@@ -1,0 +1,6 @@
+.sesskey
+/.vscode
+/.idea
+*.pyc
+__pycache__
+/workspace
