@@ -1,16 +1,14 @@
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import re
-import json
 import subprocess
 from pathlib import Path
 from typing import Dict, Optional
 
-from jobflow import job
 
-
-@job
 def run_vasp(vasp_command: Optional[str] = None, env: Optional[Dict[str, str]] = None) -> Dict[str, object]:
     """
     Run VASP in the current working directory and emit a minimal summary.
@@ -50,4 +48,15 @@ def run_vasp(vasp_command: Optional[str] = None, env: Optional[Dict[str, str]] =
         pass
     return {"summary": summary}
 
+
+def _cli() -> None:
+    parser = argparse.ArgumentParser(description="Run VASP once in the current directory.")
+    parser.add_argument("--vasp-cmd", dest="vasp_cmd", default=None, help="Path to vasp_std or equivalent")
+    args = parser.parse_args()
+    res = run_vasp(vasp_command=args.vasp_cmd)
+    print(json.dumps(res.get("summary", {}), indent=2))
+
+
+if __name__ == "__main__":
+    _cli()
 

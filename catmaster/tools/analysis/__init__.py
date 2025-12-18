@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any, Dict
 from pydantic import BaseModel, Field
 
+from catmaster.tools.base import create_tool_output, resolve_workspace_path
+from pathlib import Path
+
 
 class VaspSummarizeInput(BaseModel):
     work_dir: str = Field(..., description="Directory containing VASP outputs (must include vasprun.xml).")
@@ -16,10 +19,8 @@ def vasp_summarize(payload: Dict[str, Any]) -> Dict[str, Any]:
     Returns: dict with energies, convergence flags, final structure (if converged), and metadata
     """
     from .vasp_summarizer import summarize_vasp
-    from catmaster.tools.base import create_tool_output
-    from pathlib import Path
     
-    work_dir = payload["work_dir"]
+    work_dir = str(resolve_workspace_path(payload["work_dir"]))
     
     try:
         summary = summarize_vasp(Path(work_dir))

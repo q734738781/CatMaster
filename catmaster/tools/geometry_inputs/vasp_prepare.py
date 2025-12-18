@@ -1,5 +1,5 @@
 """
-Prepare normalized VASP input sets via StructWriter.
+Prepare MPRelax-style VASP input sets via StructWriter.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pymatgen.core import Structure
 from pymatgen.io.ase import AseAtomsAdaptor
 
 from .vasp_inputs import StructWriter
-from catmaster.tools.base import create_tool_output
+from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 
 
 SUPPORTED_EXTS = {".vasp", ".cif", ".json", ".xyz"}
@@ -33,9 +33,9 @@ def _discover_structures(input_path: Path) -> List[Path]:
     return files
 
 
-def prepare_vasp_inputs(payload: Dict[str, object]) -> Dict[str, object]:
-    input_path = Path(payload["input_path"])
-    output_root = Path(payload["output_root"])
+def prepare_mprelax_inputs(payload: Dict[str, object]) -> Dict[str, object]:
+    input_path = resolve_workspace_path(str(payload["input_path"]))
+    output_root = resolve_workspace_path(str(payload["output_root"]))
     calc_type = str(payload.get("calc_type", "bulk"))
     k_product = int(payload.get("k_product", 20))
     user_incar_settings = payload.get("user_incar_settings") or {}
@@ -47,7 +47,7 @@ def prepare_vasp_inputs(payload: Dict[str, object]) -> Dict[str, object]:
     emitted: List[Dict[str, object]] = []
     for struct_path in structures:
         structure = _load_structure(struct_path)
-        out_dir = output_root / struct_path.stem
+        out_dir = output_root
         writer.write_vasp_inputs(
             structure=structure,
             output_dir=out_dir,
@@ -64,14 +64,12 @@ def prepare_vasp_inputs(payload: Dict[str, object]) -> Dict[str, object]:
     
     # Return standardized output
     return create_tool_output(
-        tool_name="vasp_prepare",
+        tool_name="mp_relax_prepare",
         success=True,
         data={
             "calc_type": calc_type,
             "k_product": k_product,
             "structures_processed": len(emitted),
-            "prepared_directories": [e["output_dir"] for e in emitted],
+            "prepared_directories_rel": [workspace_relpath(Path(e["output_dir"])) for e in emitted],
         }
     )
-
-

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Any, Optional
 import time
+import os
+from pathlib import Path
 
 
 def create_tool_output(
@@ -39,3 +41,36 @@ def create_tool_output(
         "error": error,
         "execution_time": execution_time
     }
+
+
+def workspace_root() -> Path:
+    """Resolve the workspace root from CATMASTER_WORKSPACE or cwd."""
+    env = os.environ.get("CATMASTER_WORKSPACE")
+    root = Path(env).expanduser().resolve() if env else Path.cwd().resolve()
+    return root
+
+
+def workspace_relpath(path: Path) -> str:
+    """Return workspace-relative path string if inside workspace, else absolute."""
+    root = workspace_root()
+    try:
+        return str(path.resolve().relative_to(root))
+    except Exception:
+        return str(path.resolve())
+
+
+def resolve_workspace_path(path: str, *, must_exist: bool = False) -> Path:
+    """
+    Resolve a path under the workspace. Relative paths are rooted at workspace_root().
+    Absolute paths are allowed only if they stay within workspace_root().
+    """
+    root = workspace_root()
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        p = root / p
+    p = p.resolve()
+    if not str(p).startswith(str(root)):
+        raise ValueError(f"Path escapes workspace root: {p}")
+    if must_exist and not p.exists():
+        raise FileNotFoundError(f"Path does not exist: {p}")
+    return p

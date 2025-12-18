@@ -1,53 +1,25 @@
-# CatMaster Demo Scripts
+# CatMaster Demo Scripts (DPDispatcher)
 
-This directory contains demo scripts for testing the CatMaster workflow.
+Remote targets
+- **gpu_server**: DPDispatcher Shell backend on the GPU host; used for MACE relax.
+- **cpu_hpc**: DPDispatcher Slurm backend on the HPC cluster; used for VASP jobs.
 
-## Understanding Device Types
+Demos
+- `demo_dpdispatcher_mace_o2.py` — MACE relaxation of O2 on gpu_server (POSCAR from tests/assets/O2_in_the_box). Dry-run unless `--run`.
+- `demo_dpdispatcher_vasp_o2.py` — VASP relaxation of O2 on cpu_hpc (INCAR/KPOINTS/POSCAR/POTCAR from tests/assets/O2_in_the_box). Dry-run unless `--run`.
+- `demo_dpdispatcher_remote_submit.py` — minimal hostname/date submission smoke test.
 
-- **local**: Tools that run locally on your machine
-  - `create_molecule`: Creates molecular structures
-  - `vasp_prepare`: Prepares VASP input files locally
-  - `vasp_summarize`: Analyzes VASP output files locally
-
-- **gpu-worker**: Tools that run on remote GPU nodes (via jobflow-remote)
-  - `mace_relax`: Machine learning potential optimization using MACE
-
-- **cpu-worker**: Tools that run on remote CPU/HPC nodes (via jobflow-remote)
-  - `vasp_execute`: Runs VASP calculations on HPC clusters
-
-## Demo Scripts
-
-1. **demo_o2_dft_calculation.py**
-   - Full workflow for O2 molecule DFT calculation
-   - Requires remote execution capabilities (gpu-worker and cpu-worker)
-   - Creates structure → ML pre-optimization → VASP optimization → VASP static → Summary
-
-2. **demo_o2_local_only.py**
-   - Local-only workflow (no remote execution)
-   - Creates O2 structure and prepares VASP inputs
-   - Good for testing without remote infrastructure
-
-3. **test_tool_registry.py**
-   - Displays all registered tools and their parameters
-   - Verifies tool registry configuration
-
-4. **test_tools_manually.py**
-   - Tests individual tools without LLM workflow
-   - Good for debugging specific tool issues
-
-## Running the Demos
-
+Usage
 ```bash
-# Full DFT workflow (requires remote setup)
-python demo_o2_dft_calculation.py
+# MACE on GPU (dry-run)
+python demos/demo_dpdispatcher_mace_o2.py
+# Actually submit
+python demos/demo_dpdispatcher_mace_o2.py --run
 
-# Local-only testing
-python demo_o2_local_only.py
-
-# Check tool registry
-python test_tool_registry.py
+# VASP on HPC (dry-run)
+python demos/demo_dpdispatcher_vasp_o2.py
+# Actually submit
+python demos/demo_dpdispatcher_vasp_o2.py --run
 ```
 
-## Note on Remote Execution
-
-The "cpu-worker" and "gpu-worker" refer to remote execution via jobflow-remote, not local CPU/GPU execution. These require proper configuration of jobflow-remote with access to HPC resources.
+Prereqs: `~/.catmaster/dpdispatcher.yaml` (or split JSONs) defines machines/resources; password-less SSH is assumed.

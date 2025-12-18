@@ -1,9 +1,9 @@
 # PC control plane dependencies
-jobflow>=0.1.5
-jobflow-remote>=0.1.8
+dpdispatcher>=0.6.12
 pymatgen>=2024.2.23
 ase>=3.23.0
 paramiko>=3.3.0
+pyyaml>=6.0
 ruamel.yaml>=0.17.32
 pandas>=2.2.0
 selenium>=4.6.0

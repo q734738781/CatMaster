@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 from pymatgen.io.vasp.outputs import Vasprun
+from pymatgen.io.vasp import Poscar
 
 
 def summarize_vasp(work_dir: Path) -> Dict[str, Any]:
-    """recommend_device: CPU"""
+    """recommend_device: local"""
     vasprun_path = work_dir / "vasprun.xml"
     if not vasprun_path.exists():
         raise FileNotFoundError(f"{vasprun_path} is missing.")
@@ -28,20 +29,14 @@ def summarize_vasp(work_dir: Path) -> Dict[str, Any]:
     outcar_path = work_dir / "OUTCAR"
     summary: Dict[str, Any] = {
         "formula": vasprun.final_structure.composition.reduced_formula,
-        "nsites": len(vasprun.final_structure),
         "final_energy_eV": vasprun.final_energy,
-        "final_energy_per_atom_eV": vasprun.final_energy / len(vasprun.final_structure),
-        "efermi": vasprun.efermi,
-        "is_spin": vasprun.is_spin,
         "ionic_steps": len(vasprun.ionic_steps),
-        "electronic_steps_per_ionic": [len(step["electronic_steps"]) for step in vasprun.ionic_steps],
         "converged_electronic": vasprun.converged_electronic,
         "converged_ionic": vasprun.converged_ionic,
-        "potcar_symbols": vasprun.potcar_symbols,
-        "outcar_present": outcar_path.exists(),
     }
     if vasprun.converged_ionic:
-        summary["final_structure"] = vasprun.final_structure.as_dict()
+        poscar_str = Poscar(vasprun.final_structure).get_string(significant_figures=6)
+        summary["final_structure_poscar"] = poscar_str
     return summary
 
 
@@ -52,5 +47,4 @@ def write_summary(work_dir: Path, output_path: Path) -> Dict[str, Any]:
     with output_path.open("w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2, ensure_ascii=False)
     return summary
-
 

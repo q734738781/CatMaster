@@ -20,11 +20,9 @@ numpy>=1.24.0
 scipy>=1.10.0
 
 # Remote execution
-jobflow>=0.1.14
-jobflow-remote>=0.1.1
+dpdispatcher>=0.6.12
 paramiko>=3.0.0
 
 # Utilities
 python-dotenv>=1.0.0
 pandas>=2.0.0
-

@@ -1,0 +1,5 @@
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2025-12-17 18:02:17,264 - INFO : info:check_all_finished: False
+2025-12-17 18:02:17,264 - INFO : remote path: /public/home/chenhh/catmaster_work/75de9ed153a3b977e4fe63319737f67c2d4444df
+2025-12-17 18:02:23,147 - INFO : job: 9bd5a70ac0d44be6a07b80c5902c9428a2bf56af submit; job_id is 212401
+2025-12-17 18:04:24,805 - INFO : job: 9bd5a70ac0d44be6a07b80c5902c9428a2bf56af 212401 finished

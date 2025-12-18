@@ -1,0 +1,7 @@
+tasks:
+  mace_relax:
+    resources: mace_gpu
+    defaults:
+      model: medium-mpa-0
+  vasp_execute:
+    resources: vasp_cpu

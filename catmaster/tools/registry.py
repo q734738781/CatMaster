@@ -18,22 +18,35 @@ class ToolRegistry:
         """Register all available tools"""
         
         # Geometry/Input tools
-        from catmaster.tools.geometry_inputs import create_molecule, vasp_prepare
-        from catmaster.tools.geometry_inputs import MoleculeCreateInput, VaspPrepareInput
+        from catmaster.tools.geometry_inputs import create_molecule, mp_relax_prepare
+        from catmaster.tools.geometry_inputs import MoleculeCreateInput, MPRelaxPrepareInput
         
         # Execution tools  
         from catmaster.tools.execution import mace_relax, vasp_execute
         from catmaster.tools.execution import MaceRelaxInput, VaspExecuteInput
-        
+
         # Analysis tools
         from catmaster.tools.analysis import vasp_summarize, VaspSummarizeInput
+
+        # File management tools
+        from catmaster.tools import file_manager
+        from catmaster.tools.python_repl import python_exec, PythonExecInput
+
+        # Memory/notes
+        from catmaster.tools import memory
         
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule", create_molecule, MoleculeCreateInput)
         self.register_tool("mace_relax", mace_relax, MaceRelaxInput)
-        self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
+        self.register_tool("mp_relax_prepare", mp_relax_prepare, MPRelaxPrepareInput)
         self.register_tool("vasp_execute", vasp_execute, VaspExecuteInput)
         self.register_tool("vasp_summarize", vasp_summarize, VaspSummarizeInput)
+        self.register_tool("list_files", file_manager.list_files, file_manager.ListFilesInput)
+        self.register_tool("read_file", file_manager.read_file, file_manager.ReadFileInput)
+        self.register_tool("write_file", file_manager.write_file, file_manager.WriteFileInput)
+        self.register_tool("find_text", file_manager.find_text, file_manager.FindTextInput)
+        self.register_tool("python_exec", python_exec, PythonExecInput, device="local")
+        self.register_tool("write_note", memory.write_note, memory.MemoryNoteInput)
     
     def register_tool(
         self, 

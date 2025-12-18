@@ -1,0 +1,43 @@
+cpu_hpc:
+  batch_type: Slurm
+  context_type: SSHContext
+  local_root: ~/catmaster_local
+  remote_root: /public/home/chenhh/catmaster_work
+  remote_profile:
+    hostname: 166.111.35.183
+    port: 31125
+    username: chenhh
+    key_filename: /home/chenhh/.ssh/id_ed25519
+    execute_command: "source ~/.bashrc"
+
+gpu_server:
+  batch_type: Shell
+  context_type: SSHContext
+  local_root: ~/catmaster_local
+  remote_root: /ssd/chenhh/catmaster_work
+  remote_profile:
+    hostname: 166.111.35.177
+    port: 22
+    username: chenhh
+    key_filename: /home/chenhh/.ssh/id_ed25519
+  env_setup: |
+    ulimit -s unlimited
+    export PATH=/ssd/chenhh/miniconda3/condabin:$PATH
+    eval "$(conda shell.bash hook)"
+    conda activate catmaster-gpu
+    export PYTHONPATH=/ssd/chenhh/catmaster_code:$PYTHONPATH
+
+cpu_ssh_local:
+  batch_type: Shell
+  context_type: SSHContext
+  local_root: ~/catmaster_local
+  remote_root: /home/chenhh/catmaster_work_local
+  remote_profile:
+    hostname: 127.0.0.1
+    port: 22
+    username: chenhh
+    key_filename: /home/chenhh/.ssh/id_ed25519
+  env_setup: |
+    export PATH=$HOME/miniconda3/condabin:$PATH
+    eval "$(conda shell.bash hook)"
+    conda activate catmaster-local

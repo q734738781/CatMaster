@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
-from typing import Dict, Optional
-
-from jobflow import job
+from typing import Dict
 
 
-@job
 def run_mace(
     structure_file: str = "POSCAR",
     fmax: float = 0.05,
@@ -79,3 +77,26 @@ def run_mace(
     
     return {"summary": summary}
 
+
+def _cli() -> None:
+    parser = argparse.ArgumentParser(description="Run a MACE relaxation in-place.")
+    parser.add_argument("--structure", default="POSCAR", help="Structure file name")
+    parser.add_argument("--fmax", type=float, default=0.05, help="Force convergence threshold (eV/Å)")
+    parser.add_argument("--steps", type=int, default=500, help="Maximum optimization steps")
+    parser.add_argument("--model", default="medium-mpa-0", help="MACE model name")
+    parser.add_argument("--device", default="auto", help="Device to use: auto|cpu|cuda|cuda:0")
+    args = parser.parse_args()
+    
+    result = run_mace(
+        structure_file=args.structure,
+        fmax=args.fmax,
+        steps=args.steps,
+        model=args.model,
+        device=args.device,
+    )
+    summary = result.get("summary", {})
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    _cli()

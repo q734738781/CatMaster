@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from pymatgen.core import Structure
 from pymatgen.io.vasp.sets import MPRelaxSet
 
+from catmaster.tools.base import resolve_workspace_path
 
 class StructWriter:
     """
@@ -32,7 +33,7 @@ class StructWriter:
             user_incar_overrides: User INCAR overrides
             run_template: Optional run.yaml template path
         """
-        output_dir = Path(output_dir)
+        output_dir = resolve_workspace_path(str(output_dir))
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Get calculation-specific user_incar_settings

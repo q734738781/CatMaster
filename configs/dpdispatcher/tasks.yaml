@@ -1,0 +1,21 @@
+vasp_execute:
+  command: "mpirun -n $SLURM_NTASKS vasp_std > vasp_stdout.txt 2>&1"
+  forward_files:
+    - "*"
+  backward_files:
+    - OUTCAR
+    - OSZICAR
+    - CONTCAR
+    - vasprun.xml
+  task_work_path: "."
+
+mace_relax:
+  command: "python -m catmaster.tools.execution.mace_jobs --structure {structure_file} --fmax {fmax} --steps {maxsteps} --model {model}"
+  forward_files:
+    - "*"
+  backward_files:
+    - CONTCAR
+    - opt.traj
+    - opt.log
+    - summary.json
+  task_work_path: "."
