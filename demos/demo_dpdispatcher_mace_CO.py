@@ -13,15 +13,15 @@ from pprint import pprint
 
 from catmaster.tools.execution import mace_relax
 
-ASSETS = Path(__file__).resolve().parents[1] / "tests" / "assets" / "O2_in_the_box"
+ASSETS = Path(__file__).resolve().parents[1] / "tests" / "assets" 
 
 
 def stage_poscar(workspace: Path) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
     dest_dir = workspace / "mace_o2"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(ASSETS / "POSCAR", dest_dir / "POSCAR")
-    return dest_dir / "POSCAR"
+    shutil.copy(ASSETS / "CO.xyz", dest_dir / "CO.xyz")
+    return dest_dir / "CO.xyz"
 
 
 def main() -> None:
@@ -38,7 +38,7 @@ def main() -> None:
         "fmax": 0.05,
         "maxsteps": 400,
         "model": None,  # use router default
-        "check_interval": 30,
+        "check_interval": 10,
     }
 
     print("Planned payload (gpu_server MACE):")

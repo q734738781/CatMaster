@@ -26,10 +26,9 @@ from langchain_openai import ChatOpenAI
 from catmaster.agents.orchestrator import Orchestrator
 
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LLM DPDispatcher demo: O2 VASP run")
-    parser.add_argument("--workspace", default="workspace/demo_llm_o2_vasp", help="Workspace root")
+    parser = argparse.ArgumentParser(description="LLM demo: O2 Fe adsorption energy calculation")
+    parser.add_argument("--workspace", default="workspace/demo_llm_fe_ads_energy", help="Workspace root")
     parser.add_argument("--run", action="store_true", help="Actually submit vasp_execute; otherwise quit")
     parser.add_argument("--log-level", default="INFO", help="Logging level (INFO or DEBUG)")
     parser.add_argument("--log-dir", default=None, help="Directory to store logs (log.log + orchestrator_llm.jsonl)")
@@ -39,6 +38,7 @@ def main() -> None:
     handlers = [logging.StreamHandler()]
     if args.proxy:
         print(f"Using proxy: {args.proxy}")
+        
         host, port = args.proxy.split(":")
         os.environ["HTTP_PROXY"] = f"http://{host}:{port}"
         os.environ["HTTPS_PROXY"] = f"http://{host}:{port}"
@@ -46,6 +46,9 @@ def main() -> None:
     
     log_dir_path = Path(args.log_dir).expanduser().resolve() if args.log_dir else None
     if log_dir_path:
+        # Remove the directory if it exists
+        if log_dir_path.exists():
+            shutil.rmtree(log_dir_path)
         log_dir_path.mkdir(parents=True, exist_ok=True)
         log_path = log_dir_path / "log.log"
         handlers.append(logging.FileHandler(log_path))
@@ -58,21 +61,24 @@ def main() -> None:
     root = Path(args.workspace).resolve()
     # Export to CATMASTER_WORKSPACE (tools should respect this workspace)
     os.environ["CATMASTER_WORKSPACE"] = str(root)
-    # Clean and Make dir
+    # Clean and Make dir for workspace
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
 
     user_request = (
-        "Compute O2 in a box: prepare VASP inputs from scratch (Initial guess: O2 for 1.3 Å bond),"
-        "DO perform VASP calculation to get the results, and report final energy per atom and O–O bond distance from vasp results. Do not stop until you have completed the calculation task."
+        "Compute CO adsorption energy on a Fe(111) surface for different adsorption sites:"
+        "Download the mp-150 structure from Materials Project (Fe bcc phase) and use it as the initial structure, prepare VASP inputs from scratch, and perform VASP calculation to get the results."
+        "Use a 2x2 supercell for the slab, with 10A slab thickness and 15A vacuum thickness, fix the bottom 3 layers of the slab."
+        "Enumerate the adsorption sites on the slab, and place the CO molecule on each site."
+        "Use the following formula to calculate the adsorption energy: E_ads = E_(Fe-CO) - E_(Fe) - E_(CO), report the adsorption energy for each adsorption site and report the most stable adsorption site."
     )
 
     llm = ChatOpenAI(
         model="gpt-5.2",
         temperature=0,
         # model_kwargs={"response_format": {"type": "json_object"}},
-        reasoning_effort="medium",
+        reasoning_effort="high",
 
     )
     summary_llm = ChatOpenAI(

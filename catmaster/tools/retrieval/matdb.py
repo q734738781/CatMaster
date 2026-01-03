@@ -1,16 +1,22 @@
 """
-Materials Project API wrapper used in Stage 1.
+Materials Project retrieval tools exposed to LLM agents.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
-
+from pymatgen.core.structure import Structure
 from mp_api.client import MPRester
-from pymatgen.core import Structure
+
+from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.tools.retrieval.schemas import (
+    MPSearchMaterialsInput,
+    MPDownloadStructureInput,
+)
 
 
 @dataclass(slots=True)
@@ -19,107 +25,172 @@ class MatdbHit:
     formula: str
     energy_above_hull: Optional[float]
     formation_energy_per_atom: Optional[float]
-    e_above_hull: Optional[float] = None
-    task_id: Optional[str] = None
+    band_gap: Optional[float]
+    nsites: Optional[int]
+    volume: Optional[float]
+    density: Optional[float]
 
 
-class MaterialsDBAdapter:
-    def __init__(self, api_key: Optional[str] = None) -> None:
-        self.api_key = api_key
-        self.client = MPRester(api_key) if api_key else MPRester()
+def _mpr() -> MPRester:
+    api_key = os.environ.get("MP_API_KEY")
+    if not api_key:
+        raise RuntimeError("MP_API_KEY environment variable is not set.")
+    return MPRester(api_key, monty_decode=True, use_document_model=True)
 
-    def get_structures(self, identifier: str, output_dir: Path) -> List[Path]:
-        """Download structures for the given material id or formula."""
-        output_dir.mkdir(parents=True, exist_ok=True)
-        if identifier.startswith("mp-"):
-            structures: List[Structure] = [
-                self.client.get_structure_by_material_id(identifier)
-            ]
-        else:
-            structures = self.client.get_structures(identifier) or []
-        paths: List[Path] = []
-        for idx, struct in enumerate(structures):
-            if isinstance(struct, dict):
-                struct = Structure.from_dict(struct)
-            fid = f"{identifier.replace(' ', '_')}_{idx:03d}.cif"
-            path = output_dir / fid
-            struct.to(fmt="cif", filename=str(path))
-            paths.append(path)
-        return paths
 
-    def search(self, criteria: Dict, properties: Optional[Iterable[str]] = None) -> List[MatdbHit]:
-        allowed = {
-            "material_ids",
-            "formula",
-            "chemsys",
-            "elements",
-        }
-        search_kwargs: Dict[str, any] = {}
-        for key, value in criteria.items():
-            if key not in allowed:
-                raise ValueError(f"Unsupported Summary search key: {key}")
-            search_kwargs[key] = value
+def mp_search_materials(payload: Dict[str, object]) -> Dict[str, object]:
+    """
+    Search Materials Project by formula/chemsys/elements and return concise hit list.
+    Args:
+        query: Formula or chemsys (e.g., 'LiFePO4' or 'Li-Fe-P-O') or mp-id.
+        limit: Maximum number of hits to return.
+        band_gap_min: Minimum band gap (eV).
+        band_gap_max: Maximum band gap (eV).
+        e_above_hull_max: Maximum energy above hull (eV/atom).
+        nsites_max: Maximum number of sites (filters out very large cells).
+        api_key: Materials Project API key (optional if env provides).
+    Returns:
+        List of hits with material_id, formula, energy_above_hull, formation_energy_per_atom, band_gap, nsites, volume, and density.
+    """
+    params = MPSearchMaterialsInput(**payload)
+    try:
+        client = _mpr()
+    except Exception as exc:
+        return create_tool_output("mp_search_materials", success=False, error=str(exc))
 
-        fields = list(properties) if properties else [
-            "material_id",
-            "formula_pretty",
-            "energy_above_hull",
-            "formation_energy_per_atom",
-        ]
+    # Build search kwargs
+    criteria: Dict[str, Any] = {}
+    q = params.query.strip()
+    if q.startswith("mp-"):
+        criteria["material_ids"] = [q]
+    elif "-" in q:
+        criteria["chemsys"] = q
+    else:
+        criteria["formula"] = q
 
-        docs = self.client.summary.search(fields=fields, **search_kwargs)
-        hits: List[MatdbHit] = []
-        for doc in docs:
-            hits.append(
-                MatdbHit(
-                    material_id=doc.material_id,
-                    formula=doc.formula_pretty,
-                    energy_above_hull=getattr(doc, "energy_above_hull", None),
-                    formation_energy_per_atom=getattr(doc, "formation_energy_per_atom", None),
-                    e_above_hull=getattr(doc, "energy_above_hull", None),
-                    task_id=getattr(doc, "task_id", None),
-                )
+    fields = [
+        "material_id",
+        "formula_pretty",
+        "energy_above_hull",
+        "formation_energy_per_atom",
+        "band_gap",
+        "nsites",
+        "volume",
+        "density",
+    ]
+
+    docs = client.summary.search(fields=fields, **criteria)
+
+    hits: List[MatdbHit] = []
+    for doc in docs:
+        # Apply optional filters
+        if params.band_gap_min is not None and (doc.band_gap or 0.0) < params.band_gap_min:
+            continue
+        if params.band_gap_max is not None and (doc.band_gap or 0.0) > params.band_gap_max:
+            continue
+        if params.e_above_hull_max is not None and (doc.energy_above_hull or 0.0) > params.e_above_hull_max:
+            continue
+        if params.nsites_max is not None and (doc.nsites or 0) > params.nsites_max:
+            continue
+
+        hits.append(
+            MatdbHit(
+                material_id=doc.material_id,
+                formula=doc.formula_pretty,
+                energy_above_hull=getattr(doc, "energy_above_hull", None),
+                formation_energy_per_atom=getattr(doc, "formation_energy_per_atom", None),
+                band_gap=getattr(doc, "band_gap", None),
+                nsites=getattr(doc, "nsites", None),
+                volume=getattr(doc, "volume", None),
+                density=getattr(doc, "density", None),
             )
-        return hits
+        )
 
+    # Sort by energy above hull then band gap for stability-first ranking
+    hits.sort(key=lambda h: (h.energy_above_hull if h.energy_above_hull is not None else 1e9,
+                             h.band_gap if h.band_gap is not None else 0.0))
 
-def save_hits(hits: Iterable[MatdbHit], output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as fh:
-        json.dump([asdict(hit) for hit in hits], fh, indent=2, ensure_ascii=False)
-
-
-def query(
-    criteria: Dict,
-    properties: Optional[Iterable[str]] = None,
-    structures_dir: Path = Path("structures"),
-    api_key: Optional[str] = None,
-) -> Dict[str, object]:
-    adapter = MaterialsDBAdapter(api_key=api_key)
-    hits = adapter.search(criteria=criteria, properties=properties)
-    structures_path = Path(structures_dir)
-    structures_path.mkdir(parents=True, exist_ok=True)
-    hits_path = (
-        structures_path.parent / "matdb_hits.json"
-        if structures_path.name == "structures"
-        else structures_path / "matdb_hits.json"
+    limited = hits[: params.limit]
+    return create_tool_output(
+        "mp_search_materials",
+        success=True,
+        data={
+            "count": len(hits),
+            "returned": len(limited),
+            "hits": [
+                {
+                    "mp_id": h.material_id,
+                    "formula": h.formula,
+                    "e_above_hull": h.energy_above_hull,
+                    "formation_energy_per_atom": h.formation_energy_per_atom,
+                    "band_gap": h.band_gap,
+                    "nsites": h.nsites,
+                    "volume": h.volume,
+                    "density": h.density,
+                }
+                for h in limited
+            ],
+            "truncated": len(hits) > len(limited),
+        },
     )
-    save_hits(hits, hits_path)
 
-    structure_paths: List[str] = []
-    if hits:
-        def energy(hit: MatdbHit) -> float:
-            return hit.energy_above_hull if hit.energy_above_hull is not None else float("inf")
 
-        best_hit = min(hits, key=energy)
-        structure_paths = [p.as_posix() for p in adapter.get_structures(best_hit.material_id, structures_path)]
+def mp_download_structure(payload: Dict[str, object]) -> Dict[str, object]:
+    """
+    Download a single structure from Materials Project and write it under the workspace.
+    Args:
+        mp_id: Materials Project ID, e.g., mp-149.
+        fmt: Output format: poscar|cif|json.
+        output_dir: Directory to write the structure.
+    Returns:
+        Path to the written structure.
+    """
+    params = MPDownloadStructureInput(**payload)
+    try:
+        client = _mpr()
+    except Exception as exc:
+        return create_tool_output("mp_download_structure", success=False, error=str(exc))
 
-    return {
-        "count": len(hits),
-        "hits_path": hits_path.as_posix(),
-        "structures": structure_paths,
-        "provider": "materials_project",
-        "api_version": getattr(adapter.client, "api_version", None),
+    out_dir = resolve_workspace_path(params.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    fmt = params.fmt.lower()
+    ext = {"poscar": "vasp", "cif": "cif", "json": "json"}.get(fmt, fmt)
+    out_path = out_dir / f"{params.mp_id}.{ext}"
+
+    try:
+        structure = client.get_structure_by_material_id(params.mp_id)
+        if isinstance(structure, dict):
+            # Use pymatgen json structure load
+            structure = Structure.from_dict(structure)
+    except Exception as exc:  # pragma: no cover - remote call
+        return create_tool_output(
+            "mp_download_structure",
+            success=False,
+            error=str(exc),
+        )
+
+    if fmt == "json":
+        out_path.write_text(json.dumps(structure.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        structure.to(fmt=fmt, filename=str(out_path))
+
+    meta = {
+        "formula": structure.composition.reduced_formula,
+        "natoms": len(structure)
     }
 
+    return create_tool_output(
+        "mp_download_structure",
+        success=True,
+        data={
+            "mp_id": params.mp_id,
+            "format": fmt,
+            "structure_rel": workspace_relpath(out_path),
+            "output_dir_rel": workspace_relpath(out_dir),
+            "metadata": meta,
+        },
+    )
 
+
+__all__ = ["mp_search_materials", "mp_download_structure"]

@@ -16,31 +16,89 @@ class SlabCutInput(BaseModel):
     fix_bottom: bool = Field(True, description="Fix bottom region during relaxation.")
 
 
-class SlabFixInput(BaseModel):
-    input_path: str = Field(..., description="A slab file or folder containing slabs.")
-    output_dir: str = Field(..., description="Directory to write fixed slabs.")
-    relax_thickness: float = Field(5.0, ge=0.0, description="Thickness to relax (Å).")
-    fix_bottom: bool = Field(True, description="Fix bottom region during relaxation.")
-    centralize: bool = Field(False, description="Centralize slab along c axis.")
-
-
 class AdsorbatePlacementInput(BaseModel):
     config: Dict[str, Any] = Field(..., description="Config dict forwarded to adsorbate placement generator.")
 
 
-class MPRelaxPrepareInput(BaseModel):
-    """Prepare MPRelax-style VASP input sets for molecular/bulk/slab relaxations."""
+class EnumerateAdsorptionSitesInput(BaseModel):
+    """Enumerate adsorption sites on a slab using ASF."""
 
-    input_path: str = Field(..., description="Path to structure file (POSCAR/CIF/XYZ/JSON) or directory")
-    output_root: str = Field(..., description="Root directory where MPRelax input sets will be created")
-    calc_type: str = Field("bulk", description="Calculation type: 'gas', 'bulk', or 'slab', will affect k-point and ISIF settings")
-    k_product: int = Field(20, ge=1, description="K-point density product (use 1 for molecules)")
+    slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF), workspace-relative.")
+    mode: str = Field("all", description="Which site families to return: all|ontop|bridge|hollow.")
+    distance: float = Field(2.0, ge=0.0, description="Height above surface to sample adsorption sites (Å).")
+    output_json: str = Field("adsorption/sites.json", description="Output JSON path for site list (workspace-relative).")
+
+
+class PlaceAdsorbateInput(BaseModel):
+    """Place an adsorbate molecule on a slab."""
+
+    slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ recommended).")
+    site: str = Field("auto", description="Site label like ontop_0|bridge_1|hollow_2 or 'auto'.")
+    distance: float = Field(2.0, ge=0.0, description="Height used to generate adsorption sites (Å).")
+    output_poscar: str = Field("adsorption/adsorbed.vasp", description="Output POSCAR path (workspace-relative).")
+
+
+class GenerateBatchAdsorptionStructuresInput(BaseModel):
+    """Generate multiple adsorbed structures up to max_structures."""
+
+    slab_file: str
+    adsorbate_file: str
+    mode: str = Field("all", description="all|ontop|bridge|hollow")
+    distance: float = 2.0
+    max_structures: int = Field(12, ge=1, le=100)
+    output_dir: str = Field("adsorption/batch", description="Directory to write batch POSCARs.")
+    
+class SlabBuildInput(BaseModel):
+    """Build slabs for all terminations of a Miller index from a bulk structure."""
+
+    bulk_structure: str = Field(..., description="Bulk structure file (POSCAR/CIF/etc.), workspace-relative.")
+    miller_index: List[int] = Field(..., min_length=3, max_length=3, description="Miller index [h,k,l].")
+    output_root: str = Field("slabs", description="Directory to write the slab structures.")
+    slab_thickness: float = Field(12.0, ge=0.0, description="Target slab thickness (Å).")
+    vacuum_thickness: float = Field(15.0, ge=0.0, description="Vacuum thickness (Å).")
+    supercell: List[int] = Field([1, 1, 1], min_length=3, max_length=3, description="Supercell replication [a,b,c].")
+    get_symmetry_slab: bool = Field(False, description="Use symmetry-distinct terminations if available.")
+    orthogonal: bool = Field(False, description="If true, convert each slab to an orthogonal c-oriented cell.")
+
+
+class SlabSelectiveDynamicsInput(BaseModel):
+    """Set selective dynamics for a slab structure (Fix Atoms)."""
+
+    structure_ref: str = Field(..., description="Slab structure file to modify (POSCAR/CIF).")
+    output_path: str = Field(..., description="Output structure path (workspace-relative).")
+    freeze_layers: Optional[int] = Field(None, ge=0, description="Freeze bottom N atomic layers (exclusive with relax_thickness) Use 0.2A to group layers.")
+    relax_thickness: Optional[float] = Field(None, ge=0.0, description="Thickness (Å) from the top that remains relaxed; below is frozen.")
+    centralize: bool = Field(False, description="Recentre slab along c before applying constraints.")
+
+class RelaxPrepareInput(BaseModel):
+    """
+Prepare MPRelaxSet-based VASP relax inputs with calc_type presets and k_product k-mesh.
+
+Baseline DFT settings follow Materials Project MPRelaxSet (key defaults: 
+- PAW-PBE54 POTCARS, ENCUT=520 eV
+- PREC=Accurate, ISPIN=2, IBRION=2, LREAL=AUTO, LASPH=True, LORBIT=11, LWAVE=False, LCHARG=False).
+- Additional overrides applied for relaxation robustness: EDIFF=1e-6; NSW=500; EDIFFG=-0.02; ISMEAR=0, SIGMA=0.1 for solids; gas calc_type will be ISMEAR=0, SIGMA=0.01
+- KPOINTS is generated by k*a=k_product, where a is the lattice constant in Angstrom. Set to 30 by default and sufficient for most systems.
+- DFT-D3 is enabled by default and DFT+U is disabled by default. Enable it for Transition Metal Oxide systems.
+    """
+
+    input_path: str = Field(..., description="Path to a structure file with lattice information (POSCAR/CIF) or a directory containing multiple structures. XYZ files are NOT supported.")
+    output_root: str = Field(..., description="Root directory for generated VASP inputs (one subfolder per input structure). Will generate root/file_names for vasp inputs")
+    calc_type: str = Field("bulk", description="Calculation type: 'gas'|'bulk'|'slab'|'lattice'. "
+            "This provides preset INCAR overrides: "
+            "'lattice' will apply ISIF=3; 'bulk' will apply ISIF=2 (bulk position relaxation only); 'slab' will apply ISIF=2 and force KPOINTS in z direction to 1; "
+            "gas will apply ISIF=2, ISYM=0, LREAL=False, ISMEAR=0, SIGMA=0.01, and force KPOINTS to 1x1x1")
+    k_product: int = Field(30, ge=1, description="Target k-mesh density via k_i≈round(k_product/L_i), min 1, forced odd (Gamma-centered); gas always 1x1x1.")
+    use_d3: bool = Field(True, description="Add IVDW=11 (DFT-D3) to the INCAR if true")
+    use_dft_plus_u: bool = Field(False, description="Add LDAU=True to the INCAR if true. Enable it for Transition Metal Oxide systems.")
     user_incar_settings: Optional[Dict[str, Any]] = Field(
         None,
-        description=(
-            "INCAR overrides on top of MPRelaxSet defaults (pymatgen format). "
-            'Specify MAGMOM as {"element": value}, not a list.'
-        ),
+        description=("""
+INCAR overrides (pymatgen Incar semantics) on top of MPRelaxSet (calc_type presets will always win if conflict with params specified here)
+Specify MAGMOM, LDAUU, etc. if needed, fomrmat as {"element": value}, not a per-atom list.
+You can also specify EDIFF and EDIFFG to control the convergence of the calculation and override the default values.
+""")
     )
 
 
@@ -48,5 +106,5 @@ __all__ = [
     "SlabCutInput",
     "SlabFixInput",
     "AdsorbatePlacementInput",
-    "MPRelaxPrepareInput",
+    "RelaxPrepareInput",
 ]

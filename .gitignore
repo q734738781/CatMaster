@@ -4,3 +4,7 @@
 *.pyc
 __pycache__
 /workspace
+/logs
+/tests/test_output
+/templates
+POTCAR

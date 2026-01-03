@@ -1,5 +1,33 @@
 LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
-2025-12-17 18:02:17,264 - INFO : info:check_all_finished: False
-2025-12-17 18:02:17,264 - INFO : remote path: /public/home/chenhh/catmaster_work/75de9ed153a3b977e4fe63319737f67c2d4444df
-2025-12-17 18:02:23,147 - INFO : job: 9bd5a70ac0d44be6a07b80c5902c9428a2bf56af submit; job_id is 212401
-2025-12-17 18:04:24,805 - INFO : job: 9bd5a70ac0d44be6a07b80c5902c9428a2bf56af 212401 finished
+2025-12-24 17:18:57,878 - INFO : info:check_all_finished: False
+2025-12-24 17:18:57,878 - INFO : remote path: /public/home/chenhh/catmaster_work/cf0eed95f04feca0cb996299d5d1819d33014c09
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2025-12-24 17:35:38,636 - INFO : info:check_all_finished: False
+2025-12-24 17:35:38,636 - INFO : remote path: /public/home/chenhh/catmaster_work/dae86a6305dcebfc4e2c1ac48e5a0d892e6991f4
+2025-12-24 17:35:45,198 - INFO : job: 28d4a055794e2969ba72a8c66a7973c9c6b6096a submit; job_id is 215319
+2025-12-24 17:35:45,920 - INFO : job: b87b1e6d66b91a57c50cc40de79f9b79e32e97d1 submit; job_id is 215320
+2025-12-24 17:35:46,628 - INFO : job: 69ce3ec30815e18340b9fb629d7561b8e19ea837 submit; job_id is 215321
+2025-12-24 17:35:47,331 - INFO : job: f807e696b0c49f1e2adfa535bc044585c96949cc submit; job_id is 215322
+2025-12-24 17:35:48,042 - INFO : job: b0ce015123a2f66ba6c01b104ea17c8cd706f0fd submit; job_id is 215323
+2025-12-24 17:35:48,742 - INFO : job: 0785b20ef20320fa5aef17dcca0c626b92454a91 submit; job_id is 215324
+2025-12-24 17:38:52,919 - INFO : job: b87b1e6d66b91a57c50cc40de79f9b79e32e97d1 215320 finished
+2025-12-24 18:03:11,185 - INFO : job: b0ce015123a2f66ba6c01b104ea17c8cd706f0fd 215323 finished
+2025-12-25 04:23:11,933 - INFO : job: 28d4a055794e2969ba72a8c66a7973c9c6b6096a 215319 finished
+2025-12-25 04:35:17,625 - INFO : job: 0785b20ef20320fa5aef17dcca0c626b92454a91 215324 finished
+2025-12-25 04:43:19,948 - INFO : job: f807e696b0c49f1e2adfa535bc044585c96949cc 215322 finished
+2025-12-25 04:44:20,153 - INFO : job: 69ce3ec30815e18340b9fb629d7561b8e19ea837 215321 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2025-12-25 10:29:34,941 - INFO : info:check_all_finished: False
+2025-12-25 10:29:34,942 - INFO : remote path: /public/home/chenhh/catmaster_work/02068d20b0afb290aa3c0da0b3f6029dd57fac52
+2025-12-25 10:29:43,036 - INFO : job: 28d4a055794e2969ba72a8c66a7973c9c6b6096a submit; job_id is 215328
+2025-12-25 10:29:44,087 - INFO : job: c313971e8f9fd9d55f8e8569509670d9ba9b8afc submit; job_id is 215329
+2025-12-25 10:29:44,811 - INFO : job: 69ce3ec30815e18340b9fb629d7561b8e19ea837 submit; job_id is 215330
+2025-12-25 10:29:45,888 - INFO : job: f807e696b0c49f1e2adfa535bc044585c96949cc submit; job_id is 215331
+2025-12-25 10:29:46,928 - INFO : job: 7bfe032179a33785dd328afcbc7d6cff05233ff0 submit; job_id is 215332
+2025-12-25 10:29:47,890 - INFO : job: 0785b20ef20320fa5aef17dcca0c626b92454a91 submit; job_id is 215333
+2025-12-25 10:33:51,848 - INFO : job: 7bfe032179a33785dd328afcbc7d6cff05233ff0 215332 finished
+2025-12-25 10:39:53,811 - INFO : job: c313971e8f9fd9d55f8e8569509670d9ba9b8afc 215329 finished
+2025-12-25 21:31:05,004 - INFO : job: 28d4a055794e2969ba72a8c66a7973c9c6b6096a 215328 finished
+2025-12-25 21:31:05,360 - INFO : job: f807e696b0c49f1e2adfa535bc044585c96949cc 215331 finished
+2025-12-25 22:43:15,388 - INFO : job: 69ce3ec30815e18340b9fb629d7561b8e19ea837 215330 finished
+2025-12-25 23:17:17,627 - INFO : job: 0785b20ef20320fa5aef17dcca0c626b92454a91 215333 finished

@@ -204,7 +204,7 @@ Task 系统依然必须引入，因为它是 MultiAgent 调度、批处理、长
 
 * 引入一个新任务验证工具治理能力：单表面吸附计算的最小闭环
 
-  1. 生成分子或吸附物（create_molecule）
+  1. 生成分子或吸附物（create_molecule_from_smiles）
   2. 结构松弛（mace_relax 或 mp_relax_prepare，视你工具实际含义）
   3. vasp_execute
   4. vasp_summarize

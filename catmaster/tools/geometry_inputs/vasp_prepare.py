@@ -33,26 +33,35 @@ def _discover_structures(input_path: Path) -> List[Path]:
     return files
 
 
-def prepare_mprelax_inputs(payload: Dict[str, object]) -> Dict[str, object]:
+def relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
     input_path = resolve_workspace_path(str(payload["input_path"]))
     output_root = resolve_workspace_path(str(payload["output_root"]))
     calc_type = str(payload.get("calc_type", "bulk"))
-    k_product = int(payload.get("k_product", 20))
+    k_product = int(payload.get("k_product", 30))
     user_incar_settings = payload.get("user_incar_settings") or {}
+    use_d3 = bool(payload.get("use_d3", True))
+    use_dft_plus_u = bool(payload.get("use_dft_plus_u", False))
 
     output_root.mkdir(parents=True, exist_ok=True)
     writer = StructWriter()
 
     structures = _discover_structures(input_path)
+    # Auto-detect batch vs single if not explicitly set:
+    # - single file => single mode
+    # - directory or multiple files => batch mode
+    batch_mode = input_path.is_dir() or len(structures) > 1
+
     emitted: List[Dict[str, object]] = []
     for struct_path in structures:
         structure = _load_structure(struct_path)
-        out_dir = output_root
+        out_dir = output_root / struct_path.stem if batch_mode else output_root
         writer.write_vasp_inputs(
             structure=structure,
             output_dir=out_dir,
             calc_type=calc_type,
             k_product=k_product,
+            use_d3=use_d3,
+            use_dft_plus_u=use_dft_plus_u,
             user_incar_overrides=user_incar_settings,
         )
         emitted.append(
@@ -61,10 +70,12 @@ def prepare_mprelax_inputs(payload: Dict[str, object]) -> Dict[str, object]:
                 "output_dir": str(out_dir),
             }
         )
+        if not batch_mode:
+            break
     
     # Return standardized output
     return create_tool_output(
-        tool_name="mp_relax_prepare",
+        tool_name="relax_prepare",
         success=True,
         data={
             "calc_type": calc_type,

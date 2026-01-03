@@ -67,10 +67,34 @@ Create:
 
 Rules:
 - Use only the available tools; do NOT invent capabilities.
-- Always express any file or directory paths as relative paths; they will be resolved relative to CATMASTER_WORKSPACE.
+- Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
 - Return exactly one JSON object; no code fences or extra text.
 - JSON schema: {{"todo": [...], "next_step": "...", "reasoning": "..."}}"""),
             ("human", "{user_request}")
+        ])
+
+        self.plan_feedback_prompt = ChatPromptTemplate.from_messages([
+            ("system", """
+You are an expert computational workflow planner.
+
+Available tools:
+{tools}
+
+Revise the plan based on human feedback.
+
+Inputs:
+- Original user request
+- Current plan JSON
+- Human feedback
+- Feedback history (oldest first)
+
+Rules:
+- Use only the available tools; do NOT invent capabilities.
+- If feedback is unclear or conflicts with tool limits, make the smallest safe change and note the constraint in reasoning.
+- Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
+- Return exactly one JSON object; no code fences or extra text.
+- JSON schema: {{"todo": [...], "next_step": "...", "reasoning": "..."}}"""),
+            ("human", "User request: {user_request}\nCurrent plan: {plan_json}\nHuman feedback: {feedback}\nFeedback history: {feedback_history}")
         ])
 
         self.step_prompt = ChatPromptTemplate.from_messages([
@@ -95,7 +119,7 @@ Rules:
 - If action='call', method MUST exactly match one tool name in available tools. Otherwise set action='finish_project' and explain why.
 - If you ensure that to finish the project, set action="finish_project" and method=null in that single object.
 - Prefer creating/using subfolders under the workspace for each step; reuse paths returned by previous tool calls instead of guessing.
-- Always provide file or directory paths as relative paths; they will be resolved relative to CATMASTER_WORKSPACE.
+- Always provide file or directory paths as relative paths; they will be resolved relative to workspace root.
 - If a needed file might not exist, first list or create it with the appropriate tool.
 - Treat user instruction as a suggestion. If observations contradict it or a better action is available, you CAN revise the plan by choosing a different tool call and writing an updated next_step.
 - The controller may skip a turn if your JSON is invalid; in that case, you must output a valid JSON decision next turn.
@@ -106,12 +130,30 @@ Rules:
         self.summary_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a scientific workflow assistant. Summarize the run from observations and respond the results for the user.
 Include key numerical results present in observations.
-Mention where outputs are stored (use relative paths if provided). Keep it concise (3-6 sentences)."""),
+Mention where outputs are stored (use relative paths if provided). Keep the summary concise and informative."""),
             ("human", "User request: {user_request}\nObservations: {observations}")
         ])
 
     def _tool_schema(self) -> str:
         return self.registry.get_tool_descriptions_for_llm()
+
+    def _normalize_plan(self, data: Dict[str, Any], user_request: str) -> Dict[str, Any]:
+        if not isinstance(data, dict):
+            data = {}
+        normalized = dict(data)
+        todo = normalized.get("todo")
+        if not isinstance(todo, list) or not todo:
+            todo = [user_request]
+        next_step = normalized.get("next_step")
+        if not isinstance(next_step, str) or not next_step.strip():
+            next_step = user_request
+        reasoning = normalized.get("reasoning")
+        if not isinstance(reasoning, str):
+            reasoning = ""
+        normalized["todo"] = todo
+        normalized["next_step"] = next_step
+        normalized["reasoning"] = reasoning
+        return normalized
 
     def plan(self, user_request: str) -> Dict[str, Any]:
         messages = self.plan_prompt.format_messages(
@@ -128,14 +170,94 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
             data = self._parse_json_response(raw)
         except Exception as exc:
             self.logger.error("Failed to parse plan response: %s (%s), using user request as fallback", raw, exc)
-            data = {"todo": [user_request], "next_step": user_request}
-        return data
+            data = {"todo": [user_request], "next_step": user_request, "reasoning": ""}
+        return self._normalize_plan(data, user_request)
+
+    def revise_plan(
+        self,
+        user_request: str,
+        plan: Dict[str, Any],
+        feedback: str,
+        *,
+        feedback_history: Optional[List[Dict[str, Any]]] = None,
+        log_llm: bool = False,
+    ) -> Dict[str, Any]:
+        messages = self.plan_feedback_prompt.format_messages(
+            user_request=user_request,
+            tools=self._tool_schema(),
+            plan_json=json.dumps(plan, ensure_ascii=False),
+            feedback=feedback,
+            feedback_history=json.dumps(feedback_history or [], ensure_ascii=False),
+        )
+        resp = self.llm.invoke(messages)
+        raw = resp.content
+        self._write_llm_log("plan_feedback_prompt", messages=self._messages_to_dict(messages))
+        self._write_llm_log("plan_feedback_response", content=raw)
+        if log_llm or self.log_llm_console:
+            self.logger.info("[PLAN FEEDBACK][LLM RAW] %s", raw)
+        try:
+            data = self._parse_json_response(raw)
+        except Exception as exc:
+            self.logger.error("Failed to parse plan feedback response: %s (%s), keeping prior plan", raw, exc)
+            data = plan
+        return self._normalize_plan(data, user_request)
+
+    def start_plan_review(self, user_request: str) -> Dict[str, Any]:
+        plan = self.plan(user_request)
+        return {
+            "user_request": user_request,
+            "plan": plan,
+            "feedback_history": [],
+            "approved": False,
+            "round": 0,
+        }
+
+    def apply_plan_feedback(
+        self,
+        state: Dict[str, Any],
+        feedback: str,
+        *,
+        log_llm: bool = False,
+    ) -> Dict[str, Any]:
+        if not isinstance(state, dict) or "plan" not in state or "user_request" not in state:
+            raise ValueError("Invalid plan review state; expected keys: user_request, plan")
+        state.setdefault("feedback_history", [])
+        state.setdefault("round", 0)
+        feedback_text = feedback or ""
+        if self._is_plan_approved(feedback_text):
+            state["approved"] = True
+            state["feedback_history"].append({
+                "round": state.get("round", 0),
+                "feedback": feedback_text,
+                "approved": True,
+                "plan": state["plan"],
+            })
+            return state
+        new_plan = self.revise_plan(
+            state["user_request"],
+            state["plan"],
+            feedback_text,
+            feedback_history=state.get("feedback_history", []),
+            log_llm=log_llm,
+        )
+        state["feedback_history"].append({
+            "round": state.get("round", 0),
+            "feedback": feedback_text,
+            "approved": False,
+            "plan_before": state["plan"],
+            "plan_after": new_plan,
+        })
+        state["plan"] = new_plan
+        state["approved"] = False
+        state["round"] = state.get("round", 0) + 1
+        return state
 
     def run(
         self,
         user_request: str,
         *,
         log_llm: bool = False,
+        initial_plan: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         memories = {
             "todo": [],
@@ -143,7 +265,7 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
             "next_step": "",
         }
 
-        initial = self.plan(user_request)
+        initial = self._normalize_plan(initial_plan, user_request) if initial_plan else self.plan(user_request)
         memories["todo"] = initial.get("todo", [])
         memories["next_step"] = initial.get("next_step", "")
 
@@ -168,8 +290,8 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
             method = decision.get("method")
             params = decision.get("params", {})
             self.logger.info("[STEP %s] Calling tool %s with params %s", step, method, params)
-            # Random time sleep of 1-3 seconds
-            time.sleep(random.uniform(1, 3))
+            # Random time sleep of 0.1-0.3 seconds
+            time.sleep(random.uniform(0.1, 0.3))
             result = self._call_tool(method, params)
             self.logger.info("[STEP %s] Result: %s", step, result)
             memories["observations"].append({"step": step, "method": method, "result": result})
@@ -185,6 +307,27 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
             "summary": summary,
             "final_answer": final_answer,
         }
+
+    def run_with_plan_state(
+        self,
+        plan_state: Dict[str, Any],
+        *,
+        log_llm: bool = False,
+    ) -> Dict[str, Any]:
+        if not isinstance(plan_state, dict) or "plan" not in plan_state:
+            raise ValueError("Invalid plan_state; expected a dict with a 'plan' key")
+        if not plan_state.get("approved"):
+            return {
+                "todo": plan_state.get("plan", {}).get("todo", []),
+                "observations": [],
+                "transcript": [],
+                "summary": "Plan awaiting approval; apply feedback and approve with 'yes' before running steps.",
+                "final_answer": "",
+                "plan_state": plan_state,
+                "status": "awaiting_plan_approval",
+            }
+        user_request = plan_state.get("user_request", "")
+        return self.run(user_request, log_llm=log_llm, initial_plan=plan_state.get("plan"))
 
     def _decide_next(
         self,
@@ -215,7 +358,7 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
                 "result": {"status": status, **kw},
             })
 
-        # 1) 尝试直接 parse；失败则纳入observations
+        # 1) Try to parse the raw response as JSON
         try:
             decision = self._parse_json_response(raw)
         except Exception as exc:
@@ -233,7 +376,7 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
                 "reasoning": f"unable to parse LLM decision as JSON: {exc}",
             }
 
-        # 3) 归一化（避免缺字段 / params 不是对象等）
+        # 3) Normalize the decision to avoid missing fields / params not being an object
         action = decision.get("action")
         method = decision.get("method")
         params = decision.get("params") if isinstance(decision.get("params"), dict) else {}
@@ -241,7 +384,7 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
         note = decision.get("note", "")
         reasoning = decision.get("reasoning", "")
 
-        # 4) 最低限度校验（工具名不存在就不执行，写 observation，并结束或可选择再次 repair）
+        # 4) Minimum validation (if the tool name does not exist, skip the step, write observation, and end or choose to repair again)
         if action == "call":
             if not method or not self.registry.get_tool_function(method):
                 _controller_obs(
@@ -307,6 +450,12 @@ Mention where outputs are stored (use relative paths if provided). Keep it conci
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """Strict JSON parse; raises if invalid."""
         return json.loads(content)
+
+    def _is_plan_approved(self, feedback: str) -> bool:
+        if not isinstance(feedback, str):
+            return False
+        normalized = feedback.strip().lower()
+        return normalized in {"yes", "y", "approve", "approved", "ok", "okay"}
 
     # ------------------ LLM log helper ------------------
     def _write_llm_log(self, event: str, *, content: Optional[str] = None, messages: Optional[List[Dict[str, Any]]] = None, step: Optional[int] = None) -> None:

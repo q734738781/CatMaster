@@ -33,10 +33,8 @@ def summarize_vasp(work_dir: Path) -> Dict[str, Any]:
         "ionic_steps": len(vasprun.ionic_steps),
         "converged_electronic": vasprun.converged_electronic,
         "converged_ionic": vasprun.converged_ionic,
+        "final_structure_path": str((work_dir / "CONTCAR").resolve()),
     }
-    if vasprun.converged_ionic:
-        poscar_str = Poscar(vasprun.final_structure).get_string(significant_figures=6)
-        summary["final_structure_poscar"] = poscar_str
     return summary
 
 
@@ -47,4 +45,3 @@ def write_summary(work_dir: Path, output_path: Path) -> Dict[str, Any]:
     with output_path.open("w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2, ensure_ascii=False)
     return summary
-

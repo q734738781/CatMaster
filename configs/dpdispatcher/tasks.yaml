@@ -14,8 +14,6 @@ mace_relax:
   forward_files:
     - "*"
   backward_files:
-    - CONTCAR
-    - opt.traj
-    - opt.log
+    - opt.*
     - summary.json
   task_work_path: "."

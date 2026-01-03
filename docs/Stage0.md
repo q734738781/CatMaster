@@ -198,7 +198,7 @@ Stage 0 不引入完整 World Model 语义层，但必须做到：
 你可以把阶段 0 的验收固定为三条自动化回归任务，每条都能在你当前工具集中完成：
 
 1. **O2 能量计算正常跑通**
-   预期LLM自动规划的调用链：* create_molecule →（可选 mace_relax）→ vasp_execute → vasp_summarize → final summary
+   预期LLM自动规划的调用链：* create_molecule_from_smiles →（可选 mace_relax）→ vasp_execute → vasp_summarize → final summary
 2. **参数错误纠错回归**
    * 人为让 LLM 第一次 toolcall 缺字段或类型不对
    * 观察系统拦截、记录、驱动修正，最终跑通

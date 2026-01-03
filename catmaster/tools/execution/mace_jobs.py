@@ -17,7 +17,7 @@ def run_mace(
     Run MACE force field relaxation in the current working directory.
     
     Args:
-        structure_file: Input structure file name (default: POSCAR)
+        structure_file: Input structure file (Must have lattice information, xyz files are NOT supported)
         fmax: Force convergence criterion (eV/Å)
         steps: Maximum optimization steps
         model: MACE model name
@@ -54,8 +54,17 @@ def run_mace(
     # Check convergence - optimization converged if max force < fmax
     converged = max_force < fmax
     
-    # Save optimized structure
-    write("CONTCAR", atoms, format="vasp")
+    # Save optimized structure using a format compatible with the input.
+    # xyz files usually carry no lattice, so writing VASP would fail.
+    input_suffix = Path(structure_file).suffix.lower()
+    has_lattice = atoms.cell is not None and getattr(atoms.cell, "volume", 0) > 1e-6
+
+    if has_lattice:
+        write("opt.vasp", atoms, format="vasp")
+        output_structure = "opt.vasp"
+    else:
+        write("opt.xyz", atoms, format="xyz")
+        output_structure = "opt.xyz"
     
     # Create summary
     summary = {
@@ -67,6 +76,7 @@ def run_mace(
         "steps": steps,
         "converged": converged,
         "nsteps": opt.nsteps,
+        "output_structure": output_structure,
     }
     
     # Save summary to file

@@ -33,6 +33,8 @@ class ListFilesInput(BaseModel):
 def list_files(payload: dict) -> dict:
     params = ListFilesInput(**payload)
     root = _resolve(params.path)
+    if not root.exists():
+        return create_tool_output("list_files", False, error=f"Path does not exist: {root}")
     files = []
     for item in sorted(root.glob("**/*")):
         files.append({"path": str(item.relative_to(_workspace_root())), "is_dir": item.is_dir()})
@@ -69,6 +71,10 @@ class FindTextInput(BaseModel):
     pattern: str = Field(..., description="Substring to look for")
     max_matches: int = Field(50)
 
+class MoveFilesInput(BaseModel):
+    src: str = Field(..., description="Source file or directory path (workspace-relative)")
+    dst: str = Field(..., description="Destination path (workspace-relative). If exists, operation fails.")
+
 
 def find_text(payload: dict) -> dict:
     params = FindTextInput(**payload)
@@ -85,14 +91,35 @@ def find_text(payload: dict) -> dict:
     return create_tool_output("find_text", True, data={"matches": matches})
 
 
+def move_files(payload: dict) -> dict:
+    params = MoveFilesInput(**payload)
+    src = _resolve(params.src)
+    dst = _resolve(params.dst)
+    if not src.exists():
+        return create_tool_output("move_files", False, error=f"Source does not exist: {src}")
+    if dst.exists():
+        return create_tool_output("move_files", False, error=f"Destination already exists: {dst}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)
+    return create_tool_output(
+        "move_files",
+        True,
+        data={
+            "src_rel": str(src.relative_to(_workspace_root())),
+            "dst_rel": str(dst.relative_to(_workspace_root())),
+        },
+    )
+
+
 __all__ = [
     "list_files",
     "read_file",
     "write_file",
     "find_text",
+    "move_files",
     "ListFilesInput",
     "ReadFileInput",
     "WriteFileInput",
     "FindTextInput",
+    "MoveFilesInput",
 ]
-

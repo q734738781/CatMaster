@@ -13,12 +13,12 @@ from pprint import pprint
 
 from catmaster.tools.execution import vasp_execute
 
-ASSETS = Path(__file__).resolve().parents[1] / "tests" / "assets" / "O2_in_the_box"
+ASSETS = Path(__file__).resolve().parents[1] / "tests" / "assets" / "CO_VASP_inputs"
 
 
 def stage_inputs(workspace: Path) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
-    dest = workspace / "vasp_o2"
+    dest = workspace / "CO_VASP_inputs"
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(ASSETS, dest)
@@ -28,7 +28,7 @@ def stage_inputs(workspace: Path) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run O2 VASP via DPDispatcher")
-    parser.add_argument("--workspace", default="workspace/demo_vasp_o2", help="Local workspace root")
+    parser.add_argument("--workspace", default="workspace/demo_vasp_CO", help="Local workspace root")
     parser.add_argument("--run", action="store_true", help="Actually submit; default prints payload")
     args = parser.parse_args()
 
