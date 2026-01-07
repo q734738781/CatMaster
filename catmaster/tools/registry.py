@@ -47,18 +47,19 @@ class ToolRegistry:
         from catmaster.tools.analysis import vasp_summarize, VaspSummarizeInput
 
         # File management tools
-        from catmaster.tools import file_manager
-        from catmaster.tools.python_repl import python_exec, PythonExecInput
+        from catmaster.tools.misc import file_manager
+        from catmaster.tools.misc.python_repl import python_exec, PythonExecInput
 
         # Retrieval tools
-        from catmaster.tools.retrieval.matdb import mp_search_materials, mp_download_structure
-        from catmaster.tools.retrieval.schemas import (
+        from catmaster.tools.retrieval.matdb import (
+            mp_search_materials,
+            mp_download_structure,
             MPSearchMaterialsInput,
             MPDownloadStructureInput,
         )
 
         # Memory/notes
-        from catmaster.tools import memory
+        from catmaster.tools.misc import memory
         
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
@@ -79,7 +80,12 @@ class ToolRegistry:
         self.register_tool("list_files", file_manager.list_files, file_manager.ListFilesInput)
         self.register_tool("read_file", file_manager.read_file, file_manager.ReadFileInput)
         self.register_tool("write_file", file_manager.write_file, file_manager.WriteFileInput)
-        self.register_tool("find_text", file_manager.find_text, file_manager.FindTextInput)
+        self.register_tool("mkdir", file_manager.mkdir, file_manager.MkdirInput)
+        self.register_tool("copy_files", file_manager.copy_files, file_manager.CopyFilesInput)
+        self.register_tool("delete", file_manager.delete, file_manager.DeleteInput)
+        self.register_tool("grep_tool", file_manager.grep_tool, file_manager.GrepToolInput)
+        self.register_tool("head", file_manager.head, file_manager.HeadInput)
+        self.register_tool("tail", file_manager.tail, file_manager.TailInput)
         self.register_tool("move_files", file_manager.move_files, file_manager.MoveFilesInput)
         self.register_tool("python_exec", python_exec, PythonExecInput)
         self.register_tool("write_note", memory.write_note, memory.MemoryNoteInput)
@@ -129,6 +135,16 @@ class ToolRegistry:
                 params.append(f"  - {field_name}: {desc}")
 
             descriptions.append(f"{name} : {doc}\n" + "\n".join(params))
+
+        return "\n\n".join(descriptions)
+
+    def get_short_tool_descriptions_for_llm(self) -> str:
+        """Get short tool descriptions (name + docstring only) for LLM planning."""
+        descriptions = []
+        for name, info in self.tools.items():
+            model = info["input_model"]
+            doc = model.__doc__ or f"Input for {name}"
+            descriptions.append(f"{name} : {doc}")
 
         return "\n\n".join(descriptions)
 

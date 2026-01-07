@@ -15,13 +15,22 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 import time
 import random
-from langchain_core.prompts import ChatPromptTemplate
+import sys
 from langchain_openai import ChatOpenAI
 
 from catmaster.tools.registry import get_tool_registry
+from catmaster.runtime import RunContext, EventLog, ToolExecutor, ArtifactStore
+from catmaster.agents.logo import logo_str
+from catmaster.agents.orchestrator_prompts import (
+    build_plan_prompt,
+    build_plan_repair_prompt,
+    build_plan_feedback_prompt,
+    build_step_prompt,
+    build_summary_prompt,
+)
 import logging
 
 
@@ -34,8 +43,18 @@ class Orchestrator:
         *,
         llm_log_path: Optional[str] = None,
         log_llm_console: bool = True,
+        run_context: Optional[RunContext] = None,
+        event_log: Optional[EventLog] = None,
+        run_dir: Optional[str] = None,
+        resume_dir: Optional[str] = None,
+        project_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        max_tool_attempts: int = 3,
+        max_plan_attempts: int = 3,
     ):
         self.logger = logging.getLogger(__name__)
+        print(logo_str)
         self.llm = llm or ChatOpenAI(
             temperature=0,
             model="gpt-5.2",
@@ -47,95 +66,113 @@ class Orchestrator:
             model="gpt-5.2",
         )
         self.max_steps = max_steps
+        self.max_plan_attempts = max_plan_attempts
         self.registry = get_tool_registry()
         self.log_llm_console = log_llm_console
         default_log = Path.home() / ".catmaster" / "logs" / "orchestrator_llm.jsonl"
         self.llm_log_file = Path(llm_log_path).expanduser().resolve() if llm_log_path else default_log
         self.llm_log_file.parent.mkdir(parents=True, exist_ok=True)
+        if run_dir and resume_dir:
+            raise ValueError("run_dir and resume_dir are mutually exclusive")
+        resolved_run_dir = Path(run_dir).expanduser().resolve() if run_dir else None
+        resolved_resume_dir = Path(resume_dir).expanduser().resolve() if resume_dir else None
+        if run_context:
+            self.run_context = run_context
+        elif resolved_resume_dir:
+            self.run_context = RunContext.load(resolved_resume_dir)
+        else:
+            self.run_context = RunContext.create(
+                run_dir=resolved_run_dir,
+                project_id=project_id,
+                run_id=run_id,
+                model_name=self._resolve_model_name(),
+            )
+        self.event_log = event_log or EventLog(self.run_context.run_dir)
+        self.tool_executor = tool_executor or ToolExecutor(self.registry, max_attempts=max_tool_attempts)
+        self.artifact_store = ArtifactStore(self.run_context.run_dir)
+        self.resume_dir = str(resolved_resume_dir) if resolved_resume_dir else None
 
-        self.plan_prompt = ChatPromptTemplate.from_messages([
-            ("system", """
-You are an expert computational workflow planner.
-
-Available tools:
-{tools}
-
-Create:
-- A ToDo list (long-term), each item a short clause that can be completed with the listed tools, which will be used as the reference plan skeleton for the next step decision.
-- A NextStep (single actionable intent) that can be attempted immediately.
-- A reasoning field explaining briefly why this plan/next step was chosen.
-
-Rules:
-- Use only the available tools; do NOT invent capabilities.
-- Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
-- Return exactly one JSON object; no code fences or extra text.
-- JSON schema: {{"todo": [...], "next_step": "...", "reasoning": "..."}}"""),
-            ("human", "{user_request}")
-        ])
-
-        self.plan_feedback_prompt = ChatPromptTemplate.from_messages([
-            ("system", """
-You are an expert computational workflow planner.
-
-Available tools:
-{tools}
-
-Revise the plan based on human feedback.
-
-Inputs:
-- Original user request
-- Current plan JSON
-- Human feedback
-- Feedback history (oldest first)
-
-Rules:
-- Use only the available tools; do NOT invent capabilities.
-- If feedback is unclear or conflicts with tool limits, make the smallest safe change and note the constraint in reasoning.
-- Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
-- Return exactly one JSON object; no code fences or extra text.
-- JSON schema: {{"todo": [...], "next_step": "...", "reasoning": "..."}}"""),
-            ("human", "User request: {user_request}\nCurrent plan: {plan_json}\nHuman feedback: {feedback}\nFeedback history: {feedback_history}")
-        ])
-
-        self.step_prompt = ChatPromptTemplate.from_messages([
-            ("system", """
-You are an execution controller. Decide ONE tool call or finish_project.
-Context:
-- Available tools: {tools}
-- Reference Plan Skeleton: {todo}
-- Observations so far: {observations}
-- Last result: {last_result}
-
-Rules:
-- Choose at most one tool per turn.
-- Return exactly one JSON object; no code fences or extra text.
-- JSON schema (all lowercase keys):
-{{"action": "call"|"finish_project",
-    "method": "tool_name"|null,
-    "params": {{...}},
-    "next_step": "a concrete, testable intent that can be acted on in the next turn (either a tool call you plan to attempt, or a condition to check via a specific tool)",
-    "note": "optional short self-note for memory",
-    "reasoning": "brief rationale for this decision"}}
-- If action='call', method MUST exactly match one tool name in available tools. Otherwise set action='finish_project' and explain why.
-- If you ensure that to finish the project, set action="finish_project" and method=null in that single object.
-- Prefer creating/using subfolders under the workspace for each step; reuse paths returned by previous tool calls instead of guessing.
-- Always provide file or directory paths as relative paths; they will be resolved relative to workspace root.
-- If a needed file might not exist, first list or create it with the appropriate tool.
-- Treat user instruction as a suggestion. If observations contradict it or a better action is available, you CAN revise the plan by choosing a different tool call and writing an updated next_step.
-- The controller may skip a turn if your JSON is invalid; in that case, you must output a valid JSON decision next turn.
-"""),
-            ("human", "Suggested next step (may be revised): {instruction}")
-        ])
-
-        self.summary_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a scientific workflow assistant. Summarize the run from observations and respond the results for the user.
-Include key numerical results present in observations.
-Mention where outputs are stored (use relative paths if provided). Keep the summary concise and informative."""),
-            ("human", "User request: {user_request}\nObservations: {observations}")
-        ])
+        self.plan_prompt = build_plan_prompt()
+        self.plan_repair_prompt = build_plan_repair_prompt()
+        self.plan_feedback_prompt = build_plan_feedback_prompt()
+        self.step_prompt = build_step_prompt()
+        self.summary_prompt = build_summary_prompt()
 
     def _tool_schema(self) -> str:
         return self.registry.get_tool_descriptions_for_llm()
+
+    def _tool_schema_short(self) -> str:
+        return self.registry.get_short_tool_descriptions_for_llm()
+
+    def _resolve_model_name(self) -> str:
+        for attr in ("model_name", "model"):
+            value = getattr(self.llm, attr, None)
+            if isinstance(value, str) and value:
+                return value
+        return "unknown"
+
+    def _log_event(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            if self.event_log:
+                self.event_log.append(event, payload=payload)
+        except Exception as exc:
+            self.logger.debug("Event log append failed: %s", exc)
+
+    def _toolcall_id(self, step: int, method: str) -> str:
+        return f"step{step}_{method}"
+
+    def _run_state_path(self) -> Path:
+        return self.run_context.run_dir / "run_state.json"
+
+    def _save_run_state(
+        self,
+        *,
+        user_request: str,
+        memories: Dict[str, Any],
+        transcript: List[Dict[str, Any]],
+        next_step_index: int,
+        finished: bool = False,
+        finish_reason: Optional[str] = None,
+        last_error: Optional[str] = None,
+    ) -> None:
+        payload = {
+            "user_request": user_request,
+            "memories": memories,
+            "transcript": transcript,
+            "next_step_index": next_step_index,
+            "finished": finished,
+            "finish_reason": finish_reason,
+            "last_error": last_error,
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        }
+        path = self._run_state_path()
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+    def _load_run_state(self) -> Dict[str, Any]:
+        path = self._run_state_path()
+        if not path.exists():
+            raise FileNotFoundError(f"run_state.json not found in {self.run_context.run_dir}")
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data
+
+    def _normalize_run_state(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        state = data if isinstance(data, dict) else {}
+        memories = state.get("memories") if isinstance(state.get("memories"), dict) else {}
+        memories.setdefault("todo", [])
+        memories.setdefault("observations", [])
+        memories.setdefault("next_step", "")
+        memories.setdefault("toolcall_seq", 0)
+        memories.setdefault("pending_toolcall", None)
+        transcript = state.get("transcript") if isinstance(state.get("transcript"), list) else []
+        next_step_index = state.get("next_step_index")
+        if not isinstance(next_step_index, int) or next_step_index < 0:
+            next_step_index = len(transcript)
+        state["memories"] = memories
+        state["transcript"] = transcript
+        state["next_step_index"] = next_step_index
+        return state
 
     def _normalize_plan(self, data: Dict[str, Any], user_request: str) -> Dict[str, Any]:
         if not isinstance(data, dict):
@@ -156,22 +193,46 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
         return normalized
 
     def plan(self, user_request: str) -> Dict[str, Any]:
+        tools = self._tool_schema_short()
         messages = self.plan_prompt.format_messages(
             user_request=user_request,
-            tools=self._tool_schema(),
+            tools=tools,
         )
-        resp = self.llm.invoke(messages)
-        raw = resp.content
-        self._write_llm_log("plan_prompt", messages=self._messages_to_dict(messages))
-        self._write_llm_log("plan_response", content=raw)
-        if self.log_llm_console:
-            self.logger.info("[PLAN][LLM RAW] %s", raw)
-        try:
-            data = self._parse_json_response(raw)
-        except Exception as exc:
-            self.logger.error("Failed to parse plan response: %s (%s), using user request as fallback", raw, exc)
-            data = {"todo": [user_request], "next_step": user_request, "reasoning": ""}
-        return self._normalize_plan(data, user_request)
+        last_error = None
+        for attempt in range(1, self.max_plan_attempts + 1):
+            resp = self.llm.invoke(messages)
+            raw = resp.content
+            self._write_llm_log("plan_prompt", messages=self._messages_to_dict(messages))
+            self._write_llm_log("plan_response", content=raw)
+            if self.log_llm_console:
+                self.logger.info("[PLAN][LLM RAW][attempt=%s] %s", attempt, raw)
+            try:
+                data = self._parse_json_response(raw)
+            except Exception as exc:
+                last_error = str(exc)
+                self.logger.error("Failed to parse plan response (attempt %s): %s (%s)", attempt, raw, exc)
+                self._log_event("PLAN_PARSE_FAILED", {
+                    "attempt": attempt,
+                    "error": last_error,
+                    "raw": raw,
+                })
+                messages = self.plan_repair_prompt.format_messages(
+                    user_request=user_request,
+                    tools=tools,
+                    error=last_error,
+                    raw=raw,
+                )
+                continue
+
+            normalized = self._normalize_plan(data, user_request)
+            self._log_event("PLAN_CREATED", {
+                "todo": normalized.get("todo", []),
+                "next_step": normalized.get("next_step", ""),
+                "reasoning": normalized.get("reasoning", ""),
+            })
+            return normalized
+
+        raise ValueError(f"Failed to generate a valid plan after {self.max_plan_attempts} attempts: {last_error}")
 
     def revise_plan(
         self,
@@ -184,7 +245,7 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
     ) -> Dict[str, Any]:
         messages = self.plan_feedback_prompt.format_messages(
             user_request=user_request,
-            tools=self._tool_schema(),
+            tools=self._tool_schema_short(),
             plan_json=json.dumps(plan, ensure_ascii=False),
             feedback=feedback,
             feedback_history=json.dumps(feedback_history or [], ensure_ascii=False),
@@ -200,7 +261,13 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
         except Exception as exc:
             self.logger.error("Failed to parse plan feedback response: %s (%s), keeping prior plan", raw, exc)
             data = plan
-        return self._normalize_plan(data, user_request)
+        normalized = self._normalize_plan(data, user_request)
+        self._log_event("PLAN_REVISION", {
+            "feedback": feedback,
+            "plan_before": plan,
+            "plan_after": normalized,
+        })
+        return normalized
 
     def start_plan_review(self, user_request: str) -> Dict[str, Any]:
         plan = self.plan(user_request)
@@ -232,6 +299,10 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
                 "approved": True,
                 "plan": state["plan"],
             })
+            self._log_event("PLAN_APPROVED", {
+                "feedback": feedback_text,
+                "plan": state["plan"],
+            })
             return state
         new_plan = self.revise_plan(
             state["user_request"],
@@ -258,20 +329,80 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
         *,
         log_llm: bool = False,
         initial_plan: Optional[Dict[str, Any]] = None,
+        plan_review: bool = True,
+        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
     ) -> Dict[str, Any]:
-        memories = {
-            "todo": [],
-            "observations": [],
-            "next_step": "",
-        }
+        if self.resume_dir:
+            state = self._normalize_run_state(self._load_run_state())
+            memories = state["memories"]
+            transcript = state["transcript"]
+            start_step = state["next_step_index"]
+            user_request = state.get("user_request", user_request)
+            finish_reason = state.get("finish_reason") or "resumed"
+            self._log_event("RUN_RESUMED", {
+                "run_dir": self.run_context.run_dir.name,
+                "next_step_index": start_step,
+            })
+        else:
+            memories = {
+                "todo": [],
+                "observations": [],
+                "next_step": "",
+                "toolcall_seq": 0,
+                "pending_toolcall": None,
+            }
+            if initial_plan:
+                initial = self._normalize_plan(initial_plan, user_request)
+                self._log_event("PLAN_CREATED", {
+                    "todo": initial.get("todo", []),
+                    "next_step": initial.get("next_step", ""),
+                    "reasoning": initial.get("reasoning", ""),
+                    "source": "provided",
+                })
+            else:
+                initial = self.plan(user_request)
 
-        initial = self._normalize_plan(initial_plan, user_request) if initial_plan else self.plan(user_request)
-        memories["todo"] = initial.get("todo", [])
-        memories["next_step"] = initial.get("next_step", "")
+            if plan_review:
+                state = {
+                    "user_request": user_request,
+                    "plan": initial,
+                    "feedback_history": [],
+                    "approved": False,
+                    "round": 0,
+                }
+                while not state.get("approved"):
+                    if plan_feedback_provider:
+                        feedback = plan_feedback_provider(state)
+                    else:
+                        if not sys.stdin.isatty():
+                            raise RuntimeError("plan_review requires a feedback provider when not running in a TTY")
+                        print("\n=== Proposed Plan ===")
+                        for i, item in enumerate(state["plan"].get("todo", []), start=1):
+                            print(f"{i}. {item}")
+                        print(f"\nNext step: {state['plan'].get('next_step', '')}")
+                        print("\nEnter feedback to revise, or type 'yes' to approve:")
+                        feedback = input("> ").strip()
+                    if not feedback:
+                        if not plan_feedback_provider:
+                            print("Empty input. Please enter feedback to revise, or type 'yes' to approve.")
+                        continue
+                    state = self.apply_plan_feedback(state, feedback, log_llm=log_llm)
+                initial = state["plan"]
 
-        transcript: List[Dict[str, Any]] = []
+            memories["todo"] = initial.get("todo", [])
+            memories["next_step"] = initial.get("next_step", "")
+            transcript = []
+            start_step = 0
+            finish_reason = "max_steps_reached"
+            self._save_run_state(
+                user_request=user_request,
+                memories=memories,
+                transcript=transcript,
+                next_step_index=start_step,
+                finished=False,
+            )
 
-        for step in range(self.max_steps):
+        for step in range(start_step, self.max_steps):
             decision = self._decide_next(
                 memories,
                 log_llm=log_llm,
@@ -282,23 +413,196 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
 
             if action == "finish_project":
                 self.logger.info("[STEP %s] LLM decided to finish", step)
+                self._log_event("FINISH_DECIDED", {
+                    "step": step,
+                    "decision": decision,
+                })
+                finish_reason = "finish_project"
+                self._save_run_state(
+                    user_request=user_request,
+                    memories=memories,
+                    transcript=transcript,
+                    next_step_index=step + 1,
+                    finished=True,
+                    finish_reason=finish_reason,
+                )
                 break
             if action == "skip_step":
                 self.logger.info("[STEP %s] Due to decision parse failure or invalid tool name, skip the step", step)
+                self._save_run_state(
+                    user_request=user_request,
+                    memories=memories,
+                    transcript=transcript,
+                    next_step_index=step + 1,
+                    finished=False,
+                )
                 continue
 
             method = decision.get("method")
             params = decision.get("params", {})
             self.logger.info("[STEP %s] Calling tool %s with params %s", step, method, params)
+            toolcall_id = self._toolcall_id(step, method)
+            refs = self.artifact_store.toolcall_refs(toolcall_id)
+            pending = memories.get("pending_toolcall")
+            if not pending or pending.get("method") != method:
+                toolcall_key = f"{method}:{memories.get('toolcall_seq', 0)}"
+                memories["pending_toolcall"] = {"method": method, "key": toolcall_key}
+            else:
+                toolcall_key = pending.get("key")
+            validation = self.tool_executor.validate(method, params, toolcall_key=toolcall_key)
+            if not validation.get("ok"):
+                tool_output = validation.get("tool_output", {})
+                if isinstance(tool_output, dict):
+                    tool_output.setdefault("data", {})
+                    if isinstance(tool_output.get("data"), dict):
+                        tool_output["data"]["attempt_count"] = validation.get("attempt_count")
+                        tool_output["data"]["max_attempts"] = validation.get("max_attempts")
+                input_payload = {
+                    "raw_params": params,
+                    "validated_params": None,
+                    "tool_name": method,
+                    "toolcall_id": toolcall_id,
+                    "status": "validation_failed",
+                }
+                self.artifact_store.write_input(toolcall_id, input_payload)
+                output_payload = {
+                    "toolresult": tool_output,
+                    "full_output": tool_output,
+                }
+                self.artifact_store.write_output(toolcall_id, output_payload)
+                self._log_event("TOOLCALL_VALIDATION_FAILED", {
+                    "step": step,
+                    "method": method,
+                    "raw_params": params,
+                    "error": validation.get("error_digest", ""),
+                    "errors": validation.get("errors", []),
+                    "attempt_count": validation.get("attempt_count"),
+                    "max_attempts": validation.get("max_attempts"),
+                    "toolcall_id": toolcall_id,
+                    "input_ref": refs["input_ref"],
+                    "output_ref": refs["output_ref"],
+                })
+                memories["observations"].append({"step": step, "method": method, "result": tool_output})
+                transcript.append({
+                    "step": step,
+                    "method": method,
+                    "params": params,
+                    "result": tool_output,
+                    "validation_failed": True,
+                    "toolcall_id": toolcall_id,
+                    "input_ref": refs["input_ref"],
+                    "output_ref": refs["output_ref"],
+                })
+                memories["next_step"] = validation.get("next_step", memories.get("next_step", ""))
+                self._save_run_state(
+                    user_request=user_request,
+                    memories=memories,
+                    transcript=transcript,
+                    next_step_index=step + 1,
+                    finished=False,
+                )
+                continue
+
+            validated_params = validation.get("validated_params", {})
+            input_payload = {
+                "raw_params": params,
+                "validated_params": validated_params,
+                "tool_name": method,
+                "toolcall_id": toolcall_id,
+                "status": "validated",
+            }
+            self.artifact_store.write_input(toolcall_id, input_payload)
+            self._log_event("TOOLCALL_STARTED", {
+                "step": step,
+                "method": method,
+                "raw_params": params,
+                "validated_params": validated_params,
+                "toolcall_id": toolcall_id,
+                "input_ref": refs["input_ref"],
+            })
             # Random time sleep of 0.1-0.3 seconds
             time.sleep(random.uniform(0.1, 0.3))
-            result = self._call_tool(method, params)
-            self.logger.info("[STEP %s] Result: %s", step, result)
-            memories["observations"].append({"step": step, "method": method, "result": result})
-            transcript.append({"step": step, "method": method, "params": params, "result": result})
+            try:
+                result = self._call_tool(method, validated_params)
+                self.logger.info("[STEP %s] Result: %s", step, result)
+                output_payload = {
+                    "toolresult": result,
+                    "full_output": result,
+                }
+                self.artifact_store.write_output(toolcall_id, output_payload)
+                self._log_event("TOOLCALL_FINISHED", {
+                    "step": step,
+                    "method": method,
+                    "validated_params": validated_params,
+                    "toolcall_id": toolcall_id,
+                    "output_ref": refs["output_ref"],
+                    "result": result,
+                })
+                memories["observations"].append({"step": step, "method": method, "result": result})
+                transcript.append({
+                    "step": step,
+                    "method": method,
+                    "params": params,
+                    "validated_params": validated_params,
+                    "result": result,
+                    "toolcall_id": toolcall_id,
+                    "input_ref": refs["input_ref"],
+                    "output_ref": refs["output_ref"],
+                })
+                memories["pending_toolcall"] = None
+                memories["toolcall_seq"] = memories.get("toolcall_seq", 0) + 1
+                self._save_run_state(
+                    user_request=user_request,
+                    memories=memories,
+                    transcript=transcript,
+                    next_step_index=step + 1,
+                    finished=False,
+                )
+            except Exception as exc:
+                output_payload = {
+                    "toolresult": {
+                        "toolcall_id": toolcall_id,
+                        "tool_name": method,
+                        "status": "failed",
+                        "error": str(exc),
+                        "input_ref": refs["input_ref"],
+                        "output_ref": refs["output_ref"],
+                    },
+                    "full_output": {"error": str(exc)},
+                }
+                self.artifact_store.write_output(toolcall_id, output_payload)
+                self._log_event("TOOLCALL_FAILED", {
+                    "step": step,
+                    "method": method,
+                    "validated_params": validated_params,
+                    "error": str(exc),
+                    "toolcall_id": toolcall_id,
+                    "output_ref": refs["output_ref"],
+                })
+                self._save_run_state(
+                    user_request=user_request,
+                    memories=memories,
+                    transcript=transcript,
+                    next_step_index=step + 1,
+                    finished=False,
+                    last_error=str(exc),
+                )
+                raise
 
         summary = self._summarize(memories, user_request)
         final_answer = self._llm_summary(memories, user_request)
+        self._log_event("RUN_FINISHED", {
+            "reason": finish_reason,
+            "steps": len(transcript),
+        })
+        self._save_run_state(
+            user_request=user_request,
+            memories=memories,
+            transcript=transcript,
+            next_step_index=step + 1 if 'step' in locals() else 0,
+            finished=True,
+            finish_reason=finish_reason,
+        )
 
         return {
             "todo": memories["todo"],
@@ -354,7 +658,7 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
         def _controller_obs(status: str, **kw):
             memories["observations"].append({
                 "step": step,
-                "method": "__controller__",
+                "method": "ORCHESTRATOR_OBSERVATION",
                 "result": {"status": status, **kw},
             })
 
@@ -379,14 +683,14 @@ Mention where outputs are stored (use relative paths if provided). Keep the summ
         # 3) Normalize the decision to avoid missing fields / params not being an object
         action = decision.get("action")
         method = decision.get("method")
-        params = decision.get("params") if isinstance(decision.get("params"), dict) else {}
+        params = decision.get("params", {})
         next_step = decision.get("next_step", "")
         note = decision.get("note", "")
         reasoning = decision.get("reasoning", "")
 
         # 4) Minimum validation (if the tool name does not exist, skip the step, write observation, and end or choose to repair again)
         if action == "call":
-            if not method or not self.registry.get_tool_function(method):
+            if not method or not self.registry.get_tool_info(method):
                 _controller_obs(
                     "TOOLCALL_VALIDATION_FAILED",
                     error="invalid or unknown tool name",

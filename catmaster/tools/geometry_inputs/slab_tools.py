@@ -4,13 +4,46 @@ Slab generation and editing helpers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
+from pydantic import BaseModel, Field
 from pymatgen.core import Structure
 from pymatgen.core.surface import SlabGenerator
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath, create_tool_output
+
+
+class SlabBuildInput(BaseModel):
+    """Build slabs for all terminations of a Miller index from a bulk structure."""
+
+    bulk_structure: str = Field(..., description="Bulk structure file (POSCAR/CIF/etc.), workspace-relative.")
+    miller_index: List[int] = Field(..., min_length=3, max_length=3, description="Miller index [h,k,l].")
+    output_root: str = Field("slabs", description="Directory to write the slab structures.")
+    slab_thickness: float = Field(12.0, ge=0.0, description="Target slab thickness (Å).")
+    vacuum_thickness: float = Field(15.0, ge=0.0, description="Vacuum thickness (Å).")
+    supercell: List[int] = Field([1, 1, 1], min_length=3, max_length=3, description="Supercell replication [a,b,c].")
+    get_symmetry_slab: bool = Field(False, description="Use symmetry-distinct terminations if available.")
+    orthogonal: bool = Field(True, description="If true, convert each slab to an orthogonal c-oriented cell.")
+
+
+class SlabSelectiveDynamicsInput(BaseModel):
+    """Set selective dynamics for a slab structure (Fix Atoms)."""
+
+    structure_ref: str = Field(..., description="Slab structure file to modify (POSCAR/CIF).")
+    output_path: str = Field(..., description="Output structure path (workspace-relative).")
+    freeze_layers: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Freeze bottom N atomic layers (exclusive with relax_thickness). Use layer_tol to group layers.",
+    )
+    relax_thickness: Optional[float] = Field(
+        None,
+        ge=0.0,
+        description="Thickness (Å) from the top that remains relaxed; below is frozen.",
+    )
+    centralize: bool = Field(False, description="Recentre slab along c before applying constraints.")
+    layer_tol: float = Field(0.2, gt=0.0, description="Layer grouping tolerance in Å for freeze_layers.")
 
 
 def _ensure_dir(path: Path) -> None:
@@ -22,14 +55,15 @@ def build_slab(payload: Dict[str, object]) -> Dict[str, object]:
     Build slabs for all terminations of a given Miller index. Each termination is written
     as a separate POSCAR under output_root. Supercell expansion is applied to every termination.
     """
-    bulk_path = resolve_workspace_path(str(payload["bulk_structure"]), must_exist=True)
-    miller = tuple(int(x) for x in payload.get("miller_index", []))
-    slab_thickness = float(payload.get("slab_thickness", 12.0))
-    vacuum_thickness = float(payload.get("vacuum_thickness", 15.0))
-    supercell = tuple(int(x) for x in payload.get("supercell", (1, 1, 1)))
-    get_symmetry = bool(payload.get("get_symmetry_slab", False))
-    orthogonal = bool(payload.get("orthogonal", True))
-    output_root = resolve_workspace_path(str(payload.get("output_root", "slabs")))
+    params = SlabBuildInput(**payload)
+    bulk_path = resolve_workspace_path(params.bulk_structure, must_exist=True)
+    miller = tuple(int(x) for x in params.miller_index)
+    slab_thickness = float(params.slab_thickness)
+    vacuum_thickness = float(params.vacuum_thickness)
+    supercell = tuple(int(x) for x in params.supercell)
+    get_symmetry = bool(params.get_symmetry_slab)
+    orthogonal = bool(params.orthogonal)
+    output_root = resolve_workspace_path(params.output_root)
 
     if len(miller) != 3:
         return create_tool_output("build_slab", success=False, error="miller_index must have 3 integers")
@@ -159,12 +193,13 @@ def set_selective_dynamics(payload: Dict[str, object]) -> Dict[str, object]:
     """
     Add selective dynamics flags: freeze bottom layers or everything below a relax_thickness.
     """
-    structure_ref = resolve_workspace_path(str(payload["structure_ref"]), must_exist=True)
-    output_path = resolve_workspace_path(str(payload["output_path"]))
-    freeze_layers = payload.get("freeze_layers")
-    relax_thickness = payload.get("relax_thickness")
-    centralize = bool(payload.get("centralize", False))
-    layer_tol = float(payload.get("layer_tol", 0.2))
+    params = SlabSelectiveDynamicsInput(**payload)
+    structure_ref = resolve_workspace_path(params.structure_ref, must_exist=True)
+    output_path = resolve_workspace_path(params.output_path)
+    freeze_layers = params.freeze_layers
+    relax_thickness = params.relax_thickness
+    centralize = bool(params.centralize)
+    layer_tol = float(params.layer_tol)
 
     if (freeze_layers is None) == (relax_thickness is None):
         return create_tool_output("set_selective_dynamics", success=False, error="Provide exactly one of freeze_layers or relax_thickness.")
@@ -208,4 +243,9 @@ def set_selective_dynamics(payload: Dict[str, object]) -> Dict[str, object]:
     return create_tool_output("set_selective_dynamics", success=True, data=data)
 
 
-__all__ = ["build_slab", "set_selective_dynamics"]
+__all__ = [
+    "SlabBuildInput",
+    "SlabSelectiveDynamicsInput",
+    "build_slab",
+    "set_selective_dynamics",
+]

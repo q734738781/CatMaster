@@ -5,16 +5,42 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+from pydantic import BaseModel, Field
 from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.core import Structure, Molecule
 from pymatgen.io.vasp.inputs import Poscar
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
-from catmaster.tools.geometry_inputs.schemas import (
-    EnumerateAdsorptionSitesInput,
-    PlaceAdsorbateInput,
-    GenerateBatchAdsorptionStructuresInput,
-)
+
+
+class EnumerateAdsorptionSitesInput(BaseModel):
+    """Enumerate adsorption sites on a slab using ASF."""
+
+    slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF), workspace-relative.")
+    mode: str = Field("all", description="Which site families to return: all|ontop|bridge|hollow.")
+    distance: float = Field(2.0, ge=0.0, description="Height above surface to sample adsorption sites (Å).")
+    output_json: str = Field("adsorption/sites.json", description="Output JSON path for site list (workspace-relative).")
+
+
+class PlaceAdsorbateInput(BaseModel):
+    """Place an adsorbate molecule on a slab."""
+
+    slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ recommended).")
+    site: str = Field("auto", description="Site label like ontop_0|bridge_1|hollow_2 or 'auto'.")
+    distance: float = Field(2.0, ge=0.0, description="Height used to generate adsorption sites (Å).")
+    output_poscar: str = Field("adsorption/adsorbed.vasp", description="Output POSCAR path (workspace-relative).")
+
+
+class GenerateBatchAdsorptionStructuresInput(BaseModel):
+    """Generate multiple adsorbed structures up to max_structures."""
+
+    slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ recommended).")
+    mode: str = Field("all", description="all|ontop|bridge|hollow")
+    distance: float = Field(2.0, ge=0.0, description="Height used to generate adsorption sites (Å).")
+    max_structures: int = Field(12, ge=1, le=100, description="Maximum number of adsorbed structures to generate.")
+    output_dir: str = Field("adsorption/batch", description="Directory to write batch POSCARs.")
 
 _MAX_RETURN_SITES = 50
 
@@ -249,6 +275,9 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, A
 
 
 __all__ = [
+    "EnumerateAdsorptionSitesInput",
+    "PlaceAdsorbateInput",
+    "GenerateBatchAdsorptionStructuresInput",
     "enumerate_adsorption_sites",
     "place_adsorbate",
     "generate_batch_adsorption_structures",

@@ -15,8 +15,7 @@ from catmaster.tools.base import create_tool_output, resolve_workspace_path, wor
 
 class MoleculeFromSmilesInput(BaseModel):
     """
-    Build a 3D molecule from a SMILES string using RDKit (ETKDGv3 + MMFF, fallback UFF).
-    PLEASE PAY ATTENTION TO THE FORMAL CHARGE OF THE SMILES STRING, RDkit will check the charge and add Hs to the molecule to make it neutral.
+    Build a 3D molecule from a SMILES string using RDKit. Specially, pay attention to the formal charge of the SMILES string, RDkit will check the charge and add Hs to the molecule to make it neutral.
     """
 
     smiles: str = Field(..., description="SMILES string for the molecule.")

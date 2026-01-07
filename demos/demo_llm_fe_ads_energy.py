@@ -33,6 +33,7 @@ def main() -> None:
     parser.add_argument("--log-level", default="INFO", help="Logging level (INFO or DEBUG)")
     parser.add_argument("--log-dir", default=None, help="Directory to store logs (log.log + orchestrator_llm.jsonl)")
     parser.add_argument("--proxy", default=None, help="Proxy server address expressed as <host>:<port>")
+    parser.add_argument("--resume", default=None, help="Run directory to resume from")
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]
@@ -62,9 +63,10 @@ def main() -> None:
     # Export to CATMASTER_WORKSPACE (tools should respect this workspace)
     os.environ["CATMASTER_WORKSPACE"] = str(root)
     # Clean and Make dir for workspace
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True, exist_ok=True)
+    if not args.resume:
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True, exist_ok=True)
 
     user_request = (
         "Compute CO adsorption energy on a Fe(111) surface for different adsorption sites:"
@@ -93,6 +95,7 @@ def main() -> None:
         max_steps=100,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
         log_llm_console=True,
+        resume_dir=args.resume,
     )
 
     if not args.run:

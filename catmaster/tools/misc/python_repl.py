@@ -9,12 +9,12 @@ from catmaster.tools.base import create_tool_output
 
 class PythonExecInput(BaseModel):
     """
-    Execute inline Python code for calculations or quick expression evaluation.
+    Execute inline Python code for calculations or figure drawing.
     ALWAYS use `print(...)` to output the final result; only printed output will be returned.
-    Keep the code short, pure, and side-effect free (no file or network operations).
+    Basic packages for material science are provided (e.g. numpy, matplotlib, pymatgen, ase, etc.)
     """
 
-    code: str = Field(..., description="Python code to execute. Keep it short.")
+    code: str = Field(..., description="Python code to execute. ")
 
 
 _REPL = PythonREPL()

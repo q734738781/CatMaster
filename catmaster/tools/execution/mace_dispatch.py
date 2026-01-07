@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
@@ -16,11 +16,33 @@ from catmaster.tools.execution.resource_router import ResourceRouter, Route
 from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
+from pydantic import BaseModel, Field
+
+
+class MaceRelaxInput(BaseModel):
+    """Submit a single MACE relaxation."""
+
+    structure_file: str = Field(
+        ...,
+        description="Input structure file with lattice information (Supports POSCAR/CIF, xyz files are NOT supported).",
+    )
+    fmax: float = Field(0.03, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
+    maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
+    model: Optional[str] = Field(None, description="MACE model name; defaults from router config (medium-mpa-0).")
+    check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
+
+
+class MaceRelaxBatchInput(BaseModel):
+    """Submit multiple MACE relaxations in one DPDispatcher submission. Preferred tool for batch MACE relaxations."""
+
+    structure_files: list[str] = Field(..., description="List of structure files with lattice (POSCAR/CIF).")
+    fmax: float = Field(0.03, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
+    maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
+    model: Optional[str] = Field(None, description="MACE model name; defaults from router config (medium-mpa-0).")
+    check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
 def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
-    from catmaster.tools.execution import MaceRelaxInput
-
     params = MaceRelaxInput(**payload)
     router = ResourceRouter()
     route = router.route("mace_relax")
@@ -67,8 +89,6 @@ def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
-    from catmaster.tools.execution import MaceRelaxBatchInput
-
     params = MaceRelaxBatchInput(**payload)
     router = ResourceRouter()
     route = router.route("mace_relax")
@@ -203,4 +223,9 @@ def _build_mace_relax_request(params: Any, *, route: Route, work_dir: Path, dest
     )
 
 
-__all__ = ["mace_relax", "mace_relax_batch"]
+__all__ = [
+    "MaceRelaxInput",
+    "MaceRelaxBatchInput",
+    "mace_relax",
+    "mace_relax_batch",
+]

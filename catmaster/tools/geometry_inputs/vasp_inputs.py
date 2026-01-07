@@ -51,7 +51,7 @@ class StructWriter:
         # Global overrides for all relaxations
         user_incar_settings.setdefault("EDIFF", 1e-6)
         user_incar_settings.setdefault("NSW", 500)
-        user_incar_settings.setdefault("NELM", 150)
+        user_incar_settings.setdefault("NELM", 100)
         user_incar_settings.setdefault("EDIFFG", -0.02)
         if calc_type != "gas":
             user_incar_settings.setdefault("ISMEAR", 0)

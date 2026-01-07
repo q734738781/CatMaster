@@ -21,6 +21,21 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
 import shutil
+from pydantic import BaseModel, Field
+
+
+class VaspExecuteInput(BaseModel):
+    """Submit a single VASP run."""
+
+    input_dir: str = Field(..., description="Directory containing VASP inputs (INCAR/KPOINTS/POSCAR/POTCAR)")
+    check_interval: int = Field(30, description="Polling interval seconds")
+
+
+class VaspExecuteBatchInput(BaseModel):
+    """Submit multiple VASP runs in one DPDispatcher submission. Preferred tool for batch VASP runs."""
+
+    input_dirs: list[str] = Field(..., description="List of VASP input directories.")
+    check_interval: int = Field(30, description="Polling interval seconds")
 
 
 _INCAR_KEY_RE = re.compile(r"(?i)^\s*(NCORE|NPAR)\b")
@@ -89,8 +104,6 @@ def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, An
 
 
 def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
-    from catmaster.tools.execution import VaspExecuteInput
-
     params = VaspExecuteInput(**payload)
     router = ResourceRouter()
     route = router.route("vasp_execute")
@@ -116,8 +129,6 @@ def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
-    from catmaster.tools.execution import VaspExecuteBatchInput
-
     params = VaspExecuteBatchInput(**payload)
     router = ResourceRouter()
     route = router.route("vasp_execute")
@@ -228,4 +239,9 @@ def _build_vasp_execute_request(params: Any, *, route: Route, registry: TaskRegi
     )
 
 
-__all__ = ["vasp_execute", "vasp_execute_batch"]
+__all__ = [
+    "VaspExecuteInput",
+    "VaspExecuteBatchInput",
+    "vasp_execute",
+    "vasp_execute_batch",
+]

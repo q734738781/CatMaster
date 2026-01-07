@@ -4,8 +4,8 @@ Flow-oriented tool modules organized by stages (packages):
 - geometry_inputs
 - execution
 - analysis
+- misc
 """
 
 # Subpackages are discovered via package imports
-
 

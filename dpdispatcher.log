@@ -31,3 +31,47 @@ LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdis
 2025-12-25 21:31:05,360 - INFO : job: f807e696b0c49f1e2adfa535bc044585c96949cc 215331 finished
 2025-12-25 22:43:15,388 - INFO : job: 69ce3ec30815e18340b9fb629d7561b8e19ea837 215330 finished
 2025-12-25 23:17:17,627 - INFO : job: 0785b20ef20320fa5aef17dcca0c626b92454a91 215333 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-07 10:11:32,733 - INFO : info:check_all_finished: False
+2026-01-07 10:11:32,735 - INFO : remote path: /public/home/chenhh/catmaster_work/8593406343305f92e27cbda683b4e85d5f6a4177
+2026-01-07 10:11:34,189 - INFO : job: 5ba4be002d9785cb557e3264a7c91bcb52d416a0 submit; job_id is 215442
+2026-01-07 10:13:35,770 - INFO : job: 5ba4be002d9785cb557e3264a7c91bcb52d416a0 215442 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-07 10:42:37,860 - INFO : info:check_all_finished: False
+2026-01-07 10:42:37,860 - INFO : remote path: /public/home/chenhh/catmaster_work/4c39a65e420bb8ec4260d80fffd70d4d3f6f767a
+2026-01-07 10:42:39,229 - INFO : job: 5ba4be002d9785cb557e3264a7c91bcb52d416a0 submit; job_id is 215509
+2026-01-07 11:07:03,629 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-07 11:07:03,633 - INFO : submission exit: 4c39a65e420bb8ec4260d80fffd70d4d3f6f767a
+2026-01-07 11:07:03,633 - INFO : at /public/home/chenhh/catmaster_work/4c39a65e420bb8ec4260d80fffd70d4d3f6f767a
+2026-01-07 11:07:03,633 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/4c39a65e420bb8ec4260d80fffd70d4d3f6f767a.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-07 11:30:28,213 - INFO : info:check_all_finished: False
+2026-01-07 11:30:28,214 - INFO : remote path: /public/home/chenhh/catmaster_work/8c437aa9dc85b671ea7b137e66c1deb1d2772c6d
+2026-01-07 11:30:29,644 - INFO : job: 150dda7e4a423975d8bfbff21503ec2536e492ff submit; job_id is 215510
+2026-01-07 11:32:31,228 - INFO : job: 150dda7e4a423975d8bfbff21503ec2536e492ff 215510 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-07 12:09:49,429 - INFO : info:check_all_finished: False
+2026-01-07 12:09:49,430 - INFO : remote path: /public/home/chenhh/catmaster_work/58e8888e76d4702f3b4645ae8187e7c8f8ed9c35
+2026-01-07 12:09:50,825 - INFO : job: 150dda7e4a423975d8bfbff21503ec2536e492ff submit; job_id is 215514
+2026-01-07 12:12:52,558 - INFO : job: 150dda7e4a423975d8bfbff21503ec2536e492ff 215514 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
