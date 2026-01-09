@@ -1,4 +1,15 @@
-cpu_hpc:
+cpu_server:
+  batch_type: Slurm
+  context_type: SSHContext
+  local_root: ~/catmaster_local
+  remote_root: /public/home/chenhh/catmaster_work
+  remote_profile:
+    hostname: 166.111.34.210
+    port: 22
+    username: chenhh
+    key_filename: /home/chenhh/.ssh/id_ed25519
+
+cpu_server_2:
   batch_type: Slurm
   context_type: SSHContext
   local_root: ~/catmaster_local
@@ -8,8 +19,7 @@ cpu_hpc:
     port: 31125
     username: chenhh
     key_filename: /home/chenhh/.ssh/id_ed25519
-    execute_command: "source ~/.bashrc"
-
+  
 gpu_server:
   batch_type: Shell
   context_type: SSHContext

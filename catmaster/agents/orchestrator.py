@@ -559,15 +559,16 @@ class Orchestrator:
                     finished=False,
                 )
             except Exception as exc:
+                tool_result = {
+                    "toolcall_id": toolcall_id,
+                    "tool_name": method,
+                    "status": "failed",
+                    "error": str(exc),
+                    "input_ref": refs["input_ref"],
+                    "output_ref": refs["output_ref"],
+                }
                 output_payload = {
-                    "toolresult": {
-                        "toolcall_id": toolcall_id,
-                        "tool_name": method,
-                        "status": "failed",
-                        "error": str(exc),
-                        "input_ref": refs["input_ref"],
-                        "output_ref": refs["output_ref"],
-                    },
+                    "toolresult": tool_result,
                     "full_output": {"error": str(exc)},
                 }
                 self.artifact_store.write_output(toolcall_id, output_payload)
@@ -579,6 +580,20 @@ class Orchestrator:
                     "toolcall_id": toolcall_id,
                     "output_ref": refs["output_ref"],
                 })
+                memories["observations"].append({"step": step, "method": method, "result": tool_result})
+                transcript.append({
+                    "step": step,
+                    "method": method,
+                    "params": params,
+                    "validated_params": validated_params,
+                    "result": tool_result,
+                    "toolcall_id": toolcall_id,
+                    "input_ref": refs["input_ref"],
+                    "output_ref": refs["output_ref"],
+                    "error": str(exc),
+                })
+                memories["pending_toolcall"] = None
+                memories["toolcall_seq"] = memories.get("toolcall_seq", 0) + 1
                 self._save_run_state(
                     user_request=user_request,
                     memories=memories,
@@ -587,7 +602,7 @@ class Orchestrator:
                     finished=False,
                     last_error=str(exc),
                 )
-                raise
+                continue
 
         summary = self._summarize(memories, user_request)
         final_answer = self._llm_summary(memories, user_request)

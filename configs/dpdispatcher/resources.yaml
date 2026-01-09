@@ -1,13 +1,13 @@
 vasp_cpu:
-  machine: cpu_hpc
+  machine: cpu_server_2
   number_node: 1
-  cpu_per_node: 64
+  cpu_per_node: 32
   queue_name: batch
   group_size: 1
   custom_flags:
     - "#SBATCH -t 7-00:00:00"
     - "#SBATCH --export=ALL"
-  source_list: ["/public/home/chenhh/software/catmaster_env.sh"]
+  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
 
 mace_gpu:
   machine: gpu_server

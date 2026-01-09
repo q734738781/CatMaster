@@ -100,7 +100,7 @@ def _task_state(task: Task) -> str:
 
 
 def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None, register: Optional[MachineRegister] = None) -> DispatchResult:
-    """Submit a single task through DPDispatcher and optionally wait for completion."""
+    """Submit a single task through DPDispatcher and wait for completion."""
 
     reg = register or MachineRegister(extra_paths=[Path(config_path)]) if config_path else MachineRegister()
 

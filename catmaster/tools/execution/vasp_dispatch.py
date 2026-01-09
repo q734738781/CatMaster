@@ -45,7 +45,7 @@ def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, An
     """
     If INCAR does not specify NCORE/NPAR, append `NCORE` chosen by:
     1) target ~ sqrt(cpu_per_node)
-    2) NCORE must divide cpu_per_node/2
+    2) NCORE must divide cpu_per_node
 
     Returns a small dict for logging/debugging.
     """
@@ -58,16 +58,8 @@ def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, An
     except Exception:
         return {"patched": False, "reason": "cpu_per_node_missing_or_invalid", "cpu_per_node": cpu_per_node}
 
-    half_cpu = cpu_per_node_i // 2
-    if half_cpu < 1:
-        return {
-            "patched": False,
-            "reason": "cpu_per_node_too_small",
-            "cpu_per_node": cpu_per_node_i,
-        }
-
     target = math.sqrt(cpu_per_node_i)
-    factors = [f for f in range(1, half_cpu + 1) if half_cpu % f == 0]
+    factors = [f for f in range(1, cpu_per_node_i + 1) if cpu_per_node_i % f == 0]
 
     # choose the smallest factor >= target; if none, fallback to largest factor
     higher_or_equal = [f for f in factors if f >= target]
@@ -98,7 +90,6 @@ def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, An
         "reason": "autoset",
         "ncore": ncore,
         "cpu_per_node": cpu_per_node_i,
-        "half_cpu": half_cpu,
         "target": target,
     }
 

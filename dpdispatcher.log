@@ -75,3 +75,321 @@ LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdis
 LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
 LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
 LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-08 17:07:07,521 - INFO : info:check_all_finished: False
+2026-01-08 17:07:07,522 - INFO : remote path: /public/home/chenhh/catmaster_work/f184f423ddc96de22b1112598f42d411c91c99ad
+2026-01-08 17:07:09,195 - INFO : job: 150dda7e4a423975d8bfbff21503ec2536e492ff submit; job_id is 215515
+2026-01-08 17:09:10,791 - INFO : job: 150dda7e4a423975d8bfbff21503ec2536e492ff 215515 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-08 17:21:07,245 - INFO : Find old submission; recover submission from json file;submission.submission_hash:58e8888e76d4702f3b4645ae8187e7c8f8ed9c35; machine.context.remote_root:/public/home/chenhh/catmaster_work/58e8888e76d4702f3b4645ae8187e7c8f8ed9c35; submission.work_base:relax;
+2026-01-08 17:21:07,245 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-08 21:27:51,330 - INFO : info:check_all_finished: False
+2026-01-08 21:27:51,331 - INFO : remote path: /public/home/chenhh/catmaster_work/fedd9731430e15d88c45a32d60caafef9284f5d7
+2026-01-08 21:27:53,232 - INFO : job: c39dcb6f4579675ee2bc042a56222de2cc051db8 submit; job_id is 215597
+2026-01-08 21:27:53,944 - INFO : job: 2a447fc3ab5e429689aa2b0b1c384343d0a6807e submit; job_id is 215598
+2026-01-08 21:27:54,644 - INFO : job: bc2ea2a73bb1f1fca80e3a58992a1c94f11a0d3a submit; job_id is 215599
+2026-01-08 21:27:55,375 - INFO : job: 4c87b03884f35a5314b4ec6b21ec4edcbf8f4ee8 submit; job_id is 215600
+2026-01-08 21:27:56,080 - INFO : job: 9442697f94215f075ae40ce74326dbc5789b2e9c submit; job_id is 215601
+2026-01-08 21:27:56,790 - INFO : job: e3a338259ba07be16e04d546b91097ff6ab6de4c submit; job_id is 215602
+2026-01-08 21:27:57,502 - INFO : job: b195e2f6370c31b01db968f54bfa38b41485dab3 submit; job_id is 215603
+2026-01-08 21:27:58,199 - INFO : job: 858b902fa97a7f8558926344dd12ac868abe7aad submit; job_id is 215604
+2026-01-08 21:27:58,890 - INFO : job: 3eefa5f9a15ac1dbfd360cc0c2a64c0882fac6fd submit; job_id is 215605
+2026-01-08 21:27:59,603 - INFO : job: 6fa64e9ceee714d9b5e1e8c1cd6730c4e8d3ac6c submit; job_id is 215606
+2026-01-08 21:28:00,291 - INFO : job: 96f46b60719c1e9297237dc2a9ee6e34f41733c1 submit; job_id is 215607
+2026-01-08 21:28:00,964 - INFO : job: f65c1e10c9152c9198bd515a17e6ee0070cb8fb0 submit; job_id is 215608
+2026-01-08 21:28:01,612 - INFO : job: 4937dcc84177262bcdf1b24ea999836eac2e3be6 submit; job_id is 215609
+2026-01-08 21:28:02,298 - INFO : job: 86d3d66aa5379e9c4baa0870a19453a9f470f2d2 submit; job_id is 215610
+2026-01-08 21:28:02,959 - INFO : job: 10cfedd1d9c8541bdb547ad17fd7f1236a673037 submit; job_id is 215611
+2026-01-08 21:33:17,459 - INFO : job: 4937dcc84177262bcdf1b24ea999836eac2e3be6 215609 finished
+2026-01-08 21:41:33,712 - INFO : job: 9442697f94215f075ae40ce74326dbc5789b2e9c 215601 finished
+2026-01-08 22:58:03,438 - INFO : job: 96f46b60719c1e9297237dc2a9ee6e34f41733c1 215607 finished
+2026-01-08 23:00:07,013 - INFO : job: 3eefa5f9a15ac1dbfd360cc0c2a64c0882fac6fd 215605 finished
+2026-01-09 09:30:50,500 - ERROR : Failed to run exec_command: SSH session not active in calling cd /public/home/chenhh/catmaster_work/fedd9731430e15d88c45a32d60caafef9284f5d7 ;squeue -o "%.18i %.2t" -j 215597
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 305, in exec_command
+    return self.ssh.exec_command(cmd)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/client.py", line 558, in exec_command
+    chan = self._transport.open_session(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 988, in open_session
+    return self.open_channel(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 1119, in open_channel
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 2195, in run
+    ptype, m = self.packetizer.read_message()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/packet.py", line 496, in read_message
+    header = self.read_all(self.__block_size_in, check_rekey=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/packet.py", line 324, in read_all
+    raise EOFError()
+EOFError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/utils/utils.py", line 197, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 315, in exec_command
+    raise RetrySignal(f"SSH session not active in calling {cmd}") from e
+dpdispatcher.utils.utils.RetrySignal: SSH session not active in calling cd /public/home/chenhh/catmaster_work/fedd9731430e15d88c45a32d60caafef9284f5d7 ;squeue -o "%.18i %.2t" -j 215597
+2026-01-09 09:30:50,531 - WARNING : Sleep 1 s and retry...
+2026-01-09 09:30:51,543 - ERROR : Failed to run exec_command: SSH session not active in calling cd /public/home/chenhh/catmaster_work/fedd9731430e15d88c45a32d60caafef9284f5d7 ;squeue -o "%.18i %.2t" -j 215597
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 305, in exec_command
+    return self.ssh.exec_command(cmd)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/client.py", line 558, in exec_command
+    chan = self._transport.open_session(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 988, in open_session
+    return self.open_channel(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 1082, in open_channel
+    raise SSHException("SSH session not active")
+paramiko.ssh_exception.SSHException: SSH session not active
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/utils/utils.py", line 197, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 315, in exec_command
+    raise RetrySignal(f"SSH session not active in calling {cmd}") from e
+dpdispatcher.utils.utils.RetrySignal: SSH session not active in calling cd /public/home/chenhh/catmaster_work/fedd9731430e15d88c45a32d60caafef9284f5d7 ;squeue -o "%.18i %.2t" -j 215597
+2026-01-09 09:30:51,544 - WARNING : Sleep 1 s and retry...
+2026-01-09 09:30:52,544 - ERROR : Failed to run exec_command: SSH session not active in calling cd /public/home/chenhh/catmaster_work/fedd9731430e15d88c45a32d60caafef9284f5d7 ;squeue -o "%.18i %.2t" -j 215597
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 305, in exec_command
+    return self.ssh.exec_command(cmd)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/client.py", line 558, in exec_command
+    chan = self._transport.open_session(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 988, in open_session
+    return self.open_channel(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 1082, in open_channel
+    raise SSHException("SSH session not active")
+paramiko.ssh_exception.SSHException: SSH session not active
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/utils/utils.py", line 197, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 315, in exec_command
+    raise RetrySignal(f"SSH session not active in calling {cmd}") from e
+dpdispatcher.utils.utils.RetrySignal: SSH session not active in calling cd /public/home/chenhh/catmaster_work/fedd9731430e15d88c45a32d60caafef9284f5d7 ;squeue -o "%.18i %.2t" -j 215597
+2026-01-09 09:30:52,545 - WARNING : Sleep 1 s and retry...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:04:06,177 - INFO : info:check_all_finished: False
+2026-01-09 10:04:06,177 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:04:07,787 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca submit; job_id is 37
+2026-01-09 10:04:40,113 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-09 10:04:40,115 - INFO : submission exit: b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:04:40,115 - INFO : at /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:04:40,115 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/b2eac03f4e45ccbbec82d8fa690239f464272207.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:05:49,932 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b2eac03f4e45ccbbec82d8fa690239f464272207; machine.context.remote_root:/public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207; submission.work_base:CO_VASP_inputs;
+2026-01-09 10:05:50,295 - INFO : info:check_all_finished: False
+2026-01-09 10:05:50,295 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:05:51,562 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca 37 terminated; fail_cout is 1; resubmitting job
+2026-01-09 10:05:52,308 - INFO : job:0be60e9ee2139d960f5894bbe3852a07e1486eca re-submit after terminated; new job_id is 38
+2026-01-09 10:05:52,625 - INFO : job:0be60e9ee2139d960f5894bbe3852a07e1486eca job_id:38 after re-submitting; the state now is <JobStatus.waiting: 2>
+2026-01-09 10:05:54,174 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca 38 terminated; fail_cout is 2; resubmitting job
+2026-01-09 10:05:54,917 - INFO : job:0be60e9ee2139d960f5894bbe3852a07e1486eca re-submit after terminated; new job_id is 39
+2026-01-09 10:05:55,277 - INFO : job:0be60e9ee2139d960f5894bbe3852a07e1486eca job_id:39 after re-submitting; the state now is <JobStatus.terminated: 4>
+2026-01-09 10:05:55,278 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca 39 terminated; fail_cout is 3; resubmitting job
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:06:06,998 - INFO : info:check_all_finished: False
+2026-01-09 10:06:06,998 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:06:08,559 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca submit; job_id is 40
+2026-01-09 10:06:10,115 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca 40 terminated; fail_cout is 1; resubmitting job
+2026-01-09 10:06:10,860 - INFO : job:0be60e9ee2139d960f5894bbe3852a07e1486eca re-submit after terminated; new job_id is 41
+2026-01-09 10:06:11,184 - INFO : job:0be60e9ee2139d960f5894bbe3852a07e1486eca job_id:41 after re-submitting; the state now is <JobStatus.running: 3>
+2026-01-09 10:06:33,386 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-09 10:06:33,387 - INFO : submission exit: b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:06:33,387 - INFO : at /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:06:33,387 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/b2eac03f4e45ccbbec82d8fa690239f464272207.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:07:04,710 - INFO : info:check_all_finished: False
+2026-01-09 10:07:04,711 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:07:06,382 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca submit; job_id is 42
+2026-01-09 10:17:29,985 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-09 10:17:29,986 - INFO : submission exit: b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:17:29,986 - INFO : at /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:17:29,986 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/b2eac03f4e45ccbbec82d8fa690239f464272207.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:17:36,938 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b2eac03f4e45ccbbec82d8fa690239f464272207; machine.context.remote_root:/public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207; submission.work_base:CO_VASP_inputs;
+2026-01-09 10:17:37,097 - INFO : info:check_all_finished: False
+2026-01-09 10:17:37,098 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:20:39,418 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-09 10:20:39,420 - INFO : submission exit: b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:20:39,421 - INFO : at /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:20:39,421 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/b2eac03f4e45ccbbec82d8fa690239f464272207.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:21:03,999 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b2eac03f4e45ccbbec82d8fa690239f464272207; machine.context.remote_root:/public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207; submission.work_base:CO_VASP_inputs;
+2026-01-09 10:21:04,163 - INFO : info:check_all_finished: False
+2026-01-09 10:21:04,163 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:21:24,138 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-09 10:21:24,140 - INFO : submission exit: b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:21:24,140 - INFO : at /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:21:24,140 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/b2eac03f4e45ccbbec82d8fa690239f464272207.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:21:37,784 - INFO : info:check_all_finished: False
+2026-01-09 10:21:37,784 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:21:39,383 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca submit; job_id is 43
+2026-01-09 10:28:55,793 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-09 10:28:55,795 - INFO : submission exit: b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:28:55,795 - INFO : at /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:28:55,795 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/b2eac03f4e45ccbbec82d8fa690239f464272207.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:28:59,268 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b2eac03f4e45ccbbec82d8fa690239f464272207; machine.context.remote_root:/public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207; submission.work_base:CO_VASP_inputs;
+2026-01-09 10:28:59,425 - INFO : info:check_all_finished: False
+2026-01-09 10:28:59,426 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:29:02,833 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-09 10:29:02,834 - INFO : submission exit: b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:29:02,834 - INFO : at /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:29:02,834 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/b2eac03f4e45ccbbec82d8fa690239f464272207.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:29:24,590 - INFO : info:check_all_finished: False
+2026-01-09 10:29:24,590 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:29:26,143 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca submit; job_id is 44
+2026-01-09 10:33:27,968 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca 44 finished
+2026-01-09 10:33:28,167 - ERROR : Get error code 2 in calling tar czfh b2eac03f4e45ccbbec82d8fa690239f464272207.tar.gz OUTCAR CONTCAR OSZICAR vasprun.xml with job: b2eac03f4e45ccbbec82d8fa690239f464272207 . message: tar: CONTCAR: Cannot open: Resource temporarily unavailable
+tar: OSZICAR: Cannot open: Resource temporarily unavailable
+tar: vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh b2eac03f4e45ccbbec82d8fa690239f464272207.tar.gz OUTCAR CONTCAR OSZICAR vasprun.xml with job: b2eac03f4e45ccbbec82d8fa690239f464272207 . message: tar: CONTCAR: Cannot open: Resource temporarily unavailable
+tar: OSZICAR: Cannot open: Resource temporarily unavailable
+tar: vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-09 10:33:28,170 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:34:46,404 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b2eac03f4e45ccbbec82d8fa690239f464272207; machine.context.remote_root:/public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207; submission.work_base:CO_VASP_inputs;
+2026-01-09 10:34:46,405 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 10:35:52,619 - INFO : info:check_all_finished: False
+2026-01-09 10:35:52,620 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 10:35:54,239 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca submit; job_id is 45
+2026-01-09 10:36:55,720 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca 45 finished
+2026-01-09 10:36:55,874 - ERROR : Get error code 2 in calling tar czfh b2eac03f4e45ccbbec82d8fa690239f464272207.tar.gz CONTCAR OUTCAR vasprun.xml OSZICAR with job: b2eac03f4e45ccbbec82d8fa690239f464272207 . message: tar: CONTCAR: Cannot open: Resource temporarily unavailable
+tar: OUTCAR: Cannot open: Resource temporarily unavailable
+tar: vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: OSZICAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh b2eac03f4e45ccbbec82d8fa690239f464272207.tar.gz CONTCAR OUTCAR vasprun.xml OSZICAR with job: b2eac03f4e45ccbbec82d8fa690239f464272207 . message: tar: CONTCAR: Cannot open: Resource temporarily unavailable
+tar: OUTCAR: Cannot open: Resource temporarily unavailable
+tar: vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: OSZICAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-09 10:36:55,877 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 14:47:38,946 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b2eac03f4e45ccbbec82d8fa690239f464272207; machine.context.remote_root:/public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207; submission.work_base:CO_VASP_inputs;
+2026-01-09 14:47:38,946 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 15:00:40,042 - INFO : info:check_all_finished: False
+2026-01-09 15:00:40,042 - INFO : remote path: /public/home/chenhh/catmaster_work/b2eac03f4e45ccbbec82d8fa690239f464272207
+2026-01-09 15:00:41,660 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca submit; job_id is 46
+2026-01-09 15:01:43,145 - INFO : job: 0be60e9ee2139d960f5894bbe3852a07e1486eca 46 finished
+2026-01-09 15:01:43,299 - ERROR : Get error code 2 in calling tar czfh b2eac03f4e45ccbbec82d8fa690239f464272207.tar.gz OSZICAR vasprun.xml OUTCAR CONTCAR with job: b2eac03f4e45ccbbec82d8fa690239f464272207 . message: tar: OSZICAR: Cannot open: Resource temporarily unavailable
+tar: vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CONTCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh b2eac03f4e45ccbbec82d8fa690239f464272207.tar.gz OSZICAR vasprun.xml OUTCAR CONTCAR with job: b2eac03f4e45ccbbec82d8fa690239f464272207 . message: tar: OSZICAR: Cannot open: Resource temporarily unavailable
+tar: vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CONTCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-09 15:01:43,301 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 15:09:37,482 - INFO : info:check_all_finished: False
+2026-01-09 15:09:37,482 - INFO : remote path: /public/home/chenhh/catmaster_work/4e16f79bac519e8e560f32c42d8f9723e04b69ad
+2026-01-09 15:09:38,815 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215664
+2026-01-09 15:10:40,274 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215664 finished

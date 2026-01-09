@@ -69,11 +69,12 @@ def main() -> None:
         root.mkdir(parents=True, exist_ok=True)
 
     user_request = (
-        "Compute CO adsorption energy on a Fe(111) surface for different adsorption sites:"
-        "Download the mp-150 structure from Materials Project (Fe bcc phase) and use it as the initial structure, prepare VASP inputs from scratch, and perform VASP calculation to get the results."
+        "Compute CO adsorption energy on BCC Fe surface for different surfaces and adsorption sites:"
+        "Download the mp-150 structure from Materials Project (Fe bcc phase) and use it as the initial structure."
         "Use a 2x2 supercell for the slab, with 10A slab thickness and 15A vacuum thickness, fix the bottom 3 layers of the slab."
-        "Enumerate the adsorption sites on the slab, and place the CO molecule on each site."
-        "Use the following formula to calculate the adsorption energy: E_ads = E_(Fe-CO) - E_(Fe) - E_(CO), report the adsorption energy for each adsorption site and report the most stable adsorption site."
+        "Enumerate the adsorption sites on the slab's (100), (110), and (111) surfaces, and place the CO molecule on each possible site."
+        "Use the following formula to calculate the adsorption energy: E_ads = E_(Fe-CO) - E_(Fe) - E_(CO)"
+        "Perform VASP calculation to get the results. Summarize the results in a markdown file, report the adsorption energy for each adsorption site on different surfaces and report the most stable adsorption site."
     )
 
     llm = ChatOpenAI(
@@ -92,7 +93,7 @@ def main() -> None:
     orch = Orchestrator(
         llm=llm,
         summary_llm=summary_llm,
-        max_steps=100,
+        max_steps=300,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
         log_llm_console=True,
         resume_dir=args.resume,
