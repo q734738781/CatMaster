@@ -393,3 +393,74 @@ LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdis
 2026-01-09 15:09:37,482 - INFO : remote path: /public/home/chenhh/catmaster_work/4e16f79bac519e8e560f32c42d8f9723e04b69ad
 2026-01-09 15:09:38,815 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215664
 2026-01-09 15:10:40,274 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215664 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-09 17:57:45,818 - INFO : info:check_all_finished: False
+2026-01-09 17:57:45,818 - INFO : remote path: /public/home/chenhh/catmaster_work/b066b8420476d005349e2fdc54c592d3f3619449
+2026-01-09 17:57:47,225 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215700
+2026-01-09 18:02:49,207 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215700 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-10 14:39:48,329 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b066b8420476d005349e2fdc54c592d3f3619449; machine.context.remote_root:/public/home/chenhh/catmaster_work/b066b8420476d005349e2fdc54c592d3f3619449; submission.work_base:o2_box;
+2026-01-10 14:39:48,330 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-10 17:18:43,968 - INFO : info:check_all_finished: False
+2026-01-10 17:18:43,968 - INFO : remote path: /public/home/chenhh/catmaster_work/e17d80d1ffdd9da70c3cef175477f6452e351281
+2026-01-10 17:18:45,314 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215782
+2026-01-10 17:26:47,822 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215782 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-10 17:33:22,002 - INFO : info:check_all_finished: False
+2026-01-10 17:33:22,002 - INFO : remote path: /public/home/chenhh/catmaster_work/95a4475b92d21edd6a8cc74da297b9e673ebfaed
+2026-01-10 17:33:23,440 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215787
+2026-01-10 17:38:25,444 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215787 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-10 19:26:17,537 - INFO : info:check_all_finished: False
+2026-01-10 19:26:17,537 - INFO : remote path: /ssd/chenhh/catmaster_work/859bd5533d07318371e48f131b5eaefa1b3aee9b
+2026-01-10 19:26:18,326 - INFO : job: 2b6dbf86b01f2ba69d583ca3773c72c74e84bcaf submit; job_id is 799501
+2026-01-10 19:26:39,637 - INFO : job: 2b6dbf86b01f2ba69d583ca3773c72c74e84bcaf 799501 finished
+2026-01-10 19:31:27,366 - INFO : info:check_all_finished: False
+2026-01-10 19:31:27,366 - INFO : remote path: /public/home/chenhh/catmaster_work/48e8deaacbf331f5d5237dbde2790de1f703004b
+2026-01-10 19:31:28,796 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215798
+2026-01-10 19:34:30,541 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215798 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-10 22:18:01,744 - INFO : Find old submission; recover submission from json file;submission.submission_hash:48e8deaacbf331f5d5237dbde2790de1f703004b; machine.context.remote_root:/public/home/chenhh/catmaster_work/48e8deaacbf331f5d5237dbde2790de1f703004b; submission.work_base:vasp_relax_gas;
+2026-01-10 22:18:01,744 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 00:27:36,062 - INFO : info:check_all_finished: False
+2026-01-11 00:27:36,063 - INFO : remote path: /public/home/chenhh/catmaster_work/0ff18f72fbbaa5a19057f18110e31e9d55573b39
+2026-01-11 00:27:37,510 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215803
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 00:34:39,838 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215803 finished
+2026-01-11 00:41:14,433 - INFO : info:check_all_finished: False
+2026-01-11 00:41:14,433 - INFO : remote path: /public/home/chenhh/catmaster_work/e2c319fbf8338cb4d5f98dda788f611197e9a105
+2026-01-11 00:41:15,815 - INFO : job: 2c66d0dbe7f42d01a6d00b53fc6383d89b368b1d submit; job_id is 215804
+2026-01-11 00:41:16,525 - INFO : job: ed32ecc726fae13399d08227cf488b5260e9046d submit; job_id is 215805
+2026-01-11 00:47:19,534 - INFO : job: 2c66d0dbe7f42d01a6d00b53fc6383d89b368b1d 215804 finished
+2026-01-11 00:50:20,099 - INFO : job: ed32ecc726fae13399d08227cf488b5260e9046d 215805 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 08:34:09,950 - INFO : Find old submission; recover submission from json file;submission.submission_hash:e17d80d1ffdd9da70c3cef175477f6452e351281; machine.context.remote_root:/public/home/chenhh/catmaster_work/e17d80d1ffdd9da70c3cef175477f6452e351281; submission.work_base:vasp_relax;
+2026-01-11 08:34:09,953 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 08:57:45,224 - INFO : info:check_all_finished: False
+2026-01-11 08:57:45,225 - INFO : remote path: /public/home/chenhh/catmaster_work/913173d508f83da9990f889e57298e8dfd7d6abe
+2026-01-11 08:57:46,613 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215809
+2026-01-11 09:06:49,063 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215809 finished

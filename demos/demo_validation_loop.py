@@ -73,7 +73,6 @@ def main() -> None:
     orch = DeterministicOrchestrator(
         decisions=decisions,
         llm=DummyLLM(),
-        summary_llm=DummyLLM(),
         max_steps=len(decisions),
         log_llm_console=False,
         max_tool_attempts=3,
@@ -81,7 +80,7 @@ def main() -> None:
 
     result = orch.run(
         "Demo: validate tool params and auto-retry",
-        initial_plan={"todo": ["write a file with validation check"], "next_step": "write_file", "reasoning": ""},
+        initial_plan={"todo": ["write a file with validation check"], "reasoning": ""},
     )
 
     print("\n=== Summary ===")

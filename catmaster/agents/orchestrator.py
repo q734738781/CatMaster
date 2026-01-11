@@ -1,102 +1,173 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LLM-driven execution loop with three memories:
-- ToDo (long-term plan skeleton)
-- NextStep (short-term intent for the next tool call)
-- Observation (long-term log of executed actions/results)
-
-Flow: user request -> LLM drafts ToDo & initial NextStep -> execute one tool ->
-record Observation -> LLM updates NextStep (and optionally trims ToDo) -> repeat
-until LLM says finish.
+Task-based orchestrator with whiteboard patch workflow and unified tracing.
 """
 from __future__ import annotations
 
 import json
+import re
+import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable
-import time
-import random
+import logging
 import sys
+
 from langchain_openai import ChatOpenAI
 
 from catmaster.tools.registry import get_tool_registry
-from catmaster.runtime import RunContext, EventLog, ToolExecutor, ArtifactStore
+from catmaster.tools.base import system_root, workspace_root
+from catmaster.runtime import (
+    RunContext,
+    ToolExecutor,
+    ArtifactStore,
+    WhiteboardStore,
+    TraceStore,
+    ContextPackBuilder,
+    ContextPackPolicy,
+    whiteboard_ops_apply_atomic,
+    whiteboard_ops_persist,
+    whiteboard_ops_validate,
+)
+from catmaster.runtime.artifact_log import ArtifactLog
+from catmaster.runtime.whiteboard_ops import persist_whiteboard_diff, append_task_journal_entry, _section_bounds
 from catmaster.agents.logo import logo_str
+from catmaster.agents.task_runner import TaskStepper, TaskSummarizer
 from catmaster.agents.orchestrator_prompts import (
     build_plan_prompt,
     build_plan_repair_prompt,
     build_plan_feedback_prompt,
-    build_step_prompt,
+    build_task_step_prompt,
+    build_task_summarizer_prompt,
+    build_task_summarizer_repair_prompt,
     build_summary_prompt,
 )
-import logging
 
 
 class Orchestrator:
     def __init__(
         self,
-        llm: Optional[ChatOpenAI] = None,
-        summary_llm: Optional[ChatOpenAI] = None,
-        max_steps: int = 6,
+        llm: ChatOpenAI,
+        max_steps: int = 100,
         *,
+        summary_llm: Optional[ChatOpenAI] = None,
         llm_log_path: Optional[str] = None,
         log_llm_console: bool = True,
         run_context: Optional[RunContext] = None,
-        event_log: Optional[EventLog] = None,
         run_dir: Optional[str] = None,
+        resume: bool = False,
         resume_dir: Optional[str] = None,
         project_id: Optional[str] = None,
         run_id: Optional[str] = None,
         tool_executor: Optional[ToolExecutor] = None,
         max_tool_attempts: int = 3,
         max_plan_attempts: int = 3,
+        patch_repair_attempts: int = 1,
+        summary_repair_attempts: int = 1,
     ):
         self.logger = logging.getLogger(__name__)
         print(logo_str)
-        self.llm = llm or ChatOpenAI(
-            temperature=0,
-            model="gpt-5.2",
-            response_format={"type": "json_object"},
-            reasoning_effort="medium",
-        )
-        self.summary_llm = summary_llm or ChatOpenAI(
-            temperature=0,
-            model="gpt-5.2",
-        )
+        if llm is None:
+            raise ValueError("llm must be provided (single shared model).")
+        self.llm = llm
+        self.summary_llm = summary_llm or llm
         self.max_steps = max_steps
         self.max_plan_attempts = max_plan_attempts
+        self.patch_repair_attempts = patch_repair_attempts
+        self.summary_repair_attempts = summary_repair_attempts
         self.registry = get_tool_registry()
         self.log_llm_console = log_llm_console
-        default_log = Path.home() / ".catmaster" / "logs" / "orchestrator_llm.jsonl"
-        self.llm_log_file = Path(llm_log_path).expanduser().resolve() if llm_log_path else default_log
-        self.llm_log_file.parent.mkdir(parents=True, exist_ok=True)
-        if run_dir and resume_dir:
-            raise ValueError("run_dir and resume_dir are mutually exclusive")
-        resolved_run_dir = Path(run_dir).expanduser().resolve() if run_dir else None
-        resolved_resume_dir = Path(resume_dir).expanduser().resolve() if resume_dir else None
+        self.resuming = False
+
         if run_context:
             self.run_context = run_context
-        elif resolved_resume_dir:
-            self.run_context = RunContext.load(resolved_resume_dir)
         else:
-            self.run_context = RunContext.create(
-                run_dir=resolved_run_dir,
-                project_id=project_id,
-                run_id=run_id,
-                model_name=self._resolve_model_name(),
-            )
-        self.event_log = event_log or EventLog(self.run_context.run_dir)
+            if run_dir and (resume or resume_dir):
+                raise ValueError("run_dir is mutually exclusive with resume/resume_dir")
+            resolved_run_dir = Path(run_dir).expanduser().resolve() if run_dir else None
+            resolved_resume = self._resolve_resume_run_dir(resume_dir, resume)
+            if resolved_resume:
+                self.run_context = RunContext.load(resolved_resume)
+                self.resuming = True
+            else:
+                self.run_context = RunContext.create(
+                    run_dir=resolved_run_dir,
+                    project_id=project_id,
+                    run_id=run_id,
+                    model_name=self._resolve_model_name(),
+                )
+                self.resuming = False
+
+        self.trace_store = TraceStore(self.run_context.run_dir)
         self.tool_executor = tool_executor or ToolExecutor(self.registry, max_attempts=max_tool_attempts)
         self.artifact_store = ArtifactStore(self.run_context.run_dir)
-        self.resume_dir = str(resolved_resume_dir) if resolved_resume_dir else None
+
+        self.whiteboard = WhiteboardStore.create_default()
+        self.whiteboard.ensure_exists()
+        self.artifact_log = ArtifactLog(system_root() / "artifacts.csv")
+        self.artifact_log.ensure_exists()
+        self.context_builder = ContextPackBuilder(self.whiteboard)
+
+        default_log = self.run_context.run_dir / "llm.jsonl"
+        self.llm_log_file = Path(llm_log_path).expanduser().resolve() if llm_log_path else default_log
+        self.llm_log_file.parent.mkdir(parents=True, exist_ok=True)
 
         self.plan_prompt = build_plan_prompt()
         self.plan_repair_prompt = build_plan_repair_prompt()
         self.plan_feedback_prompt = build_plan_feedback_prompt()
-        self.step_prompt = build_step_prompt()
+        self.task_step_prompt = build_task_step_prompt()
+        self.task_summary_prompt = build_task_summarizer_prompt()
+        self.task_summary_repair_prompt = build_task_summarizer_repair_prompt()
         self.summary_prompt = build_summary_prompt()
+
+    def _resolve_resume_run_dir(self, resume_dir: Optional[str], resume: bool) -> Optional[Path]:
+        if not resume and not resume_dir:
+            return None
+        base = Path(resume_dir).expanduser().resolve() if resume_dir else workspace_root()
+        if (base / "meta.json").exists():
+            return base
+        sys_root = base if base.name == ".catmaster" else (base / ".catmaster")
+        runs_root = sys_root / "runs"
+        if not runs_root.exists():
+            raise FileNotFoundError(f"Resume requested but runs directory not found: {runs_root}")
+        run_dirs = [d for d in runs_root.iterdir() if d.is_dir()]
+        if not run_dirs:
+            raise FileNotFoundError(f"Resume requested but no run directories found in {runs_root}")
+        run_dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+        for candidate in run_dirs:
+            if (candidate / "task_state.json").exists():
+                return candidate
+        for candidate in run_dirs:
+            if (candidate / "meta.json").exists():
+                return candidate
+        raise FileNotFoundError(f"Resume requested but no valid run metadata found in {runs_root}")
+
+    def _task_state_path(self) -> Path:
+        return self.run_context.run_dir / "task_state.json"
+
+    def _load_task_state(self) -> Dict[str, Any]:
+        path = self._task_state_path()
+        if not path.exists():
+            raise FileNotFoundError(f"task_state.json not found in {self.run_context.run_dir}")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("task_state.json must contain a JSON object")
+        for key in ("user_request", "plan", "tasks", "observations", "status"):
+            if key not in data:
+                raise ValueError(f"task_state.json missing required key: {key}")
+        if not isinstance(data["tasks"], list):
+            raise ValueError("task_state.json tasks must be a list")
+        if not isinstance(data["observations"], list):
+            raise ValueError("task_state.json observations must be a list")
+        for idx, task in enumerate(data["tasks"], start=1):
+            if not isinstance(task, dict):
+                raise ValueError(f"task_state.json tasks[{idx}] must be an object")
+            for key in ("task_id", "goal", "status"):
+                if key not in task:
+                    raise ValueError(f"task_state.json tasks[{idx}] missing key: {key}")
+        return data
 
     def _tool_schema(self) -> str:
         return self.registry.get_tool_descriptions_for_llm()
@@ -111,86 +182,9 @@ class Orchestrator:
                 return value
         return "unknown"
 
-    def _log_event(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
-        try:
-            if self.event_log:
-                self.event_log.append(event, payload=payload)
-        except Exception as exc:
-            self.logger.debug("Event log append failed: %s", exc)
-
-    def _toolcall_id(self, step: int, method: str) -> str:
-        return f"step{step}_{method}"
-
-    def _run_state_path(self) -> Path:
-        return self.run_context.run_dir / "run_state.json"
-
-    def _save_run_state(
-        self,
-        *,
-        user_request: str,
-        memories: Dict[str, Any],
-        transcript: List[Dict[str, Any]],
-        next_step_index: int,
-        finished: bool = False,
-        finish_reason: Optional[str] = None,
-        last_error: Optional[str] = None,
-    ) -> None:
-        payload = {
-            "user_request": user_request,
-            "memories": memories,
-            "transcript": transcript,
-            "next_step_index": next_step_index,
-            "finished": finished,
-            "finish_reason": finish_reason,
-            "last_error": last_error,
-            "updated_at": datetime.utcnow().isoformat() + "Z",
-        }
-        path = self._run_state_path()
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False, indent=2)
-
-    def _load_run_state(self) -> Dict[str, Any]:
-        path = self._run_state_path()
-        if not path.exists():
-            raise FileNotFoundError(f"run_state.json not found in {self.run_context.run_dir}")
-        with path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data
-
-    def _normalize_run_state(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        state = data if isinstance(data, dict) else {}
-        memories = state.get("memories") if isinstance(state.get("memories"), dict) else {}
-        memories.setdefault("todo", [])
-        memories.setdefault("observations", [])
-        memories.setdefault("next_step", "")
-        memories.setdefault("toolcall_seq", 0)
-        memories.setdefault("pending_toolcall", None)
-        transcript = state.get("transcript") if isinstance(state.get("transcript"), list) else []
-        next_step_index = state.get("next_step_index")
-        if not isinstance(next_step_index, int) or next_step_index < 0:
-            next_step_index = len(transcript)
-        state["memories"] = memories
-        state["transcript"] = transcript
-        state["next_step_index"] = next_step_index
-        return state
-
-    def _normalize_plan(self, data: Dict[str, Any], user_request: str) -> Dict[str, Any]:
-        if not isinstance(data, dict):
-            data = {}
-        normalized = dict(data)
-        todo = normalized.get("todo")
-        if not isinstance(todo, list) or not todo:
-            todo = [user_request]
-        next_step = normalized.get("next_step")
-        if not isinstance(next_step, str) or not next_step.strip():
-            next_step = user_request
-        reasoning = normalized.get("reasoning")
-        if not isinstance(reasoning, str):
-            reasoning = ""
-        normalized["todo"] = todo
-        normalized["next_step"] = next_step
-        normalized["reasoning"] = reasoning
-        return normalized
+    def _trace_event(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
+        record = {"event": event, "payload": payload or {}}
+        self.trace_store.append_event(record)
 
     def plan(self, user_request: str) -> Dict[str, Any]:
         tools = self._tool_schema_short()
@@ -208,14 +202,9 @@ class Orchestrator:
                 self.logger.info("[PLAN][LLM RAW][attempt=%s] %s", attempt, raw)
             try:
                 data = self._parse_json_response(raw)
+                normalized = self._normalize_plan(data, user_request)
             except Exception as exc:
                 last_error = str(exc)
-                self.logger.error("Failed to parse plan response (attempt %s): %s (%s)", attempt, raw, exc)
-                self._log_event("PLAN_PARSE_FAILED", {
-                    "attempt": attempt,
-                    "error": last_error,
-                    "raw": raw,
-                })
                 messages = self.plan_repair_prompt.format_messages(
                     user_request=user_request,
                     tools=tools,
@@ -223,11 +212,8 @@ class Orchestrator:
                     raw=raw,
                 )
                 continue
-
-            normalized = self._normalize_plan(data, user_request)
-            self._log_event("PLAN_CREATED", {
+            self._trace_event("PLAN_CREATED", {
                 "todo": normalized.get("todo", []),
-                "next_step": normalized.get("next_step", ""),
                 "reasoning": normalized.get("reasoning", ""),
             })
             return normalized
@@ -256,13 +242,9 @@ class Orchestrator:
         self._write_llm_log("plan_feedback_response", content=raw)
         if log_llm or self.log_llm_console:
             self.logger.info("[PLAN FEEDBACK][LLM RAW] %s", raw)
-        try:
-            data = self._parse_json_response(raw)
-        except Exception as exc:
-            self.logger.error("Failed to parse plan feedback response: %s (%s), keeping prior plan", raw, exc)
-            data = plan
+        data = self._parse_json_response(raw)
         normalized = self._normalize_plan(data, user_request)
-        self._log_event("PLAN_REVISION", {
+        self._trace_event("PLAN_REVISION", {
             "feedback": feedback,
             "plan_before": plan,
             "plan_after": normalized,
@@ -299,7 +281,7 @@ class Orchestrator:
                 "approved": True,
                 "plan": state["plan"],
             })
-            self._log_event("PLAN_APPROVED", {
+            self._trace_event("PLAN_APPROVED", {
                 "feedback": feedback_text,
                 "plan": state["plan"],
             })
@@ -332,427 +314,601 @@ class Orchestrator:
         plan_review: bool = True,
         plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
     ) -> Dict[str, Any]:
-        if self.resume_dir:
-            state = self._normalize_run_state(self._load_run_state())
-            memories = state["memories"]
-            transcript = state["transcript"]
-            start_step = state["next_step_index"]
-            user_request = state.get("user_request", user_request)
-            finish_reason = state.get("finish_reason") or "resumed"
-            self._log_event("RUN_RESUMED", {
-                "run_dir": self.run_context.run_dir.name,
-                "next_step_index": start_step,
-            })
-        else:
-            memories = {
-                "todo": [],
-                "observations": [],
-                "next_step": "",
-                "toolcall_seq": 0,
-                "pending_toolcall": None,
-            }
-            if initial_plan:
-                initial = self._normalize_plan(initial_plan, user_request)
-                self._log_event("PLAN_CREATED", {
-                    "todo": initial.get("todo", []),
-                    "next_step": initial.get("next_step", ""),
-                    "reasoning": initial.get("reasoning", ""),
-                    "source": "provided",
-                })
-            else:
-                initial = self.plan(user_request)
-
+        if self.resuming:
+            if initial_plan is not None:
+                raise ValueError("Cannot provide initial_plan when resuming")
             if plan_review:
-                state = {
+                raise ValueError("plan_review is not supported when resuming")
+        if self.resuming:
+            state = self._load_task_state()
+            user_request = state["user_request"]
+            plan = self._normalize_plan(state["plan"], user_request)
+            tasks = state["tasks"]
+            observations = state["observations"]
+            status = state.get("status", "running")
+            if status in {"done", "failure", "needs_intervention"}:
+                raise ValueError(f"Cannot resume; run already ended with status {status}")
+            self._initialize_whiteboard_goal(user_request)
+        else:
+            plan = self._normalize_plan(initial_plan, user_request) if initial_plan else self.plan(user_request)
+            self._initialize_whiteboard_goal(user_request)
+            if plan_review:
+                review_state = {
                     "user_request": user_request,
-                    "plan": initial,
+                    "plan": plan,
                     "feedback_history": [],
                     "approved": False,
                     "round": 0,
                 }
-                while not state.get("approved"):
+                if plan_feedback_provider is None and not sys.stdin.isatty():
+                    raise ValueError("plan_review requires a feedback provider when not running in a TTY")
+                while not review_state.get("approved"):
                     if plan_feedback_provider:
-                        feedback = plan_feedback_provider(state)
+                        feedback = plan_feedback_provider(review_state)
                     else:
-                        if not sys.stdin.isatty():
-                            raise RuntimeError("plan_review requires a feedback provider when not running in a TTY")
                         print("\n=== Proposed Plan ===")
-                        for i, item in enumerate(state["plan"].get("todo", []), start=1):
+                        reasoning = (review_state["plan"].get("reasoning") or "").strip()
+                        print("Plan Description:")
+                        print(reasoning if reasoning else "(none)")
+                        print("\nTherefore, Here is a proposed plan:")
+                        for i, item in enumerate(review_state["plan"].get("todo", []), start=1):
                             print(f"{i}. {item}")
-                        print(f"\nNext step: {state['plan'].get('next_step', '')}")
                         print("\nEnter feedback to revise, or type 'yes' to approve:")
                         feedback = input("> ").strip()
                     if not feedback:
-                        if not plan_feedback_provider:
-                            print("Empty input. Please enter feedback to revise, or type 'yes' to approve.")
+                        if plan_feedback_provider:
+                            raise ValueError("plan_review feedback cannot be empty")
+                        print("Empty input. Please enter feedback to revise, or type 'yes' to approve.")
                         continue
-                    state = self.apply_plan_feedback(state, feedback, log_llm=log_llm)
-                initial = state["plan"]
+                    review_state = self.apply_plan_feedback(review_state, feedback, log_llm=log_llm)
+                plan = review_state["plan"]
 
-            memories["todo"] = initial.get("todo", [])
-            memories["next_step"] = initial.get("next_step", "")
-            transcript = []
-            start_step = 0
-            finish_reason = "max_steps_reached"
-            self._save_run_state(
-                user_request=user_request,
-                memories=memories,
-                transcript=transcript,
-                next_step_index=start_step,
-                finished=False,
-            )
-
-        for step in range(start_step, self.max_steps):
-            decision = self._decide_next(
-                memories,
-                log_llm=log_llm,
-                step=step,
-            )
-            action = decision.get("action")
-            memories["next_step"] = decision.get("next_step", "")
-
-            if action == "finish_project":
-                self.logger.info("[STEP %s] LLM decided to finish", step)
-                self._log_event("FINISH_DECIDED", {
-                    "step": step,
-                    "decision": decision,
-                })
-                finish_reason = "finish_project"
-                self._save_run_state(
-                    user_request=user_request,
-                    memories=memories,
-                    transcript=transcript,
-                    next_step_index=step + 1,
-                    finished=True,
-                    finish_reason=finish_reason,
-                )
-                break
-            if action == "skip_step":
-                self.logger.info("[STEP %s] Due to decision parse failure or invalid tool name, skip the step", step)
-                self._save_run_state(
-                    user_request=user_request,
-                    memories=memories,
-                    transcript=transcript,
-                    next_step_index=step + 1,
-                    finished=False,
-                )
-                continue
-
-            method = decision.get("method")
-            params = decision.get("params", {})
-            self.logger.info("[STEP %s] Calling tool %s with params %s", step, method, params)
-            toolcall_id = self._toolcall_id(step, method)
-            refs = self.artifact_store.toolcall_refs(toolcall_id)
-            pending = memories.get("pending_toolcall")
-            if not pending or pending.get("method") != method:
-                toolcall_key = f"{method}:{memories.get('toolcall_seq', 0)}"
-                memories["pending_toolcall"] = {"method": method, "key": toolcall_key}
-            else:
-                toolcall_key = pending.get("key")
-            validation = self.tool_executor.validate(method, params, toolcall_key=toolcall_key)
-            if not validation.get("ok"):
-                tool_output = validation.get("tool_output", {})
-                if isinstance(tool_output, dict):
-                    tool_output.setdefault("data", {})
-                    if isinstance(tool_output.get("data"), dict):
-                        tool_output["data"]["attempt_count"] = validation.get("attempt_count")
-                        tool_output["data"]["max_attempts"] = validation.get("max_attempts")
-                input_payload = {
-                    "raw_params": params,
-                    "validated_params": None,
-                    "tool_name": method,
-                    "toolcall_id": toolcall_id,
-                    "status": "validation_failed",
-                }
-                self.artifact_store.write_input(toolcall_id, input_payload)
-                output_payload = {
-                    "toolresult": tool_output,
-                    "full_output": tool_output,
-                }
-                self.artifact_store.write_output(toolcall_id, output_payload)
-                self._log_event("TOOLCALL_VALIDATION_FAILED", {
-                    "step": step,
-                    "method": method,
-                    "raw_params": params,
-                    "error": validation.get("error_digest", ""),
-                    "errors": validation.get("errors", []),
-                    "attempt_count": validation.get("attempt_count"),
-                    "max_attempts": validation.get("max_attempts"),
-                    "toolcall_id": toolcall_id,
-                    "input_ref": refs["input_ref"],
-                    "output_ref": refs["output_ref"],
-                })
-                memories["observations"].append({"step": step, "method": method, "result": tool_output})
-                transcript.append({
-                    "step": step,
-                    "method": method,
-                    "params": params,
-                    "result": tool_output,
-                    "validation_failed": True,
-                    "toolcall_id": toolcall_id,
-                    "input_ref": refs["input_ref"],
-                    "output_ref": refs["output_ref"],
-                })
-                memories["next_step"] = validation.get("next_step", memories.get("next_step", ""))
-                self._save_run_state(
-                    user_request=user_request,
-                    memories=memories,
-                    transcript=transcript,
-                    next_step_index=step + 1,
-                    finished=False,
-                )
-                continue
-
-            validated_params = validation.get("validated_params", {})
-            input_payload = {
-                "raw_params": params,
-                "validated_params": validated_params,
-                "tool_name": method,
-                "toolcall_id": toolcall_id,
-                "status": "validated",
-            }
-            self.artifact_store.write_input(toolcall_id, input_payload)
-            self._log_event("TOOLCALL_STARTED", {
-                "step": step,
-                "method": method,
-                "raw_params": params,
-                "validated_params": validated_params,
-                "toolcall_id": toolcall_id,
-                "input_ref": refs["input_ref"],
+            tasks = self._compile_tasks(plan.get("todo", []))
+            observations = []
+            status = "running"
+            self._write_task_state({
+                "user_request": user_request,
+                "plan": plan,
+                "tasks": tasks,
+                "observations": observations,
+                "status": status,
             })
-            # Random time sleep of 0.1-0.3 seconds
-            time.sleep(random.uniform(0.1, 0.3))
+
+        for task in tasks:
+            if task.get("status") != "pending":
+                continue
+            task_id = task["task_id"]
+            task_goal = task["goal"]
+            self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
+            context_pack = self.context_builder.build(task_goal, role="task_runner", policy=ContextPackPolicy())
+            stepper = TaskStepper(
+                llm=self.llm,
+                registry=self.registry,
+                tool_executor=self.tool_executor,
+                artifact_store=self.artifact_store,
+                trace_store=self.trace_store,
+                prompt=self.task_step_prompt,
+                log_fn=self._write_llm_log,
+                log_llm_console=log_llm,
+                max_steps=self.max_steps,
+            )
+            step_result = stepper.run(
+                task_id=task_id,
+                task_goal=task_goal,
+                tools_schema=self._tool_schema(),
+                context_pack=context_pack,
+                initial_instruction=f"Start task: {task_goal}",
+            )
+            summarizer = TaskSummarizer(
+                llm=self.summary_llm,
+                prompt=self.task_summary_prompt,
+                repair_prompt=self.task_summary_repair_prompt,
+                log_fn=self._write_llm_log,
+                log_llm_console=log_llm,
+            )
+            task_result = self._summarize_and_update_whiteboard(
+                summarizer,
+                task_id=task_id,
+                task_goal=task_goal,
+                step_result=step_result,
+            )
+            outcome = task_result["task_outcome"]
+            observation_path = self._write_observation(
+                task_id=task_id,
+                outcome=outcome,
+                summary=task_result["task_summary"],
+                key_artifacts=task_result["key_artifacts"],
+            )
+            observations.append({
+                "task_id": task_id,
+                "outcome": outcome,
+                "summary": task_result["task_summary"],
+                "observation_path": observation_path,
+                "key_artifacts": task_result["key_artifacts"],
+                "ops_path": task_result.get("ops_path"),
+                "diff_path": task_result.get("diff_path"),
+            })
+            task["status"] = outcome
+            self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
+            if outcome in {"failure", "needs_intervention"}:
+                status = outcome
+                self._write_task_state({
+                    "user_request": user_request,
+                    "plan": plan,
+                    "tasks": tasks,
+                    "observations": observations,
+                    "status": status,
+                })
+                break
+            self._write_task_state({
+                "user_request": user_request,
+                "plan": plan,
+                "tasks": tasks,
+                "observations": observations,
+                "status": status,
+            })
+
+        if status == "running":
+            status = "done"
+
+        summary = self._summarize_tasks(user_request, observations, status)
+        self._write_task_state({
+            "user_request": user_request,
+            "plan": plan,
+            "tasks": tasks,
+            "observations": observations,
+            "status": status,
+            "summary": summary,
+        })
+        self._publish_report(user_request, summary)
+        return {
+            "tasks": tasks,
+            "observations": observations,
+            "summary": summary,
+            "final_answer": summary,
+            "status": status,
+        }
+
+    def _summarize_and_update_whiteboard(
+        self,
+        summarizer: TaskSummarizer,
+        *,
+        task_id: str,
+        task_goal: str,
+        step_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        finish_reason = step_result.get("finish_reason", "")
+        local_observations = step_result.get("local_observations", [])
+        whiteboard_text = self.whiteboard.read()
+        error = None
+        result = self._run_task_summarizer(
+            summarizer,
+            task_id=task_id,
+            task_goal=task_goal,
+            finish_reason=finish_reason,
+            local_observations=local_observations,
+            whiteboard_text=whiteboard_text,
+            error=error,
+            use_repair_prompt=False,
+        )
+        if result is None:
+            fallback_before = self.whiteboard.get_hash()
+            fallback_summary = "Task summarizer failed; journal entry added for manual review."
+            self._append_journal_entry(
+                task_id=task_id,
+                outcome="needs_intervention",
+                summary=fallback_summary,
+                key_artifacts=[],
+            )
+            fallback_after = self.whiteboard.get_hash()
+            self._trace_whiteboard_update(
+                task_id=task_id,
+                ops_path="",
+                diff_path="",
+                status="summary_failed",
+                errors=["summary_failed"],
+                warnings=[],
+                before_hash=fallback_before,
+                after_hash=fallback_after,
+                repair_attempt=0,
+            )
+            return {
+                "task_outcome": "needs_intervention",
+                "task_summary": fallback_summary,
+                "key_artifacts": [],
+                "whiteboard_ops": [],
+                "ops_failed": True,
+                "summary_failed": True,
+            }
+
+        attempt = 0
+        while attempt <= self.patch_repair_attempts:
+            ops = [op for op in result.get("whiteboard_ops", []) if op.get("section") != "Goal"]
+            dropped_goal_ops = len(result.get("whiteboard_ops", [])) - len(ops)
+            ops_path = whiteboard_ops_persist(
+                ops,
+                {"run_id": self.run_context.run_id, "task_id": task_id, "attempt": attempt},
+                root=system_root(),
+            )["ops_path"]
+            before_hash = self.whiteboard.get_hash()
+            validation = whiteboard_ops_validate(ops)
+            if not validation.get("ok"):
+                error = "; ".join(validation.get("errors", []))
+                self._trace_whiteboard_update(
+                    task_id=task_id,
+                    ops_path=ops_path,
+                    diff_path="",
+                    status="ops_validation_failed",
+                    errors=validation.get("errors", []),
+                    warnings=validation.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
+                    before_hash=before_hash,
+                    after_hash=None,
+                    repair_attempt=attempt,
+                )
+                attempt += 1
+                whiteboard_text = self.whiteboard.read()
+                result = self._run_task_summarizer(
+                    summarizer,
+                    task_id=task_id,
+                    task_goal=task_goal,
+                    finish_reason=finish_reason,
+                    local_observations=local_observations,
+                    whiteboard_text=whiteboard_text,
+                    error=error,
+                    use_repair_prompt=True,
+                ) or result
+                continue
+
             try:
-                result = self._call_tool(method, validated_params)
-                self.logger.info("[STEP %s] Result: %s", step, result)
-                output_payload = {
-                    "toolresult": result,
-                    "full_output": result,
-                }
-                self.artifact_store.write_output(toolcall_id, output_payload)
-                self._log_event("TOOLCALL_FINISHED", {
-                    "step": step,
-                    "method": method,
-                    "validated_params": validated_params,
-                    "toolcall_id": toolcall_id,
-                    "output_ref": refs["output_ref"],
-                    "result": result,
-                })
-                memories["observations"].append({"step": step, "method": method, "result": result})
-                transcript.append({
-                    "step": step,
-                    "method": method,
-                    "params": params,
-                    "validated_params": validated_params,
-                    "result": result,
-                    "toolcall_id": toolcall_id,
-                    "input_ref": refs["input_ref"],
-                    "output_ref": refs["output_ref"],
-                })
-                memories["pending_toolcall"] = None
-                memories["toolcall_seq"] = memories.get("toolcall_seq", 0) + 1
-                self._save_run_state(
-                    user_request=user_request,
-                    memories=memories,
-                    transcript=transcript,
-                    next_step_index=step + 1,
-                    finished=False,
+                apply_result = whiteboard_ops_apply_atomic(self.whiteboard.path, ops, task_id)
+            except Exception as exc:
+                apply_result = {"ok": False, "errors": [str(exc)], "warnings": []}
+
+            if apply_result.get("ok"):
+                diff_path = ""
+                final_text = apply_result.get("after_text", "")
+                journal_text = append_task_journal_entry(
+                    final_text,
+                    task_id=task_id,
+                    outcome=result.get("task_outcome", ""),
+                    summary=result.get("task_summary", ""),
+                    artifacts=[item.get("path", "") for item in result.get("key_artifacts", [])],
+                )
+                if journal_text != final_text:
+                    self.whiteboard.path.write_text(journal_text, encoding="utf-8")
+                after_hash = self.whiteboard.get_hash()
+                try:
+                    diff_path = persist_whiteboard_diff(
+                        apply_result.get("before_text", ""),
+                        journal_text,
+                        {"run_id": self.run_context.run_id, "task_id": task_id, "attempt": attempt},
+                        root=system_root(),
+                        whiteboard_path=self.whiteboard.path,
+                    )["diff_path"]
+                except Exception:
+                    diff_path = ""
+                self._trace_whiteboard_update(
+                    task_id=task_id,
+                    ops_path=ops_path,
+                    diff_path=diff_path,
+                    status="applied",
+                    errors=[],
+                    warnings=apply_result.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
+                    before_hash=apply_result.get("before_hash"),
+                    after_hash=after_hash,
+                    repair_attempt=attempt,
+                )
+                result["ops_path"] = ops_path
+                result["diff_path"] = diff_path
+                self._update_artifact_log(result.get("key_artifacts", []))
+                return result
+
+            error = "; ".join(apply_result.get("errors", []))
+            self._trace_whiteboard_update(
+                task_id=task_id,
+                ops_path=ops_path,
+                diff_path="",
+                status="apply_failed",
+                errors=apply_result.get("errors", []),
+                warnings=apply_result.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
+                before_hash=before_hash,
+                after_hash=None,
+                repair_attempt=attempt,
+            )
+            attempt += 1
+            whiteboard_text = self.whiteboard.read()
+            result = self._run_task_summarizer(
+                summarizer,
+                task_id=task_id,
+                task_goal=task_goal,
+                finish_reason=finish_reason,
+                local_observations=local_observations,
+                whiteboard_text=whiteboard_text,
+                error=error,
+                use_repair_prompt=True,
+            ) or result
+
+        fallback_before = self.whiteboard.get_hash()
+        self._append_journal_entry(
+            task_id=task_id,
+            outcome=result["task_outcome"],
+            summary=result["task_summary"],
+            key_artifacts=result["key_artifacts"],
+        )
+        fallback_after = self.whiteboard.get_hash()
+        self._trace_whiteboard_update(
+            task_id=task_id,
+            ops_path="",
+            diff_path="",
+            status="ops_failed",
+            errors=[error or "ops_failed"],
+            warnings=[],
+            before_hash=fallback_before,
+            after_hash=fallback_after,
+            repair_attempt=attempt,
+        )
+        result["ops_failed"] = True
+        self._update_artifact_log(result.get("key_artifacts", []))
+        return result
+
+    def _initialize_whiteboard_goal(self, user_request: str) -> None:
+        try:
+            text = self.whiteboard.read()
+        except Exception:
+            return
+        lines = text.splitlines()
+        bounds = None
+        try:
+            bounds = _section_bounds(lines)
+        except Exception:
+            bounds = None
+        if not bounds or "Goal" not in bounds:
+            return
+        start, end = bounds["Goal"]
+        body = [line for line in lines[start + 1:end] if line.strip()]
+        if any(line.strip() not in {"- (empty)", "- (none)"} for line in body):
+            return
+        goal_text = " ".join(user_request.strip().split())
+        if not goal_text:
+            return
+        lines[start + 1:end] = [f"- {goal_text}"]
+        updated = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+        self.whiteboard.path.write_text(updated, encoding="utf-8")
+
+    def _run_task_summarizer(
+        self,
+        summarizer: TaskSummarizer,
+        *,
+        task_id: str,
+        task_goal: str,
+        finish_reason: str,
+        local_observations: List[Dict[str, Any]],
+        whiteboard_text: str,
+        error: Optional[str],
+        use_repair_prompt: bool,
+    ) -> Optional[Dict[str, Any]]:
+        last_error = error
+        for attempt in range(self.summary_repair_attempts + 1):
+            try:
+                return summarizer.run(
+                    task_id=task_id,
+                    task_goal=task_goal,
+                    finish_reason=finish_reason,
+                    local_observations=local_observations,
+                    whiteboard_text=whiteboard_text,
+                    whiteboard_path=str(self.whiteboard.path.relative_to(system_root().parent)),
+                    error=last_error,
+                    use_repair_prompt=use_repair_prompt or attempt > 0,
                 )
             except Exception as exc:
-                tool_result = {
-                    "toolcall_id": toolcall_id,
-                    "tool_name": method,
-                    "status": "failed",
-                    "error": str(exc),
-                    "input_ref": refs["input_ref"],
-                    "output_ref": refs["output_ref"],
-                }
-                output_payload = {
-                    "toolresult": tool_result,
-                    "full_output": {"error": str(exc)},
-                }
-                self.artifact_store.write_output(toolcall_id, output_payload)
-                self._log_event("TOOLCALL_FAILED", {
-                    "step": step,
-                    "method": method,
-                    "validated_params": validated_params,
-                    "error": str(exc),
-                    "toolcall_id": toolcall_id,
-                    "output_ref": refs["output_ref"],
-                })
-                memories["observations"].append({"step": step, "method": method, "result": tool_result})
-                transcript.append({
-                    "step": step,
-                    "method": method,
-                    "params": params,
-                    "validated_params": validated_params,
-                    "result": tool_result,
-                    "toolcall_id": toolcall_id,
-                    "input_ref": refs["input_ref"],
-                    "output_ref": refs["output_ref"],
-                    "error": str(exc),
-                })
-                memories["pending_toolcall"] = None
-                memories["toolcall_seq"] = memories.get("toolcall_seq", 0) + 1
-                self._save_run_state(
-                    user_request=user_request,
-                    memories=memories,
-                    transcript=transcript,
-                    next_step_index=step + 1,
-                    finished=False,
-                    last_error=str(exc),
-                )
+                last_error = str(exc)
+        return None
+
+    def _update_artifact_log(self, key_artifacts: List[Dict[str, Any]]) -> None:
+        if not key_artifacts:
+            return
+        entries: List[Dict[str, str]] = []
+        for item in key_artifacts:
+            path = (item.get("path") or "").strip()
+            if not path:
                 continue
-
-        summary = self._summarize(memories, user_request)
-        final_answer = self._llm_summary(memories, user_request)
-        self._log_event("RUN_FINISHED", {
-            "reason": finish_reason,
-            "steps": len(transcript),
-        })
-        self._save_run_state(
-            user_request=user_request,
-            memories=memories,
-            transcript=transcript,
-            next_step_index=step + 1 if 'step' in locals() else 0,
-            finished=True,
-            finish_reason=finish_reason,
-        )
-
-        return {
-            "todo": memories["todo"],
-            "observations": memories["observations"],
-            "transcript": transcript,
-            "summary": summary,
-            "final_answer": final_answer,
-        }
-
-    def run_with_plan_state(
-        self,
-        plan_state: Dict[str, Any],
-        *,
-        log_llm: bool = False,
-    ) -> Dict[str, Any]:
-        if not isinstance(plan_state, dict) or "plan" not in plan_state:
-            raise ValueError("Invalid plan_state; expected a dict with a 'plan' key")
-        if not plan_state.get("approved"):
-            return {
-                "todo": plan_state.get("plan", {}).get("todo", []),
-                "observations": [],
-                "transcript": [],
-                "summary": "Plan awaiting approval; apply feedback and approve with 'yes' before running steps.",
-                "final_answer": "",
-                "plan_state": plan_state,
-                "status": "awaiting_plan_approval",
-            }
-        user_request = plan_state.get("user_request", "")
-        return self.run(user_request, log_llm=log_llm, initial_plan=plan_state.get("plan"))
-
-    def _decide_next(
-        self,
-        memories: Dict[str, Any],
-        *,
-        log_llm: bool = False,
-        step: int = 0,
-    ) -> Dict[str, Any]:
-        messages = self.step_prompt.format_messages(
-            todo=json.dumps(memories.get("todo", [])),
-            observations=json.dumps(memories.get("observations", [])),
-            last_result=json.dumps(memories.get("observations", [])[-1] if memories.get("observations") else {}),
-            tools=self._tool_schema(),
-            instruction=memories.get("next_step", ""),
-        )
-        resp = self.llm.invoke(messages)
-        raw = resp.content
-
-        self._write_llm_log("step_prompt", step=step, messages=self._messages_to_dict(messages))
-        self._write_llm_log("step_response", step=step, content=raw)
-        if log_llm or self.log_llm_console:
-            self.logger.info("[DECIDE][LLM RAW][step=%s] %s", step, raw)
-
-        def _controller_obs(status: str, **kw):
-            memories["observations"].append({
-                "step": step,
-                "method": "ORCHESTRATOR_OBSERVATION",
-                "result": {"status": status, **kw},
+            path_parts = Path(path).parts
+            if ".catmaster" in path_parts:
+                continue
+            if path.startswith("/"):
+                try:
+                    resolved = Path(path).resolve()
+                except Exception:
+                    continue
+                try:
+                    resolved.relative_to(workspace_root())
+                except Exception:
+                    continue
+                try:
+                    resolved.relative_to(system_root())
+                    continue
+                except Exception:
+                    pass
+            entries.append({
+                "path": path,
+                "description": (item.get("description") or "").strip(),
+                "type": ArtifactLog.infer_type(path),
             })
+        if entries:
+            self.artifact_log.update(entries)
 
-        # 1) Try to parse the raw response as JSON
+    def _trace_whiteboard_update(
+        self,
+        *,
+        task_id: str,
+        ops_path: str,
+        diff_path: str,
+        status: str,
+        errors: List[str],
+        warnings: List[str],
+        before_hash: Optional[str],
+        after_hash: Optional[str],
+        repair_attempt: int,
+    ) -> None:
+        self.trace_store.append_patch({
+            "task_id": task_id,
+            "role": "manager",
+            "whiteboard_path": str(self.whiteboard.path),
+            "ops_path": ops_path,
+            "diff_path": diff_path,
+            "status": status,
+            "errors": errors,
+            "warnings": warnings,
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+            "repair_attempt": repair_attempt,
+        })
+
+    def _append_journal_entry(
+        self,
+        *,
+        task_id: str,
+        outcome: str,
+        summary: str,
+        key_artifacts: List[Dict[str, Any]],
+    ) -> None:
+        text = self.whiteboard.read()
+        updated = append_task_journal_entry(
+            text,
+            task_id=task_id,
+            outcome=outcome,
+            summary=summary,
+            artifacts=[item.get("path", "") for item in key_artifacts if item.get("path")],
+        )
+        self.whiteboard.path.write_text(updated, encoding="utf-8")
+
+    def _compile_tasks(self, todo: List[str]) -> List[Dict[str, Any]]:
+        tasks: List[Dict[str, Any]] = []
+        for idx, item in enumerate(todo or [], start=1):
+            tasks.append({
+                "task_id": f"task_{idx:02d}",
+                "goal": str(item),
+                "status": "pending",
+            })
+        return tasks
+
+    def _write_observation(
+        self,
+        *,
+        task_id: str,
+        outcome: str,
+        summary: str,
+        key_artifacts: List[Dict[str, Any]],
+    ) -> str:
+        obs_dir = self.run_context.run_dir / "observations"
+        obs_dir.mkdir(parents=True, exist_ok=True)
+        index = len(list(obs_dir.glob("obs_*.md"))) + 1
+        fname = f"obs_{index:03d}_{task_id}.md"
+        path = obs_dir / fname
+        lines = [
+            f"# Observation {index}",
+            f"- Task: {task_id}",
+            f"- Outcome: {outcome}",
+            "",
+            "## Summary",
+            summary or "",
+            "",
+            "## Key Artifacts",
+        ]
+        if key_artifacts:
+            for item in key_artifacts:
+                kpath = item.get("path", "")
+                desc = item.get("description", "")
+                kind = item.get("kind", "")
+                lines.append(f"- {kpath} ({kind}): {desc}")
+        else:
+            lines.append("- (none)")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return str(path.relative_to(self.run_context.run_dir))
+
+    def _write_task_state(self, payload: Dict[str, Any]) -> None:
+        path = self.run_context.run_dir / "task_state.json"
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _summarize_tasks(self, user_request: str, observations: List[Dict[str, Any]], status: str) -> str:
+        fallback = self._summarize_tasks_fallback(user_request, observations)
         try:
-            decision = self._parse_json_response(raw)
-        except Exception as exc:
-            _controller_obs(
-                "LLM_DECISION_JSON_PARSE_FAILED",
-                error=str(exc),
-                raw=raw,
+            whiteboard_excerpt = self.whiteboard.read_sections(
+                ["Goal", "Key Facts", "Key Files", "Constraints"],
+                max_chars=4000,
             )
-            return {
-                "action": "skip_step",
-                "method": None,
-                "params": {},
-                "next_step": "Re-emit a valid JSON decision following the schema. Choose ONE tool call with valid params, or finish_project.",
-                "note": "json_parse_failed",
-                "reasoning": f"unable to parse LLM decision as JSON: {exc}",
-            }
+        except Exception:
+            whiteboard_excerpt = ""
+        artifacts = self._artifact_log_excerpt(limit=200)
+        try:
+            messages = self.summary_prompt.format_messages(
+                user_request=user_request,
+                observations=json.dumps(observations, ensure_ascii=False),
+                whiteboard_excerpt=whiteboard_excerpt,
+                artifacts=json.dumps(artifacts, ensure_ascii=False),
+                status=status,
+            )
+            resp = self.summary_llm.invoke(messages)
+            raw = (resp.content or "").strip()
+            self._write_llm_log("final_summary_prompt", messages=self._messages_to_dict(messages))
+            self._write_llm_log("final_summary_response", content=raw)
+            return raw if raw else fallback
+        except Exception:
+            return fallback
 
-        # 3) Normalize the decision to avoid missing fields / params not being an object
-        action = decision.get("action")
-        method = decision.get("method")
-        params = decision.get("params", {})
-        next_step = decision.get("next_step", "")
-        note = decision.get("note", "")
-        reasoning = decision.get("reasoning", "")
-
-        # 4) Minimum validation (if the tool name does not exist, skip the step, write observation, and end or choose to repair again)
-        if action == "call":
-            if not method or not self.registry.get_tool_info(method):
-                _controller_obs(
-                    "TOOLCALL_VALIDATION_FAILED",
-                    error="invalid or unknown tool name",
-                    method=method,
-                )
-                return {
-                    "action": "skip_step",
-                    "method": None,
-                    "params": {},
-                    "next_step": "skip the step due to invalid tool name in decision",
-                    "note": "invalid_tool",
-                    "reasoning": f"method is not a valid registered tool: {method}",
-                }
-
-        if action == "finish_project":
-            method = None
-            params = {}
-
-        return {
-            "action": action,
-            "method": method,
-            "params": params,
-            "next_step": next_step,
-            "note": note,
-            "reasoning": reasoning,
-        }
-
-    def _call_tool(self, method: str, params: Dict[str, Any]) -> Any:
-        func = self.registry.get_tool_function(method)
-        return func(params)
-
-    def _summarize(self, memories: Dict[str, Any], user_request: str) -> str:
+    @staticmethod
+    def _summarize_tasks_fallback(user_request: str, observations: List[Dict[str, Any]]) -> str:
         lines = [f"Request: {user_request}"]
-        for obs in memories.get("observations", []):
-            lines.append(f"- {obs.get('method')}: status={obs.get('result', {}).get('status', 'unknown')}")
+        for obs in observations:
+            lines.append(f"- {obs.get('task_id')}: outcome={obs.get('outcome')} summary={obs.get('summary')}")
         return "\n".join(lines)
 
-    def _llm_summary(self, memories: Dict[str, Any], user_request: str) -> str:
-        obs_text = json.dumps(memories.get("observations", []), ensure_ascii=False)
+    def _artifact_log_excerpt(self, limit: int = 200) -> List[Dict[str, Any]]:
+        entries = self.artifact_log.load()
+        entries.sort(key=lambda e: e.get("updated_time", ""), reverse=True)
+        return entries[:limit]
+
+    def _publish_report(self, user_request: str, final_answer: str) -> None:
+        reports_dir = workspace_root() / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        latest_link = reports_dir / "latest_run"
+        target = self.run_context.run_dir
         try:
-            resp = self.summary_llm.invoke(self.summary_prompt.format_messages(
-                user_request=user_request,
-                observations=obs_text,
-            ))
-            return resp.content
+            if latest_link.is_symlink() or latest_link.exists():
+                latest_link.unlink()
         except Exception:
-            return self._summarize(memories, user_request)
+            pass
+        rel_target = os.path.relpath(target, reports_dir)
+        try:
+            latest_link.symlink_to(rel_target)
+        except Exception:
+            # Fallback: create a text pointer if symlink fails
+            latest_link.write_text(str(target), encoding="utf-8")
+
+        final_report = reports_dir / "FINAL_REPORT.md"
+        final_report.write_text(
+            "\n".join([
+                "# Final Report",
+                "",
+                "## User Query",
+                user_request,
+                "",
+                "## Final Answer",
+                final_answer,
+                "",
+            ]),
+            encoding="utf-8",
+        )
+
+        whiteboard_src = self.whiteboard.path
+        whiteboard_dst = reports_dir / "WHITEBOARD.md"
+        try:
+            shutil.copy2(whiteboard_src, whiteboard_dst)
+        except Exception:
+            # Best-effort copy
+            if whiteboard_src.exists():
+                whiteboard_dst.write_text(whiteboard_src.read_text(encoding="utf-8"), encoding="utf-8")
 
     def _messages_to_dict(self, messages: List[Any]) -> List[Dict[str, Any]]:
         formatted: List[Dict[str, Any]] = []
@@ -765,20 +921,39 @@ class Orchestrator:
             )
         return formatted
 
-    # ------------------ JSON parsing helpers ------------------
-    def _parse_json_response(self, content: str) -> Dict[str, Any]:
-        """Strict JSON parse; raises if invalid."""
-        return json.loads(content)
+    @staticmethod
+    def _parse_json_response(content: str) -> Dict[str, Any]:
+        match = re.search(r"```json\s*(.*?)\s*```", content, re.IGNORECASE | re.DOTALL)
+        if not match:
+            raise ValueError("Expected JSON wrapped in ```json ... ```")
+        json_text = match.group(1).strip()
+        return json.loads(json_text)
 
-    def _is_plan_approved(self, feedback: str) -> bool:
+    @staticmethod
+    def _is_plan_approved(feedback: str) -> bool:
         if not isinstance(feedback, str):
             return False
         normalized = feedback.strip().lower()
         return normalized in {"yes", "y", "approve", "approved", "ok", "okay"}
 
-    # ------------------ LLM log helper ------------------
-    def _write_llm_log(self, event: str, *, content: Optional[str] = None, messages: Optional[List[Dict[str, Any]]] = None, step: Optional[int] = None) -> None:
-        """Append prompt/response to a private JSONL log outside the workspace."""
+    def _normalize_plan(self, data: Dict[str, Any], user_request: str) -> Dict[str, Any]:
+        if not isinstance(data, dict):
+            raise ValueError("Plan must be a JSON object")
+        normalized = dict(data)
+        todo = normalized.get("todo")
+        if not isinstance(todo, list) or not todo:
+            raise ValueError("Plan.todo must be a non-empty list")
+        reasoning = normalized.get("reasoning")
+        if reasoning is None:
+            reasoning = ""
+        if not isinstance(reasoning, str):
+            raise ValueError("Plan.reasoning must be a string")
+        normalized["todo"] = todo
+        normalized.pop("next_step", None)
+        normalized["reasoning"] = reasoning
+        return normalized
+
+    def _write_llm_log(self, event: str, *, content: Optional[str] = None, messages: Optional[List[Dict[str, Any]]] = None, step: Optional[int] = None, **extra: Any) -> None:
         if not self.llm_log_file:
             return
         record = {
@@ -791,10 +966,10 @@ class Orchestrator:
             record["messages"] = messages
         if content is not None:
             record["content"] = content
-        try:
-            with self.llm_log_file.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception as exc:
-            self.logger.debug("LLM log write failed: %s", exc)
+        if extra:
+            record.update(extra)
+        with self.llm_log_file.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 
 __all__ = ["Orchestrator"]

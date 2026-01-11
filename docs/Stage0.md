@@ -174,7 +174,7 @@ Stage 0 不引入完整 World Model 语义层，但必须做到：
 
 **验收要点**
 
-* 在 vasp_execute 后强制中断进程，恢复后能继续到 vasp_summarize 与最终 summary。
+* 在 vasp_execute 后强制中断进程，恢复后能继续到 python_exec 与最终 summary。
 * 恢复后不会把同一个 job 重复提交（如果你现有 vasp_execute 已经有 job_id 或工作目录检查机制，则应利用它；如果没有，阶段 0 至少要做到“检测输出目录存在时不盲目重复”）。
 
 ---
@@ -198,7 +198,7 @@ Stage 0 不引入完整 World Model 语义层，但必须做到：
 你可以把阶段 0 的验收固定为三条自动化回归任务，每条都能在你当前工具集中完成：
 
 1. **O2 能量计算正常跑通**
-   预期LLM自动规划的调用链：* create_molecule_from_smiles →（可选 mace_relax）→ vasp_execute → vasp_summarize → final summary
+   预期LLM自动规划的调用链：* create_molecule_from_smiles →（可选 mace_relax）→ vasp_execute → python_exec → final summary
 2. **参数错误纠错回归**
    * 人为让 LLM 第一次 toolcall 缺字段或类型不对
    * 观察系统拦截、记录、驱动修正，最终跑通

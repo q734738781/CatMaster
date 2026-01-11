@@ -7,7 +7,6 @@ Flow (file-first):
 2) Let the orchestrator plan/execute using registered tools:
    - relax_prepare (local)
    - vasp_execute (DPDispatcher)
-   - vasp_summarize (local)
 3) Report final energy per atom and O–O bond distance.
 
 Use --run to actually submit to the configured cluster; default is dry-run
@@ -33,7 +32,7 @@ def main() -> None:
     parser.add_argument("--log-level", default="INFO", help="Logging level (INFO or DEBUG)")
     parser.add_argument("--log-dir", default=None, help="Directory to store logs (log.log + orchestrator_llm.jsonl)")
     parser.add_argument("--proxy", default=None, help="Proxy server address expressed as <host>:<port>")
-    parser.add_argument("--resume", default=None, help="Run directory to resume from")
+    parser.add_argument("--resume", action="store_true", help="Resume from existing workspace (do not clear)")
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]
@@ -84,19 +83,12 @@ def main() -> None:
         reasoning_effort="high",
 
     )
-    summary_llm = ChatOpenAI(
-        model="gpt-5.2",
-        temperature=0,
-        reasoning_effort="medium",
-    ) # Use natural language response format
-
     orch = Orchestrator(
         llm=llm,
-        summary_llm=summary_llm,
         max_steps=300,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
         log_llm_console=True,
-        resume_dir=args.resume,
+        resume=args.resume,
     )
 
     if not args.run:
