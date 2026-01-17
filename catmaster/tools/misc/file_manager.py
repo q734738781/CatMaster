@@ -47,7 +47,7 @@ class WorkspaceListFilesInput(BaseModel):
     view: str = Field("user", description="user or system")
     depth: int = Field(3, ge=0, description="Maximum depth to traverse from the root path")
     max_entries: int = Field(200, ge=1, description="Maximum number of entries to return")
-    exclude_globs: List[str] = Field(default_factory=list, description="Glob patterns to exclude")
+    exclude_globs: List[str] = Field(default_factory=list, description="List of glob patterns to exclude")
     continuation_token: Optional[str] = Field(None, description="Opaque offset token for pagination")
 
 

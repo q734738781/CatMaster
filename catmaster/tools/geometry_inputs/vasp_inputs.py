@@ -53,6 +53,8 @@ class StructWriter:
         user_incar_settings.setdefault("NSW", 500)
         user_incar_settings.setdefault("NELM", 100)
         user_incar_settings.setdefault("EDIFFG", -0.02)
+        user_incar_settings.setdefault("LCHARG", False)
+        user_incar_settings.setdefault("LWAVE", False)
         if calc_type != "gas":
             user_incar_settings.setdefault("ISMEAR", 0)
             user_incar_settings.setdefault("SIGMA", 0.1)

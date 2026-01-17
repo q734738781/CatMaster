@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional
+import os
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
@@ -26,7 +27,11 @@ class MaceRelaxInput(BaseModel):
         ...,
         description="Input structure file with lattice information (Supports POSCAR/CIF, xyz files are NOT supported).",
     )
-    fmax: float = Field(0.03, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
+    output_root: Optional[str] = Field(
+        None,
+        description="Output directory for relaxation results. Defaults to the input file's directory.",
+    )
+    fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
     model: Optional[str] = Field(None, description="MACE model name; defaults from router config (medium-mpa-0).")
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
@@ -35,8 +40,19 @@ class MaceRelaxInput(BaseModel):
 class MaceRelaxBatchInput(BaseModel):
     """Submit multiple MACE relaxations in one DPDispatcher submission. Preferred tool for batch MACE relaxations."""
 
-    structure_files: list[str] = Field(..., description="List of structure files with lattice (POSCAR/CIF).")
-    fmax: float = Field(0.03, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
+    input_dir: str = Field(
+        ...,
+        description="Root directory containing structure files with lattice (POSCAR/CIF).",
+    )
+    output_root: str = Field(
+        ...,
+        description=(
+            "Root directory to store batch outputs. Results are flattened under output_root using '__' to encode the "
+            "relative input path (without file suffix). For example, input 'a/b/CO.vasp' -> output "
+            "'<output_root>/a__b__CO/'. Must be outside input_dir."
+        ),
+    )
+    fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
     model: Optional[str] = Field(None, description="MACE model name; defaults from router config (medium-mpa-0).")
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
@@ -52,17 +68,14 @@ def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("model is required; set in payload or router defaults")
 
     structure_path = resolve_workspace_path(params.structure_file, must_exist=True)
-    parent = structure_path.parent
-    base = structure_path.stem
-    candidate = parent / base
-    idx = 1
-    while candidate.exists():
-        candidate = parent / f"{base}_run{idx}"
-        idx += 1
-    work_dir = candidate
-    work_dir.mkdir(parents=True, exist_ok=True)
+    output_root = resolve_workspace_path(params.output_root) if params.output_root else structure_path.parent
+    if output_root.exists() and not output_root.is_dir():
+        raise NotADirectoryError(f"output_root is not a directory: {output_root}")
+    output_root.mkdir(parents=True, exist_ok=True)
+    work_dir = output_root
     dest_structure = work_dir / structure_path.name
-    dest_structure.write_bytes(structure_path.read_bytes())
+    if dest_structure.resolve() != structure_path.resolve():
+        dest_structure.write_bytes(structure_path.read_bytes())
 
     params.model = model
     dispatch_req = _build_mace_relax_request(params, route=route, work_dir=work_dir, dest_structure=dest_structure)
@@ -88,6 +101,51 @@ def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
         execution_time=result.duration_s,
     )
 
+def _is_structure_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    name = path.name
+    if name in {"POSCAR", "CONTCAR"}:
+        return True
+    return path.suffix.lower() in {".vasp", ".poscar", ".cif"}
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
+    files: list[Path] = []
+    skip_prefixes = ("mace_batch_", "vasp_batch_")
+    for dirpath, dirnames, filenames in os.walk(root):
+        path = Path(dirpath)
+        if exclude_root is not None and _is_within(path, exclude_root):
+            dirnames[:] = []
+            continue
+        if any(part.startswith(skip_prefixes) for part in path.parts):
+            dirnames[:] = []
+            continue
+        if ".catmaster" in path.parts:
+            dirnames[:] = []
+            continue
+        if "summary.json" in filenames:
+            dirnames[:] = []
+            continue
+        dirnames[:] = [
+            d for d in dirnames
+            if d != ".catmaster" and not d.startswith(skip_prefixes)
+        ]
+        for fname in filenames:
+            p = path / fname
+            if _is_structure_file(p):
+                files.append(p)
+    return sorted(files, key=lambda p: str(p))
+
+
 def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = MaceRelaxBatchInput(**payload)
     router = ResourceRouter()
@@ -97,55 +155,75 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not model:
         raise ValueError("model is required; set in payload or router defaults")
 
-    structures = [resolve_workspace_path(p, must_exist=True) for p in params.structure_files]
+    input_root = resolve_workspace_path(params.input_dir, must_exist=True)
+    if not input_root.is_dir():
+        return create_tool_output(
+            "mace_relax_batch",
+            success=False,
+            error=f"input_dir is not a directory: {input_root}",
+        )
+    if params.output_root is None:
+        return create_tool_output(
+            "mace_relax_batch",
+            success=False,
+            error="output_root is required for directory batch relaxations.",
+        )
+    output_root = resolve_workspace_path(params.output_root)
+    if output_root.exists() and not output_root.is_dir():
+        return create_tool_output(
+            "mace_relax_batch",
+            success=False,
+            error=f"output_root is not a directory: {output_root}",
+        )
+    if _is_within(output_root, input_root):
+        return create_tool_output(
+            "mace_relax_batch",
+            success=False,
+            error="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+        )
+    output_root.mkdir(parents=True, exist_ok=True)
+    structures = _collect_structure_files(input_root, exclude_root=None)
+    if not structures:
+        return create_tool_output(
+            "mace_relax_batch",
+            success=False,
+            error="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+        )
+
     work_base = make_work_base("mace_batch")
-    base_dir = structures[0].parent
+    stage_root = output_root / work_base
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+    stage_input = stage_root / "input"
+    stage_output = stage_root / "output"
+    shutil.copytree(input_root, stage_input)
+    stage_output.mkdir(parents=True, exist_ok=True)
 
     reg = TaskRegistry()
-    cfg = reg.get("mace_relax")
+    cfg = reg.get("mace_relax_dir")
 
-    tasks: list[TaskSpec] = []
-    task_meta = []
-    for struct in structures:
-        task_dir = base_dir / work_base / struct.stem
-        if task_dir.exists():
-            shutil.rmtree(task_dir)
-        task_dir.mkdir(parents=True, exist_ok=True)
-        dest_structure = task_dir / struct.name
-        dest_structure.write_bytes(struct.read_bytes())
-
-        ctx = {
-            "structure_file": dest_structure.name,
-            "structure": dest_structure.name,
-            "fmax": params.fmax,
-            "maxsteps": params.maxsteps,
-            "steps": params.maxsteps,
-            "model": model,
-        }
-        rendered = render_task_fields(cfg, ctx, task_dir)
-
-        tasks.append(
-            TaskSpec(
-                command=rendered["command"],
-                task_work_path=task_dir.relative_to(base_dir / work_base).as_posix(),
-                forward_files=rendered["forward_files"],
-                backward_files=rendered["backward_files"],
-            )
-        )
-        task_meta.append(
-            {
-                "input_struct_rel": workspace_relpath(struct),
-                "stage_dir": task_dir,
-                "backward_files": rendered["backward_files"],
-            }
-        )
+    ctx = {
+        "input_path": "input",
+        "output_root": "output",
+        "fmax": params.fmax,
+        "maxsteps": params.maxsteps,
+        "steps": params.maxsteps,
+        "model": model,
+    }
+    rendered = render_task_fields(cfg, ctx, stage_root)
+    task = TaskSpec(
+        command=rendered["command"],
+        task_work_path=".",
+        forward_files=rendered["forward_files"],
+        backward_files=rendered["backward_files"],
+    )
 
     batch_req = BatchDispatchRequest(
         machine=route.machine,
         resources=route.resources,
         work_base=work_base,
-        local_root=str(base_dir),
-        tasks=tasks,
+        local_root=str(output_root),
+        tasks=[task],
         forward_common_files=[],
         backward_common_files=[],
         clean_remote=False,
@@ -154,19 +232,11 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     result = dispatch_submission(batch_req)
 
-    outputs = []
-    for meta in task_meta:
-        stage = meta["stage_dir"]
-        back_files = []
-        for pattern in meta["backward_files"]:
-            for p in stage.glob(pattern):
-                back_files.append(workspace_relpath(p))
-        outputs.append(
-            {
-                "input_structure_rel": meta["input_struct_rel"],
-                "output_files": back_files,
-            }
-        )
+    if stage_output.exists():
+        shutil.copytree(stage_output, output_root, dirs_exist_ok=True)
+
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
 
     return create_tool_output(
         tool_name="mace_relax_batch",
@@ -175,7 +245,10 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             "task_states": result.task_states,
             "submission_dir": result.submission_dir,
             "work_base": result.work_base,
-            "outputs": outputs,
+            "input_root_rel": workspace_relpath(input_root),
+            "output_root_rel": workspace_relpath(output_root),
+            "batch_summary_rel": workspace_relpath(output_root / "batch_summary.json") if (output_root / "batch_summary.json").exists() else None,
+            "structures_found": len(structures),
         },
         execution_time=result.duration_s,
     )

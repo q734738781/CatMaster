@@ -22,7 +22,8 @@ class ToolRegistry:
             create_molecule_from_smiles,
             relax_prepare,
             build_slab,
-            set_selective_dynamics,
+            fix_atoms_by_layers,
+            fix_atoms_by_height,
             supercell,
             enumerate_adsorption_sites,
             place_adsorbate,
@@ -32,7 +33,8 @@ class ToolRegistry:
             MoleculeFromSmilesInput,
             RelaxPrepareInput,
             SlabBuildInput,
-            SlabSelectiveDynamicsInput,
+            FixAtomsByLayersInput,
+            FixAtomsByHeightInput,
             SupercellInput,
             EnumerateAdsorptionSitesInput,
             PlaceAdsorbateInput,
@@ -64,7 +66,8 @@ class ToolRegistry:
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("relax_prepare", relax_prepare, RelaxPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
-        self.register_tool("set_selective_dynamics", set_selective_dynamics, SlabSelectiveDynamicsInput)
+        self.register_tool("fix_atoms_by_layers", fix_atoms_by_layers, FixAtomsByLayersInput)
+        self.register_tool("fix_atoms_by_height", fix_atoms_by_height, FixAtomsByHeightInput)
         self.register_tool("supercell", supercell, SupercellInput)
         self.register_tool("enumerate_adsorption_sites", enumerate_adsorption_sites, EnumerateAdsorptionSitesInput)
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)

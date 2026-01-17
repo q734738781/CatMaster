@@ -23,19 +23,26 @@ import os
 import shutil
 from langchain_openai import ChatOpenAI
 from catmaster.agents.orchestrator import Orchestrator
+from catmaster.ui import create_reporter
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LLM demo: O2 Fe adsorption energy calculation")
-    parser.add_argument("--workspace", default="workspace/demo_llm_fe_ads_energy", help="Workspace root")
+    parser = argparse.ArgumentParser(description="LLM demo: Fe structure comprehension")
+    parser.add_argument("--workspace", default="workspace/demo_llm_fe_comprehension", help="Workspace root")
     parser.add_argument("--run", action="store_true", help="Actually submit vasp_execute; otherwise quit")
     parser.add_argument("--log-level", default="INFO", help="Logging level (INFO or DEBUG)")
     parser.add_argument("--log-dir", default=None, help="Directory to store logs (log.log + orchestrator_llm.jsonl)")
     parser.add_argument("--proxy", default=None, help="Proxy server address expressed as <host>:<port>")
     parser.add_argument("--resume", action="store_true", help="Resume from existing workspace (do not clear)")
+    parser.add_argument("--ui", choices=["rich", "plain", "off"], default=None, help="UI mode (default: rich if TTY else plain)")
+    parser.add_argument("--ui-debug", action="store_true", help="Show UI debug panel with LLM snippets/paths")
+    parser.add_argument("--no-splash", action="store_true", help="Disable splash screen")
     args = parser.parse_args()
 
-    handlers = [logging.StreamHandler()]
+    ui_mode = args.ui or ("rich" if sys.stdout.isatty() else "plain")
+    handlers = []
+    if ui_mode == "off":
+        handlers.append(logging.StreamHandler())
     if args.proxy:
         print(f"Using proxy: {args.proxy}")
         
@@ -57,6 +64,12 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=handlers,
     )
+    reporter = create_reporter(
+        ui_mode,
+        ui_debug=args.ui_debug,
+        show_splash=not args.no_splash,
+        is_tty=sys.stdout.isatty(),
+    )
 
     root = Path(args.workspace).resolve()
     # Export to CATMASTER_WORKSPACE (tools should respect this workspace)
@@ -68,12 +81,12 @@ def main() -> None:
         root.mkdir(parents=True, exist_ok=True)
 
     user_request = (
-        "Compute CO adsorption energy on BCC Fe surface for different surfaces and adsorption sites:"
-        "Download the mp-150 structure from Materials Project (Fe bcc phase) and use it as the initial structure."
-        "Use a 2x2 supercell for the slab, with 10A slab thickness and 15A vacuum thickness, fix the bottom 3 layers of the slab."
-        "Enumerate the adsorption sites on the slab's (100), (110), and (111) surfaces, and place the CO molecule on each possible site."
-        "Use the following formula to calculate the adsorption energy: E_ads = E_(Fe-CO) - E_(Fe) - E_(CO)"
-        "Perform VASP calculation to get the results. Summarize the results in a markdown file, report the adsorption energy for each adsorption site on different surfaces and report the most stable adsorption site."
+        "Compute surface energies of bcc Fe (100),(110),(111) facet of conventional cell and determine CO adsorption energy with best adsorption site on the most stable surface"
+        "Download the proper structure from Materials Project and use it as the initial structure. Get the relaxed structure under our calculation creteria."
+        "User enough thickness for slab construction (12A for slab and 15A for vacuum), and fix center part of slabs for surface for surface energy calculations."
+        "Then generate all possible adsorption structures on the most stable surface and calculate the adsorption energy for each site using the 2x2 supercell slab to avoid the pbc adsorbate co-interaction effect. Remember to fix the bottom atoms for adsorption calculation."
+        "Perform VASP calculation to get the results. Summarize the results in a markdown file, report the surface energies and the best site for CO adsorption geometry file"
+        "Write down your proposed calculation parameters in the plan tasks for review."
     )
 
     llm = ChatOpenAI(
@@ -87,8 +100,9 @@ def main() -> None:
         llm=llm,
         max_steps=300,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
-        log_llm_console=True,
+        log_llm_console=ui_mode == "off",
         resume=args.resume,
+        reporter=reporter,
     )
 
     if not args.run:
@@ -100,18 +114,7 @@ def main() -> None:
         log_llm=True,
     )
 
-    print("\n=== Summary ===")
-    print(result.get("summary", "No summary"))
-    if "final_answer" in result:
-        print("\n=== LLM Final Answer ===")
-        print(result.get("final_answer", "No final answer"))
-    print("\nObservations:")
-    for obs in result.get("observations", []):
-        print(obs)
-    if log_dir_path:
-        print(f"\nLogs saved to: {log_dir_path}")
-        print("  - app log: log.log")
-        print("  - LLM trace: orchestrator_llm.jsonl")
+    _ = result
 
 
 if __name__ == "__main__":

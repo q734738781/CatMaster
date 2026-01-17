@@ -18,9 +18,9 @@ def main() -> None:
 
     res = tool(
         {
-            "structure_file": "tests/assets/Fe.cif",
-            "supercell": [3, 3, 3],
-            "output_path": str(out_dir / "Fe_3x3x3.vasp"),
+            "structure_file": "tests/assets/Fe_hkl111_12A_15AVac_5ARelax.vasp",
+            "supercell": [2, 2, 1],
+            "output_path": str(out_dir / "Fe_111_2x2.vasp"),
         }
     )
 

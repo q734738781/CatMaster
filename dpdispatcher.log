@@ -464,3 +464,1507 @@ LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdis
 2026-01-11 08:57:45,225 - INFO : remote path: /public/home/chenhh/catmaster_work/913173d508f83da9990f889e57298e8dfd7d6abe
 2026-01-11 08:57:46,613 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215809
 2026-01-11 09:06:49,063 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215809 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 13:22:45,862 - INFO : Find old submission; recover submission from json file;submission.submission_hash:e17d80d1ffdd9da70c3cef175477f6452e351281; machine.context.remote_root:/public/home/chenhh/catmaster_work/e17d80d1ffdd9da70c3cef175477f6452e351281; submission.work_base:vasp_relax;
+2026-01-11 13:22:45,862 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 13:35:13,708 - INFO : Find old submission; recover submission from json file;submission.submission_hash:b066b8420476d005349e2fdc54c592d3f3619449; machine.context.remote_root:/public/home/chenhh/catmaster_work/b066b8420476d005349e2fdc54c592d3f3619449; submission.work_base:o2_box;
+2026-01-11 13:35:13,709 - INFO : info:check_all_finished: True
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 14:05:10,998 - INFO : info:check_all_finished: False
+2026-01-11 14:05:10,998 - INFO : remote path: /public/home/chenhh/catmaster_work/008516b1dc375107bb54d50509cf0b31b3b34260
+2026-01-11 14:05:12,356 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215812
+2026-01-11 14:11:14,414 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215812 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 19:00:54,587 - INFO : info:check_all_finished: False
+2026-01-11 19:00:54,587 - INFO : remote path: /public/home/chenhh/catmaster_work/5f092451a14411c6469c656521e547b5daede243
+2026-01-11 19:00:56,013 - INFO : job: 72f788f6f14eea25e858cc30c73ad94dd3a44370 submit; job_id is 215816
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 20:05:59,569 - INFO : info:check_all_finished: False
+2026-01-11 20:05:59,569 - INFO : remote path: /public/home/chenhh/catmaster_work/936f224c8ecb204a717c1042929eaf4c4a578ec6
+2026-01-11 20:06:00,959 - INFO : job: a347dd5a90b666eb8ae9349e6c22a590899a2d8c submit; job_id is 215819
+2026-01-11 20:09:02,675 - INFO : job: a347dd5a90b666eb8ae9349e6c22a590899a2d8c 215819 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 20:56:19,587 - INFO : info:check_all_finished: False
+2026-01-11 20:56:19,589 - INFO : remote path: /public/home/chenhh/catmaster_work/0dff1907109af991991e93048a31ecd9ea5c47df
+2026-01-11 20:56:21,007 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e submit; job_id is 215822
+2026-01-11 21:08:23,788 - INFO : job: a26f2dd9339e4bcad26b91e44edf5cb09ad32f6e 215822 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 21:12:11,138 - INFO : info:check_all_finished: False
+2026-01-11 21:12:11,139 - INFO : remote path: /public/home/chenhh/catmaster_work/7a43c12632aaba6dd4fa3f4e4cd04cce18a985a8
+2026-01-11 21:12:12,525 - INFO : job: f1e87d886740a8a947f76560cbf5fb33b492b173 submit; job_id is 215823
+2026-01-11 21:14:14,122 - INFO : job: f1e87d886740a8a947f76560cbf5fb33b492b173 215823 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 21:26:09,118 - INFO : info:check_all_finished: False
+2026-01-11 21:26:09,118 - INFO : remote path: /public/home/chenhh/catmaster_work/dcf542baead955362d97551a21b4ca080e4ea667
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 21:26:30,991 - INFO : info:check_all_finished: False
+2026-01-11 21:26:30,992 - INFO : remote path: /public/home/chenhh/catmaster_work/8ec7511b5c5cf716bde2f3cebc37476ef3695dca
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 21:26:40,830 - INFO : info:check_all_finished: False
+2026-01-11 21:26:40,830 - INFO : remote path: /public/home/chenhh/catmaster_work/d4dc72a3b5656d1367cda796f31d65cb74cd28db
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 21:44:22,704 - INFO : info:check_all_finished: False
+2026-01-11 21:44:22,705 - INFO : remote path: /public/home/chenhh/catmaster_work/652e563e241064b52761c426381c0ea1b22ffcfe
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 21:46:06,579 - INFO : info:check_all_finished: False
+2026-01-11 21:46:06,580 - INFO : remote path: /public/home/chenhh/catmaster_work/0d9ab14543a2cfd1f6278f1f872770c8c01470c1
+2026-01-11 21:46:07,944 - INFO : job: 429ec492e059817427851ad3d5a1be74be2b27e7 submit; job_id is 215824
+2026-01-11 21:48:09,529 - INFO : job: 429ec492e059817427851ad3d5a1be74be2b27e7 215824 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 21:59:32,447 - INFO : info:check_all_finished: False
+2026-01-11 21:59:32,447 - INFO : remote path: /public/home/chenhh/catmaster_work/066380a1c304efc17ddfea3fa3ce2366f0a7675d
+2026-01-11 21:59:33,859 - INFO : job: 429ec492e059817427851ad3d5a1be74be2b27e7 submit; job_id is 215825
+2026-01-11 22:12:36,777 - INFO : job: 429ec492e059817427851ad3d5a1be74be2b27e7 215825 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 22:55:51,938 - INFO : info:check_all_finished: False
+2026-01-11 22:55:51,938 - INFO : remote path: /public/home/chenhh/catmaster_work/c45304c578bdbb9a1c01f65c0238eff78d2cfbde
+2026-01-11 22:55:53,299 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215828
+2026-01-11 22:57:54,864 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215828 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 23:15:34,598 - INFO : info:check_all_finished: False
+2026-01-11 23:15:34,599 - INFO : remote path: /public/home/chenhh/catmaster_work/6d4396929bf3921b8c037ad07339b3bab92c1081
+2026-01-11 23:15:36,034 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215829
+2026-01-11 23:28:39,031 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215829 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-11 23:44:44,427 - INFO : info:check_all_finished: False
+2026-01-11 23:44:44,428 - INFO : remote path: /public/home/chenhh/catmaster_work/2b0b079e711fcce73147a81028bf7417494ee5ac
+2026-01-11 23:44:45,905 - INFO : job: 139a7673abb4c08b2465220990329a575fc95690 submit; job_id is 215830
+2026-01-11 23:44:46,616 - INFO : job: 10d35f3901176495ab90b18367e2d06a4792f37a submit; job_id is 215831
+2026-01-11 23:55:51,001 - INFO : job: 139a7673abb4c08b2465220990329a575fc95690 215830 finished
+2026-01-11 23:56:51,330 - INFO : job: 10d35f3901176495ab90b18367e2d06a4792f37a 215831 finished
+2026-01-12 00:01:15,798 - INFO : info:check_all_finished: False
+2026-01-12 00:01:15,799 - INFO : remote path: /public/home/chenhh/catmaster_work/ee43c232a4aa11957b1b7e0b88656e31ceec0cf4
+2026-01-12 00:01:17,206 - INFO : job: 139a7673abb4c08b2465220990329a575fc95690 submit; job_id is 215832
+2026-01-12 00:01:17,938 - INFO : job: 6d73d10e2b54f51b4be0d40795c532a78bb31e54 submit; job_id is 215833
+2026-01-12 00:12:22,355 - INFO : job: 139a7673abb4c08b2465220990329a575fc95690 215832 finished
+2026-01-12 00:13:22,682 - INFO : job: 6d73d10e2b54f51b4be0d40795c532a78bb31e54 215833 finished
+2026-01-12 00:17:39,367 - INFO : info:check_all_finished: False
+2026-01-12 00:17:39,368 - INFO : remote path: /public/home/chenhh/catmaster_work/3e484e79376864998e9e2393e697f02120fdefbc
+2026-01-12 00:17:40,745 - INFO : job: 139a7673abb4c08b2465220990329a575fc95690 submit; job_id is 215834
+2026-01-12 00:17:41,472 - INFO : job: 6d73d10e2b54f51b4be0d40795c532a78bb31e54 submit; job_id is 215835
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 00:34:39,183 - INFO : info:check_all_finished: False
+2026-01-12 00:34:39,183 - INFO : remote path: /public/home/chenhh/catmaster_work/28103ec0e03b0bc3f5768439082e5ce7f790d96f
+2026-01-12 00:34:40,602 - INFO : job: 10d35f3901176495ab90b18367e2d06a4792f37a submit; job_id is 215836
+2026-01-12 00:34:41,316 - INFO : job: 139a7673abb4c08b2465220990329a575fc95690 submit; job_id is 215837
+2026-01-12 00:35:50,901 - INFO : info:check_all_finished: False
+2026-01-12 00:35:50,902 - INFO : remote path: /public/home/chenhh/catmaster_work/b85becb75e48e49dff0ccf0edf9a4126e06bab1e
+2026-01-12 00:35:52,327 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215838
+2026-01-12 00:36:43,233 - INFO : job: 10d35f3901176495ab90b18367e2d06a4792f37a 215836 finished
+2026-01-12 00:36:43,439 - INFO : job: 139a7673abb4c08b2465220990329a575fc95690 215837 finished
+2026-01-12 00:36:53,808 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215838 finished
+2026-01-12 00:37:43,579 - INFO : info:check_all_finished: False
+2026-01-12 00:37:43,580 - INFO : remote path: /public/home/chenhh/catmaster_work/c0b8ecf460050a8f21e4166f374538e504207815
+2026-01-12 00:37:45,033 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215839
+2026-01-12 00:38:46,512 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215839 finished
+2026-01-12 00:44:28,884 - INFO : info:check_all_finished: False
+2026-01-12 00:44:28,894 - INFO : remote path: /public/home/chenhh/catmaster_work/5d65516ec89b6b2e24050715a4da298917444a76
+2026-01-12 00:44:30,334 - INFO : job: 6142617d6383561dae8b52e339cf92cd19b75702 submit; job_id is 215840
+2026-01-12 00:44:31,057 - INFO : job: d59c1477321fb8996df949dd6a06d00be21b301c submit; job_id is 215841
+2026-01-12 00:44:31,774 - INFO : job: d59c1477321fb8996df949dd6a06d00be21b301c submit; job_id is 215842
+2026-01-12 01:26:51,926 - INFO : job: d59c1477321fb8996df949dd6a06d00be21b301c 215842 finished
+2026-01-12 02:02:01,929 - INFO : job: d59c1477321fb8996df949dd6a06d00be21b301c 215841 finished
+2026-01-12 05:37:28,412 - INFO : job: 6142617d6383561dae8b52e339cf92cd19b75702 215840 finished
+2026-01-12 05:40:52,184 - INFO : info:check_all_finished: False
+2026-01-12 05:40:52,184 - INFO : remote path: /public/home/chenhh/catmaster_work/c17a6822e63295fe388770e1e6a737b136df3302
+2026-01-12 05:40:53,654 - INFO : job: 0eab5b123a29c02c893d32b28249882bbfe8728e submit; job_id is 215843
+2026-01-12 05:40:54,397 - INFO : job: 0eab5b123a29c02c893d32b28249882bbfe8728e submit; job_id is 215844
+2026-01-12 05:40:55,150 - INFO : job: 0eab5b123a29c02c893d32b28249882bbfe8728e submit; job_id is 215845
+2026-01-12 05:52:01,339 - INFO : job: 0eab5b123a29c02c893d32b28249882bbfe8728e 215843 finished
+2026-01-12 05:52:01,544 - INFO : job: 0eab5b123a29c02c893d32b28249882bbfe8728e 215844 finished
+2026-01-12 05:52:01,749 - INFO : job: 0eab5b123a29c02c893d32b28249882bbfe8728e 215845 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 11:08:31,355 - INFO : info:check_all_finished: False
+2026-01-12 11:08:31,355 - INFO : remote path: /public/home/chenhh/catmaster_work/6149db1313ff904ecab1978f9fccf76b35cf6eda
+2026-01-12 11:08:32,776 - INFO : job: c0ede2882006f87d37b3cbf899d2f8710da9f854 submit; job_id is 215849
+2026-01-12 11:08:33,506 - INFO : job: 4fbafe73c3bf0404649c7a205d9a4b1d6efff91c submit; job_id is 215850
+2026-01-12 11:09:35,299 - INFO : job: 4fbafe73c3bf0404649c7a205d9a4b1d6efff91c 215850 finished
+2026-01-12 11:10:35,463 - INFO : job: c0ede2882006f87d37b3cbf899d2f8710da9f854 215849 finished
+2026-01-12 11:10:36,699 - INFO : info:check_all_finished: False
+2026-01-12 11:10:36,699 - INFO : remote path: /ssd/chenhh/catmaster_work/5c6b9873be70e1a82705734a20faf9fb85c536d3
+2026-01-12 11:10:37,402 - INFO : job: 24f0a9a1f1e18894fe8e519fffaf8dc39d99eb2b submit; job_id is 1079267
+2026-01-12 11:10:37,740 - INFO : job: 30375f6e2129c3a9971e6898907a5988ae27ee5c submit; job_id is 1079278
+2026-01-12 11:10:49,201 - INFO : job: 24f0a9a1f1e18894fe8e519fffaf8dc39d99eb2b 1079267 finished
+2026-01-12 11:10:49,313 - INFO : job: 30375f6e2129c3a9971e6898907a5988ae27ee5c 1079278 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 12:16:38,514 - INFO : info:check_all_finished: False
+2026-01-12 12:16:38,515 - INFO : remote path: /public/home/chenhh/catmaster_work/309677890806f7a09d237f75dedb7a830d0815bc
+2026-01-12 12:16:39,932 - INFO : job: c0ede2882006f87d37b3cbf899d2f8710da9f854 submit; job_id is 215852
+2026-01-12 12:16:40,651 - INFO : job: 4fbafe73c3bf0404649c7a205d9a4b1d6efff91c submit; job_id is 215853
+2026-01-12 12:17:42,413 - INFO : job: 4fbafe73c3bf0404649c7a205d9a4b1d6efff91c 215853 finished
+2026-01-12 12:18:42,618 - INFO : job: c0ede2882006f87d37b3cbf899d2f8710da9f854 215852 finished
+2026-01-12 12:18:43,919 - INFO : info:check_all_finished: False
+2026-01-12 12:18:43,919 - INFO : remote path: /ssd/chenhh/catmaster_work/e3fb2df357ab449d42320cc8b8354ebd2599f096
+2026-01-12 12:18:44,612 - INFO : job: 24f0a9a1f1e18894fe8e519fffaf8dc39d99eb2b submit; job_id is 1114882
+2026-01-12 12:18:44,928 - INFO : job: 30375f6e2129c3a9971e6898907a5988ae27ee5c submit; job_id is 1114893
+2026-01-12 12:18:56,397 - INFO : job: 24f0a9a1f1e18894fe8e519fffaf8dc39d99eb2b 1114882 finished
+2026-01-12 12:18:56,509 - INFO : job: 30375f6e2129c3a9971e6898907a5988ae27ee5c 1114893 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 12:23:45,382 - INFO : info:check_all_finished: False
+2026-01-12 12:23:45,382 - INFO : remote path: /public/home/chenhh/catmaster_work/894199c93af8bc825a4590dada8e5a83892c94ad
+2026-01-12 12:23:46,740 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215854
+2026-01-12 12:31:49,032 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215854 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 12:46:38,113 - INFO : info:check_all_finished: False
+2026-01-12 12:46:38,114 - INFO : remote path: /public/home/chenhh/catmaster_work/d61e7395ae3c8b5c2cad9efb0e7f9e40ecb6f617
+2026-01-12 12:46:39,483 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215855
+2026-01-12 12:50:41,327 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215855 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 13:13:16,614 - INFO : info:check_all_finished: False
+2026-01-12 13:13:16,616 - INFO : remote path: /public/home/chenhh/catmaster_work/f8e8ae6813f387f1102fa2682c887a4621992bef
+2026-01-12 13:13:18,004 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215856
+2026-01-12 13:19:20,054 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215856 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 13:27:13,491 - INFO : info:check_all_finished: False
+2026-01-12 13:27:13,491 - INFO : remote path: /public/home/chenhh/catmaster_work/10c7b25f9c0703aa7fb8a270fd6945338bd4bb7c
+2026-01-12 13:27:14,869 - INFO : job: d62dbbcb9b36d615a557011533ad53eca9795334 submit; job_id is 215858
+2026-01-12 13:27:15,592 - INFO : job: dc2a66723f976f011ec4866704ca7e25ac12b885 submit; job_id is 215859
+2026-01-12 13:34:18,842 - INFO : job: d62dbbcb9b36d615a557011533ad53eca9795334 215858 finished
+2026-01-12 13:34:19,041 - INFO : job: dc2a66723f976f011ec4866704ca7e25ac12b885 215859 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 13:53:08,083 - INFO : info:check_all_finished: False
+2026-01-12 13:53:08,084 - INFO : remote path: /public/home/chenhh/catmaster_work/91abaff65033c0e961cc671f008c350a6dc5be67
+2026-01-12 13:53:09,463 - INFO : job: 66ad27b030550ecc1e5bc1e39fe9d17f70c33e49 submit; job_id is 215861
+2026-01-12 13:53:10,166 - INFO : job: c501369a9750c91e87df5e9c880532c2c2d951b7 submit; job_id is 215862
+2026-01-12 13:56:12,323 - INFO : job: 66ad27b030550ecc1e5bc1e39fe9d17f70c33e49 215861 finished
+2026-01-12 13:56:12,526 - INFO : job: c501369a9750c91e87df5e9c880532c2c2d951b7 215862 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 14:42:18,918 - INFO : info:check_all_finished: False
+2026-01-12 14:42:18,920 - INFO : remote path: /public/home/chenhh/catmaster_work/f7366b0b1d629efc8418be5a6157d25c009429ad
+2026-01-12 14:42:20,449 - INFO : job: 09a60d31350b58fedce31605908fc81065971803 submit; job_id is 215863
+2026-01-12 14:50:22,772 - INFO : job: 09a60d31350b58fedce31605908fc81065971803 215863 finished
+2026-01-12 14:50:28,779 - INFO : info:check_all_finished: False
+2026-01-12 14:50:28,780 - INFO : remote path: /public/home/chenhh/catmaster_work/1e011693771b82016c6d4578abc87c2b58d95412
+2026-01-12 14:50:31,095 - INFO : job: 09a60d31350b58fedce31605908fc81065971803 submit; job_id is 215864
+2026-01-12 14:58:28,027 - INFO : job: 09a60d31350b58fedce31605908fc81065971803 215864 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 16:02:57,667 - INFO : info:check_all_finished: False
+2026-01-12 16:02:57,667 - INFO : remote path: /public/home/chenhh/catmaster_work/e395b8776adc4aae341e19bddfa3544b0bab420b
+2026-01-12 16:02:59,055 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215865
+2026-01-12 16:04:00,523 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215865 finished
+2026-01-12 16:05:35,762 - INFO : info:check_all_finished: False
+2026-01-12 16:05:35,762 - INFO : remote path: /public/home/chenhh/catmaster_work/079de3c2e27a8836af6d3a3ea43d79cce3ad95c0
+2026-01-12 16:05:37,136 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215866
+2026-01-12 16:06:08,602 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215866 finished
+2026-01-12 16:21:00,305 - INFO : info:check_all_finished: False
+2026-01-12 16:21:00,309 - INFO : remote path: /public/home/chenhh/catmaster_work/37461e18542c648146fda761c4ea9bfa0920a432
+2026-01-12 16:21:01,778 - INFO : job: 32cc05c38cd2f4d67cee04273626d188f5d146f2 submit; job_id is 215872
+2026-01-12 16:21:02,528 - INFO : job: 0fb76a6f7b44c1e5629c3d03d621eef712df0d78 submit; job_id is 215873
+2026-01-12 16:21:03,244 - INFO : job: 6471f4afdae93d30d571c1c4c896fc295836de36 submit; job_id is 215874
+2026-01-12 16:51:17,932 - INFO : job: 6471f4afdae93d30d571c1c4c896fc295836de36 215874 finished
+2026-01-12 17:14:24,461 - INFO : job: 0fb76a6f7b44c1e5629c3d03d621eef712df0d78 215873 finished
+2026-01-12 17:22:25,531 - INFO : job: 32cc05c38cd2f4d67cee04273626d188f5d146f2 215872 finished
+2026-01-12 17:24:06,506 - INFO : info:check_all_finished: False
+2026-01-12 17:24:06,506 - INFO : remote path: /public/home/chenhh/catmaster_work/f0d89fb91d469dd1d86e721e68e3ac37f555a42c
+2026-01-12 17:24:07,966 - INFO : job: d969e3e33efa52aedefa26270b90bbd07d590605 submit; job_id is 215888
+2026-01-12 17:24:08,708 - INFO : job: d1fe406e062d6fd3f924d1cedc8c33d21499d423 submit; job_id is 215889
+2026-01-12 17:24:09,458 - INFO : job: 7a10e23f087944181d08ba7b399396581b8c6b54 submit; job_id is 215890
+2026-01-12 17:30:13,780 - INFO : job: 7a10e23f087944181d08ba7b399396581b8c6b54 215890 finished
+2026-01-12 17:34:14,976 - INFO : job: d1fe406e062d6fd3f924d1cedc8c33d21499d423 215889 finished
+2026-01-12 17:43:16,130 - INFO : job: d969e3e33efa52aedefa26270b90bbd07d590605 215888 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 18:52:11,434 - INFO : info:check_all_finished: False
+2026-01-12 18:52:11,434 - INFO : remote path: /public/home/chenhh/catmaster_work/3033b424370e7c6ea7892aad7276ccaff1e96f1d
+2026-01-12 18:52:13,058 - INFO : job: c0ede2882006f87d37b3cbf899d2f8710da9f854 submit; job_id is 215896
+2026-01-12 18:52:13,774 - INFO : job: 4fbafe73c3bf0404649c7a205d9a4b1d6efff91c submit; job_id is 215897
+2026-01-12 18:53:15,398 - INFO : job: c0ede2882006f87d37b3cbf899d2f8710da9f854 215896 finished
+2026-01-12 18:53:15,596 - INFO : job: 4fbafe73c3bf0404649c7a205d9a4b1d6efff91c 215897 finished
+2026-01-12 18:53:16,868 - INFO : info:check_all_finished: False
+2026-01-12 18:53:16,868 - INFO : remote path: /ssd/chenhh/catmaster_work/ff43b9f5bd3efaa9775f28db84f5a3cf26673468
+2026-01-12 18:53:17,587 - INFO : job: 24f0a9a1f1e18894fe8e519fffaf8dc39d99eb2b submit; job_id is 1252024
+2026-01-12 18:53:17,923 - INFO : job: 30375f6e2129c3a9971e6898907a5988ae27ee5c submit; job_id is 1252036
+2026-01-12 18:53:29,396 - INFO : job: 24f0a9a1f1e18894fe8e519fffaf8dc39d99eb2b 1252024 finished
+2026-01-12 18:53:29,511 - INFO : job: 30375f6e2129c3a9971e6898907a5988ae27ee5c 1252036 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 19:06:02,352 - INFO : info:check_all_finished: False
+2026-01-12 19:06:02,353 - INFO : remote path: /public/home/chenhh/catmaster_work/fbef0e02e97db133824e228244b5e030fd40e8e2
+2026-01-12 19:06:03,768 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215899
+2026-01-12 19:07:05,234 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215899 finished
+2026-01-12 19:16:04,176 - INFO : info:check_all_finished: False
+2026-01-12 19:16:04,177 - INFO : remote path: /public/home/chenhh/catmaster_work/2fcbf89123d0b71180480fd313509095fce512bb
+2026-01-12 19:16:05,628 - INFO : job: 993e02b5939b2cb2864c1a0953cc264a6e94adf2 submit; job_id is 215900
+2026-01-12 19:16:06,376 - INFO : job: 7b8363397d18e42efdf145f9d67e4cddfafbe1b2 submit; job_id is 215901
+2026-01-12 19:16:07,103 - INFO : job: a34359a874bd345c07afd6667052a2ce55017504 submit; job_id is 215902
+2026-01-12 19:19:05,466 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-12 19:19:05,467 - INFO : submission exit: 2fcbf89123d0b71180480fd313509095fce512bb
+2026-01-12 19:19:05,467 - INFO : at /public/home/chenhh/catmaster_work/2fcbf89123d0b71180480fd313509095fce512bb
+2026-01-12 19:19:05,467 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/2fcbf89123d0b71180480fd313509095fce512bb.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 19:24:35,988 - INFO : info:check_all_finished: False
+2026-01-12 19:24:35,989 - INFO : remote path: /public/home/chenhh/catmaster_work/364ded090870968d2d6a685b2ee9aff2d31a1cc8
+2026-01-12 19:24:37,408 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 submit; job_id is 215903
+2026-01-12 19:26:38,997 - INFO : job: 2e409613d5d7417bf4e75e069ae6ff4f704c9de0 215903 finished
+2026-01-12 19:35:52,600 - INFO : info:check_all_finished: False
+2026-01-12 19:35:52,602 - INFO : remote path: /public/home/chenhh/catmaster_work/6b2ce87d44b77cbbe89ddf61e26bfd5217645b06
+2026-01-12 19:35:54,060 - INFO : job: 95b78ba11a3757bbad250af8334d67e509b25a75 submit; job_id is 215904
+2026-01-12 19:35:54,773 - INFO : job: 0319cb5f7008cb690fe277f0660a36ca0f5cdd9e submit; job_id is 215905
+2026-01-12 19:35:55,477 - INFO : job: fa2ca558049b3b1f7954702cc00b0edf4bb6ffee submit; job_id is 215906
+2026-01-12 20:06:10,073 - INFO : job: 0319cb5f7008cb690fe277f0660a36ca0f5cdd9e 215905 finished
+2026-01-12 20:15:12,787 - INFO : job: fa2ca558049b3b1f7954702cc00b0edf4bb6ffee 215906 finished
+2026-01-12 20:46:43,394 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-12 20:46:43,396 - INFO : submission exit: 6b2ce87d44b77cbbe89ddf61e26bfd5217645b06
+2026-01-12 20:46:43,396 - INFO : at /public/home/chenhh/catmaster_work/6b2ce87d44b77cbbe89ddf61e26bfd5217645b06
+2026-01-12 20:46:43,396 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/6b2ce87d44b77cbbe89ddf61e26bfd5217645b06.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 22:03:27,714 - INFO : info:check_all_finished: False
+2026-01-12 22:03:27,715 - INFO : remote path: /public/home/chenhh/catmaster_work/618b22ae0390e05b46835fd8860b9bfef5e7557f
+2026-01-12 22:03:29,361 - INFO : job: dc5567988cc72cc884a06564e0a0153ce73dea8d submit; job_id is 54
+2026-01-12 22:03:30,124 - INFO : job: 8ae66f86496f1c17f9af969b8778ac6381f18874 submit; job_id is 55
+2026-01-12 22:04:31,771 - INFO : job: dc5567988cc72cc884a06564e0a0153ce73dea8d 54 finished
+2026-01-12 22:04:31,976 - INFO : job: 8ae66f86496f1c17f9af969b8778ac6381f18874 55 finished
+2026-01-12 22:04:32,194 - ERROR : Get error code 2 in calling tar czfh 618b22ae0390e05b46835fd8860b9bfef5e7557f.tar.gz O2/EIGENVAL O2/CONTCAR CO/OSZICAR CO/KPOINTS CO/XDATCAR O2/IBZKPT O2/OSZICAR O2/REPORT CO/OUTCAR O2/vasp_stdout.out O2/OUTCAR O2/log CO/IBZKPT O2/INCAR CO/POSCAR CO/9dbfcb9b859b14e6f1cd29b92cdffbb969469072_task_tag_finished O2/CHG CO/WAVECAR CO/REPORT O2/KPOINTS CO/CHG CO/DOSCAR CO/PCDAT CO/vasp_stdout.out CO/PROCAR O2/POSCAR CO/err CO/log CO/CHGCAR O2/vasprun.xml O2/WAVECAR CO/CONTCAR O2/CHGCAR O2/POTCAR CO/vasprun.xml O2/XDATCAR O2/PROCAR CO/EIGENVAL CO/INCAR O2/PCDAT CO/POTCAR O2/err O2/DOSCAR O2/f6b74bd21e7c25450e40f673e35d83ab2dae5176_task_tag_finished with job: 618b22ae0390e05b46835fd8860b9bfef5e7557f . message: tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh 618b22ae0390e05b46835fd8860b9bfef5e7557f.tar.gz O2/EIGENVAL O2/CONTCAR CO/OSZICAR CO/KPOINTS CO/XDATCAR O2/IBZKPT O2/OSZICAR O2/REPORT CO/OUTCAR O2/vasp_stdout.out O2/OUTCAR O2/log CO/IBZKPT O2/INCAR CO/POSCAR CO/9dbfcb9b859b14e6f1cd29b92cdffbb969469072_task_tag_finished O2/CHG CO/WAVECAR CO/REPORT O2/KPOINTS CO/CHG CO/DOSCAR CO/PCDAT CO/vasp_stdout.out CO/PROCAR O2/POSCAR CO/err CO/log CO/CHGCAR O2/vasprun.xml O2/WAVECAR CO/CONTCAR O2/CHGCAR O2/POTCAR CO/vasprun.xml O2/XDATCAR O2/PROCAR CO/EIGENVAL CO/INCAR O2/PCDAT CO/POTCAR O2/err O2/DOSCAR O2/f6b74bd21e7c25450e40f673e35d83ab2dae5176_task_tag_finished with job: 618b22ae0390e05b46835fd8860b9bfef5e7557f . message: tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-12 22:04:32,204 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 22:15:07,542 - INFO : info:check_all_finished: False
+2026-01-12 22:15:07,543 - INFO : remote path: /public/home/chenhh/catmaster_work/c029b4208bfe79a31680502a0f0596a708235c1f
+2026-01-12 22:15:09,247 - INFO : job: dc5567988cc72cc884a06564e0a0153ce73dea8d submit; job_id is 56
+2026-01-12 22:15:10,031 - INFO : job: 8ae66f86496f1c17f9af969b8778ac6381f18874 submit; job_id is 57
+2026-01-12 22:16:11,668 - INFO : job: dc5567988cc72cc884a06564e0a0153ce73dea8d 56 finished
+2026-01-12 22:16:11,874 - INFO : job: 8ae66f86496f1c17f9af969b8778ac6381f18874 57 finished
+2026-01-12 22:16:12,090 - ERROR : Get error code 2 in calling tar czfh c029b4208bfe79a31680502a0f0596a708235c1f.tar.gz O2/POSCAR O2/vasp_stdout.out CO/IBZKPT O2/log O2/OUTCAR CO/POTCAR O2/err O2/vasprun.xml O2/REPORT CO/vasp_stdout.out O2/WAVECAR O2/f6b74bd21e7c25450e40f673e35d83ab2dae5176_task_tag_finished O2/KPOINTS CO/EIGENVAL O2/CONTCAR CO/POSCAR CO/CHGCAR O2/IBZKPT O2/DOSCAR CO/log O2/PROCAR CO/DOSCAR O2/EIGENVAL O2/XDATCAR CO/OUTCAR CO/KPOINTS O2/POTCAR CO/REPORT O2/PCDAT CO/INCAR CO/vasprun.xml O2/CHG CO/err CO/WAVECAR CO/CHG O2/OSZICAR O2/CHGCAR O2/INCAR CO/CONTCAR CO/9dbfcb9b859b14e6f1cd29b92cdffbb969469072_task_tag_finished CO/OSZICAR CO/PCDAT CO/XDATCAR CO/PROCAR with job: c029b4208bfe79a31680502a0f0596a708235c1f . message: tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh c029b4208bfe79a31680502a0f0596a708235c1f.tar.gz O2/POSCAR O2/vasp_stdout.out CO/IBZKPT O2/log O2/OUTCAR CO/POTCAR O2/err O2/vasprun.xml O2/REPORT CO/vasp_stdout.out O2/WAVECAR O2/f6b74bd21e7c25450e40f673e35d83ab2dae5176_task_tag_finished O2/KPOINTS CO/EIGENVAL O2/CONTCAR CO/POSCAR CO/CHGCAR O2/IBZKPT O2/DOSCAR CO/log O2/PROCAR CO/DOSCAR O2/EIGENVAL O2/XDATCAR CO/OUTCAR CO/KPOINTS O2/POTCAR CO/REPORT O2/PCDAT CO/INCAR CO/vasprun.xml O2/CHG CO/err CO/WAVECAR CO/CHG O2/OSZICAR O2/CHGCAR O2/INCAR CO/CONTCAR CO/9dbfcb9b859b14e6f1cd29b92cdffbb969469072_task_tag_finished CO/OSZICAR CO/PCDAT CO/XDATCAR CO/PROCAR with job: c029b4208bfe79a31680502a0f0596a708235c1f . message: tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-12 22:16:12,092 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 22:28:20,166 - INFO : info:check_all_finished: False
+2026-01-12 22:28:20,166 - INFO : remote path: /public/home/chenhh/catmaster_work/19f95bef505effbf7175ad471171d4e8ee2b4b7b
+2026-01-12 22:28:21,809 - INFO : job: d83b65d944efa5057a1ac0192c0d8bb84d69fe6c submit; job_id is 58
+2026-01-12 22:28:22,560 - INFO : job: 4e0088930c0e24515cb4c7a30530c56dc482e2e0 submit; job_id is 59
+2026-01-12 22:29:24,195 - INFO : job: d83b65d944efa5057a1ac0192c0d8bb84d69fe6c 58 finished
+2026-01-12 22:29:24,403 - INFO : job: 4e0088930c0e24515cb4c7a30530c56dc482e2e0 59 finished
+2026-01-12 22:29:24,624 - ERROR : Get error code 2 in calling tar czfh 19f95bef505effbf7175ad471171d4e8ee2b4b7b.tar.gz CO/IBZKPT O2/WAVECAR O2/POSCAR CO/WAVECAR O2/CONTCAR O2/err O2/log O2/IBZKPT O2/EIGENVAL CO/vasp_stdout.out CO/CONTCAR O2/CHG O2/XDATCAR O2/DOSCAR O2/vasprun.xml CO/CHG O2/bde8eef6c7f8e05a80332f6debc1b760c90f1d7d_task_tag_finished CO/EIGENVAL CO/DOSCAR CO/KPOINTS CO/POTCAR O2/KPOINTS CO/OSZICAR O2/CHGCAR O2/REPORT CO/XDATCAR O2/POTCAR CO/POSCAR CO/err CO/d778a7d6431552ea53f3f4b46fe76556691b9ca0_task_tag_finished CO/PCDAT O2/PCDAT O2/OUTCAR CO/INCAR O2/PROCAR CO/vasprun.xml CO/OUTCAR CO/log CO/PROCAR CO/REPORT CO/CHGCAR O2/vasp_stdout.out O2/OSZICAR O2/INCAR with job: 19f95bef505effbf7175ad471171d4e8ee2b4b7b . message: tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh 19f95bef505effbf7175ad471171d4e8ee2b4b7b.tar.gz CO/IBZKPT O2/WAVECAR O2/POSCAR CO/WAVECAR O2/CONTCAR O2/err O2/log O2/IBZKPT O2/EIGENVAL CO/vasp_stdout.out CO/CONTCAR O2/CHG O2/XDATCAR O2/DOSCAR O2/vasprun.xml CO/CHG O2/bde8eef6c7f8e05a80332f6debc1b760c90f1d7d_task_tag_finished CO/EIGENVAL CO/DOSCAR CO/KPOINTS CO/POTCAR O2/KPOINTS CO/OSZICAR O2/CHGCAR O2/REPORT CO/XDATCAR O2/POTCAR CO/POSCAR CO/err CO/d778a7d6431552ea53f3f4b46fe76556691b9ca0_task_tag_finished CO/PCDAT O2/PCDAT O2/OUTCAR CO/INCAR O2/PROCAR CO/vasprun.xml CO/OUTCAR CO/log CO/PROCAR CO/REPORT CO/CHGCAR O2/vasp_stdout.out O2/OSZICAR O2/INCAR with job: 19f95bef505effbf7175ad471171d4e8ee2b4b7b . message: tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-12 22:29:24,628 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 22:33:17,850 - INFO : info:check_all_finished: False
+2026-01-12 22:33:17,851 - INFO : remote path: /public/home/chenhh/catmaster_work/b2c7f85eaf484ee310aa47de2ce24b88d75f4e6a
+2026-01-12 22:33:19,509 - INFO : job: b7ee533be579f2e7d67a780be5dbff53fe8143d3 submit; job_id is 60
+2026-01-12 22:33:20,254 - INFO : job: 198a599cd832b3ade61fab52932198ea94ced6c2 submit; job_id is 61
+2026-01-12 22:34:21,898 - INFO : job: b7ee533be579f2e7d67a780be5dbff53fe8143d3 60 finished
+2026-01-12 22:34:22,113 - INFO : job: 198a599cd832b3ade61fab52932198ea94ced6c2 61 finished
+2026-01-12 22:34:22,336 - ERROR : Get error code 2 in calling tar czfh b2c7f85eaf484ee310aa47de2ce24b88d75f4e6a.tar.gz CO/REPORT CO/DOSCAR CO/vasprun.xml CO/OUTCAR O2/OUTCAR O2/POSCAR O2/PROCAR O2/KPOINTS CO/WAVECAR O2/log O2/EIGENVAL O2/da5f763f8db13e28851720a99d857c5463b5c751_task_tag_finished CO/IBZKPT CO/POTCAR CO/CONTCAR O2/DOSCAR O2/vasprun.xml CO/XDATCAR O2/PCDAT O2/CONTCAR CO/POSCAR O2/err O2/REPORT O2/POTCAR O2/OSZICAR CO/PCDAT CO/CHGCAR O2/CHGCAR CO/288bab85b9a404a5c91a7018def7bbb64f9c1a16_task_tag_finished CO/EIGENVAL CO/PROCAR CO/err O2/CHG CO/INCAR CO/vasp_stdout.out O2/INCAR CO/log O2/WAVECAR O2/vasp_stdout.out CO/CHG CO/OSZICAR O2/IBZKPT O2/XDATCAR CO/KPOINTS with job: b2c7f85eaf484ee310aa47de2ce24b88d75f4e6a . message: tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh b2c7f85eaf484ee310aa47de2ce24b88d75f4e6a.tar.gz CO/REPORT CO/DOSCAR CO/vasprun.xml CO/OUTCAR O2/OUTCAR O2/POSCAR O2/PROCAR O2/KPOINTS CO/WAVECAR O2/log O2/EIGENVAL O2/da5f763f8db13e28851720a99d857c5463b5c751_task_tag_finished CO/IBZKPT CO/POTCAR CO/CONTCAR O2/DOSCAR O2/vasprun.xml CO/XDATCAR O2/PCDAT O2/CONTCAR CO/POSCAR O2/err O2/REPORT O2/POTCAR O2/OSZICAR CO/PCDAT CO/CHGCAR O2/CHGCAR CO/288bab85b9a404a5c91a7018def7bbb64f9c1a16_task_tag_finished CO/EIGENVAL CO/PROCAR CO/err O2/CHG CO/INCAR CO/vasp_stdout.out O2/INCAR CO/log O2/WAVECAR O2/vasp_stdout.out CO/CHG CO/OSZICAR O2/IBZKPT O2/XDATCAR CO/KPOINTS with job: b2c7f85eaf484ee310aa47de2ce24b88d75f4e6a . message: tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-12 22:34:22,339 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 22:42:44,057 - INFO : info:check_all_finished: False
+2026-01-12 22:42:44,059 - INFO : remote path: /public/home/chenhh/catmaster_work/3009b21603489e85912d439e10b66cc6636a6804
+2026-01-12 22:42:45,743 - INFO : job: c04a760bb28357cccd91cc03e8b5dbf9cce8c29f submit; job_id is 62
+2026-01-12 22:42:46,500 - INFO : job: 6d38d51f87e67a9c861b9fdef93a67c82956f6da submit; job_id is 63
+2026-01-12 22:43:48,155 - INFO : job: c04a760bb28357cccd91cc03e8b5dbf9cce8c29f 62 finished
+2026-01-12 22:43:48,356 - INFO : job: 6d38d51f87e67a9c861b9fdef93a67c82956f6da 63 finished
+2026-01-12 22:43:48,579 - ERROR : Get error code 2 in calling tar czfh 3009b21603489e85912d439e10b66cc6636a6804.tar.gz CO/WAVECAR CO/CONTCAR CO/POTCAR O2/XDATCAR O2/CONTCAR CO/KPOINTS O2/vasprun.xml O2/OSZICAR O2/OUTCAR CO/29e349fa524db0168505d496fb3e3e0dec9304ad_task_tag_finished CO/PROCAR O2/CHG CO/vasprun.xml O2/vasp_stdout.out CO/REPORT CO/EIGENVAL CO/PCDAT O2/PCDAT O2/KPOINTS CO/CHG O2/INCAR CO/POSCAR O2/842cd594cfb6d694cee6529f671e61d833e96b01_task_tag_finished O2/IBZKPT O2/PROCAR CO/XDATCAR O2/WAVECAR O2/POSCAR O2/REPORT O2/POTCAR O2/EIGENVAL CO/INCAR O2/log CO/log CO/vasp_stdout.out CO/OSZICAR CO/err O2/CHGCAR CO/IBZKPT CO/CHGCAR CO/DOSCAR CO/OUTCAR O2/err O2/DOSCAR with job: 3009b21603489e85912d439e10b66cc6636a6804 . message: tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh 3009b21603489e85912d439e10b66cc6636a6804.tar.gz CO/WAVECAR CO/CONTCAR CO/POTCAR O2/XDATCAR O2/CONTCAR CO/KPOINTS O2/vasprun.xml O2/OSZICAR O2/OUTCAR CO/29e349fa524db0168505d496fb3e3e0dec9304ad_task_tag_finished CO/PROCAR O2/CHG CO/vasprun.xml O2/vasp_stdout.out CO/REPORT CO/EIGENVAL CO/PCDAT O2/PCDAT O2/KPOINTS CO/CHG O2/INCAR CO/POSCAR O2/842cd594cfb6d694cee6529f671e61d833e96b01_task_tag_finished O2/IBZKPT O2/PROCAR CO/XDATCAR O2/WAVECAR O2/POSCAR O2/REPORT O2/POTCAR O2/EIGENVAL CO/INCAR O2/log CO/log CO/vasp_stdout.out CO/OSZICAR CO/err O2/CHGCAR CO/IBZKPT CO/CHGCAR CO/DOSCAR CO/OUTCAR O2/err O2/DOSCAR with job: 3009b21603489e85912d439e10b66cc6636a6804 . message: tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-12 22:43:48,584 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 22:49:26,026 - INFO : info:check_all_finished: False
+2026-01-12 22:49:26,026 - INFO : remote path: /public/home/chenhh/catmaster_work/448da52de0cad89cfc73fe7b36c8c0e338e126dc
+2026-01-12 22:49:27,629 - INFO : job: c3099af33175a2b3cb57910c33a9c23f828bc9e3 submit; job_id is 64
+2026-01-12 22:49:28,379 - INFO : job: 544dda33c56facf3800a1fac38a4441c6e112bd5 submit; job_id is 65
+2026-01-12 22:50:30,036 - INFO : job: c3099af33175a2b3cb57910c33a9c23f828bc9e3 64 finished
+2026-01-12 22:50:30,245 - INFO : job: 544dda33c56facf3800a1fac38a4441c6e112bd5 65 finished
+2026-01-12 22:50:30,463 - ERROR : Get error code 2 in calling tar czfh 448da52de0cad89cfc73fe7b36c8c0e338e126dc.tar.gz O2/CONTCAR CO/vasprun.xml O2/REPORT CO/CONTCAR CO/DOSCAR O2/CHGCAR O2/DOSCAR CO/vasp_stdout.out O2/OSZICAR O2/WAVECAR O2/KPOINTS CO/EIGENVAL CO/KPOINTS CO/OUTCAR CO/OSZICAR O2/PROCAR O2/IBZKPT CO/log CO/REPORT O2/log O2/POTCAR O2/PCDAT CO/XDATCAR O2/OUTCAR O2/XDATCAR CO/CHG CO/err O2/EIGENVAL CO/CHGCAR CO/POTCAR CO/INCAR CO/IBZKPT O2/INCAR O2/POSCAR CO/PCDAT CO/WAVECAR O2/vasprun.xml O2/CHG O2/err O2/842cd594cfb6d694cee6529f671e61d833e96b01_task_tag_finished CO/PROCAR O2/vasp_stdout.out CO/POSCAR CO/29e349fa524db0168505d496fb3e3e0dec9304ad_task_tag_finished with job: 448da52de0cad89cfc73fe7b36c8c0e338e126dc . message: tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh 448da52de0cad89cfc73fe7b36c8c0e338e126dc.tar.gz O2/CONTCAR CO/vasprun.xml O2/REPORT CO/CONTCAR CO/DOSCAR O2/CHGCAR O2/DOSCAR CO/vasp_stdout.out O2/OSZICAR O2/WAVECAR O2/KPOINTS CO/EIGENVAL CO/KPOINTS CO/OUTCAR CO/OSZICAR O2/PROCAR O2/IBZKPT CO/log CO/REPORT O2/log O2/POTCAR O2/PCDAT CO/XDATCAR O2/OUTCAR O2/XDATCAR CO/CHG CO/err O2/EIGENVAL CO/CHGCAR CO/POTCAR CO/INCAR CO/IBZKPT O2/INCAR O2/POSCAR CO/PCDAT CO/WAVECAR O2/vasprun.xml O2/CHG O2/err O2/842cd594cfb6d694cee6529f671e61d833e96b01_task_tag_finished CO/PROCAR O2/vasp_stdout.out CO/POSCAR CO/29e349fa524db0168505d496fb3e3e0dec9304ad_task_tag_finished with job: 448da52de0cad89cfc73fe7b36c8c0e338e126dc . message: tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-12 22:50:30,471 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 22:52:35,263 - INFO : info:check_all_finished: False
+2026-01-12 22:52:35,264 - INFO : remote path: /public/home/chenhh/catmaster_work/920d3d8ae798e952634d4203bfd6c061f6d708f4
+2026-01-12 22:52:36,913 - INFO : job: c3099af33175a2b3cb57910c33a9c23f828bc9e3 submit; job_id is 66
+2026-01-12 22:52:37,669 - INFO : job: 544dda33c56facf3800a1fac38a4441c6e112bd5 submit; job_id is 67
+2026-01-12 22:53:39,311 - INFO : job: c3099af33175a2b3cb57910c33a9c23f828bc9e3 66 finished
+2026-01-12 22:53:39,521 - INFO : job: 544dda33c56facf3800a1fac38a4441c6e112bd5 67 finished
+2026-01-12 22:53:39,732 - ERROR : Get error code 2 in calling tar czfh 920d3d8ae798e952634d4203bfd6c061f6d708f4.tar.gz O2/842cd594cfb6d694cee6529f671e61d833e96b01_task_tag_finished O2/CONTCAR O2/POSCAR CO/OUTCAR O2/vasp_stdout.out CO/WAVECAR O2/EIGENVAL CO/CHGCAR CO/PROCAR O2/err O2/POTCAR O2/PCDAT CO/OSZICAR O2/IBZKPT O2/OUTCAR CO/EIGENVAL CO/KPOINTS O2/INCAR O2/DOSCAR O2/CHGCAR CO/XDATCAR CO/CONTCAR O2/REPORT O2/PROCAR CO/err CO/29e349fa524db0168505d496fb3e3e0dec9304ad_task_tag_finished O2/OSZICAR CO/POTCAR CO/CHG O2/KPOINTS O2/log CO/INCAR CO/DOSCAR CO/vasprun.xml O2/WAVECAR O2/CHG O2/XDATCAR CO/PCDAT CO/IBZKPT O2/vasprun.xml CO/vasp_stdout.out CO/log CO/REPORT CO/POSCAR with job: 920d3d8ae798e952634d4203bfd6c061f6d708f4 . message: tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh 920d3d8ae798e952634d4203bfd6c061f6d708f4.tar.gz O2/842cd594cfb6d694cee6529f671e61d833e96b01_task_tag_finished O2/CONTCAR O2/POSCAR CO/OUTCAR O2/vasp_stdout.out CO/WAVECAR O2/EIGENVAL CO/CHGCAR CO/PROCAR O2/err O2/POTCAR O2/PCDAT CO/OSZICAR O2/IBZKPT O2/OUTCAR CO/EIGENVAL CO/KPOINTS O2/INCAR O2/DOSCAR O2/CHGCAR CO/XDATCAR CO/CONTCAR O2/REPORT O2/PROCAR CO/err CO/29e349fa524db0168505d496fb3e3e0dec9304ad_task_tag_finished O2/OSZICAR CO/POTCAR CO/CHG O2/KPOINTS O2/log CO/INCAR CO/DOSCAR CO/vasprun.xml O2/WAVECAR O2/CHG O2/XDATCAR CO/PCDAT CO/IBZKPT O2/vasprun.xml CO/vasp_stdout.out CO/log CO/REPORT CO/POSCAR with job: 920d3d8ae798e952634d4203bfd6c061f6d708f4 . message: tar: O2/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: O2/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: CO/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: CO/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: O2/INCAR: Cannot open: Resource temporarily unavailable
+tar: O2/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/PROCAR: Cannot open: Resource temporarily unavailable
+tar: O2/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: CO/POTCAR: Cannot open: Resource temporarily unavailable
+tar: O2/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: CO/INCAR: Cannot open: Resource temporarily unavailable
+tar: CO/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: CO/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: O2/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: CO/PCDAT: Cannot open: Resource temporarily unavailable
+tar: CO/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: O2/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: CO/POSCAR: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-01-12 22:53:39,733 - INFO : Retrying in 1 minute...
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-12 23:36:15,261 - INFO : info:check_all_finished: False
+2026-01-12 23:36:15,263 - INFO : remote path: /public/home/chenhh/catmaster_work/0a7a34ab681e0b4c19d9235a2e2a8d7c8fdf4a80
+2026-01-12 23:36:16,716 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 215913
+2026-01-12 23:38:18,306 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 215913 finished
+2026-01-12 23:46:42,611 - INFO : info:check_all_finished: False
+2026-01-12 23:46:42,613 - INFO : remote path: /public/home/chenhh/catmaster_work/c2056e62bcb5bee732afbbd42c1bafa743db3ac3
+2026-01-12 23:46:44,152 - INFO : job: 60e04cc984e374c7b2fe999ad8b4f8ba4f094eec submit; job_id is 215914
+2026-01-12 23:46:44,877 - INFO : job: 4a63ce673985050c1dac5204cfc6de6fefae6fbb submit; job_id is 215915
+2026-01-12 23:46:45,623 - INFO : job: 782c1f4032dc35115fd39fe6a2ef6aaba7da3077 submit; job_id is 215916
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 00:00:47,204 - INFO : info:check_all_finished: False
+2026-01-13 00:00:47,209 - INFO : job: 2ee46e15d18198b9bd77e39c22381d21f30be3ab submit; job_id is 3811919
+2026-01-13 00:00:48,218 - INFO : job: 2ee46e15d18198b9bd77e39c22381d21f30be3ab 3811919 terminated; fail_cout is 1; resubmitting job
+2026-01-13 00:00:48,219 - INFO : job:2ee46e15d18198b9bd77e39c22381d21f30be3ab re-submit after terminated; new job_id is 3811949
+2026-01-13 00:00:48,425 - INFO : job:2ee46e15d18198b9bd77e39c22381d21f30be3ab job_id:3811949 after re-submitting; the state now is <JobStatus.running: 3>
+2026-01-13 00:00:58,429 - INFO : job: 2ee46e15d18198b9bd77e39c22381d21f30be3ab 3811949 terminated; fail_cout is 2; resubmitting job
+2026-01-13 00:00:58,430 - INFO : job:2ee46e15d18198b9bd77e39c22381d21f30be3ab re-submit after terminated; new job_id is 3812024
+2026-01-13 00:00:58,636 - INFO : job:2ee46e15d18198b9bd77e39c22381d21f30be3ab job_id:3812024 after re-submitting; the state now is <JobStatus.running: 3>
+2026-01-13 00:01:08,639 - INFO : job: 2ee46e15d18198b9bd77e39c22381d21f30be3ab 3812024 terminated; fail_cout is 3; resubmitting job
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 00:02:12,362 - INFO : info:check_all_finished: False
+2026-01-13 00:02:12,364 - INFO : job: e5d31bb873510a27c25266a0e815abfe78054ed9 submit; job_id is 3812355
+2026-01-13 00:02:13,369 - INFO : job: e5d31bb873510a27c25266a0e815abfe78054ed9 3812355 terminated; fail_cout is 1; resubmitting job
+2026-01-13 00:02:13,371 - INFO : job:e5d31bb873510a27c25266a0e815abfe78054ed9 re-submit after terminated; new job_id is 3812379
+2026-01-13 00:02:13,577 - INFO : job:e5d31bb873510a27c25266a0e815abfe78054ed9 job_id:3812379 after re-submitting; the state now is <JobStatus.running: 3>
+2026-01-13 00:02:23,581 - INFO : job: e5d31bb873510a27c25266a0e815abfe78054ed9 3812379 terminated; fail_cout is 2; resubmitting job
+2026-01-13 00:02:23,582 - INFO : job:e5d31bb873510a27c25266a0e815abfe78054ed9 re-submit after terminated; new job_id is 3812456
+2026-01-13 00:02:23,788 - INFO : job:e5d31bb873510a27c25266a0e815abfe78054ed9 job_id:3812456 after re-submitting; the state now is <JobStatus.running: 3>
+2026-01-13 00:02:24,388 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-13 00:02:24,389 - INFO : submission exit: 52981d2b3ff07884d30300af9aa9d87e09505dbe
+2026-01-13 00:02:24,389 - INFO : at /home/chenhh/catmaster_work_local/52981d2b3ff07884d30300af9aa9d87e09505dbe
+2026-01-13 00:02:24,389 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/52981d2b3ff07884d30300af9aa9d87e09505dbe.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 00:02:26,205 - INFO : info:check_all_finished: False
+2026-01-13 00:02:26,207 - INFO : job: cedd06f44dfd9bb29a169212fcdb0032d488480c submit; job_id is 3812497
+2026-01-13 00:02:37,216 - INFO : job: cedd06f44dfd9bb29a169212fcdb0032d488480c 3812497 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 00:12:52,593 - INFO : job: 60e04cc984e374c7b2fe999ad8b4f8ba4f094eec 215914 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 00:26:36,692 - INFO : info:check_all_finished: False
+2026-01-13 00:26:36,692 - INFO : remote path: /public/home/chenhh/catmaster_work/ad9676215560fa331e88d88aa10f57bce52f4a54
+2026-01-13 00:26:38,093 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc submit; job_id is 215917
+2026-01-13 00:26:38,812 - INFO : job: 1a554eebc8a5b738603210aa09744bf75b952b0e submit; job_id is 215918
+2026-01-13 00:26:39,533 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 submit; job_id is 215919
+2026-01-13 00:27:41,466 - INFO : job: 1a554eebc8a5b738603210aa09744bf75b952b0e 215918 finished
+2026-01-13 00:27:41,664 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 215919 finished
+2026-01-13 00:29:42,006 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc 215917 finished
+2026-01-13 00:38:56,390 - INFO : job: 4a63ce673985050c1dac5204cfc6de6fefae6fbb 215915 finished
+2026-01-13 00:42:52,830 - INFO : info:check_all_finished: False
+2026-01-13 00:42:52,831 - INFO : remote path: /public/home/chenhh/catmaster_work/213693df19d7075f66ffb28bbdd74a48629b29fc
+2026-01-13 00:42:54,283 - INFO : job: 436d918a0dbdbd1cd13ae13a6ed4b9d6268de2c9 submit; job_id is 215921
+2026-01-13 00:42:55,015 - INFO : job: f94dae506f9869fce98b9c4912b2741615e84da0 submit; job_id is 215922
+2026-01-13 00:42:55,752 - INFO : job: ec3ce79c91e2972bfde6f559b152efc27e57b394 submit; job_id is 215923
+2026-01-13 01:24:59,375 - INFO : job: 782c1f4032dc35115fd39fe6a2ef6aaba7da3077 215916 finished
+2026-01-13 02:16:38,412 - INFO : job: ec3ce79c91e2972bfde6f559b152efc27e57b394 215923 finished
+2026-01-13 03:34:00,318 - INFO : job: f94dae506f9869fce98b9c4912b2741615e84da0 215922 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 11:40:49,259 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-13 11:40:49,262 - INFO : submission exit: 213693df19d7075f66ffb28bbdd74a48629b29fc
+2026-01-13 11:40:49,262 - INFO : at /public/home/chenhh/catmaster_work/213693df19d7075f66ffb28bbdd74a48629b29fc
+2026-01-13 11:40:49,262 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/213693df19d7075f66ffb28bbdd74a48629b29fc.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 14:38:52,159 - INFO : info:check_all_finished: False
+2026-01-13 14:38:52,162 - INFO : job: cedd06f44dfd9bb29a169212fcdb0032d488480c submit; job_id is 3978699
+2026-01-13 14:39:03,190 - INFO : job: cedd06f44dfd9bb29a169212fcdb0032d488480c 3978699 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 14:39:18,708 - INFO : info:check_all_finished: False
+2026-01-13 14:39:18,710 - INFO : job: 85ced66a4f0a54fbb1cab0cd35a9b84af32ef767 submit; job_id is 3978966
+2026-01-13 14:39:29,739 - INFO : job: 85ced66a4f0a54fbb1cab0cd35a9b84af32ef767 3978966 finished
+2026-01-13 14:39:29,739 - INFO : find existing /home/chenhh/python_projects/CatMaster/workspace/demo_dpdispatcher_batch/mace_outputs/mace_batch_20260113_143918_458731/./output, replacing by /home/chenhh/catmaster_work_local/7fe31e7e58e78a74e1e708af4bb2b9a3c02bf201/./output
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 14:47:07,718 - INFO : info:check_all_finished: False
+2026-01-13 14:47:07,719 - INFO : remote path: /public/home/chenhh/catmaster_work/30e7312fbb6c6dca1db563bfb0aab066c9fbd726
+2026-01-13 14:47:10,063 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 215933
+2026-01-13 14:48:45,477 - INFO : info:check_all_finished: False
+2026-01-13 14:48:45,477 - INFO : remote path: /public/home/chenhh/catmaster_work/448ae532107d3de60d5bec86a789e87a78809beb
+2026-01-13 14:48:47,809 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc submit; job_id is 215934
+2026-01-13 14:48:48,521 - INFO : job: 1a554eebc8a5b738603210aa09744bf75b952b0e submit; job_id is 215935
+2026-01-13 14:48:49,250 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 submit; job_id is 215936
+2026-01-13 14:49:11,641 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 215933 finished
+2026-01-13 14:49:51,193 - INFO : job: 1a554eebc8a5b738603210aa09744bf75b952b0e 215935 finished
+2026-01-13 14:49:51,386 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 215936 finished
+2026-01-13 14:50:51,584 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc 215934 finished
+2026-01-13 14:56:30,891 - INFO : info:check_all_finished: False
+2026-01-13 14:56:30,891 - INFO : remote path: /public/home/chenhh/catmaster_work/97f3b7221dac64f633e739fd7c0c6fc9f75b125a
+2026-01-13 14:56:32,281 - INFO : job: 82321f619f616432dac3ecfa7e9166e449418298 submit; job_id is 215937
+2026-01-13 14:56:32,984 - INFO : job: 0ccf8c51d0e622cd3e2fc486757059694f0c0fcb submit; job_id is 215938
+2026-01-13 14:56:33,697 - INFO : job: a01d41cbf7bd37272b7d77975c66ed4c9876744b submit; job_id is 215939
+2026-01-13 14:56:34,424 - INFO : job: 836cbff698293663ef900b4175922770aa52b467 submit; job_id is 215940
+2026-01-13 14:59:20,788 - INFO : info:check_all_finished: False
+2026-01-13 14:59:20,789 - INFO : remote path: /public/home/chenhh/catmaster_work/36010c1408b56144911252bc783e1b344172cf46
+2026-01-13 14:59:22,231 - INFO : job: fcb689e15334b8222c9752d6b3a53e22375fcbf8 submit; job_id is 215941
+2026-01-13 14:59:22,979 - INFO : job: 12ee4fcb257463084d1ad8991f9e6caee0187f15 submit; job_id is 215942
+2026-01-13 14:59:23,688 - INFO : job: bd3ceef4dcaaa1f78acaf413cb20f67c530de43d submit; job_id is 215943
+2026-01-13 15:04:27,359 - INFO : job: fcb689e15334b8222c9752d6b3a53e22375fcbf8 215941 finished
+2026-01-13 15:04:38,361 - INFO : job: 0ccf8c51d0e622cd3e2fc486757059694f0c0fcb 215938 finished
+2026-01-13 15:04:38,565 - INFO : job: a01d41cbf7bd37272b7d77975c66ed4c9876744b 215939 finished
+2026-01-13 15:04:38,765 - INFO : job: 836cbff698293663ef900b4175922770aa52b467 215940 finished
+2026-01-13 15:05:27,828 - INFO : job: 12ee4fcb257463084d1ad8991f9e6caee0187f15 215942 finished
+2026-01-13 15:08:39,047 - INFO : job: 82321f619f616432dac3ecfa7e9166e449418298 215937 finished
+2026-01-13 15:13:29,016 - INFO : job: bd3ceef4dcaaa1f78acaf413cb20f67c530de43d 215943 finished
+2026-01-13 15:16:51,161 - INFO : info:check_all_finished: False
+2026-01-13 15:16:51,162 - INFO : remote path: /public/home/chenhh/catmaster_work/2afa8ae66f0d622923a39ff8ab8f3c1489134649
+2026-01-13 15:16:52,549 - INFO : job: 7b7b4dac4bffca050315b1bc630e7ef2af18de61 submit; job_id is 215944
+2026-01-13 15:16:53,267 - INFO : job: 4d43165c183501a5d6e0a87b1fb30669f0d6f252 submit; job_id is 215945
+2026-01-13 15:16:53,965 - INFO : job: dfd2df4dc9ec7a4f5ff376d1e122f09331b4b283 submit; job_id is 215946
+2026-01-13 15:17:39,867 - INFO : info:check_all_finished: False
+2026-01-13 15:17:39,867 - INFO : remote path: /public/home/chenhh/catmaster_work/6f5b2d1e0b361dbe59ac36fa936d63e87230a199
+2026-01-13 15:17:41,221 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 215947
+2026-01-13 15:20:42,924 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 215947 finished
+2026-01-13 15:25:16,812 - INFO : info:check_all_finished: False
+2026-01-13 15:25:16,812 - INFO : remote path: /public/home/chenhh/catmaster_work/d5e931724907ef4a0e47482533cc8287a4d66e04
+2026-01-13 15:25:18,178 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 215948
+2026-01-13 16:13:22,481 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 215948 finished
+2026-01-13 16:36:30,070 - INFO : job: 4d43165c183501a5d6e0a87b1fb30669f0d6f252 215945 finished
+2026-01-13 17:17:41,803 - INFO : job: dfd2df4dc9ec7a4f5ff376d1e122f09331b4b283 215946 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 18:56:30,176 - INFO : info:check_all_finished: False
+2026-01-13 18:56:30,176 - INFO : remote path: /public/home/chenhh/catmaster_work/a171911964937b86a03a264ef8ad024488851a1a
+2026-01-13 18:56:31,762 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 215950
+2026-01-13 18:57:33,245 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 215950 finished
+2026-01-13 19:09:37,552 - INFO : info:check_all_finished: False
+2026-01-13 19:09:37,552 - INFO : remote path: /public/home/chenhh/catmaster_work/e47e12138d07f29a7b03d4526b032788827c1cb1
+2026-01-13 19:09:38,937 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 215951
+2026-01-13 19:10:40,419 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 215951 finished
+2026-01-13 19:19:05,877 - INFO : info:check_all_finished: False
+2026-01-13 19:19:05,877 - INFO : remote path: /public/home/chenhh/catmaster_work/f7457d8e7e8cb49aa47cc7b2e663c95ca7bbf726
+2026-01-13 19:19:07,384 - INFO : job: 357d977faaec8a700496abc59f7533cc8a5d0801 submit; job_id is 215952
+2026-01-13 19:19:08,135 - INFO : job: 85b7ce5c3a2ded9d40568ed0983bb5d0ee8dc1db submit; job_id is 215953
+2026-01-13 19:19:08,860 - INFO : job: b1f8b7cabfc929213ce6b939e6e584b15c6b8fca submit; job_id is 215954
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 20:42:46,985 - INFO : job: 357d977faaec8a700496abc59f7533cc8a5d0801 215952 finished
+2026-01-13 21:05:39,440 - INFO : info:check_all_finished: False
+2026-01-13 21:05:39,443 - INFO : job: f874df7d432c8d858f93c6e70799cc109b1221bc submit; job_id is 4053644
+2026-01-13 21:06:40,454 - INFO : job: f874df7d432c8d858f93c6e70799cc109b1221bc 4053644 finished
+2026-01-13 21:06:40,454 - INFO : find existing /home/chenhh/python_projects/CatMaster/workspace/demo_llm_Alloy_111_HER/mace_runs/bare_slabs/mace_batch_20260113_210539_c46ced/./output, replacing by /home/chenhh/catmaster_work_local/48391b0312a5c8d6368636b4cfd843f6543d5fa1/./output
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 21:49:18,915 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-13 21:49:18,916 - INFO : submission exit: f7457d8e7e8cb49aa47cc7b2e663c95ca7bbf726
+2026-01-13 21:49:18,916 - INFO : at /public/home/chenhh/catmaster_work/f7457d8e7e8cb49aa47cc7b2e663c95ca7bbf726
+2026-01-13 21:49:18,916 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/f7457d8e7e8cb49aa47cc7b2e663c95ca7bbf726.json.
+2026-01-13 21:49:30,262 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-13 21:49:30,263 - INFO : submission exit: 2afa8ae66f0d622923a39ff8ab8f3c1489134649
+2026-01-13 21:49:30,263 - INFO : at /public/home/chenhh/catmaster_work/2afa8ae66f0d622923a39ff8ab8f3c1489134649
+2026-01-13 21:49:30,264 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/2afa8ae66f0d622923a39ff8ab8f3c1489134649.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 23:15:38,030 - INFO : info:check_all_finished: False
+2026-01-13 23:15:38,030 - INFO : remote path: /public/home/chenhh/catmaster_work/40daa0ea38f9c127186f29f6a793f9d5c1b5725f
+2026-01-13 23:15:39,460 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 215958
+2026-01-13 23:16:40,943 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 215958 finished
+2026-01-13 23:17:38,100 - INFO : info:check_all_finished: False
+2026-01-13 23:17:38,100 - INFO : remote path: /public/home/chenhh/catmaster_work/f8bf02fac91319dd1ea82f229aa9c7a0598b9717
+2026-01-13 23:17:39,495 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 215959
+2026-01-13 23:18:10,987 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 215959 finished
+2026-01-13 23:20:02,811 - INFO : info:check_all_finished: False
+2026-01-13 23:20:02,811 - INFO : remote path: /public/home/chenhh/catmaster_work/9f4d3dc5721d84c654222849151b5021434e7b08
+2026-01-13 23:20:04,302 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 submit; job_id is 215960
+2026-01-13 23:20:05,053 - INFO : job: 107c55e59515571d10d5514abcc808d2da0a20c7 submit; job_id is 215961
+2026-01-13 23:20:05,760 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 submit; job_id is 215962
+2026-01-13 23:21:07,517 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 215960 finished
+2026-01-13 23:21:07,725 - INFO : job: 107c55e59515571d10d5514abcc808d2da0a20c7 215961 finished
+2026-01-13 23:21:07,928 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 215962 finished
+2026-01-13 23:32:07,466 - INFO : info:check_all_finished: False
+2026-01-13 23:32:07,466 - INFO : remote path: /public/home/chenhh/catmaster_work/391ee537b71208b7eeb6f7771e0701520aaaab3a
+2026-01-13 23:32:08,875 - INFO : job: 30563d9e2c8e9adb186661cfe4415b12669bee1e submit; job_id is 215963
+2026-01-13 23:32:09,609 - INFO : job: a7d1ba74fe54c9d7ad6951705fd249e88f478c87 submit; job_id is 215964
+2026-01-13 23:32:10,320 - INFO : job: 1b23a6464cd9dc13b546c1ef753c5e1feb58fce4 submit; job_id is 215965
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-13 23:55:26,232 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-13 23:55:26,234 - INFO : submission exit: 391ee537b71208b7eeb6f7771e0701520aaaab3a
+2026-01-13 23:55:26,234 - INFO : at /public/home/chenhh/catmaster_work/391ee537b71208b7eeb6f7771e0701520aaaab3a
+2026-01-13 23:55:26,234 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/391ee537b71208b7eeb6f7771e0701520aaaab3a.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 00:03:27,477 - INFO : info:check_all_finished: False
+2026-01-14 00:03:27,477 - INFO : remote path: /public/home/chenhh/catmaster_work/e31117e564b5aae338e3582e4adf343313a66ae9
+2026-01-14 00:03:28,852 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 215970
+2026-01-14 00:04:30,316 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 215970 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 00:19:07,719 - INFO : info:check_all_finished: False
+2026-01-14 00:19:07,720 - INFO : remote path: /public/home/chenhh/catmaster_work/2af26e846b1ed93c8d182d430ad414f2ecfa4d76
+2026-01-14 00:19:09,169 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 215972
+2026-01-14 00:20:10,644 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 215972 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 00:26:21,059 - INFO : info:check_all_finished: False
+2026-01-14 00:26:21,059 - INFO : remote path: /public/home/chenhh/catmaster_work/7ff6f6d747e75cf2c4aaf58d2ffa8cb7254ff840
+2026-01-14 00:26:22,537 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 submit; job_id is 215973
+2026-01-14 00:26:23,274 - INFO : job: 107c55e59515571d10d5514abcc808d2da0a20c7 submit; job_id is 215974
+2026-01-14 00:26:23,976 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 submit; job_id is 215976
+2026-01-14 00:28:25,775 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 215973 finished
+2026-01-14 00:28:25,975 - INFO : job: 107c55e59515571d10d5514abcc808d2da0a20c7 215974 finished
+2026-01-14 00:28:26,174 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 215976 finished
+2026-01-14 00:28:36,591 - INFO : info:check_all_finished: False
+2026-01-14 00:28:36,591 - INFO : remote path: /public/home/chenhh/catmaster_work/8962c7e9e057308cb047d7f3fcc76c2fa5c87023
+2026-01-14 00:28:38,108 - INFO : job: 61099bc1310f90e4cc988cfaa65a833e920ff388 submit; job_id is 215977
+2026-01-14 00:28:38,844 - INFO : job: 425ebe6364ce67385122529371df160545b8fe4d submit; job_id is 215978
+2026-01-14 00:28:39,585 - INFO : job: 9f011d8238de4f4727834919e2b81e991cf16a2a submit; job_id is 215979
+2026-01-14 00:28:40,326 - INFO : job: 589b015917a860c3efc47061cf111eae4e7839f4 submit; job_id is 215980
+2026-01-14 00:28:41,048 - INFO : job: dc57e8246f70cebc8b87b187da05e2c39e5ed54a submit; job_id is 215981
+2026-01-14 00:28:41,774 - INFO : job: a851256036ef1c7f3a663760ee3e625fa95eb965 submit; job_id is 215982
+2026-01-14 00:33:00,201 - INFO : info:check_all_finished: False
+2026-01-14 00:33:00,201 - INFO : remote path: /public/home/chenhh/catmaster_work/690d535ada7dac49320dffd982e5cbc5e4a1afd7
+2026-01-14 00:33:01,651 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 submit; job_id is 215985
+2026-01-14 00:33:02,390 - INFO : job: 107c55e59515571d10d5514abcc808d2da0a20c7 submit; job_id is 215986
+2026-01-14 00:33:03,113 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 submit; job_id is 215987
+2026-01-14 02:10:14,340 - INFO : job: 61099bc1310f90e4cc988cfaa65a833e920ff388 215977 finished
+2026-01-14 02:10:14,702 - INFO : job: 9f011d8238de4f4727834919e2b81e991cf16a2a 215979 finished
+2026-01-14 02:46:02,721 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 215985 finished
+2026-01-14 02:51:04,364 - INFO : job: 107c55e59515571d10d5514abcc808d2da0a20c7 215986 finished
+2026-01-14 02:59:05,575 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 215987 finished
+2026-01-14 03:01:45,305 - INFO : info:check_all_finished: False
+2026-01-14 03:01:45,306 - INFO : remote path: /public/home/chenhh/catmaster_work/6ae8c655bb89b2b1d31f79b1f9f246c4e68a6c17
+2026-01-14 03:01:46,756 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 216002
+2026-01-14 03:03:48,354 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 216002 finished
+2026-01-14 05:31:15,728 - INFO : job: 589b015917a860c3efc47061cf111eae4e7839f4 215980 finished
+2026-01-14 06:25:40,219 - INFO : job: a851256036ef1c7f3a663760ee3e625fa95eb965 215982 finished
+2026-01-14 07:16:54,673 - INFO : job: 425ebe6364ce67385122529371df160545b8fe4d 215978 finished
+2026-01-14 08:19:02,662 - INFO : job: dc57e8246f70cebc8b87b187da05e2c39e5ed54a 215981 finished
+2026-01-14 08:21:51,932 - INFO : info:check_all_finished: False
+2026-01-14 08:21:51,933 - INFO : remote path: /public/home/chenhh/catmaster_work/2bb190bd36e1f96368508eca3ecafe23e68b4b47
+2026-01-14 08:21:57,446 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 216004
+2026-01-14 09:12:04,288 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-14 09:12:04,291 - INFO : submission exit: 2bb190bd36e1f96368508eca3ecafe23e68b4b47
+2026-01-14 09:12:04,291 - INFO : at /public/home/chenhh/catmaster_work/2bb190bd36e1f96368508eca3ecafe23e68b4b47
+2026-01-14 09:12:04,291 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/2bb190bd36e1f96368508eca3ecafe23e68b4b47.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 09:27:59,345 - INFO : info:check_all_finished: False
+2026-01-14 09:27:59,347 - INFO : remote path: /public/home/chenhh/catmaster_work/afae8b2f67c976db00ae2b0bfe761a8c9657d7d5
+2026-01-14 09:28:04,799 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 216005
+2026-01-14 09:29:06,281 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 216005 finished
+2026-01-14 09:31:20,933 - INFO : info:check_all_finished: False
+2026-01-14 09:31:20,933 - INFO : remote path: /public/home/chenhh/catmaster_work/7065f5809acc3fdf6d7c7a670e6bd453d67d8ae8
+2026-01-14 09:31:27,289 - INFO : job: 9bd5c31a2290f9cb00c1f81b577fa8d40be96bd7 submit; job_id is 216006
+2026-01-14 09:31:28,016 - INFO : job: 18ce10f40f38227782d6fd1b4b6d983794f77a13 submit; job_id is 216007
+2026-01-14 09:31:28,752 - INFO : job: e51606a43de9d3eae36fab8e89d1c1a64d70d8ae submit; job_id is 216008
+2026-01-14 09:43:35,703 - INFO : job: e51606a43de9d3eae36fab8e89d1c1a64d70d8ae 216008 finished
+2026-01-14 09:52:01,917 - INFO : info:check_all_finished: False
+2026-01-14 09:52:01,917 - INFO : remote path: /public/home/chenhh/catmaster_work/f2438fd40d400b31052b12dd5b268be91e5e5341
+2026-01-14 09:52:07,259 - INFO : job: cb93c87c45b6ef6d7edc1eeec4aab5a3ecf4ee36 submit; job_id is 216009
+2026-01-14 09:52:08,002 - INFO : job: 490a66791e57e6ebda8ca85c3c1489151f5a64a2 submit; job_id is 216010
+2026-01-14 09:52:08,711 - INFO : job: f9ff12376b751215ff755bca7d3e839d81a47c31 submit; job_id is 216011
+2026-01-14 09:53:10,488 - INFO : job: cb93c87c45b6ef6d7edc1eeec4aab5a3ecf4ee36 216009 finished
+2026-01-14 09:53:10,689 - INFO : job: 490a66791e57e6ebda8ca85c3c1489151f5a64a2 216010 finished
+2026-01-14 09:53:10,891 - INFO : job: f9ff12376b751215ff755bca7d3e839d81a47c31 216011 finished
+2026-01-14 10:04:41,487 - INFO : job: 9bd5c31a2290f9cb00c1f81b577fa8d40be96bd7 216006 finished
+2026-01-14 10:30:30,426 - INFO : info:check_all_finished: False
+2026-01-14 10:30:30,427 - INFO : remote path: /public/home/chenhh/catmaster_work/c15d1196d6b9896bc0937b544220cf9ad511de1f
+2026-01-14 10:30:35,853 - INFO : job: 030208ad00650ca2cd1fdcf87f2dd8ac596d301b submit; job_id is 216013
+2026-01-14 10:30:36,564 - INFO : job: 1c2175461d2c04c1d868058c8c9ebdd77135c10e submit; job_id is 216014
+2026-01-14 10:30:37,270 - INFO : job: 41466374b0ba41e034f98eb4a54b3aaaa1d68592 submit; job_id is 216015
+2026-01-14 10:47:46,066 - INFO : job: 030208ad00650ca2cd1fdcf87f2dd8ac596d301b 216013 finished
+2026-01-14 10:51:47,429 - INFO : job: 18ce10f40f38227782d6fd1b4b6d983794f77a13 216007 finished
+2026-01-14 10:56:53,073 - INFO : info:check_all_finished: False
+2026-01-14 10:56:53,073 - INFO : remote path: /public/home/chenhh/catmaster_work/166efa8323c8c2f43ca9a9fa637b66d29692ee9c
+2026-01-14 10:56:59,488 - INFO : job: 0be9dfc85cd675f67aa276f717ef75e2acf8a818 submit; job_id is 216016
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 11:07:51,843 - INFO : job: 1c2175461d2c04c1d868058c8c9ebdd77135c10e 216014 finished
+2026-01-14 11:09:16,368 - INFO : info:check_all_finished: False
+2026-01-14 11:09:16,377 - INFO : remote path: /public/home/chenhh/catmaster_work/9f06c0b0f07a466650384f7be92ea339ec002f44
+2026-01-14 11:09:21,778 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 submit; job_id is 216017
+2026-01-14 11:09:22,477 - INFO : job: 511f106bc17e9a63d32881d8064b68bee086da23 submit; job_id is 216018
+2026-01-14 11:09:23,213 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 submit; job_id is 216019
+2026-01-14 11:10:25,005 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 216017 finished
+2026-01-14 11:10:25,208 - INFO : job: 511f106bc17e9a63d32881d8064b68bee086da23 216018 finished
+2026-01-14 11:10:25,414 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 216019 finished
+2026-01-14 12:01:47,622 - INFO : info:check_all_finished: False
+2026-01-14 12:01:47,623 - INFO : remote path: /public/home/chenhh/catmaster_work/65e3cee425977e3cd458424462175d6e5ec532bd
+2026-01-14 12:01:53,959 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 submit; job_id is 216020
+2026-01-14 12:01:54,669 - INFO : job: 511f106bc17e9a63d32881d8064b68bee086da23 submit; job_id is 216021
+2026-01-14 12:01:55,383 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 submit; job_id is 216022
+2026-01-14 12:13:01,651 - INFO : job: 511f106bc17e9a63d32881d8064b68bee086da23 216021 finished
+2026-01-14 12:21:04,107 - INFO : job: 505ec997f4a06094d5c0e633448d94a12080b391 216022 finished
+2026-01-14 13:21:11,413 - INFO : job: ee2eea42d7e06fdb1caac47a6e63999e245aea55 216020 finished
+2026-01-14 13:26:55,004 - INFO : info:check_all_finished: False
+2026-01-14 13:26:55,004 - INFO : remote path: /public/home/chenhh/catmaster_work/ee3d59295533b15348d810a87c1e2d01319f9829
+2026-01-14 13:27:01,339 - INFO : job: c164e04ea7c11d45aca449da349f8f4118100553 submit; job_id is 216023
+2026-01-14 13:29:02,953 - INFO : job: c164e04ea7c11d45aca449da349f8f4118100553 216023 finished
+2026-01-14 14:00:09,262 - INFO : info:check_all_finished: False
+2026-01-14 14:00:09,262 - INFO : remote path: /public/home/chenhh/catmaster_work/4ebf49b5c917099ea4f5f059d4256f36fec51f1d
+2026-01-14 14:00:17,232 - INFO : job: d19acc2bdb77e92ef13a06a40136cc13d98fa508 submit; job_id is 216024
+2026-01-14 14:00:17,966 - INFO : job: 668a3106cea69290af98382253ec0e44b9b8e1c3 submit; job_id is 216025
+2026-01-14 14:00:18,691 - INFO : job: fcca78100ce1de210486c9253ac533b19fd32a9a submit; job_id is 216026
+2026-01-14 14:00:19,443 - INFO : job: 55e76c2a7f0bdeb943a292050c77955d68b78f55 submit; job_id is 216027
+2026-01-14 14:00:20,150 - INFO : job: 9ed8c0fe55b56dfe9a93275ee391c97a5f9b0c8f submit; job_id is 216028
+2026-01-14 14:00:20,890 - INFO : job: 9a132f61ddeb8f825139ab7a47000e9b031c5d18 submit; job_id is 216029
+2026-01-14 14:00:21,579 - INFO : job: 3646890cab4a3f076b17d28dc3257d7748d13ac0 submit; job_id is 216030
+2026-01-14 14:00:22,285 - INFO : job: a1a3b281e2797a9b88d57b85c492d4d71520162e submit; job_id is 216031
+2026-01-14 14:00:22,964 - INFO : job: c1a8f1f2f18aaaf4912c8b120fad6f2aa748ef47 submit; job_id is 216032
+2026-01-14 14:00:23,694 - INFO : job: 1df6cda3e6a309949cfa803a2f8de2ba99b9810a submit; job_id is 216033
+2026-01-14 14:00:24,418 - INFO : job: 11c50494c9cfa2f4636a62ca6ef219bc9d49dc37 submit; job_id is 216034
+2026-01-14 14:00:25,160 - INFO : job: bd3ac48358132437afa6cad9455f0d111ed37c36 submit; job_id is 216035
+2026-01-14 14:00:25,903 - INFO : job: 08a9f7756a8016d677871025a465ad20351cd824 submit; job_id is 216036
+2026-01-14 14:00:26,642 - INFO : job: d1122370132a34e9a1970b16d7ce5b8ed8de6c6e submit; job_id is 216037
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 15:23:00,351 - INFO : info:check_all_finished: False
+2026-01-14 15:23:00,354 - INFO : job: f874df7d432c8d858f93c6e70799cc109b1221bc submit; job_id is 87697
+2026-01-14 15:24:01,367 - INFO : job: f874df7d432c8d858f93c6e70799cc109b1221bc 87697 finished
+2026-01-14 15:24:01,368 - INFO : find existing /home/chenhh/python_projects/CatMaster/workspace/demo_llm_Alloy_111_HER/mace_runs/bare_slabs/mace_batch_20260114_152300_80fde5/./output, replacing by /home/chenhh/catmaster_work_local/2208f4eee6cff63e6a3d6eaf1a1d45de46629890/./output
+2026-01-14 15:24:25,184 - INFO : info:check_all_finished: False
+2026-01-14 15:24:25,185 - INFO : job: f874df7d432c8d858f93c6e70799cc109b1221bc submit; job_id is 88361
+2026-01-14 15:47:26,822 - INFO : job: f874df7d432c8d858f93c6e70799cc109b1221bc 88361 finished
+2026-01-14 15:47:26,823 - INFO : find existing /home/chenhh/python_projects/CatMaster/workspace/demo_llm_Alloy_111_HER/mace_runs/h_ads/mace_batch_20260114_152425_c2e534/./output, replacing by /home/chenhh/catmaster_work_local/b17887c0c7fa45a48fcf360b71e9f2efb934f212/./output
+2026-01-14 15:47:40,375 - INFO : info:check_all_finished: False
+2026-01-14 15:47:40,377 - INFO : job: 7c05007b7700aef6a7452ac02011e7d5f0b8379e submit; job_id is 98360
+2026-01-14 15:48:11,398 - INFO : job: 7c05007b7700aef6a7452ac02011e7d5f0b8379e 98360 finished
+2026-01-14 16:09:33,674 - INFO : info:check_all_finished: False
+2026-01-14 16:09:33,674 - INFO : remote path: /public/home/chenhh/catmaster_work/bd2509e7f463708c0b0802982d54529d3176734b
+2026-01-14 16:09:39,287 - INFO : job: d92b1fdadb6619a0f24b723b2b1eb93f3d3d5991 submit; job_id is 216047
+2026-01-14 16:09:40,023 - INFO : job: ceacc5e933b1f3b062e073c2f13eee17be04f248 submit; job_id is 216048
+2026-01-14 16:09:40,757 - INFO : job: 31801e4342208d39a5fc8adc72fea8c21840f08e submit; job_id is 216049
+2026-01-14 16:09:41,498 - INFO : job: 48cb6074ba7008d024dddbb9eca3f94903d95184 submit; job_id is 216050
+2026-01-14 16:09:42,237 - INFO : job: 0cdeac03893456fa9fd5b6e8bb0c351933241280 submit; job_id is 216051
+2026-01-14 16:09:42,976 - INFO : job: 221fa7b577fc4fc9c5a162a565ff1886575a1121 submit; job_id is 216052
+2026-01-14 16:09:43,715 - INFO : job: f05205c8194264b70dc48c9f6efc14477d3bd143 submit; job_id is 216053
+2026-01-14 16:09:44,456 - INFO : job: 1754ce4052759498e3206fa2ea99f1be75307407 submit; job_id is 216054
+2026-01-14 17:49:38,926 - INFO : job: 9ed8c0fe55b56dfe9a93275ee391c97a5f9b0c8f 216028 finished
+2026-01-14 17:56:53,027 - INFO : job: 668a3106cea69290af98382253ec0e44b9b8e1c3 216025 finished
+2026-01-14 19:15:50,597 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-14 19:15:50,600 - INFO : submission exit: c15d1196d6b9896bc0937b544220cf9ad511de1f
+2026-01-14 19:15:50,600 - INFO : at /public/home/chenhh/catmaster_work/c15d1196d6b9896bc0937b544220cf9ad511de1f
+2026-01-14 19:15:50,600 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/c15d1196d6b9896bc0937b544220cf9ad511de1f.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 20:08:59,637 - INFO : info:check_all_finished: False
+2026-01-14 20:08:59,637 - INFO : remote path: /public/home/chenhh/catmaster_work/a8e4261526eba7cf9d2cf9c2c3e29650f10c4c15
+2026-01-14 20:09:01,949 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 submit; job_id is 216056
+2026-01-14 20:09:02,668 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc submit; job_id is 216057
+2026-01-14 20:09:03,403 - INFO : job: 5f76b44aeed9b191f73c45435392638ef9880198 submit; job_id is 216058
+2026-01-14 20:09:23,499 - INFO : info:check_all_finished: False
+2026-01-14 20:09:23,499 - INFO : remote path: /public/home/chenhh/catmaster_work/600335e412ef4ac4fa4dc1b3b261aeb3a5dbe37d
+2026-01-14 20:09:25,825 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216059
+2026-01-14 20:10:05,161 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 216056 finished
+2026-01-14 20:10:05,360 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc 216057 finished
+2026-01-14 20:10:05,564 - INFO : job: 5f76b44aeed9b191f73c45435392638ef9880198 216058 finished
+2026-01-14 20:10:27,291 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 216059 finished
+2026-01-14 20:16:18,705 - INFO : job: ceacc5e933b1f3b062e073c2f13eee17be04f248 216048 finished
+2026-01-14 20:23:03,754 - INFO : info:check_all_finished: False
+2026-01-14 20:23:03,754 - INFO : remote path: /public/home/chenhh/catmaster_work/fdfa9f87c09c462221f8cb46bbf59a76aa79d6f5
+2026-01-14 20:23:05,176 - INFO : job: 6ec6a8f51f49f01dfb4358c26ba5c267d7d6d880 submit; job_id is 216062
+2026-01-14 20:23:05,916 - INFO : job: 6e2554559f20de0872f16fe340fafdd268c2b80d submit; job_id is 216063
+2026-01-14 20:23:06,665 - INFO : job: 3f4b6752396ca1f503bb6929b2d90d6519ad7a65 submit; job_id is 216064
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 20:39:38,950 - INFO : info:check_all_finished: False
+2026-01-14 20:39:38,950 - INFO : remote path: /public/home/chenhh/catmaster_work/4e3e4427e72f7dc0afcfad2940b7663d15ae019c
+2026-01-14 20:39:40,397 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 submit; job_id is 216066
+2026-01-14 20:39:41,131 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc submit; job_id is 216067
+2026-01-14 20:39:41,871 - INFO : job: 5f76b44aeed9b191f73c45435392638ef9880198 submit; job_id is 216068
+2026-01-14 20:40:43,654 - INFO : job: 0db803b7770b7a6e86049209abbdf19f30cdf376 216066 finished
+2026-01-14 20:40:43,861 - INFO : job: c64bab404e2fad52cb8ca10f2ed85c2054a40dcc 216067 finished
+2026-01-14 20:40:44,063 - INFO : job: 5f76b44aeed9b191f73c45435392638ef9880198 216068 finished
+2026-01-14 20:50:37,513 - INFO : job: 0cdeac03893456fa9fd5b6e8bb0c351933241280 216051 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 21:11:49,378 - INFO : info:check_all_finished: False
+2026-01-14 21:11:49,378 - INFO : remote path: /public/home/chenhh/catmaster_work/53b7032e18dafde46b7c7715aaf977073a84e97c
+2026-01-14 21:11:50,789 - INFO : job: e5625dd12271b360f15c2a6133a7e7a957e4f9a2 submit; job_id is 216071
+2026-01-14 21:11:51,497 - INFO : job: 9a751436ac1e100f00be4d038721b6689b969e4a submit; job_id is 216072
+2026-01-14 21:11:52,213 - INFO : job: ed1067991dd89b7d908314119a399eb1baee39b3 submit; job_id is 216073
+2026-01-14 21:12:54,153 - INFO : job: 9a751436ac1e100f00be4d038721b6689b969e4a 216072 finished
+2026-01-14 21:12:54,364 - INFO : job: ed1067991dd89b7d908314119a399eb1baee39b3 216073 finished
+2026-01-14 21:13:54,562 - INFO : job: e5625dd12271b360f15c2a6133a7e7a957e4f9a2 216071 finished
+2026-01-14 21:18:14,259 - INFO : info:check_all_finished: False
+2026-01-14 21:18:14,259 - INFO : remote path: /public/home/chenhh/catmaster_work/6db7d44598ccdbc6fbde8f28f6809d1d402265fc
+2026-01-14 21:18:15,660 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216074
+2026-01-14 21:21:47,844 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 216074 finished
+2026-01-14 21:23:06,801 - INFO : info:check_all_finished: False
+2026-01-14 21:23:06,801 - INFO : remote path: /public/home/chenhh/catmaster_work/ac543d101479078ea636b4666831d0b95c4a6293
+2026-01-14 21:23:08,208 - INFO : job: 997e73872611c9432082a143ddd8d59b20e6ca2d submit; job_id is 216075
+2026-01-14 21:23:08,951 - INFO : job: 42b93e7076c0e55bbd8d7cdbe2bff93eae4a5a77 submit; job_id is 216076
+2026-01-14 21:23:09,682 - INFO : job: 74082aba9181a785a08fdb0b5b86b9a677a835e8 submit; job_id is 216077
+2026-01-14 21:23:21,326 - INFO : job: 6e2554559f20de0872f16fe340fafdd268c2b80d 216063 finished
+2026-01-14 21:53:05,956 - INFO : job: d92b1fdadb6619a0f24b723b2b1eb93f3d3d5991 216047 finished
+2026-01-14 22:13:14,141 - INFO : job: 221fa7b577fc4fc9c5a162a565ff1886575a1121 216052 finished
+2026-01-14 22:14:33,732 - INFO : job: 42b93e7076c0e55bbd8d7cdbe2bff93eae4a5a77 216076 finished
+2026-01-14 22:43:23,465 - INFO : job: f05205c8194264b70dc48c9f6efc14477d3bd143 216053 finished
+2026-01-14 22:49:33,470 - INFO : job: 6ec6a8f51f49f01dfb4358c26ba5c267d7d6d880 216062 finished
+2026-01-14 23:15:35,285 - INFO : job: 3f4b6752396ca1f503bb6929b2d90d6519ad7a65 216064 finished
+2026-01-14 23:20:41,405 - INFO : info:check_all_finished: False
+2026-01-14 23:20:41,406 - INFO : remote path: /public/home/chenhh/catmaster_work/6afaaccc6044d2bc9d6ab0c7bdcc53ee9193a284
+2026-01-14 23:20:42,806 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216079
+2026-01-14 23:50:39,987 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-14 23:50:39,990 - INFO : submission exit: 6afaaccc6044d2bc9d6ab0c7bdcc53ee9193a284
+2026-01-14 23:50:39,990 - INFO : at /public/home/chenhh/catmaster_work/6afaaccc6044d2bc9d6ab0c7bdcc53ee9193a284
+2026-01-14 23:50:39,991 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/6afaaccc6044d2bc9d6ab0c7bdcc53ee9193a284.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-14 23:58:36,393 - INFO : info:check_all_finished: False
+2026-01-14 23:58:36,393 - INFO : remote path: /public/home/chenhh/catmaster_work/c92fc20cca7240013fbdd37ced45ba4af1a81f5f
+2026-01-14 23:58:37,792 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216080
+2026-01-14 23:59:39,271 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 216080 finished
+2026-01-15 01:33:29,866 - INFO : job: 74082aba9181a785a08fdb0b5b86b9a677a835e8 216077 finished
+2026-01-15 07:33:19,766 - INFO : job: 31801e4342208d39a5fc8adc72fea8c21840f08e 216049 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-15 08:57:36,134 - INFO : info:check_all_finished: False
+2026-01-15 08:57:36,135 - INFO : remote path: /public/home/chenhh/catmaster_work/8f94b3df063ebc115f0f1149db2df1e9e9a49295
+2026-01-15 08:57:37,541 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216082
+2026-01-15 09:06:40,021 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 216082 finished
+2026-01-15 09:14:09,130 - INFO : info:check_all_finished: False
+2026-01-15 09:14:09,131 - INFO : remote path: /public/home/chenhh/catmaster_work/c9e9eb95439f354aed30d743a639bb684b152c29
+2026-01-15 09:14:10,583 - INFO : job: db0ee85de079ef1873b860a19c4f67e86be74398 submit; job_id is 216083
+2026-01-15 09:14:11,319 - INFO : job: 8823ff7b9f3eb70a6ebfc31235a9ed51ddb4d421 submit; job_id is 216084
+2026-01-15 09:14:12,043 - INFO : job: 350018a9b670da3dd9123f16cacfe16004d8a0a1 submit; job_id is 216085
+2026-01-15 09:23:17,435 - INFO : job: db0ee85de079ef1873b860a19c4f67e86be74398 216083 finished
+2026-01-15 09:47:06,572 - INFO : info:check_all_finished: False
+2026-01-15 09:47:06,572 - INFO : remote path: /public/home/chenhh/catmaster_work/376de5cdcef3d4b584a551d2d162570df11325fa
+2026-01-15 09:47:07,785 - INFO : job: db0ee85de079ef1873b860a19c4f67e86be74398 submit; job_id is 216087
+2026-01-15 09:47:08,173 - INFO : job: 8823ff7b9f3eb70a6ebfc31235a9ed51ddb4d421 submit; job_id is 216088
+2026-01-15 09:47:08,528 - INFO : job: 350018a9b670da3dd9123f16cacfe16004d8a0a1 submit; job_id is 216089
+2026-01-15 09:47:13,899 - INFO : info:check_all_finished: False
+2026-01-15 09:47:13,900 - INFO : remote path: /public/home/chenhh/catmaster_work/c9b726925ac27f97d55effc356c93e1213dbadf9
+2026-01-15 09:47:15,749 - INFO : job: 997e73872611c9432082a143ddd8d59b20e6ca2d submit; job_id is 216090
+2026-01-15 09:47:16,134 - INFO : job: 42b93e7076c0e55bbd8d7cdbe2bff93eae4a5a77 submit; job_id is 216091
+2026-01-15 09:47:16,520 - INFO : job: 74082aba9181a785a08fdb0b5b86b9a677a835e8 submit; job_id is 216092
+2026-01-15 09:48:01,422 - ERROR : Failed to run exec_command: SSH session not active in calling cd /public/home/chenhh/catmaster_work/bd2509e7f463708c0b0802982d54529d3176734b ;squeue -o "%.18i %.2t" -j 216050
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 305, in exec_command
+    return self.ssh.exec_command(cmd)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/client.py", line 558, in exec_command
+    chan = self._transport.open_session(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 988, in open_session
+    return self.open_channel(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 1082, in open_channel
+    raise SSHException("SSH session not active")
+paramiko.ssh_exception.SSHException: SSH session not active
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/utils/utils.py", line 197, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 315, in exec_command
+    raise RetrySignal(f"SSH session not active in calling {cmd}") from e
+dpdispatcher.utils.utils.RetrySignal: SSH session not active in calling cd /public/home/chenhh/catmaster_work/bd2509e7f463708c0b0802982d54529d3176734b ;squeue -o "%.18i %.2t" -j 216050
+2026-01-15 09:48:01,428 - WARNING : Sleep 1 s and retry...
+2026-01-15 09:48:02,429 - ERROR : Failed to run exec_command: SSH session not active in calling cd /public/home/chenhh/catmaster_work/bd2509e7f463708c0b0802982d54529d3176734b ;squeue -o "%.18i %.2t" -j 216050
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 305, in exec_command
+    return self.ssh.exec_command(cmd)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/client.py", line 558, in exec_command
+    chan = self._transport.open_session(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 988, in open_session
+    return self.open_channel(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 1082, in open_channel
+    raise SSHException("SSH session not active")
+paramiko.ssh_exception.SSHException: SSH session not active
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/utils/utils.py", line 197, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 315, in exec_command
+    raise RetrySignal(f"SSH session not active in calling {cmd}") from e
+dpdispatcher.utils.utils.RetrySignal: SSH session not active in calling cd /public/home/chenhh/catmaster_work/bd2509e7f463708c0b0802982d54529d3176734b ;squeue -o "%.18i %.2t" -j 216050
+2026-01-15 09:48:02,430 - WARNING : Sleep 1 s and retry...
+2026-01-15 09:48:03,430 - ERROR : Failed to run exec_command: SSH session not active in calling cd /public/home/chenhh/catmaster_work/bd2509e7f463708c0b0802982d54529d3176734b ;squeue -o "%.18i %.2t" -j 216050
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 305, in exec_command
+    return self.ssh.exec_command(cmd)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/client.py", line 558, in exec_command
+    chan = self._transport.open_session(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 988, in open_session
+    return self.open_channel(
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/paramiko/transport.py", line 1082, in open_channel
+    raise SSHException("SSH session not active")
+paramiko.ssh_exception.SSHException: SSH session not active
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/utils/utils.py", line 197, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 315, in exec_command
+    raise RetrySignal(f"SSH session not active in calling {cmd}") from e
+dpdispatcher.utils.utils.RetrySignal: SSH session not active in calling cd /public/home/chenhh/catmaster_work/bd2509e7f463708c0b0802982d54529d3176734b ;squeue -o "%.18i %.2t" -j 216050
+2026-01-15 09:48:03,431 - WARNING : Sleep 1 s and retry...
+2026-01-15 09:49:19,097 - INFO : info:check_all_finished: False
+2026-01-15 09:49:19,097 - INFO : remote path: /public/home/chenhh/catmaster_work/8ce7bffea3a50ff7b0565f415a99c3abcd114d38
+2026-01-15 09:49:20,984 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216093
+2026-01-15 09:52:22,551 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 216093 finished
+2026-01-15 09:52:55,910 - INFO : info:check_all_finished: False
+2026-01-15 09:52:55,910 - INFO : remote path: /public/home/chenhh/catmaster_work/b9fd3792c421496a25f588c3e9be321a198b8212
+2026-01-15 09:52:57,452 - INFO : job: 38ee31bb5c1922743974cde87f611e43abf84d18 submit; job_id is 216094
+2026-01-15 09:52:57,864 - INFO : job: e10618fd3e7655648d41e85da20c6c3546a5ed21 submit; job_id is 216095
+2026-01-15 09:52:58,211 - INFO : job: 357f004f5b481cc72e9619dec38243eb76236a11 submit; job_id is 216096
+2026-01-15 09:52:58,566 - INFO : job: b03f0a919d065d1b6897922388f805517ccc82b6 submit; job_id is 216097
+2026-01-15 09:52:58,922 - INFO : job: c865abb9995bb121167d1037d40a11cd69e5523b submit; job_id is 216098
+2026-01-15 09:52:59,313 - INFO : job: 686873f90f6500799c9a399d62625a55f2034b5d submit; job_id is 216099
+2026-01-15 09:52:59,723 - INFO : job: 671d3c91d2d4e5ee865cb0da4e310e494d3be7bb submit; job_id is 216100
+2026-01-15 09:53:00,144 - INFO : job: 8afa32d2b7ecbf36991be617dfe4d03bdd8171ea submit; job_id is 216101
+2026-01-15 10:05:11,759 - INFO : job: db0ee85de079ef1873b860a19c4f67e86be74398 216087 finished
+2026-01-15 10:38:34,718 - INFO : job: 42b93e7076c0e55bbd8d7cdbe2bff93eae4a5a77 216091 finished
+2026-01-15 10:41:14,601 - INFO : job: 8823ff7b9f3eb70a6ebfc31235a9ed51ddb4d421 216088 finished
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-15 10:52:45,523 - INFO : info:check_all_finished: False
+2026-01-15 10:52:45,524 - INFO : remote path: /public/home/chenhh/catmaster_work/e6a960d1a22800d43eb797560e669a6c9060f101
+2026-01-15 10:52:47,383 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216106
+2026-01-15 10:53:48,742 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 216106 finished
+2026-01-15 10:58:44,568 - INFO : info:check_all_finished: False
+2026-01-15 10:58:44,568 - INFO : remote path: /public/home/chenhh/catmaster_work/2be35b4fed182c5f85759a0387d4da604427f7d8
+2026-01-15 10:58:46,361 - INFO : job: 31519abac413d081d0f9cb584707dacb861051b2 submit; job_id is 216107
+2026-01-15 10:58:46,726 - INFO : job: 1744d705be13fadc5bc48e97927894f8489b72e2 submit; job_id is 216108
+2026-01-15 10:58:47,085 - INFO : job: 0b35efdeedb11e2348b07a43ac6ebe6c79663209 submit; job_id is 216109
+2026-01-15 11:03:09,733 - ERROR : 
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 248, in run_submission
+    time.sleep(check_interval)
+KeyboardInterrupt
+2026-01-15 11:03:09,736 - INFO : submission exit: 2be35b4fed182c5f85759a0387d4da604427f7d8
+2026-01-15 11:03:09,736 - INFO : at /public/home/chenhh/catmaster_work/2be35b4fed182c5f85759a0387d4da604427f7d8
+2026-01-15 11:03:09,736 - INFO : Submission information is saved in /home/chenhh/.dpdispatcher/submission/2be35b4fed182c5f85759a0387d4da604427f7d8.json.
+LOG INIT:dpdispatcher log direct to /home/chenhh/python_projects/CatMaster/dpdispatcher.log
+2026-01-15 11:08:15,823 - INFO : job: 350018a9b670da3dd9123f16cacfe16004d8a0a1 216089 finished
+2026-01-15 11:09:36,651 - INFO : info:check_all_finished: False
+2026-01-15 11:09:36,651 - INFO : remote path: /public/home/chenhh/catmaster_work/745714bcb1ff4e131bd6d9a5db966682634b63f7
+2026-01-15 11:09:38,522 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 submit; job_id is 216110
+2026-01-15 11:10:39,853 - INFO : job: 91dce1e9a5361d856435cee37700855921b93da5 216110 finished
+2026-01-15 11:17:15,804 - INFO : info:check_all_finished: False
+2026-01-15 11:17:15,804 - INFO : remote path: /public/home/chenhh/catmaster_work/2697f7fd55719ef4f0bf2b5ee255f034cae6c680
+2026-01-15 11:17:17,759 - INFO : job: fcb689e15334b8222c9752d6b3a53e22375fcbf8 submit; job_id is 216111
+2026-01-15 11:17:18,098 - INFO : job: 12ee4fcb257463084d1ad8991f9e6caee0187f15 submit; job_id is 216112
+2026-01-15 11:17:18,475 - INFO : job: bd3ceef4dcaaa1f78acaf413cb20f67c530de43d submit; job_id is 216113
+2026-01-15 11:21:53,442 - INFO : info:check_all_finished: False
+2026-01-15 11:21:53,443 - INFO : remote path: /public/home/chenhh/catmaster_work/447d0a1025e9e2018b6d625b1e489e2dbdf49d28
+2026-01-15 11:21:56,582 - INFO : job: a4d1563bf10ebf31b101e5d0ca19a4de2c86288e submit; job_id is 216114
+2026-01-15 11:21:56,984 - INFO : job: bb6a818a2645cbca8213838a2c59242fb384f154 submit; job_id is 216115
+2026-01-15 11:21:57,423 - INFO : job: fedb5636f874bfaf4f5c8ca6ada3501d19f73d57 submit; job_id is 216116
+2026-01-15 11:21:57,820 - INFO : job: 7fef378a290572ee169babace6df0a9cd3e9cd65 submit; job_id is 216117
+2026-01-15 11:21:58,221 - INFO : job: e09ee48ed6e1df53169e470a331d7128f46c71be submit; job_id is 216118
+2026-01-15 11:21:58,656 - INFO : job: ae75bac87762ee9a9ad6f75879634037a956e365 submit; job_id is 216119
+2026-01-15 11:28:04,146 - INFO : job: e09ee48ed6e1df53169e470a331d7128f46c71be 216118 finished
+2026-01-15 11:28:23,441 - INFO : job: fcb689e15334b8222c9752d6b3a53e22375fcbf8 216111 finished
+2026-01-15 11:44:12,747 - INFO : job: ae75bac87762ee9a9ad6f75879634037a956e365 216119 finished
+2026-01-15 12:05:56,135 - INFO : job: c865abb9995bb121167d1037d40a11cd69e5523b 216098 finished
+2026-01-15 12:07:32,454 - INFO : job: 12ee4fcb257463084d1ad8991f9e6caee0187f15 216112 finished
+2026-01-15 13:09:09,377 - INFO : job: 74082aba9181a785a08fdb0b5b86b9a677a835e8 216092 finished
+2026-01-15 14:26:47,705 - INFO : job: e10618fd3e7655648d41e85da20c6c3546a5ed21 216095 finished
+2026-01-15 14:43:51,656 - INFO : job: bd3ceef4dcaaa1f78acaf413cb20f67c530de43d 216113 finished
+2026-01-15 15:00:58,799 - INFO : job: 38ee31bb5c1922743974cde87f611e43abf84d18 216094 finished
+2026-01-15 15:43:10,275 - INFO : job: 686873f90f6500799c9a399d62625a55f2034b5d 216099 finished
+2026-01-15 17:45:36,263 - INFO : job: 671d3c91d2d4e5ee865cb0da4e310e494d3be7bb 216100 finished
+2026-01-15 18:51:17,236 - INFO : job: fedb5636f874bfaf4f5c8ca6ada3501d19f73d57 216116 finished
+2026-01-16 00:24:09,513 - INFO : job: 7fef378a290572ee169babace6df0a9cd3e9cd65 216117 finished
+2026-01-16 02:12:34,905 - INFO : job: a4d1563bf10ebf31b101e5d0ca19a4de2c86288e 216114 finished
+2026-01-16 05:43:01,183 - INFO : job: bb6a818a2645cbca8213838a2c59242fb384f154 216115 finished
+2026-01-16 06:45:47,180 - INFO : job: 357f004f5b481cc72e9619dec38243eb76236a11 216096 finished
+2026-01-16 12:03:58,014 - INFO : job: 997e73872611c9432082a143ddd8d59b20e6ca2d 216090 finished
+2026-01-16 12:11:32,940 - INFO : info:check_all_finished: False
+2026-01-16 12:11:32,942 - INFO : remote path: /public/home/chenhh/catmaster_work/db4d2df0fa2110b7b4948859de67945f176153ad
+2026-01-16 12:11:34,377 - INFO : job: 5c1581e443a90886f017ee1820942d5a138c157d submit; job_id is 216168
+2026-01-16 12:11:34,756 - INFO : job: c528228f76381c5c84336f61e96216ecf5f09100 submit; job_id is 216169
+2026-01-16 12:11:35,094 - INFO : job: 947280f321b09da7d6ec15f88f418d24cc712e02 submit; job_id is 216170
+2026-01-16 12:11:35,401 - INFO : job: bc02fba07d11c2d8a4f2220c2fd9fedd1940d3bb submit; job_id is 216171
+2026-01-16 12:11:35,735 - INFO : job: 0a9b8d157ac75b245693b554dc4d902b7b2077fc submit; job_id is 216172
+2026-01-16 12:11:36,079 - INFO : job: 805855253545313cf208d6d6dbf95a46ea20a415 submit; job_id is 216173
+2026-01-16 12:11:36,407 - INFO : job: a6ecc13c4ff10accfef217fbb36207df9e7149d4 submit; job_id is 216174
+2026-01-16 12:11:36,787 - INFO : job: 865b9e5d1f651531988c2f4407a4e28b4ed9d79c submit; job_id is 216175
+2026-01-16 12:11:37,134 - INFO : job: 19c3dd146a083c8830b763da316d21b90be6d5d9 submit; job_id is 216176
+2026-01-16 12:11:37,489 - INFO : job: e45c4dcb41b44371ba5f70422e534e1d4be5da81 submit; job_id is 216177
+2026-01-16 12:11:37,854 - INFO : job: 2fa41bc2bef60b37525e1ead0debe4f09a7c6378 submit; job_id is 216178
+2026-01-16 12:11:38,180 - INFO : job: 5d4e9f3bb05eef4347913b966f4969096aa2fd0d submit; job_id is 216179
+2026-01-16 12:11:38,506 - INFO : job: 613beded631c6d39576ae68f0ed97b6dc9e85bb1 submit; job_id is 216180
+2026-01-16 12:11:38,782 - INFO : job: 194e4dc4733eb657b3bc14994fd04d0a43b3dc5e submit; job_id is 216181
+2026-01-16 23:29:30,011 - INFO : job: 865b9e5d1f651531988c2f4407a4e28b4ed9d79c 216175 finished
+2026-01-17 01:14:41,271 - INFO : job: 613beded631c6d39576ae68f0ed97b6dc9e85bb1 216180 finished
+2026-01-17 02:11:16,710 - INFO : job: e45c4dcb41b44371ba5f70422e534e1d4be5da81 216177 finished
+2026-01-17 03:18:06,271 - INFO : job: b03f0a919d065d1b6897922388f805517ccc82b6 216097 finished
+2026-01-17 05:48:15,590 - INFO : job: 8afa32d2b7ecbf36991be617dfe4d03bdd8171ea 216101 finished
+2026-01-17 06:41:50,021 - INFO : job: 5d4e9f3bb05eef4347913b966f4969096aa2fd0d 216179 finished

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -14,7 +14,15 @@ from catmaster.tools.base import create_tool_output, resolve_workspace_path, wor
 
 
 class EnumerateAdsorptionSitesInput(BaseModel):
-    """Enumerate adsorption sites on a slab using ASF."""
+    """
+    Enumerate adsorption sites on a slab using ASF. Use it only for small scale placement.
+
+    The tool writes a JSON list to output_json:
+    [
+      {"label": "ontop_0", "kind": "ontop", "cart_coords": [x, y, z]}
+    ]
+    The returned tool data includes the workspace-relative path in "sites" and "sites_json_rel".
+    """
 
     slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF), workspace-relative.")
     mode: str = Field("all", description="Which site families to return: all|ontop|bridge|hollow.")
@@ -23,27 +31,43 @@ class EnumerateAdsorptionSitesInput(BaseModel):
 
 
 class PlaceAdsorbateInput(BaseModel):
-    """Place an adsorbate molecule on a slab."""
+    """Place an adsorbate molecule on a slab. Use it only if for small scale placement.
+    This tool keeps selective dynamics of the original slab structure and allows adsorbate to move freely."""
 
     slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
-    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ recommended).")
-    site: str = Field("auto", description="Site label like ontop_0|bridge_1|hollow_2 or 'auto'.")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ).")
+    site: str = Field("auto", description="Site label like ontop_0|bridge_1|hollow_2 or 'auto' (which use all[0]).")
     distance: float = Field(2.0, ge=0.0, description="Height used to generate adsorption sites (Å).")
     output_poscar: str = Field("adsorption/adsorbed.vasp", description="Output POSCAR path (workspace-relative).")
 
 
 class GenerateBatchAdsorptionStructuresInput(BaseModel):
-    """Generate multiple adsorbed structures up to max_structures."""
+    """
+    Generate multiple adsorbed structures up to max_structures. Suitable for large scale placement.
+    This tool keeps selective dynamics of the original slab structure and allows adsorbate to move freely.
+    Input can be a single slab file (slab_file) or a directory of slab files (slab_dir).
+    When slab_dir is used, each slab gets its own subdirectory under output_dir. Max_structures applies per slab.
+    For nested slab_dir layouts, slab_id encodes the relative path (without suffix) using '__'.
 
-    slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
-    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ recommended).")
+    The tool writes a JSON list to output_dir/batch_structures.json:
+    [
+      {
+        "slab_file_rel": "slabs/fe111.vasp",
+        "slab_id": "fe111",
+        "label": "ontop_0",
+        "output_poscar_rel": "adsorption/batch/fe111/ontop_0.vasp"
+      }
+    ]
+    The returned tool data replaces "structures" with the workspace-relative path to this JSON file.
+    """
+
+    slab_file: Optional[str] = Field(None, description="Slab structure file (POSCAR/CONTCAR/CIF).")
+    slab_dir: Optional[str] = Field(None, description="Directory containing slab files for high-throughput placement.")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ).")
     mode: str = Field("all", description="all|ontop|bridge|hollow")
     distance: float = Field(2.0, ge=0.0, description="Height used to generate adsorption sites (Å).")
-    max_structures: int = Field(12, ge=1, le=100, description="Maximum number of adsorbed structures to generate.")
+    max_structures: int = Field(1000, ge=1, description="Maximum number of adsorbed structures to generate.")
     output_dir: str = Field("adsorption/batch", description="Directory to write batch POSCARs.")
-
-_MAX_RETURN_SITES = 50
-
 
 def _to_list3(x) -> List[float]:
     arr = np.array(x, dtype=float).reshape(3)
@@ -77,6 +101,20 @@ def _parse_site(site: str) -> Tuple[str, int]:
     return kind, idx
 
 
+def _collect_slab_files(root: Path) -> List[Path]:
+    files: List[Path] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        name = path.name
+        if name in {"POSCAR", "CONTCAR"}:
+            files.append(path)
+            continue
+        if path.suffix.lower() in {".vasp", ".poscar", ".cif"}:
+            files.append(path)
+    return sorted(files, key=lambda p: str(p))
+
+
 def enumerate_adsorption_sites(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         params = EnumerateAdsorptionSitesInput(**payload)
@@ -95,10 +133,6 @@ def enumerate_adsorption_sites(payload: Dict[str, Any]) -> Dict[str, Any]:
                 site_rows.append({"label": f"{kind}_{i}", "kind": kind, "cart_coords": _to_list3(c)})
 
         total_found = len(site_rows)
-        truncated = False
-        if total_found > _MAX_RETURN_SITES:
-            site_rows = site_rows[:_MAX_RETURN_SITES]
-            truncated = True
 
         default_site = None
         for pref in ("ontop", "bridge", "hollow"):
@@ -123,12 +157,11 @@ def enumerate_adsorption_sites(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "ontop": len(ads_sites.get("ontop", [])),
                 "bridge": len(ads_sites.get("bridge", [])),
                 "hollow": len(ads_sites.get("hollow", [])),
-                "returned": len(site_rows),
+                "returned": total_found,
                 "total_in_mode": total_found,
-                "truncated": truncated,
-                "max_return": _MAX_RETURN_SITES,
+                "truncated": False,
             },
-            "sites": site_rows,
+            "sites": workspace_relpath(out_json),
             "slab_z_max": z_max,
         }
         return create_tool_output("enumerate_adsorption_sites", success=True, data=data)
@@ -209,66 +242,136 @@ def place_adsorbate(payload: Dict[str, Any]) -> Dict[str, Any]:
 def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         params = GenerateBatchAdsorptionStructuresInput(**payload)
-        slab_path = resolve_workspace_path(params.slab_file, must_exist=True)
         ads_path = resolve_workspace_path(params.adsorbate_file, must_exist=True)
         out_dir = resolve_workspace_path(params.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        slab = Structure.from_file(str(slab_path))
-        slab_sd = slab.site_properties.get("selective_dynamics") if slab.site_properties else None
         mol = _load_adsorbate_molecule(ads_path)
 
-        asf = AdsorbateSiteFinder(slab)
-        ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
+        slab_paths: List[Path] = []
+        slab_root: Optional[Path] = None
+        if (params.slab_file is None) == (params.slab_dir is None):
+            return create_tool_output(
+                "generate_batch_adsorption_structures",
+                success=False,
+                error="Provide exactly one of slab_file or slab_dir.",
+            )
+        if params.slab_file is not None:
+            slab_paths = [resolve_workspace_path(params.slab_file, must_exist=True)]
+        else:
+            slab_root = resolve_workspace_path(params.slab_dir, must_exist=True)
+            if not slab_root.is_dir():
+                return create_tool_output(
+                    "generate_batch_adsorption_structures",
+                    success=False,
+                    error=f"slab_dir is not a directory: {slab_root}",
+                )
+            slab_paths = _collect_slab_files(slab_root)
+            if not slab_paths:
+                return create_tool_output(
+                    "generate_batch_adsorption_structures",
+                    success=False,
+                    error="No slab files found in slab_dir.",
+                )
 
         kinds = ["ontop", "bridge", "hollow"] if params.mode == "all" else [params.mode]
         results: List[Dict[str, Any]] = []
-        generated = 0
+        generated_total = 0
+        total_candidates = 0
+        slabs_processed = 0
+        slabs_failed = 0
+        errors: List[Dict[str, str]] = []
+        truncated_any = False
 
-        for kind in kinds:
-            for idx, coord in enumerate(ads_sites.get(kind, [])):
-                if generated >= params.max_structures:
-                    break
-                ads_struct = asf.add_adsorbate(mol, coord, translate=True, reorient=True)
+        for slab_path in slab_paths:
+            try:
+                slab = Structure.from_file(str(slab_path))
+                slab_sd = slab.site_properties.get("selective_dynamics") if slab.site_properties else None
 
-                # selective dynamics propagation
-                slab_sd_list = [list(map(bool, v)) for v in slab_sd] if slab_sd and len(slab_sd) == len(slab) else [
-                    [True, True, True] for _ in range(len(slab))
-                ]
-                sd_new = slab_sd_list + [[True, True, True] for _ in range(len(mol))]
-                if "selective_dynamics" in ads_struct.site_properties:
-                    ads_struct.remove_site_property("selective_dynamics")
-                ads_struct.add_site_property("selective_dynamics", sd_new)
+                asf = AdsorbateSiteFinder(slab)
+                ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
 
-                file_path = out_dir / f"{kind}_{idx}.vasp"
-                Poscar(ads_struct).write_file(str(file_path))
+                if slab_root is None:
+                    slab_id = slab_path.stem
+                    slab_out_dir = out_dir
+                    slab_rel = workspace_relpath(slab_path)
+                else:
+                    rel_path = slab_path.relative_to(slab_root).with_suffix("")
+                    slab_id = "__".join(rel_path.parts)
+                    slab_out_dir = out_dir / slab_id
+                    slab_rel = workspace_relpath(slab_path)
 
-                results.append(
-                    {
-                        "label": f"{kind}_{idx}",
-                        "output_poscar_rel": workspace_relpath(file_path),
-                    }
-                )
-                generated += 1
-            if generated >= params.max_structures:
-                break
+                slab_out_dir.mkdir(parents=True, exist_ok=True)
 
-        total_candidates = sum(len(ads_sites.get(k, [])) for k in kinds)
-        if generated == 0:
-            raise RuntimeError(f"No adsorption sites found for mode='{params.mode}'.")
+                generated = 0
+                for kind in kinds:
+                    for idx, coord in enumerate(ads_sites.get(kind, [])):
+                        if generated >= params.max_structures:
+                            break
+                        ads_struct = asf.add_adsorbate(mol, coord, translate=True, reorient=True)
+
+                        slab_sd_list = [list(map(bool, v)) for v in slab_sd] if slab_sd and len(slab_sd) == len(slab) else [
+                            [True, True, True] for _ in range(len(slab))
+                        ]
+                        sd_new = slab_sd_list + [[True, True, True] for _ in range(len(mol))]
+                        if "selective_dynamics" in ads_struct.site_properties:
+                            ads_struct.remove_site_property("selective_dynamics")
+                        ads_struct.add_site_property("selective_dynamics", sd_new)
+
+                        file_path = slab_out_dir / f"{kind}_{idx}.vasp"
+                        Poscar(ads_struct).write_file(str(file_path))
+
+                        results.append(
+                            {
+                                "slab_file_rel": slab_rel,
+                                "slab_id": slab_id,
+                                "label": f"{kind}_{idx}",
+                                "output_poscar_rel": workspace_relpath(file_path),
+                            }
+                        )
+                        generated += 1
+                    if generated >= params.max_structures:
+                        break
+
+                total_candidates_slab = sum(len(ads_sites.get(k, [])) for k in kinds)
+                total_candidates += total_candidates_slab
+                generated_total += generated
+                truncated_any = truncated_any or (generated < total_candidates_slab)
+                slabs_processed += 1
+            except Exception as exc:
+                slabs_failed += 1
+                errors.append({"slab_file_rel": workspace_relpath(slab_path), "error": str(exc)})
+
+        if slabs_processed == 0:
+            return create_tool_output(
+                "generate_batch_adsorption_structures",
+                success=False,
+                error="No slabs processed successfully.",
+            )
 
         data = {
-            "slab_file_rel": workspace_relpath(slab_path),
             "adsorbate_file_rel": workspace_relpath(ads_path),
             "mode": params.mode,
             "distance": float(params.distance),
             "max_structures": params.max_structures,
             "output_dir_rel": workspace_relpath(out_dir),
-            "generated": generated,
+            "generated": generated_total,
             "total_candidates": total_candidates,
-            "truncated": generated < total_candidates,
-            "structures": results,
+            "truncated": truncated_any,
+            "slabs_processed": slabs_processed,
+            "slabs_failed": slabs_failed,
         }
+        if slab_root is None:
+            data["slab_file_rel"] = workspace_relpath(slab_paths[0])
+        else:
+            data["slab_dir_rel"] = workspace_relpath(slab_root)
+
+        structures_path = out_dir / "batch_structures.json"
+        structures_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        data["structures"] = workspace_relpath(structures_path)
+        if errors:
+            data["errors"] = errors
+
         return create_tool_output("generate_batch_adsorption_structures", success=True, data=data)
     except Exception as exc:
         return create_tool_output("generate_batch_adsorption_structures", success=False, error=str(exc))

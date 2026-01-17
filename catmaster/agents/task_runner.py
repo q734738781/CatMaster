@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 from langchain_openai import ChatOpenAI
 
 from catmaster.runtime import ArtifactStore, TraceStore
 from catmaster.tools.registry import ToolRegistry
+from catmaster.ui import Reporter, NullReporter, make_event
 
 
 class TaskStepper:
@@ -25,6 +27,7 @@ class TaskStepper:
         log_fn=None,
         log_llm_console: bool = False,
         max_steps: int = 100,
+        reporter: Optional[Reporter] = None,
     ):
         self.llm = llm
         self.registry = registry
@@ -37,6 +40,76 @@ class TaskStepper:
         self.log_llm_console = log_llm_console
         self.max_steps = max_steps
         self.logger = logging.getLogger(__name__)
+        self.reporter = reporter or NullReporter()
+
+    def _emit(
+        self,
+        name: str,
+        *,
+        level: str = "info",
+        category: Optional[str] = None,
+        task_id: Optional[str] = None,
+        step_id: Optional[int] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self.reporter.emit(make_event(
+            name,
+            level=level,
+            category=category,
+            task_id=task_id,
+            step_id=step_id,
+            payload=payload or {},
+        ))
+
+    def _ui_debug(self) -> bool:
+        return bool(getattr(self.reporter, "ui_debug", False))
+
+    @staticmethod
+    def _snippet(text: Any, limit: int = 140) -> str:
+        if text is None:
+            return ""
+        cleaned = " ".join(str(text).split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: max(0, limit - 3)] + "..."
+
+    @staticmethod
+    def _compact_params(params: Any, max_items: int = 4, max_len: int = 140) -> str:
+        if not isinstance(params, dict):
+            return TaskStepper._snippet(params, max_len)
+        parts = []
+        for key in list(params.keys())[:max_items]:
+            val = params.get(key)
+            if isinstance(val, (str, int, float, bool)):
+                sval = str(val)
+            elif isinstance(val, list):
+                sval = f"list[{len(val)}]"
+            elif isinstance(val, dict):
+                sval = f"dict[{len(val)}]"
+            else:
+                sval = type(val).__name__
+            parts.append(f"{key}={sval}")
+        return TaskStepper._snippet(", ".join(parts), max_len)
+
+    @staticmethod
+    def _tool_highlights(result: Dict[str, Any], max_len: int = 160) -> str:
+        if not isinstance(result, dict):
+            return TaskStepper._snippet(result, max_len)
+        if result.get("error"):
+            return TaskStepper._snippet(result.get("error", ""), max_len)
+        data = result.get("data")
+        if isinstance(data, dict):
+            keys = list(data.keys())
+            if keys:
+                return TaskStepper._snippet("keys: " + ", ".join(keys[:6]), max_len)
+            return "data: {}"
+        if isinstance(data, list):
+            return f"list[{len(data)}]"
+        if isinstance(data, str):
+            return TaskStepper._snippet(data, max_len)
+        if data is None:
+            return ""
+        return TaskStepper._snippet(str(data), max_len)
 
     def run(
         self,
@@ -47,8 +120,8 @@ class TaskStepper:
         context_pack: Dict[str, Any],
         initial_instruction: Optional[str] = None,
     ) -> Dict[str, Any]:
-        max_parse_failures = 2
-        max_decision_failures = 2
+        max_parse_failures = 30
+        max_decision_failures = 30
         memories: Dict[str, Any] = {
             "todo": [task_goal],
             "observations": [],
@@ -61,29 +134,45 @@ class TaskStepper:
 
         for step in range(self.max_steps):
             last_result = memories["observations"][-1] if memories["observations"] else {}
+            instruction = memories.get("next_step", "")
+            self._emit("TASK_STEP_START", category="task", task_id=task_id, step_id=step, payload={
+                "instruction_snippet": self._snippet(instruction, 200),
+            })
             messages = self.prompt.format_messages(
                 goal=task_goal,
                 observations=json.dumps(memories.get("observations", []), ensure_ascii=False),
                 last_result=json.dumps(last_result, ensure_ascii=False),
                 tools=tools_schema,
-                instruction=memories.get("next_step", ""),
+                instruction=instruction,
                 whiteboard_excerpt=context_pack.get("whiteboard_excerpt", ""),
                 artifact_slice=json.dumps(context_pack.get("artifact_slice", []), ensure_ascii=False),
                 constraints=context_pack.get("constraints", ""),
                 workspace_policy=context_pack.get("workspace_policy", ""),
             )
+            self._emit("LLM_CALL_START", category="llm", task_id=task_id, step_id=step, payload={
+                "kind": "task_step",
+            })
+            t0 = time.perf_counter()
             resp = self.llm.invoke(messages)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
             raw = resp.content
             if self.log_fn:
                 self.log_fn("task_step_prompt", task_id=task_id, step=step, messages=self._messages_to_dict(messages))
                 self.log_fn("task_step_response", task_id=task_id, step=step, content=raw)
             if self.log_llm_console:
                 self.logger.debug("[TASK][LLM RAW][%s][step=%s] %s", task_id, step, raw)
+            payload = {"kind": "task_step", "elapsed_ms": elapsed_ms}
+            if self._ui_debug():
+                payload["raw_snippet"] = self._snippet(raw, 240)
+            self._emit("LLM_CALL_END", category="llm", task_id=task_id, step_id=step, payload=payload)
 
             try:
                 decision = _parse_json_block(raw)
             except Exception as exc:
-                self.logger.warning("[TASK][JSON PARSE FAILED][%s][step=%s] %s", task_id, step, exc)
+                self.logger.debug("[TASK][JSON PARSE FAILED][%s][step=%s] %s", task_id, step, exc)
+                self._emit("TASK_JSON_PARSE_FAILED", level="warning", category="task", task_id=task_id, step_id=step, payload={
+                    "error": str(exc),
+                })
                 memories["parse_failures"] = memories.get("parse_failures", 0) + 1
                 memories["observations"].append({
                     "step": step,
@@ -103,6 +192,9 @@ class TaskStepper:
                 continue
 
             if not isinstance(decision, dict):
+                self._emit("TASK_DECISION_INVALID", level="warning", category="task", task_id=task_id, step_id=step, payload={
+                    "reason": "Decision must be a JSON object",
+                })
                 memories["decision_failures"] = memories.get("decision_failures", 0) + 1
                 memories["observations"].append({
                     "step": step,
@@ -121,10 +213,23 @@ class TaskStepper:
                 continue
 
             action = (decision.get("action") or "").strip().lower()
+            method = decision.get("method")
+            params = decision.get("params", {})
+            next_step = decision.get("next_step", "")
+            reasoning = decision.get("reasoning", "")
+            if action in {"call", "task_finish", "task_fail"}:
+                self._emit("TASK_DECISION", category="task", task_id=task_id, step_id=step, payload={
+                    "action": action,
+                    "method": method,
+                    "params_compact": self._compact_params(params),
+                    "next_step_snippet": self._snippet(next_step, 160),
+                    "reasoning_snippet": self._snippet(reasoning, 160),
+                })
             if action == "call":
-                method = decision.get("method")
-                params = decision.get("params", {})
                 if not method or not self.registry.get_tool_info(method):
+                    self._emit("TASK_DECISION_INVALID", level="warning", category="task", task_id=task_id, step_id=step, payload={
+                        "reason": f"Invalid tool name: {method}",
+                    })
                     memories["decision_failures"] = memories.get("decision_failures", 0) + 1
                     memories["observations"].append({
                         "step": step,
@@ -175,8 +280,21 @@ class TaskStepper:
                     memories["next_step"] = (
                         "System view is not available. Use view='user' and the provided artifact list."
                     )
+                    reason = tool_output.get("error", "")
+                    self._emit("TOOL_VALIDATE_FAILED", level="warning", category="tool", task_id=task_id, step_id=step, payload={
+                        "tool": method,
+                        "reason": self._snippet(reason, 200),
+                    })
+                    self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
+                        "tool": method,
+                        "status": "validation_failed",
+                        "highlights": self._snippet(reason, 200),
+                    })
                     continue
-                self.logger.info("[TASK][TOOL CALL][%s][step=%s] %s %s", task_id, step, method, params)
+                self._emit("TOOL_CALL_START", category="tool", task_id=task_id, step_id=step, payload={
+                    "tool": method,
+                    "params_compact": self._compact_params(params),
+                })
                 pending = memories.get("pending_toolcall") or {}
                 if pending.get("method") == method:
                     toolcall_key = pending.get("toolcall_key")
@@ -186,6 +304,7 @@ class TaskStepper:
                 validation = self.tool_executor.validate(method, params, toolcall_key=toolcall_key)
                 if not validation.get("ok"):
                     tool_output = validation.get("tool_output", {})
+                    reason = validation.get("error_digest") or tool_output.get("error", "")
                     self.artifact_store.write_input(toolcall_id, {
                         "raw_params": params,
                         "validated_params": None,
@@ -208,6 +327,15 @@ class TaskStepper:
                     )
                     self.trace_store.append_toolcall(record)
                     memories["observations"].append({"step": step, "method": method, "result": tool_output})
+                    self._emit("TOOL_VALIDATE_FAILED", level="warning", category="tool", task_id=task_id, step_id=step, payload={
+                        "tool": method,
+                        "reason": self._snippet(reason, 200),
+                    })
+                    self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
+                        "tool": method,
+                        "status": "validation_failed",
+                        "highlights": self._snippet(reason, 200),
+                    })
                     memories["next_step"] = validation.get(
                         "next_step",
                         f"Fix parameters for tool {method} to satisfy the schema.",
@@ -241,13 +369,12 @@ class TaskStepper:
                         "data": {},
                         "error": f"Tool {method} returned non-dict output",
                     }
-                self.logger.info(
-                    "[TASK][TOOL RESULT][%s][step=%s] %s status=%s data=%s",
+                self.logger.debug(
+                    "[TASK][TOOL RESULT][%s][step=%s] %s status=%s",
                     task_id,
                     step,
                     method,
                     result.get("status"),
-                    result.get("data"),
                 )
                 self.artifact_store.write_output(toolcall_id, {
                     "toolresult": result,
@@ -263,6 +390,11 @@ class TaskStepper:
                     refs=refs,
                 )
                 self.trace_store.append_toolcall(record)
+                self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
+                    "tool": method,
+                    "status": result.get("status", ""),
+                    "highlights": self._tool_highlights(result),
+                })
                 memories["observations"].append({"step": step, "method": method, "result": result})
                 if result.get("status") == "success":
                     memories["toolcall_seq"] = memories.get("toolcall_seq", 0) + 1
@@ -275,7 +407,7 @@ class TaskStepper:
                 continue
 
             if action == "task_finish":
-                self.logger.info("[TASK][DONE][%s][step=%s] task_finish", task_id, step)
+                self.logger.debug("[TASK][DONE][%s][step=%s] task_finish", task_id, step)
                 return {
                     "status": "done",
                     "finish_reason": "task_finish",
@@ -283,13 +415,16 @@ class TaskStepper:
                 }
 
             if action == "task_fail":
-                self.logger.info("[TASK][DONE][%s][step=%s] task_fail", task_id, step)
+                self.logger.debug("[TASK][DONE][%s][step=%s] task_fail", task_id, step)
                 return {
                     "status": "done",
                     "finish_reason": "task_fail",
                     "local_observations": memories["observations"],
                 }
 
+            self._emit("TASK_DECISION_INVALID", level="warning", category="task", task_id=task_id, step_id=step, payload={
+                "reason": f"Invalid action: {action}",
+            })
             memories["decision_failures"] = memories.get("decision_failures", 0) + 1
             memories["observations"].append({
                 "step": step,
@@ -366,6 +501,7 @@ class TaskSummarizer:
         self.log_fn = log_fn
         self.log_llm_console = log_llm_console
         self.logger = logging.getLogger(__name__)
+        self.last_raw: str = ""
 
     def run(
         self,
@@ -391,6 +527,7 @@ class TaskSummarizer:
         )
         resp = self.llm.invoke(messages)
         raw = resp.content
+        self.last_raw = raw or ""
         if self.log_fn:
             event = "task_summary_prompt_repair" if use_repair_prompt else "task_summary_prompt"
             self.log_fn(event, task_id=task_id, messages=self._messages_to_dict(messages))

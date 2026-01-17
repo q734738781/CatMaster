@@ -20,10 +20,7 @@ def main() -> None:
         {
             "query": "Fe2O3",
             "limit": 10,
-            "band_gap_min": None,
-            "band_gap_max": None,
-            "e_above_hull_max": None,
-            "nsites_max": None,
+            "output_csv": str(out_dir / "results.csv"),
         }
     )
 

@@ -66,6 +66,7 @@ class ToolExecutor:
         ]
 
         try:
+            raw_params = {k: v for k, v in raw_params.items() if v is not None}
             validated = input_model.model_validate(raw_params)
         except ValidationError as exc:
             errors = self._format_validation_errors(exc) + extra_errors

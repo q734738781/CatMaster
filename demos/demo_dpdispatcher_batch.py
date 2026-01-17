@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """
-Demonstrate submitting multiple DPDispatcher jobs in batch mode:
-- One batch submission for two VASP relaxations (CO, O2) on cpu_hpc/vasp_cpu
-- One batch submission for two MACE relaxations (CO, O2) on gpu_server/mace_gpu
-
-Each batch uses task_work_path to separate tasks inside a single work_base.
+Demonstrate batch tools for DPDispatcher:
+- vasp_execute_batch on prepared VASP input subdirectories
+- mace_relax_batch on a directory of structure files
 
 Usage:
   python demos/demo_dpdispatcher_batch.py --run   # actually submit
@@ -17,31 +15,30 @@ import shutil
 from pathlib import Path
 from pprint import pprint
 
-from catmaster.tools.execution.dpdispatcher_runner import (
-    TaskSpec,
-    BatchDispatchRequest,
-    dispatch_submission,
-    make_work_base,
-)
+from catmaster.tools.execution import vasp_execute_batch, mace_relax_batch
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "tests" / "assets"
 
 
-def stage_vasp_inputs(workspace: Path, name: str, src_dir: Path) -> Path:
-    dest = workspace / name
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(src_dir, dest)
-    return dest
+def stage_vasp_inputs(root: Path) -> Path:
+    vasp_root = root / "vasp_inputs"
+    if vasp_root.exists():
+        shutil.rmtree(vasp_root)
+    vasp_root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(ASSETS / "CO_VASP_inputs", vasp_root / "CO")
+    shutil.copytree(ASSETS / "O2_VASP_inputs", vasp_root / "O2")
+    return vasp_root
 
 
-def stage_mace_structure(workspace: Path, name: str, src_file: Path) -> Path:
-    dest_dir = workspace / name
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / src_file.name
-    shutil.copy(src_file, dest)
-    return dest
+def stage_mace_structures(root: Path) -> Path:
+    mace_root = root / "mace_inputs"
+    if mace_root.exists():
+        shutil.rmtree(mace_root)
+    mace_root.mkdir(parents=True, exist_ok=True)
+    (mace_root / "CO.vasp").write_bytes((ASSETS / "CO_VASP_inputs" / "POSCAR").read_bytes())
+    (mace_root / "O2.vasp").write_bytes((ASSETS / "O2_VASP_inputs" / "POSCAR").read_bytes())
+    return mace_root
 
 
 def main() -> None:
@@ -57,89 +54,49 @@ def main() -> None:
         shutil.rmtree(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
 
-    # ---------- VASP batch ----------
-    vasp_base = make_work_base("vasp_batch")
-    vasp_root = workspace / vasp_base
-    (vasp_root).mkdir(parents=True, exist_ok=True)
-    co_vasp = stage_vasp_inputs(vasp_root, "CO", ASSETS / "CO_VASP_inputs")
-    o2_vasp = stage_vasp_inputs(vasp_root, "O2", ASSETS / "O2_VASP_inputs")
+    vasp_payload = None
+    mace_payload = None
 
-    vasp_tasks = []
-    for name in ["CO", "O2"]:
-        task_dir = vasp_root / name
-        forwards = [p.name for p in task_dir.iterdir() if p.is_file()]
-        vasp_tasks.append(
-            TaskSpec(
-                command="mpirun -n $SLURM_NTASKS vasp_std > vasp_stdout.txt 2>&1",
-                task_work_path=name,
-                forward_files=forwards,
-                backward_files=["OUTCAR", "OSZICAR", "CONTCAR", "vasprun.xml"],
-            )
-        )
-    vasp_batch = BatchDispatchRequest(
-        machine="cpu_hpc",
-        resources="vasp_cpu",
-        work_base=vasp_base,
-        local_root=str(workspace),
-        tasks=vasp_tasks,
-        forward_common_files=[],
-        backward_common_files=[],
-        clean_remote=False,
-        check_interval=60,
-    )
-
-    # ---------- MACE batch ----------
-    mace_base = make_work_base("mace_batch")
-    mace_root = workspace / mace_base
-    mace_root.mkdir(parents=True, exist_ok=True)
-    co_struct = stage_mace_structure(mace_root, "CO", ASSETS / "CO_VASP_inputs" / "POSCAR")
-    o2_struct = stage_mace_structure(mace_root, "O2", ASSETS / "O2_VASP_inputs" / "POSCAR")
-
-    mace_tasks = []
-    for struct in [co_struct, o2_struct]:
-        task_dir = struct.parent
-        forwards = [p.name for p in task_dir.iterdir() if p.is_file()]
-        mace_tasks.append(
-            TaskSpec(
-                command=f"python -m catmaster.tools.execution.mace_jobs --structure {struct.name} --fmax 0.05 --steps 300 --model medium-mpa-0",
-                task_work_path=task_dir.name,
-                forward_files=forwards,
-                backward_files=["opt.*", "summary.json", "opt.log", "opt.traj"],
-            )
-        )
-    mace_batch = BatchDispatchRequest(
-        machine="gpu_server",
-        resources="mace_gpu",
-        work_base=mace_base,
-        local_root=str(workspace),
-        tasks=mace_tasks,
-        forward_common_files=[],
-        backward_common_files=[],
-        clean_remote=False,
-        check_interval=10,
-    )
     if not args.disable_vasp:
-        print("\nVASP Batch Request:")
-        pprint(vasp_batch.model_dump())
+        vasp_root = stage_vasp_inputs(workspace)
+        vasp_output = workspace / "vasp_outputs"
+        vasp_payload = {
+            "input_dir": str(vasp_root),
+            "output_dir": str(vasp_output),
+            "check_interval": 60,
+        }
+        print("\nVASP Batch Payload:")
+        pprint(vasp_payload)
+
     if not args.disable_mace:
-        print("\nMACE Batch Request:")
-        pprint(mace_batch.model_dump())
+        mace_root = stage_mace_structures(workspace)
+        mace_output = workspace / "mace_outputs"
+        mace_payload = {
+            "input_dir": str(mace_root),
+            "output_root": str(mace_output),
+            "fmax": 0.05,
+            "maxsteps": 300,
+            "model": "medium-mpa-0",
+            "check_interval": 10,
+        }
+        print("\nMACE Batch Payload:")
+        pprint(mace_payload)
 
     if not args.run:
         print("\nDry-run only. Use --run to submit.")
         return
 
-    if not args.disable_vasp:
+    if vasp_payload:
         print("\nSubmitting VASP batch...")
-        res_vasp = dispatch_submission(vasp_batch)
+        res_vasp = vasp_execute_batch(vasp_payload)
         print("VASP batch result:")
-        pprint(res_vasp.model_dump())
+        pprint(res_vasp)
 
-    if not args.disable_mace:
+    if mace_payload:
         print("\nSubmitting MACE batch...")
-        res_mace = dispatch_submission(mace_batch)
+        res_mace = mace_relax_batch(mace_payload)
         print("MACE batch result:")
-        pprint(res_mace.model_dump())
+        pprint(res_mace)
 
 
 if __name__ == "__main__":

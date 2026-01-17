@@ -5,12 +5,44 @@ import time
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
-
 import yaml
 from pydantic import BaseModel, Field
-
+import re
 from dpdispatcher import Machine, Resources, Task, Submission
 from catmaster.tools.execution.machine_registry import MachineRegister
+
+_DP_PATTERNS = [
+    re.compile(r"^[0-9a-f]{40}_task_tag_finished$"),
+    re.compile(r"^[0-9a-f]{40}_job_tag_finished$"),
+    re.compile(r"^[0-9a-f]{40}_job_id$"),
+    re.compile(r"^[0-9a-f]{40}_flag_if_job_task_fail$"),
+    re.compile(r"^[0-9a-f]{40}_last_err_file$"),
+    re.compile(r"^[0-9a-f]{40}_job\.json$"),
+    re.compile(r"^[0-9a-f]{40}\.sub$"),
+    re.compile(r"^[0-9a-f]{40}\.sub\.run$"),
+    re.compile(r"^[0-9a-f]{40}\.json$"),
+    re.compile(r"^tag_failure_download_.*$"),
+]
+
+def _is_dp_artifact(name: str) -> bool:
+    for pat in _DP_PATTERNS:
+        if pat.match(name):
+            return True
+    return False
+
+def cleanup_dpdispatcher_artifacts(work_base_dir: Path) -> None:
+    if not work_base_dir.exists():
+        return 0
+
+    for p in work_base_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        if not _is_dp_artifact(p.name):
+            continue
+        try:
+            p.unlink()
+        except Exception:
+            continue
 
 
 class DispatchRequest(BaseModel):
@@ -137,6 +169,7 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
 
     states = [_task_state(t) for t in task_list]
     output_dir = Path(machine.context.init_local_root) / request.work_base / request.task_work_path
+    cleanup_dpdispatcher_artifacts(output_dir)
 
     return DispatchResult(
         work_base=request.work_base,
@@ -194,6 +227,7 @@ def dispatch_submission(
     work_suffixes = {t.task_work_path for t in batch.tasks}
     suffix = work_suffixes.pop() if len(work_suffixes) == 1 else ""
     output_dir = Path(machine.context.init_local_root) / batch.work_base / suffix
+    cleanup_dpdispatcher_artifacts(output_dir)
 
     return DispatchResult(
         work_base=batch.work_base,

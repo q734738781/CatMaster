@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 """
-LLM-driven O2-in-the-box workflow demo for comparing the singlet and triplet O2.
+LLM-driven O2-in-the-box workflow demo using GPT-5.1 + DPDispatcher.
 
+Flow (file-first):
+1) Let the LLM create an initial POSCAR (or equivalent) using available tools.
+2) Let the orchestrator plan/execute using registered tools:
+   - relax_prepare (local)
+   - vasp_execute (DPDispatcher)
+3) Report final energy per atom and O–O bond distance.
+
+Use --run to actually submit to the configured cluster; default is dry-run
+stub for vasp_execute.
 """
 # Add parent dir to sys.path
 from __future__ import annotations
@@ -14,22 +23,29 @@ import os
 import shutil
 from langchain_openai import ChatOpenAI
 from catmaster.agents.orchestrator import Orchestrator
-
+from catmaster.ui import create_reporter
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LLM demo: O2 VASP singlet and triplet comparison")
-    parser.add_argument("--workspace", default="workspace/demo_llm_o2_vasp_stcompare", help="Workspace root")
+    parser = argparse.ArgumentParser(description="LLM demo: Fe structure surface energies")
+    parser.add_argument("--workspace", default="workspace/demo_llm_fe_surface", help="Workspace root")
     parser.add_argument("--run", action="store_true", help="Actually submit vasp_execute; otherwise quit")
     parser.add_argument("--log-level", default="INFO", help="Logging level (INFO or DEBUG)")
     parser.add_argument("--log-dir", default=None, help="Directory to store logs (log.log + orchestrator_llm.jsonl)")
     parser.add_argument("--proxy", default=None, help="Proxy server address expressed as <host>:<port>")
     parser.add_argument("--resume", action="store_true", help="Resume from existing workspace (do not clear)")
+    parser.add_argument("--ui", choices=["rich", "plain", "off"], default=None, help="UI mode (default: rich if TTY else plain)")
+    parser.add_argument("--ui-debug", action="store_true", help="Show UI debug panel with LLM snippets/paths")
+    parser.add_argument("--no-splash", action="store_true", help="Disable splash screen")
     args = parser.parse_args()
 
-    handlers = [logging.StreamHandler()]
+    ui_mode = args.ui or ("rich" if sys.stdout.isatty() else "plain")
+    handlers = []
+    if ui_mode == "off":
+        handlers.append(logging.StreamHandler())
     if args.proxy:
         print(f"Using proxy: {args.proxy}")
+        
         host, port = args.proxy.split(":")
         os.environ["HTTP_PROXY"] = f"http://{host}:{port}"
         os.environ["HTTPS_PROXY"] = f"http://{host}:{port}"
@@ -37,6 +53,9 @@ def main() -> None:
     
     log_dir_path = Path(args.log_dir).expanduser().resolve() if args.log_dir else None
     if log_dir_path:
+        # Remove the directory if it exists
+        if log_dir_path.exists():
+            shutil.rmtree(log_dir_path)
         log_dir_path.mkdir(parents=True, exist_ok=True)
         log_path = log_dir_path / "log.log"
         handlers.append(logging.FileHandler(log_path))
@@ -45,34 +64,43 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=handlers,
     )
+    reporter = create_reporter(
+        ui_mode,
+        ui_debug=args.ui_debug,
+        show_splash=not args.no_splash,
+        is_tty=sys.stdout.isatty(),
+    )
 
     root = Path(args.workspace).resolve()
     # Export to CATMASTER_WORKSPACE (tools should respect this workspace)
     os.environ["CATMASTER_WORKSPACE"] = str(root)
-    # Clean and Make dir (skip if resuming)
+    # Clean and Make dir for workspace
     if not args.resume:
         if root.exists():
             shutil.rmtree(root)
         root.mkdir(parents=True, exist_ok=True)
 
     user_request = (
-        "I need you to compare the singlet and triplet O2 in a box: "
-        "Prepare VASP inputs from scratch, perform VASP calculation to get the results, and report final energy per atom and O–O bond distance from vasp results for both singlet and triplet O2."
-        "Write your results in a markdown file."
+        "Compute surface energies of some common surfaces (100,110,111) on BCC Fe surface:"
+        "Download thestructure from Materials Project (Fe bcc phase) and use it as the initial structure."
+        "Use with at least 15A slab thickness and 15A vacuum thickness and construct symmetric slab model for surface energy calculations."
+        "Perform VASP calculation to get the results. Report the surface energies of different surfaces and the relevant surface energy ranking. Report your proposed calculation parameters in the plan tasks for review."
     )
 
     llm = ChatOpenAI(
         model="gpt-5.2",
         temperature=0,
+        # model_kwargs={"response_format": {"type": "json_object"}},
         reasoning_effort="medium",
 
     )
     orch = Orchestrator(
         llm=llm,
-        max_steps=100,
+        max_steps=300,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
-        log_llm_console=True,
+        log_llm_console=ui_mode == "off",
         resume=args.resume,
+        reporter=reporter,
     )
 
     if not args.run:
@@ -84,18 +112,7 @@ def main() -> None:
         log_llm=True,
     )
 
-    print("\n=== Summary ===")
-    print(result.get("summary", "No summary"))
-    if "final_answer" in result:
-        print("\n=== LLM Final Answer ===")
-        print(result.get("final_answer", "No final answer"))
-    print("\nObservations:")
-    for obs in result.get("observations", []):
-        print(obs)
-    if log_dir_path:
-        print(f"\nLogs saved to: {log_dir_path}")
-        print("  - app log: log.log")
-        print("  - LLM trace: orchestrator_llm.jsonl")
+    _ = result
 
 
 if __name__ == "__main__":

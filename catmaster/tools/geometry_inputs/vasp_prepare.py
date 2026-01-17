@@ -100,24 +100,40 @@ def relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
     batch_mode = input_path.is_dir() or len(structures) > 1
 
     emitted: List[Dict[str, object]] = []
+    errors: List[Dict[str, str]] = []
     for struct_path in structures:
-        structure = _load_structure(struct_path)
-        out_dir = output_root / struct_path.stem if batch_mode else output_root
-        writer.write_vasp_inputs(
-            structure=structure,
-            output_dir=out_dir,
-            calc_type=calc_type,
-            k_product=k_product,
-            use_d3=use_d3,
-            use_dft_plus_u=use_dft_plus_u,
-            user_incar_overrides=user_incar_settings,
-        )
-        emitted.append(
-            {
-                "source": str(struct_path),
-                "output_dir": str(out_dir),
-            }
-        )
+        try:
+            structure = _load_structure(struct_path)
+            out_dir = output_root / struct_path.stem if batch_mode else output_root
+            writer.write_vasp_inputs(
+                structure=structure,
+                output_dir=out_dir,
+                calc_type=calc_type,
+                k_product=k_product,
+                use_d3=use_d3,
+                use_dft_plus_u=use_dft_plus_u,
+                user_incar_overrides=user_incar_settings,
+            )
+            emitted.append(
+                {
+                    "source": str(struct_path),
+                    "output_dir": str(out_dir),
+                }
+            )
+        except Exception as exc:
+            errors.append({"source": str(struct_path), "error": str(exc)})
+            if not batch_mode:
+                return create_tool_output(
+                    tool_name="relax_prepare",
+                    success=False,
+                    error=str(exc),
+                    data={
+                        "calc_type": calc_type,
+                        "k_product": k_product,
+                        "structures_processed": 0,
+                        "errors": errors,
+                    },
+                )
         if not batch_mode:
             break
     
@@ -130,6 +146,8 @@ def relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
             "k_product": k_product,
             "structures_processed": len(emitted),
             "prepared_directories_rel": [workspace_relpath(Path(e["output_dir"])) for e in emitted],
+            "errors_count": len(errors),
+            "errors": errors,
         }
     )
 

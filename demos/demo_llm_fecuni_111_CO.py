@@ -26,10 +26,9 @@ from catmaster.agents.orchestrator import Orchestrator
 from catmaster.ui import create_reporter
 
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LLM DPDispatcher demo: O2 VASP run")
-    parser.add_argument("--workspace", default="workspace/demo_llm_o2_vasp", help="Workspace root")
+    parser = argparse.ArgumentParser(description="LLM demo: Fe, Cu, Ni (111) CO adsorption energy comparison")
+    parser.add_argument("--workspace", default="workspace/demo_llm_fecuni_111_CO", help="Workspace root")
     parser.add_argument("--run", action="store_true", help="Actually submit vasp_execute; otherwise quit")
     parser.add_argument("--log-level", default="INFO", help="Logging level (INFO or DEBUG)")
     parser.add_argument("--log-dir", default=None, help="Directory to store logs (log.log + orchestrator_llm.jsonl)")
@@ -46,6 +45,7 @@ def main() -> None:
         handlers.append(logging.StreamHandler())
     if args.proxy:
         print(f"Using proxy: {args.proxy}")
+        
         host, port = args.proxy.split(":")
         os.environ["HTTP_PROXY"] = f"http://{host}:{port}"
         os.environ["HTTPS_PROXY"] = f"http://{host}:{port}"
@@ -53,6 +53,9 @@ def main() -> None:
     
     log_dir_path = Path(args.log_dir).expanduser().resolve() if args.log_dir else None
     if log_dir_path:
+        # Remove the directory if it exists
+        if log_dir_path.exists():
+            shutil.rmtree(log_dir_path)
         log_dir_path.mkdir(parents=True, exist_ok=True)
         log_path = log_dir_path / "log.log"
         handlers.append(logging.FileHandler(log_path))
@@ -71,27 +74,30 @@ def main() -> None:
     root = Path(args.workspace).resolve()
     # Export to CATMASTER_WORKSPACE (tools should respect this workspace)
     os.environ["CATMASTER_WORKSPACE"] = str(root)
-    # Clean and Make dir (skip if resuming)
+    # Clean and Make dir for workspace
     if not args.resume:
         if root.exists():
             shutil.rmtree(root)
         root.mkdir(parents=True, exist_ok=True)
 
     user_request = (
-        "Compute O2 in a box: prepare VASP inputs from scratch,"
-        "DO perform VASP calculation to get the results, and report final energy per atom and O–O bond distance from vasp results."
+        "Compute the CO adsorption energy on the (111) conventional cell surface of Fe, Cu, Ni"
+        "Download the the most stable bulk structures from Materials Project and use them as the initial structures. Perform lattice optimization to get the bulk structure."
+        "Then use it for slab construction (orthogonal c-oriented cell) and generate all adsorption sites structures on the (111) facet (2x2 supercell) and calculate the adsorption energy for each site for three metals."
+        "Perform VASP calculations from scratch to get the results. "
+        "Summarize the results in a markdown file, report the adsorption energy for each site, with the lowest adsorption energy reported, and compare which metal has the lowest adsorption energy on (111) facet."
     )
 
     llm = ChatOpenAI(
         model="gpt-5.2",
         temperature=0,
         # model_kwargs={"response_format": {"type": "json_object"}},
-        reasoning_effort="medium",
+        reasoning_effort="high",
 
     )
     orch = Orchestrator(
         llm=llm,
-        max_steps=100,
+        max_steps=300,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
         log_llm_console=ui_mode == "off",
         resume=args.resume,

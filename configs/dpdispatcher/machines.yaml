@@ -8,6 +8,9 @@ cpu_server:
     port: 22
     username: chenhh
     key_filename: /home/chenhh/.ssh/id_ed25519
+  env_setup: |
+    ulimit -s unlimited
+    sync && sleep 10
 
 cpu_server_2:
   batch_type: Slurm
@@ -39,15 +42,11 @@ gpu_server:
 
 cpu_ssh_local:
   batch_type: Shell
-  context_type: SSHContext
+  context_type: Local
   local_root: ~/catmaster_local
   remote_root: /home/chenhh/catmaster_work_local
-  remote_profile:
-    hostname: 127.0.0.1
-    port: 22
-    username: chenhh
-    key_filename: /home/chenhh/.ssh/id_ed25519
   env_setup: |
     export PATH=$HOME/miniconda3/condabin:$PATH
+    export PYTHONPATH=/home/chenhh/python_projects/CatMaster:$PYTHONPATH
     eval "$(conda shell.bash hook)"
-    conda activate catmaster-local
+    conda activate catmaster

@@ -18,7 +18,7 @@ def main() -> None:
 
     results = []
     for fmt in ["cif", "poscar"]:
-        res = tool({"mp_id": "mp-150", "fmt": fmt, "output_dir": str(out_dir)})
+        res = tool({"mp_ids": ["mp-13", "mp-149"], "fmt": fmt, "output_dir": str(out_dir)})
         results.append({"fmt": fmt, "result": res})
 
     (out_dir / "run.json").write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")

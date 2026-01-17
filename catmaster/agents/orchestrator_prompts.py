@@ -12,16 +12,22 @@ Available tools:
 {tools}
 
 Create:
-- A ToDo list (task list), each item is a few sentences describing a small milestone deliverable or verifiable outcome that should be get by a few tool calls and logically distinct from each other.
-- A reasoning field explaining briefly why this plan was chosen.
+- A ToDo list (task list), each item is a simple paragraph of small task description with a milestone deliverable that should be get by a some tool calls. Do not output json.
+- A plan_description field for describing the whole plan, and explaining briefly why this plan was chosen.
 
 Rules:
 - Use only the available tools; do NOT invent capabilities.
 - Order matters: ToDo items should be arranged in the exact sequence they must be executed.
 - Human readble: The ToDo items should be easy to understand by a human.
-- Precise ToDo: Do not introduce background information or consequences in the ToDo items. Just write the specific goal of the task and the deliverable.
+- Precise Task Description: Do not introduce background information or consequences in the ToDo items. Just write the specific goal of the task and the deliverable.
+- Logical Distinct: ToDo items should be logically distinct, but do not make tasks too fragmented.
+- Detail presentation: In the next execution stage, the overall plan will not be visible to executor, so you should provide enough details for the executor to understand each task, as well as details requested by human.
 - Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema: {{"todo": [...], "reasoning": "..."}}"""),
+- JSON schema: 
+```json
+{{"todo": [...(Simple paragraphs list)], "plan_description": "..."}}
+```
+"""),
         ("human", "{user_request}")
     ])
 
@@ -39,9 +45,17 @@ Your previous response was not valid JSON. Re-emit a valid JSON object wrapped i
 Rules:
 - Use only the available tools; do NOT invent capabilities.
 - ToDo items should be milestone deliverables, not tool calls.
+- Human readble: The ToDo items should be easy to understand by a human.
+- Precise Task Description: Do not introduce background information or consequences in the ToDo items. Just write the specific goal of the task and the deliverable.
+- Logical Distinct: ToDo items should be logically distinct, but do not make tasks too fragmented.
 - Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
+- Detail presentation: In the next execution stage, the overall plan will not be visible to executor, so you should provide enough details for the executor to understand each task, as well as details requested by human.
 - Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema: {{"todo": [...], "reasoning": "..."}}"""),
+- JSON schema: 
+```json
+{{"todo": [...], "plan_description": "..."}}
+```
+"""),
         ("human", "User request: {user_request}\nParse error: {error}\nInvalid response: {raw}")
     ])
 
@@ -64,11 +78,15 @@ Inputs:
 
 Rules:
 - Use only the available tools; do NOT invent capabilities.
-- If feedback is unclear or conflicts with tool limits, make the smallest safe change and note the constraint in reasoning.
-- ToDo items should be milestone deliverables, not tool calls.
+- If feedback is unclear or conflicts with tool limits, make the smallest safe change and note the constraint in plan_description.
+- ToDo items should be small task descriptions with a milestone deliverable, not a list tool calls.
 - Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
 - Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema: {{"todo": [...], "reasoning": "..."}}"""),
+- JSON schema: 
+```json
+{{"todo": [...], "plan_description": "..."}}
+```
+"""),
         ("human", "User request: {user_request}\nCurrent plan: {plan_json}\nHuman feedback: {feedback}\nFeedback history: {feedback_history}")
     ])
 
@@ -89,20 +107,23 @@ Rules:
 - Choose at most one action per turn.
 - Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
 - JSON schema (all lowercase keys):
-{{"action": "call"|"task_finish"|"task_fail",
+```json
+{{"action": "call" | "task_finish" | "task_fail",
     "method": "tool_name",
     "params": {{...}},
     "next_step": "a intent that can be acted on in the next turn or suggest finish the task",
     "note": "optional short self-note for memory",
     "reasoning": "brief rationale for this decision"}}
-- If action='call', method MUST exactly match one tool name in available tools. Otherwise set action='task_fail' and explain why.
+```
+- If action='call', method MUST exactly match one tool name in available tools. 
+- If last JSON parse is invalid (TASK_JSON_PARSE_FAILED, parse error, etc), you should try to output a valid JSON decision next turn.
 - If you ensure that to finish the task, set action="task_finish".
 - Check the params are valid and the tool name is correct.
 - All file paths in tool params MUST come from the context pack (Whiteboard Key Files or the artifact list) or from the immediate outputs of tools run in this task. Reuse existing key files whenever possible.
 - Always provide file or directory paths as relative paths; they will be resolved relative to the selected view.
-- If you think if the task cou
 - Treat user instruction as a suggestion. If observations contradict it or a better action is available, you can revise the plan by choosing a different tool call.
 - Do not suggest anything that beyond the scope of the task goal regardless the background of the goal. If you think the task could be completed after this tool call, suggest to finish the task in next_step.
+
 Run context:
 - Observations so far: {observations}
 - Last result: {last_result}
@@ -120,7 +141,8 @@ You are a task summarizer. Use ONLY the task's local observations to summarize t
 Rules:
 - Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
 - JSON schema:
-{{"task_outcome": "success" | "failure" | "needs_intervention",
+```json
+{{"task_outcome": "success" | "needs_intervention",
   "task_summary": "short conclusion",
   "key_artifacts": [{{"path": "...", "description": "...", "kind": "input|output|intermediate|report|log"}}],
   "whiteboard_ops": [
@@ -130,6 +152,10 @@ Rules:
     {{"op": "UPSERT", "section": "Constraints", "record_type": "CONSTRAINT", "id": "CONSTRAINT_ID", "text": "...", "rationale": "..."}},
     {{"op": "UPSERT", "section": "Open Questions", "text": "..." }}
   ]}}
+```
+- If task is completed successfully, set task_outcome="success". 
+- If task meets some great problem (e.g. hardware failure, software bug, etc.) and needs human intervention for further guidance, set task_outcome="needs_intervention". Do not use it with trivial issues (e.g. file layout, request confirmation of execution).
+- If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
 - Ops must only target: Key Facts, Key Files, Constraints, Open Questions.
 - UPSERT requirements:
   - Key Facts: record_type=FACT, id, text required
@@ -157,7 +183,8 @@ Your previous whiteboard ops were invalid. Regenerate correct ops and JSON respo
 Rules:
 - Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
 - JSON schema:
-{{"task_outcome": "success" | "failure" | "needs_intervention",
+```json
+{{"task_outcome": "success" | "needs_intervention",
   "task_summary": "short conclusion",
   "key_artifacts": [{{"path": "...", "description": "...", "kind": "input|output|intermediate|report|log"}}],
   "whiteboard_ops": [
@@ -167,6 +194,10 @@ Rules:
     {{"op": "UPSERT", "section": "Constraints", "record_type": "CONSTRAINT", "id": "CONSTRAINT_ID", "text": "...", "rationale": "..."}},
     {{"op": "UPSERT", "section": "Open Questions", "text": "..." }}
   ]}}
+```
+- If task is completed successfully, set task_outcome="success". 
+- If task meets some great problem (e.g. hardware failure, software bug, etc.) and needs human intervention for further guidance, set task_outcome="needs_intervention". Do not use it with trivial issues (e.g. file layout, request confirmation of execution).
+- If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
 - Ops must only target: Key Facts, Key Files, Constraints, Open Questions.
 - UPSERT requirements:
   - Key Facts: record_type=FACT, id, text required
@@ -199,19 +230,21 @@ Rules:
 - Choose at most one tool per turn.
 - Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
 - JSON schema (all lowercase keys):
+```json
 {{"action": "call"|"finish_project",
     "method": "tool_name"|null,
     "params": {{...}},
     "next_step": "a concrete, testable intent that can be acted on in the next turn (either a tool call you plan to attempt, or a condition to check via a specific tool)",
     "note": "optional short self-note for memory",
     "reasoning": "brief rationale for this decision"}}
+```
 - If action='call', method MUST exactly match one tool name in available tools. Otherwise set action='finish_project' and explain why.
 - If you ensure that to finish the project, set action="finish_project" and method=null in that single object.
 - Prefer reuse paths returned by previous tool calls instead of guessing.
 - Always provide file or directory paths as relative paths; they will be resolved relative to workspace root.
 - If a needed file might not exist, first list or create it with the appropriate tool.
 - Treat user instruction as a suggestion. If observations contradict it or a better action is available, you CAN revise the plan by choosing a different tool call and writing an updated next_step.
-- The controller may skip a turn if your JSON is invalid or not properly fenced; in that case, you must output a valid JSON decision next turn.
+- The controller may raise an error if your JSON is invalid or not properly fenced in last step; in that case, you must output a valid JSON decision next turn.
 """),
         ("human", "Suggested next step (may be revised): {instruction}")
     ])

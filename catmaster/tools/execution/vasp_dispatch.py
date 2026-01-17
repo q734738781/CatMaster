@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import math
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -20,7 +21,6 @@ from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
-import shutil
 from pydantic import BaseModel, Field
 
 
@@ -34,7 +34,18 @@ class VaspExecuteInput(BaseModel):
 class VaspExecuteBatchInput(BaseModel):
     """Submit multiple VASP runs in one DPDispatcher submission. Preferred tool for batch VASP runs."""
 
-    input_dirs: list[str] = Field(..., description="List of VASP input directories.")
+    input_dir: str = Field(
+        ...,
+        description="Root directory containing VASP input subdirectories (each with INCAR/KPOINTS/POSCAR/POTCAR). e.g. input_dir/task01/INCAR...,input_dir/task02/INCAR... ",
+    )
+    output_dir: str = Field(
+        ...,
+        description=(
+            "Root directory to store batch outputs. Results are written to output_dir using the same subdirectory "
+            "layout as input_dir. Must not be inside input_dir. Staging directories under output_dir are cleaned "
+            "after completion."
+        ),
+    )
     check_interval: int = Field(30, description="Polling interval seconds")
 
 
@@ -94,6 +105,45 @@ def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, An
     }
 
 
+def _is_vasp_input_dir(path: Path) -> bool:
+    required = ("POTCAR", "INCAR")
+    return path.is_dir() and all((path / name).is_file() for name in required)
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
+    input_dirs: list[Path] = []
+    skip_prefixes = ("vasp_batch_", "mace_batch_")
+    for dirpath, dirnames, _ in os.walk(root):
+        path = Path(dirpath)
+        if exclude_root is not None and _is_within(path, exclude_root):
+            dirnames[:] = []
+            continue
+        rel = path.resolve().relative_to(root.resolve())
+        if any(part.startswith(skip_prefixes) for part in rel.parts):
+            dirnames[:] = []
+            continue
+        if ".catmaster" in path.parts:
+            dirnames[:] = []
+            continue
+        dirnames[:] = [
+            d for d in dirnames
+            if d != ".catmaster" and not d.startswith(skip_prefixes)
+        ]
+        if _is_vasp_input_dir(path):
+            if path != root:
+                input_dirs.append(path)
+            dirnames[:] = []
+    return sorted(input_dirs, key=lambda p: str(p))
+
+
 def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = VaspExecuteInput(**payload)
     router = ResourceRouter()
@@ -124,10 +174,37 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     router = ResourceRouter()
     route = router.route("vasp_execute")
 
-    input_dirs = [resolve_workspace_path(p, must_exist=True) for p in params.input_dirs]
+    input_root = resolve_workspace_path(params.input_dir, must_exist=True)
+    if not input_root.is_dir():
+        return create_tool_output(
+            "vasp_execute_batch",
+            success=False,
+            error=f"input_dir is not a directory: {input_root}",
+        )
+    output_root = resolve_workspace_path(params.output_dir)
+    if output_root.exists() and not output_root.is_dir():
+        return create_tool_output(
+            "vasp_execute_batch",
+            success=False,
+            error=f"output_dir is not a directory: {output_root}",
+        )
+    if _is_within(output_root, input_root):
+        return create_tool_output(
+            "vasp_execute_batch",
+            success=False,
+            error="output_dir must not be inside input_dir to avoid mixing inputs with outputs.",
+        )
+    output_root.mkdir(parents=True, exist_ok=True)
+    exclude_root = None
+    input_dirs = _collect_vasp_input_dirs(input_root, exclude_root=exclude_root)
+    if not input_dirs:
+        return create_tool_output(
+            "vasp_execute_batch",
+            success=False,
+            error="No VASP input subdirectories found (expected subdirs containing POTCAR and INCAR).",
+        )
     work_base = make_work_base("vasp_batch")
-    parents = {d.parent for d in input_dirs}
-    local_root = parents.pop() if len(parents) == 1 else input_dirs[0].parent
+    local_root = output_root
 
     reg = TaskRegistry()
     cfg = reg.get("vasp_execute")
@@ -135,9 +212,11 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     tasks: list[TaskSpec] = []
     task_meta = []
     for inp in input_dirs:
-        stage_dir = local_root / work_base / inp.stem
+        rel_path = inp.relative_to(input_root)
+        stage_dir = local_root / work_base / rel_path
         if stage_dir.exists():
             shutil.rmtree(stage_dir)
+        stage_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(inp, stage_dir)
 
         _maybe_autoset_ncore(stage_dir, resources_key=route.resources)
@@ -146,7 +225,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         tasks.append(
             TaskSpec(
                 command=rendered["command"],
-                task_work_path=stage_dir.relative_to(local_root / work_base).as_posix(),
+                task_work_path=rel_path.as_posix(),
                 forward_files=rendered["forward_files"],
                 backward_files=rendered["backward_files"],
             )
@@ -155,6 +234,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "input_dir": inp,
                 "stage_dir": stage_dir,
+                "output_dir": output_root / rel_path,
                 "backward_files": rendered["backward_files"],
             }
         )
@@ -177,16 +257,30 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     for meta in task_meta:
         inp = meta["input_dir"]
         stage = meta["stage_dir"]
+        output_dir = meta["output_dir"]
+        if output_dir.exists():
+            shutil.copytree(inp, output_dir, dirs_exist_ok=True)
+        else:
+            output_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(inp, output_dir)
         for bf in meta["backward_files"]:
             for p in stage.glob(bf):
-                dest = inp / p.name
-                dest.write_bytes(p.read_bytes())
+                dest = output_dir / p.name
+                if p.is_dir():
+                    shutil.copytree(p, dest, dirs_exist_ok=True)
+                else:
+                    dest.write_bytes(p.read_bytes())
         outputs.append(
             {
                 "input_dir_rel": workspace_relpath(inp),
+                "output_dir_rel": workspace_relpath(output_dir),
                 "output_files": meta["backward_files"],
             }
         )
+
+    stage_root = output_root / work_base
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
 
     return create_tool_output(
         tool_name="vasp_execute_batch",
@@ -195,6 +289,8 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             "task_states": result.task_states,
             "submission_dir": result.submission_dir,
             "work_base": result.work_base,
+            "input_root_rel": workspace_relpath(input_root),
+            "output_root_rel": workspace_relpath(output_root),
             "outputs": outputs,
         },
         execution_time=result.duration_s,
