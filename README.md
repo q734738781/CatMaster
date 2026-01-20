@@ -268,4 +268,3 @@ Finally, enjoy your catalysis research in the age of LLM! The project is current
 ## License
 This project is licensed under the Apache-2.0 License.
 
-[![Anurag's GitHub stats](https://github-readme-stats.vercel.app/api?username=q734738781)](https://github.com/anuraghazra/github-readme-stats)

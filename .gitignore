@@ -11,8 +11,5 @@ __pycache__
 POTCAR
 /devdocs
 /reference_codes
-/configs/dpdispatcher/machines.yaml
-/configs/dpdispatcher/tasks.yaml
-/configs/dpdispatcher/router.yaml
-/configs/dpdispatcher/dpdispatcher.yaml
+/configs
 /reference_scripts
