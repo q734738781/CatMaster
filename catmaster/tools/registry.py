@@ -28,6 +28,8 @@ class ToolRegistry:
             enumerate_adsorption_sites,
             place_adsorbate,
             generate_batch_adsorption_structures,
+            make_neb_geometry,
+            make_neb_incar,
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
@@ -39,6 +41,8 @@ class ToolRegistry:
             EnumerateAdsorptionSitesInput,
             PlaceAdsorbateInput,
             GenerateBatchAdsorptionStructuresInput,
+            MakeNebGeometryInput,
+            MakeNebIncarInput,
         )
         
         # Execution tools  
@@ -72,6 +76,8 @@ class ToolRegistry:
         self.register_tool("enumerate_adsorption_sites", enumerate_adsorption_sites, EnumerateAdsorptionSitesInput)
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
         self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
+        self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
+        self.register_tool("make_neb_incar", make_neb_incar, MakeNebIncarInput)
         self.register_tool("vasp_execute", vasp_execute, VaspExecuteInput)
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)

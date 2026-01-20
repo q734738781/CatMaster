@@ -27,7 +27,7 @@ This document summarizes what the codebase can do right now, based on the curren
   - reports: `workspace/reports/FINAL_REPORT.md`, `workspace/reports/WHITEBOARD.md`, `workspace/reports/latest_run` symlink.
 
 - Tool execution:
-  - `ToolExecutor` validates inputs with Pydantic schemas, rejects extra fields, and retries bounded attempts.
+  - `ToolExecutor` validates inputs with Pydantic schemas, rejects extra fields.
 
 
 
@@ -62,6 +62,8 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - **generate_batch_adsorption_structures**: batch adsorbate placement for single or multiple slabs; emits JSON manifest.
 
+- **make_neb_geometry/make_neb_incar**: NEB initial structures and INCAR generation; supports CI-NEB, IDPP, and image count.
+
 
 
 ### Execution (DPDispatcher)
@@ -86,39 +88,16 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - **workspace_* file ops**: list/read/write/mkdir/copy/delete/grep/head/tail/move within workspace root.
 
-- **python_exec**: short, side-effect-free Python calculations.
+- **python_exec**: Python calculations and longtail-tool self-implementation. VERY powerful tool for latest LLMs. Use with caution. Use SAFE models only. 
+
+- Special Notice: Mainstream llms, has the report that it may execute DANGEROUS operations in their CLI products (e.g. rm -rf unexpected folder for codex-cli, gemini-cli etc.), however, we never met this behavior in our early stage development via python exec tool. If you are concerned about this, it is better to use a dedicate sub-system (e.g. WSL) for agent execution.
 
 - **write_note**: append a memory note to the observation log.
-
-- **lit_browser.py**: Selenium-based Google Scholar helper (module import; not registered as a tool).
 
 
 
 ## Demos (checked against current files)
 
-
-
-- `demos/demo_dpdispatcher_mace_CO.py`:
-
-  - MACE relaxation of CO via DPDispatcher (dry-run unless `--run`).
-
-
-
-- `demos/demo_dpdispatcher_vasp_CO.py`:
-
-  - VASP relaxation of CO via DPDispatcher (dry-run unless `--run`).
-
-
-
-- `demos/demo_dpdispatcher_batch.py`:
-
-  - Batch VASP + MACE submissions from assets.
-
-
-
-- `demos/demo_dpdispatcher_remote_submit.py`:
-
-  - Minimal remote command submission.
 
 
 
@@ -157,13 +136,6 @@ This document summarizes what the codebase can do right now, based on the curren
   - Pt–Ni–Cu alloy HER screening with MACE + DFT validation.
 
 
-
-- `demos/demo_validation_loop.py`:
-
-  - Deterministic tool schema validation + retry loop.
-
-
-
 - `demos/show_tool_descriptions.py`:
 
   - Print tool schemas and descriptions.
@@ -180,6 +152,6 @@ This document summarizes what the codebase can do right now, based on the curren
 
   - `~/.catmaster/dpdispatcher.yaml` / `~/.catmaster/dpdispatcher.d/*`
 
-  - `configs/dpdispatcher/*` in this repo
+  - `configs/dpdispatcher/*` directly in the repo
 
 - Materials Project tools require `MP_API_KEY`.

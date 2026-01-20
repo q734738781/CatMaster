@@ -484,7 +484,8 @@ class Orchestrator:
             if initial_plan is not None:
                 raise ValueError("Cannot provide initial_plan when resuming")
             if plan_review:
-                raise ValueError("plan_review is not supported when resuming")
+                self.logger.warning("plan_review requested while resuming; ignoring and continuing with stored plan.")
+                plan_review = False
         try:
             if self.resuming:
                 state = self._load_task_state()

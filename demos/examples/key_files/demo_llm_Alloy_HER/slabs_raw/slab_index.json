@@ -1,0 +1,772 @@
+{
+  "mp-1184054_h100_t0": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1184054",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-1184054/mp-1184054_h100_t0.vasp",
+    "termination": 0
+  },
+  "mp-1184054_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1184054",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-1184054/mp-1184054_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-1184054_h110_t1": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1184054",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-1184054/mp-1184054_h110_t1.vasp",
+    "termination": 1
+  },
+  "mp-1184054_h111_t0": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1184054",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-1184054/mp-1184054_h111_t0.vasp",
+    "termination": 0
+  },
+  "mp-1184054_h111_t1": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1184054",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-1184054/mp-1184054_h111_t1.vasp",
+    "termination": 1
+  },
+  "mp-1186117_h100_t0": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1186117",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-1186117/mp-1186117_h100_t0.vasp",
+    "termination": 0
+  },
+  "mp-1186117_h100_t1": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1186117",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-1186117/mp-1186117_h100_t1.vasp",
+    "termination": 1
+  },
+  "mp-1186117_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1186117",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-1186117/mp-1186117_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-1186117_h110_t1": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1186117",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-1186117/mp-1186117_h110_t1.vasp",
+    "termination": 1
+  },
+  "mp-1186117_h111_t0": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1186117",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-1186117/mp-1186117_h111_t0.vasp",
+    "termination": 0
+  },
+  "mp-12086_h100_t0": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12086",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-12086/mp-12086_h100_t0.vasp",
+    "termination": 0
+  },
+  "mp-12086_h100_t1": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12086",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-12086/mp-12086_h100_t1.vasp",
+    "termination": 1
+  },
+  "mp-12086_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12086",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-12086/mp-12086_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-12086_h110_t1": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12086",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-12086/mp-12086_h110_t1.vasp",
+    "termination": 1
+  },
+  "mp-12086_h111_t0": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12086",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-12086/mp-12086_h111_t0.vasp",
+    "termination": 0
+  },
+  "mp-1225687_h100_t0": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1225687",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-1225687/mp-1225687_h100_t0.vasp",
+    "termination": 0
+  },
+  "mp-1225687_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1225687",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-1225687/mp-1225687_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-1225687_h111_t0": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1225687",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-1225687/mp-1225687_h111_t0.vasp",
+    "termination": 0
+  },
+  "mp-1225687_h111_t1": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-1225687",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-1225687/mp-1225687_h111_t1.vasp",
+    "termination": 1
+  },
+  "mp-12608_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12608",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-12608/mp-12608_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-12608_h110_t1": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12608",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-12608/mp-12608_h110_t1.vasp",
+    "termination": 1
+  },
+  "mp-12798_h100_t0": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12798",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-12798/mp-12798_h100_t0.vasp",
+    "termination": 0
+  },
+  "mp-12798_h100_t1": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12798",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-12798/mp-12798_h100_t1.vasp",
+    "termination": 1
+  },
+  "mp-12798_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12798",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-12798/mp-12798_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-12798_h110_t1": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12798",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-12798/mp-12798_h110_t1.vasp",
+    "termination": 1
+  },
+  "mp-12798_h111_t0": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-12798",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-12798/mp-12798_h111_t0.vasp",
+    "termination": 0
+  },
+  "mp-644311_h100_t0": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-644311",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-644311/mp-644311_h100_t0.vasp",
+    "termination": 0
+  },
+  "mp-644311_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-644311",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-644311/mp-644311_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-644311_h111_t0": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-644311",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-644311/mp-644311_h111_t0.vasp",
+    "termination": 0
+  },
+  "mp-644311_h111_t1": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-644311",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-644311/mp-644311_h111_t1.vasp",
+    "termination": 1
+  },
+  "mp-945_h100_t0": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-945",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-945/mp-945_h100_t0.vasp",
+    "termination": 0
+  },
+  "mp-945_h100_t1": {
+    "facet": "(100)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-945",
+    "miller_index": [
+      1,
+      0,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_100/mp-945/mp-945_h100_t1.vasp",
+    "termination": 1
+  },
+  "mp-945_h110_t0": {
+    "facet": "(110)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-945",
+    "miller_index": [
+      1,
+      1,
+      0
+    ],
+    "slab_file_rel": "slabs_raw/hkl_110/mp-945/mp-945_h110_t0.vasp",
+    "termination": 0
+  },
+  "mp-945_h111_t0": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-945",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-945/mp-945_h111_t0.vasp",
+    "termination": 0
+  },
+  "mp-945_h111_t1": {
+    "facet": "(111)",
+    "generation_settings": {
+      "get_symmetry_slab": true,
+      "orthogonal": true,
+      "slab_thickness_A": 12.0,
+      "supercell": [
+        1,
+        1,
+        1
+      ],
+      "vacuum_thickness_A": 15.0
+    },
+    "material_id": "mp-945",
+    "miller_index": [
+      1,
+      1,
+      1
+    ],
+    "slab_file_rel": "slabs_raw/hkl_111/mp-945/mp-945_h111_t1.vasp",
+    "termination": 1
+  }
+}

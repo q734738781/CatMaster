@@ -1,0 +1,8 @@
+{
+  "facet": "110",
+  "gamma_ev_per_a2": 0.19401061086827942,
+  "gamma_j_per_m2": 3.1083926476507515,
+  "slab_vasprun": "fe_surfaces/05_surface_vasp_out/Fe_110_centerfixed/vasprun.xml",
+  "bulk_vasprun": "fe_surfaces/01_bulk/vasp_out/Fe_conv/vasprun.xml",
+  "surface_energies_tsv": "fe_surfaces/results/surface_energies.tsv"
+}

@@ -20,6 +20,12 @@ from catmaster.tools.geometry_inputs.adsorbate_tool import (
     place_adsorbate,
     generate_batch_adsorption_structures,
 )
+from catmaster.tools.geometry_inputs.neb_tools import (
+    MakeNebGeometryInput,
+    MakeNebIncarInput,
+    make_neb_geometry,
+    make_neb_incar,
+)
 
 __all__ = [
     "MoleculeFromSmilesInput",
@@ -40,4 +46,8 @@ __all__ = [
     "enumerate_adsorption_sites",
     "place_adsorbate",
     "generate_batch_adsorption_structures",
+    "MakeNebGeometryInput",
+    "MakeNebIncarInput",
+    "make_neb_geometry",
+    "make_neb_incar",
 ]

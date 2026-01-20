@@ -1,0 +1,38 @@
+Geometry summary (Fe–N4/graphene and CO adsorption)
+Date: 2026-01-17
+
+Key structure files created/used:
+- Graphene 5x5x1 supercell: geometries/graphene_5x5.vasp
+- Fe–N4/graphene (initial): geometries/FeN4_graphene_initial.vasp
+- Fe–N4/graphene (relaxed): relax/FeN4_graphene/opt.vasp
+- CO molecule (reference): geometries/CO.xyz
+- CO@Fe–N4/graphene (initial): geometries/CO_on_FeN4_graphene_initial.vasp
+- CO@Fe–N4/graphene (relaxed): relax/CO_on_FeN4_graphene/opt.vasp
+
+Computed key geometric metrics
+
+1) Fe–N4/graphene
+- Initial structure: geometries/FeN4_graphene_initial.vasp
+  Fe–N bond lengths (Å): [2.408538, 2.408538, 2.408538, 2.408538]
+  Mean / min / max (Å): 2.408538 / 2.408538 / 2.408538
+
+- Relaxed structure: relax/FeN4_graphene/opt.vasp
+  Fe–N bond lengths (Å): [1.896378, 1.896380, 1.896377, 1.896378]
+  Mean / min / max (Å): 1.896378 / 1.896377 / 1.896380
+
+2) CO@Fe–N4/graphene
+- Initial structure: geometries/CO_on_FeN4_graphene_initial.vasp
+  Fe–C distance (Å): 1.800000
+  C–O bond length (Å): 1.130000
+  CO tilt vs surface normal (deg): 0.000000
+
+- Relaxed structure: relax/CO_on_FeN4_graphene/opt.vasp
+  Fe–C distance (Å): 1.837761
+  C–O bond length (Å): 1.167276
+  CO tilt vs surface normal (deg): 0.000121
+
+Final relaxed bond metrics (requested):
+- Fe–N (Å, mean/min/max): 1.896378 / 1.896377 / 1.896380  (relax/FeN4_graphene/opt.vasp)
+- Fe–C (Å): 1.837761  (relax/CO_on_FeN4_graphene/opt.vasp)
+- C–O (Å): 1.167276  (relax/CO_on_FeN4_graphene/opt.vasp)
+- CO tilt (deg from surface normal): 0.000121  (relax/CO_on_FeN4_graphene/opt.vasp)

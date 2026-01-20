@@ -1,0 +1,4 @@
+facet	n_atoms_slab	area_a2	e_slab_ev	e_bulk_per_atom_ev	gamma_ev_per_a2	gamma_j_per_m2	slab_vasprun	bulk_vasprun
+100	10	7.869936	-82.66664424	-8.58301746	0.20098831	3.2202	fe_surfaces/05_surface_vasp_out/Fe_100_centerfixed/vasprun.xml	fe_surfaces/01_bulk/vasp_out/Fe_conv/vasprun.xml
+110	7	5.564885	-57.92182869	-8.58301746	0.19401061	3.1084	fe_surfaces/05_surface_vasp_out/Fe_110_centerfixed/vasprun.xml	fe_surfaces/01_bulk/vasp_out/Fe_conv/vasprun.xml
+111	16	13.631129	-131.81107241	-8.58301746	0.20237527	3.2424	fe_surfaces/05_surface_vasp_out/Fe_111_centerfixed/vasprun.xml	fe_surfaces/01_bulk/vasp_out/Fe_conv/vasprun.xml

@@ -1,11 +1,40 @@
-# PC control plane dependencies
-dpdispatcher>=0.6.12
-pymatgen>=2024.2.23
+# -----------------------------------------------------------------------------
+# Runtime requirements (minimum versions).
+# Notes:
+#   - mp-api requires Python >= 3.10.
+#   - For reproducibility, consider pinning exact versions via a lock/constraints
+#     file (pip-tools / uv / poetry) once you validate a working set.
+# -----------------------------------------------------------------------------
+
+# Core scientific stack
+numpy>=1.26.0
+scipy>=1.10.0
+pandas>=2.2.0
+
+# Atomistic modeling / materials
 ase>=3.23.0
-paramiko>=3.3.0
+pymatgen>=2024.2.23
+
+# YAML parsing (PyYAML) and round-trip editing (ruamel.yaml)
 pyyaml>=6.0
 ruamel.yaml>=0.17.32
-pandas>=2.2.0
-selenium>=4.6.0
-mp-api>=0.40.0
-numpy>=1.26.0
+
+# Remote execution / HPC control plane
+dpdispatcher>=0.6.12
+paramiko>=3.3.0
+
+# LLM agent system (avoid umbrella 'langchain')
+openai>=1.0.0
+langchain-core>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.10
+langgraph>=0.0.20
+
+# Utilities
+python-dotenv>=1.0.0
+rich>=13.0.0
+pydantic>=2.0.0
+
+# External data / cheminformatics
+mp-api>=0.40.0     # often shown in docs as: pip install mp_api
+rdkit>=2025.3.6    # PyPI uses 2025.3.6-style versions

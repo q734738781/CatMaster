@@ -13,3 +13,5 @@ tqdm>=4.66.1
 matplotlib>=3.8.0
 dpdispatcher>=0.6.12
 pyyaml>=6.0
+
+# If you plan to use MACE in local, you should also install the dependencies list in this file as well as pc.txt.

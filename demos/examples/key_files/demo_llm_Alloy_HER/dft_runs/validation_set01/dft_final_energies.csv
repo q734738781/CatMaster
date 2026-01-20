@@ -1,0 +1,10 @@
+kind,name,dir,status,final_energy_eV,converged,source
+gas,H2_box,dft_runs/validation_set01/vasp_inputs/gas,ok,-6.7723967,True,vasprun.xml
+slab,mp-1186117_h110_t0__bare,dft_runs/validation_set01/vasp_outputs/slab/mp-1186117_h110_t0__bare,ok,-454.95227631,True,vasprun.xml
+slab,mp-1186117_h110_t0__bridge_4,dft_runs/validation_set01/vasp_outputs/slab/mp-1186117_h110_t0__bridge_4,ok,-458.47859253,True,vasprun.xml
+slab,mp-12086_h100_t1__bare,dft_runs/validation_set01/vasp_outputs/slab/mp-12086_h100_t1__bare,ok,-262.37690627,True,vasprun.xml
+slab,mp-12086_h100_t1__bridge_0,dft_runs/validation_set01/vasp_outputs/slab/mp-12086_h100_t1__bridge_0,ok,-266.04084509,True,vasprun.xml
+slab,mp-12086_h110_t1__bare,dft_runs/validation_set01/vasp_outputs/slab/mp-12086_h110_t1__bare,ok,-336.91952605,True,vasprun.xml
+slab,mp-12086_h110_t1__bridge_0,dft_runs/validation_set01/vasp_outputs/slab/mp-12086_h110_t1__bridge_0,ok,-340.63900037,True,vasprun.xml
+slab,mp-12608_h110_t0__bare,dft_runs/validation_set01/vasp_outputs/slab/mp-12608_h110_t0__bare,ok,-1109.2875243,True,vasprun.xml
+slab,mp-12608_h110_t0__bridge_7,dft_runs/validation_set01/vasp_outputs/slab/mp-12608_h110_t0__bridge_7,ok,-1112.76559747,True,vasprun.xml
