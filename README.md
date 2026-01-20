@@ -37,7 +37,7 @@ CatMaster is a **open-source** task-based LLM orchestration and tooling framewor
 
 CatMaster is designed for real-world research environments, aiming at production-level research—for example, you have supercomputer cluster access for DFT calculations and an optional GPU server for ML-related research, while processing files on your laptop. Because of this, the environment setup is a bit complex, but definitely worth it. Once you set it up, you can open multiple terminals, raise many questions, have your coffee break, and let the LLMs do trivial things for you. But before that, you should carefully read the following setup guidance:
 
-First, you should download the source code of the project, place somewhere (recommned: WSL for convinient environemnt setting) and preparew the environment:
+First, you should download the source code of the project (Find it in release/source code.zip, or directly download the repository if you like dev version), place somewhere (recommned: WSL for convinient environemnt setting) and preparew the environment:
 
 ### Python dependencies
 
