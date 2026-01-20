@@ -231,7 +231,7 @@ Example (prompt string):
 python main.py \
   --workspace workspace/my_run \
   --model gpt-5.2 \
-  --reasoning-effort medium \
+  --reasoning-effort high \
   --prompt "Compute O2 in a box and report energy per atom."
 ```
 
@@ -244,6 +244,7 @@ python main.py \
 ```
 
 Notes:
+- We strongly recommend using reasoning effort `high` for tasks. It will be cleverer and make you less angry with an affordable cost.
 - `--clean` is optional and off by default (use it only when you want to delete the workspace).
 - Set `CATMASTER_WORKSPACE` instead of `--workspace` if preferred.
 - You still need your model provider key (e.g., `OPENAI_API_KEY`) in the environment.
@@ -263,7 +264,7 @@ Notes:
 
 ---
 
-Finally, enjoy your catalysis research in the age of LLM! The project is currently in its prototype/conceptual validation stage and under active development, you can open issues if you meet problems when using this system.
+Finally, the project is currently in its prototype/conceptual validation stage and under active development, you can open issues if you meet problems when using this system.
 
 ## License
 This project is licensed under the Apache-2.0 License.
