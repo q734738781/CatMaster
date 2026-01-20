@@ -1,5 +1,19 @@
 # CatMaster
-
+```
++----------------------------------------------------------+
+|   _____      _    __  __              _                  |
+|  / ____|    | |  |  \/  |            | |                 |
+| | |     __ _| |_ | \  / |  __ _  ___ | |_  ___  _ __     |
+| | |    / _` | __|| |\/| | / _` |/ __|| __|/ _ \| '__|    |
+| | |___| (_| | |_ | |  | || (_| |\__ \| |_| ___/| |       |
+|  \_____\__,_|\__||_|  |_| \__,_||___/ \__|\___||_|       |
+|        \_____________________________________________\   |
+|         \_____________________________________________\  |
+|                                                          |
+|     An Automated Agent System for Catalysis Research     |
+|                                                          |
++----------------------------------------------------------+
+```
 CatMaster is a **open-source** task-based LLM orchestration and tooling framework for computational materials workflows. It is build on the classical Planner-Executor-Summarizer architecture now, provides a structured planning/execution loop, tool registry for geometry/input preparation and job submission (VASP, MACE via DPDispatcher), and unified tracing/reporting (task state, tool calls, whiteboard diffs, and final reports).
 
 ## Highlights
@@ -48,14 +62,18 @@ Register and set your Materials Project API key in ~/.bashrc if you do not want 
 export MP_API_KEY=YOUR_API_KEY
 ```
 
+### Pymatgen POTCAR Configs:
+
+Pymatgen needs POTCAR files to generate VASP inputs. You should download the POTCAR files from VASP portal and place them in a local dir.
+Then refer to https://pymatgen.org/installation.html to setup POTCARs for pymatgen.
+
+
 ### DPDispatcher config (templates, with required fields)
 
 DPDispatcher config can be provided via:
 - `$CATMASTER_DP_CONFIG` / `$CATMASTER_DP_TASKS`
 - `~/.catmaster/dpdispatcher.yaml` or `~/.catmaster/dpdispatcher.d/*`
-- `configs/dpdispatcher/*` directly under the project dir.
-
-
+- `configs/dpdispatcher/*` directly under the project dir (relative to main.py)
 
 **FOR ANY EXECUTION ON REMOTE MACHINES, PASSWORDLESS SSH CONNECTIONS (PRIVATE KEY LOGIN) SHOULD BE CONFIGURED BEFORE LAUNCHING THE CODE.**
 
@@ -120,7 +138,7 @@ mace_gpu:
 `tasks.yaml` (template; **do not change the command patterns unless you know what you are doing :)**
 ```yaml
 vasp_execute:
-  command: "mpirun -n $SLURM_NTASKS vasp_std > vasp_stdout.out 2>&1"
+  command: "mpirun -n $SLURM_NTASKS vasp_std > vasp_stdout.out 2>&1" # This is a typical comman patten, change it to fit your server.
   forward_files:
     - "*"
   backward_files:
@@ -156,15 +174,17 @@ tasks:
     resources: vasp_cpu
 ```
 
+
 Notes:
 - Keep `env_setup` / `source_list` aligned with your site environment scripts and MPI setup.
 - For GPU MACE jobs, the **code folder must exist on the GPU host**; set `PYTHONPATH` in `env_setup` accordingly.
 - For Slurm/VASP, ensure your env script exports `vasp_std` and sets MPI bootstrap (e.g., `I_MPI_HYDRA_BOOTSTRAP=ssh` when required).
-
+- Under normal scenarios, you should not modify the name of tasks.yaml in case of program will not find suitable task.
+- 
 ### CPU (VASP) requirements
 
 - Slurm-based HPC environment.
-- VASP available in PATH or sourced via an environment script.
+- VASP available in PATH or sourced via an environment script. Make sure launch command in tasks.yaml matches your site setup.
 - DPDispatcher uses SSH to submit jobs; the MPI bootstrap should be set for SSH.
 
 ### GPU (MACE) requirements
@@ -232,7 +252,7 @@ Notes:
 
 - Start with `docs/abilities.md` for current capabilities.
 - See runnable examples under `demos/`.
-- Browse `devdocs/demos/` for summarized runs and final reports from those demos.
+- Browse `demos/examples` for summarized runs, key files and final reports from those demos.
 
 ## Common environment variables
 
@@ -244,3 +264,8 @@ Notes:
 ---
 
 Finally, enjoy your catalysis research in the age of LLM! The project is currently in its prototype/conceptual validation stage and under active development, you can open issues if you meet problems when using this system.
+
+## License
+This project is licensed under the Apache-2.0 License.
+
+[![Anurag's GitHub stats](https://github-readme-stats.vercel.app/api?username=q734738781)](https://github.com/anuraghazra/github-readme-stats)
