@@ -27,11 +27,8 @@ CatMaster is a **open-source** task-based LLM orchestration and tooling framewor
 ## Project layout
 
 - `catmaster/`: core orchestration, runtime, tools, and UI.
-- `configs/dpdispatcher/`: DPDispatcher routing/machines/resources/task templates.
-- `demos/`: runnable scripts for end-to-end use cases.
-- `devdocs/demos/`: summarized demo outputs and final reports.
+- `demos/`: runnable scripts for end-to-end use cases and examples.
 - `docs/`: capability and design notes (start with `docs/abilities.md`).
-- `reference_scripts/`: environment setup helpers (e.g., VASP remote env).
 
 ## Environment setup
 
