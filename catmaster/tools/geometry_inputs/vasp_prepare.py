@@ -43,7 +43,7 @@ class RelaxPrepareInput(BaseModel):
         description=(
             "Calculation type: 'gas'|'bulk'|'slab'|'lattice'. "
             "This provides preset INCAR overrides for different calculation types. gas is suitable for small molecules; slab is suitable for surface slab models; "
-            "bulk is suitable for ion-position only relaxation for bulk-ion relax with lattice fixed; lattice is suitable for full bulk-ion and lattice relaxation. "
+            "bulk is suitable for ion-position only relaxation for bulk with lattice fixed; lattice is suitable for full bulk-ion as well lattice relaxation. "
             "'lattice' will apply ISIF=3; 'bulk' will apply ISIF=2; 'slab' will apply ISIF=2 and force KPOINTS in z direction to 1; "
             "gas will apply ISIF=2, ISYM=0, LREAL=False, ISMEAR=0, SIGMA=0.01, and force KPOINTS to 1x1x1"
         ),
