@@ -52,14 +52,14 @@ class RelaxPrepareInput(BaseModel):
         ge=1,
         description="Target k-mesh density via k_i~round(k_product/L_i), min 1, forced odd (Gamma-centered); gas always 1x1x1.",
     )
-    use_d3: bool = Field(True, description="Add IVDW=11 (DFT-D3) to the INCAR if true")
-    use_dft_plus_u: bool = Field(False, description="Add LDAU=True to the INCAR if true. Enable it for Transition Metal Oxide systems.")
+    use_d3: bool = Field(False, description="Enable DFT-D3 Correction (IVDW=11). Enable it for adsorption calculations.")
+    use_dft_plus_u: bool = Field(False, description="Enable DFT+U relevant settings according to materials project standard. Enable it for Transition Metal Oxide systems.")
     user_incar_settings: Optional[Dict[str, Any]] = Field(
         None,
         description=(
             "INCAR overrides (pymatgen Incar semantics) on top of MPRelaxSet (calc_type presets will always win if conflict with params specified here). "
-            "Specify MAGMOM, LDAUU, etc. if needed, format as {\"element\": value}, not a per-atom list. "
-            "You can also specify EDIFF and EDIFFG to control the convergence of the calculation and override the default values."
+            "Specify MAGMOM, LDAUU, etc. if user specially needed, format as {\"element\": value}, not a per-atom list. "
+            "You can also specify other params, like EDIFF and EDIFFG to control the convergence of the calculation and override the default values."
         ),
     )
 
