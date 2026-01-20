@@ -257,7 +257,6 @@ Notes:
 
 ## Common environment variables
 
-- `CATMASTER_WORKSPACE`: workspace root for artifacts and reports.
 - `MP_API_KEY`: Materials Project API key.
 - `OPENAI_API_KEY` (or your provider key).
 - `CATMASTER_DP_CONFIG` / `CATMASTER_DP_TASKS`: DPDispatcher config overrides.
