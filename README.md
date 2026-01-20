@@ -246,7 +246,6 @@ python main.py \
 Notes:
 - We strongly recommend using reasoning effort `high` for tasks. It will be cleverer and make you less angry with an affordable cost.
 - `--clean` is optional and off by default (use it only when you want to delete the workspace).
-- Set `CATMASTER_WORKSPACE` instead of `--workspace` if preferred.
 - You still need your model provider key (e.g., `OPENAI_API_KEY`) in the environment.
 - The summary of each run will be saved under `<workspace>/reports/FINAL_REPORT.md`.
 
