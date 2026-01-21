@@ -265,3 +265,16 @@ Finally, the project is currently in its prototype/conceptual validation stage a
 ## License
 This project is licensed under the Apache-2.0 License.
 
+## Citation
+If you find CatMaster useful in your research, please consider citing:
+```
+@misc{chen2026catmasteragenticautonomouscomputational,
+      title={CatMaster: An Agentic Autonomous System for Computational Heterogeneous Catalysis Research}, 
+      author={Honghao Chen and Jiangjie Qiu and Yi Shen Tew and Xiaonan Wang},
+      year={2026},
+      eprint={2601.13508},
+      archivePrefix={arXiv},
+      primaryClass={cond-mat.mtrl-sci},
+      url={https://arxiv.org/abs/2601.13508}, 
+}
+```
