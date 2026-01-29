@@ -12,7 +12,6 @@ import argparse
 import logging
 import os
 import shutil
-from langchain_openai import ChatOpenAI
 from catmaster.agents.orchestrator import Orchestrator
 from catmaster.ui import create_reporter
 
@@ -74,14 +73,7 @@ def main() -> None:
         "Write your results in a markdown file."
     )
 
-    llm = ChatOpenAI(
-        model="gpt-5.2",
-        temperature=0,
-        reasoning_effort="medium",
-
-    )
     orch = Orchestrator(
-        llm=llm,
         max_steps=100,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
         log_llm_console=ui_mode == "off",

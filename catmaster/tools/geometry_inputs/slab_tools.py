@@ -82,6 +82,11 @@ class FixAtomsByLayersInput(BaseModel):
     )
 
 
+class ZRange(BaseModel):
+    z_min: float = Field(..., description="Lower bound (Å) in Cartesian coordinates.")
+    z_max: float = Field(..., description="Upper bound (Å) in Cartesian coordinates.")
+
+
 class FixAtomsByHeightInput(BaseModel):
     """Fix (freeze) atoms within specified z ranges of slab structure(s).
 
@@ -100,10 +105,10 @@ class FixAtomsByHeightInput(BaseModel):
             "encodes the relative input path (without suffix) using '__'."
         ),
     )
-    z_ranges: List[Tuple[float, float]] = Field(
+    z_ranges: List[ZRange] = Field(
         ...,
         min_length=1,
-        description="List of (z_min, z_max) ranges in Å in Cartesian coordinates, atoms in the ranges are frozen. Do not use too much digits due to float precision error.",
+        description="Ranges in Å in Cartesian coordinates; atoms in these z ranges are frozen.",
     )
     centralize: bool = Field(False, description="Recentre slab along c after applying constraints.")
 
@@ -566,7 +571,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> Dict[str, object]:
             success=False,
             error="z_ranges must not be empty.",
         )
-    z_ranges = [(float(zmin), float(zmax)) for zmin, zmax in params.z_ranges]
+    z_ranges = [(float(item.z_min), float(item.z_max)) for item in params.z_ranges]
     centralize = bool(params.centralize)
 
     for zmin, zmax in z_ranges:
@@ -670,6 +675,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> Dict[str, object]:
 __all__ = [
     "SlabBuildInput",
     "FixAtomsByLayersInput",
+    "ZRange",
     "FixAtomsByHeightInput",
     "build_slab",
     "fix_atoms_by_layers",

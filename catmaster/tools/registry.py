@@ -9,10 +9,11 @@ from pydantic import BaseModel
 
 class ToolRegistry:
     """Simple tool registry mapping names to functions and their input models."""
-    
-    def __init__(self):
+
+    def __init__(self, register_all_tools: bool = True):
         self.tools = {}
-        self._register_all_tools()
+        if register_all_tools:
+            self._register_all_tools()
     
     def _register_all_tools(self):
         """Register all available tools"""
@@ -107,6 +108,30 @@ class ToolRegistry:
             "input_model": input_model,
             "parameters": input_model.model_json_schema()
         }
+
+    def as_openai_tools(
+        self,
+        *,
+        allowlist: list[str] | None = None,
+        strict: bool = False,
+    ) -> list[dict]:
+        tools: list[dict] = []
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        for name in names:
+            info = self.tools.get(name)
+            if not info:
+                continue
+            model = info["input_model"]
+            description = (model.__doc__ or f"Input for {name}").strip()
+            schema = info.get("parameters") or model.model_json_schema()
+            tools.append({
+                "type": "function",
+                "name": name,
+                "description": description,
+                "parameters": sanitize_json_schema(schema),
+                "strict": strict,
+            })
+        return tools
     
     def get_tool_info(self, name: str) -> Dict[str, Any]:
         """Get tool information by name."""
@@ -128,10 +153,14 @@ class ToolRegistry:
             for name, info in self.tools.items()
         }
     
-    def get_tool_descriptions_for_llm(self) -> str:
+    def get_tool_descriptions_for_llm(self, allowlist: list[str] | None = None) -> str:
         """Get tool descriptions formatted for LLM consumption."""
         descriptions = []
-        for name, info in self.tools.items():
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        for name in names:
+            info = self.tools.get(name)
+            if not info:
+                continue
             model = info["input_model"]
             doc = model.__doc__ or f"Input for {name}"
             params = []
@@ -143,15 +172,54 @@ class ToolRegistry:
 
         return "\n\n".join(descriptions)
 
-    def get_short_tool_descriptions_for_llm(self) -> str:
+    def get_short_tool_descriptions_for_llm(self, allowlist: list[str] | None = None) -> str:
         """Get short tool descriptions (name + docstring only) for LLM planning."""
         descriptions = []
-        for name, info in self.tools.items():
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        for name in names:
+            info = self.tools.get(name)
+            if not info:
+                continue
             model = info["input_model"]
             doc = model.__doc__ or f"Input for {name}"
             descriptions.append(f"{name} : {doc}")
 
         return "\n\n".join(descriptions)
+
+
+def sanitize_json_schema(schema: dict) -> dict:
+    if isinstance(schema, list):
+        return [sanitize_json_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    cleaned: dict = {}
+    for key, value in schema.items():
+        if isinstance(value, dict):
+            cleaned[key] = sanitize_json_schema(value)
+        elif isinstance(value, list):
+            cleaned[key] = [sanitize_json_schema(item) for item in value]
+        else:
+            cleaned[key] = value
+
+    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
+        cleaned["properties"] = {
+            prop: sanitize_json_schema(prop_schema)
+            for prop, prop_schema in cleaned["properties"].items()
+        }
+    for key in ("anyOf", "allOf", "oneOf"):
+        if key in cleaned and isinstance(cleaned[key], list):
+            cleaned[key] = [sanitize_json_schema(item) for item in cleaned[key]]
+    if "items" in cleaned:
+        cleaned["items"] = sanitize_json_schema(cleaned["items"])
+    if "prefixItems" in cleaned and isinstance(cleaned["prefixItems"], list):
+        cleaned["prefixItems"] = [sanitize_json_schema(item) for item in cleaned["prefixItems"]]
+
+    schema_type = cleaned.get("type")
+    if schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type):
+        cleaned.setdefault("additionalProperties", False)
+
+    return cleaned
 
 
 # Singleton instance

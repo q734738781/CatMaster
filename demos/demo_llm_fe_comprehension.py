@@ -21,7 +21,6 @@ import argparse
 import logging
 import os
 import shutil
-from langchain_openai import ChatOpenAI
 from catmaster.agents.orchestrator import Orchestrator
 from catmaster.ui import create_reporter
 
@@ -89,15 +88,7 @@ def main() -> None:
         "Write down your proposed calculation parameters in the plan tasks for review."
     )
 
-    llm = ChatOpenAI(
-        model="gpt-5.2",
-        temperature=0,
-        # model_kwargs={"response_format": {"type": "json_object"}},
-        reasoning_effort="high",
-
-    )
     orch = Orchestrator(
-        llm=llm,
         max_steps=300,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
         log_llm_console=ui_mode == "off",
