@@ -21,7 +21,7 @@ SUPPORTED_EXTS = {".vasp", ".cif"}
 class RelaxPrepareInput(BaseModel):
     """
     Prepare MPRelaxSet-based VASP relax inputs with calc_type presets and k_product k-mesh. 
-    Also can be modified for other calculation types by overriding the user_incar_settings.
+    Also can be modified for other calculation types by overriding INCAR via the user_incar_settings.
     Support exts: .vasp, .cif
 
     Baseline DFT settings follow Materials Project MPRelaxSet (key defaults):
@@ -65,7 +65,7 @@ class RelaxPrepareInput(BaseModel):
         description=(
             "User INCAR overrides (pymatgen Incar semantics) on top of MPRelaxSet (calc_type presets will always win if conflict with params specified here). "
             "Specify MAGMOM, LDAUU, etc. if user specially needed, format as {\"element\": value}, not a per-atom list. "
-            "You can also specify other params, like EDIFF and EDIFFG to control the convergence of the calculation and override the default values."
+            "You can also specify other params, to adapt specific calculation requirements."
         ),
     )
 
