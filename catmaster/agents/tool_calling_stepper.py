@@ -388,8 +388,6 @@ class ToolCallingTaskStepper:
         parts = [f"Task goal: {task_goal}"]
         if context_pack:
             parts.append("Context pack:\n" + json.dumps(context_pack, ensure_ascii=False, indent=2))
-        if initial_instruction:
-            parts.append(f"Execution guidance: {initial_instruction}")
         return "\n\n".join(parts)
 
     def _seed_state(
@@ -412,7 +410,6 @@ class ToolCallingTaskStepper:
             workspace_policy=context_pack.get("workspace_policy", ""),
             whiteboard_excerpt=context_pack.get("whiteboard_excerpt", ""),
             artifact_slice=self._format_artifact_slice(context_pack.get("artifact_slice", [])),
-            execution_guidance=initial_instruction or "",
         )
         for msg in messages:
             role = getattr(msg, "role", None) or getattr(msg, "type", "user")

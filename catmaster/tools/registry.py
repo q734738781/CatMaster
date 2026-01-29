@@ -47,8 +47,8 @@ class ToolRegistry:
         )
         
         # Execution tools  
-        from catmaster.tools.execution import mace_relax, vasp_execute, mace_relax_batch, vasp_execute_batch
-        from catmaster.tools.execution import MaceRelaxInput, VaspExecuteInput, MaceRelaxBatchInput, VaspExecuteBatchInput
+        from catmaster.tools.execution import mace_relax_batch, vasp_execute_batch
+        from catmaster.tools.execution import MaceRelaxBatchInput, VaspExecuteBatchInput
 
         # File management tools
         from catmaster.tools.misc import file_manager
@@ -67,7 +67,6 @@ class ToolRegistry:
         
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
-        self.register_tool("mace_relax", mace_relax, MaceRelaxInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("relax_prepare", relax_prepare, RelaxPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
@@ -79,7 +78,6 @@ class ToolRegistry:
         self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
         self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
         self.register_tool("make_neb_incar", make_neb_incar, MakeNebIncarInput)
-        self.register_tool("vasp_execute", vasp_execute, VaspExecuteInput)
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)

@@ -66,6 +66,8 @@ class TaskConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     command: str
+    resources: str | None = None
+    defaults: Dict[str, object] = Field(default_factory=dict)
     task_work_path: str = "."
     forward_files: List[str] = Field(default_factory=list)
     backward_files: List[str] = Field(default_factory=list)

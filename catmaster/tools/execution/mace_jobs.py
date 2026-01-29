@@ -67,15 +67,6 @@ def _collect_structure_files(root: Path) -> List[Path]:
     return sorted(files, key=lambda p: str(p))
 
 
-def _unique_output_dir(base_dir: Path, stem: str) -> Path:
-    candidate = base_dir / stem
-    idx = 1
-    while candidate.exists():
-        candidate = base_dir / f"{stem}_run{idx}"
-        idx += 1
-    return candidate
-
-
 def _is_within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -156,102 +147,90 @@ def run_mace_path(
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
     """
-    Run MACE relaxation for a file or a directory.
+    Run MACE relaxation for a directory of structure files.
 
-    - If input_path is a file, writes outputs to output_root if provided, otherwise to the file's directory.
-    - If input_path is a directory, output_root is required and outputs are flattened under output_root using "__"
-      to encode the relative path without file suffix (e.g. a/b/CO.vasp -> a__b__CO).
+    - input_path must be a directory.
+    - output_root is required.
+    - Output mirrors the input directory structure and expands file names into folders
+      (e.g. input_root/a/c.vasp -> output_root/a/c/opt.vasp).
     """
     input_path = Path(input_path)
     output_root_path = Path(output_root) if output_root else None
+    if not input_path.is_dir():
+        raise ValueError("input_path must be a directory for batch relaxation.")
+    if output_root_path is None:
+        raise ValueError("output_root is required when input_path is a directory.")
+    input_resolved = input_path.resolve()
+    output_resolved = output_root_path.resolve()
+    if _is_within(output_resolved, input_resolved):
+        raise ValueError("output_root must not be inside input_path.")
+    structures = _collect_structure_files(input_path)
+    if not structures:
+        raise ValueError(f"No structure files found in directory: {input_path}")
+    output_root_path.mkdir(parents=True, exist_ok=True)
+    from mace.calculators import mace_mp
+    import torch
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    calc = mace_mp(model=model, device=device)
 
-    if input_path.is_dir():
-        if output_root_path is None:
-            raise ValueError("output_root is required when input_path is a directory.")
-        input_resolved = input_path.resolve()
-        output_resolved = output_root_path.resolve()
-        if _is_within(output_resolved, input_resolved):
-            raise ValueError("output_root must not be inside input_path.")
-        structures = _collect_structure_files(input_path)
-        if not structures:
-            raise ValueError(f"No structure files found in directory: {input_path}")
-        output_root_path.mkdir(parents=True, exist_ok=True)
-        from mace.calculators import mace_mp
-        import torch
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        calc = mace_mp(model=model, device=device)
-
-        results = []
-        errors = []
-        for struct in structures:
-            rel_path = struct.relative_to(input_path).with_suffix("")
-            slab_id = "__".join(rel_path.parts)
-            base_dir = output_root_path
-            out_dir = _unique_output_dir(base_dir, slab_id)
-            try:
-                res = _run_mace_single(
-                    structure_path=struct,
-                    output_dir=out_dir,
-                    fmax=fmax,
-                    steps=steps,
-                    model=model,
-                    device=device,
-                    calc=calc,
-                )
-                results.append(
-                    {
-                        "input_rel": str(struct.relative_to(input_path)),
-                        "slab_id": slab_id,
-                        "output_rel": str(out_dir.relative_to(output_root_path)),
-                        "summary": res.get("summary", {}),
-                    }
-                )
-            except Exception as exc:
-                errors.append({"input_rel": str(struct.relative_to(input_path)), "error": str(exc)})
-
-        batch_summary = {
-            "input_root": str(input_path),
-            "output_root": str(output_root_path),
-            "model": model,
-            "device": device,
-            "fmax": fmax,
-            "steps": steps,
-            "results": results,
-            "errors": errors,
-        }
+    results = []
+    errors = []
+    for struct in structures:
+        rel_path = struct.relative_to(input_path)
+        rel_dir = rel_path.with_suffix("")
+        out_dir = output_root_path / rel_dir
         try:
-            (output_root_path / "batch_summary.json").write_text(
-                json.dumps(batch_summary, indent=2), encoding="utf-8"
+            res = _run_mace_single(
+                structure_path=struct,
+                output_dir=out_dir,
+                fmax=fmax,
+                steps=steps,
+                model=model,
+                device=device,
+                calc=calc,
             )
-        except Exception:
-            pass
+            results.append(
+                {
+                    "input_rel": str(rel_path),
+                    "output_rel": str(out_dir.relative_to(output_root_path)),
+                    "summary": res.get("summary", {}),
+                }
+            )
+        except Exception as exc:
+            errors.append({"input_rel": str(rel_path), "error": str(exc)})
 
-        return batch_summary
+    batch_summary = {
+        "input_root": str(input_path),
+        "output_root": str(output_root_path),
+        "model": model,
+        "device": device,
+        "fmax": fmax,
+        "steps": steps,
+        "results": results,
+        "errors": errors,
+    }
+    try:
+        (output_root_path / "batch_summary.json").write_text(
+            json.dumps(batch_summary, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
-    output_dir = output_root_path if output_root_path else input_path.resolve().parent
-    return _run_mace_single(
-        structure_path=input_path,
-        output_dir=output_dir,
-        fmax=fmax,
-        steps=steps,
-        model=model,
-        device=device,
-    )
+    return batch_summary
 
 
 def _cli() -> None:
-    parser = argparse.ArgumentParser(description="Run a MACE relaxation in-place.")
-    parser.add_argument("--input", help="Input file or directory")
-    parser.add_argument("--structure", default="POSCAR", help="Structure file name")
+    parser = argparse.ArgumentParser(description="Run MACE relaxations for a directory of structures.")
+    parser.add_argument("--input", required=True, help="Input root directory")
     parser.add_argument("--fmax", type=float, default=0.05, help="Force convergence threshold (eV/Å)")
     parser.add_argument("--steps", type=int, default=500, help="Maximum optimization steps")
     parser.add_argument("--model", default="medium-mpa-0", help="MACE model name")
     parser.add_argument("--device", default="auto", help="Device to use: auto|cpu|cuda|cuda:0")
-    parser.add_argument("--output_root", default=None, help="Output root directory")
+    parser.add_argument("--output_root", required=True, help="Output root directory")
     args = parser.parse_args()
 
-    input_path = args.input or args.structure
+    input_path = args.input
     result = run_mace_path(
         input_path=input_path,
         fmax=args.fmax,

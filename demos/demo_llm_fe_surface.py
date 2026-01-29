@@ -83,7 +83,8 @@ def main() -> None:
         "Compute surface energies of some common surfaces (100,110,111) on BCC Fe surface:"
         "Download the structure from Materials Project (Fe bcc phase) and use it as the initial structure."
         "Use with at least 15A slab thickness and 15A vacuum thickness and construct symmetric slab model for surface energy calculations."
-        "Perform VASP calculation to get the results. Report the surface energies of different surfaces and the relevant surface energy ranking. Report your proposed calculation parameters in the plan tasks for review."
+        "Perform VASP calculation to get the results. Report the surface energies of different surfaces and the relevant surface energy ranking."
+        "Report your proposed calculation parameters in the plan for review."
     )
 
     orch = Orchestrator(

@@ -68,7 +68,15 @@ This document summarizes what the codebase can do right now, based on the curren
 
 ### Execution (DPDispatcher)
 
+<<<<<<< ours
+<<<<<<< ours
+- **vasp_execute / vasp_execute_batch**: submit VASP jobs (single or batch) via DPDispatcher; uses `configs/dpdispatcher/*` and task defaults in `tasks.yaml`.
+=======
+- **vasp_execute / vasp_execute_batch**: submit VASP jobs (single or batch) via DPDispatcher; uses `configs/dpdispatcher/*` and tool input defaults for resources/machine.
+>>>>>>> theirs
+=======
 - **vasp_execute / vasp_execute_batch**: submit VASP jobs (single or batch) via DPDispatcher; uses `configs/dpdispatcher/*` and router defaults.
+>>>>>>> theirs
 
 - **mace_relax / mace_relax_batch**: submit MACE relaxations (single or batch) via DPDispatcher; outputs relaxed structure, trajectory, log, `summary.json`.
 
