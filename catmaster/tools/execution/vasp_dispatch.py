@@ -16,7 +16,6 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
     make_work_base,
 )
-from catmaster.tools.execution.resource_router import ResourceRouter, Route
 from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
@@ -28,6 +27,8 @@ class VaspExecuteInput(BaseModel):
     """Submit a single VASP run."""
 
     input_dir: str = Field(..., description="Directory containing VASP inputs (INCAR/KPOINTS/POSCAR/POTCAR)")
+    resources: str = Field("vasp_cpu", description="DPDispatcher resources preset key")
+    machine: str | None = Field(None, description="Override machine key; default derived from resources preset")
     check_interval: int = Field(30, description="Polling interval seconds")
 
 
@@ -46,6 +47,8 @@ class VaspExecuteBatchInput(BaseModel):
             "after completion."
         ),
     )
+    resources: str = Field("vasp_cpu", description="DPDispatcher resources preset key")
+    machine: str | None = Field(None, description="Override machine key; default derived from resources preset")
     check_interval: int = Field(30, description="Polling interval seconds")
 
 
@@ -105,6 +108,17 @@ def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, An
     }
 
 
+def _resolve_machine_for_resources(resources_key: str, *, machine: str | None = None) -> str:
+    if machine:
+        return machine
+    reg = MachineRegister()
+    res_cfg = reg.get_resources(resources_key)
+    resolved = res_cfg.get("machine")
+    if not resolved:
+        raise KeyError(f"Resources '{resources_key}' missing machine binding")
+    return str(resolved)
+
+
 def _is_vasp_input_dir(path: Path) -> bool:
     required = ("POTCAR", "INCAR")
     return path.is_dir() and all((path / name).is_file() for name in required)
@@ -146,14 +160,14 @@ def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) ->
 
 def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = VaspExecuteInput(**payload)
-    router = ResourceRouter()
-    route = router.route("vasp_execute")
+    resources_key = params.resources
+    machine = _resolve_machine_for_resources(resources_key, machine=params.machine)
 
     # --- NCORE hack lives here (resource-aware, LLM-agnostic) ---
     input_dir = resolve_workspace_path(params.input_dir, must_exist=True)
-    ncore_info = _maybe_autoset_ncore(input_dir, resources_key=route.resources)
+    ncore_info = _maybe_autoset_ncore(input_dir, resources_key=resources_key)
 
-    dispatch_req = _build_vasp_execute_request(params, route=route)
+    dispatch_req = _build_vasp_execute_request(params, machine=machine, resources=resources_key)
     result = dispatch_task(dispatch_req)
 
     return create_tool_output(
@@ -171,8 +185,8 @@ def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = VaspExecuteBatchInput(**payload)
-    router = ResourceRouter()
-    route = router.route("vasp_execute")
+    resources_key = params.resources
+    machine = _resolve_machine_for_resources(resources_key, machine=params.machine)
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
@@ -219,7 +233,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         stage_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(inp, stage_dir)
 
-        _maybe_autoset_ncore(stage_dir, resources_key=route.resources)
+        _maybe_autoset_ncore(stage_dir, resources_key=resources_key)
 
         rendered = render_task_fields(cfg, {}, stage_dir)
         tasks.append(
@@ -240,8 +254,8 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     batch_req = BatchDispatchRequest(
-        machine=route.machine,
-        resources=route.resources,
+        machine=machine,
+        resources=resources_key,
         work_base=work_base,
         local_root=str(local_root),
         tasks=tasks,
@@ -296,7 +310,13 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         execution_time=result.duration_s,
     )
 
-def _build_vasp_execute_request(params: Any, *, route: Route, registry: TaskRegistry | None = None) -> DispatchRequest:
+def _build_vasp_execute_request(
+    params: Any,
+    *,
+    machine: str,
+    resources: str,
+    registry: TaskRegistry | None = None,
+) -> DispatchRequest:
     reg = registry or TaskRegistry()
     cfg = reg.get("vasp_execute")
 
@@ -312,8 +332,8 @@ def _build_vasp_execute_request(params: Any, *, route: Route, registry: TaskRegi
     rendered = render_task_fields(cfg, {}, input_dir)
 
     return DispatchRequest(
-        machine=route.machine,
-        resources=route.resources,
+        machine=machine,
+        resources=resources,
         command=rendered["command"],
         work_base=work_base,
         task_work_path=rendered["task_work_path"],

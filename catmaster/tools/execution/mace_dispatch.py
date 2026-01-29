@@ -13,7 +13,7 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
     make_work_base,
 )
-from catmaster.tools.execution.resource_router import ResourceRouter, Route
+from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
@@ -33,7 +33,9 @@ class MaceRelaxInput(BaseModel):
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
-    model: Optional[str] = Field(None, description="MACE model name; defaults from router config (medium-mpa-0).")
+    model: str = Field("medium-mpa-0", description="MACE model name.")
+    resources: str = Field("mace_gpu", description="DPDispatcher resources preset key")
+    machine: str | None = Field(None, description="Override machine key; default derived from resources preset")
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
@@ -54,18 +56,28 @@ class MaceRelaxBatchInput(BaseModel):
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
-    model: Optional[str] = Field(None, description="MACE model name; defaults from router config (medium-mpa-0).")
+    model: str = Field("medium-mpa-0", description="MACE model name.")
+    resources: str = Field("mace_gpu", description="DPDispatcher resources preset key")
+    machine: str | None = Field(None, description="Override machine key; default derived from resources preset")
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
+
+
+def _resolve_machine_for_resources(resources_key: str, *, machine: str | None = None) -> str:
+    if machine:
+        return machine
+    reg = MachineRegister()
+    res_cfg = reg.get_resources(resources_key)
+    resolved = res_cfg.get("machine")
+    if not resolved:
+        raise KeyError(f"Resources '{resources_key}' missing machine binding")
+    return str(resolved)
 
 
 def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = MaceRelaxInput(**payload)
-    router = ResourceRouter()
-    route = router.route("mace_relax")
-
-    model = params.model or route.defaults.get("model")
-    if not model:
-        raise ValueError("model is required; set in payload or router defaults")
+    resources_key = params.resources
+    machine = _resolve_machine_for_resources(resources_key, machine=params.machine)
+    model = params.model
 
     structure_path = resolve_workspace_path(params.structure_file, must_exist=True)
     output_root = resolve_workspace_path(params.output_root) if params.output_root else structure_path.parent
@@ -78,7 +90,13 @@ def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
         dest_structure.write_bytes(structure_path.read_bytes())
 
     params.model = model
-    dispatch_req = _build_mace_relax_request(params, route=route, work_dir=work_dir, dest_structure=dest_structure)
+    dispatch_req = _build_mace_relax_request(
+        params,
+        machine=machine,
+        resources=resources_key,
+        work_dir=work_dir,
+        dest_structure=dest_structure,
+    )
     result = dispatch_task(dispatch_req)
 
     summary = _read_summary(work_dir / "summary.json")
@@ -148,12 +166,9 @@ def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) ->
 
 def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = MaceRelaxBatchInput(**payload)
-    router = ResourceRouter()
-    route = router.route("mace_relax")
-
-    model = params.model or route.defaults.get("model")
-    if not model:
-        raise ValueError("model is required; set in payload or router defaults")
+    resources_key = params.resources
+    machine = _resolve_machine_for_resources(resources_key, machine=params.machine)
+    model = params.model
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
@@ -219,8 +234,8 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     batch_req = BatchDispatchRequest(
-        machine=route.machine,
-        resources=route.resources,
+        machine=machine,
+        resources=resources_key,
         work_base=work_base,
         local_root=str(output_root),
         tasks=[task],
@@ -263,7 +278,15 @@ def _read_summary(path: Path) -> Dict[str, Any]:
     except Exception:
         return {}
 
-def _build_mace_relax_request(params: Any, *, route: Route, work_dir: Path, dest_structure: Path, registry: TaskRegistry | None = None):
+def _build_mace_relax_request(
+    params: Any,
+    *,
+    machine: str,
+    resources: str,
+    work_dir: Path,
+    dest_structure: Path,
+    registry: TaskRegistry | None = None,
+):
     reg = registry or TaskRegistry()
     cfg = reg.get("mace_relax")
 
@@ -282,8 +305,8 @@ def _build_mace_relax_request(params: Any, *, route: Route, work_dir: Path, dest
     rendered = render_task_fields(cfg, ctx, work_dir)
 
     return DispatchRequest(
-        machine=route.machine,
-        resources=route.resources,
+        machine=machine,
+        resources=resources,
         command=rendered["command"],
         work_base=work_base,
         task_work_path=rendered["task_work_path"],
