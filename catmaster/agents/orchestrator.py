@@ -16,8 +16,6 @@ from typing import Any, Dict, List, Optional, Callable
 import logging
 import sys
 
-from langchain_openai import ChatOpenAI
-
 from catmaster.tools.registry import get_tool_registry
 from catmaster.tools.base import system_root, workspace_root
 from catmaster.runtime import (
@@ -35,11 +33,22 @@ from catmaster.runtime import (
 from catmaster.runtime.artifact_log import ArtifactLog
 from catmaster.runtime.whiteboard_ops import persist_whiteboard_diff, append_task_journal_entry, _section_bounds
 from catmaster.agents.logo import logo_str
-from catmaster.agents.task_runner import TaskStepper, TaskSummarizer
+from catmaster.agents.task_runner import TaskSummarizer
+from catmaster.agents.tool_calling_stepper import ToolCallingTaskStepper
+from catmaster.agents.plan_control_tools import PLAN_CONTROL_TOOL_NAMES, get_plan_control_tool_schemas
+from catmaster.agents.control_tools import get_control_tool_schemas
+from catmaster.agents.llm_utils import llm_text
+from catmaster.llm.driver import ToolCallingDriver
+from catmaster.llm.config import LLMProfile
+from catmaster.llm.factory import build_llm_bundle
+from catmaster.runtime.conversation_state import message_item
+from catmaster.runtime.tool_policy import ToolPolicy
+from catmaster.runtime.tool_backend import ToolBackend
+from catmaster.runtime.local_tool_backend import LocalToolBackend
+from catmaster.skills.registry import SkillRegistry
 from catmaster.ui import Reporter, NullReporter, make_event
 from catmaster.agents.orchestrator_prompts import (
     build_plan_prompt,
-    build_plan_repair_prompt,
     build_plan_feedback_prompt,
     build_task_step_prompt,
     build_task_summarizer_prompt,
@@ -47,14 +56,23 @@ from catmaster.agents.orchestrator_prompts import (
     build_summary_prompt,
 )
 
+_PLANNER_TOOL_ALLOWLIST = [
+    "workspace_list_files",
+    "workspace_read_file",
+    "workspace_grep",
+    "workspace_head",
+    "workspace_tail",
+]
+
 
 class Orchestrator:
     def __init__(
         self,
-        llm: ChatOpenAI,
+        llm: Optional[Any] = None,
         max_steps: int = 100,
         *,
-        summary_llm: Optional[ChatOpenAI] = None,
+        summary_llm: Optional[Any] = None,
+        llm_profile: Optional[LLMProfile] = None,
         llm_log_path: Optional[str] = None,
         log_llm_console: bool = True,
         reporter: Optional[Reporter] = None,
@@ -69,6 +87,11 @@ class Orchestrator:
         max_plan_attempts: int = 3,
         patch_repair_attempts: int = 1,
         summary_repair_attempts: int = 1,
+        tool_driver: Optional[ToolCallingDriver] = None,
+        tool_policy: Optional[ToolPolicy] = None,
+        tool_policy_path: Optional[str] = None,
+        tool_backend: Optional[ToolBackend] = None,
+        skill_registry: Optional[SkillRegistry] = None,
     ):
         self.logger = logging.getLogger(__name__)
         self.reporter = reporter or NullReporter()
@@ -82,8 +105,32 @@ class Orchestrator:
             },
             run_id=run_id,
         ))
+        self.llm_profile = llm_profile
+        self._llm_provider: Optional[str] = None
+        self._llm_base_url: Optional[str] = None
+        self._tool_driver_kind: Optional[str] = None
+        self._supports_builtin_tools = True
         if llm is None:
-            raise ValueError("llm must be provided (single shared model).")
+            profile = llm_profile or LLMProfile.from_env_or_file()
+            bundle = build_llm_bundle(profile)
+            llm = bundle.llm
+            summary_llm = summary_llm or bundle.summary_llm
+            if tool_driver is None:
+                tool_driver = bundle.tool_driver
+            self.llm_profile = profile
+            self._llm_provider = bundle.provider
+            self._llm_base_url = profile.main.base_url
+            self._tool_driver_kind = profile.main.tool_calling.driver
+            self._supports_builtin_tools = bool(profile.main.tool_calling.supports_builtin_tools)
+        elif llm_profile is not None:
+            self._llm_provider = llm_profile.main.provider
+            self._llm_base_url = llm_profile.main.base_url
+            self._tool_driver_kind = llm_profile.main.tool_calling.driver
+            self._supports_builtin_tools = bool(llm_profile.main.tool_calling.supports_builtin_tools)
+        if self._tool_driver_kind is None and tool_driver is not None:
+            self._tool_driver_kind = tool_driver.__class__.__name__
+        if llm is None:
+            raise ValueError("llm must be provided or resolvable from llm_profile/env")
         self.llm = llm
         self.summary_llm = summary_llm or llm
         self.max_steps = max_steps
@@ -110,12 +157,24 @@ class Orchestrator:
                     project_id=project_id,
                     run_id=run_id,
                     model_name=self._resolve_model_name(),
+                    provider=self._llm_provider,
+                    base_url=self._llm_base_url,
+                    driver_kind=self._tool_driver_kind,
                 )
                 self.resuming = False
 
         self.trace_store = TraceStore(self.run_context.run_dir)
         self.tool_executor = tool_executor or ToolExecutor(self.registry, max_attempts=max_tool_attempts)
         self.artifact_store = ArtifactStore(self.run_context.run_dir)
+        policy_path = Path(tool_policy_path) if tool_policy_path else Path("configs/tool_policy.yaml")
+        self.tool_policy = tool_policy or ToolPolicy.from_file(policy_path)
+        self.skill_registry = skill_registry or SkillRegistry.load_builtin_skills()
+        self.tool_backend = tool_backend or LocalToolBackend(
+            registry=self.registry,
+            tool_executor=self.tool_executor,
+            artifact_store=self.artifact_store,
+            trace_store=self.trace_store,
+        )
 
         self.whiteboard = WhiteboardStore.create_default()
         self.whiteboard.ensure_exists()
@@ -128,17 +187,32 @@ class Orchestrator:
         self.llm_log_file.parent.mkdir(parents=True, exist_ok=True)
 
         self.plan_prompt = build_plan_prompt()
-        self.plan_repair_prompt = build_plan_repair_prompt()
         self.plan_feedback_prompt = build_plan_feedback_prompt()
         self.task_step_prompt = build_task_step_prompt()
         self.task_summary_prompt = build_task_summarizer_prompt()
         self.task_summary_repair_prompt = build_task_summarizer_repair_prompt()
         self.summary_prompt = build_summary_prompt()
+        self.tool_driver = tool_driver
+        if self.tool_driver is None:
+            try:
+                from catmaster.llm.openai_responses_driver import OpenAIResponsesDriver
+            except Exception as exc:
+                raise ImportError(
+                    "Tool calling is enabled but OpenAI driver is unavailable. Install `openai` or provide tool_driver."
+                ) from exc
+            self.tool_driver = OpenAIResponsesDriver(model=self._resolve_model_name())
+            if self._tool_driver_kind is None:
+                self._tool_driver_kind = "openai_responses"
+                if self._llm_provider is None:
+                    self._llm_provider = "openai"
         self._emit("RUN_INIT_DONE", payload={
             "run_id": self.run_context.run_id,
             "run_dir": str(self.run_context.run_dir),
             "model_name": self._resolve_model_name(),
             "model_label": self._resolve_model_label(),
+            "provider": self._llm_provider or "",
+            "driver_kind": self._tool_driver_kind or "",
+            "base_url": self._llm_base_url or "",
             "resuming": self.resuming,
             "llm_log_path": str(self.llm_log_file),
             "trace_paths": {
@@ -203,7 +277,48 @@ class Orchestrator:
     def _tool_schema_short(self) -> str:
         return self.registry.get_short_tool_descriptions_for_llm()
 
+    def _planner_tool_schema(self) -> str:
+        return self.registry.get_tool_descriptions_for_llm(allowlist=_PLANNER_TOOL_ALLOWLIST)
+
+    def _planner_function_tools(self) -> list[dict]:
+        tools = self.tool_backend.list_function_tools()
+        denied = self.tool_policy.denied_tools or set()
+        return [
+            tool for tool in tools
+            if tool.get("name") in _PLANNER_TOOL_ALLOWLIST and tool.get("name") not in denied
+        ]
+
+    @staticmethod
+    def _tool_descriptions_from_tools(
+        function_tools: list[dict],
+        builtin_tools: list[dict],
+        control_tools: list[dict],
+    ) -> str:
+        descriptions: list[str] = []
+        for tool in function_tools:
+            name = tool.get("name", "")
+            if not name:
+                continue
+            desc = (tool.get("description") or "").strip()
+            descriptions.append(f"{name} : {desc}".strip())
+        for tool in builtin_tools:
+            tool_type = tool.get("type")
+            if not tool_type:
+                continue
+            descriptions.append(f"{tool_type} : builtin tool")
+        for tool in control_tools:
+            name = tool.get("name")
+            if not name:
+                continue
+            desc = (tool.get("description") or "").strip()
+            descriptions.append(f"{name} : {desc}".strip())
+        return "\n\n".join(descriptions)
+
     def _resolve_model_name(self) -> str:
+        if self.llm_profile is not None:
+            model = getattr(self.llm_profile.main, "model", None)
+            if isinstance(model, str) and model:
+                return model
         for attr in ("model_name", "model"):
             value = getattr(self.llm, attr, None)
             if isinstance(value, str) and value:
@@ -230,6 +345,20 @@ class Orchestrator:
 
     def _collect_model_kwargs(self) -> Dict[str, Any]:
         merged: Dict[str, Any] = {}
+        if self.llm_profile is not None:
+            cfg = self.llm_profile.main
+            for key in (
+                "reasoning_effort",
+                "temperature",
+                "max_tokens",
+                "max_output_tokens",
+                "top_p",
+                "frequency_penalty",
+                "presence_penalty",
+            ):
+                value = getattr(cfg, key, None)
+                if value is not None:
+                    merged[key] = value
         raw = getattr(self.llm, "model_kwargs", None)
         if isinstance(raw, dict):
             merged.update(raw)
@@ -237,6 +366,7 @@ class Orchestrator:
             "reasoning_effort",
             "temperature",
             "max_tokens",
+            "max_output_tokens",
             "top_p",
             "frequency_penalty",
             "presence_penalty",
@@ -246,6 +376,25 @@ class Orchestrator:
                 continue
             merged[key] = value
         return merged
+
+    def _tool_driver_kwargs(self) -> Dict[str, Any]:
+        kwargs = self._collect_model_kwargs()
+        driver_kwargs: Dict[str, Any] = {}
+        for key in (
+            "reasoning_effort",
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+        ):
+            value = kwargs.get(key)
+            if value is not None:
+                driver_kwargs[key] = value
+        if "max_output_tokens" in kwargs and kwargs.get("max_output_tokens") is not None:
+            driver_kwargs["max_output_tokens"] = kwargs["max_output_tokens"]
+        elif "max_tokens" in kwargs and kwargs.get("max_tokens") is not None:
+            driver_kwargs["max_output_tokens"] = kwargs["max_tokens"]
+        return driver_kwargs
 
     def _trace_event(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
         record = {"event": event, "payload": payload or {}}
@@ -288,57 +437,53 @@ class Orchestrator:
         return cleaned[: max(0, limit - 3)] + "..."
 
     def plan(self, user_request: str) -> Dict[str, Any]:
-        tools = self._tool_schema() # It is not known to provide full schema or short here is better
+        tools = self._tool_schema()
         messages = self.plan_prompt.format_messages(
             user_request=user_request,
             tools=tools,
+            planner_tools=self._planner_tool_schema(),
         )
-        last_error = None
         self._emit("PLAN_START", category="plan", payload={"attempts": self.max_plan_attempts})
-        for attempt in range(1, self.max_plan_attempts + 1):
-            self._emit("LLM_CALL_START", category="llm", payload={"kind": "plan", "attempt": attempt})
-            t0 = time.perf_counter()
-            resp = self.llm.invoke(messages)
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
-            raw = resp.content
-            self._write_llm_log("plan_prompt", messages=self._messages_to_dict(messages))
-            self._write_llm_log("plan_response", content=raw)
-            if self.log_llm_console:
-                self.logger.info("[PLAN][LLM RAW][attempt=%s] %s", attempt, raw)
-            payload = {"kind": "plan", "attempt": attempt, "elapsed_ms": elapsed_ms}
-            if self._ui_debug():
-                payload["raw_snippet"] = self._snippet(raw, 240)
-            self._emit("LLM_CALL_END", category="llm", payload=payload)
-            try:
-                data = self._parse_json_response(raw)
-                normalized = self._normalize_plan(data, user_request)
-            except Exception as exc:
-                last_error = str(exc)
-                self._emit("PLAN_PARSE_FAILED", level="warning", category="plan", payload={
-                    "error": last_error,
-                    "attempt": attempt,
-                })
-                messages = self.plan_repair_prompt.format_messages(
-                    user_request=user_request,
-                    tools=tools,
-                    error=last_error,
-                    raw=raw,
-                )
-                continue
-            self._trace_event("PLAN_CREATED", {
-                "todo": normalized.get("todo", []),
-                "plan_description": normalized.get("plan_description", ""),
-            })
-            todo = normalized.get("todo", [])
-            self._emit("PLAN_CREATED", category="plan", payload={
-                "n_items": len(todo),
-                "todo": todo,
-                "plan_description_snippet": self._snippet(normalized.get("plan_description", ""), 200),
-            })
-            self._emit("PLAN_DONE", category="plan", payload={"n_items": len(todo)})
-            return normalized
-
-        raise ValueError(f"Failed to generate a valid plan after {self.max_plan_attempts} attempts: {last_error}")
+        input_items = self._messages_to_input_items(messages)
+        stepper = ToolCallingTaskStepper(
+            driver=self.tool_driver,
+            backend=self.tool_backend,
+            prompt=None,
+            control_tools=get_plan_control_tool_schemas(),
+            control_tool_names=PLAN_CONTROL_TOOL_NAMES,
+            reporter=self.reporter,
+            max_steps=self.max_plan_attempts,
+            driver_kwargs={
+                **self._tool_driver_kwargs(),
+                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
+            },
+            role="planner",
+        )
+        step_result = stepper.run(
+            task_id="plan",
+            task_goal="Plan tasks",
+            context_pack={},
+            seed_messages=input_items,
+            function_tools=self._planner_function_tools(),
+            builtin_tools=[],
+        )
+        finish_reason = step_result.get("finish_reason", "")
+        if finish_reason != "plan_finish":
+            raise ValueError(f"Planner did not finish with plan_finish (got {finish_reason})")
+        payload = step_result.get("control_payload") or {}
+        normalized = self._normalize_plan(payload, user_request)
+        self._trace_event("PLAN_CREATED", {
+            "todo": normalized.get("todo", []),
+            "plan_description": normalized.get("plan_description", ""),
+        })
+        todo = normalized.get("todo", [])
+        self._emit("PLAN_CREATED", category="plan", payload={
+            "n_items": len(todo),
+            "todo": todo,
+            "plan_description_snippet": self._snippet(normalized.get("plan_description", ""), 200),
+        })
+        self._emit("PLAN_DONE", category="plan", payload={"n_items": len(todo)})
+        return normalized
 
     def revise_plan(
         self,
@@ -352,25 +497,39 @@ class Orchestrator:
         messages = self.plan_feedback_prompt.format_messages(
             user_request=user_request,
             tools=self._tool_schema_short(),
+            planner_tools=self._planner_tool_schema(),
             plan_json=json.dumps(plan, ensure_ascii=False),
             feedback=feedback,
             feedback_history=json.dumps(feedback_history or [], ensure_ascii=False),
         )
-        self._emit("LLM_CALL_START", category="llm", payload={"kind": "plan_feedback"})
-        t0 = time.perf_counter()
-        resp = self.llm.invoke(messages)
-        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        raw = resp.content
-        self._write_llm_log("plan_feedback_prompt", messages=self._messages_to_dict(messages))
-        self._write_llm_log("plan_feedback_response", content=raw)
-        if log_llm or self.log_llm_console:
-            self.logger.info("[PLAN FEEDBACK][LLM RAW] %s", raw)
-        payload = {"kind": "plan_feedback", "elapsed_ms": elapsed_ms}
-        if self._ui_debug():
-            payload["raw_snippet"] = self._snippet(raw, 240)
-        self._emit("LLM_CALL_END", category="llm", payload=payload)
-        data = self._parse_json_response(raw)
-        normalized = self._normalize_plan(data, user_request)
+        input_items = self._messages_to_input_items(messages)
+        stepper = ToolCallingTaskStepper(
+            driver=self.tool_driver,
+            backend=self.tool_backend,
+            prompt=None,
+            control_tools=get_plan_control_tool_schemas(),
+            control_tool_names=PLAN_CONTROL_TOOL_NAMES,
+            reporter=self.reporter,
+            max_steps=self.max_plan_attempts,
+            driver_kwargs={
+                **self._tool_driver_kwargs(),
+                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
+            },
+            role="planner",
+        )
+        step_result = stepper.run(
+            task_id="plan_feedback",
+            task_goal="Revise plan",
+            context_pack={},
+            seed_messages=input_items,
+            function_tools=self._planner_function_tools(),
+            builtin_tools=[],
+        )
+        finish_reason = step_result.get("finish_reason", "")
+        if finish_reason != "plan_finish":
+            raise ValueError(f"Plan feedback did not finish with plan_finish (got {finish_reason})")
+        payload = step_result.get("control_payload") or {}
+        normalized = self._normalize_plan(payload, user_request)
         self._trace_event("PLAN_REVISION", {
             "feedback": feedback,
             "plan_before": plan,
@@ -604,24 +763,47 @@ class Orchestrator:
                         "excerpt_chars": len(context_pack.get("whiteboard_excerpt", "") or ""),
                         "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
                     })
-                    stepper = TaskStepper(
-                        llm=self.llm,
-                        registry=self.registry,
-                        tool_executor=self.tool_executor,
-                        artifact_store=self.artifact_store,
-                        trace_store=self.trace_store,
+                    skills = self.skill_registry.select_skills(task_goal)
+                    skill_allowlist: set[str] = set()
+                    skill_hints: list[str] = []
+                    for skill in skills:
+                        skill_allowlist.update(skill.tool_allowlist)
+                        if skill.prompt_snippet:
+                            skill_hints.append(skill.prompt_snippet.strip())
+                    if skills:
+                        self._emit("SKILLS_SELECTED", category="task", task_id=task_id, payload={
+                            "skills": [skill.id for skill in skills],
+                        })
+
+                    function_tools = self.tool_backend.list_function_tools()
+                    filtered_tools = self.tool_policy.filter_function_tools(function_tools)
+                    if self.tool_policy.use_skill_allowlist and skill_allowlist:
+                        filtered_tools = [tool for tool in filtered_tools if tool.get("name") in skill_allowlist]
+                    builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
+                    execution_guidance = ""
+                    if skill_hints:
+                        execution_guidance = "Skill hints:\n" + "\n".join(skill_hints)
+
+                    stepper = ToolCallingTaskStepper(
+                        driver=self.tool_driver,
+                        backend=self.tool_backend,
                         prompt=self.task_step_prompt,
-                        log_fn=self._write_llm_log,
-                        log_llm_console=log_llm,
-                        max_steps=self.max_steps,
                         reporter=self.reporter,
+                        max_steps=min(self.max_steps, self.tool_policy.max_tool_calls_per_task),
+                        driver_kwargs={
+                            **self._tool_driver_kwargs(),
+                            "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
+                        },
+                        trace_store=self.trace_store,
+                        role="task_runner",
                     )
                     step_result = stepper.run(
                         task_id=task_id,
                         task_goal=task_goal,
-                        tools_schema=self._tool_schema(),
                         context_pack=context_pack,
-                        initial_instruction=f"Start task: {task_goal}",
+                        initial_instruction=execution_guidance,
+                        function_tools=filtered_tools,
+                        builtin_tools=builtin_tools,
                     )
                     summarizer = TaskSummarizer(
                         llm=self.summary_llm,
@@ -1358,7 +1540,6 @@ class Orchestrator:
                     finish_reason=finish_reason,
                     local_observations=local_observations,
                     whiteboard_text=whiteboard_text,
-                    whiteboard_path=str(self.whiteboard.path.relative_to(system_root().parent)),
                     error=last_error,
                     use_repair_prompt=use_repair_prompt or attempt > 0,
                 )
@@ -1534,7 +1715,7 @@ class Orchestrator:
             self._emit("LLM_CALL_START", category="llm", payload={"kind": "final_summary"})
             t0 = time.perf_counter()
             resp = self.summary_llm.invoke(messages)
-            raw = (resp.content or "").strip()
+            raw = llm_text(resp).strip()
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
             self._write_llm_log("final_summary_prompt", messages=self._messages_to_dict(messages))
             self._write_llm_log("final_summary_response", content=raw)
@@ -1645,6 +1826,19 @@ class Orchestrator:
                 }
             )
         return formatted
+
+    @staticmethod
+    def _messages_to_input_items(messages: List[Any]) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = getattr(msg, "role", None) or getattr(msg, "type", "user")
+            if role == "human":
+                role = "user"
+            elif role == "ai":
+                role = "assistant"
+            content = getattr(msg, "content", str(msg))
+            items.append(message_item(role, content))
+        return items
 
     @staticmethod
     def _parse_json_response(content: str) -> Dict[str, Any]:

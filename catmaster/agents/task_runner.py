@@ -4,13 +4,15 @@ import json
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, ConfigDict, Field
 
 from catmaster.runtime import ArtifactStore, TraceStore
 from catmaster.tools.registry import ToolRegistry
 from catmaster.ui import Reporter, NullReporter, make_event
+from catmaster.agents.llm_utils import llm_text
 
 
 class TaskStepper:
@@ -155,7 +157,7 @@ class TaskStepper:
             t0 = time.perf_counter()
             resp = self.llm.invoke(messages)
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
-            raw = resp.content
+            raw = llm_text(resp)
             if self.log_fn:
                 self.log_fn("task_step_prompt", task_id=task_id, step=step, messages=self._messages_to_dict(messages))
                 self.log_fn("task_step_response", task_id=task_id, step=step, content=raw)
@@ -485,6 +487,39 @@ class TaskStepper:
         return formatted
 
 
+class KeyArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: Optional[str] = None
+    description: Optional[str] = None
+    kind: Optional[str] = None
+
+
+class WhiteboardOp(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: str
+    section: str
+    record_type: Optional[str] = None
+    id: Optional[str] = None
+    text: Optional[str] = None
+    reason: Optional[str] = None
+    superseded_by: Optional[str] = None
+    path: Optional[str] = None
+    kind: Optional[str] = None
+    description: Optional[str] = None
+    rationale: Optional[str] = None
+
+
+class TaskSummaryOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_outcome: Literal["success", "needs_intervention", "failure"]
+    task_summary: str
+    key_artifacts: List[KeyArtifact] = Field(default_factory=list)
+    whiteboard_ops: List[WhiteboardOp] = Field(default_factory=list)
+
+
 class TaskSummarizer:
     def __init__(
         self,
@@ -502,6 +537,7 @@ class TaskSummarizer:
         self.log_llm_console = log_llm_console
         self.logger = logging.getLogger(__name__)
         self.last_raw: str = ""
+        self._structured_llm = llm.with_structured_output(TaskSummaryOutput)
 
     def run(
         self,
@@ -511,7 +547,6 @@ class TaskSummarizer:
         finish_reason: str,
         local_observations: List[Dict[str, Any]],
         whiteboard_text: str,
-        whiteboard_path: str,
         error: Optional[str] = None,
         use_repair_prompt: bool = False,
     ) -> Dict[str, Any]:
@@ -522,68 +557,65 @@ class TaskSummarizer:
             finish_reason=finish_reason,
             local_observations=json.dumps(local_observations, ensure_ascii=False),
             whiteboard_text=whiteboard_text,
-            whiteboard_path=whiteboard_path,
             error=error or "",
         )
-        resp = self.llm.invoke(messages)
-        raw = resp.content
-        self.last_raw = raw or ""
+        result = self._structured_llm.invoke(messages)
+        parsed = self._normalize_structured_output(result)
+        self.last_raw = json.dumps(parsed.model_dump(), ensure_ascii=False)
         if self.log_fn:
             event = "task_summary_prompt_repair" if use_repair_prompt else "task_summary_prompt"
             self.log_fn(event, task_id=task_id, messages=self._messages_to_dict(messages))
-            self.log_fn("task_summary_response", task_id=task_id, content=raw)
+            self.log_fn("task_summary_response", task_id=task_id, content=self.last_raw)
         if self.log_llm_console:
-            self.logger.debug("[TASK][SUMMARY RAW][%s] %s", task_id, raw)
-        try:
-            parsed = _parse_json_block(raw)
-        except Exception as exc:
-            raise ValueError(f"TaskSummarizer JSON parse failed: {exc}") from exc
-        if not isinstance(parsed, dict):
-            raise ValueError("TaskSummarizer returned non-object JSON")
+            self.logger.debug("[TASK][SUMMARY RAW][%s] %s", task_id, self.last_raw)
 
-        outcome = (parsed.get("task_outcome") or "").strip().lower()
+        outcome = (parsed.task_outcome or "").strip().lower()
         if outcome not in {"success", "failure", "needs_intervention"}:
             raise ValueError(f"Invalid task_outcome: {outcome}")
-        summary = parsed.get("task_summary")
+        summary = parsed.task_summary
         if not isinstance(summary, str):
             raise ValueError("task_summary must be a string")
-        ops = parsed.get("whiteboard_ops")
-        if not isinstance(ops, list):
-            raise ValueError("whiteboard_ops must be a list")
         normalized_ops: List[Dict[str, Any]] = []
-        for item in ops:
-            if not isinstance(item, dict):
-                raise ValueError("whiteboard_ops items must be objects")
-            op_type = str(item.get("op", "")).strip().upper()
+        for item in parsed.whiteboard_ops:
+            op_dict = item.model_dump(exclude_none=True)
+            op_type = str(op_dict.get("op", "")).strip().upper()
             if not op_type:
                 raise ValueError("whiteboard_ops.op is required")
-            record_type = item.get("record_type")
-            normalized_ops.append({
-                **item,
-                "op": op_type,
-                "record_type": str(record_type).strip().upper() if record_type else record_type,
-            })
+            record_type = op_dict.get("record_type")
+            if record_type is not None:
+                record_type = str(record_type).strip().upper()
+            normalized_item = dict(op_dict)
+            normalized_item["op"] = op_type
+            if record_type:
+                normalized_item["record_type"] = record_type
+            normalized_ops.append(normalized_item)
 
-        key_artifacts = parsed.get("key_artifacts") if isinstance(parsed.get("key_artifacts"), list) else []
-        normalized: List[Dict[str, Any]] = []
-        for item in key_artifacts:
-            if not isinstance(item, dict):
-                continue
-            path = (item.get("path") or "").strip()
+        normalized_artifacts: List[Dict[str, Any]] = []
+        for item in parsed.key_artifacts:
+            art = item.model_dump(exclude_none=True)
+            path = (art.get("path") or "").strip()
             if not path:
                 continue
-            normalized.append({
+            normalized_artifacts.append({
                 "path": path,
-                "description": (item.get("description") or "").strip(),
-                "kind": (item.get("kind") or "").strip(),
+                "description": (art.get("description") or "").strip(),
+                "kind": (art.get("kind") or "").strip(),
             })
 
         return {
             "task_outcome": outcome,
             "task_summary": summary,
-            "key_artifacts": normalized,
+            "key_artifacts": normalized_artifacts,
             "whiteboard_ops": normalized_ops,
         }
+
+    @staticmethod
+    def _normalize_structured_output(result: Any) -> TaskSummaryOutput:
+        if isinstance(result, TaskSummaryOutput):
+            return result
+        if isinstance(result, dict):
+            return TaskSummaryOutput.model_validate(result)
+        return TaskSummaryOutput.model_validate(result)
 
     @staticmethod
     def _messages_to_dict(messages: List[Any]) -> List[Dict[str, Any]]:

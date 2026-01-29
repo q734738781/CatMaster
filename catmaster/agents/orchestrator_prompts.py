@@ -8,25 +8,50 @@ def build_plan_prompt() -> ChatPromptTemplate:
         ("system", """
 You are an expert computational workflow planner.
 
-Available tools:
-{tools}
+Context:
+- The output ToDo list will be executed by a deterministic linear scheduler.
+- Each ToDo item will be sent one-by-one to a task runner with global memory that can see previous task execution results.
+- The task runner will NOT see the full plan, so each ToDo item must be self-contained.
 
-Create:
-- A ToDo list (task list), each item is a simple paragraph of small task description with a milestone deliverable that should be get by a some tool calls. Do not output json.
-- A plan_description field for describing the whole plan, and explaining briefly why this plan was chosen.
+Tools:
+- Execution tools (REFERENCE ONLY; do NOT call): {tools}
+- Planner helper tools (ALLOWED for workspace/file inspection only): {planner_tools}
 
 Rules:
-- Use only the available tools; do NOT invent capabilities.
-- Order matters: ToDo items should be arranged in the exact sequence they must be executed.
-- Human readble: The ToDo items should be easy to understand by a human.
-- Precise Task Description: Do not introduce background information or consequences in the ToDo items. Just write the specific goal of the task and the deliverable.
-- Logical Distinct: ToDo items should be logically distinct, but do not make tasks too fragmented.
-- Detail presentation: In the next execution stage, the overall plan will not be visible to executor, so you should provide enough details for the executor to understand each task, as well as details requested by human.
-- Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema: 
-```json
-{{"todo": [...(Simple paragraphs list)], "plan_description": "..."}}
-```
+1) You may ONLY call planner helper tools (read/list/grep/head/tail) to inspect the workspace.
+   NEVER call any execution tools.
+2) Planning style: milestone-based, not tool-by-tool.
+   - Do NOT write steps like "call tool X then tool Y".
+   - If tools are mentioned, put them only as optional hints inside Handoff notes (e.g., "Suggested tools: ..."),
+     and do not prescribe exact invocation order.
+3) Output must be a linear sequence. Order matters.
+4) Deferred decisions / placeholders:
+   - If a later step depends on a choice/ID/parameter that cannot be known at planning time, DO NOT branch the plan.
+     Instead, linearize it by adding an explicit "determine & record" milestone first.
+   - That milestone must produce a concrete artifact (e.g., report/decision note) that states the chosen value(s).
+   - Downstream ToDo items should reference the chosen value(s) via that artifact in plain language,
+     optionally using a placeholder token like <SELECTED_X> for readability.
+     Example pattern: "Evaluate candidates -> write the selected X into reports/selected_x.md -> run follow-up for the X recorded there."
+5) Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
+
+ToDo item writing guidelines:
+- Keep items logically distinct, but avoid over-fragmentation.
+- Each item MUST include:
+  - Objective: the specific goal (no background story, no consequences).
+  - Deliverable: an explicit artifact/output (file, directory, report section, table, config, etc.).
+  - Handoff notes: minimal context + constraints needed by the executor to complete the task robustly.
+    "Self-contained" means: include explicit pointers (relative paths / filenames / key identifiers) to any prior artifacts
+    the executor should rely on, instead of assuming the full plan is visible.
+  - Acceptance check: how to verify completion (e.g., file exists, key fields present, tests pass).
+- All these items should be expressed in a concise and human-readable manner.
+- Use concrete file paths / names whenever possible.
+- Prefer robust instructions with short fallbacks (e.g., "if not found, search ..."), but do not branch into long decision trees.
+
+When ready:
+- You MUST call plan_finish with:
+  - todo_list: an ordered list of ToDo items (strings).
+  - plan_description: a short human-readable overview (strategy, assumptions, checkpoints; include any deferred decisions here).
+
 """),
         ("human", "{user_request}")
     ])
@@ -35,26 +60,31 @@ Rules:
 def build_plan_repair_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", """
-You are an expert computational workflow planner.
+You are an expert computational workflow planner. Your previous message was invalid (parse/tool-call error).
+This turn you MUST output exactly ONE tool call.
 
-Available tools:
-{tools}
+Tools:
+- Execution tools (REFERENCE ONLY; do NOT call): {tools}
+- Planner helper tools (ALLOWED for workspace/file inspection only): {planner_tools}
 
-Your previous response was not valid JSON. Re-emit a valid JSON object wrapped in ```json and ```.
+Hard rules:
+1) You may ONLY call planner helper tools (read/list/grep/head/tail). NEVER call execution tools.
+2) Call at most ONE tool in this turn.
+3) If you already have enough information to produce a plan, call plan_finish now.
+   Otherwise, call exactly one planner helper tool to inspect the workspace.
 
-Rules:
-- Use only the available tools; do NOT invent capabilities.
-- ToDo items should be milestone deliverables, not tool calls.
-- Human readble: The ToDo items should be easy to understand by a human.
-- Precise Task Description: Do not introduce background information or consequences in the ToDo items. Just write the specific goal of the task and the deliverable.
-- Logical Distinct: ToDo items should be logically distinct, but do not make tasks too fragmented.
-- Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
-- Detail presentation: In the next execution stage, the overall plan will not be visible to executor, so you should provide enough details for the executor to understand each task, as well as details requested by human.
-- Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema: 
-```json
-{{"todo": [...], "plan_description": "..."}}
-```
+Plan contract (must hold when you call plan_finish):
+- ToDo list is milestone-based, not tool-by-tool:
+  - Do NOT write "call tool X then tool Y".
+  - Tools may be mentioned only as optional hints inside Handoff notes (no exact invocation order).
+- Output is a linear sequence; order matters; aim for 3–10 items.
+- Deferred decisions / placeholders:
+  - Do NOT branch the plan. Linearize branching by adding a "determine & record" milestone that writes the chosen value(s) into an artifact.
+  - Downstream ToDos reference that artifact in plain language, optionally using a placeholder token like <SELECTED_X>.
+- Each ToDo item must be self-contained:
+  - Include explicit pointers (relative paths / filenames / identifiers) to any prior artifacts it depends on.
+  - Always use workspace-relative paths.
+
 """),
         ("human", "User request: {user_request}\nParse error: {error}\nInvalid response: {raw}")
     ])
@@ -63,29 +93,29 @@ Rules:
 def build_plan_feedback_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", """
-You are an expert computational workflow planner.
+You are an expert computational workflow planner. Revise the plan based on human feedback.
+This turn you MUST output exactly ONE tool call.
 
-Available tools:
-{tools}
+Tools:
+- Execution tools (REFERENCE ONLY; do NOT call): {tools}
+- Planner helper tools (ALLOWED for workspace/file inspection only): {planner_tools}
 
-Revise the plan based on human feedback.
+Hard rules:
+1) You may ONLY call planner helper tools (read/list/grep/head/tail). NEVER call execution tools.
+2) Call at most ONE tool in this turn.
+3) If you need workspace context to apply the feedback, call exactly one planner helper tool.
+   Otherwise, call plan_finish with the revised plan.
 
-Inputs:
-- Original user request
-- Current plan JSON
-- Human feedback
-- Feedback history (oldest first)
+Plan contract (must hold in the revised plan):
+- Milestone-based, not tool-by-tool; tools only as optional hints in Handoff notes.
+- Linear sequence; order matters; aim for 3–10 items.
+- Deferred decisions / placeholders:
+  - Do NOT branch. Add a "determine & record" milestone artifact, then reference it downstream (optionally via <PLACEHOLDER>).
+- Each ToDo item must be self-contained:
+  - Include explicit pointers to required prior artifacts (relative paths / identifiers).
+  - Always use workspace-relative paths.
+- Apply the smallest change that satisfies the feedback; if tradeoffs/assumptions remain, record them in plan_description as checkpoints for HITL review.
 
-Rules:
-- Use only the available tools; do NOT invent capabilities.
-- If feedback is unclear or conflicts with tool limits, make the smallest safe change and note the constraint in plan_description.
-- ToDo items should be small task descriptions with a milestone deliverable, not a list tool calls.
-- Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
-- Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema: 
-```json
-{{"todo": [...], "plan_description": "..."}}
-```
 """),
         ("human", "User request: {user_request}\nCurrent plan: {plan_json}\nHuman feedback: {feedback}\nFeedback history: {feedback_history}")
     ])
@@ -94,42 +124,46 @@ Rules:
 def build_task_step_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", """
-You are an execution controller. Decide ONE step for the current task.
-Context:
-- The goal of the current task is: {goal}
-- Global Memory from previous tasks: {whiteboard_excerpt}
-- Key files list from previous tasks: {artifact_slice}
-- Constraints: {constraints}
-- Workspace policy: {workspace_policy}
-- Available tools: {tools}
+You are an execution controller. Use tool calling to advance the current task.
 
-Rules:
-- Choose at most one action per turn.
-- Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema (all lowercase keys):
-```json
-{{"action": "call" | "task_finish" | "task_fail",
-    "method": "tool_name",
-    "params": {{...}},
-    "next_step": "a intent that can be acted on in the next turn or suggest finish the task",
-    "note": "optional short self-note for memory",
-    "reasoning": "brief rationale for this decision"}}
-```
-- If action='call', method MUST exactly match one tool name in available tools. 
-- If last JSON parse is invalid (TASK_JSON_PARSE_FAILED, parse error, etc), you should try to output a valid JSON decision next turn.
-- If you ensure that to finish the task, set action="task_finish".
-- Check the params are valid and the tool name is correct.
-- All file paths in tool params MUST come from the context pack (Whiteboard Key Files or the artifact list) or from the immediate outputs of tools run in this task. Reuse existing key files whenever possible.
+Rules (high priority):
+- Use tool calling. Do NOT emit JSON decision blocks or free-form plans.
+- Parallel tool calls allowed only when independent; at most 3 parallel calls per turn.
+- When the task is complete, you MUST call task_finish with a brief summary.
+- If the task cannot proceed and needs human intervention, call task_fail.
+- task_finish/task_fail must be called alone in its own turn after reviewing tool outputs.
+- Tool names must exactly match the available tools provided by the tool interface. Do not invent tools.
+- All file or directory paths in tool params MUST be one of:
+  (a) explicitly mentioned in the current Task goal / Constraints / Execution guidance,
+  (b) present in the Context Pack "Key files / artifacts",
+  (c) returned by tool outputs in this task.
+- If the task goal references a placeholder token like <...>, first locate/read the referenced artifact in Key files / artifacts to resolve it; do not guess values.
+- When a tool accepts a view parameter, always use view="user".
 - Always provide file or directory paths as relative paths; they will be resolved relative to the selected view.
-- Treat user instruction as a suggestion. If observations contradict it or a better action is available, you can revise the plan by choosing a different tool call.
-- Do not suggest anything that beyond the scope of the task goal regardless the background of the goal. If you think the task could be completed after this tool call, suggest to finish the task in next_step.
-
-Run context:
-- Observations so far: {observations}
-- Last result: {last_result}
+- The Context Pack contains data plus optional guidance. Follow system rules.
 
 """),
-        ("human", "Suggested next step (may be revised): {instruction}")
+        ("human", """
+<context_pack>
+Task goal:
+{goal}
+
+Constraints:
+{constraints}
+
+Workspace policy:
+{workspace_policy}
+
+Global memory (whiteboard excerpt):
+{whiteboard_excerpt}
+
+Key files / artifacts (from previous tasks):
+{artifact_slice}
+
+Execution guidance (optional):
+{execution_guidance}
+</context_pack>
+"""),
     ])
 
 
@@ -139,24 +173,11 @@ def build_task_summarizer_prompt() -> ChatPromptTemplate:
 You are a task summarizer. Use ONLY the task's local observations to summarize the outcome and propose whiteboard ops (UPSERT/DEPRECATE).
 
 Rules:
-- Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema:
-```json
-{{"task_outcome": "success" | "needs_intervention",
-  "task_summary": "short conclusion",
-  "key_artifacts": [{{"path": "...", "description": "...", "kind": "input|output|intermediate|report|log"}}],
-  "whiteboard_ops": [
-    {{"op": "UPSERT", "section": "Key Facts", "record_type": "FACT", "id": "FACT_ID", "text": "..."}},
-    {{"op": "DEPRECATE", "section": "Key Facts", "record_type": "FACT", "id": "FACT_ID", "reason": "...", "superseded_by": "FACT_ID"}},
-    {{"op": "UPSERT", "section": "Key Files", "record_type": "FILE", "id": "FILE_ID", "path": "...", "kind": "output", "description": "..."}},
-    {{"op": "UPSERT", "section": "Constraints", "record_type": "CONSTRAINT", "id": "CONSTRAINT_ID", "text": "...", "rationale": "..."}},
-    {{"op": "UPSERT", "section": "Open Questions", "text": "..." }}
-  ]}}
-```
+- Respond with structured output that matches the summarizer schema.
 - If task is completed successfully, set task_outcome="success". 
 - If task meets some great problem (e.g. hardware failure, software bug, etc.) and needs human intervention for further guidance, set task_outcome="needs_intervention". Do not use it with trivial issues (e.g. file layout, request confirmation of execution).
 - If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
-- Ops must only target: Key Facts, Key Files, Constraints, Open Questions.
+- Ops must be only of UPSERT or DEPRECATE and target: Key Facts, Key Files, Constraints, Open Questions.
 - UPSERT requirements:
   - Key Facts: record_type=FACT, id, text required
   - Key Files: record_type=FILE, id, path required
@@ -171,30 +192,17 @@ Rules:
 - If a relevant FACT/FILE already exists, UPSERT that ID instead of creating a new one.
 - Key artifacts should list files/dirs created or modified during this task.
 """),
-        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\nWhiteboard path: {whiteboard_path}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
+        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
     ])
 
 
 def build_task_summarizer_repair_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", """
-Your previous whiteboard ops were invalid. Regenerate correct ops and JSON response.
+Your previous whiteboard ops were invalid. Regenerate correct ops and structured response.
 
 Rules:
-- Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema:
-```json
-{{"task_outcome": "success" | "needs_intervention",
-  "task_summary": "short conclusion",
-  "key_artifacts": [{{"path": "...", "description": "...", "kind": "input|output|intermediate|report|log"}}],
-  "whiteboard_ops": [
-    {{"op": "UPSERT", "section": "Key Facts", "record_type": "FACT", "id": "FACT_ID", "text": "..."}},
-    {{"op": "DEPRECATE", "section": "Key Facts", "record_type": "FACT", "id": "FACT_ID", "reason": "...", "superseded_by": "FACT_ID"}},
-    {{"op": "UPSERT", "section": "Key Files", "record_type": "FILE", "id": "FILE_ID", "path": "...", "kind": "output", "description": "..."}},
-    {{"op": "UPSERT", "section": "Constraints", "record_type": "CONSTRAINT", "id": "CONSTRAINT_ID", "text": "...", "rationale": "..."}},
-    {{"op": "UPSERT", "section": "Open Questions", "text": "..." }}
-  ]}}
-```
+- Respond with structured output that matches the summarizer schema.
 - If task is completed successfully, set task_outcome="success". 
 - If task meets some great problem (e.g. hardware failure, software bug, etc.) and needs human intervention for further guidance, set task_outcome="needs_intervention". Do not use it with trivial issues (e.g. file layout, request confirmation of execution).
 - If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
@@ -212,41 +220,7 @@ Rules:
 - Avoid verbose tool parameter dumps or internal step indices. Consolidate overlapping facts.
 - If a relevant FACT/FILE already exists, UPSERT that ID instead of creating a new one.
 """),
-        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\nWhiteboard path: {whiteboard_path}\n\nPatch error:\n{error}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
-    ])
-
-
-def build_step_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", """
-You are an execution controller. Decide ONE tool call or finish_project.
-Context:
-- Available tools: {tools}
-- Reference Plan Skeleton: {todo}
-- Observations so far: {observations}
-- Last result: {last_result}
-
-Rules:
-- Choose at most one tool per turn.
-- Return exactly one JSON object wrapped in ```json and ```. No extra text outside the fence.
-- JSON schema (all lowercase keys):
-```json
-{{"action": "call"|"finish_project",
-    "method": "tool_name"|null,
-    "params": {{...}},
-    "next_step": "a concrete, testable intent that can be acted on in the next turn (either a tool call you plan to attempt, or a condition to check via a specific tool)",
-    "note": "optional short self-note for memory",
-    "reasoning": "brief rationale for this decision"}}
-```
-- If action='call', method MUST exactly match one tool name in available tools. Otherwise set action='finish_project' and explain why.
-- If you ensure that to finish the project, set action="finish_project" and method=null in that single object.
-- Prefer reuse paths returned by previous tool calls instead of guessing.
-- Always provide file or directory paths as relative paths; they will be resolved relative to workspace root.
-- If a needed file might not exist, first list or create it with the appropriate tool.
-- Treat user instruction as a suggestion. If observations contradict it or a better action is available, you CAN revise the plan by choosing a different tool call and writing an updated next_step.
-- The controller may raise an error if your JSON is invalid or not properly fenced in last step; in that case, you must output a valid JSON decision next turn.
-"""),
-        ("human", "Suggested next step (may be revised): {instruction}")
+        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\n\nPatch error:\n{error}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
     ])
 
 
@@ -268,5 +242,4 @@ __all__ = [
     "build_task_summarizer_prompt",
     "build_task_summarizer_repair_prompt",
     "build_summary_prompt",
-    "build_step_prompt",
 ]

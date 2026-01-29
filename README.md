@@ -207,15 +207,47 @@ Notes:
 - Ensure the VASP environment script is sourced and `vasp_std` is in PATH.
 
 ## LLM Configuration
-This project currently only support OpenAI's model, but theoretically, it can be seamlessly changed to other model provider's models, but this feature is in currently only in future plan. To use LLM, you should acquire your API key, and set in in your environment (e.g. ~/.bashrc):
+CatMaster now supports multiple providers via `configs/llm.yaml` (with secrets from env). To use LLM, acquire your API key and export it (e.g. ~/.bashrc):
 
 ```bash
 export OPENAI_API_KEY="sk-projxxxxxxxxxxx"
-# Optionally, you may want to change the endpoint:
+# Optionally, change endpoint:
 export OPENAI_BASE_URL="https://your-proxy-or-custom-endpoint/v1"
 ```
 
-You can modify the main.py for other models manually. Currently the system do not require any structured output and interact with LLMs with only plain text, so theoretically, you can directly switch to other langchain chatmodel by modifying the main.py. We plan to release a unified LLM interface in next minor release.
+### Switch provider via configs/llm.yaml
+
+OpenRouter example:
+```yaml
+main:
+  provider: openrouter
+  model: openai/gpt-4o-mini
+  api_key_env: OPENROUTER_API_KEY
+  base_url: https://openrouter.ai/api/v1
+  tool_calling:
+    driver: openai_chat_completions
+```
+
+OpenAI (Responses API) example:
+```yaml
+main:
+  provider: openai
+  model: gpt-5.2
+  api_key_env: OPENAI_API_KEY
+  tool_calling:
+    driver: openai_responses
+```
+
+Deepseek (OpenAI-compatible) example:
+```yaml
+main:
+  provider: deepseek
+  model: deepseek-chat
+  api_key_env: DEEPSEEK_API_KEY
+  base_url: https://api.deepseek.com/v1
+  tool_calling:
+    driver: openai_chat_completions
+```
 
 ## Quick test (LLM entry)
 

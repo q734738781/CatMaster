@@ -32,6 +32,9 @@ class RunContext:
     workspace: Path
     run_dir: Path
     model_name: str
+    provider: Optional[str]
+    base_url: Optional[str]
+    driver_kind: Optional[str]
     start_time: str
 
     @classmethod
@@ -43,6 +46,9 @@ class RunContext:
         project_id: Optional[str] = None,
         run_id: Optional[str] = None,
         model_name: str = "unknown",
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
+        driver_kind: Optional[str] = None,
     ) -> "RunContext":
         ws = (workspace or workspace_root()).resolve()
         ensure_system_root()
@@ -60,6 +66,9 @@ class RunContext:
             workspace=ws,
             run_dir=resolved_run_dir,
             model_name=model_name,
+            provider=provider,
+            base_url=base_url,
+            driver_kind=driver_kind,
             start_time=start_time,
         )
         ctx.write_meta()
@@ -85,6 +94,9 @@ class RunContext:
             workspace=ws,
             run_dir=resolved_run_dir,
             model_name=meta.get("model_name") or "unknown",
+            provider=meta.get("provider"),
+            base_url=meta.get("base_url"),
+            driver_kind=meta.get("driver_kind"),
             start_time=meta.get("start_time") or datetime.utcnow().isoformat() + "Z",
         )
 
@@ -94,6 +106,9 @@ class RunContext:
             "run_id": self.run_id,
             "workspace": str(self.workspace),
             "model_name": self.model_name,
+            "provider": self.provider,
+            "base_url": self.base_url,
+            "driver_kind": self.driver_kind,
             "start_time": self.start_time,
         }
 

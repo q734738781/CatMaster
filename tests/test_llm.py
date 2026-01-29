@@ -1,3 +1,6 @@
+import pytest
+pytest.skip("integration smoke test; run manually", allow_module_level=True)
+
 from openai import OpenAI
 
 client = OpenAI()

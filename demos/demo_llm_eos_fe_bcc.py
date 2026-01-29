@@ -12,7 +12,6 @@ import argparse
 import logging
 import os
 import shutil
-from langchain_openai import ChatOpenAI
 from catmaster.agents.orchestrator import Orchestrator
 from catmaster.ui import create_reporter
 
@@ -76,13 +75,7 @@ def main() -> None:
         "Plot your results in a pyplot plot pdf, with x=volume and y=energy per atom, and try to use Birch-Murnaghan equation of state to fit the data, report the fitted parameters."
     )
 
-    llm = ChatOpenAI(
-        model="gpt-5.2",
-        temperature=0,
-        reasoning_effort="medium",
-    )
     orch = Orchestrator(
-        llm=llm,
         max_steps=100,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
         log_llm_console=ui_mode == "off",
