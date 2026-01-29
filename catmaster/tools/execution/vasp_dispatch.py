@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 
 class VaspExecuteInput(BaseModel):
-    """Submit a single VASP run."""
+    """Deprecated: single VASP run. Use vasp_execute_batch with input/output roots."""
 
     input_dir: str = Field(..., description="Directory containing VASP inputs (INCAR/KPOINTS/POSCAR/POTCAR)")
     check_interval: int = Field(30, description="Polling interval seconds")
@@ -35,14 +35,16 @@ class VaspExecuteBatchInput(BaseModel):
 
     input_dir: str = Field(
         ...,
-        description="Root directory containing VASP input subdirectories (each with INCAR/KPOINTS/POSCAR/POTCAR). e.g. input_dir/task01/INCAR...,input_dir/task02/INCAR... ",
+        description=(
+            "Root directory containing VASP input subdirectories. Any subfolder containing both INCAR and POTCAR "
+            "is treated as a VASP calc folder. Subfolders are discovered recursively."
+        ),
     )
     output_dir: str = Field(
         ...,
         description=(
-            "Root directory to store batch outputs. Results are written to output_dir using the same subdirectory "
-            "layout as input_dir. Must not be inside input_dir. Staging directories under output_dir are cleaned "
-            "after completion."
+            "Root directory to store batch outputs. Results mirror the input subfolder layout under output_dir. "
+            "Must not be inside input_dir. Staging directories under output_dir are cleaned after completion."
         ),
     )
     check_interval: int = Field(30, description="Polling interval seconds")
@@ -153,37 +155,11 @@ def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) ->
 
 
 def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
-    params = VaspExecuteInput(**payload)
-    reg = TaskRegistry()
-    cfg = reg.get("vasp_execute")
-    resources_key = cfg.resources
-    if not resources_key:
-        raise KeyError("vasp_execute missing resources in task config")
-    machine = _resolve_machine_for_resources(resources_key)
-
-    # --- NCORE hack lives here (resource-aware, LLM-agnostic) ---
-    input_dir = resolve_workspace_path(params.input_dir, must_exist=True)
-    ncore_info = _maybe_autoset_ncore(input_dir, resources_key=resources_key)
-
-    dispatch_req = _build_vasp_execute_request(
-        params,
-        machine=machine,
-        resources=resources_key,
-        registry=reg,
-    )
-    result = dispatch_task(dispatch_req)
-
+    _ = VaspExecuteInput(**payload)
     return create_tool_output(
         tool_name="vasp_execute",
-        success=True,
-        data={
-            "task_states": result.task_states,
-            "download_path": result.output_dir,
-            "submission_dir": result.submission_dir,
-            "work_base": result.work_base,
-            #"ncore_autoset": ncore_info,
-        },
-        execution_time=result.duration_s,
+        success=False,
+        error="Single-folder VASP relaxation is deprecated. Use vasp_execute_batch with input_root/output_root.",
     )
 
 
@@ -202,6 +178,12 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             "vasp_execute_batch",
             success=False,
             error=f"input_dir is not a directory: {input_root}",
+        )
+    if _is_vasp_input_dir(input_root):
+        return create_tool_output(
+            "vasp_execute_batch",
+            success=False,
+            error="input_dir is a single VASP calc folder. Provide a root with subfolders for batch execution.",
         )
     output_root = resolve_workspace_path(params.output_dir)
     if output_root.exists() and not output_root.is_dir():
@@ -355,6 +337,5 @@ def _build_vasp_execute_request(
 __all__ = [
     "VaspExecuteInput",
     "VaspExecuteBatchInput",
-    "vasp_execute",
     "vasp_execute_batch",
 ]
