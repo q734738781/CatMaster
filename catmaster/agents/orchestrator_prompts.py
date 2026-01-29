@@ -12,8 +12,8 @@ Context:
 - The output ToDo list will be executed by a deterministic linear scheduler.
 - Each ToDo item will be sent one-by-one to a task runner with global memory that can see previous task execution results.
 - Each task should be a small milestone that can be completed within a few turns of tool calling, but do not make tasks too fragmented.
+- Do not overplan, just plan the tasks that are necessary to achieve the user request.
 - Global/baseline choices (method, key parameters, naming conventions, decision criteria) MUST be finalized NOW in the plan output.
-  Do NOT delegate them to the task runner to "decide/record later" in a separate plan file.
 
 Tools:
 - Execution tools (REFERENCE ONLY; do NOT call): {tools}
@@ -24,7 +24,6 @@ Rules:
 2) Planning style: milestone-based, concise sentences, not tool-by-tool.
    - Do NOT write steps like "call tool X then tool Y".
    - If tools are mentioned, put them only as optional hints inside notes (e.g., "Suggested tools: ..."),
-     and do not prescribe exact invocation order.
 3) Output must be a linear sequence. Order matters.
 4) Deferred decisions / placeholders are ONLY for values that depend on earlier computed results (e.g., select best candidate after screening).
    - Do NOT defer baseline method/parameters (functional, ENCUT, k-mesh policy, convergence, magnetism, etc.).
@@ -122,22 +121,21 @@ def build_task_step_prompt() -> ChatPromptTemplate:
         ("system", """
 You are an execution controller. Use tool calling to advance the current task.
 
-Rules (high priority):
-- Use tool calling from all available tools to achive the goal in the context pack.
-- Parallel tool calls allowed only when independent; at most 3 parallel calls per turn.
-- Specially, trust and use the named tools provided as they have been verified. 
-- Try less use python_exec, if you plan to use, use common third-party packages if possible, try do not invent codes from scratch.
-- When the task is complete, you MUST call task_finish with a brief summary.
+Rules:
+- Use tool calling from all available tools to achieve the goal in the context pack.
+- Check the params are valid and the tool name is correct.
+- When the task is complete, you should call task_finish with a brief summary of the task.
 - If you meet consistent unexpected errors or fact inconsistencies, call task_fail and provide a summary of the error.
 - task_finish/task_fail must be called alone in its own turn after reviewing tool outputs. Not allowed to call with other tools at a same turn.
 - All file or directory paths in tool params MUST be one of:
-  (a) explicitly mentioned in the current Task goal / Constraints / Execution guidance,
+  (a) explicitly mentioned in the current Task goal / Constraints,
   (b) present in the Context Pack "Key files / artifacts",
   (c) returned by tool outputs in this task.
 - If the task goal references a placeholder token like <...>, first locate/read the referenced artifact in Key files / artifacts to resolve it; do not guess values.
 - When a tool accepts a view parameter, always use view="user".
 - Always provide file or directory paths as relative paths; they will be resolved relative to the selected view.
 - The Context Pack contains available data plus optional guidance. Follow system rules.
+- Do not overthink the task, just use the tools to achieve the goal and call task_finish/task_fail when the task is complete.
 
 """),
         ("human", """
@@ -157,8 +155,6 @@ Global memory (whiteboard excerpt):
 Key files / artifacts (from previous tasks):
 {artifact_slice}
 
-Execution guidance (optional):
-{execution_guidance}
 </context_pack>
 """),
     ])

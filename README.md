@@ -158,14 +158,34 @@ mace_relax_dir:
   backward_files:
     - "output"
   task_work_path: "."
+```
+
+`router.yaml` (template): # This file will be considered to remove in future versions
+```yaml
+tasks:
+  mace_relax:
+    resources: mace_gpu
+    defaults:
+      model: medium-mpa-0
+  vasp_execute:
+    resources: vasp_cpu
+```
+
 
 Notes:
 - Keep `env_setup` / `source_list` aligned with your site environment scripts and MPI setup.
 - For GPU MACE jobs, the **code folder must exist on the GPU host**; set `PYTHONPATH` in `env_setup` accordingly.
 - For Slurm/VASP, ensure your env script exports `vasp_std` and sets MPI bootstrap (e.g., `I_MPI_HYDRA_BOOTSTRAP=ssh` when required).
+<<<<<<< ours
+<<<<<<< ours
+- Tool defaults now live in `configs/dpdispatcher/tasks.yaml` (resources/machine/model). Adjust that file for site defaults.
+=======
 - Tool defaults now live in the tool inputs (e.g., `resources="vasp_cpu"` / `resources="mace_gpu"`, `model="medium-mpa-0"`). Override per call when needed.
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 - Under normal scenarios, you should not modify the name of tasks.yaml in case of program will not find suitable task.
-
+- 
 ### CPU (VASP) requirements
 
 - Slurm-based HPC environment.

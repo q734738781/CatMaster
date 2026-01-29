@@ -17,6 +17,7 @@ if os.environ.get("CATMASTER_ROUTER_CONFIG"):
     DEFAULT_PATHS.append(Path(os.environ["CATMASTER_ROUTER_CONFIG"]))
 if os.environ.get("CATMASTER_DP_CONFIG"):
     DEFAULT_PATHS.append(Path(os.environ["CATMASTER_DP_CONFIG"]))
+DEFAULT_PATHS.append(Path(__file__).resolve().parents[3] / "configs" / "dpdispatcher" / "router.yaml")
 
 
 class Route(BaseModel):

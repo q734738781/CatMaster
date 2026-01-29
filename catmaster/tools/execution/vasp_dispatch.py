@@ -27,8 +27,6 @@ class VaspExecuteInput(BaseModel):
     """Submit a single VASP run."""
 
     input_dir: str = Field(..., description="Directory containing VASP inputs (INCAR/KPOINTS/POSCAR/POTCAR)")
-    resources: str = Field("vasp_cpu", description="DPDispatcher resources preset key")
-    machine: str | None = Field(None, description="Override machine key; default derived from resources preset")
     check_interval: int = Field(30, description="Polling interval seconds")
 
 
@@ -47,8 +45,6 @@ class VaspExecuteBatchInput(BaseModel):
             "after completion."
         ),
     )
-    resources: str = Field("vasp_cpu", description="DPDispatcher resources preset key")
-    machine: str | None = Field(None, description="Override machine key; default derived from resources preset")
     check_interval: int = Field(30, description="Polling interval seconds")
 
 
@@ -108,9 +104,7 @@ def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, An
     }
 
 
-def _resolve_machine_for_resources(resources_key: str, *, machine: str | None = None) -> str:
-    if machine:
-        return machine
+def _resolve_machine_for_resources(resources_key: str) -> str:
     reg = MachineRegister()
     res_cfg = reg.get_resources(resources_key)
     resolved = res_cfg.get("machine")
@@ -160,14 +154,23 @@ def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) ->
 
 def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = VaspExecuteInput(**payload)
-    resources_key = params.resources
-    machine = _resolve_machine_for_resources(resources_key, machine=params.machine)
+    reg = TaskRegistry()
+    cfg = reg.get("vasp_execute")
+    resources_key = cfg.resources
+    if not resources_key:
+        raise KeyError("vasp_execute missing resources in task config")
+    machine = _resolve_machine_for_resources(resources_key)
 
     # --- NCORE hack lives here (resource-aware, LLM-agnostic) ---
     input_dir = resolve_workspace_path(params.input_dir, must_exist=True)
     ncore_info = _maybe_autoset_ncore(input_dir, resources_key=resources_key)
 
-    dispatch_req = _build_vasp_execute_request(params, machine=machine, resources=resources_key)
+    dispatch_req = _build_vasp_execute_request(
+        params,
+        machine=machine,
+        resources=resources_key,
+        registry=reg,
+    )
     result = dispatch_task(dispatch_req)
 
     return create_tool_output(
@@ -183,10 +186,15 @@ def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
         execution_time=result.duration_s,
     )
 
+
 def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = VaspExecuteBatchInput(**payload)
-    resources_key = params.resources
-    machine = _resolve_machine_for_resources(resources_key, machine=params.machine)
+    reg = TaskRegistry()
+    cfg = reg.get("vasp_execute")
+    resources_key = cfg.resources
+    if not resources_key:
+        raise KeyError("vasp_execute missing resources in task config")
+    machine = _resolve_machine_for_resources(resources_key)
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
@@ -219,9 +227,6 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
     work_base = make_work_base("vasp_batch")
     local_root = output_root
-
-    reg = TaskRegistry()
-    cfg = reg.get("vasp_execute")
 
     tasks: list[TaskSpec] = []
     task_meta = []
@@ -309,6 +314,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         },
         execution_time=result.duration_s,
     )
+
 
 def _build_vasp_execute_request(
     params: Any,

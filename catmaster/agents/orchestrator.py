@@ -765,11 +765,8 @@ class Orchestrator:
                     })
                     skills = self.skill_registry.select_skills(task_goal)
                     skill_allowlist: set[str] = set()
-                    skill_hints: list[str] = []
                     for skill in skills:
                         skill_allowlist.update(skill.tool_allowlist)
-                        if skill.prompt_snippet:
-                            skill_hints.append(skill.prompt_snippet.strip())
                     if skills:
                         self._emit("SKILLS_SELECTED", category="task", task_id=task_id, payload={
                             "skills": [skill.id for skill in skills],
@@ -780,10 +777,6 @@ class Orchestrator:
                     if self.tool_policy.use_skill_allowlist and skill_allowlist:
                         filtered_tools = [tool for tool in filtered_tools if tool.get("name") in skill_allowlist]
                     builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
-                    execution_guidance = ""
-                    if skill_hints:
-                        execution_guidance = "Skill hints:\n" + "\n".join(skill_hints)
-
                     stepper = ToolCallingTaskStepper(
                         driver=self.tool_driver,
                         backend=self.tool_backend,
@@ -801,7 +794,7 @@ class Orchestrator:
                         task_id=task_id,
                         task_goal=task_goal,
                         context_pack=context_pack,
-                        initial_instruction=execution_guidance,
+                        initial_instruction=None,
                         function_tools=filtered_tools,
                         builtin_tools=builtin_tools,
                     )
