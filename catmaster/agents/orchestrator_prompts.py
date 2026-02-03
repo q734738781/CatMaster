@@ -12,7 +12,7 @@ Context:
 - The output ToDo list will be executed by a deterministic linear scheduler.
 - Each ToDo item will be sent one-by-one to a task runner with global memory that can see previous task execution results.
 - Each task should be a small milestone that can be completed within a few turns of tool calling, but do not make tasks too fragmented.
-- Do not overplan, just plan the tasks that are necessary to achieve the user request.
+- Do not overthink about the plan, just plan the tasks that are necessary to achieve the user request and make less tool calls.
 - Global/baseline choices (method, key parameters, naming conventions, decision criteria) MUST be finalized NOW in the plan output.
 
 Tools:

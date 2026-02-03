@@ -39,9 +39,9 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true", help="Resume from existing workspace")
 
     # Orchestrator detail settings
-    parser.add_argument("--max-steps", type=int, default=100)
-    parser.add_argument("--max-tool-attempts", type=int, default=10)
-    parser.add_argument("--max-plan-attempts", type=int, default=10)
+    parser.add_argument("--max-steps", type=int, default=200)
+    parser.add_argument("--max-tool-attempts", type=int, default=3)
+    parser.add_argument("--max-plan-steps", type=int, default=50)
     parser.add_argument("--patch-repair-attempts", type=int, default=1)
     parser.add_argument("--summary-repair-attempts", type=int, default=1)
     parser.add_argument("--no-plan-review", action="store_true", help="Disable plan review")
@@ -119,8 +119,8 @@ def main() -> None:
         orch_kwargs["max_steps"] = args.max_steps
     if args.max_tool_attempts is not None:
         orch_kwargs["max_tool_attempts"] = args.max_tool_attempts
-    if args.max_plan_attempts is not None:
-        orch_kwargs["max_plan_attempts"] = args.max_plan_attempts
+    if args.max_plan_steps is not None:
+        orch_kwargs["max_plan_steps"] = args.max_plan_steps
     if args.patch_repair_attempts is not None:
         orch_kwargs["patch_repair_attempts"] = args.patch_repair_attempts
     if args.summary_repair_attempts is not None:
