@@ -11,9 +11,8 @@ import shutil
 import sys
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
-
 from catmaster.agents.orchestrator import Orchestrator
+from catmaster.llm.config import LLMProfile
 from catmaster.ui import create_reporter
 
 
@@ -25,22 +24,14 @@ def _load_prompt(args: argparse.Namespace) -> str:
     raise SystemExit("Provide --prompt or --prompt-file.")
 
 
-def _build_llm(args: argparse.Namespace, model: str) -> ChatOpenAI:
-    llm_kwargs: dict = {"model": model}
-    if args.reasoning_effort is not None:
-        llm_kwargs["reasoning_effort"] = args.reasoning_effort
-    return ChatOpenAI(**llm_kwargs)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="CatMaster entry point")
     prompt_group = parser.add_mutually_exclusive_group(required=True)
     prompt_group.add_argument("--prompt", help="User prompt as a string")
     prompt_group.add_argument("--prompt-file", help="Path to a text file containing the prompt")
 
-    # LLM API calls
-    parser.add_argument("--model", required=True, help="LLM model name")
-    parser.add_argument("--reasoning-effort", default=None)
+    # LLM config (loaded from YAML/env by default)
+    parser.add_argument("--llm-config", default=None, help="Path to LLM config YAML (default: configs/llm.yaml)")
 
     # Workspace
     parser.add_argument("--workspace", default=None, help="Workspace root (or set CATMASTER_WORKSPACE)")
@@ -114,10 +105,10 @@ def main() -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     os.environ["CATMASTER_WORKSPACE"] = str(workspace)
 
-    llm = _build_llm(args, args.model)
+    llm_profile = LLMProfile.from_env_or_file(args.llm_config)
 
     orch_kwargs: dict = {
-        "llm": llm,
+        "llm_profile": llm_profile,
         "reporter": reporter,
         "log_llm_console": ui_mode == "off",
         "resume": args.resume,
