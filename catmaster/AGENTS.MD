@@ -103,7 +103,7 @@ CatMaster distinguishes two “views” of the filesystem:
 Rules:
 
 1. Tools should operate in **user view** unless there is a strong reason otherwise.
-2. The `task_runner` role cannot access `view="system"` via file tools.
+2. The `task_runner` role cannot access `view="system"` via tools with a `view` parameter (e.g., `bash_exec`).
 3. If a tool produces an artifact that future tasks must read, it must be written into the **user workspace**, and the tool must return a **workspace-relative** path using `workspace_relpath(...)`.
 4. Use `resolve_workspace_path(...)` and `resolve_view_path(...)` for all path resolution and validation. Do not manually join paths with strings.
 
@@ -161,7 +161,8 @@ For tools operating on directories:
 - **Never** place `output_dir` inside `input_dir` (must validate).
 - Exclude `.catmaster/` and staging directories (`*_batch_*`) from input scanning.
 - Ensure outputs are isolated and do not become inputs on subsequent scans.
-- Produce a deterministic mapping from input paths to output paths (e.g., flatten relative paths using `__`).
+- Produce a deterministic mapping from input paths to output paths. Prefer mirroring the input layout under
+  `output_root`, and for file inputs expand into a folder (e.g., `input_root/a/c.vasp` -> `output_root/a/c/...`).
 
 ---
 

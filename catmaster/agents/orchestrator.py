@@ -57,11 +57,7 @@ from catmaster.agents.orchestrator_prompts import (
 )
 
 _PLANNER_TOOL_ALLOWLIST = [
-    "workspace_list_files",
-    "workspace_read_file",
-    "workspace_grep",
-    "workspace_head",
-    "workspace_tail",
+    "bash_exec",
 ]
 
 

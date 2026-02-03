@@ -51,7 +51,7 @@ class ToolRegistry:
         from catmaster.tools.execution import MaceRelaxBatchInput, VaspExecuteBatchInput
 
         # File management tools
-        from catmaster.tools.misc import file_manager
+        from catmaster.tools.misc.bash_exec import bash_exec, BashExecInput
         from catmaster.tools.misc.python_repl import python_exec, PythonExecInput
 
         # Retrieval tools
@@ -81,16 +81,7 @@ class ToolRegistry:
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
-        self.register_tool("workspace_list_files", file_manager.workspace_list_files, file_manager.WorkspaceListFilesInput)
-        self.register_tool("workspace_read_file", file_manager.workspace_read_file, file_manager.WorkspaceReadFileInput)
-        self.register_tool("workspace_write_file", file_manager.workspace_write_file, file_manager.WorkspaceWriteFileInput)
-        self.register_tool("workspace_mkdir", file_manager.workspace_mkdir, file_manager.WorkspaceMkdirInput)
-        self.register_tool("workspace_copy_files", file_manager.workspace_copy_files, file_manager.WorkspaceCopyFilesInput)
-        self.register_tool("workspace_delete", file_manager.workspace_delete, file_manager.WorkspaceDeleteInput)
-        self.register_tool("workspace_grep", file_manager.workspace_grep, file_manager.WorkspaceGrepInput)
-        self.register_tool("workspace_head", file_manager.workspace_head, file_manager.WorkspaceHeadInput)
-        self.register_tool("workspace_tail", file_manager.workspace_tail, file_manager.WorkspaceTailInput)
-        self.register_tool("workspace_move_files", file_manager.workspace_move_files, file_manager.WorkspaceMoveFilesInput)
+        self.register_tool("bash_exec", bash_exec, BashExecInput)
         self.register_tool("python_exec", python_exec, PythonExecInput)
         self.register_tool("write_note", memory.write_note, memory.MemoryNoteInput)
     

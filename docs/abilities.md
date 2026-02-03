@@ -94,7 +94,7 @@ This document summarizes what the codebase can do right now, based on the curren
 
 ### Utilities
 
-- **workspace_* file ops**: list/read/write/mkdir/copy/delete/grep/head/tail/move within workspace root.
+- **bash_exec**: run bash scripts inside the workspace (no network by default via unshare).
 
 - **python_exec**: Python calculations and longtail-tool self-implementation. VERY powerful tool for latest LLMs. Use with caution. Use SAFE models only. 
 

@@ -366,7 +366,7 @@ class ToolCallingTaskStepper:
 
     @staticmethod
     def _is_system_view_request(tool_name: str, params: Any) -> bool:
-        if not tool_name.startswith("workspace_"):
+        if not (tool_name.startswith("workspace_") or tool_name == "bash_exec"):
             return False
         if not isinstance(params, dict):
             return False
