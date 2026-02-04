@@ -50,7 +50,8 @@ conda create -n catmaster python=3.11
 pip install -r requirements/pc.txt
 ```
 
-**For GPU SIDE**: Copy and place the catmaster folder in a remote dir, referred to <REMOTE_CODE_ROOT>, and fill the DPDispatcher configuration files that will provided in sections later.
+**For GPU SIDE**: Ensure the remote host has the Python/MACE runtime; the task scripts are forwarded via DPDispatcher, so syncing the full repo is not required.
+**For CPU SIDE**: VASP execution now runs a forwarded Python boot script; ensure the CPU cluster provides Python 3.10+ in the job environment (module/conda).
 
 ### Materials Project
 
@@ -89,6 +90,8 @@ cpu_server:
     key_filename: <PATH_TO_SSH_KEY>
   env_setup: |
     ulimit -s unlimited # Any commands you want to use for 
+    # Ensure Python 3.10+ is available for task_script/vasp_boot.py
+    # module load python/3.10  (example)
 
 gpu_server:
   batch_type: Shell
@@ -105,7 +108,7 @@ gpu_server:
     export PATH=<CONDA_BIN>:$PATH
     eval "$(conda shell.bash hook)"
     conda activate <GPU_ENV_NAME>
-    export PYTHONPATH=<REMOTE_CODE_ROOT>:$PYTHONPATH
+    # No repo sync required when using forwarded task scripts.
 ```
 
 `resources.yaml` (template; keep `source_list` and Slurm flags as needed):\n
@@ -135,9 +138,10 @@ mace_gpu:
 `tasks.yaml` (template; **do not change the command patterns unless you know what you are doing :)**
 ```yaml
 vasp_execute:
-  command: "mpirun -n $SLURM_NTASKS vasp_std > vasp_stdout.out 2>&1" # This is a typical comman patten, change it to fit your server.
+  command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
   forward_files:
     - "*"
+    - "task_script/vasp_boot.py"
   backward_files:
     - "*"
   task_work_path: "."
@@ -167,6 +171,7 @@ tasks:
 Notes:
 - Keep `env_setup` / `source_list` aligned with your site environment scripts and MPI setup.
 - For GPU MACE jobs, the MACE script is forwarded via DPDispatcher; only the remote Python/MACE environment is required.
+- For CPU VASP jobs, the boot script is forwarded via DPDispatcher; ensure MPI and VASP binaries are available in the remote env.
 - For Slurm/VASP, ensure your env script exports `vasp_std` and sets MPI bootstrap (e.g., `I_MPI_HYDRA_BOOTSTRAP=ssh` when required).
 <<<<<<< ours
 <<<<<<< ours
@@ -181,6 +186,7 @@ Notes:
 ### CPU (VASP) requirements
 
 - Slurm-based HPC environment.
+- Python 3.10+ available on compute nodes (for `task_script/vasp_boot.py`).
 - VASP available in PATH or sourced via an environment script. Make sure launch command in tasks.yaml matches your site setup.
 - DPDispatcher uses SSH to submit jobs; the MPI bootstrap should be set for SSH.
 
@@ -196,7 +202,7 @@ To execute vasp, you need to ensure VASP is correctly installed in cpu server an
 Reference (from `reference_scripts/catmaster_env_vasp.sh`):
 ```bash
 export PATH=/public/software/vasp.6.4.1-vtst-sol/bin:$PATH
-export PYTHONPATH=/public/home/abcdefg/catmaster_code:$PYTHONPATH
+export PYTHONPATH=/public/home/abcdefg/catmaster_code:$PYTHONPATH  # optional: only if you run custom Python not forwarded
 source /public/software/vasp.6.4.1-vtst-sol/env.sh
 ulimit -s unlimited
 export I_MPI_HYDRA_BOOTSTRAP=ssh

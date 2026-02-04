@@ -219,6 +219,10 @@ Whiteboard content rules:
 
 ## 10) Quick reference: tool skeleton
 
+Remote tool rule (DPDispatcher/GPU):
+- If a tool needs to ship a script to the remote workdir, stage it under `task_script/` and run it via
+  `python task_script/<script>.py ...`. Do not rely on syncing the full repo to the remote host.
+
 ```python
 from __future__ import annotations
 
