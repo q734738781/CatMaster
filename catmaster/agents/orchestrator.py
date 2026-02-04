@@ -65,7 +65,7 @@ class Orchestrator:
     def __init__(
         self,
         llm: Optional[Any] = None,
-        max_steps: int = 100,
+        max_steps: int = 200,
         *,
         summary_llm: Optional[Any] = None,
         llm_profile: Optional[LLMProfile] = None,
@@ -80,7 +80,7 @@ class Orchestrator:
         run_id: Optional[str] = None,
         tool_executor: Optional[ToolExecutor] = None,
         max_tool_attempts: int = 3,
-        max_plan_attempts: int = 3,
+        max_plan_steps : int = 50,
         patch_repair_attempts: int = 1,
         summary_repair_attempts: int = 1,
         tool_driver: Optional[ToolCallingDriver] = None,
@@ -130,7 +130,7 @@ class Orchestrator:
         self.llm = llm
         self.summary_llm = summary_llm or llm
         self.max_steps = max_steps
-        self.max_plan_attempts = max_plan_attempts
+        self.max_plan_steps = max_plan_steps
         self.patch_repair_attempts = patch_repair_attempts
         self.summary_repair_attempts = summary_repair_attempts
         self.registry = get_tool_registry()
@@ -439,7 +439,7 @@ class Orchestrator:
             tools=tools,
             planner_tools=self._planner_tool_schema(),
         )
-        self._emit("PLAN_START", category="plan", payload={"attempts": self.max_plan_attempts})
+        self._emit("PLAN_START", category="plan", payload={"attempts": self.max_plan_steps})
         input_items = self._messages_to_input_items(messages)
         stepper = ToolCallingTaskStepper(
             driver=self.tool_driver,
@@ -448,7 +448,7 @@ class Orchestrator:
             control_tools=get_plan_control_tool_schemas(),
             control_tool_names=PLAN_CONTROL_TOOL_NAMES,
             reporter=self.reporter,
-            max_steps=self.max_plan_attempts,
+            max_steps=self.max_plan_steps,
             driver_kwargs={
                 **self._tool_driver_kwargs(),
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
@@ -506,7 +506,7 @@ class Orchestrator:
             control_tools=get_plan_control_tool_schemas(),
             control_tool_names=PLAN_CONTROL_TOOL_NAMES,
             reporter=self.reporter,
-            max_steps=self.max_plan_attempts,
+            max_steps=self.max_plan_steps,
             driver_kwargs={
                 **self._tool_driver_kwargs(),
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,

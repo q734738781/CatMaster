@@ -79,8 +79,8 @@ This document summarizes what the codebase can do right now, based on the curren
 >>>>>>> theirs
 
 - **mace_relax / mace_relax_batch**: submit MACE relaxations (single or batch) via DPDispatcher; outputs relaxed structure, trajectory, log, `summary.json`.
-
-- Local runners exist for VASP/MACE in `catmaster/tools/execution/*_jobs.py` (used by DPDispatcher task templates).
+- MACE batch runs forward the MACE script to `task_script/mace_jobs.py` in the remote workdir; only the remote Python/MACE environment is required.
+- VASP batch runs forward `task_script/vasp_boot.py` in the remote workdir; the boot script handles launching MPI + VASP.
 
 
 

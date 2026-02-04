@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-import math
 import os
 from pathlib import Path
 from typing import Any, Dict
@@ -48,62 +46,6 @@ class VaspExecuteBatchInput(BaseModel):
         ),
     )
     check_interval: int = Field(30, description="Polling interval seconds")
-
-
-_INCAR_KEY_RE = re.compile(r"(?i)^\s*(NCORE|NPAR)\b")
-
-
-def _maybe_autoset_ncore(input_dir: Path, *, resources_key: str) -> Dict[str, Any]:
-    """
-    If INCAR does not specify NCORE/NPAR, append `NCORE` chosen by:
-    1) target ~ sqrt(cpu_per_node)
-    2) NCORE must divide cpu_per_node
-
-    Returns a small dict for logging/debugging.
-    """
-    reg = MachineRegister()
-    res_cfg = reg.get_resources(resources_key)
-    cpu_per_node = res_cfg.get("cpu_per_node")
-
-    try:
-        cpu_per_node_i = int(cpu_per_node)
-    except Exception:
-        return {"patched": False, "reason": "cpu_per_node_missing_or_invalid", "cpu_per_node": cpu_per_node}
-
-    target = math.sqrt(cpu_per_node_i)
-    factors = [f for f in range(1, cpu_per_node_i + 1) if cpu_per_node_i % f == 0]
-
-    # choose the smallest factor >= target; if none, fallback to largest factor
-    higher_or_equal = [f for f in factors if f >= target]
-    if higher_or_equal:
-        ncore = min(higher_or_equal)
-    else:
-        ncore = max(factors)
-
-    incar = input_dir / "INCAR"
-    if not incar.exists():
-        return {"patched": False, "reason": "incar_missing", "ncore": ncore}
-
-    lines = incar.read_text(errors="ignore").splitlines()
-
-    # If user already set NCORE/NPAR, do nothing (respect explicit intent)
-    for ln in lines:
-        # strip inline comments commonly used in INCAR
-        head = ln.split("!")[0].split("#")[0].strip()
-        if not head:
-            continue
-        if _INCAR_KEY_RE.match(head):
-            return {"patched": False, "reason": "already_set", "ncore": ncore}
-
-    lines.append(f"NCORE = {ncore}")
-    incar.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {
-        "patched": True,
-        "reason": "autoset",
-        "ncore": ncore,
-        "cpu_per_node": cpu_per_node_i,
-        "target": target,
-    }
 
 
 def _resolve_machine_for_resources(resources_key: str) -> str:
@@ -219,8 +161,12 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             shutil.rmtree(stage_dir)
         stage_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(inp, stage_dir)
-
-        _maybe_autoset_ncore(stage_dir, resources_key=resources_key)
+        script_src = Path(__file__).resolve().parents[2] / "remote" / "cpu" / "vasp_boot.py"
+        if not script_src.is_file():
+            raise FileNotFoundError(f"Missing VASP boot script: {script_src}")
+        script_dst = stage_dir / "task_script" / "vasp_boot.py"
+        script_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(script_src, script_dst)
 
         rendered = render_task_fields(cfg, {}, stage_dir)
         tasks.append(

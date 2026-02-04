@@ -1,0 +1,184 @@
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+
+def _is_gamma_only(kpoints_path: Path) -> bool:
+    if not kpoints_path.is_file():
+        return False
+    try:
+        raw_lines = kpoints_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        lines = []
+        for line in raw_lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("#", "!")):
+                continue
+            lines.append(stripped)
+        if len(lines) < 4:
+            return False
+        try:
+            npoints = int(lines[1].split()[0])
+        except ValueError:
+            return False
+        if npoints != 0:
+            # Only trust automatic Gamma with 1x1x1 for vasp_gam safety.
+            return False
+        scheme = lines[2].lower()
+        if "gamma" not in scheme:
+            return False
+        grid_parts = lines[3].split()
+        if len(grid_parts) < 3:
+            return False
+        try:
+            grid = [int(grid_parts[0]), int(grid_parts[1]), int(grid_parts[2])]
+        except ValueError:
+            return False
+        return grid == [1, 1, 1]
+    except Exception:
+        return False
+    return False
+
+
+_INCAR_KEY_RE = re.compile(r"(?i)^\s*(NCORE|NPAR)\b")
+
+
+def _infer_cpu_per_node(args: argparse.Namespace, log_file) -> int | None:
+    if args.cpu_per_node is not None and args.cpu_per_node > 0:
+        log_file.write(f"[vasp_boot] auto-ncore: cpu_per_node={args.cpu_per_node}\n")
+        log_file.flush()
+        return args.cpu_per_node
+    env_val = os.environ.get("SLURM_CPUS_ON_NODE", "").strip()
+    if env_val:
+        try:
+            parsed = int(env_val)
+        except ValueError:
+            return None
+        if parsed > 0:
+            return parsed
+    return None
+
+
+def _choose_ncore(cpu_per_node: int) -> int:
+    target = cpu_per_node ** 0.5
+    factors = [f for f in range(1, cpu_per_node + 1) if cpu_per_node % f == 0]
+    higher_or_equal = [f for f in factors if f >= target]
+    if higher_or_equal:
+        return min(higher_or_equal)
+    return max(factors)
+
+
+def _maybe_set_ncore(args: argparse.Namespace, log_file) -> None:
+    if not args.auto_ncore:
+        return
+    incar_path = Path(args.incar)
+    if not incar_path.is_file():
+        log_file.write("[vasp_boot] auto-ncore: INCAR missing, skip\n")
+        log_file.flush()
+        return
+    cpu_per_node = _infer_cpu_per_node(args, log_file)
+    if not cpu_per_node:
+        log_file.write("[vasp_boot] auto-ncore: cpu_per_node unavailable, skip\n")
+        log_file.flush()
+        return
+    lines = incar_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    for ln in lines:
+        head = ln.split("!")[0].split("#")[0].strip()
+        if not head:
+            continue
+        if _INCAR_KEY_RE.match(head):
+            log_file.write("[vasp_boot] auto-ncore: NCORE/NPAR already set, skip\n")
+            log_file.flush()
+            return
+    ncore = _choose_ncore(cpu_per_node)
+    lines.append(f"NCORE = {ncore}")
+    incar_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log_file.write(f"[vasp_boot] auto-ncore: cpu_per_node={cpu_per_node}, ncore={ncore}\n")
+    log_file.flush()
+
+
+def _resolve_nprocs(nprocs: int | None) -> int:
+    if nprocs is not None:
+        if nprocs <= 0:
+            raise ValueError("nprocs must be positive")
+        return nprocs
+    env_val = os.environ.get("SLURM_NTASKS")
+    if not env_val:
+        raise ValueError("SLURM_NTASKS is not set; pass --nprocs explicitly")
+    try:
+        parsed = int(env_val)
+    except ValueError as exc:
+        raise ValueError(f"Invalid SLURM_NTASKS: {env_val}") from exc
+    if parsed <= 0:
+        raise ValueError(f"Invalid SLURM_NTASKS (<=0): {env_val}")
+    return parsed
+
+
+def _build_command(args: argparse.Namespace) -> tuple[list[str], str]:
+    vasp_bin = args.vasp
+    if args.auto_gamma and _is_gamma_only(Path(args.kpoints)):
+        vasp_bin = args.gamma_vasp
+    nprocs = _resolve_nprocs(args.nprocs)
+    return [args.launcher, "-n", str(nprocs), vasp_bin], vasp_bin
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="VASP boot wrapper for DPDispatcher tasks")
+    parser.add_argument("--vasp", default="vasp_std", help="VASP binary to run")
+    parser.add_argument("--launcher", default="mpirun", help="MPI launcher command")
+    parser.add_argument("--nprocs", type=int, default=None, help="MPI process count")
+    parser.add_argument("--log", default="vasp_stdout.out", help="Log file path")
+    parser.add_argument("--sync-delay", type=int, default=10, help="Sleep seconds after sync")
+    parser.add_argument("--auto-gamma", action="store_true", help="Use gamma VASP when KPOINTS is Gamma")
+    parser.add_argument("--gamma-vasp", default="vasp_gam", help="Gamma-point VASP binary")
+    parser.add_argument("--kpoints", default="KPOINTS", help="KPOINTS file path")
+    parser.add_argument("--auto-ncore", action="store_true", help="Auto-set NCORE when absent")
+    parser.add_argument("--cpu-per-node", type=int, default=None, help="CPU per node hint for NCORE")
+    parser.add_argument("--incar", default="INCAR", help="INCAR file path")
+    args = parser.parse_args()
+
+    try:
+        cmd, vasp_bin = _build_command(args)
+    except Exception as exc:
+        sys.stderr.write(f"[vasp_boot] {exc}\n")
+        return 2
+
+    with open(args.log, "w", encoding="utf-8") as log_file:
+        log_file.write(f"[vasp_boot] cwd={Path.cwd()}\n")
+        for key in (
+            "SLURM_JOB_ID",
+            "SLURM_NTASKS",
+            "SLURM_NNODES",
+            "SLURM_CPUS_PER_TASK",
+            "SLURM_CPUS_ON_NODE",
+            "SLURM_JOB_CPUS_PER_NODE",
+            "OMP_NUM_THREADS",
+            "I_MPI_HYDRA_BOOTSTRAP",
+        ):
+            log_file.write(f"[vasp_boot] env {key}={os.environ.get(key, '')}\n")
+        log_file.write(f"[vasp_boot] vasp_bin={vasp_bin}\n")
+        log_file.write(f"[vasp_boot] command: {' '.join(cmd)}\n")
+        log_file.flush()
+        _maybe_set_ncore(args, log_file)
+        proc = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, check=False)
+
+    try:
+        os.sync()
+    except AttributeError:
+        pass
+
+    if args.sync_delay > 0:
+        time.sleep(args.sync_delay)
+
+    return int(proc.returncode)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
