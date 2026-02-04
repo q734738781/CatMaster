@@ -175,6 +175,12 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     stage_output = stage_root / "output"
     shutil.copytree(input_root, stage_input)
     stage_output.mkdir(parents=True, exist_ok=True)
+    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_jobs.py"
+    if not script_src.is_file():
+        raise FileNotFoundError(f"Missing MACE remote script: {script_src}")
+    script_dst = stage_root / "task_script" / "mace_jobs.py"
+    script_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(script_src, script_dst)
 
     cfg = reg.get("mace_relax_dir")
 

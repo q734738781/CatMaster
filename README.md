@@ -142,19 +142,11 @@ vasp_execute:
     - "*"
   task_work_path: "."
 
-mace_relax:
-  command: "python -m catmaster.tools.execution.mace_jobs --structure {structure_file} --fmax {fmax} --steps {maxsteps} --model {model}"
-  forward_files:
-    - "{structure_file}"
-  backward_files:
-    - opt.*
-    - summary.json
-  task_work_path: "."
-
 mace_relax_dir:
-  command: "python -m catmaster.tools.execution.mace_jobs --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model}"
+  command: "python task_script/mace_jobs.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model}"
   forward_files:
     - "input"
+    - "task_script/mace_jobs.py"
   backward_files:
     - "output"
   task_work_path: "."
@@ -174,7 +166,7 @@ tasks:
 
 Notes:
 - Keep `env_setup` / `source_list` aligned with your site environment scripts and MPI setup.
-- For GPU MACE jobs, the **code folder must exist on the GPU host**; set `PYTHONPATH` in `env_setup` accordingly.
+- For GPU MACE jobs, the MACE script is forwarded via DPDispatcher; only the remote Python/MACE environment is required.
 - For Slurm/VASP, ensure your env script exports `vasp_std` and sets MPI bootstrap (e.g., `I_MPI_HYDRA_BOOTSTRAP=ssh` when required).
 <<<<<<< ours
 <<<<<<< ours
@@ -195,7 +187,7 @@ Notes:
 ### GPU (MACE) requirements
 
 - GPU host with CUDA/cuDNN and a Python environment for MACE.
-- **Important:** MACE jobs need the code folder available on the GPU host. Copy/sync your repo there and set `PYTHONPATH` accordingly.
+- **Important:** MACE jobs forward the MACE script via DPDispatcher; you only need the remote runtime environment.
 
 ### VASP remote environment script
 
