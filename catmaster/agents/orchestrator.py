@@ -992,6 +992,7 @@ class Orchestrator:
             tasks = state["tasks"]
             observations = state["observations"]
             status = state.get("status", "running")
+            hitl_history = state.get("hitl_history") or []
             if status in {"done", "failure"}:
                 raise ValueError(f"Cannot resume; run already ended with status {status}")
             self._initialize_whiteboard_goal(user_request)
@@ -1004,6 +1005,7 @@ class Orchestrator:
             }]
             observations = []
             status = "running"
+            hitl_history = []
             self._write_task_state({
                 "schema_version": 2,
                 "lane": "fast",
@@ -1011,6 +1013,7 @@ class Orchestrator:
                 "tasks": tasks,
                 "observations": observations,
                 "status": status,
+                "hitl_history": hitl_history,
             })
 
         self._emit("TASKS_COMPILED", category="task", payload={
@@ -1024,27 +1027,88 @@ class Orchestrator:
             start_ui("Starting execution...", False)
             self._emit("SPLASH_HIDE", category="splash")
 
-        progressed = False
-        for task in tasks:
-            if task.get("status") != "pending":
-                continue
-            progressed = True
-            task_id = task["task_id"]
-            task_goal = task["goal"]
+        while True:
+            next_task = None
+            for task in tasks:
+                if task.get("status") == "pending":
+                    next_task = task
+                    break
+            if next_task is None:
+                if status == "running":
+                    status = "done"
+                break
+
+            task_id = next_task["task_id"]
+            task_goal = next_task["goal"]
             self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
             self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
             obs = self._execute_task(task_id=task_id, task_goal=task_goal, log_llm=log_llm)
             observations.append(obs)
-            task["status"] = obs["outcome"]
+            next_task["status"] = obs["outcome"]
             outcome = obs["outcome"]
             self._emit("TASK_END", category="task", task_id=task_id, payload={
                 "outcome": outcome,
                 "summary_snippet": self._snippet(obs.get("summary", ""), 200),
             })
             self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
-            if outcome in {"failure", "needs_intervention"}:
-                status = outcome
+
+            if outcome == "needs_intervention":
+                hitl_meta = self._hitl_collect_guidance(
+                    user_request=user_request,
+                    observations=observations,
+                    tasks=tasks,
+                    reason=f"task:{task_id}",
+                    log_llm=log_llm,
+                )
+                hitl_history.append(hitl_meta)
+                if not hitl_meta.get("feedback"):
+                    status = "needs_intervention"
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "fast",
+                        "user_request": user_request,
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                        "hitl": hitl_meta,
+                        "hitl_history": hitl_history,
+                    })
+                    break
+                follow_goal = (
+                    "Continue original request with HITL guidance: "
+                    f"{self._snippet(hitl_meta.get('feedback', ''), 240)}"
+                )
+                tasks.append({
+                    "task_id": f"task_{self._next_task_index(tasks):02d}",
+                    "goal": follow_goal,
+                    "status": "pending",
+                })
+                status = "running"
+                self._write_task_state({
+                    "schema_version": 2,
+                    "lane": "fast",
+                    "user_request": user_request,
+                    "tasks": tasks,
+                    "observations": observations,
+                    "status": status,
+                    "hitl": hitl_meta,
+                    "hitl_history": hitl_history,
+                })
+                continue
+
+            if outcome == "failure":
+                status = "failure"
+                self._write_task_state({
+                    "schema_version": 2,
+                    "lane": "fast",
+                    "user_request": user_request,
+                    "tasks": tasks,
+                    "observations": observations,
+                    "status": status,
+                    "hitl_history": hitl_history,
+                })
                 break
+
             status = "running"
             self._write_task_state({
                 "schema_version": 2,
@@ -1053,12 +1117,8 @@ class Orchestrator:
                 "tasks": tasks,
                 "observations": observations,
                 "status": status,
+                "hitl_history": hitl_history,
             })
-
-        if status == "running" and not progressed:
-            status = "done"
-        if status == "running" and all(task.get("status") != "pending" for task in tasks):
-            status = "done"
 
         self._write_task_state({
             "schema_version": 2,
@@ -1067,6 +1127,7 @@ class Orchestrator:
             "tasks": tasks,
             "observations": observations,
             "status": status,
+            "hitl_history": hitl_history,
         })
         final_answer = observations[-1]["summary"] if observations else ""
         result = {
@@ -1109,6 +1170,7 @@ class Orchestrator:
             tasks = state["tasks"]
             observations = state["observations"]
             status = state.get("status", "running")
+            hitl_history = state.get("hitl_history") or []
             proposal_info = state.get("proposal") or {}
             proposal_path = proposal_info.get("proposal_path") or "proposal.md"
             work_packages = proposal_info.get("work_packages") or []
@@ -1128,6 +1190,7 @@ class Orchestrator:
             tasks = []
             observations = []
             status = "running"
+            hitl_history = []
             self._write_task_state({
                 "schema_version": 2,
                 "lane": "standard",
@@ -1139,6 +1202,7 @@ class Orchestrator:
                 "tasks": tasks,
                 "observations": observations,
                 "status": status,
+                "hitl_history": hitl_history,
             })
 
             if plan_review:
@@ -1155,6 +1219,7 @@ class Orchestrator:
                         "tasks": tasks,
                         "observations": observations,
                         "status": status,
+                        "hitl_history": hitl_history,
                     })
 
                 proposal_md, work_packages, approved, _ = self._review_proposal(
@@ -1179,6 +1244,7 @@ class Orchestrator:
                         "tasks": tasks,
                         "observations": observations,
                         "status": status,
+                        "hitl_history": hitl_history,
                     })
 
         self._emit("TASKS_COMPILED", category="task", payload={
@@ -1209,8 +1275,20 @@ class Orchestrator:
                     "summary_snippet": self._snippet(obs.get("summary", ""), 200),
                 })
                 self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
-                if outcome in {"failure", "needs_intervention"}:
-                    status = outcome
+                if outcome == "needs_intervention":
+                    hitl_meta = self._hitl_collect_guidance(
+                        user_request=user_request,
+                        observations=observations,
+                        tasks=tasks,
+                        reason=f"task:{task_id}",
+                        log_llm=log_llm,
+                        plan_feedback_provider=plan_feedback_provider,
+                    )
+                    hitl_history.append(hitl_meta)
+                    if not hitl_meta.get("feedback"):
+                        status = "needs_intervention"
+                    else:
+                        status = "running"
                     self._write_task_state({
                         "schema_version": 2,
                         "lane": "standard",
@@ -1222,6 +1300,24 @@ class Orchestrator:
                         "tasks": tasks,
                         "observations": observations,
                         "status": status,
+                        "hitl": hitl_meta,
+                        "hitl_history": hitl_history,
+                    })
+                    break
+                if outcome == "failure":
+                    status = "failure"
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": self._proposal_path().name,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                        "hitl_history": hitl_history,
                     })
                     break
                 self._write_task_state({
@@ -1235,6 +1331,7 @@ class Orchestrator:
                     "tasks": tasks,
                     "observations": observations,
                     "status": status,
+                    "hitl_history": hitl_history,
                 })
 
         if status == "needs_intervention":
@@ -1281,6 +1378,7 @@ class Orchestrator:
                         "tasks": tasks,
                         "observations": observations,
                         "status": status,
+                        "hitl_history": hitl_history,
                     })
                     self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
                     self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
@@ -1293,10 +1391,54 @@ class Orchestrator:
                         "summary_snippet": self._snippet(obs.get("summary", ""), 200),
                     })
                     self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
-                    if outcome in {"failure", "needs_intervention"}:
-                        status = outcome
-                    else:
-                        status = "running"
+                    if outcome == "needs_intervention":
+                        hitl_meta = self._hitl_collect_guidance(
+                            user_request=user_request,
+                            observations=observations,
+                            tasks=tasks,
+                            reason=f"task:{task_id}",
+                            log_llm=log_llm,
+                            plan_feedback_provider=plan_feedback_provider,
+                        )
+                        hitl_history.append(hitl_meta)
+                        if not hitl_meta.get("feedback"):
+                            status = "needs_intervention"
+                        else:
+                            status = "running"
+                        self._write_task_state({
+                            "schema_version": 2,
+                            "lane": "standard",
+                            "user_request": user_request,
+                            "proposal": {
+                                "proposal_path": self._proposal_path().name,
+                                "work_packages": work_packages,
+                            },
+                            "tasks": tasks,
+                            "observations": observations,
+                            "status": status,
+                            "hitl": hitl_meta,
+                            "hitl_history": hitl_history,
+                        })
+                        if status == "needs_intervention":
+                            break
+                        continue
+                    if outcome == "failure":
+                        status = "failure"
+                        self._write_task_state({
+                            "schema_version": 2,
+                            "lane": "standard",
+                            "user_request": user_request,
+                            "proposal": {
+                                "proposal_path": self._proposal_path().name,
+                                "work_packages": work_packages,
+                            },
+                            "tasks": tasks,
+                            "observations": observations,
+                            "status": status,
+                            "hitl_history": hitl_history,
+                        })
+                        break
+                    status = "running"
                     self._write_task_state({
                         "schema_version": 2,
                         "lane": "standard",
@@ -1308,9 +1450,8 @@ class Orchestrator:
                         "tasks": tasks,
                         "observations": observations,
                         "status": status,
+                        "hitl_history": hitl_history,
                     })
-                    if status in {"failure", "needs_intervention"}:
-                        break
                     continue
 
                 if state == "MinorReviseProposal":
@@ -1332,6 +1473,7 @@ class Orchestrator:
                         "tasks": tasks,
                         "observations": observations,
                         "status": status,
+                        "hitl_history": hitl_history,
                     })
                     continue
 
@@ -1355,6 +1497,7 @@ class Orchestrator:
                             "tasks": tasks,
                             "observations": observations,
                             "status": status,
+                            "hitl_history": hitl_history,
                         })
                         continue
 
@@ -1385,6 +1528,7 @@ class Orchestrator:
                                 "feedback": feedback,
                                 "questions": decision.get("questions_for_human"),
                             },
+                            "hitl_history": hitl_history,
                         })
                         break
                     proposal_relpath = self._write_proposal(proposal_md)
@@ -1399,6 +1543,7 @@ class Orchestrator:
                         "tasks": tasks,
                         "observations": observations,
                         "status": status,
+                        "hitl_history": hitl_history,
                     })
                     continue
 
@@ -1423,6 +1568,7 @@ class Orchestrator:
                 "observations": observations,
                 "status": status,
                 "summary": summary,
+                "hitl_history": hitl_history,
             })
             report_paths = self._publish_report(user_request, summary)
             preview_lines = [line for line in (summary or "").splitlines() if line.strip()][:8]
@@ -1562,6 +1708,151 @@ class Orchestrator:
             return str(path.relative_to(self.run_context.run_dir))
         except Exception:
             return str(path)
+
+    def _hitl_collect_guidance(
+        self,
+        *,
+        user_request: str,
+        observations: List[Dict[str, Any]],
+        tasks: List[Dict[str, Any]],
+        reason: str = "",
+        log_llm: bool = False,
+        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
+    ) -> Dict[str, Any]:
+        hitl_index = self._next_hitl_index()
+        hitl_tag = f"hitl_{hitl_index:03d}"
+        hitl_dir = self.run_context.run_dir / "hitl" / hitl_tag
+        hitl_dir.mkdir(parents=True, exist_ok=True)
+
+        summary = self._summarize_tasks(user_request, observations, status="needs_intervention")
+        report_text = summary or ""
+        interrupted_report_path = hitl_dir / "interrupted_report.md"
+        interrupted_report_path.write_text(report_text or "", encoding="utf-8")
+
+        feedback_state = {
+            "user_request": user_request,
+            "tasks": tasks,
+            "observations": observations,
+            "status": "needs_intervention",
+            "report_text": report_text,
+            "report_path": self._rel_run_path(interrupted_report_path),
+            "hitl_dir": str(hitl_dir),
+            "hitl_id": hitl_tag,
+            "reason": reason,
+        }
+        feedback = ""
+        report_ref = ""
+        try:
+            report_ref = str(interrupted_report_path.resolve().relative_to(workspace_root()))
+        except Exception:
+            report_ref = self._rel_run_path(interrupted_report_path)
+
+        if plan_feedback_provider:
+            feedback = plan_feedback_provider({**feedback_state, "stage": "hitl_feedback"}) or ""
+        else:
+            if hasattr(self.reporter, "prompt_hitl_feedback") and self.reporter.is_live():
+                feedback = self.reporter.prompt_hitl_feedback(
+                    report_text=report_text,
+                    report_path=report_ref,
+                )
+            else:
+                raise ValueError("HITL feedback requires a live reporter (WebUI) or a feedback provider.")
+
+        human_feedback_path = hitl_dir / "human_feedback.txt"
+        human_feedback_path.write_text(feedback or "", encoding="utf-8")
+
+        hitl_meta = {
+            "hitl_id": hitl_tag,
+            "hitl_dir": self._rel_run_path(hitl_dir),
+            "interrupted_report": self._rel_run_path(interrupted_report_path),
+            "human_feedback": self._rel_run_path(human_feedback_path),
+            "report_path": report_ref,
+            "feedback": feedback or "",
+        }
+
+        if not feedback:
+            return hitl_meta
+
+        guidance_snippet = self._snippet(feedback, 9999)
+        constraint_text = f"HITL guidance ({hitl_tag}): {guidance_snippet}"
+        if report_ref:
+            constraint_text += f" | report: {report_ref}"
+
+        ops = [{
+            "op": "UPSERT",
+            "section": "Constraints",
+            "record_type": "CONSTRAINT",
+            "id": f"HITL_{hitl_index:03d}",
+            "text": constraint_text,
+            "rationale": f"HITL intervention {hitl_tag}",
+        }]
+        ops_file = hitl_dir / "whiteboard_ops.json"
+        ops_file.write_text(json.dumps(ops, ensure_ascii=False, indent=2), encoding="utf-8")
+        hitl_meta["whiteboard_ops"] = self._rel_run_path(ops_file)
+
+        validation = whiteboard_ops_validate(ops)
+        before_hash = self.whiteboard.get_hash()
+        if not validation.get("ok"):
+            self._trace_whiteboard_update(
+                task_id=hitl_tag,
+                ops_path=self._rel_run_path(ops_file),
+                diff_path="",
+                status="ops_validation_failed",
+                errors=validation.get("errors", []),
+                warnings=validation.get("warnings", []),
+                before_hash=before_hash,
+                after_hash=None,
+                repair_attempt=0,
+            )
+            hitl_meta["whiteboard_ops_status"] = "ops_validation_failed"
+            return hitl_meta
+
+        try:
+            apply_result = whiteboard_ops_apply_atomic(self.whiteboard.path, ops, hitl_tag)
+        except Exception as exc:
+            apply_result = {"ok": False, "errors": [str(exc)], "warnings": []}
+
+        if apply_result.get("ok"):
+            diff_path = ""
+            after_hash = self.whiteboard.get_hash()
+            try:
+                diff_path = persist_whiteboard_diff(
+                    apply_result.get("before_text", ""),
+                    apply_result.get("after_text", ""),
+                    {"run_id": self.run_context.run_id, "task_id": hitl_tag, "attempt": 0},
+                    root=system_root(),
+                    whiteboard_path=self.whiteboard.path,
+                )["diff_path"]
+            except Exception:
+                diff_path = ""
+            self._trace_whiteboard_update(
+                task_id=hitl_tag,
+                ops_path=self._rel_run_path(ops_file),
+                diff_path=diff_path,
+                status="applied",
+                errors=[],
+                warnings=apply_result.get("warnings", []),
+                before_hash=apply_result.get("before_hash"),
+                after_hash=after_hash,
+                repair_attempt=0,
+            )
+            hitl_meta["whiteboard_ops_status"] = "applied"
+            hitl_meta["whiteboard_diff"] = diff_path
+            return hitl_meta
+
+        self._trace_whiteboard_update(
+            task_id=hitl_tag,
+            ops_path=self._rel_run_path(ops_file),
+            diff_path="",
+            status="apply_failed",
+            errors=apply_result.get("errors", []),
+            warnings=apply_result.get("warnings", []),
+            before_hash=before_hash,
+            after_hash=None,
+            repair_attempt=0,
+        )
+        hitl_meta["whiteboard_ops_status"] = "apply_failed"
+        return hitl_meta
 
     def _hitl_intervene(
         self,

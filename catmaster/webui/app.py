@@ -226,6 +226,8 @@ def _poll_updates() -> Tuple[
             prompt_meta = f"Report path: {report_path}" if report_path else ""
         else:
             prompt_title = "Input Required"
+    if prompt_visible:
+        run_status = f"[INPUT REQUIRED] {run_status}"
     return (
         run_status,
         feed_text,
@@ -279,6 +281,18 @@ def launch(*, host: str = "127.0.0.1", port: int = 7860, workspace: Optional[str
         with gr.Row():
             run_info = gr.Textbox(label="Run Info", interactive=False)
 
+        with gr.Group(visible=False) as prompt_group:
+            gr.Markdown("## INPUT REQUIRED (Plan Review / HITL)")
+            prompt_title_md = gr.Markdown()
+            prompt_body_md = gr.Markdown()
+            prompt_meta_md = gr.Markdown()
+            prompt_input = gr.Textbox(label="Your Feedback", lines=3)
+            with gr.Row():
+                submit_btn = gr.Button("Submit")
+                approve_btn = gr.Button("Approve (yes)")
+            prompt_status = gr.Textbox(label="Prompt Status", interactive=False)
+            prompt_id_box = gr.Textbox(visible=False)
+
         with gr.Row():
             with gr.Column(scale=1):
                 runs_dropdown = gr.Dropdown(label="Runs", choices=[])
@@ -303,18 +317,6 @@ def launch(*, host: str = "127.0.0.1", port: int = 7860, workspace: Optional[str
                         trace_patch = gr.Textbox(label="patch_trace.jsonl", lines=8, interactive=False)
                     with gr.TabItem("Final Report"):
                         final_report_md = gr.Markdown()
-
-        with gr.Group(visible=False) as prompt_group:
-            gr.Markdown("## Input Required")
-            prompt_title_md = gr.Markdown()
-            prompt_body_md = gr.Markdown()
-            prompt_meta_md = gr.Markdown()
-            prompt_input = gr.Textbox(label="Your Feedback", lines=3)
-            with gr.Row():
-                submit_btn = gr.Button("Submit")
-                approve_btn = gr.Button("Approve (yes)")
-            prompt_status = gr.Textbox(label="Prompt Status", interactive=False)
-            prompt_id_box = gr.Textbox(visible=False)
 
         refresh_workspaces_btn.click(
             _refresh_workspaces,

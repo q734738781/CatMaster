@@ -126,18 +126,27 @@ Context:
 - After this proposal, a Director agent will dynamically decide the next concrete task based on progress.
 
 Your job:
-- Produce a COMPLETE proposal in markdown (not just an outline).
+- Produce a COMPLETE but compact proposal in markdown (not just an outline).
 - Also produce an ordered list of work_packages (high-level steps) that represent the suggested execution order.
   - The number of work packages is not fixed; include as many as needed.
   - Do NOT write tool-by-tool steps; keep work packages as methodological/engineering milestones.
 
-Proposal must include:
-- Objective & scope
-- Current context summary (based on the full whiteboard and artifacts index)
-- Technical approach / strategy (high-level, but complete)
-- Work packages (with deliverables + acceptance checks)
-- Risks / failure modes and fallback options
-- Items needing human decision (if any)
+Core behavior:
+- Prefer making reasonable default assumptions and proceeding, instead of asking the human to specify everything.
+- Only ask the human about decisions that are truly BLOCKING (cannot proceed safely / would change the final deliverable drastically).
+- If the user request includes an explicit clarification in parentheses or bilingual form (e.g., "PX (toluene)"), treat that clarification as authoritative.
+
+Output requirements:
+1) A COMPLETE but compact proposal in markdown.
+   - Keep it proportional: for simple one-deliverable tasks, keep it short and actionable.
+   - Avoid boilerplate "in scope/out of scope" unless the user explicitly asks.
+2) Include a "Key parameters (defaults)" section near the top:
+   - List 5-10 key parameters with: parameter name, chosen default, confidence (high/medium/low), short rationale.
+3) Include "Items needing human decision" ONLY if blocking:
+   - Prefix each with "BLOCKING:".
+   - Limit to at most 1-3 blocking questions.
+   - If not blocking, decide a default and record it in "Key parameters (defaults)" instead.
+4) Also output an ordered list of work_packages (high-level milestones). Do NOT write tool-by-tool steps.
 
 Rules:
 - Use workspace-relative paths only.
@@ -217,6 +226,11 @@ Rules:
 - Do not emit meta tasks like "write a plan/proposal".
 - If you need information from a file, emit a task that reads that file.
 - One decision per turn: you MUST call director_decide exactly once.
+- If the proposal contains unresolved BLOCKING human decisions (look for "BLOCKING:" in "Items needing human decision"),
+  you MUST NOT continue with PerformNextTask. Instead, return MajorReviseProposal with:
+  - updated_proposal_md that includes your current best defaults,
+  - updated_work_packages,
+  - needs_human=true and questions_for_human (1-3 items).
 """),
         ("human", """
 User request:
@@ -293,7 +307,8 @@ You are a task summarizer. Use ONLY the task's local observations to summarize t
 Rules:
 - Respond with structured output that matches the summarizer schema.
 - If task is completed successfully, set task_outcome="success". 
-- If task meets some great problem (e.g. hardware failure, software bug, etc.) and needs human intervention for further guidance, set task_outcome="needs_intervention". Do not use it with trivial issues (e.g. file layout, request confirmation of execution).
+- Set task_outcome="needs_intervention" when the task cannot be completed without human input due to missing/ambiguous critical requirements (not just hardware/software failures).
+- Do NOT use needs_intervention for minor preference questions that do not block delivery.
 - If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
 - Ops must be only of UPSERT or DEPRECATE and target: Key Facts, Key Files, Constraints, Open Questions.
 - UPSERT requirements:
@@ -322,7 +337,8 @@ Your previous whiteboard ops were invalid. Regenerate correct ops and structured
 Rules:
 - Respond with structured output that matches the summarizer schema.
 - If task is completed successfully, set task_outcome="success". 
-- If task meets some great problem (e.g. hardware failure, software bug, etc.) and needs human intervention for further guidance, set task_outcome="needs_intervention". Do not use it with trivial issues (e.g. file layout, request confirmation of execution).
+- Set task_outcome="needs_intervention" when the task cannot be completed without human input due to missing/ambiguous critical requirements (not just hardware/software failures).
+- Do NOT use needs_intervention for minor preference questions that do not block delivery.
 - If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
 - Ops must only target: Key Facts, Key Files, Constraints, Open Questions.
 - UPSERT requirements:
