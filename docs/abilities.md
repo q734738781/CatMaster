@@ -103,49 +103,10 @@ This document summarizes what the codebase can do right now, based on the curren
 
 
 
-## Demos (checked against current files)
+## Demos (prompt-only)
 
-
-
-
-- `demos/demo_llm_o2_vasp.py`:
-
-  - LLM-driven O2-in-a-box VASP workflow.
-
-
-
-- `demos/demo_llm_o2_spin_compare.py`:
-
-  - Singlet vs triplet O2 comparison; writes results markdown.
-
-
-
-- `demos/demo_llm_fe_surface.py`:
-
-  - Fe surface energies for (100)/(110)/(111).
-
-
-
-- `demos/demo_llm_fe_comprehension.py`:
-
-  - Fe surface energies + CO adsorption site screening.
-
-
-
-- `demos/demo_llm_fecuni_111_CO.py`:
-
-  - Fe/Cu/Ni (111) CO adsorption energy comparison.
-
-
-
-- `demos/demo_llm_Alloy_HER.py`:
-
-  - Pt–Ni–Cu alloy HER screening with MACE + DFT validation.
-
-
-- `demos/show_tool_descriptions.py`:
-
-  - Print tool schemas and descriptions.
+- Demo prompts live under `demos/examples/*.md`.
+- Each markdown file includes the original prompt (and may include run artifacts from prior executions).
 
 
 

@@ -1,7 +1,7 @@
 # Demo: demo_llm_fe_comprehension
 
 ## Run artifacts
-- Script: demos/demo_llm_fe_comprehension.py
+- Script: (removed; prompt-only demo)
 - Workspace: workspace/demo_llm_fe_comprehension
 - Run dir: workspace/demo_llm_fe_comprehension/.catmaster/runs/run_20260115_004710_51351d (status: done)
 

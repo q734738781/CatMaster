@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from .app import launch
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="CatMaster WebUI")
-    parser.add_argument("--workspace", default=None, help="Workspace root (or set CATMASTER_WORKSPACE)")
+    default_workspace = str(Path.cwd() / "workspace")
+    parser.add_argument("--workspace", default=default_workspace, help="Workspace root (default: ./workspace)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7860)
     args = parser.parse_args()

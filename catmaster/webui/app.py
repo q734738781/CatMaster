@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -86,11 +87,43 @@ def _refresh_runs() -> Tuple[List[Tuple[str, str]], str]:
     runs = _SESSION.list_runs()
     return runs, "Runs refreshed."
 
+def _refresh_workspaces(root_path: str) -> Tuple[gr.Dropdown, str]:
+    ok, msg, choices = _SESSION.set_workspace_root(root_path)
+    if not ok:
+        return gr.update(choices=[], value=None), msg
+    return gr.update(choices=choices, value=None), msg
 
-def _open_workspace(path: str) -> Tuple[List[Tuple[str, str]], str]:
-    ok, msg = _SESSION.open_workspace(path)
+
+def _open_workspace(root_path: str, name: str) -> Tuple[gr.Dropdown, str, str]:
+    _SESSION.set_workspace_root(root_path)
+    ok, msg = _SESSION.open_workspace_by_name(name)
     runs = _SESSION.list_runs() if ok else []
-    return runs, msg
+    current = _SESSION.current_workspace_path()
+    return gr.update(choices=runs, value=None), msg, current
+
+
+def _create_workspace(root_path: str, name: str) -> Tuple[gr.Dropdown, gr.Dropdown, str, str, str]:
+    ok, msg, choices = _SESSION.set_workspace_root(root_path)
+    if not ok:
+        return (
+            gr.update(choices=[], value=None),
+            gr.update(choices=[], value=None),
+            msg,
+            "",
+            name,
+        )
+    created, create_msg = _SESSION.create_workspace(name)
+    runs = _SESSION.list_runs() if created else []
+    current = _SESSION.current_workspace_path()
+    status = create_msg if create_msg else msg
+    value = name if created else None
+    return (
+        gr.update(choices=choices, value=value),
+        gr.update(choices=runs, value=None),
+        status,
+        current,
+        "",
+    )
 
 
 def _select_run(run_name: str) -> str:
@@ -213,14 +246,26 @@ def _poll_updates() -> Tuple[
 
 
 def launch(*, host: str = "127.0.0.1", port: int = 7860, workspace: Optional[str] = None) -> None:
+    if workspace is None:
+        workspace = str(Path.cwd() / "workspace")
     with gr.Blocks() as demo:
         gr.Markdown("# CatMaster Web Workbench")
 
         with gr.Row():
-            workspace_box = gr.Textbox(label="Workspace", placeholder="Path to workspace")
-            open_btn = gr.Button("Open Workspace")
-            refresh_runs_btn = gr.Button("Refresh Runs")
+            workspace_root_box = gr.Textbox(
+                label="Workspace Root",
+                placeholder="Path to workspace root",
+                value=workspace,
+            )
+            refresh_workspaces_btn = gr.Button("Refresh Workspaces")
             status_box = gr.Textbox(label="Status", interactive=False)
+
+        with gr.Row():
+            workspace_list = gr.Dropdown(label="Workspaces", choices=[])
+            open_workspace_btn = gr.Button("Open Workspace")
+            new_workspace_name = gr.Textbox(label="New Workspace Name")
+            create_workspace_btn = gr.Button("Create Workspace")
+            current_workspace_box = gr.Textbox(label="Current Workspace", interactive=False)
 
         with gr.Row():
             prompt_box = gr.Textbox(label="User Request", lines=4)
@@ -271,15 +316,22 @@ def launch(*, host: str = "127.0.0.1", port: int = 7860, workspace: Optional[str
             prompt_status = gr.Textbox(label="Prompt Status", interactive=False)
             prompt_id_box = gr.Textbox(visible=False)
 
-        open_btn.click(
+        refresh_workspaces_btn.click(
+            _refresh_workspaces,
+            inputs=[workspace_root_box],
+            outputs=[workspace_list, status_box],
+        )
+        open_workspace_btn.click(
             _open_workspace,
-            inputs=[workspace_box],
-            outputs=[runs_dropdown, status_box],
+            inputs=[workspace_root_box, workspace_list],
+            outputs=[runs_dropdown, status_box, current_workspace_box],
         )
-        refresh_runs_btn.click(
-            _refresh_runs,
-            outputs=[runs_dropdown, status_box],
+        create_workspace_btn.click(
+            _create_workspace,
+            inputs=[workspace_root_box, new_workspace_name],
+            outputs=[workspace_list, runs_dropdown, status_box, current_workspace_box, new_workspace_name],
         )
+        # Runs are refreshed after opening/creating a workspace.
         runs_dropdown.change(
             _select_run,
             inputs=[runs_dropdown],
@@ -326,9 +378,9 @@ def launch(*, host: str = "127.0.0.1", port: int = 7860, workspace: Optional[str
         )
 
         if workspace:
-            ok, msg = _SESSION.open_workspace(workspace)
+            ok, msg, choices = _SESSION.set_workspace_root(workspace)
             status_box.value = msg
-            workspace_box.value = workspace
-            runs_dropdown.choices = _SESSION.list_runs()
+            workspace_root_box.value = workspace
+            workspace_list.choices = choices
 
     demo.queue().launch(server_name=host, server_port=port)

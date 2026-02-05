@@ -1,7 +1,7 @@
 # Demo: demo_llm_eos_fe_bcc
 
 ## Run artifacts
-- Script: demos/demo_llm_eos_fe_bcc.py
+- Script: (removed; prompt-only demo)
 - Workspace: workspace/demo_llm_eos_fe_bcc
 - Run dir: workspace/demo_llm_eos_fe_bcc/.catmaster/runs/run_20260117_114419_bf22ca (status: done)
 

@@ -1,7 +1,7 @@
 # Demo: demo_llm_fe_surface
 
 ## Run artifacts
-- Script: demos/demo_llm_fe_surface.py
+- Script: (removed; prompt-only demo)
 - Workspace: workspace/demo_llm_fe_surface
 - Run dir: workspace/demo_llm_fe_surface/.catmaster/runs/run_20260115_030333_f3b3dd (status: done)
 

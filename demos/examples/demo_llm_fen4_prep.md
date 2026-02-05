@@ -1,7 +1,7 @@
 # Demo: demo_llm_fen4_prep
 
 ## Run artifacts
-- Script: demos/demo_llm_fen4_prep.py
+- Script: (removed; prompt-only demo)
 - Workspace: workspace/demo_fen4_co
 - Run dir: workspace/demo_fen4_co/.catmaster/runs/run_20260117_135301_14fc15 (status: done)
 

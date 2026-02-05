@@ -19,6 +19,7 @@ from .web_reporter import PromptBroker, WebReporter
 class WebSession:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self.workspace_root: Optional[Path] = None
         self.workspace: Optional[Path] = None
         self.reporter: Optional[WebReporter] = None
         self.broker: Optional[PromptBroker] = None
@@ -31,17 +32,65 @@ class WebSession:
         self.current_prompt_id: str = ""
         self.event_lines: List[str] = []
 
-    def open_workspace(self, path: str) -> Tuple[bool, str]:
+    def set_workspace_root(self, path: str) -> Tuple[bool, str, List[Tuple[str, str]]]:
+        try:
+            root = Path(path).expanduser().resolve()
+            root.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return False, f"Failed to open workspace root: {exc}", []
+        with self._lock:
+            self.workspace_root = root
+        return True, f"Workspace root: {root}", self._list_workspace_choices(root)
+
+    def open_workspace(self, path: str, *, create: bool = True) -> Tuple[bool, str]:
+        if self.run_thread and self.run_thread.is_alive():
+            return False, "Run in progress; stop it before switching workspace."
         try:
             ws = Path(path).expanduser().resolve()
-            ws.mkdir(parents=True, exist_ok=True)
+            if ws.exists():
+                if not ws.is_dir():
+                    return False, f"Workspace is not a directory: {ws}"
+            else:
+                if not create:
+                    return False, f"Workspace does not exist: {ws}"
+                ws.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
             return False, f"Failed to open workspace: {exc}"
         os.environ["CATMASTER_WORKSPACE"] = str(ws)
         system_root().mkdir(parents=True, exist_ok=True)
         with self._lock:
             self.workspace = ws
+            self.selected_run_dir = None
+            self.last_event_seq = 0
+            self.event_lines = []
+            self.run_info = {}
+            if self.run_status != "running":
+                self.run_status = "idle"
         return True, f"Workspace: {ws}"
+
+    def open_workspace_by_name(self, name: str) -> Tuple[bool, str]:
+        root = self.workspace_root
+        if root is None:
+            return False, "Workspace root not set."
+        if not name:
+            return False, "Select a workspace first."
+        target = (root / name).resolve()
+        return self.open_workspace(str(target), create=False)
+
+    def create_workspace(self, name: str) -> Tuple[bool, str]:
+        root = self.workspace_root
+        if root is None:
+            return False, "Workspace root not set."
+        if not name:
+            return False, "Workspace name is required."
+        target = (root / name).resolve()
+        return self.open_workspace(str(target), create=True)
+
+    def list_workspaces(self) -> List[Tuple[str, str]]:
+        root = self.workspace_root
+        if root is None:
+            return []
+        return self._list_workspace_choices(root)
 
     def list_runs(self) -> List[Tuple[str, str]]:
         if self.workspace is None:
@@ -191,6 +240,10 @@ class WebSession:
         with self._lock:
             return self.selected_run_dir
 
+    def current_workspace_path(self) -> str:
+        with self._lock:
+            return str(self.workspace) if self.workspace else ""
+
     def read_whiteboard(self) -> str:
         return io.read_text(system_root() / "whiteboard.md", view="system", max_chars=MAX_TEXT_PREVIEW_CHARS)
 
@@ -258,3 +311,16 @@ class WebSession:
             active_runs_path.write_text(json.dumps(active_runs, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             return
+
+    def _list_workspace_choices(self, root: Path) -> List[Tuple[str, str]]:
+        choices: List[Tuple[str, str]] = []
+        if not root.exists():
+            return choices
+        for entry in sorted(root.iterdir(), key=lambda p: p.name):
+            if not entry.is_dir():
+                continue
+            name = entry.name
+            if name.startswith("."):
+                continue
+            choices.append((name, name))
+        return choices
