@@ -24,7 +24,7 @@ This document defines coding conventions intended for code-generation agents (e.
   - All executable “capabilities” exposed to the LLM.
   - Tools must validate inputs with Pydantic schemas and return standardized outputs.
 - `catmaster/ui/`
-  - Reporters (console/live) and event bus.
+  - Reporter abstraction and UI event bus (console UI removed; WebUI lives under `catmaster/webui/`).
 
 ### Data model (high level)
 

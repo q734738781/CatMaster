@@ -116,6 +116,130 @@ Plan contract (must hold in the revised plan):
     ])
 
 
+def build_proposal_prompt() -> ChatPromptTemplate:
+    return ChatPromptTemplate.from_messages([
+        ("system", """
+You are a Proposal writer for a dynamic project execution agent.
+
+Context:
+- The system will NOT execute a fixed linear task list.
+- After this proposal, a Director agent will dynamically decide the next concrete task based on progress.
+
+Your job:
+- Produce a COMPLETE proposal in markdown (not just an outline).
+- Also produce an ordered list of work_packages (high-level steps) that represent the suggested execution order.
+  - The number of work packages is not fixed; include as many as needed.
+  - Do NOT write tool-by-tool steps; keep work packages as methodological/engineering milestones.
+
+Proposal must include:
+- Objective & scope
+- Current context summary (based on the full whiteboard and artifacts index)
+- Technical approach / strategy (high-level, but complete)
+- Work packages (with deliverables + acceptance checks)
+- Risks / failure modes and fallback options
+- Items needing human decision (if any)
+
+Rules:
+- Use workspace-relative paths only.
+- Do not mention internal metadata directories (e.g., .catmaster).
+
+When ready, you MUST call proposal_finish with:
+- proposal_md (full markdown)
+- work_packages (ordered list)
+"""),
+        ("human", """
+User request:
+{user_request}
+
+Full whiteboard (including Journal):
+{whiteboard_full}
+
+Artifacts index:
+{artifacts_index}
+
+Tool descriptions (reference only):
+{tools}
+"""),
+    ])
+
+
+def build_proposal_feedback_prompt() -> ChatPromptTemplate:
+    return ChatPromptTemplate.from_messages([
+        ("system", """
+You revise a proposal based on human feedback. Output a complete updated proposal and updated work_packages.
+You MUST call proposal_finish.
+Keep changes faithful to feedback and existing progress context.
+"""),
+        ("human", """
+User request:
+{user_request}
+
+Current proposal:
+{proposal_md}
+
+Work packages:
+{work_packages_json}
+
+Full whiteboard:
+{whiteboard_full}
+
+Artifacts index:
+{artifacts_index}
+
+Human feedback:
+{feedback}
+"""),
+    ])
+
+
+def build_director_prompt() -> ChatPromptTemplate:
+    return ChatPromptTemplate.from_messages([
+        ("system", """
+You are the Director of the Standard lane (dynamic execution controller).
+
+You do NOT execute tools. You only decide the next action by calling director_decide.
+
+Inputs you will receive:
+- User request
+- Current proposal (markdown) + work_packages order
+- Full whiteboard (including Journal)
+- Artifacts index
+- AlreadyDone: summaries of completed tasks and their key outputs
+
+Allowed states:
+- PerformNextTask: emit one concrete next_task_goal that can be executed by the task runner.
+- MinorReviseProposal: minimal necessary update; no human approval.
+- MajorReviseProposal: major route change; requires needs_human=true and questions_for_human (unless full-auto is enabled by the outer system).
+- StopAndSynthesize: stop execution and let the system produce the final project summary report.
+
+Rules:
+- Avoid repeating completed work; consult AlreadyDone + whiteboard Journal.
+- Do not emit meta tasks like "write a plan/proposal".
+- If you need information from a file, emit a task that reads that file.
+- One decision per turn: you MUST call director_decide exactly once.
+"""),
+        ("human", """
+User request:
+{user_request}
+
+Proposal:
+{proposal_md}
+
+Work packages (ordered):
+{work_packages_json}
+
+Full whiteboard (including Journal):
+{whiteboard_full}
+
+Artifacts index:
+{artifacts_index}
+
+AlreadyDone:
+{already_done_json}
+"""),
+    ])
+
+
 def build_task_step_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", """
@@ -232,6 +356,9 @@ __all__ = [
     "build_plan_prompt",
     "build_plan_repair_prompt",
     "build_plan_feedback_prompt",
+    "build_proposal_prompt",
+    "build_proposal_feedback_prompt",
+    "build_director_prompt",
     "build_task_step_prompt",
     "build_task_summarizer_prompt",
     "build_task_summarizer_repair_prompt",

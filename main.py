@@ -5,15 +5,15 @@ User-friendly entry point for CatMaster LLM runs.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import shutil
-import sys
 from pathlib import Path
 
 from catmaster.agents.orchestrator import Orchestrator
 from catmaster.llm.config import LLMProfile
-from catmaster.ui import create_reporter
+from catmaster.ui import NullReporter
 
 
 def _load_prompt(args: argparse.Namespace) -> str:
@@ -44,18 +44,17 @@ def main() -> None:
     parser.add_argument("--max-plan-steps", type=int, default=50)
     parser.add_argument("--patch-repair-attempts", type=int, default=1)
     parser.add_argument("--summary-repair-attempts", type=int, default=1)
-    parser.add_argument("--no-plan-review", action="store_true", help="Disable plan review")
+    parser.add_argument("--no-plan-review", action="store_true", help="Disable plan review (required for non-interactive CLI)")
+    parser.add_argument("--lane", choices=["fast", "standard"], required=True, help="Execution lane")
+    parser.add_argument("--full-auto-major", action="store_true", help="Auto-accept major proposal revisions (standard lane)")
 
     # Logging. Default disabled
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--log-dir", default=None)
     parser.add_argument("--log-llm", action="store_true", help="Log LLM prompts/responses")
 
-    # Proxy and UI
+    # Proxy
     parser.add_argument("--proxy", default=None, help="Proxy as <host>:<port> for LLM API calls")
-    parser.add_argument("--ui", choices=["rich", "plain", "off"], default=None)
-    parser.add_argument("--ui-debug", action="store_true")
-    parser.add_argument("--no-splash", action="store_true")
 
     args = parser.parse_args()
 
@@ -78,10 +77,7 @@ def main() -> None:
         os.environ["HTTPS_PROXY"] = f"http://{host}:{port}"
         os.environ["SOCKS_PROXY"] = f"socks5://{host}:{port}"
 
-    handlers: list[logging.Handler] = []
-    ui_mode = args.ui or ("rich" if sys.stdout.isatty() else "plain")
-    if ui_mode == "off":
-        handlers.append(logging.StreamHandler())
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
     if args.log_dir:
         log_dir = Path(args.log_dir).expanduser().resolve()
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -93,12 +89,7 @@ def main() -> None:
         handlers=handlers or None,
     )
 
-    reporter = create_reporter(
-        ui_mode,
-        ui_debug=args.ui_debug,
-        show_splash=not args.no_splash,
-        is_tty=sys.stdout.isatty(),
-    )
+    reporter = NullReporter()
 
     if args.clean and workspace.exists():
         shutil.rmtree(workspace)
@@ -110,9 +101,23 @@ def main() -> None:
     orch_kwargs: dict = {
         "llm_profile": llm_profile,
         "reporter": reporter,
-        "log_llm_console": ui_mode == "off",
+        "log_llm_console": False,
         "resume": args.resume,
     }
+    if args.resume:
+        active_runs_path = workspace / ".catmaster" / "active_runs.json"
+        if active_runs_path.exists():
+            try:
+                active_runs = json.loads(active_runs_path.read_text(encoding="utf-8"))
+            except Exception:
+                active_runs = {}
+            if isinstance(active_runs, dict):
+                lane_run = active_runs.get(args.lane)
+                if lane_run:
+                    candidate = Path(lane_run)
+                    if not candidate.is_absolute():
+                        candidate = (workspace / ".catmaster" / lane_run).resolve()
+                    orch_kwargs["resume_dir"] = str(candidate)
     if args.log_dir:
         orch_kwargs["llm_log_path"] = str(Path(args.log_dir).expanduser().resolve() / "orchestrator_llm.jsonl")
     if args.max_steps is not None:
@@ -128,10 +133,34 @@ def main() -> None:
 
     orch = Orchestrator(**orch_kwargs)
 
+    try:
+        sys_root = workspace / ".catmaster"
+        sys_root.mkdir(parents=True, exist_ok=True)
+        active_runs_path = sys_root / "active_runs.json"
+        try:
+            active_runs = json.loads(active_runs_path.read_text(encoding="utf-8"))
+        except Exception:
+            active_runs = {}
+        if not isinstance(active_runs, dict):
+            active_runs = {}
+        try:
+            rel_run = orch.run_context.run_dir.relative_to(sys_root)
+            active_runs[args.lane] = str(rel_run)
+        except Exception:
+            active_runs[args.lane] = str(orch.run_context.run_dir)
+        active_runs_path.write_text(json.dumps(active_runs, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    if not args.no_plan_review:
+        raise SystemExit("Console UI is removed. Use WebUI for plan review or pass --no-plan-review.")
+
     orch.run(
         prompt,
         log_llm=args.log_llm,
-        plan_review=not args.no_plan_review,
+        plan_review=False,
+        lane=args.lane,
+        full_auto_major=args.full_auto_major,
     )
 
 

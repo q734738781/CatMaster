@@ -14,15 +14,15 @@ stub for vasp_execute.
 """
 # Add parent dir to sys.path
 from __future__ import annotations
-import sys
 from pathlib import Path
+import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 import argparse
 import logging
 import os
 import shutil
 from catmaster.agents.orchestrator import Orchestrator
-from catmaster.ui import create_reporter
+from catmaster.ui import NullReporter
 
 
 
@@ -34,15 +34,9 @@ def main() -> None:
     parser.add_argument("--log-dir", default=None, help="Directory to store logs (log.log + orchestrator_llm.jsonl)")
     parser.add_argument("--proxy", default=None, help="Proxy server address expressed as <host>:<port>")
     parser.add_argument("--resume", action="store_true", help="Resume from existing workspace (do not clear)")
-    parser.add_argument("--ui", choices=["rich", "plain", "off"], default=None, help="UI mode (default: rich if TTY else plain)")
-    parser.add_argument("--ui-debug", action="store_true", help="Show UI debug panel with LLM snippets/paths")
-    parser.add_argument("--no-splash", action="store_true", help="Disable splash screen")
     args = parser.parse_args()
 
-    ui_mode = args.ui or ("rich" if sys.stdout.isatty() else "plain")
-    handlers = []
-    if ui_mode == "off":
-        handlers.append(logging.StreamHandler())
+    handlers = [logging.StreamHandler()]
     if args.proxy:
         print(f"Using proxy: {args.proxy}")
         host, port = args.proxy.split(":")
@@ -60,12 +54,7 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=handlers,
     )
-    reporter = create_reporter(
-        ui_mode,
-        ui_debug=args.ui_debug,
-        show_splash=not args.no_splash,
-        is_tty=sys.stdout.isatty(),
-    )
+    reporter = NullReporter()
 
     root = Path(args.workspace).resolve()
     # Export to CATMASTER_WORKSPACE (tools should respect this workspace)
@@ -84,7 +73,7 @@ def main() -> None:
     orch = Orchestrator(
         max_steps=100,
         llm_log_path=str(log_dir_path / "orchestrator_llm.jsonl") if log_dir_path else None,
-        log_llm_console=ui_mode == "off",
+        log_llm_console=False,
         resume=args.resume,
         reporter=reporter,
     )
@@ -96,6 +85,7 @@ def main() -> None:
     result = orch.run(
         user_request,
         log_llm=True,
+        plan_review=False,
     )
 
     _ = result

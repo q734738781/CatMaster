@@ -50,6 +50,13 @@ conda create -n catmaster python=3.11
 pip install -r requirements/pc.txt
 ```
 
+### WebUI
+
+Run the web workbench (recommended):
+```bash
+python -m catmaster.webui --workspace /path/to/workspace
+```
+
 **For GPU SIDE**: Ensure the remote host has the Python/MACE runtime; the task scripts are forwarded via DPDispatcher, so syncing the full repo is not required.
 **For CPU SIDE**: VASP execution now runs a forwarded Python boot script; ensure the CPU cluster provides Python 3.10+ in the job environment (module/conda).
 

@@ -33,10 +33,9 @@ This document summarizes what the codebase can do right now, based on the curren
 
 ## UI
 
-- Reporter abstraction with three modes: `rich`, `plain`, `off` (`catmaster/ui`).
-- Rich live dashboard shows tasks, current step, tool usage, whiteboard counts, and an event feed; optional debug panel.
-- Scrollable plan review prompt and final-summary viewer (rich mode), with plain console fallbacks.
-- HITL report viewer + feedback prompt (rich + plain).
+- WebUI workbench (Gradio) for event feed, whiteboard, artifacts, task state, traces, and final report.
+- Plan/Proposal review and HITL feedback are handled in WebUI and unblock the orchestrator.
+- Console UI has been removed; CLI is non-interactive.
 
 
 

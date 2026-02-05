@@ -14,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable
 import logging
-import sys
 
 from catmaster.tools.registry import get_tool_registry
 from catmaster.tools.base import system_root, workspace_root
@@ -36,7 +35,14 @@ from catmaster.agents.logo import logo_str
 from catmaster.agents.task_runner import TaskSummarizer
 from catmaster.agents.tool_calling_stepper import ToolCallingTaskStepper
 from catmaster.agents.plan_control_tools import PLAN_CONTROL_TOOL_NAMES, get_plan_control_tool_schemas
-from catmaster.agents.control_tools import get_control_tool_schemas
+from catmaster.agents.proposal_control_tools import (
+    PROPOSAL_CONTROL_TOOL_NAMES,
+    get_proposal_control_tool_schemas,
+)
+from catmaster.agents.director_control_tools import (
+    DIRECTOR_CONTROL_TOOL_NAMES,
+    get_director_control_tool_schemas,
+)
 from catmaster.agents.llm_utils import llm_text
 from catmaster.llm.driver import ToolCallingDriver
 from catmaster.llm.config import LLMProfile
@@ -54,6 +60,9 @@ from catmaster.agents.orchestrator_prompts import (
     build_task_summarizer_prompt,
     build_task_summarizer_repair_prompt,
     build_summary_prompt,
+    build_proposal_prompt,
+    build_proposal_feedback_prompt,
+    build_director_prompt,
 )
 
 _PLANNER_TOOL_ALLOWLIST = [
@@ -184,6 +193,9 @@ class Orchestrator:
 
         self.plan_prompt = build_plan_prompt()
         self.plan_feedback_prompt = build_plan_feedback_prompt()
+        self.proposal_prompt = build_proposal_prompt()
+        self.proposal_feedback_prompt = build_proposal_feedback_prompt()
+        self.director_prompt = build_director_prompt()
         self.task_step_prompt = build_task_step_prompt()
         self.task_summary_prompt = build_task_summarizer_prompt()
         self.task_summary_repair_prompt = build_task_summarizer_repair_prompt()
@@ -252,9 +264,15 @@ class Orchestrator:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("task_state.json must contain a JSON object")
-        for key in ("user_request", "plan", "tasks", "observations", "status"):
+        if "lane" not in data:
+            # Legacy runs without lane default to standard.
+            data["lane"] = "standard"
+        for key in ("user_request", "tasks", "observations", "status"):
             if key not in data:
                 raise ValueError(f"task_state.json missing required key: {key}")
+        lane = data.get("lane")
+        if lane not in {"fast", "standard"}:
+            raise ValueError(f"task_state.json has invalid lane: {lane}")
         if not isinstance(data["tasks"], list):
             raise ValueError("task_state.json tasks must be a list")
         if not isinstance(data["observations"], list):
@@ -600,6 +618,853 @@ class Orchestrator:
         state["round"] = state.get("round", 0) + 1
         return state
 
+    def _artifact_index(self) -> List[Dict[str, Any]]:
+        entries = self.artifact_log.load()
+        if not isinstance(entries, list):
+            return []
+        return entries
+
+    def _proposal_path(self) -> Path:
+        return self.run_context.run_dir / "proposal.md"
+
+    def _write_proposal(self, proposal_md: str) -> str:
+        path = self._proposal_path()
+        path.write_text(proposal_md or "", encoding="utf-8")
+        return str(path.relative_to(self.run_context.run_dir))
+
+    def _create_proposal(self, user_request: str, *, log_llm: bool = False) -> Dict[str, Any]:
+        tools = self._tool_schema()
+        whiteboard_full = self.whiteboard.read()
+        artifacts_index = self._artifact_index()
+        messages = self.proposal_prompt.format_messages(
+            user_request=user_request,
+            whiteboard_full=whiteboard_full,
+            artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
+            tools=tools,
+        )
+        self._emit("PROPOSAL_START", category="plan", payload={"attempts": self.max_plan_steps})
+        input_items = self._messages_to_input_items(messages)
+        stepper = ToolCallingTaskStepper(
+            driver=self.tool_driver,
+            backend=self.tool_backend,
+            prompt=None,
+            control_tools=get_proposal_control_tool_schemas(),
+            control_tool_names=PROPOSAL_CONTROL_TOOL_NAMES,
+            reporter=self.reporter,
+            max_steps=self.max_plan_steps,
+            driver_kwargs={
+                **self._tool_driver_kwargs(),
+                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
+            },
+            role="proposal",
+        )
+        step_result = stepper.run(
+            task_id="proposal",
+            task_goal="Create proposal",
+            context_pack={},
+            seed_messages=input_items,
+            function_tools=[],
+            builtin_tools=[],
+        )
+        finish_reason = step_result.get("finish_reason", "")
+        if finish_reason != "proposal_finish":
+            raise ValueError(f"Proposal did not finish with proposal_finish (got {finish_reason})")
+        payload = step_result.get("control_payload") or {}
+        proposal_md = payload.get("proposal_md")
+        work_packages = payload.get("work_packages")
+        if not isinstance(proposal_md, str):
+            raise ValueError("Proposal must include proposal_md string")
+        if not isinstance(work_packages, list):
+            raise ValueError("Proposal must include work_packages list")
+        self._trace_event("PROPOSAL_CREATED", {
+            "n_work_packages": len(work_packages),
+        })
+        self._emit("PROPOSAL_DONE", category="plan", payload={
+            "n_work_packages": len(work_packages),
+        })
+        return {
+            "proposal_md": proposal_md,
+            "work_packages": work_packages,
+        }
+
+    def _revise_proposal(
+        self,
+        user_request: str,
+        *,
+        proposal_md: str,
+        work_packages: List[str],
+        feedback: str,
+        log_llm: bool = False,
+    ) -> Dict[str, Any]:
+        whiteboard_full = self.whiteboard.read()
+        artifacts_index = self._artifact_index()
+        messages = self.proposal_feedback_prompt.format_messages(
+            user_request=user_request,
+            proposal_md=proposal_md,
+            work_packages_json=json.dumps(work_packages, ensure_ascii=False),
+            whiteboard_full=whiteboard_full,
+            artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
+            feedback=feedback,
+        )
+        input_items = self._messages_to_input_items(messages)
+        stepper = ToolCallingTaskStepper(
+            driver=self.tool_driver,
+            backend=self.tool_backend,
+            prompt=None,
+            control_tools=get_proposal_control_tool_schemas(),
+            control_tool_names=PROPOSAL_CONTROL_TOOL_NAMES,
+            reporter=self.reporter,
+            max_steps=self.max_plan_steps,
+            driver_kwargs={
+                **self._tool_driver_kwargs(),
+                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
+            },
+            role="proposal",
+        )
+        step_result = stepper.run(
+            task_id="proposal_feedback",
+            task_goal="Revise proposal",
+            context_pack={},
+            seed_messages=input_items,
+            function_tools=[],
+            builtin_tools=[],
+        )
+        finish_reason = step_result.get("finish_reason", "")
+        if finish_reason != "proposal_finish":
+            raise ValueError(f"Proposal feedback did not finish with proposal_finish (got {finish_reason})")
+        payload = step_result.get("control_payload") or {}
+        revised_md = payload.get("proposal_md")
+        revised_packages = payload.get("work_packages")
+        if not isinstance(revised_md, str):
+            raise ValueError("Revised proposal must include proposal_md string")
+        if not isinstance(revised_packages, list):
+            raise ValueError("Revised proposal must include work_packages list")
+        self._trace_event("PROPOSAL_REVISION", {
+            "feedback": feedback,
+            "work_packages_before": work_packages,
+            "work_packages_after": revised_packages,
+        })
+        return {
+            "proposal_md": revised_md,
+            "work_packages": revised_packages,
+        }
+
+    def _director_decide(
+        self,
+        *,
+        user_request: str,
+        proposal_md: str,
+        work_packages: List[str],
+        observations: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        whiteboard_full = self.whiteboard.read()
+        artifacts_index = self._artifact_index()
+        messages = self.director_prompt.format_messages(
+            user_request=user_request,
+            proposal_md=proposal_md,
+            work_packages_json=json.dumps(work_packages, ensure_ascii=False),
+            whiteboard_full=whiteboard_full,
+            artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
+            already_done_json=json.dumps(observations, ensure_ascii=False),
+        )
+        input_items = self._messages_to_input_items(messages)
+        stepper = ToolCallingTaskStepper(
+            driver=self.tool_driver,
+            backend=self.tool_backend,
+            prompt=None,
+            control_tools=get_director_control_tool_schemas(),
+            control_tool_names=DIRECTOR_CONTROL_TOOL_NAMES,
+            reporter=self.reporter,
+            max_steps=self.max_plan_steps,
+            driver_kwargs={
+                **self._tool_driver_kwargs(),
+                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
+            },
+            role="director",
+        )
+        step_result = stepper.run(
+            task_id="director",
+            task_goal="Decide next action",
+            context_pack={},
+            seed_messages=input_items,
+            function_tools=[],
+            builtin_tools=[],
+        )
+        finish_reason = step_result.get("finish_reason", "")
+        if finish_reason != "director_decide":
+            raise ValueError(f"Director did not finish with director_decide (got {finish_reason})")
+        payload = step_result.get("control_payload") or {}
+        return payload
+
+    def _review_proposal(
+        self,
+        *,
+        user_request: str,
+        proposal_md: str,
+        work_packages: List[str],
+        log_llm: bool,
+        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]],
+        allow_revise: bool = True,
+        persist_fn: Optional[Callable[[str, List[str]], None]] = None,
+    ) -> tuple[str, List[str], bool, str]:
+        review_state = {
+            "user_request": user_request,
+            "proposal_md": proposal_md,
+            "work_packages": work_packages,
+            "plan": {"todo": list(work_packages), "plan_description": proposal_md},
+            "feedback_history": [],
+            "approved": False,
+            "round": 0,
+        }
+        if plan_feedback_provider is None and not self.reporter.is_live():
+            raise ValueError("plan_review requires a live reporter (WebUI). Start WebUI or disable plan_review.")
+
+        last_feedback = ""
+        while not review_state.get("approved"):
+            plan_description = (review_state["proposal_md"] or "").strip()
+            self._emit("PLAN_REVIEW_SHOW", category="plan", payload={
+                "todo": review_state["work_packages"],
+                "plan_description_snippet": self._snippet(plan_description, 240),
+            })
+            self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan")
+            if plan_feedback_provider:
+                feedback = plan_feedback_provider({
+                    **review_state,
+                    "stage": "proposal_review",
+                })
+            else:
+                if hasattr(self.reporter, "prompt_plan_feedback") and self.reporter.is_live():
+                    feedback = self.reporter.prompt_plan_feedback(
+                        todo=review_state["work_packages"],
+                        plan_description=plan_description,
+                    )
+                else:
+                    raise ValueError("plan_review requires a live reporter (WebUI). Start WebUI or disable plan_review.")
+            if not feedback:
+                if plan_feedback_provider:
+                    raise ValueError("plan_review feedback cannot be empty")
+                self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan", payload={"error": "empty_input"})
+                continue
+
+            last_feedback = feedback
+            if self._is_plan_approved(feedback):
+                review_state["approved"] = True
+                review_state["feedback_history"].append({
+                    "round": review_state.get("round", 0),
+                    "feedback": feedback,
+                    "approved": True,
+                })
+                self._emit("PLAN_REVIEW_APPROVED", category="plan", payload={
+                    "feedback_snippet": self._snippet(feedback, 160),
+                })
+                break
+            if not allow_revise:
+                return proposal_md, work_packages, False, feedback
+
+            self._emit("PLAN_REVIEW_REVISING", category="plan", payload={
+                "feedback_snippet": self._snippet(feedback, 160),
+            })
+            revised = self._revise_proposal(
+                user_request,
+                proposal_md=proposal_md,
+                work_packages=work_packages,
+                feedback=feedback,
+                log_llm=log_llm,
+            )
+            proposal_md = revised["proposal_md"]
+            work_packages = revised["work_packages"]
+            if persist_fn:
+                persist_fn(proposal_md, work_packages)
+            review_state["proposal_md"] = proposal_md
+            review_state["work_packages"] = work_packages
+            review_state["plan"] = {"todo": list(work_packages), "plan_description": proposal_md}
+            review_state["feedback_history"].append({
+                "round": review_state.get("round", 0),
+                "feedback": feedback,
+                "approved": False,
+            })
+            review_state["round"] = review_state.get("round", 0) + 1
+        return proposal_md, work_packages, True, last_feedback
+
+    def _execute_task(
+        self,
+        *,
+        task_id: str,
+        task_goal: str,
+        log_llm: bool,
+    ) -> Dict[str, Any]:
+        context_pack = self.context_builder.build(
+            task_goal,
+            role="task_runner",
+            policy=ContextPackPolicy(
+                max_whiteboard_chars=10**9,
+                include_journal=True,
+                max_journal_chars=10**9,
+                max_artifacts=10**6,
+            ),
+        )
+        context_pack["whiteboard_excerpt"] = self.whiteboard.read()
+        self._emit("TASK_CONTEXT_READY", category="task", task_id=task_id, payload={
+            "excerpt_chars": len(context_pack.get("whiteboard_excerpt", "") or ""),
+            "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
+        })
+        skills = self.skill_registry.select_skills(task_goal)
+        skill_allowlist: set[str] = set()
+        for skill in skills:
+            skill_allowlist.update(skill.tool_allowlist)
+        if skills:
+            self._emit("SKILLS_SELECTED", category="task", task_id=task_id, payload={
+                "skills": [skill.id for skill in skills],
+            })
+
+        function_tools = self.tool_backend.list_function_tools()
+        filtered_tools = self.tool_policy.filter_function_tools(function_tools)
+        if self.tool_policy.use_skill_allowlist and skill_allowlist:
+            filtered_tools = [tool for tool in filtered_tools if tool.get("name") in skill_allowlist]
+        builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
+        stepper = ToolCallingTaskStepper(
+            driver=self.tool_driver,
+            backend=self.tool_backend,
+            prompt=self.task_step_prompt,
+            reporter=self.reporter,
+            max_steps=min(self.max_steps, self.tool_policy.max_tool_calls_per_task),
+            driver_kwargs={
+                **self._tool_driver_kwargs(),
+                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
+            },
+            trace_store=self.trace_store,
+            role="task_runner",
+        )
+        step_result = stepper.run(
+            task_id=task_id,
+            task_goal=task_goal,
+            context_pack=context_pack,
+            initial_instruction=None,
+            function_tools=filtered_tools,
+            builtin_tools=builtin_tools,
+        )
+        summarizer = TaskSummarizer(
+            llm=self.summary_llm,
+            prompt=self.task_summary_prompt,
+            repair_prompt=self.task_summary_repair_prompt,
+            log_fn=self._write_llm_log,
+            log_llm_console=log_llm,
+        )
+        task_result = self._summarize_and_update_whiteboard(
+            summarizer,
+            task_id=task_id,
+            task_goal=task_goal,
+            step_result=step_result,
+        )
+        outcome = task_result["task_outcome"]
+        observation_path = self._write_observation(
+            task_id=task_id,
+            outcome=outcome,
+            summary=task_result["task_summary"],
+            key_artifacts=task_result["key_artifacts"],
+        )
+        self._emit("OBSERVATION_WRITTEN", category="task", task_id=task_id, payload={
+            "path": observation_path,
+        })
+        return {
+            "task_id": task_id,
+            "outcome": outcome,
+            "summary": task_result["task_summary"],
+            "observation_path": observation_path,
+            "key_artifacts": task_result["key_artifacts"],
+            "ops_path": task_result.get("ops_path"),
+            "diff_path": task_result.get("diff_path"),
+        }
+
+    def _run_fast(
+        self,
+        user_request: str,
+        *,
+        log_llm: bool,
+        defer_ui: bool,
+        start_ui: Callable[[str, bool], None],
+    ) -> Dict[str, Any]:
+        if self.resuming:
+            state = self._load_task_state()
+            if state.get("lane") != "fast":
+                raise ValueError(f"Cannot resume; lane mismatch ({state.get('lane')})")
+            user_request = state["user_request"]
+            tasks = state["tasks"]
+            observations = state["observations"]
+            status = state.get("status", "running")
+            if status in {"done", "failure"}:
+                raise ValueError(f"Cannot resume; run already ended with status {status}")
+            self._initialize_whiteboard_goal(user_request)
+        else:
+            self._initialize_whiteboard_goal(user_request)
+            tasks = [{
+                "task_id": "task_01",
+                "goal": user_request,
+                "status": "pending",
+            }]
+            observations = []
+            status = "running"
+            self._write_task_state({
+                "schema_version": 2,
+                "lane": "fast",
+                "user_request": user_request,
+                "tasks": tasks,
+                "observations": observations,
+                "status": status,
+            })
+
+        self._emit("TASKS_COMPILED", category="task", payload={
+            "n_tasks": len(tasks),
+            "tasks": tasks,
+        })
+
+        if not defer_ui:
+            self._emit("SPLASH_HIDE", category="splash")
+        if defer_ui:
+            start_ui("Starting execution...", False)
+            self._emit("SPLASH_HIDE", category="splash")
+
+        progressed = False
+        for task in tasks:
+            if task.get("status") != "pending":
+                continue
+            progressed = True
+            task_id = task["task_id"]
+            task_goal = task["goal"]
+            self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
+            self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
+            obs = self._execute_task(task_id=task_id, task_goal=task_goal, log_llm=log_llm)
+            observations.append(obs)
+            task["status"] = obs["outcome"]
+            outcome = obs["outcome"]
+            self._emit("TASK_END", category="task", task_id=task_id, payload={
+                "outcome": outcome,
+                "summary_snippet": self._snippet(obs.get("summary", ""), 200),
+            })
+            self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
+            if outcome in {"failure", "needs_intervention"}:
+                status = outcome
+                break
+            status = "running"
+            self._write_task_state({
+                "schema_version": 2,
+                "lane": "fast",
+                "user_request": user_request,
+                "tasks": tasks,
+                "observations": observations,
+                "status": status,
+            })
+
+        if status == "running" and not progressed:
+            status = "done"
+        if status == "running" and all(task.get("status") != "pending" for task in tasks):
+            status = "done"
+
+        self._write_task_state({
+            "schema_version": 2,
+            "lane": "fast",
+            "user_request": user_request,
+            "tasks": tasks,
+            "observations": observations,
+            "status": status,
+        })
+        final_answer = observations[-1]["summary"] if observations else ""
+        result = {
+            "tasks": tasks,
+            "observations": observations,
+            "summary": final_answer,
+            "final_answer": final_answer,
+            "status": status,
+        }
+        self._emit("RUN_END", category="run", payload={
+            "status": status,
+            "run_dir": str(self.run_context.run_dir),
+        })
+        try:
+            if hasattr(self.reporter, "show_final_summary") and self.reporter.is_live():
+                self.reporter.show_final_summary(final_answer)
+        except Exception:
+            pass
+        return result
+
+    def _run_standard(
+        self,
+        user_request: str,
+        *,
+        log_llm: bool,
+        plan_review: bool,
+        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]],
+        full_auto_major: bool,
+        defer_ui: bool,
+        start_ui: Callable[[str, bool], None],
+    ) -> Dict[str, Any]:
+        if self.resuming:
+            if plan_review:
+                self.logger.warning("plan_review requested while resuming; ignoring and continuing with stored proposal.")
+                plan_review = False
+            state = self._load_task_state()
+            if state.get("lane") != "standard":
+                raise ValueError(f"Cannot resume; lane mismatch ({state.get('lane')})")
+            user_request = state["user_request"]
+            tasks = state["tasks"]
+            observations = state["observations"]
+            status = state.get("status", "running")
+            proposal_info = state.get("proposal") or {}
+            proposal_path = proposal_info.get("proposal_path") or "proposal.md"
+            work_packages = proposal_info.get("work_packages") or []
+            proposal_file = self.run_context.run_dir / proposal_path
+            if not proposal_file.exists():
+                raise FileNotFoundError(f"proposal.md not found: {proposal_file}")
+            proposal_md = proposal_file.read_text(encoding="utf-8")
+            if status in {"done", "failure"}:
+                raise ValueError(f"Cannot resume; run already ended with status {status}")
+            self._initialize_whiteboard_goal(user_request)
+        else:
+            self._initialize_whiteboard_goal(user_request)
+            proposal = self._create_proposal(user_request, log_llm=log_llm)
+            proposal_md = proposal["proposal_md"]
+            work_packages = proposal["work_packages"]
+            proposal_relpath = self._write_proposal(proposal_md)
+            tasks = []
+            observations = []
+            status = "running"
+            self._write_task_state({
+                "schema_version": 2,
+                "lane": "standard",
+                "user_request": user_request,
+                "proposal": {
+                    "proposal_path": proposal_relpath,
+                    "work_packages": work_packages,
+                },
+                "tasks": tasks,
+                "observations": observations,
+                "status": status,
+            })
+
+            if plan_review:
+                def persist(proposal_text: str, packages: List[str]) -> None:
+                    relpath = self._write_proposal(proposal_text)
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": relpath,
+                            "work_packages": packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                    })
+
+                proposal_md, work_packages, approved, _ = self._review_proposal(
+                    user_request=user_request,
+                    proposal_md=proposal_md,
+                    work_packages=work_packages,
+                    log_llm=log_llm,
+                    plan_feedback_provider=plan_feedback_provider,
+                    allow_revise=True,
+                    persist_fn=persist,
+                )
+                if approved:
+                    proposal_relpath = self._write_proposal(proposal_md)
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": proposal_relpath,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                    })
+
+        self._emit("TASKS_COMPILED", category="task", payload={
+            "n_tasks": len(tasks),
+            "tasks": tasks,
+        })
+
+        if not defer_ui:
+            self._emit("SPLASH_HIDE", category="splash")
+        if defer_ui:
+            start_ui("Starting execution...", False)
+            self._emit("SPLASH_HIDE", category="splash")
+
+        if status == "running":
+            for task in tasks:
+                if task.get("status") != "pending":
+                    continue
+                task_id = task["task_id"]
+                task_goal = task["goal"]
+                self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
+                self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
+                obs = self._execute_task(task_id=task_id, task_goal=task_goal, log_llm=log_llm)
+                observations.append(obs)
+                task["status"] = obs["outcome"]
+                outcome = obs["outcome"]
+                self._emit("TASK_END", category="task", task_id=task_id, payload={
+                    "outcome": outcome,
+                    "summary_snippet": self._snippet(obs.get("summary", ""), 200),
+                })
+                self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
+                if outcome in {"failure", "needs_intervention"}:
+                    status = outcome
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": self._proposal_path().name,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                    })
+                    break
+                self._write_task_state({
+                    "schema_version": 2,
+                    "lane": "standard",
+                    "user_request": user_request,
+                    "proposal": {
+                        "proposal_path": self._proposal_path().name,
+                        "work_packages": work_packages,
+                    },
+                    "tasks": tasks,
+                    "observations": observations,
+                    "status": status,
+                })
+
+        if status == "needs_intervention":
+            self._emit("RUN_END", category="run", payload={
+                "status": status,
+                "run_dir": str(self.run_context.run_dir),
+            })
+            final_answer = observations[-1]["summary"] if observations else ""
+            return {
+                "tasks": tasks,
+                "observations": observations,
+                "summary": final_answer,
+                "final_answer": final_answer,
+                "status": status,
+            }
+
+        if status != "failure":
+            while True:
+                decision = self._director_decide(
+                    user_request=user_request,
+                    proposal_md=proposal_md,
+                    work_packages=work_packages,
+                    observations=observations,
+                )
+                state = decision.get("state")
+                if state == "PerformNextTask":
+                    task_goal = decision.get("next_task_goal")
+                    if not task_goal:
+                        raise ValueError("Director PerformNextTask missing next_task_goal")
+                    task_id = f"task_{self._next_task_index(tasks):02d}"
+                    tasks.append({
+                        "task_id": task_id,
+                        "goal": task_goal,
+                        "status": "pending",
+                    })
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": self._proposal_path().name,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                    })
+                    self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
+                    self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
+                    obs = self._execute_task(task_id=task_id, task_goal=task_goal, log_llm=log_llm)
+                    observations.append(obs)
+                    tasks[-1]["status"] = obs["outcome"]
+                    outcome = obs["outcome"]
+                    self._emit("TASK_END", category="task", task_id=task_id, payload={
+                        "outcome": outcome,
+                        "summary_snippet": self._snippet(obs.get("summary", ""), 200),
+                    })
+                    self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
+                    if outcome in {"failure", "needs_intervention"}:
+                        status = outcome
+                    else:
+                        status = "running"
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": self._proposal_path().name,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                    })
+                    if status in {"failure", "needs_intervention"}:
+                        break
+                    continue
+
+                if state == "MinorReviseProposal":
+                    updated_md = decision.get("updated_proposal_md")
+                    updated_packages = decision.get("updated_work_packages")
+                    if not isinstance(updated_md, str) or not isinstance(updated_packages, list):
+                        raise ValueError("Director MinorReviseProposal missing updated proposal fields")
+                    proposal_md = updated_md
+                    work_packages = updated_packages
+                    proposal_relpath = self._write_proposal(proposal_md)
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": proposal_relpath,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                    })
+                    continue
+
+                if state == "MajorReviseProposal":
+                    updated_md = decision.get("updated_proposal_md")
+                    updated_packages = decision.get("updated_work_packages")
+                    if not isinstance(updated_md, str) or not isinstance(updated_packages, list):
+                        raise ValueError("Director MajorReviseProposal missing updated proposal fields")
+                    if full_auto_major:
+                        proposal_md = updated_md
+                        work_packages = updated_packages
+                        proposal_relpath = self._write_proposal(proposal_md)
+                        self._write_task_state({
+                            "schema_version": 2,
+                            "lane": "standard",
+                            "user_request": user_request,
+                            "proposal": {
+                                "proposal_path": proposal_relpath,
+                                "work_packages": work_packages,
+                            },
+                            "tasks": tasks,
+                            "observations": observations,
+                            "status": status,
+                        })
+                        continue
+
+                    proposal_md, work_packages, approved, feedback = self._review_proposal(
+                        user_request=user_request,
+                        proposal_md=updated_md,
+                        work_packages=updated_packages,
+                        log_llm=log_llm,
+                        plan_feedback_provider=plan_feedback_provider,
+                        allow_revise=False,
+                        persist_fn=None,
+                    )
+                    if not approved:
+                        status = "needs_intervention"
+                        self._write_task_state({
+                            "schema_version": 2,
+                            "lane": "standard",
+                            "user_request": user_request,
+                            "proposal": {
+                                "proposal_path": self._proposal_path().name,
+                                "work_packages": work_packages,
+                            },
+                            "tasks": tasks,
+                            "observations": observations,
+                            "status": status,
+                            "needs_human": {
+                                "reason": "major_revision_rejected",
+                                "feedback": feedback,
+                                "questions": decision.get("questions_for_human"),
+                            },
+                        })
+                        break
+                    proposal_relpath = self._write_proposal(proposal_md)
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": proposal_relpath,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                    })
+                    continue
+
+                if state == "StopAndSynthesize":
+                    status = "done"
+                    break
+
+                raise ValueError(f"Director returned unknown state: {state}")
+
+        if status in ("done", "failure"):
+            self._emit("FINAL_SUMMARY_START", category="final")
+            summary = self._summarize_tasks(user_request, observations, status)
+            self._write_task_state({
+                "schema_version": 2,
+                "lane": "standard",
+                "user_request": user_request,
+                "proposal": {
+                    "proposal_path": self._proposal_path().name,
+                    "work_packages": work_packages,
+                },
+                "tasks": tasks,
+                "observations": observations,
+                "status": status,
+                "summary": summary,
+            })
+            report_paths = self._publish_report(user_request, summary)
+            preview_lines = [line for line in (summary or "").splitlines() if line.strip()][:8]
+            self._emit("FINAL_SUMMARY_DONE", category="final", payload={
+                "preview_lines": preview_lines,
+                "report_path": report_paths.get("final_report", ""),
+                "run_dir": report_paths.get("run_dir", ""),
+            })
+            result = {
+                "tasks": tasks,
+                "observations": observations,
+                "summary": summary,
+                "final_answer": summary,
+                "status": status,
+            }
+            self._emit("RUN_END", category="run", payload={
+                "status": status,
+                "run_dir": report_paths.get("run_dir", ""),
+                "final_report": report_paths.get("final_report", ""),
+                "whiteboard_report": report_paths.get("whiteboard_report", ""),
+                "latest_link": report_paths.get("latest_link", ""),
+            })
+            try:
+                if hasattr(self.reporter, "show_final_summary") and self.reporter.is_live():
+                    self.reporter.show_final_summary(summary)
+            except Exception:
+                pass
+            return result
+
+        self._emit("RUN_END", category="run", payload={
+            "status": status,
+            "run_dir": str(self.run_context.run_dir),
+        })
+        final_answer = observations[-1]["summary"] if observations else ""
+        return {
+            "tasks": tasks,
+            "observations": observations,
+            "summary": final_answer,
+            "final_answer": final_answer,
+            "status": status,
+        }
+
     def run(
         self,
         user_request: str,
@@ -608,16 +1473,17 @@ class Orchestrator:
         initial_plan: Optional[Dict[str, Any]] = None,
         plan_review: bool = True,
         plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
+        lane: str = "standard",
+        full_auto_major: bool = False,
     ) -> Dict[str, Any]:
-        defer_ui = bool(
-            plan_review
-            and plan_feedback_provider is None
-            and sys.stdin.isatty()
-            and not self.reporter.is_live()
-        )
+        if initial_plan is not None:
+            raise ValueError("initial_plan is no longer supported; use lane=standard proposal flow instead")
+        if lane not in {"fast", "standard"}:
+            raise ValueError(f"Invalid lane: {lane}")
+
         ui_started = False
 
-        def start_ui(subtitle: str, *, show_splash: bool = True) -> None:
+        def start_ui(subtitle: str, show_splash: bool = True) -> None:
             nonlocal ui_started
             if ui_started:
                 return
@@ -630,272 +1496,32 @@ class Orchestrator:
                     "subtitle": subtitle,
                 })
 
-        if defer_ui:
-            print(logo_str)
-            print("Initializing run context and preparing initial plan...")
-        else:
-            start_ui("Initializing run context and preparing initial plan...")
-        if self.resuming:
-            if initial_plan is not None:
-                raise ValueError("Cannot provide initial_plan when resuming")
-            if plan_review:
-                self.logger.warning("plan_review requested while resuming; ignoring and continuing with stored plan.")
-                plan_review = False
+        subtitle = (
+            "Initializing run context and preparing initial proposal..."
+            if lane == "standard"
+            else "Initializing run context..."
+        )
+        start_ui(subtitle, True)
+
         try:
-            if self.resuming:
-                state = self._load_task_state()
-                user_request = state["user_request"]
-                plan = self._normalize_plan(state["plan"], user_request)
-                tasks = state["tasks"]
-                observations = state["observations"]
-                status = state.get("status", "running")
-                if status in {"done", "failure"}:
-                    raise ValueError(f"Cannot resume; run already ended with status {status}")
-                self._initialize_whiteboard_goal(user_request)
-                if ui_started:
-                    self._emit("SPLASH_HIDE", category="splash")
+            if lane == "fast":
+                result = self._run_fast(
+                    user_request,
+                    log_llm=log_llm,
+                    defer_ui=False,
+                    start_ui=start_ui,
+                )
             else:
-                plan = self._normalize_plan(initial_plan, user_request) if initial_plan else self.plan(user_request)
-                self._initialize_whiteboard_goal(user_request)
-                if ui_started:
-                    self._emit("SPLASH_HIDE", category="splash")
-                if plan_review:
-                    review_state = {
-                        "user_request": user_request,
-                        "plan": plan,
-                        "feedback_history": [],
-                        "approved": False,
-                        "round": 0,
-                    }
-                    if plan_feedback_provider is None and not sys.stdin.isatty():
-                        raise ValueError("plan_review requires a feedback provider when not running in a TTY")
-                    while not review_state.get("approved"):
-                        plan_description = (review_state["plan"].get("plan_description") or "").strip()
-                        self._emit("PLAN_REVIEW_SHOW", category="plan", payload={
-                            "todo": review_state["plan"].get("todo", []),
-                            "plan_description_snippet": self._snippet(plan_description, 240),
-                        })
-                        self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan")
-                        if plan_feedback_provider:
-                            feedback = plan_feedback_provider(review_state)
-                            used_ui_prompt = False
-                        else:
-                            if hasattr(self.reporter, "prompt_plan_feedback") and self.reporter.is_live():
-                                feedback = self.reporter.prompt_plan_feedback(
-                                    todo=review_state["plan"].get("todo", []),
-                                    plan_description=plan_description,
-                                )
-                                used_ui_prompt = True
-                            else:
-                                print("\n=== Proposed Plan ===")
-                                print("Plan Description:")
-                                print(plan_description if plan_description else "(none)")
-                                print("\nTherefore, Here is a proposed plan:")
-                                for i, item in enumerate(review_state["plan"].get("todo", []), start=1):
-                                    print(f"{i}. {item}")
-                                print("\nEnter feedback to revise, or type 'yes' to approve:")
-                                feedback = input("> ").strip()
-                                used_ui_prompt = False
-                        if not feedback:
-                            if plan_feedback_provider:
-                                raise ValueError("plan_review feedback cannot be empty")
-                            if not used_ui_prompt:
-                                print("Empty input. Please enter feedback to revise, or type 'yes' to approve.")
-                            self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan", payload={"error": "empty_input"})
-                            continue
-                        review_state = self.apply_plan_feedback(review_state, feedback, log_llm=log_llm)
-                    plan = review_state["plan"]
-
-                tasks = self._compile_tasks(plan.get("todo", []))
-                observations = []
-                status = "running"
-                self._write_task_state({
-                    "user_request": user_request,
-                    "plan": plan,
-                    "tasks": tasks,
-                    "observations": observations,
-                    "status": status,
-                })
-                if defer_ui and not ui_started:
-                    start_ui("Starting execution...", show_splash=False)
-                    self._emit("SPLASH_HIDE", category="splash")
-
-            self._emit("TASKS_COMPILED", category="task", payload={
-                "n_tasks": len(tasks),
-                "tasks": tasks,
-            })
-
-            while True:
-                if status == "needs_intervention":
-                    hitl = self._hitl_intervene(
-                        user_request=user_request,
-                        plan=plan,
-                        tasks=tasks,
-                        observations=observations,
-                        log_llm=log_llm,
-                        plan_feedback_provider=plan_feedback_provider,
-                    )
-                    status = hitl.get("status", status)
-                    plan = hitl.get("plan", plan)
-                    tasks = hitl.get("tasks", tasks)
-                    if status == "needs_intervention":
-                        return hitl
-                    self._emit("TASKS_COMPILED", category="task", payload={
-                        "n_tasks": len(tasks),
-                        "tasks": tasks,
-                    })
-
-                progressed = False
-                for task in tasks:
-                    if task.get("status") != "pending":
-                        continue
-                    progressed = True
-                    task_id = task["task_id"]
-                    task_goal = task["goal"]
-                    self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
-                    self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
-                    context_pack = self.context_builder.build(task_goal, role="task_runner", policy=ContextPackPolicy())
-                    self._emit("TASK_CONTEXT_READY", category="task", task_id=task_id, payload={
-                        "excerpt_chars": len(context_pack.get("whiteboard_excerpt", "") or ""),
-                        "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
-                    })
-                    skills = self.skill_registry.select_skills(task_goal)
-                    skill_allowlist: set[str] = set()
-                    for skill in skills:
-                        skill_allowlist.update(skill.tool_allowlist)
-                    if skills:
-                        self._emit("SKILLS_SELECTED", category="task", task_id=task_id, payload={
-                            "skills": [skill.id for skill in skills],
-                        })
-
-                    function_tools = self.tool_backend.list_function_tools()
-                    filtered_tools = self.tool_policy.filter_function_tools(function_tools)
-                    if self.tool_policy.use_skill_allowlist and skill_allowlist:
-                        filtered_tools = [tool for tool in filtered_tools if tool.get("name") in skill_allowlist]
-                    builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
-                    stepper = ToolCallingTaskStepper(
-                        driver=self.tool_driver,
-                        backend=self.tool_backend,
-                        prompt=self.task_step_prompt,
-                        reporter=self.reporter,
-                        max_steps=min(self.max_steps, self.tool_policy.max_tool_calls_per_task),
-                        driver_kwargs={
-                            **self._tool_driver_kwargs(),
-                            "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
-                        },
-                        trace_store=self.trace_store,
-                        role="task_runner",
-                    )
-                    step_result = stepper.run(
-                        task_id=task_id,
-                        task_goal=task_goal,
-                        context_pack=context_pack,
-                        initial_instruction=None,
-                        function_tools=filtered_tools,
-                        builtin_tools=builtin_tools,
-                    )
-                    summarizer = TaskSummarizer(
-                        llm=self.summary_llm,
-                        prompt=self.task_summary_prompt,
-                        repair_prompt=self.task_summary_repair_prompt,
-                        log_fn=self._write_llm_log,
-                        log_llm_console=log_llm,
-                    )
-                    task_result = self._summarize_and_update_whiteboard(
-                        summarizer,
-                        task_id=task_id,
-                        task_goal=task_goal,
-                        step_result=step_result,
-                    )
-                    outcome = task_result["task_outcome"]
-                    observation_path = self._write_observation(
-                        task_id=task_id,
-                        outcome=outcome,
-                        summary=task_result["task_summary"],
-                        key_artifacts=task_result["key_artifacts"],
-                    )
-                    self._emit("OBSERVATION_WRITTEN", category="task", task_id=task_id, payload={
-                        "path": observation_path,
-                    })
-                    observations.append({
-                        "task_id": task_id,
-                        "outcome": outcome,
-                        "summary": task_result["task_summary"],
-                        "observation_path": observation_path,
-                        "key_artifacts": task_result["key_artifacts"],
-                        "ops_path": task_result.get("ops_path"),
-                        "diff_path": task_result.get("diff_path"),
-                    })
-                    task["status"] = outcome
-                    self._emit("TASK_END", category="task", task_id=task_id, payload={
-                        "outcome": outcome,
-                        "summary_snippet": self._snippet(task_result.get("task_summary", ""), 200),
-                    })
-                    self._trace_event("TASK_COMPLETED", {"task_id": task_id, "outcome": outcome})
-                    if outcome in {"failure", "needs_intervention"}:
-                        status = outcome
-                        self._write_task_state({
-                            "user_request": user_request,
-                            "plan": plan,
-                            "tasks": tasks,
-                            "observations": observations,
-                            "status": status,
-                        })
-                        break
-                    self._write_task_state({
-                        "user_request": user_request,
-                        "plan": plan,
-                        "tasks": tasks,
-                        "observations": observations,
-                        "status": status,
-                    })
-
-                if status == "failure":
-                    break
-                if status == "needs_intervention":
-                    continue
-                if status == "running" and not progressed:
-                    status = "done"
-                    break
-
-            if status in ("done", "failure"):
-                self._emit("FINAL_SUMMARY_START", category="final")
-                summary = self._summarize_tasks(user_request, observations, status)
-                self._write_task_state({
-                    "user_request": user_request,
-                    "plan": plan,
-                    "tasks": tasks,
-                    "observations": observations,
-                    "status": status,
-                    "summary": summary,
-                })
-                report_paths = self._publish_report(user_request, summary)
-                preview_lines = [line for line in (summary or "").splitlines() if line.strip()][:8]
-                self._emit("FINAL_SUMMARY_DONE", category="final", payload={
-                    "preview_lines": preview_lines,
-                    "report_path": report_paths.get("final_report", ""),
-                    "run_dir": report_paths.get("run_dir", ""),
-                })
-                result = {
-                    "tasks": tasks,
-                    "observations": observations,
-                    "summary": summary,
-                    "final_answer": summary,
-                    "status": status,
-                }
-                self._emit("RUN_END", category="run", payload={
-                    "status": status,
-                    "run_dir": report_paths.get("run_dir", ""),
-                    "final_report": report_paths.get("final_report", ""),
-                    "whiteboard_report": report_paths.get("whiteboard_report", ""),
-                    "latest_link": report_paths.get("latest_link", ""),
-                })
-                try:
-                    if hasattr(self.reporter, "show_final_summary") and self.reporter.is_live():
-                        self.reporter.show_final_summary(summary)
-                except Exception:
-                    pass
-                return result
+                result = self._run_standard(
+                    user_request,
+                    log_llm=log_llm,
+                    plan_review=plan_review,
+                    plan_feedback_provider=plan_feedback_provider,
+                    full_auto_major=full_auto_major,
+                    defer_ui=False,
+                    start_ui=start_ui,
+                )
+            return result
         except Exception as exc:
             self._emit("RUN_END", level="error", category="run", payload={
                 "status": "error",
@@ -978,27 +1604,16 @@ class Orchestrator:
             "hitl_id": hitl_tag,
         }
         feedback = ""
-        used_ui_prompt = False
         if plan_feedback_provider:
             feedback = plan_feedback_provider({**feedback_state, "stage": "hitl_feedback"}) or ""
         else:
-            if sys.stdin.isatty():
-                if hasattr(self.reporter, "prompt_hitl_feedback") and self.reporter.is_live():
-                    feedback = self.reporter.prompt_hitl_feedback(
-                        report_text=report_text,
-                        report_path=report_path,
-                    )
-                    used_ui_prompt = True
-                else:
-                    print("\n=== Intervention Required ===")
-                    if report_path:
-                        print(f"Interrupted report: {report_path}")
-                    print("\n--- Interrupted Report ---")
-                    print(report_text or "(none)")
-                    print("\nEnter feedback to continue, or press Enter to keep paused:")
-                    feedback = input("> ").strip()
+            if hasattr(self.reporter, "prompt_hitl_feedback") and self.reporter.is_live():
+                feedback = self.reporter.prompt_hitl_feedback(
+                    report_text=report_text,
+                    report_path=report_path,
+                )
             else:
-                feedback = ""
+                raise ValueError("HITL feedback requires a live reporter (WebUI). Start WebUI or provide feedback provider.")
 
         human_feedback_path = hitl_dir / "human_feedback.txt"
         human_feedback_path.write_text(feedback or "", encoding="utf-8")
@@ -1149,30 +1764,8 @@ class Orchestrator:
             "round": 0,
         }
 
-        if plan_feedback_provider is None and not sys.stdin.isatty():
-            self._write_task_state({
-                "user_request": user_request,
-                "plan": plan,
-                "tasks": tasks,
-                "observations": observations,
-                "status": "needs_intervention",
-                "summary": summary,
-                "hitl": {
-                    **hitl_meta,
-                    "packed_feedback": self._rel_run_path(packed_feedback_path),
-                    "proposed_plan": new_plan,
-                },
-            })
-            return {
-                "tasks": tasks,
-                "observations": observations,
-                "summary": summary,
-                "final_answer": summary,
-                "status": "needs_intervention",
-                "plan": plan,
-                "report_path": report_path,
-                "hitl_dir": str(hitl_dir),
-            }
+        if plan_feedback_provider is None and not self.reporter.is_live():
+            raise ValueError("plan_review requires a live reporter (WebUI). Start WebUI or provide feedback provider.")
 
         while not review_state.get("approved"):
             plan_description = (review_state["plan"].get("plan_description") or "").strip()
@@ -1686,10 +2279,7 @@ class Orchestrator:
     def _summarize_tasks(self, user_request: str, observations: List[Dict[str, Any]], status: str) -> str:
         fallback = self._summarize_tasks_fallback(user_request, observations)
         try:
-            whiteboard_excerpt = self.whiteboard.read_sections(
-                ["Goal", "Key Facts", "Key Files", "Constraints"],
-                max_chars=4000,
-            )
+            whiteboard_excerpt = self.whiteboard.read()
         except Exception:
             whiteboard_excerpt = ""
         artifacts = self._artifact_log_excerpt(limit=200)
