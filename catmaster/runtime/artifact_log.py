@@ -19,8 +19,8 @@ def _now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
 
-def _canonical_path(path: str) -> str:
-    root = workspace_root()
+def _canonical_path(path: str, *, workspace: Path | str | None = None) -> str:
+    root = workspace_root(workspace)
     p = Path(path)
     if not p.is_absolute():
         p = root / p
@@ -34,6 +34,7 @@ def _canonical_path(path: str) -> str:
 @dataclass(frozen=True)
 class ArtifactLog:
     path: Path
+    workspace: Optional[Path] = None
 
     header: tuple[str, ...] = ("path", "description", "type", "updated_time")
 
@@ -88,10 +89,10 @@ class ArtifactLog:
                 })
 
     @classmethod
-    def infer_type(cls, path_text: str) -> str:
+    def infer_type(cls, path_text: str, *, workspace: Path | str | None = None) -> str:
         path = Path(path_text)
         if not path.is_absolute():
-            path = workspace_root() / path
+            path = workspace_root(workspace) / path
         if path.exists():
             return "dir" if path.is_dir() else "file"
         if path_text.endswith("/") or path_text.endswith(os.sep):
@@ -103,7 +104,7 @@ class ArtifactLog:
         if not path:
             return None
         try:
-            normalized_path = _canonical_path(path)
+            normalized_path = _canonical_path(path, workspace=self.workspace)
         except Exception:
             return None
         description = (entry.get("description") or "").strip()

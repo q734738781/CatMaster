@@ -7,7 +7,7 @@ from catmaster.tools.registry import get_tool_registry
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    os.environ.setdefault("CATMASTER_WORKSPACE", str(root))
+    os.chdir(root)
 
     reg = get_tool_registry()
     tool = reg.get_tool_function("python_exec")

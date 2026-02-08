@@ -12,7 +12,7 @@ from typing import Optional
 import json
 import uuid
 
-from catmaster.tools.base import ensure_system_root, system_root, workspace_root
+from catmaster.tools.base import ensure_system_root, system_root
 
 
 def _default_project_id() -> str:
@@ -50,13 +50,19 @@ class RunContext:
         base_url: Optional[str] = None,
         driver_kind: Optional[str] = None,
     ) -> "RunContext":
-        ws = (workspace or workspace_root()).resolve()
-        ensure_system_root()
+        ws = Path(workspace).expanduser().resolve() if workspace is not None else Path.cwd().resolve()
+        ensure_system_root(workspace=ws)
         project_id = project_id or _default_project_id()
         run_id = run_id or _default_run_id()
-        resolved_run_dir = Path(run_dir).expanduser().resolve() if run_dir else (system_root() / "runs" / run_id).resolve()
-        sys_root = system_root().resolve()
-        if not str(resolved_run_dir).startswith(str(sys_root)):
+        resolved_run_dir = (
+            Path(run_dir).expanduser().resolve()
+            if run_dir
+            else (system_root(workspace=ws) / "runs" / run_id).resolve()
+        )
+        sys_root = system_root(workspace=ws).resolve()
+        try:
+            resolved_run_dir.relative_to(sys_root)
+        except ValueError:
             raise ValueError(f"run_dir must be under system root: {resolved_run_dir}")
         resolved_run_dir.mkdir(parents=True, exist_ok=True)
         start_time = datetime.utcnow().isoformat() + "Z"
@@ -77,9 +83,6 @@ class RunContext:
     @classmethod
     def load(cls, run_dir: Path) -> "RunContext":
         resolved_run_dir = Path(run_dir).expanduser().resolve()
-        sys_root = system_root().resolve()
-        if not str(resolved_run_dir).startswith(str(sys_root)):
-            raise ValueError(f"run_dir must be under system root: {resolved_run_dir}")
         meta_path = resolved_run_dir / "meta.json"
         if not meta_path.exists():
             raise FileNotFoundError(f"run meta not found: {meta_path}")
@@ -88,6 +91,11 @@ class RunContext:
         if not workspace_value:
             raise ValueError("run meta missing workspace")
         ws = Path(workspace_value).expanduser().resolve()
+        sys_root = system_root(workspace=ws).resolve()
+        try:
+            resolved_run_dir.relative_to(sys_root)
+        except ValueError:
+            raise ValueError(f"run_dir must be under system root: {resolved_run_dir}")
         return cls(
             project_id=meta.get("project_id") or _default_project_id(),
             run_id=meta.get("run_id") or _default_run_id(),

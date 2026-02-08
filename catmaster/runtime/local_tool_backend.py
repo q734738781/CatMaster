@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from catmaster.runtime.artifact_store import ArtifactStore
 from catmaster.runtime.trace_store import TraceStore
 from catmaster.runtime.tool_executor import ToolExecutor
 from catmaster.runtime.tool_backend import ToolBackend
+from catmaster.tools.base import workspace_scope
 from catmaster.tools.registry import ToolRegistry
 
 
@@ -20,12 +22,14 @@ class LocalToolBackend(ToolBackend):
         artifact_store: ArtifactStore,
         trace_store: TraceStore,
         role: str = "tool_backend",
+        workspace: Optional[Path | str] = None,
     ) -> None:
         self.registry = registry
         self.tool_executor = tool_executor
         self.artifact_store = artifact_store
         self.trace_store = trace_store
         self.role = role
+        self.workspace = Path(workspace).expanduser().resolve() if workspace is not None else None
         self.logger = logging.getLogger(__name__)
 
     def list_function_tools(self) -> list[dict]:
@@ -80,7 +84,12 @@ class LocalToolBackend(ToolBackend):
         else:
             func = self.registry.get_tool_function(name)
             try:
-                tool_output = func(validated_params or {})
+                payload = validated_params or {}
+                if self.workspace is not None:
+                    with workspace_scope(self.workspace):
+                        tool_output = func(payload)
+                else:
+                    tool_output = func(payload)
             except Exception as exc:
                 tool_output = {
                     "status": "failed",

@@ -35,19 +35,19 @@ class WhiteboardStore:
     path: Path
 
     @staticmethod
-    def default_path() -> Path:
-        return system_root() / "whiteboard.md"
+    def default_path(*, workspace: Path | str | None = None) -> Path:
+        return system_root(workspace=workspace) / "whiteboard.md"
 
     @classmethod
-    def create_default(cls) -> "WhiteboardStore":
-        ensure_system_root()
-        return cls(path=cls.default_path())
+    def create_default(cls, *, workspace: Path | str | None = None) -> "WhiteboardStore":
+        ensure_system_root(workspace=workspace)
+        return cls(path=cls.default_path(workspace=workspace))
 
     def ensure_exists(self) -> None:
         if self.path.exists():
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        legacy = system_root() / "whiteboard.md"
+        legacy = self.path.parent / "whiteboard.md"
         if legacy.exists():
             legacy.replace(self.path)
             return

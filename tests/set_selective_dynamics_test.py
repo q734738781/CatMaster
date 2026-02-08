@@ -9,7 +9,7 @@ from pymatgen.core import Structure
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    os.environ.setdefault("CATMASTER_WORKSPACE", str(root))
+    os.chdir(root)
 
     out_dir = root / "tests" / "test_output" / "fix_atoms"
     out_dir.mkdir(parents=True, exist_ok=True)

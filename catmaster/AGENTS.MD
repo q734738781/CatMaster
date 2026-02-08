@@ -106,6 +106,7 @@ Rules:
 2. The `task_runner` role cannot access `view="system"` via tools with a `view` parameter (e.g., `bash_exec`).
 3. If a tool produces an artifact that future tasks must read, it must be written into the **user workspace**, and the tool must return a **workspace-relative** path using `workspace_relpath(...)`.
 4. Use `resolve_workspace_path(...)` and `resolve_view_path(...)` for all path resolution and validation. Do not manually join paths with strings.
+5. Do not use environment-variable-based workspace selection in new code. Workspace must be passed through params/instances (for example CLI `--workspace`, `WebSession`, `Orchestrator`) or explicit function arguments.
 
 ---
 

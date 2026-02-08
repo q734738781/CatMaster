@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import json
-import os
+import shutil
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from catmaster.agents.orchestrator import Orchestrator
-from catmaster.llm.config import LLMProfile
-from catmaster.tools.base import system_root
+from catmaster.tools.base import system_root, workspace_root
 from catmaster.ui import make_event
 
 from . import io
 from .constants import MAX_EVENT_FEED, MAX_TEXT_PREVIEW_CHARS, MAX_TRACE_LINES
+from .summary_service import snapshot_summary, summarize_run
 from .web_reporter import PromptBroker, WebReporter
 
 
@@ -56,8 +55,7 @@ class WebSession:
                 ws.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
             return False, f"Failed to open workspace: {exc}"
-        os.environ["CATMASTER_WORKSPACE"] = str(ws)
-        system_root().mkdir(parents=True, exist_ok=True)
+        system_root(workspace=ws).mkdir(parents=True, exist_ok=True)
         with self._lock:
             self.workspace = ws
             self.selected_run_dir = None
@@ -86,6 +84,40 @@ class WebSession:
         target = (root / name).resolve()
         return self.open_workspace(str(target), create=True)
 
+    def clear_workspace(self) -> Tuple[bool, str]:
+        with self._lock:
+            ws = self.workspace
+            root = self.workspace_root
+            running = self.run_thread and self.run_thread.is_alive()
+        if running:
+            return False, "Run in progress; stop it before clearing the workspace."
+        if ws is None:
+            return False, "Open a workspace first."
+        try:
+            ws = ws.resolve()
+            if root is not None:
+                root = root.resolve()
+                try:
+                    ws.relative_to(root)
+                except ValueError:
+                    return False, f"Workspace path is outside workspace root: {ws}"
+            if not ws.exists() or not ws.is_dir():
+                return False, f"Workspace does not exist: {ws}"
+            for entry in ws.iterdir():
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+        except Exception as exc:
+            return False, f"Failed to clear workspace: {exc}"
+        with self._lock:
+            self.selected_run_dir = None
+            self.last_event_seq = 0
+            self.event_lines = []
+            if self.run_status != "running":
+                self.run_status = "idle"
+        return True, f"Workspace cleared: {ws}"
+
     def list_workspaces(self) -> List[Tuple[str, str]]:
         root = self.workspace_root
         if root is None:
@@ -93,9 +125,10 @@ class WebSession:
         return self._list_workspace_choices(root)
 
     def list_runs(self) -> List[Tuple[str, str]]:
-        if self.workspace is None:
+        ws = self._workspace_path()
+        if ws is None:
             return []
-        runs_root = system_root() / "runs"
+        runs_root = system_root(workspace=ws) / "runs"
         if not runs_root.exists():
             return []
         runs: List[Tuple[str, str]] = []
@@ -119,10 +152,17 @@ class WebSession:
     def select_run(self, run_name: str) -> str:
         if not run_name:
             return ""
-        runs_root = system_root() / "runs"
+        ws = self._workspace_path()
+        if ws is None:
+            return "Open a workspace first."
+        runs_root = system_root(workspace=ws) / "runs"
         candidate = (runs_root / run_name).resolve()
-        sys_root = system_root().resolve()
-        if not str(candidate).startswith(str(sys_root)) or not candidate.exists():
+        sys_root = system_root(workspace=ws).resolve()
+        try:
+            candidate.relative_to(sys_root)
+        except ValueError:
+            return "Invalid run selection"
+        if not candidate.exists():
             return "Invalid run selection"
         with self._lock:
             self.selected_run_dir = candidate
@@ -142,7 +182,8 @@ class WebSession:
         llm_config: Optional[str] = None,
     ) -> str:
         with self._lock:
-            if self.workspace is None:
+            ws = self.workspace
+            if ws is None:
                 return "Open a workspace first."
             if self.run_thread and self.run_thread.is_alive():
                 return "Run already in progress."
@@ -152,29 +193,36 @@ class WebSession:
             self.event_lines = []
             self.broker = PromptBroker()
             self.reporter = WebReporter(broker=self.broker, max_events=2000)
-        resume_dir = self._resolve_resume_dir(lane) if resume else None
+        resume_dir = self._resolve_resume_dir(lane, workspace=ws) if resume else None
 
         def _run() -> None:
+            run_dir: Optional[Path] = None
+            run_error = ""
             try:
+                from catmaster.agents.orchestrator import Orchestrator
+                from catmaster.llm.config import LLMProfile
+
                 llm_profile = LLMProfile.from_env_or_file(llm_config)
                 orch = Orchestrator(
                     llm_profile=llm_profile,
                     reporter=self.reporter,
                     log_llm_console=False,
+                    workspace=str(ws),
                     resume=resume,
                     resume_dir=resume_dir,
                 )
+                run_dir = orch.run_context.run_dir
                 if self.reporter:
-                    self.reporter.set_run_dir(orch.run_context.run_dir)
-                self._write_active_runs(lane, orch.run_context.run_dir)
+                    self.reporter.set_run_dir(run_dir)
+                self._write_active_runs(lane, run_dir, workspace=ws)
                 with self._lock:
                     self.run_status = "running"
                     self.run_info = {
                         "run_id": orch.run_context.run_id,
-                        "run_dir": str(orch.run_context.run_dir),
+                        "run_dir": str(run_dir),
                         "model_name": orch.run_context.model_name,
                     }
-                    self.selected_run_dir = orch.run_context.run_dir
+                    self.selected_run_dir = run_dir
                 orch.run(
                     prompt,
                     log_llm=log_llm,
@@ -185,19 +233,23 @@ class WebSession:
                 with self._lock:
                     self.run_status = "done"
             except Exception as exc:
+                run_error = str(exc)
                 with self._lock:
                     self.run_status = "error"
-                    self.run_error = str(exc)
+                    self.run_error = run_error
                 if self.reporter:
                     self.reporter.emit(make_event(
                         "RUN_END",
                         level="error",
                         category="run",
-                        payload={"status": "error", "error": str(exc)},
+                        payload={"status": "error", "error": run_error},
                     ))
             finally:
                 if self.reporter:
                     self.reporter.close()
+                # Generate UI summary only when a run is finalized.
+                if run_dir and run_dir.exists():
+                    summarize_run(run_dir, run_error=run_error or None)
 
         self.run_thread = threading.Thread(target=_run, daemon=True)
         self.run_thread.start()
@@ -245,38 +297,167 @@ class WebSession:
             return str(self.workspace) if self.workspace else ""
 
     def read_whiteboard(self) -> str:
-        return io.read_text(system_root() / "whiteboard.md", view="system", max_chars=MAX_TEXT_PREVIEW_CHARS)
+        ws = self._workspace_path()
+        if ws is None:
+            return ""
+        return io.read_text(
+            system_root(workspace=ws) / "whiteboard.md",
+            view="system",
+            workspace=ws,
+            max_chars=MAX_TEXT_PREVIEW_CHARS,
+        )
 
     def read_artifacts(self):
-        return io.read_artifacts_csv(system_root() / "artifacts.csv")
+        ws = self._workspace_path()
+        if ws is None:
+            return io.read_artifacts_csv(Path("/__catmaster_missing__/artifacts.csv"))
+        return io.read_artifacts_csv(system_root(workspace=ws) / "artifacts.csv", workspace=ws)
 
     def read_task_state(self, run_dir: Optional[Path]) -> str:
-        if not run_dir:
+        ws = self._workspace_path()
+        if ws is None or not run_dir:
             return ""
-        return io.read_json_pretty(run_dir / "task_state.json", view="system", max_chars=MAX_TEXT_PREVIEW_CHARS)
+        return io.read_json_pretty(
+            run_dir / "task_state.json",
+            view="system",
+            workspace=ws,
+            max_chars=MAX_TEXT_PREVIEW_CHARS,
+        )
 
     def read_proposal(self, run_dir: Optional[Path]) -> str:
-        if not run_dir:
+        ws = self._workspace_path()
+        if ws is None or not run_dir:
             return ""
-        return io.read_text(run_dir / "proposal.md", view="system", max_chars=MAX_TEXT_PREVIEW_CHARS)
+        return io.read_text(
+            run_dir / "proposal.md",
+            view="system",
+            workspace=ws,
+            max_chars=MAX_TEXT_PREVIEW_CHARS,
+        )
 
     def read_final_report(self, run_dir: Optional[Path]) -> str:
-        if not run_dir:
-            return ""
-        return io.read_text(run_dir / "reports" / "FINAL_REPORT.md", view="system", max_chars=MAX_TEXT_PREVIEW_CHARS)
+        text, _ = self.read_final_report_with_source(run_dir)
+        return text
+
+    def read_final_report_with_source(self, run_dir: Optional[Path]) -> Tuple[str, str]:
+        ws = self._workspace_path()
+        if ws is None:
+            return "(unavailable) Open a workspace first.", "unavailable"
+        if run_dir:
+            text = io.read_text(
+                run_dir / "reports" / "FINAL_REPORT.md",
+                view="system",
+                workspace=ws,
+                max_chars=MAX_TEXT_PREVIEW_CHARS,
+            )
+            if not text.startswith("(unavailable)"):
+                return text, f"selected_run:{run_dir.name}"
+
+        latest_run = self._resolve_latest_run_dir(workspace=ws)
+        if latest_run:
+            text = io.read_text(
+                latest_run / "reports" / "FINAL_REPORT.md",
+                view="system",
+                workspace=ws,
+                max_chars=MAX_TEXT_PREVIEW_CHARS,
+            )
+            if not text.startswith("(unavailable)"):
+                return text, f"latest_run:{latest_run.name}"
+
+        # Legacy fallback for older runs/workspaces.
+        text = io.read_text(
+            workspace_root(ws) / "reports" / "FINAL_REPORT.md",
+            view="user",
+            workspace=ws,
+            max_chars=MAX_TEXT_PREVIEW_CHARS,
+        )
+        if not text.startswith("(unavailable)"):
+            return text, "legacy_workspace_report"
+        return text, "unavailable"
+
+    def _resolve_latest_run_dir(self, *, workspace: Path) -> Optional[Path]:
+        latest_link = workspace_root(workspace) / "reports" / "latest_run"
+        if not latest_link.exists():
+            return None
+
+        try:
+            if latest_link.is_symlink():
+                target = latest_link.resolve()
+                if target.exists() and target.is_dir():
+                    return target
+        except Exception:
+            pass
+
+        # Fallback when latest_run is a plain-text pointer.
+        if latest_link.is_file():
+            try:
+                raw = latest_link.read_text(encoding="utf-8").strip()
+            except Exception:
+                raw = ""
+            if not raw:
+                return None
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = (system_root(workspace=workspace) / candidate).resolve()
+            else:
+                candidate = candidate.resolve()
+            sys_root = system_root(workspace=workspace).resolve()
+            try:
+                candidate.relative_to(sys_root)
+            except ValueError:
+                return None
+            if candidate.exists() and candidate.is_dir():
+                return candidate
+        return None
 
     def read_trace(self, run_dir: Optional[Path], trace_name: str) -> str:
-        if not run_dir:
+        ws = self._workspace_path()
+        if ws is None or not run_dir:
             return ""
-        return io.tail_jsonl(run_dir / trace_name, max_lines=MAX_TRACE_LINES)
+        return io.tail_jsonl(run_dir / trace_name, workspace=ws, max_lines=MAX_TRACE_LINES)
 
     def read_ui_events_from_file(self, run_dir: Optional[Path]) -> str:
-        if not run_dir:
+        ws = self._workspace_path()
+        if ws is None or not run_dir:
             return ""
-        return io.tail_jsonl(run_dir / "ui_events.jsonl", max_lines=MAX_EVENT_FEED)
+        return io.tail_jsonl(run_dir / "ui_events.jsonl", workspace=ws, max_lines=MAX_EVENT_FEED)
 
-    def _resolve_resume_dir(self, lane: str) -> Optional[str]:
-        active_runs_path = system_root() / "active_runs.json"
+    def list_run_cards(self) -> List[Dict[str, Any]]:
+        ws = self._workspace_path()
+        if ws is None:
+            return []
+        cards: List[Dict[str, Any]] = []
+        runs_root = system_root(workspace=ws) / "runs"
+        if not runs_root.exists():
+            return []
+        for run_dir in sorted(runs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            if not run_dir.is_dir():
+                continue
+            summary = snapshot_summary(run_dir)
+            meta = {}
+            meta_path = run_dir / "meta.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except Exception:
+                    meta = {}
+            cards.append(
+                {
+                    "run_name": run_dir.name,
+                    "headline": str(summary.get("headline") or run_dir.name),
+                    "summary": str(summary.get("summary") or ""),
+                    "next_actions": summary.get("next_actions") if isinstance(summary.get("next_actions"), list) else [],
+                    "status": str(summary.get("status") or ""),
+                    "source": str(summary.get("source") or "rule"),
+                    "model_name": str(meta.get("model_name") or ""),
+                    "start_time": str(meta.get("start_time") or ""),
+                    "workspace": str(meta.get("workspace") or ""),
+                }
+            )
+        return cards
+
+    def _resolve_resume_dir(self, lane: str, *, workspace: Path) -> Optional[str]:
+        active_runs_path = system_root(workspace=workspace) / "active_runs.json"
         if not active_runs_path.exists():
             return None
         try:
@@ -289,12 +470,19 @@ class WebSession:
         if not lane_run:
             return None
         candidate = Path(lane_run)
+        sys_root = system_root(workspace=workspace).resolve()
         if not candidate.is_absolute():
-            candidate = (system_root() / lane_run).resolve()
+            candidate = (sys_root / lane_run).resolve()
+        else:
+            candidate = candidate.resolve()
+        try:
+            candidate.relative_to(sys_root)
+        except ValueError:
+            return None
         return str(candidate)
 
-    def _write_active_runs(self, lane: str, run_dir: Path) -> None:
-        sys_root = system_root()
+    def _write_active_runs(self, lane: str, run_dir: Path, *, workspace: Path) -> None:
+        sys_root = system_root(workspace=workspace)
         active_runs_path = sys_root / "active_runs.json"
         try:
             active_runs = json.loads(active_runs_path.read_text(encoding="utf-8"))
@@ -324,3 +512,8 @@ class WebSession:
                 continue
             choices.append((name, name))
         return choices
+
+    def _workspace_path(self) -> Optional[Path]:
+        with self._lock:
+            ws = self.workspace
+        return ws.resolve() if isinstance(ws, Path) else None

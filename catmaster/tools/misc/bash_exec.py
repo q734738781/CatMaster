@@ -7,7 +7,7 @@ import subprocess
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_view_path, workspace_root
+from catmaster.tools.base import create_tool_output, resolve_view_path, view_relpath
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
 
 
@@ -45,7 +45,6 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("LC_ALL", "C")
-    env["CATMASTER_WORKSPACE"] = str(workspace_root())
 
     script = params.script
     if params.strict:
@@ -115,7 +114,7 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             "exit_code": exit_code,
             "timed_out": timed_out,
             "cmd": cmd,
-            "cwd": str(cwd_path),
+            "cwd": view_relpath(cwd_path, params.view),
             "timeout_s": params.timeout_s,
         }
 

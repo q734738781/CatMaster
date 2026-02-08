@@ -234,7 +234,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         success=True,
         data={
             "task_states": result.task_states,
-            "submission_dir": result.submission_dir,
+            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result.submission_dir else "",
             "work_base": result.work_base,
             "input_root_rel": workspace_relpath(input_root),
             "output_root_rel": workspace_relpath(output_root),

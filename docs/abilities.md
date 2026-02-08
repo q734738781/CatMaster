@@ -57,7 +57,7 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - **enumerate_adsorption_sites**: Pymatgen ASF site list to JSON (ontop/bridge/hollow).
 
-- **place_adsorbate**: place a molecule on a selected site, preserving slab selective dynamics.
+- **place_adsorbate**: place a molecule on a selected site, preserving slab selective dynamics; writes per-structure adsorbate index metadata (`*.meta.json`) and `ads_indices.json`.
 
 - **generate_batch_adsorption_structures**: batch adsorbate placement for single or multiple slabs; emits JSON manifest.
 
@@ -112,7 +112,7 @@ This document summarizes what the codebase can do right now, based on the curren
 
 ## Config and environment notes
 
-- Workspace root: `CATMASTER_WORKSPACE` (defaults to cwd).
+- Workspace root is now provided by runtime parameters/instances (e.g. WebSession/Orchestrator `workspace`), defaulting to current working directory when unspecified.
 
 - DPDispatcher config lookup:
 

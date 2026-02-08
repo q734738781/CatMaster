@@ -62,6 +62,8 @@ Or use the main entry point:
 python main.py --workspace /path/to/workspace
 ```
 
+Workspace selection is parameter-driven (`--workspace`/constructor arguments), not environment-variable driven.
+
 **For GPU SIDE**: Ensure the remote host has the Python/MACE runtime; the task scripts are forwarded via DPDispatcher, so syncing the full repo is not required.
 **For CPU SIDE**: VASP execution now runs a forwarded Python boot script; ensure the CPU cluster provides Python 3.10+ in the job environment (module/conda).
 

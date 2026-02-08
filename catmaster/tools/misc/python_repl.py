@@ -8,7 +8,7 @@ import subprocess
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, workspace_root
+from catmaster.tools.base import create_tool_output, workspace_relpath, workspace_root
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
 
 
@@ -39,7 +39,8 @@ def python_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = PythonExecInput(**payload)
     t0 = time.perf_counter()
 
-    cwd = str(workspace_root())
+    cwd_path = workspace_root()
+    cwd = str(cwd_path)
 
     # Inherit current environment with minimal defaults (do not override user settings)
     env = os.environ.copy()
@@ -119,7 +120,7 @@ def python_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             "exit_code": exit_code,
             "timed_out": timed_out,
             "cmd": cmd,
-            "cwd": cwd,
+            "cwd": workspace_relpath(cwd_path),
             "timeout_s": params.timeout_s,
         }
 

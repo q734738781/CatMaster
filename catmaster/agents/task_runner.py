@@ -4,12 +4,14 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Literal
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from catmaster.runtime import ArtifactStore, TraceStore
+from catmaster.tools.base import workspace_scope
 from catmaster.tools.registry import ToolRegistry
 from catmaster.ui import Reporter, NullReporter, make_event
 from catmaster.agents.llm_utils import llm_text
@@ -30,6 +32,7 @@ class TaskStepper:
         log_llm_console: bool = False,
         max_steps: int = 100,
         reporter: Optional[Reporter] = None,
+        workspace: Optional[Path | str] = None,
     ):
         self.llm = llm
         self.registry = registry
@@ -43,6 +46,7 @@ class TaskStepper:
         self.max_steps = max_steps
         self.logger = logging.getLogger(__name__)
         self.reporter = reporter or NullReporter()
+        self.workspace = Path(workspace).expanduser().resolve() if workspace is not None else None
 
     def _emit(
         self,
@@ -356,7 +360,11 @@ class TaskStepper:
                 })
                 func = self.registry.get_tool_function(method)
                 try:
-                    result = func(validated_params)
+                    if self.workspace is not None:
+                        with workspace_scope(self.workspace):
+                            result = func(validated_params)
+                    else:
+                        result = func(validated_params)
                 except Exception as exc:
                     result = {
                         "status": "failed",

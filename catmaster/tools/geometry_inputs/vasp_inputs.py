@@ -19,6 +19,7 @@ class StructWriter:
         structure: Structure,
         output_dir: Path,
         calc_type: str = "bulk",
+        relax_cell: bool = False,
         k_product: int = 30,
         use_d3: bool = True,
         user_incar_overrides: Optional[Dict[str, Any]] = None,  
@@ -32,6 +33,7 @@ class StructWriter:
             structure: Pymatgen Structure object
             output_dir: Directory to write inputs
             calc_type: Type of calculation (gas/bulk/slab)
+            relax_cell: If True for bulk, set ISIF=3; otherwise ISIF=2
             k_product: K-point density product 
             user_incar_overrides: User INCAR overrides
             run_template: Optional run.yaml template path
@@ -39,7 +41,7 @@ class StructWriter:
         output_dir = resolve_workspace_path(str(output_dir))
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        required_overrides = self._required_overrides(calc_type, user_incar_overrides or {})
+        required_overrides = self._required_overrides(calc_type, relax_cell, user_incar_overrides or {})
 
         def _clean(d: Dict[str, Any]) -> Dict[str, Any]:
             return {k: v for k, v in (d or {}).items() if v is not None}
@@ -102,19 +104,27 @@ class StructWriter:
             import shutil
             shutil.copy(run_template, output_dir / "run.yaml")
 
-    def _required_overrides(self, calc_type: str, user_incar_overrides: Dict[str, Any]) -> Dict[str, Any]:
+    def _required_overrides(
+        self,
+        calc_type: str,
+        relax_cell: bool,
+        user_incar_overrides: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """Task-specific INCAR overrides; wins over user values."""
         overrides: Dict[str, Any] = {}
-        if calc_type == "lattice":
-            overrides["ISIF"] = 3
-            if "ENCUT" in user_incar_overrides and user_incar_overrides["ENCUT"] is not None:
+        if relax_cell and calc_type in {"gas", "slab"}:
+            raise ValueError("relax_cell=True is not allowed when calc_type is 'gas' or 'slab'.")
+
+        if calc_type == "bulk":
+            overrides["ISIF"] = 3 if relax_cell else 2
+            if relax_cell and "ENCUT" in user_incar_overrides and user_incar_overrides["ENCUT"] is not None:
                 try:
                     if float(user_incar_overrides["ENCUT"]) < 520:
                         import warnings
-                        warnings.warn("Detected lattice optimization with ENCUT < 520; may affect stress accuracy.")
+                        warnings.warn("Detected bulk cell relaxation with ENCUT < 520; may affect stress accuracy.")
                 except Exception:
                     pass
-        elif calc_type in {"bulk", "slab"}:
+        elif calc_type == "slab":
             overrides["ISIF"] = 2
         elif calc_type == "gas":
             overrides.update(
@@ -142,7 +152,7 @@ class StructWriter:
                 k += 1
             return k
 
-        if calc_type in {"bulk", "lattice"}:
+        if calc_type == "bulk":
             return (_k_from_len(a_len), _k_from_len(b_len), _k_from_len(c_len))
         if calc_type == "slab":
             return (_k_from_len(a_len), _k_from_len(b_len), 1)

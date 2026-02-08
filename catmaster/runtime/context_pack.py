@@ -39,20 +39,23 @@ class ContextPackBuilder:
             journal_excerpt = self.whiteboard.read_sections(["Journal"], max_chars=policy.max_journal_chars)
 
         key_files = _parse_key_files(core_excerpt)
-        artifact_log = ArtifactLog(system_root() / "artifacts.csv")
+        workspace = self.whiteboard.path.parent.parent
+        artifact_log = ArtifactLog(system_root(workspace=workspace) / "artifacts.csv", workspace=workspace)
         artifact_log.ensure_exists()
         artifact_log_entries = _sort_artifacts_by_time(_artifact_log_slice(artifact_log.load()))
         artifact_slice = _merge_artifacts(
             key_files,
             artifact_log_entries,
             policy.max_artifacts,
+            workspace=workspace,
         )
 
         constraints = self.whiteboard.read_sections(["Constraints"])
-        workspace_policy = _workspace_policy_summary(role)
+        workspace_policy = _workspace_policy_summary(role, workspace_root=str(workspace))
         return {
             "task_goal": task_goal,
             "role": role,
+            "workspace_root": str(workspace),
             "whiteboard_excerpt": _with_current_state_header(core_excerpt, journal_excerpt),
             "artifact_slice": artifact_slice,
             "constraints": constraints,
@@ -67,10 +70,12 @@ def _with_current_state_header(core_excerpt: str, journal_excerpt: str) -> str:
     return "\n\n".join(chunk for chunk in chunks if chunk).strip()
 
 
-def _workspace_policy_summary(role: str) -> str:
+def _workspace_policy_summary(role: str, *, workspace_root: str) -> str:
     return (
         "Workspace policy:\n"
+        f"- Current workspace root: {workspace_root}\n"
         "- Use user workspace only (view='user').\n"
+        "- Tool path params are resolved relative to this workspace root.\n"
         "- Do not read or write system metadata.\n"
         "- Reuse existing artifacts; avoid scanning the full workspace.\n"
         f"- Role: {role}"
@@ -116,6 +121,8 @@ def _merge_artifacts(
     key_files: List[str],
     artifact_log_entries: List[Dict[str, str]],
     limit: int,
+    *,
+    workspace: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     merged: List[Dict[str, str]] = []
     seen = set()
@@ -126,7 +133,7 @@ def _merge_artifacts(
             "path": path,
             "kind": "input",
             "description": "Whiteboard key file",
-            "type": ArtifactLog.infer_type(path),
+            "type": ArtifactLog.infer_type(path, workspace=workspace),
         })
         seen.add(path)
         if len(merged) >= limit:

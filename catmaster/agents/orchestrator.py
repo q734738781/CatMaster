@@ -82,6 +82,7 @@ class Orchestrator:
         log_llm_console: bool = True,
         reporter: Optional[Reporter] = None,
         run_context: Optional[RunContext] = None,
+        workspace: Optional[str] = None,
         run_dir: Optional[str] = None,
         resume: bool = False,
         resume_dir: Optional[str] = None,
@@ -145,9 +146,11 @@ class Orchestrator:
         self.registry = get_tool_registry()
         self.log_llm_console = log_llm_console
         self.resuming = False
+        self.workspace = Path(workspace).expanduser().resolve() if workspace else None
 
         if run_context:
             self.run_context = run_context
+            self.workspace = run_context.workspace
         else:
             if run_dir and (resume or resume_dir):
                 raise ValueError("run_dir is mutually exclusive with resume/resume_dir")
@@ -155,9 +158,11 @@ class Orchestrator:
             resolved_resume = self._resolve_resume_run_dir(resume_dir, resume)
             if resolved_resume:
                 self.run_context = RunContext.load(resolved_resume)
+                self.workspace = self.run_context.workspace
                 self.resuming = True
             else:
                 self.run_context = RunContext.create(
+                    workspace=self.workspace,
                     run_dir=resolved_run_dir,
                     project_id=project_id,
                     run_id=run_id,
@@ -179,11 +184,15 @@ class Orchestrator:
             tool_executor=self.tool_executor,
             artifact_store=self.artifact_store,
             trace_store=self.trace_store,
+            workspace=self.run_context.workspace,
         )
 
-        self.whiteboard = WhiteboardStore.create_default()
+        self.whiteboard = WhiteboardStore.create_default(workspace=self.run_context.workspace)
         self.whiteboard.ensure_exists()
-        self.artifact_log = ArtifactLog(system_root() / "artifacts.csv")
+        self.artifact_log = ArtifactLog(
+            system_root(workspace=self.run_context.workspace) / "artifacts.csv",
+            workspace=self.run_context.workspace,
+        )
         self.artifact_log.ensure_exists()
         self.context_builder = ContextPackBuilder(self.whiteboard)
 
@@ -235,7 +244,7 @@ class Orchestrator:
     def _resolve_resume_run_dir(self, resume_dir: Optional[str], resume: bool) -> Optional[Path]:
         if not resume and not resume_dir:
             return None
-        base = Path(resume_dir).expanduser().resolve() if resume_dir else workspace_root()
+        base = Path(resume_dir).expanduser().resolve() if resume_dir else workspace_root(self.workspace)
         if (base / "meta.json").exists():
             return base
         sys_root = base if base.name == ".catmaster" else (base / ".catmaster")
@@ -1120,7 +1129,7 @@ class Orchestrator:
                 "hitl_history": hitl_history,
             })
 
-        self._write_task_state({
+        state_payload = {
             "schema_version": 2,
             "lane": "fast",
             "user_request": user_request,
@@ -1128,8 +1137,26 @@ class Orchestrator:
             "observations": observations,
             "status": status,
             "hitl_history": hitl_history,
-        })
+        }
+        self._write_task_state(state_payload)
         final_answer = observations[-1]["summary"] if observations else ""
+        report_paths: Dict[str, str] = {}
+        report_summary = final_answer
+
+        if status in {"done", "failure", "needs_intervention"}:
+            # Fast lane skips project-level summarization; publish a report using task summaries.
+            self._emit("FINAL_SUMMARY_START", category="final")
+            report_summary = self._summarize_tasks_fallback(user_request, observations)
+            state_payload["summary"] = report_summary
+            self._write_task_state(state_payload)
+            report_paths = self._publish_report(user_request, report_summary)
+            preview_lines = [line for line in (report_summary or "").splitlines() if line.strip()][:8]
+            self._emit("FINAL_SUMMARY_DONE", category="final", payload={
+                "preview_lines": preview_lines,
+                "report_path": report_paths.get("final_report", ""),
+                "run_dir": report_paths.get("run_dir", ""),
+            })
+
         result = {
             "tasks": tasks,
             "observations": observations,
@@ -1137,10 +1164,17 @@ class Orchestrator:
             "final_answer": final_answer,
             "status": status,
         }
-        self._emit("RUN_END", category="run", payload={
+        run_end_payload: Dict[str, str] = {
             "status": status,
-            "run_dir": str(self.run_context.run_dir),
-        })
+            "run_dir": report_paths.get("run_dir", str(self.run_context.run_dir)),
+        }
+        if report_paths:
+            run_end_payload.update({
+                "final_report": report_paths.get("final_report", ""),
+                "whiteboard_report": report_paths.get("whiteboard_report", ""),
+                "latest_link": report_paths.get("latest_link", ""),
+            })
+        self._emit("RUN_END", category="run", payload=run_end_payload)
         try:
             if hasattr(self.reporter, "show_final_summary") and self.reporter.is_live():
                 self.reporter.show_final_summary(final_answer)
@@ -1743,7 +1777,9 @@ class Orchestrator:
         feedback = ""
         report_ref = ""
         try:
-            report_ref = str(interrupted_report_path.resolve().relative_to(workspace_root()))
+            report_ref = str(
+                interrupted_report_path.resolve().relative_to(workspace_root(self.run_context.workspace))
+            )
         except Exception:
             report_ref = self._rel_run_path(interrupted_report_path)
 
@@ -1816,13 +1852,13 @@ class Orchestrator:
             diff_path = ""
             after_hash = self.whiteboard.get_hash()
             try:
-                diff_path = persist_whiteboard_diff(
-                    apply_result.get("before_text", ""),
-                    apply_result.get("after_text", ""),
-                    {"run_id": self.run_context.run_id, "task_id": hitl_tag, "attempt": 0},
-                    root=system_root(),
-                    whiteboard_path=self.whiteboard.path,
-                )["diff_path"]
+                    diff_path = persist_whiteboard_diff(
+                        apply_result.get("before_text", ""),
+                        apply_result.get("after_text", ""),
+                        {"run_id": self.run_context.run_id, "task_id": hitl_tag, "attempt": 0},
+                        root=system_root(workspace=self.run_context.workspace),
+                        whiteboard_path=self.whiteboard.path,
+                    )["diff_path"]
             except Exception:
                 diff_path = ""
             self._trace_whiteboard_update(
@@ -1941,7 +1977,9 @@ class Orchestrator:
         report_ref = ""
         if report_path:
             try:
-                report_ref = str(Path(report_path).resolve().relative_to(workspace_root()))
+                report_ref = str(
+                    Path(report_path).resolve().relative_to(workspace_root(self.run_context.workspace))
+                )
             except Exception:
                 report_ref = os.path.basename(report_path)
 
@@ -1989,7 +2027,7 @@ class Orchestrator:
                         apply_result.get("before_text", ""),
                         apply_result.get("after_text", ""),
                         {"run_id": self.run_context.run_id, "task_id": hitl_tag, "attempt": 0},
-                        root=system_root(),
+                        root=system_root(workspace=self.run_context.workspace),
                         whiteboard_path=self.whiteboard.path,
                     )["diff_path"]
                 except Exception:
@@ -2217,7 +2255,7 @@ class Orchestrator:
             ops_path = whiteboard_ops_persist(
                 ops,
                 {"run_id": self.run_context.run_id, "task_id": task_id, "attempt": attempt},
-                root=system_root(),
+                root=system_root(workspace=self.run_context.workspace),
             )["ops_path"]
             before_hash = self.whiteboard.get_hash()
             self._emit("WHITEBOARD_APPLY_START", category="summary", task_id=task_id, payload={
@@ -2280,7 +2318,7 @@ class Orchestrator:
                         apply_result.get("before_text", ""),
                         journal_text,
                         {"run_id": self.run_context.run_id, "task_id": task_id, "attempt": attempt},
-                        root=system_root(),
+                        root=system_root(workspace=self.run_context.workspace),
                         whiteboard_path=self.whiteboard.path,
                     )["diff_path"]
                 except Exception:
@@ -2458,18 +2496,18 @@ class Orchestrator:
                 except Exception:
                     continue
                 try:
-                    resolved.relative_to(workspace_root())
+                    resolved.relative_to(workspace_root(self.run_context.workspace))
                 except Exception:
                     continue
                 try:
-                    resolved.relative_to(system_root())
+                    resolved.relative_to(system_root(workspace=self.run_context.workspace))
                     continue
                 except Exception:
                     pass
             entries.append({
                 "path": path,
                 "description": (item.get("description") or "").strip(),
-                "type": ArtifactLog.infer_type(path),
+                "type": ArtifactLog.infer_type(path, workspace=self.run_context.workspace),
             })
         if entries:
             self.artifact_log.update(entries)
@@ -2639,8 +2677,10 @@ class Orchestrator:
         return counts
 
     def _publish_report(self, user_request: str, final_answer: str) -> Dict[str, str]:
-        reports_dir = workspace_root() / "reports"
+        reports_dir = workspace_root(self.run_context.workspace) / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
+        run_reports_dir = self.run_context.run_dir / "reports"
+        run_reports_dir.mkdir(parents=True, exist_ok=True)
 
         latest_link = reports_dir / "latest_run"
         target = self.run_context.run_dir
@@ -2656,8 +2696,8 @@ class Orchestrator:
             # Fallback: create a text pointer if symlink fails
             latest_link.write_text(str(target), encoding="utf-8")
 
-        final_report = reports_dir / "FINAL_REPORT.md"
-        final_report.write_text(
+        run_final_report = run_reports_dir / "FINAL_REPORT.md"
+        run_final_report.write_text(
             "\n".join([
                 "# Final Report",
                 "",
@@ -2672,18 +2712,24 @@ class Orchestrator:
         )
 
         whiteboard_src = self.whiteboard.path
-        whiteboard_dst = reports_dir / "WHITEBOARD.md"
+        run_whiteboard_dst = run_reports_dir / "WHITEBOARD.md"
         try:
-            shutil.copy2(whiteboard_src, whiteboard_dst)
+            shutil.copy2(whiteboard_src, run_whiteboard_dst)
         except Exception:
             # Best-effort copy
             if whiteboard_src.exists():
-                whiteboard_dst.write_text(whiteboard_src.read_text(encoding="utf-8"), encoding="utf-8")
+                run_whiteboard_dst.write_text(whiteboard_src.read_text(encoding="utf-8"), encoding="utf-8")
         return {
             "run_dir": str(self.run_context.run_dir),
-            "final_report": str(final_report),
-            "whiteboard_report": str(whiteboard_dst),
+            # Backward-compatible aliases (existing callers use these keys).
+            "final_report": str(run_final_report),
+            "whiteboard_report": str(run_whiteboard_dst),
+            # Explicit run-scoped report paths.
+            "run_final_report": str(run_final_report),
+            "run_whiteboard_report": str(run_whiteboard_dst),
+            # Workspace-level pointer to the latest run.
             "latest_link": str(latest_link),
+            "workspace_latest_link": str(latest_link),
         }
 
     def _messages_to_dict(self, messages: List[Any]) -> List[Dict[str, Any]]:
