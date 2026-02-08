@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from catmaster.llm.driver import ToolCallingDriver
+from catmaster.llm.types import LLMTokenUsage
 from catmaster.runtime.conversation_state import ConversationState, message_item
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.runtime.trace_store import TraceStore
@@ -101,11 +102,26 @@ class ToolCallingTaskStepper:
             driver_payload = dict(self.driver_kwargs)
             # Execute tool calls sequentially; keep parallel_tool_calls False to avoid interleaving.
             turn = self.driver.create_turn(input_items=state.input_items, tools=tools_schema, **driver_payload)
+            usage_payload = self._usage_payload(turn.usage)
             self._emit("LLM_CALL_END", category="llm", task_id=task_id, step_id=step, payload={
                 "kind": "tool_calling",
+                "usage": usage_payload,
+                "input_tokens": usage_payload.get("input_tokens"),
+                "input_cached_tokens": usage_payload.get("input_cached_tokens"),
+                "output_tokens": usage_payload.get("output_tokens"),
+                "total_tokens": usage_payload.get("total_tokens"),
             })
             state.append_model_output_items(turn.output_items_raw)
             if self.trace_store is not None:
+                self.trace_store.append_event({
+                    "event": "LLM_USAGE",
+                    "payload": {
+                        "task_id": task_id,
+                        "step_id": step,
+                        "role": self.role,
+                        "usage": usage_payload,
+                    },
+                })
                 self.trace_store.append_event({
                     "event": "LLM_OUTPUT_ITEMS",
                     "payload": {
@@ -288,6 +304,44 @@ class ToolCallingTaskStepper:
             "finish_reason": "max_steps",
             "local_observations": observations,
         }
+
+    @staticmethod
+    def _usage_payload(usage: Any) -> dict[str, Any]:
+        normalized = ToolCallingTaskStepper._normalize_usage(usage)
+        return normalized.to_dict(include_raw=False)
+
+    @staticmethod
+    def _normalize_usage(usage: Any) -> LLMTokenUsage:
+        if isinstance(usage, LLMTokenUsage):
+            return usage
+        if isinstance(usage, dict):
+            input_tokens = ToolCallingTaskStepper._to_int(usage.get("input_tokens"))
+            output_tokens = ToolCallingTaskStepper._to_int(usage.get("output_tokens"))
+            total_tokens = ToolCallingTaskStepper._to_int(usage.get("total_tokens"))
+            if total_tokens is None and input_tokens is not None and output_tokens is not None:
+                total_tokens = input_tokens + output_tokens
+            return LLMTokenUsage(
+                input_tokens=input_tokens,
+                input_cached_tokens=ToolCallingTaskStepper._to_int(usage.get("input_cached_tokens")),
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                source=str(usage.get("source") or "provider"),
+                raw=usage.get("raw") if isinstance(usage.get("raw"), dict) else None,
+            )
+        return LLMTokenUsage(source="missing")
+
+    @staticmethod
+    def _to_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except Exception:
+            return None
 
     @staticmethod
     def _parse_arguments(arguments: Any) -> Any:

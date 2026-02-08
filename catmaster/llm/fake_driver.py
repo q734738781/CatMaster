@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from catmaster.llm.driver import ToolCallingDriver
-from catmaster.llm.types import ToolCall, TurnResult
+from catmaster.llm.types import LLMTokenUsage, ToolCall, TurnResult
 
 
-def _parse_output_items(output_items: list[dict]) -> TurnResult:
+def _parse_output_items(output_items: list[dict], *, usage: LLMTokenUsage | None = None) -> TurnResult:
     tool_calls: list[ToolCall] = []
     output_text_parts: list[str] = []
     for item in output_items:
@@ -37,6 +37,38 @@ def _parse_output_items(output_items: list[dict]) -> TurnResult:
         output_text="".join(output_text_parts),
         tool_calls=tool_calls,
         output_items_raw=output_items,
+        usage=usage,
+    )
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _parse_usage(item: Any) -> LLMTokenUsage | None:
+    if item is None:
+        return None
+    if isinstance(item, LLMTokenUsage):
+        return item
+    if not isinstance(item, dict):
+        return None
+    source = str(item.get("source") or "provider")
+    return LLMTokenUsage(
+        input_tokens=_to_int(item.get("input_tokens")),
+        input_cached_tokens=_to_int(item.get("input_cached_tokens")),
+        output_tokens=_to_int(item.get("output_tokens")),
+        total_tokens=_to_int(item.get("total_tokens")),
+        source=source,
+        raw=item.get("raw") if isinstance(item.get("raw"), dict) else None,
     )
 
 
@@ -61,5 +93,10 @@ class FakeDriver(ToolCallingDriver):
         if isinstance(item, list):
             return _parse_output_items(item)
         if isinstance(item, dict):
+            if "output_items" in item:
+                output_items = item.get("output_items")
+                if not isinstance(output_items, list):
+                    raise TypeError("FakeDriver script item output_items must be a list")
+                return _parse_output_items(output_items, usage=_parse_usage(item.get("usage")))
             return _parse_output_items([item])
         raise TypeError(f"Unsupported FakeDriver script item: {type(item).__name__}")

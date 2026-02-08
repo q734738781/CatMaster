@@ -28,6 +28,7 @@ from catmaster.runtime import (
     whiteboard_ops_apply_atomic,
     whiteboard_ops_persist,
     whiteboard_ops_validate,
+    write_usage_summary,
 )
 from catmaster.runtime.artifact_log import ArtifactLog
 from catmaster.runtime.whiteboard_ops import persist_whiteboard_diff, append_task_journal_entry, _section_bounds
@@ -423,6 +424,22 @@ class Orchestrator:
         record = {"event": event, "payload": payload or {}}
         self.trace_store.append_event(record)
 
+    def _write_usage_summary(self) -> None:
+        try:
+            summary = write_usage_summary(self.run_context.run_dir)
+        except Exception as exc:
+            self.logger.debug("usage summary write failed: %s", exc)
+            return
+        self._emit("USAGE_SUMMARY_WRITTEN", category="llm", payload={
+            "path": str(self.run_context.run_dir / "usage_summary.json"),
+            "calls": summary.get("calls", 0),
+            "input_tokens": summary.get("input_tokens", 0),
+            "input_cached_tokens": summary.get("input_cached_tokens", 0),
+            "output_tokens": summary.get("output_tokens", 0),
+            "total_tokens": summary.get("total_tokens", 0),
+            "missing_usage_calls": summary.get("missing_usage_calls", 0),
+        })
+
     def _emit(
         self,
         name: str,
@@ -474,6 +491,7 @@ class Orchestrator:
             prompt=None,
             control_tools=get_plan_control_tool_schemas(),
             control_tool_names=PLAN_CONTROL_TOOL_NAMES,
+            trace_store=self.trace_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -532,6 +550,7 @@ class Orchestrator:
             prompt=None,
             control_tools=get_plan_control_tool_schemas(),
             control_tool_names=PLAN_CONTROL_TOOL_NAMES,
+            trace_store=self.trace_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -659,6 +678,7 @@ class Orchestrator:
             prompt=None,
             control_tools=get_proposal_control_tool_schemas(),
             control_tool_names=PROPOSAL_CONTROL_TOOL_NAMES,
+            trace_store=self.trace_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -722,6 +742,7 @@ class Orchestrator:
             prompt=None,
             control_tools=get_proposal_control_tool_schemas(),
             control_tool_names=PROPOSAL_CONTROL_TOOL_NAMES,
+            trace_store=self.trace_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -783,6 +804,7 @@ class Orchestrator:
             prompt=None,
             control_tools=get_director_control_tool_schemas(),
             control_tool_names=DIRECTOR_CONTROL_TOOL_NAMES,
+            trace_store=self.trace_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -1710,6 +1732,7 @@ class Orchestrator:
             })
             raise
         finally:
+            self._write_usage_summary()
             self.reporter.close()
 
     def _next_hitl_index(self) -> int:

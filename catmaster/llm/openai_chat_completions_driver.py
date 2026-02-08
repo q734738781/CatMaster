@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Optional, Dict
 
 from catmaster.llm.driver import ToolCallingDriver
-from catmaster.llm.types import ToolCall, TurnResult
+from catmaster.llm.types import LLMTokenUsage, ToolCall, TurnResult
 
 try:
     from openai import OpenAI
@@ -164,6 +164,75 @@ def _turnresult_from_chat_response(choice_message: Any) -> TurnResult:
     )
 
 
+def _as_optional_dict(item: Any) -> dict | None:
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        return item
+    if hasattr(item, "model_dump"):
+        try:
+            dumped = item.model_dump(mode="json")  # type: ignore[attr-defined]
+        except TypeError:
+            dumped = item.model_dump()  # type: ignore[attr-defined]
+        return dumped if isinstance(dumped, dict) else None
+    if hasattr(item, "dict"):
+        dumped = item.dict()  # type: ignore[attr-defined]
+        return dumped if isinstance(dumped, dict) else None
+    if hasattr(item, "__dict__"):
+        return dict(getattr(item, "__dict__"))
+    return None
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _parse_usage(raw_usage: Any) -> LLMTokenUsage:
+    usage = _as_optional_dict(raw_usage)
+    if not usage:
+        return LLMTokenUsage(source="missing")
+
+    input_tokens = _to_int(usage.get("input_tokens"))
+    if input_tokens is None:
+        input_tokens = _to_int(usage.get("prompt_tokens"))
+
+    output_tokens = _to_int(usage.get("output_tokens"))
+    if output_tokens is None:
+        output_tokens = _to_int(usage.get("completion_tokens"))
+
+    total_tokens = _to_int(usage.get("total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    cached_tokens = _to_int(usage.get("input_cached_tokens"))
+    if cached_tokens is None:
+        details = usage.get("input_tokens_details")
+        if isinstance(details, dict):
+            cached_tokens = _to_int(details.get("cached_tokens"))
+    if cached_tokens is None:
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            cached_tokens = _to_int(details.get("cached_tokens"))
+
+    return LLMTokenUsage(
+        input_tokens=input_tokens,
+        input_cached_tokens=cached_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        source="provider",
+        raw=usage,
+    )
+
+
 class OpenAIChatCompletionsDriver(ToolCallingDriver):
     def __init__(
         self,
@@ -248,7 +317,14 @@ class OpenAIChatCompletionsDriver(ToolCallingDriver):
 
         resp = self.client.chat.completions.create(**payload)
         choice = resp.choices[0]
-        return _turnresult_from_chat_response(choice.message)
+        turn = _turnresult_from_chat_response(choice.message)
+        usage = _parse_usage(getattr(resp, "usage", None))
+        return TurnResult(
+            output_text=turn.output_text,
+            tool_calls=turn.tool_calls,
+            output_items_raw=turn.output_items_raw,
+            usage=usage,
+        )
 
 
 __all__ = ["OpenAIChatCompletionsDriver"]

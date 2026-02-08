@@ -23,6 +23,12 @@ from .manager_tools import (
     whiteboard_get_hash,
     context_pack_build,
 )
+from .usage_stats import (
+    load_usage_summary,
+    summarize_usage_from_event_trace,
+    usage_summary_path,
+    write_usage_summary,
+)
 
 __all__ = [
     "RunContext",
@@ -44,4 +50,8 @@ __all__ = [
     "whiteboard_read",
     "whiteboard_get_hash",
     "context_pack_build",
+    "load_usage_summary",
+    "summarize_usage_from_event_trace",
+    "usage_summary_path",
+    "write_usage_summary",
 ]
