@@ -161,10 +161,10 @@ vasp_execute:
   task_work_path: "."
 
 mace_relax_dir:
-  command: "python task_script/mace_jobs.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model}"
+  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head}"
   forward_files:
     - "input"
-    - "task_script/mace_jobs.py"
+    - "task_script/mace_relax.py"
   backward_files:
     - "output"
   task_work_path: "."
@@ -175,8 +175,6 @@ mace_relax_dir:
 tasks:
   mace_relax:
     resources: mace_gpu
-    defaults:
-      model: medium-mpa-0
   vasp_execute:
     resources: vasp_cpu
 ```
@@ -191,7 +189,7 @@ Notes:
 <<<<<<< ours
 - Tool defaults now live in `configs/dpdispatcher/tasks.yaml` (resources/machine/model). Adjust that file for site defaults.
 =======
-- Tool defaults now live in the tool inputs (e.g., `resources="vasp_cpu"` / `resources="mace_gpu"`, `model="medium-mpa-0"`). Override per call when needed.
+- Tool defaults now live in the tool inputs (e.g., `resources="vasp_cpu"` / `resources="mace_gpu"`, `model="mh-1"`, `head="omat_pbe"`). Override per call when needed.
 >>>>>>> theirs
 =======
 >>>>>>> theirs

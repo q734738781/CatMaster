@@ -272,6 +272,7 @@ Rules:
 - If the task goal references a placeholder token like <...>, first locate/read the referenced artifact in Key files / artifacts to resolve it; do not guess values.
 - Prefer python_exec for Python calculations/post-analysis. Use bash_exec for shell/file operations.
 - Try to merge file operations into a single tool call if possible (especially for bash_exec/python_exec). Avoid printing large outputs to stdout and use a summarized text for stdout and store bulk data in files instead.
+- Symbolic link operations are forbidden in bash_exec. Do not use ln/cp symbolic-link options or Python symlink APIs; use normal copy/move operations.
 - Always provide file or directory paths as relative paths; they will be resolved relative to the selected view.
 - The Context Pack contains available data plus optional guidance. Follow system rules.
 - Do not overthink the task, just use the tools to achieve the goal and call task_finish/task_fail when the task is complete.

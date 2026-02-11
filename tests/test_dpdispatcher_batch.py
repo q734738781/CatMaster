@@ -76,7 +76,8 @@ def main() -> None:
             "output_root": str(mace_output),
             "fmax": 0.05,
             "maxsteps": 300,
-            "model": "medium-mpa-0",
+            "model": "mh-1",
+            "head": "omat_pbe",
             "check_interval": 10,
         }
         print("\nMACE Batch Payload:")

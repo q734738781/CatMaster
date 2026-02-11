@@ -380,6 +380,13 @@ class WebSession:
         if not latest_link.exists():
             return None
 
+        # Current behavior: latest_run is a copied directory snapshot.
+        if latest_link.is_dir() and not latest_link.is_symlink():
+            try:
+                return latest_link.resolve()
+            except Exception:
+                return latest_link
+
         try:
             if latest_link.is_symlink():
                 target = latest_link.resolve()

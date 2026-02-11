@@ -2705,20 +2705,6 @@ class Orchestrator:
         run_reports_dir = self.run_context.run_dir / "reports"
         run_reports_dir.mkdir(parents=True, exist_ok=True)
 
-        latest_link = reports_dir / "latest_run"
-        target = self.run_context.run_dir
-        try:
-            if latest_link.is_symlink() or latest_link.exists():
-                latest_link.unlink()
-        except Exception:
-            pass
-        rel_target = os.path.relpath(target, reports_dir)
-        try:
-            latest_link.symlink_to(rel_target)
-        except Exception:
-            # Fallback: create a text pointer if symlink fails
-            latest_link.write_text(str(target), encoding="utf-8")
-
         run_final_report = run_reports_dir / "FINAL_REPORT.md"
         run_final_report.write_text(
             "\n".join([
@@ -2742,6 +2728,34 @@ class Orchestrator:
             # Best-effort copy
             if whiteboard_src.exists():
                 run_whiteboard_dst.write_text(whiteboard_src.read_text(encoding="utf-8"), encoding="utf-8")
+
+        latest_run_copy = reports_dir / "latest_run"
+        try:
+            if latest_run_copy.is_symlink() or latest_run_copy.is_file():
+                latest_run_copy.unlink()
+            elif latest_run_copy.is_dir():
+                shutil.rmtree(latest_run_copy)
+        except Exception:
+            pass
+
+        try:
+            shutil.copytree(self.run_context.run_dir, latest_run_copy, symlinks=False)
+        except Exception:
+            # Fallback: keep latest_run as a lightweight report snapshot.
+            try:
+                if latest_run_copy.exists():
+                    if latest_run_copy.is_dir():
+                        shutil.rmtree(latest_run_copy)
+                    else:
+                        latest_run_copy.unlink()
+            except Exception:
+                pass
+            (latest_run_copy / "reports").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(run_final_report, latest_run_copy / "reports" / "FINAL_REPORT.md")
+            if run_whiteboard_dst.exists():
+                shutil.copy2(run_whiteboard_dst, latest_run_copy / "reports" / "WHITEBOARD.md")
+            (latest_run_copy / "SOURCE_RUN_DIR.txt").write_text(str(self.run_context.run_dir), encoding="utf-8")
+
         return {
             "run_dir": str(self.run_context.run_dir),
             # Backward-compatible aliases (existing callers use these keys).
@@ -2750,9 +2764,9 @@ class Orchestrator:
             # Explicit run-scoped report paths.
             "run_final_report": str(run_final_report),
             "run_whiteboard_report": str(run_whiteboard_dst),
-            # Workspace-level pointer to the latest run.
-            "latest_link": str(latest_link),
-            "workspace_latest_link": str(latest_link),
+            # Workspace-level latest run snapshot (copy, not symlink).
+            "latest_link": str(latest_run_copy),
+            "workspace_latest_link": str(latest_run_copy),
         }
 
     def _messages_to_dict(self, messages: List[Any]) -> List[Dict[str, Any]]:

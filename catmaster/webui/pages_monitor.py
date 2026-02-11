@@ -101,6 +101,24 @@ _MONITOR_CSS = """
   border-radius: 12px;
   padding: 12px;
 }
+.cm-scroll-html {
+  max-height: 560px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+}
+.cm-scroll-code {
+  max-height: 560px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+}
+.cm-scroll-markdown {
+  max-height: 560px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+}
 """
 
 
@@ -411,15 +429,15 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             with gr.Row(equal_height=True):
                 with gr.Column(scale=4, elem_classes=["cm-panel"]):
                     gr.Markdown("## Run Inbox")
-                    cards_html = gr.HTML("")
+                    cards_html = gr.HTML("", elem_classes=["cm-scroll-html"])
                 with gr.Column(scale=4, elem_classes=["cm-panel"]):
                     gr.Markdown("## Event Timeline")
-                    event_feed = gr.Code(label="ui_events", lines=30)
+                    event_feed = gr.Code(label="ui_events", lines=30, elem_classes=["cm-scroll-code"])
                 with gr.Column(scale=4, elem_classes=["cm-panel"]):
                     gr.Markdown("## Run Detail")
                     run_summary_md = gr.Markdown()
                     report_source_md = gr.Markdown("<small>Report Source: `unavailable`</small>")
-                    final_report_md = gr.Markdown()
+                    final_report_md = gr.Markdown(elem_classes=["cm-scroll-markdown"])
 
             with gr.Group(visible=False) as prompt_group:
                 with gr.Column(elem_classes=["cm-panel"]):

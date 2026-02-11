@@ -11,7 +11,9 @@ def run_mace(
     structure_file: str = "POSCAR",
     fmax: float = 0.05,
     steps: int = 500,
-    model: str = "medium-mpa-0",
+    model: str = "mh-1",
+    head: Optional[str] = "omat_pbe",
+    dispersion: bool = False,
     device: str = "auto",
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
@@ -23,6 +25,8 @@ def run_mace(
         fmax: Force convergence criterion (eV/Å)
         steps: Maximum optimization steps
         model: MACE model name
+        head: MACE model head for multi-head models; use None to disable.
+        dispersion: Enable D3 dispersion correction in mace_mp.
         device: Device to use (auto/cpu/cuda)
         output_root: Directory to write outputs; defaults to the structure file's directory.
     
@@ -35,6 +39,8 @@ def run_mace(
         fmax=fmax,
         steps=steps,
         model=model,
+        head=head,
+        dispersion=dispersion,
         device=device,
     )
 
@@ -81,6 +87,8 @@ def _run_mace_single(
     fmax: float,
     steps: int,
     model: str,
+    head: Optional[str],
+    dispersion: bool,
     device: str,
     calc=None,
 ) -> Dict[str, object]:
@@ -97,7 +105,10 @@ def _run_mace_single(
 
     atoms = read(str(structure_path))
     if calc is None:
-        calc = mace_mp(model=model, device=device)
+        kwargs = {"model": model, "dispersion": dispersion, "device": device}
+        if head:
+            kwargs["head"] = head
+        calc = mace_mp(**kwargs)
     atoms.calc = calc
 
     traj_path = output_dir / "opt.traj"
@@ -121,6 +132,8 @@ def _run_mace_single(
     summary = {
         "device": device,
         "model": model,
+        "head": head,
+        "dispersion": dispersion,
         "final_energy_eV": final_energy,
         "fmax": fmax,
         "max_force": max_force,
@@ -142,7 +155,9 @@ def run_mace_path(
     input_path: str,
     fmax: float = 0.05,
     steps: int = 500,
-    model: str = "medium-mpa-0",
+    model: str = "mh-1",
+    head: Optional[str] = "omat_pbe",
+    dispersion: bool = False,
     device: str = "auto",
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
@@ -172,7 +187,10 @@ def run_mace_path(
     import torch
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    calc = mace_mp(model=model, device=device)
+    kwargs = {"model": model, "dispersion": dispersion, "device": device}
+    if head:
+        kwargs["head"] = head
+    calc = mace_mp(**kwargs)
 
     results = []
     errors = []
@@ -187,6 +205,8 @@ def run_mace_path(
                 fmax=fmax,
                 steps=steps,
                 model=model,
+                head=head,
+                dispersion=dispersion,
                 device=device,
                 calc=calc,
             )
@@ -204,6 +224,8 @@ def run_mace_path(
         "input_root": str(input_path),
         "output_root": str(output_root_path),
         "model": model,
+        "head": head,
+        "dispersion": dispersion,
         "device": device,
         "fmax": fmax,
         "steps": steps,
@@ -220,22 +242,47 @@ def run_mace_path(
     return batch_summary
 
 
+def _parse_bool(value: str) -> bool:
+    text = value.strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
 def _cli() -> None:
     parser = argparse.ArgumentParser(description="Run MACE relaxations for a directory of structures.")
     parser.add_argument("--input", required=True, help="Input root directory")
     parser.add_argument("--fmax", type=float, default=0.05, help="Force convergence threshold (eV/Å)")
     parser.add_argument("--steps", type=int, default=500, help="Maximum optimization steps")
-    parser.add_argument("--model", default="medium-mpa-0", help="MACE model name")
+    parser.add_argument("--model", default="mh-1", help="MACE model name")
+    parser.add_argument(
+        "--head",
+        default="omat_pbe",
+        help="Model head for multi-head models (e.g. 'omat_pbe'). Use '' for none.",
+    )
+    parser.add_argument(
+        "--dispersion",
+        type=_parse_bool,
+        default=False,
+        help="Enable dispersion correction in mace_mp (true|false). Default: false.",
+    )
     parser.add_argument("--device", default="auto", help="Device to use: auto|cpu|cuda|cuda:0")
     parser.add_argument("--output_root", required=True, help="Output root directory")
     args = parser.parse_args()
 
     input_path = args.input
+    head = args.head.strip()
+    if head == "":
+        head = None
     result = run_mace_path(
         input_path=input_path,
         fmax=args.fmax,
         steps=args.steps,
         model=args.model,
+        head=head,
+        dispersion=args.dispersion,
         device=args.device,
         output_root=args.output_root,
     )

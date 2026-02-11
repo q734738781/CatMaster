@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Any, Tuple, Optional
 import os
+import re
 import time
 import subprocess
 
@@ -15,6 +16,7 @@ class BashExecInput(BaseModel):
     """
     Execute a multi-line bash script inside the workspace (default) and return stdout/stderr.
     Network access is disabled by default using Linux network namespaces (unshare).
+    Symbolic link operations are disabled; use copy/move operations instead.
     Keep output short; write large logs to files and print a one-line summary.
     """
 
@@ -35,6 +37,38 @@ def _truncate_text_tail(text: str, limit: int) -> Tuple[str, bool]:
     return "\n...[output truncated]...\n" + text[-limit:], True
 
 
+_FORBIDDEN_SYMLINK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "ln symbolic options",
+        re.compile(
+            r"(^|[;&|(\n])\s*ln\b[^\n]*(--symbolic\b|\s-(?!-)[A-Za-z]*s[A-Za-z]*\b)",
+            flags=re.IGNORECASE,
+        ),
+    ),
+    (
+        "cp -s",
+        re.compile(
+            r"(^|[;&|(\n])\s*cp\b[^\n]*\s-(?!-)[A-Za-z]*s[A-Za-z]*\b",
+            flags=re.IGNORECASE,
+        ),
+    ),
+    ("os.symlink()", re.compile(r"\bos\.symlink\s*\(", flags=re.IGNORECASE)),
+    ("Path.symlink_to()", re.compile(r"\.symlink_to\s*\(", flags=re.IGNORECASE)),
+]
+
+
+def _detect_forbidden_symlink_usage(script: str) -> Optional[str]:
+    for label, pattern in _FORBIDDEN_SYMLINK_PATTERNS:
+        match = pattern.search(script)
+        if not match:
+            continue
+        snippet = match.group(0).strip().replace("\n", " ")
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "..."
+        return f"{label}: {snippet}"
+    return None
+
+
 def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = BashExecInput(**payload)
     t0 = time.perf_counter()
@@ -47,6 +81,27 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     env.setdefault("LC_ALL", "C")
 
     script = params.script
+    blocked_reason = _detect_forbidden_symlink_usage(script)
+    if blocked_reason:
+        return create_tool_output(
+            "bash_exec",
+            False,
+            data={
+                "stdout": "",
+                "stderr": "",
+                "exit_code": None,
+                "timed_out": False,
+                "cmd": [],
+                "cwd": view_relpath(cwd_path, params.view),
+                "timeout_s": params.timeout_s,
+                "blocked_reason": blocked_reason,
+            },
+            error=(
+                "Symbolic link operations are disabled in bash_exec. "
+                "Use copy/move operations (e.g., cp/rsync/mv) instead."
+            ),
+            execution_time=time.perf_counter() - t0,
+        )
     if params.strict:
         script = "set -euo pipefail\n" + script
 

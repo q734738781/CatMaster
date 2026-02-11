@@ -37,6 +37,12 @@ _HOME_CSS = """
   color: var(--cm-subtle);
   font-size: 0.92rem;
 }
+.cm-scroll-markdown {
+  max-height: 560px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+}
 """
 
 
@@ -238,7 +244,10 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
 
                 with gr.Column(scale=5, elem_classes=["cm-panel"]):
                     gr.Markdown("## Final Report")
-                    final_report_md = gr.Markdown("Waiting for run output...")
+                    final_report_md = gr.Markdown(
+                        "Waiting for run output...",
+                        elem_classes=["cm-scroll-markdown"],
+                    )
 
             with gr.Group(visible=False) as prompt_group:
                 with gr.Column(elem_classes=["cm-panel"]):

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 import os
+import shlex
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
@@ -33,7 +34,23 @@ class MaceRelaxInput(BaseModel):
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
-    model: Optional[str] = Field(None, description="MACE model name; defaults from task config.")
+    model: str = Field(
+        "mh-1",
+        description=(
+            "MACE model name. Recommended options: "
+            "'mh-1' (slower, higher accuracy) or "
+            "'medium-mpa-0' (faster, lower accuracy)."
+        ),
+        examples=["mh-1", "medium-mpa-0"],
+    )
+    head: Optional[str] = Field(
+        "omat_pbe",
+        description="Model head for multi-head models (e.g. 'omat_pbe'). Use empty string to disable.",
+    )
+    dispersion: bool = Field(
+        False,
+        description="Enable dispersion correction in mace_mp. Default: false.",
+    )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
@@ -54,7 +71,23 @@ class MaceRelaxBatchInput(BaseModel):
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
-    model: Optional[str] = Field(None, description="MACE model name; defaults from task config.")
+    model: str = Field(
+        "mh-1",
+        description=(
+            "MACE model name. Recommended options: "
+            "'mh-1' (slower, higher accuracy) or "
+            "'medium-mpa-0' (faster, lower accuracy)."
+        ),
+        examples=["mh-1", "medium-mpa-0"],
+    )
+    head: Optional[str] = Field(
+        "omat_pbe",
+        description="Model head for multi-head models (e.g. 'omat_pbe'). Use empty string to disable.",
+    )
+    dispersion: bool = Field(
+        False,
+        description="Enable dispersion correction in mace_mp. Default: false.",
+    )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
@@ -65,6 +98,12 @@ def _resolve_machine_for_resources(resources_key: str) -> str:
     if not resolved:
         raise KeyError(f"Resources '{resources_key}' missing machine binding")
     return str(resolved)
+
+
+def _resolve_mace_head(head_value: Any) -> Optional[str]:
+    raw = "omat_pbe" if head_value is None else head_value
+    head = str(raw).strip()
+    return head or None
 
 
 def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -128,9 +167,12 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not resources_key:
         raise KeyError("mace_relax_dir missing resources in task config")
     machine = _resolve_machine_for_resources(resources_key)
-    model = params.model or cfg.defaults.get("model")
+    model = params.model
     if not model:
-        raise ValueError("model is required; set in payload or task defaults")
+        raise ValueError("model is required.")
+    head = _resolve_mace_head(params.head)
+    head_arg = shlex.quote(head or "")
+    dispersion = bool(params.dispersion)
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
@@ -175,10 +217,10 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     stage_output = stage_root / "output"
     shutil.copytree(input_root, stage_input)
     stage_output.mkdir(parents=True, exist_ok=True)
-    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_jobs.py"
+    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_relax.py"
     if not script_src.is_file():
         raise FileNotFoundError(f"Missing MACE remote script: {script_src}")
-    script_dst = stage_root / "task_script" / "mace_jobs.py"
+    script_dst = stage_root / "task_script" / "mace_relax.py"
     script_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(script_src, script_dst)
 
@@ -191,6 +233,8 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         "maxsteps": params.maxsteps,
         "steps": params.maxsteps,
         "model": model,
+        "head": head_arg,
+        "dispersion": "true" if dispersion else "false",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     task = TaskSpec(
@@ -231,6 +275,9 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             "output_root_rel": workspace_relpath(output_root),
             "batch_summary_rel": workspace_relpath(output_root / "batch_summary.json") if (output_root / "batch_summary.json").exists() else None,
             "structures_found": len(structures),
+            "model": model,
+            "head": head,
+            "dispersion": dispersion,
         },
         execution_time=result.duration_s,
     )
@@ -267,6 +314,8 @@ def _build_mace_relax_request(
         "maxsteps": params.maxsteps,
         "steps": params.maxsteps,
         "model": params.model,
+        "head": shlex.quote(_resolve_mace_head(getattr(params, "head", None)) or ""),
+        "dispersion": "true" if bool(getattr(params, "dispersion", False)) else "false",
     }
 
     rendered = render_task_fields(cfg, ctx, work_dir)
