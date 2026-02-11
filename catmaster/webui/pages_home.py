@@ -47,8 +47,8 @@ _HOME_CSS = """
 
 
 def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme: Optional[Any] = None) -> gr.Blocks:
-    def _monitor_link(ctx: str, ws: str, run_name: str) -> str:
-        url = registry.monitor_url(ctx=ctx, ws=ws, run=run_name)
+    def _monitor_link(ctx: str, project_space_name: str, run_name: str) -> str:
+        url = registry.monitor_url(ctx=ctx, project_space=project_space_name, run=run_name)
         return (
             f'<div class="cm-mini-note">'
             f'<a href="{url}" target="_blank">Open Monitor in new tab</a>'
@@ -59,7 +59,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         params = dict(getattr(request, "query_params", {}) or {})
         state = registry.bootstrap(
             ctx=params.get("ctx"),
-            ws=params.get("ws"),
+            project_space=params.get("project_space"),
             run=params.get("run"),
         )
         session = registry.get_session(state.ctx)
@@ -70,15 +70,15 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         run_dir = session.get_selected_run_dir()
         final_report, _ = session.read_final_report_with_source(run_dir)
         workspaces = session.list_workspaces()
-        ws_name = registry.workspace_name_for_session(session)
+        project_space_name = registry.project_space_name_for_session(session)
         run_info = session.run_status_text()
         return (
             state.ctx,
-            state.workspace_root,
-            gr.update(choices=workspaces, value=ws_name or None),
-            state.workspace_path,
+            state.project_space_root,
+            gr.update(choices=workspaces, value=project_space_name or None),
+            state.project_space_path,
             state.status,
-            _monitor_link(state.ctx, ws_name, selected),
+            _monitor_link(state.ctx, project_space_name, selected),
             run_info,
             final_report,
             selected,
@@ -87,20 +87,20 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
     def _refresh_workspaces(root_path: str, ctx: str) -> Tuple[gr.Dropdown, str, str, str]:
         session = registry.get_session(ctx)
         ok, msg, choices = session.set_workspace_root(root_path)
-        ws_name = registry.workspace_name_for_session(session)
+        project_space_name = registry.project_space_name_for_session(session)
         return (
-            gr.update(choices=choices, value=ws_name if ok and ws_name else None),
+            gr.update(choices=choices, value=project_space_name if ok and project_space_name else None),
             msg,
             session.current_workspace_path(),
-            _monitor_link(ctx, ws_name, ""),
+            _monitor_link(ctx, project_space_name, ""),
         )
 
     def _open_workspace(root_path: str, name: str, ctx: str) -> Tuple[str, str, str]:
         session = registry.get_session(ctx)
         session.set_workspace_root(root_path)
         _, msg = session.open_workspace_by_name(name)
-        ws_name = registry.workspace_name_for_session(session)
-        return msg, session.current_workspace_path(), _monitor_link(ctx, ws_name, "")
+        project_space_name = registry.project_space_name_for_session(session)
+        return msg, session.current_workspace_path(), _monitor_link(ctx, project_space_name, "")
 
     def _create_workspace(root_path: str, name: str, ctx: str) -> Tuple[gr.Dropdown, str, str, str, str]:
         session = registry.get_session(ctx)
@@ -110,12 +110,12 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         created, create_msg = session.create_workspace(name)
         if created:
             choices = session.list_workspaces()
-        ws_name = registry.workspace_name_for_session(session)
+        project_space_name = registry.project_space_name_for_session(session)
         return (
-            gr.update(choices=choices, value=ws_name if created else None),
+            gr.update(choices=choices, value=project_space_name if created else None),
             create_msg if create_msg else msg,
             session.current_workspace_path(),
-            _monitor_link(ctx, ws_name, ""),
+            _monitor_link(ctx, project_space_name, ""),
             "",
         )
 
@@ -164,7 +164,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         run_dir = session.get_selected_run_dir()
         final_report, _ = session.read_final_report_with_source(run_dir)
         run_info = session.run_status_text()
-        ws_name = registry.workspace_name_for_session(session)
+        project_space_name = registry.project_space_name_for_session(session)
 
         pending = session.get_prompt()
         prompt_visible = False
@@ -194,7 +194,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         return (
             run_info,
             final_report,
-            _monitor_link(ctx, ws_name, selected),
+            _monitor_link(ctx, project_space_name, selected),
             prompt_title,
             prompt_body,
             prompt_meta,
@@ -212,17 +212,17 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         with gr.Column(elem_classes=["cm-shell"]):
             gr.Markdown("# CatMaster Workbench")
             with gr.Row():
-                workspace_root_box = gr.Textbox(label="Workspace Root", value=default_workspace)
+                workspace_root_box = gr.Textbox(label="Project Space Root", value=default_workspace)
                 refresh_workspaces_btn = gr.Button("Refresh")
 
             with gr.Row():
-                workspace_list = gr.Dropdown(label="Workspaces", choices=[])
+                workspace_list = gr.Dropdown(label="Project Spaces", choices=[])
                 open_workspace_btn = gr.Button("Open")
-                new_workspace_name = gr.Textbox(label="New Workspace")
+                new_workspace_name = gr.Textbox(label="New Project Space")
                 create_workspace_btn = gr.Button("Create", variant="primary")
 
             with gr.Row():
-                current_workspace_box = gr.Textbox(label="Current Workspace", interactive=False)
+                current_workspace_box = gr.Textbox(label="Current Project Space", interactive=False)
                 monitor_link_html = gr.HTML("")
 
             status_box = gr.Markdown(elem_classes=["cm-mini-note"])

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Workspace-scoped file management helpers with user/system view separation."""
+"""Project-files-scoped file management helpers."""
 
 import fnmatch
 import os
@@ -12,13 +12,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_view_path, view_relpath, system_root
-
-
-def _validate_view(view: str) -> str:
-    if view not in {"user", "system"}:
-        raise ValueError(f"Invalid view: {view}")
-    return view
+from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 
 
 def _is_hidden(path: Path, base: Path) -> bool:
@@ -42,9 +36,9 @@ def _should_exclude(rel_path: str, exclude_globs: List[str]) -> bool:
 
 
 class WorkspaceListFilesInput(BaseModel):
-    """List files and directories under a workspace-relative path with bounded output."""
-    path: str = Field(".", description="Relative path inside the selected view")
-    view: str = Field("user", description="user or system")
+    """List files and directories under a project-files-relative path with bounded output."""
+
+    path: str = Field(".", description="Relative path inside project files root")
     depth: int = Field(3, ge=0, description="Maximum depth to traverse from the root path")
     max_entries: int = Field(200, ge=1, description="Maximum number of entries to return")
     exclude_globs: List[str] = Field(default_factory=list, description="List of glob patterns to exclude")
@@ -53,12 +47,8 @@ class WorkspaceListFilesInput(BaseModel):
 
 def workspace_list_files(payload: dict) -> dict:
     params = WorkspaceListFilesInput(**payload)
-    view = _validate_view(params.view)
-    root = resolve_view_path(params.path, view, must_exist=True)
-    if view == "user":
-        exclude_globs = list(params.exclude_globs) + [".catmaster", ".catmaster/**"]
-    else:
-        exclude_globs = list(params.exclude_globs)
+    root = resolve_workspace_path(params.path, must_exist=True)
+    exclude_globs = list(params.exclude_globs)
 
     offset = 0
     if params.continuation_token is not None:
@@ -68,7 +58,7 @@ def workspace_list_files(payload: dict) -> dict:
             raise ValueError(f"Invalid continuation_token: {exc}")
 
     if root.is_file():
-        rel = view_relpath(root, view)
+        rel = workspace_relpath(root)
         if _should_exclude(rel, exclude_globs):
             return create_tool_output(
                 "workspace_list_files",
@@ -97,7 +87,7 @@ def workspace_list_files(payload: dict) -> dict:
         filenames.sort()
         for name in dirnames + filenames:
             path = Path(dirpath) / name
-            rel = view_relpath(path, view)
+            rel = workspace_relpath(path)
             if _should_exclude(rel, exclude_globs):
                 continue
             if seen < offset:
@@ -116,7 +106,7 @@ def workspace_list_files(payload: dict) -> dict:
         "workspace_list_files",
         True,
         data={
-            "root": view_relpath(root, view),
+            "root": workspace_relpath(root),
             "entries": entries,
             "truncated": truncated,
             "next_token": next_token,
@@ -125,18 +115,17 @@ def workspace_list_files(payload: dict) -> dict:
 
 
 class WorkspaceReadFileInput(BaseModel):
-    """Read a text file from the workspace with a byte limit."""
-    path: str = Field(..., description="File path relative to the selected view")
-    view: str = Field("user", description="user or system")
+    """Read a text file from project files with a byte limit."""
+
+    path: str = Field(..., description="File path relative to project files root")
     max_bytes: int = Field(1024, ge=1, description="Maximum bytes to read")
 
 
 def workspace_read_file(payload: dict) -> dict:
     params = WorkspaceReadFileInput(**payload)
-    view = _validate_view(params.view)
-    path = resolve_view_path(params.path, view, must_exist=True)
+    path = resolve_workspace_path(params.path, must_exist=True)
     data = path.read_bytes()[: params.max_bytes]
-    rel = view_relpath(path, view)
+    rel = workspace_relpath(path)
     return create_tool_output(
         "workspace_read_file",
         True,
@@ -145,19 +134,18 @@ def workspace_read_file(payload: dict) -> dict:
 
 
 class WorkspaceWriteFileInput(BaseModel):
-    """Write text content to a workspace-relative file path."""
-    path: str = Field(..., description="File path relative to the selected view")
-    view: str = Field("user", description="user or system")
+    """Write text content to a project-files-relative file path."""
+
+    path: str = Field(..., description="File path relative to project files root")
     content: str = Field(..., description="File content to write")
 
 
 def workspace_write_file(payload: dict) -> dict:
     params = WorkspaceWriteFileInput(**payload)
-    view = _validate_view(params.view)
-    path = resolve_view_path(params.path, view)
+    path = resolve_workspace_path(params.path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(params.content, encoding="utf-8")
-    rel = view_relpath(path, view)
+    rel = workspace_relpath(path)
     return create_tool_output(
         "workspace_write_file",
         True,
@@ -166,23 +154,22 @@ def workspace_write_file(payload: dict) -> dict:
 
 
 class WorkspaceMkdirInput(BaseModel):
-    """Create a directory under the workspace view."""
-    path: str = Field(..., description="Directory path relative to the selected view")
-    view: str = Field("user", description="user or system")
+    """Create a directory under project files root."""
+
+    path: str = Field(..., description="Directory path relative to project files root")
     parents: bool = Field(True, description="Create parent directories if needed")
     exist_ok: bool = Field(True, description="Do not error if the directory already exists")
 
 
 def workspace_mkdir(payload: dict) -> dict:
     params = WorkspaceMkdirInput(**payload)
-    view = _validate_view(params.view)
-    path = resolve_view_path(params.path, view)
+    path = resolve_workspace_path(params.path)
     existed = path.exists()
     try:
         path.mkdir(parents=params.parents, exist_ok=params.exist_ok)
     except FileExistsError:
         return create_tool_output("workspace_mkdir", False, error=f"Path exists and is not a directory: {path}")
-    rel = view_relpath(path, view)
+    rel = workspace_relpath(path)
     return create_tool_output(
         "workspace_mkdir",
         True,
@@ -191,10 +178,10 @@ def workspace_mkdir(payload: dict) -> dict:
 
 
 class WorkspaceCopyFilesInput(BaseModel):
-    """Copy files or directories within the same view."""
-    sources: List[str] = Field(..., min_length=1, description="Source files or directories (view-relative)")
-    destination: str = Field(..., description="Destination path (view-relative). If multiple sources, must be a directory.")
-    view: str = Field("user", description="user or system")
+    """Copy files or directories within project files root."""
+
+    sources: List[str] = Field(..., min_length=1, description="Source files or directories (files-root-relative)")
+    destination: str = Field(..., description="Destination path (files-root-relative). If multiple sources, must be a directory.")
     overwrite: bool = Field(False, description="Overwrite existing destination paths if true")
     recursive: bool = Field(True, description="Allow copying directories if true")
 
@@ -217,9 +204,8 @@ def _copy_single(src: Path, dst: Path, *, overwrite: bool, recursive: bool) -> N
 
 def workspace_copy_files(payload: dict) -> dict:
     params = WorkspaceCopyFilesInput(**payload)
-    view = _validate_view(params.view)
-    sources = [resolve_view_path(p, view, must_exist=True) for p in params.sources]
-    dest_root = resolve_view_path(params.destination, view)
+    sources = [resolve_workspace_path(p, must_exist=True) for p in params.sources]
+    dest_root = resolve_workspace_path(params.destination)
 
     results: List[dict] = []
     if len(sources) > 1:
@@ -232,7 +218,7 @@ def workspace_copy_files(payload: dict) -> dict:
             if src.resolve() == target.resolve():
                 return create_tool_output("workspace_copy_files", False, error=f"Source and destination are the same: {src}")
             _copy_single(src, target, overwrite=params.overwrite, recursive=params.recursive)
-            results.append({"src_rel": view_relpath(src, view), "dst_rel": view_relpath(target, view)})
+            results.append({"src_rel": workspace_relpath(src), "dst_rel": workspace_relpath(target)})
     else:
         src = sources[0]
         if dest_root.exists() and dest_root.is_dir():
@@ -244,7 +230,7 @@ def workspace_copy_files(payload: dict) -> dict:
         if not target.parent.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
         _copy_single(src, target, overwrite=params.overwrite, recursive=params.recursive)
-        results.append({"src_rel": view_relpath(src, view), "dst_rel": view_relpath(target, view)})
+        results.append({"src_rel": workspace_relpath(src), "dst_rel": workspace_relpath(target)})
 
     return create_tool_output(
         "workspace_copy_files",
@@ -254,23 +240,20 @@ def workspace_copy_files(payload: dict) -> dict:
 
 
 class WorkspaceDeleteInput(BaseModel):
-    """Delete files or directories under the workspace view."""
-    paths: List[str] = Field(..., min_length=1, description="Files or directories to delete (view-relative)")
-    view: str = Field("user", description="user or system")
+    """Delete files or directories under project files root."""
+
+    paths: List[str] = Field(..., min_length=1, description="Files or directories to delete (files-root-relative)")
     recursive: bool = Field(False, description="Allow deleting directories and their contents")
     missing_ok: bool = Field(False, description="Ignore missing paths instead of failing")
 
 
 def workspace_delete(payload: dict) -> dict:
     params = WorkspaceDeleteInput(**payload)
-    view = _validate_view(params.view)
     deleted: List[str] = []
     skipped: List[str] = []
 
     for raw in params.paths:
-        path = resolve_view_path(raw, view)
-        if view == "user" and path.resolve() == system_root().resolve():
-            return create_tool_output("workspace_delete", False, error="Refusing to delete system root")
+        path = resolve_workspace_path(raw)
         if not path.exists():
             if params.missing_ok:
                 skipped.append(str(Path(raw)))
@@ -282,7 +265,7 @@ def workspace_delete(payload: dict) -> dict:
             shutil.rmtree(path)
         else:
             path.unlink()
-        deleted.append(view_relpath(path, view))
+        deleted.append(workspace_relpath(path))
 
     return create_tool_output(
         "workspace_delete",
@@ -293,8 +276,8 @@ def workspace_delete(payload: dict) -> dict:
 
 class WorkspaceGrepInput(BaseModel):
     """Search for a pattern in files and return matching lines."""
-    path: str = Field(".", description="Base directory or file to search (view-relative)")
-    view: str = Field("user", description="user or system")
+
+    path: str = Field(".", description="Base directory or file to search (files-root-relative)")
     pattern: str = Field(..., description="Search pattern (regex by default)")
     regex: bool = Field(True, description="Interpret pattern as regex if true; otherwise literal substring")
     ignore_case: bool = Field(False, description="Case-insensitive search if true")
@@ -305,8 +288,7 @@ class WorkspaceGrepInput(BaseModel):
 
 def workspace_grep(payload: dict) -> dict:
     params = WorkspaceGrepInput(**payload)
-    view = _validate_view(params.view)
-    base = resolve_view_path(params.path, view, must_exist=True)
+    base = resolve_workspace_path(params.path, must_exist=True)
 
     flags = re.IGNORECASE if params.ignore_case else 0
     if params.regex:
@@ -321,7 +303,6 @@ def workspace_grep(payload: dict) -> dict:
     matches: List[dict] = []
     files_scanned = 0
     files_skipped = 0
-    matched_files = set()
 
     def _iter_files():
         if base.is_file():
@@ -353,9 +334,8 @@ def workspace_grep(payload: dict) -> dict:
                         if len(snippet) > 400:
                             snippet = snippet[:400] + "..."
                         matches.append(
-                            {"file": view_relpath(file, view), "line_number": line_no, "line": snippet}
+                            {"file": workspace_relpath(file), "line_number": line_no, "line": snippet}
                         )
-                        matched_files.add(view_relpath(file, view))
                         if len(matches) >= params.max_matches:
                             return create_tool_output(
                                 "workspace_grep",
@@ -385,16 +365,15 @@ def workspace_grep(payload: dict) -> dict:
 
 class WorkspaceHeadInput(BaseModel):
     """Return the first N lines of a text file."""
-    path: str = Field(..., description="File path relative to the selected view")
-    view: str = Field("user", description="user or system")
+
+    path: str = Field(..., description="File path relative to project files root")
     lines: int = Field(20, ge=1, description="Number of lines to return from the start")
     max_bytes: int = Field(20000, ge=1, description="Maximum bytes to return")
 
 
 def workspace_head(payload: dict) -> dict:
     params = WorkspaceHeadInput(**payload)
-    view = _validate_view(params.view)
-    path = resolve_view_path(params.path, view, must_exist=True)
+    path = resolve_workspace_path(params.path, must_exist=True)
     if path.is_dir():
         return create_tool_output("workspace_head", False, error=f"Path is a directory: {path}")
 
@@ -413,7 +392,7 @@ def workspace_head(payload: dict) -> dict:
                 break
             lines_out.append(line)
 
-    rel = view_relpath(path, view)
+    rel = workspace_relpath(path)
     return create_tool_output(
         "workspace_head",
         True,
@@ -429,16 +408,15 @@ def workspace_head(payload: dict) -> dict:
 
 class WorkspaceTailInput(BaseModel):
     """Return the last N lines of a text file."""
-    path: str = Field(..., description="File path relative to the selected view")
-    view: str = Field("user", description="user or system")
+
+    path: str = Field(..., description="File path relative to project files root")
     lines: int = Field(20, ge=1, description="Number of lines to return from the end")
     max_bytes: int = Field(20000, ge=1, description="Maximum bytes to return")
 
 
 def workspace_tail(payload: dict) -> dict:
     params = WorkspaceTailInput(**payload)
-    view = _validate_view(params.view)
-    path = resolve_view_path(params.path, view, must_exist=True)
+    path = resolve_workspace_path(params.path, must_exist=True)
     if path.is_dir():
         return create_tool_output("workspace_tail", False, error=f"Path is a directory: {path}")
 
@@ -455,7 +433,7 @@ def workspace_tail(payload: dict) -> dict:
         truncated = True
         content = content.encode("utf-8", errors="ignore")[-params.max_bytes :].decode("utf-8", errors="ignore")
 
-    rel = view_relpath(path, view)
+    rel = workspace_relpath(path)
     return create_tool_output(
         "workspace_tail",
         True,
@@ -470,23 +448,22 @@ def workspace_tail(payload: dict) -> dict:
 
 
 class WorkspaceMoveFilesInput(BaseModel):
-    """Move or rename a file/directory within the workspace view."""
-    src: str = Field(..., description="Source file or directory path (view-relative)")
-    dst: str = Field(..., description="Destination path (view-relative). If exists, operation fails.")
-    view: str = Field("user", description="user or system")
+    """Move or rename a file/directory within project files root."""
+
+    src: str = Field(..., description="Source file or directory path (files-root-relative)")
+    dst: str = Field(..., description="Destination path (files-root-relative). If exists, operation fails.")
 
 
 def workspace_move_files(payload: dict) -> dict:
     params = WorkspaceMoveFilesInput(**payload)
-    view = _validate_view(params.view)
-    src = resolve_view_path(params.src, view, must_exist=True)
-    dst = resolve_view_path(params.dst, view)
+    src = resolve_workspace_path(params.src, must_exist=True)
+    dst = resolve_workspace_path(params.dst)
     if dst.exists():
         return create_tool_output("workspace_move_files", False, error=f"Destination already exists: {dst}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dst)
-    src_rel = view_relpath(src, view)
-    dst_rel = view_relpath(dst, view)
+    src_rel = workspace_relpath(src)
+    dst_rel = workspace_relpath(dst)
     return create_tool_output(
         "workspace_move_files",
         True,

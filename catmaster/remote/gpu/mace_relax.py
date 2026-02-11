@@ -48,12 +48,13 @@ def run_mace(
 def _collect_structure_files(root: Path) -> List[Path]:
     files: List[Path] = []
     skip_prefixes = ("mace_batch_", "vasp_batch_")
+    internal_dirs = {"metadata", ".catmaster"}
     for dirpath, dirnames, filenames in os.walk(root):
         path = Path(dirpath)
         if any(part.startswith(skip_prefixes) for part in path.parts):
             dirnames[:] = []
             continue
-        if ".catmaster" in path.parts:
+        if any(part in internal_dirs for part in path.parts):
             dirnames[:] = []
             continue
         if "summary.json" in filenames:
@@ -61,7 +62,7 @@ def _collect_structure_files(root: Path) -> List[Path]:
             continue
         dirnames[:] = [
             d for d in dirnames
-            if d != ".catmaster" and not d.startswith(skip_prefixes)
+            if d not in internal_dirs and not d.startswith(skip_prefixes)
         ]
         for fname in filenames:
             p = path / fname

@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from catmaster.tools.base import system_root, workspace_root
+from catmaster.tools.base import ensure_project_space_layout, system_root, workspace_root
 from catmaster.ui import make_event
 
 from . import io
@@ -36,26 +36,26 @@ class WebSession:
             root = Path(path).expanduser().resolve()
             root.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
-            return False, f"Failed to open workspace root: {exc}", []
+            return False, f"Failed to open project-space root: {exc}", []
         with self._lock:
             self.workspace_root = root
-        return True, f"Workspace root: {root}", self._list_workspace_choices(root)
+        return True, f"Project-space root: {root}", self._list_workspace_choices(root)
 
     def open_workspace(self, path: str, *, create: bool = True) -> Tuple[bool, str]:
         if self.run_thread and self.run_thread.is_alive():
-            return False, "Run in progress; stop it before switching workspace."
+            return False, "Run in progress; stop it before switching project space."
         try:
             ws = Path(path).expanduser().resolve()
             if ws.exists():
                 if not ws.is_dir():
-                    return False, f"Workspace is not a directory: {ws}"
+                    return False, f"Project space is not a directory: {ws}"
             else:
                 if not create:
-                    return False, f"Workspace does not exist: {ws}"
+                    return False, f"Project space does not exist: {ws}"
                 ws.mkdir(parents=True, exist_ok=True)
+            ensure_project_space_layout(ws, create=True)
         except Exception as exc:
-            return False, f"Failed to open workspace: {exc}"
-        system_root(workspace=ws).mkdir(parents=True, exist_ok=True)
+            return False, f"Failed to open project space: {exc}"
         with self._lock:
             self.workspace = ws
             self.selected_run_dir = None
@@ -64,23 +64,23 @@ class WebSession:
             self.run_info = {}
             if self.run_status != "running":
                 self.run_status = "idle"
-        return True, f"Workspace: {ws}"
+        return True, f"Project space: {ws}"
 
     def open_workspace_by_name(self, name: str) -> Tuple[bool, str]:
         root = self.workspace_root
         if root is None:
-            return False, "Workspace root not set."
+            return False, "Project-space root not set."
         if not name:
-            return False, "Select a workspace first."
+            return False, "Select a project space first."
         target = (root / name).resolve()
         return self.open_workspace(str(target), create=False)
 
     def create_workspace(self, name: str) -> Tuple[bool, str]:
         root = self.workspace_root
         if root is None:
-            return False, "Workspace root not set."
+            return False, "Project-space root not set."
         if not name:
-            return False, "Workspace name is required."
+            return False, "Project-space name is required."
         target = (root / name).resolve()
         return self.open_workspace(str(target), create=True)
 
@@ -90,9 +90,9 @@ class WebSession:
             root = self.workspace_root
             running = self.run_thread and self.run_thread.is_alive()
         if running:
-            return False, "Run in progress; stop it before clearing the workspace."
+            return False, "Run in progress; stop it before clearing the project space."
         if ws is None:
-            return False, "Open a workspace first."
+            return False, "Open a project space first."
         try:
             ws = ws.resolve()
             if root is not None:
@@ -100,23 +100,23 @@ class WebSession:
                 try:
                     ws.relative_to(root)
                 except ValueError:
-                    return False, f"Workspace path is outside workspace root: {ws}"
+                    return False, f"Project-space path is outside project-space root: {ws}"
             if not ws.exists() or not ws.is_dir():
-                return False, f"Workspace does not exist: {ws}"
+                return False, f"Project space does not exist: {ws}"
             for entry in ws.iterdir():
                 if entry.is_dir():
                     shutil.rmtree(entry)
                 else:
                     entry.unlink()
         except Exception as exc:
-            return False, f"Failed to clear workspace: {exc}"
+            return False, f"Failed to clear project space: {exc}"
         with self._lock:
             self.selected_run_dir = None
             self.last_event_seq = 0
             self.event_lines = []
             if self.run_status != "running":
                 self.run_status = "idle"
-        return True, f"Workspace cleared: {ws}"
+        return True, f"Project space cleared: {ws}"
 
     def list_workspaces(self) -> List[Tuple[str, str]]:
         root = self.workspace_root
@@ -154,7 +154,7 @@ class WebSession:
             return ""
         ws = self._workspace_path()
         if ws is None:
-            return "Open a workspace first."
+            return "Open a project space first."
         runs_root = system_root(workspace=ws) / "runs"
         candidate = (runs_root / run_name).resolve()
         sys_root = system_root(workspace=ws).resolve()
@@ -184,7 +184,7 @@ class WebSession:
         with self._lock:
             ws = self.workspace
             if ws is None:
-                return "Open a workspace first."
+                return "Open a project space first."
             if self.run_thread and self.run_thread.is_alive():
                 return "Run already in progress."
             self.run_status = "starting"
@@ -302,8 +302,8 @@ class WebSession:
             return ""
         return io.read_text(
             system_root(workspace=ws) / "whiteboard.md",
-            view="system",
-            workspace=ws,
+            scope="metadata",
+            project_space=ws,
             max_chars=MAX_TEXT_PREVIEW_CHARS,
         )
 
@@ -311,7 +311,7 @@ class WebSession:
         ws = self._workspace_path()
         if ws is None:
             return io.read_artifacts_csv(Path("/__catmaster_missing__/artifacts.csv"))
-        return io.read_artifacts_csv(system_root(workspace=ws) / "artifacts.csv", workspace=ws)
+        return io.read_artifacts_csv(system_root(workspace=ws) / "artifacts.csv", project_space=ws)
 
     def read_task_state(self, run_dir: Optional[Path]) -> str:
         ws = self._workspace_path()
@@ -319,8 +319,8 @@ class WebSession:
             return ""
         return io.read_json_pretty(
             run_dir / "task_state.json",
-            view="system",
-            workspace=ws,
+            scope="metadata",
+            project_space=ws,
             max_chars=MAX_TEXT_PREVIEW_CHARS,
         )
 
@@ -330,8 +330,8 @@ class WebSession:
             return ""
         return io.read_text(
             run_dir / "proposal.md",
-            view="system",
-            workspace=ws,
+            scope="metadata",
+            project_space=ws,
             max_chars=MAX_TEXT_PREVIEW_CHARS,
         )
 
@@ -342,12 +342,12 @@ class WebSession:
     def read_final_report_with_source(self, run_dir: Optional[Path]) -> Tuple[str, str]:
         ws = self._workspace_path()
         if ws is None:
-            return "(unavailable) Open a workspace first.", "unavailable"
+            return "(unavailable) Open a project space first.", "unavailable"
         if run_dir:
             text = io.read_text(
                 run_dir / "reports" / "FINAL_REPORT.md",
-                view="system",
-                workspace=ws,
+                scope="metadata",
+                project_space=ws,
                 max_chars=MAX_TEXT_PREVIEW_CHARS,
             )
             if not text.startswith("(unavailable)"):
@@ -357,8 +357,8 @@ class WebSession:
         if latest_run:
             text = io.read_text(
                 latest_run / "reports" / "FINAL_REPORT.md",
-                view="system",
-                workspace=ws,
+                scope="metadata",
+                project_space=ws,
                 max_chars=MAX_TEXT_PREVIEW_CHARS,
             )
             if not text.startswith("(unavailable)"):
@@ -367,8 +367,8 @@ class WebSession:
         # Legacy fallback for older runs/workspaces.
         text = io.read_text(
             workspace_root(ws) / "reports" / "FINAL_REPORT.md",
-            view="user",
-            workspace=ws,
+            scope="files",
+            project_space=ws,
             max_chars=MAX_TEXT_PREVIEW_CHARS,
         )
         if not text.startswith("(unavailable)"):
@@ -421,13 +421,13 @@ class WebSession:
         ws = self._workspace_path()
         if ws is None or not run_dir:
             return ""
-        return io.tail_jsonl(run_dir / trace_name, workspace=ws, max_lines=MAX_TRACE_LINES)
+        return io.tail_jsonl(run_dir / trace_name, project_space=ws, max_lines=MAX_TRACE_LINES)
 
     def read_ui_events_from_file(self, run_dir: Optional[Path]) -> str:
         ws = self._workspace_path()
         if ws is None or not run_dir:
             return ""
-        return io.tail_jsonl(run_dir / "ui_events.jsonl", workspace=ws, max_lines=MAX_EVENT_FEED)
+        return io.tail_jsonl(run_dir / "ui_events.jsonl", project_space=ws, max_lines=MAX_EVENT_FEED)
 
     def list_run_cards(self) -> List[Dict[str, Any]]:
         ws = self._workspace_path()
@@ -458,7 +458,7 @@ class WebSession:
                     "source": str(summary.get("source") or "rule"),
                     "model_name": str(meta.get("model_name") or ""),
                     "start_time": str(meta.get("start_time") or ""),
-                    "workspace": str(meta.get("workspace") or ""),
+                    "project_space": str(meta.get("workspace") or ""),
                 }
             )
         return cards

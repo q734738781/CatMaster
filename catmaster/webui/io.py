@@ -2,35 +2,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Literal, Optional
 
 import pandas as pd
 
-from catmaster.tools.base import resolve_view_path, system_root, workspace_root
+from catmaster.tools.base import resolve_workspace_path, system_root, workspace_root
+
+PathScope = Literal["files", "metadata"]
 
 
-def _safe_resolve(
-    path: Path,
-    *,
-    view: str,
-    workspace: Path | str | None = None,
-    must_exist: bool = False,
-) -> Path:
-    root = workspace_root(workspace) if view == "user" else system_root(workspace)
+def _safe_resolve(path: Path, *, root: Path, must_exist: bool = False) -> Path:
     root = root.resolve()
     resolved = path.expanduser().resolve()
     try:
         resolved.relative_to(root)
-    except ValueError:
-        raise ValueError(f"Path escapes {view} root: {resolved}")
-    if view == "user":
-        sys_root = system_root(workspace).resolve()
-        try:
-            resolved.relative_to(sys_root)
-        except ValueError:
-            pass
-        else:
-            raise ValueError(f"Path under system root is not allowed in user view: {resolved}")
+    except ValueError as exc:
+        raise ValueError(f"Path escapes {root}: {resolved}") from exc
     if must_exist and not resolved.exists():
         raise FileNotFoundError(f"Path does not exist: {resolved}")
     return resolved
@@ -39,25 +26,32 @@ def _safe_resolve(
 def resolve_path(
     path: str | Path,
     *,
-    view: str,
-    workspace: Path | str | None = None,
+    scope: PathScope = "metadata",
+    project_space: Path | str | None = None,
     must_exist: bool = False,
 ) -> Path:
     p = Path(path)
-    if p.is_absolute():
-        return _safe_resolve(p, view=view, workspace=workspace, must_exist=must_exist)
-    return resolve_view_path(str(p), view, workspace=workspace, must_exist=must_exist)
+    if scope == "files":
+        if p.is_absolute():
+            return _safe_resolve(p, root=workspace_root(project_space), must_exist=must_exist)
+        return resolve_workspace_path(str(p), workspace=project_space, must_exist=must_exist)
+    if scope == "metadata":
+        root = system_root(project_space)
+        if p.is_absolute():
+            return _safe_resolve(p, root=root, must_exist=must_exist)
+        return _safe_resolve(root / p, root=root, must_exist=must_exist)
+    raise ValueError(f"Invalid scope: {scope}")
 
 
 def read_text(
     path: str | Path,
     *,
-    view: str,
-    workspace: Path | str | None = None,
+    scope: PathScope = "metadata",
+    project_space: Path | str | None = None,
     max_chars: Optional[int] = None,
 ) -> str:
     try:
-        p = resolve_path(path, view=view, workspace=workspace, must_exist=True)
+        p = resolve_path(path, scope=scope, project_space=project_space, must_exist=True)
     except Exception as exc:
         return f"(unavailable) {exc}"
     try:
@@ -72,11 +66,11 @@ def read_text(
 def read_json_pretty(
     path: str | Path,
     *,
-    view: str,
-    workspace: Path | str | None = None,
+    scope: PathScope = "metadata",
+    project_space: Path | str | None = None,
     max_chars: Optional[int] = None,
 ) -> str:
-    raw = read_text(path, view=view, workspace=workspace, max_chars=max_chars)
+    raw = read_text(path, scope=scope, project_space=project_space, max_chars=max_chars)
     try:
         data = json.loads(raw)
     except Exception:
@@ -84,9 +78,9 @@ def read_json_pretty(
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def read_artifacts_csv(path: str | Path, *, workspace: Path | str | None = None) -> pd.DataFrame:
+def read_artifacts_csv(path: str | Path, *, project_space: Path | str | None = None) -> pd.DataFrame:
     try:
-        p = resolve_path(path, view="system", workspace=workspace, must_exist=True)
+        p = resolve_path(path, scope="metadata", project_space=project_space, must_exist=True)
     except Exception:
         return pd.DataFrame(columns=["path", "description", "type", "updated_time"])
     try:
@@ -96,9 +90,9 @@ def read_artifacts_csv(path: str | Path, *, workspace: Path | str | None = None)
     return df
 
 
-def tail_jsonl(path: str | Path, *, workspace: Path | str | None = None, max_lines: int = 200) -> str:
+def tail_jsonl(path: str | Path, *, project_space: Path | str | None = None, max_lines: int = 200) -> str:
     try:
-        p = resolve_path(path, view="system", workspace=workspace, must_exist=True)
+        p = resolve_path(path, scope="metadata", project_space=project_space, must_exist=True)
     except Exception as exc:
         return f"(unavailable) {exc}"
     try:

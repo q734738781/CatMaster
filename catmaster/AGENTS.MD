@@ -19,7 +19,7 @@ This document defines coding conventions intended for code-generation agents (e.
   - Only agents should directly call the LLM.
 - `catmaster/runtime/`
   - Deterministic run state, tracing, artifact persistence, whiteboard operations, context pack building.
-  - Anything involving `.catmaster/runs/...` lives here.
+  - Anything involving `metadata/runs/...` lives here.
 - `catmaster/tools/`
   - All executable “capabilities” exposed to the LLM.
   - Tools must validate inputs with Pydantic schemas and return standardized outputs.
@@ -30,9 +30,9 @@ This document defines coding conventions intended for code-generation agents (e.
 
 - `task_state.json` is the run’s single source of truth for:
   - `user_request`, `plan`, `tasks`, `observations`, and `status`.
-- The whiteboard (`.catmaster/whiteboard.md`) is the durable, human-readable memory:
+- The whiteboard (`metadata/whiteboard.md`) is the durable, human-readable memory:
   - Updated via deterministic whiteboard ops (UPSERT/DEPRECATE).
-- Artifacts/toolcalls are persisted under `.catmaster/runs/<run_id>/...`.
+- Artifacts/toolcalls are persisted under `metadata/runs/<run_id>/...`.
 
 ---
 
@@ -95,18 +95,17 @@ Do not return raw objects, custom dict shapes, or non-dict values.
 
 ## 4) Path and workspace policy (critical)
 
-CatMaster distinguishes two “views” of the filesystem:
+CatMaster uses a project-space layout:
 
-- **User view**: the workspace root (excludes `.catmaster/`)
-- **System view**: `.catmaster/` (run metadata, traces, internal artifacts)
+- **Project files root**: `project_space/files` (LLM/task-visible files)
+- **Metadata root**: `project_space/metadata` (run metadata, traces, internal artifacts)
 
 Rules:
 
-1. Tools should operate in **user view** unless there is a strong reason otherwise.
-2. The `task_runner` role cannot access `view="system"` via tools with a `view` parameter (e.g., `bash_exec`).
-3. If a tool produces an artifact that future tasks must read, it must be written into the **user workspace**, and the tool must return a **workspace-relative** path using `workspace_relpath(...)`.
-4. Use `resolve_workspace_path(...)` and `resolve_view_path(...)` for all path resolution and validation. Do not manually join paths with strings.
-5. Do not use environment-variable-based workspace selection in new code. Workspace must be passed through params/instances (for example CLI `--workspace`, `WebSession`, `Orchestrator`) or explicit function arguments.
+1. Tools should operate in `project_space/files` unless they are explicitly metadata tools.
+2. If a tool produces an artifact that future tasks must read, write it into project files and return a files-relative path via `workspace_relpath(...)`.
+3. Use `resolve_workspace_path(...)` (or scoped path helpers) for path resolution and validation. Do not manually join paths with strings.
+4. Do not use environment-variable-based workspace selection in new code. Project space should be passed through params/instances (for example CLI args, `WebSession`, `Orchestrator`) or explicit function arguments.
 
 ---
 
@@ -160,7 +159,7 @@ For tools operating on directories:
 
 - Accept `input_dir` and `output_dir/output_root`.
 - **Never** place `output_dir` inside `input_dir` (must validate).
-- Exclude `.catmaster/` and staging directories (`*_batch_*`) from input scanning.
+- Exclude `metadata/` and staging directories (`*_batch_*`) from input scanning.
 - Ensure outputs are isolated and do not become inputs on subsequent scans.
 - Produce a deterministic mapping from input paths to output paths. Prefer mirroring the input layout under
   `output_root`, and for file inputs expand into a folder (e.g., `input_root/a/c.vasp` -> `output_root/a/c/...`).
@@ -189,13 +188,13 @@ When adding new run phases or behaviors, emit events via the Reporter to preserv
 
 ## 7) Whiteboard and memory rules
 
-- Do not directly edit `.catmaster/whiteboard.md` with ad-hoc text operations in new code.
+- Do not directly edit `metadata/whiteboard.md` with ad-hoc text operations in new code.
 - Use whiteboard ops (UPSERT/DEPRECATE) and apply them with `whiteboard_ops_apply_atomic(...)`.
 - Allowed sections are limited (see `catmaster/runtime/whiteboard_ops.py`); do not invent new sections without updating validators, templates, and context pack builder.
 
 Whiteboard content rules:
 
-- Paths recorded in Key Files must be user-workspace relative paths (no `.catmaster/...`).
+- Paths recorded in Key Files must be project-files-relative paths (no `metadata/...`).
 - Use stable IDs (FACT/FILE/CONSTRAINT identifiers) and UPSERT existing IDs when updating.
 
 ---
@@ -205,7 +204,7 @@ Whiteboard content rules:
 - Prefer structured persistence over console logs:
   - tool inputs/outputs via `ArtifactStore`
   - run/task/tool events via `TraceStore`
-- Use the existing run directory layout; do not create ad-hoc directories under `.catmaster/` without coordination.
+- Use the existing run directory layout; do not create ad-hoc directories under `metadata/` without coordination.
 - When writing JSON, use UTF-8 and `ensure_ascii=False`.
 
 ---

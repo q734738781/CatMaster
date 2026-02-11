@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from catmaster.tools.base import workspace_root
 from catmaster.webui.session import WebSession
 
 
 def test_resolve_latest_run_dir_accepts_copied_directory(tmp_path: Path) -> None:
     ws = tmp_path / "workspace"
-    latest_run = ws / "reports" / "latest_run"
+    files_root = workspace_root(ws)
+    latest_run = files_root / "reports" / "latest_run"
     (latest_run / "reports").mkdir(parents=True, exist_ok=True)
     (latest_run / "reports" / "FINAL_REPORT.md").write_text("report", encoding="utf-8")
 

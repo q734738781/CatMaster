@@ -33,7 +33,7 @@ Rules:
    - Do NOT create ToDo items whose primary deliverable is a "plan", "plan parameters", "scaffold for review", or similar documentation-only artifacts
      (e.g., reports/plan_parameters.md, setup scaffold, write plan notes).
    - Directory creation is implicit; include paths only as part of real computational milestones (structures/inputs/runs/analysis/results).
-6) Always express any file or directory paths as relative paths; they will be resolved relative to workspace root.
+6) Always express any file or directory paths as relative paths; they will be resolved relative to the project files root.
 
 ToDo item writing guidelines:
 - Keep items logically distinct, but avoid over-fragmentation.
@@ -149,8 +149,8 @@ Output requirements:
 4) Also output an ordered list of work_packages (high-level milestones). Do NOT write tool-by-tool steps.
 
 Rules:
-- Use workspace-relative paths only.
-- Do not mention internal metadata directories (e.g., .catmaster).
+- Use project-files-relative paths only.
+- Do not mention internal metadata directories.
 
 When ready, you MUST call proposal_finish with:
 - proposal_md (full markdown)
@@ -273,7 +273,7 @@ Rules:
 - Prefer python_exec for Python calculations/post-analysis. Use bash_exec for shell/file operations.
 - Try to merge file operations into a single tool call if possible (especially for bash_exec/python_exec). Avoid printing large outputs to stdout and use a summarized text for stdout and store bulk data in files instead.
 - Symbolic link operations are forbidden in bash_exec. Do not use ln/cp symbolic-link options or Python symlink APIs; use normal copy/move operations.
-- Always provide file or directory paths as relative paths; they will be resolved relative to the selected view.
+- Always provide file or directory paths as relative paths; they will be resolved relative to the project files root.
 - The Context Pack contains available data plus optional guidance. Follow system rules.
 - Do not overthink the task, just use the tools to achieve the goal and call task_finish/task_fail when the task is complete.
 
@@ -319,14 +319,14 @@ Rules:
   - Open Questions: text required (id optional)
 - DEPRECATE requirements:
   - Only valid for Key Facts/Key Files/Constraints with record_type + id.
-- Do not include any system paths (e.g., .catmaster) in key_artifacts or ops.
+- Do not include any metadata paths in key_artifacts or ops.
 - Source for FACT is optional; include it only if it is a meaningful file pointer, otherwise omit it.
 - Keep entries salient to the global goal. Include only final results, irreversible decisions/assumptions, and minimal pointers needed to continue.
 - Avoid verbose tool parameter dumps or internal step indices. Consolidate overlapping facts.
 - If a relevant FACT/FILE already exists, UPSERT that ID instead of creating a new one.
 - Key artifacts should list files/dirs created or modified during this task.
 """),
-        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
+        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\n\nFinal output text:\n{final_output_text}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
     ])
 
 
@@ -349,13 +349,13 @@ Rules:
   - Open Questions: text required (id optional)
 - DEPRECATE requirements:
   - Only valid for Key Facts/Key Files/Constraints with record_type + id.
-- Do not include any system paths (e.g., .catmaster) in key_artifacts or ops.
+- Do not include any metadata paths in key_artifacts or ops.
 - Source for FACT is optional; include it only if it is a meaningful file pointer, otherwise omit it.
 - Keep entries salient to the global goal. Include only final results, irreversible decisions/assumptions, and minimal pointers needed to continue.
 - Avoid verbose tool parameter dumps or internal step indices. Consolidate overlapping facts.
 - If a relevant FACT/FILE already exists, UPSERT that ID instead of creating a new one.
 """),
-        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\n\nPatch error:\n{error}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
+        ("human", "Task: {task_id}\nGoal: {task_goal}\nFinish reason: {finish_reason}\n\nFinal output text:\n{final_output_text}\n\nPatch error:\n{error}\n\nCurrent Whiteboard:\n{whiteboard_text}\n\nLocal Observations:\n{local_observations}")
     ])
 
 
@@ -364,7 +364,7 @@ def build_summary_prompt() -> ChatPromptTemplate:
         ("system", """You are a scientific workflow assistant. Write the final report for the user.
 Use the whiteboard excerpt, task observations, and artifact list to produce a concise scientific summary.
 Include key numerical results (energies, bond lengths, convergence data) if present.
-Reference outputs with workspace-relative paths only. Do not mention internal metadata directories."""),
+Reference outputs with project-files-relative paths only. Do not mention internal metadata directories."""),
         ("human", "User request: {user_request}\nStatus: {status}\n\nWhiteboard excerpt:\n{whiteboard_excerpt}\n\nTask observations:\n{observations}\n\nArtifact list:\n{artifacts}")
     ])
 

@@ -12,7 +12,7 @@ from typing import Optional
 import json
 import uuid
 
-from catmaster.tools.base import ensure_system_root, system_root
+from catmaster.tools.base import ensure_project_space_layout, project_space_root, system_root
 
 
 def _default_project_id() -> str:
@@ -51,7 +51,7 @@ class RunContext:
         driver_kind: Optional[str] = None,
     ) -> "RunContext":
         ws = Path(workspace).expanduser().resolve() if workspace is not None else Path.cwd().resolve()
-        ensure_system_root(workspace=ws)
+        ensure_project_space_layout(ws, create=True)
         project_id = project_id or _default_project_id()
         run_id = run_id or _default_run_id()
         resolved_run_dir = (
@@ -90,7 +90,8 @@ class RunContext:
         workspace_value = meta.get("workspace")
         if not workspace_value:
             raise ValueError("run meta missing workspace")
-        ws = Path(workspace_value).expanduser().resolve()
+        ws = project_space_root(workspace_value)
+        ensure_project_space_layout(ws, create=False)
         sys_root = system_root(workspace=ws).resolve()
         try:
             resolved_run_dir.relative_to(sys_root)

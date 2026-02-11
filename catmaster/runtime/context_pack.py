@@ -11,7 +11,7 @@ import re
 
 from catmaster.runtime.whiteboard import WhiteboardStore
 from catmaster.runtime.artifact_log import ArtifactLog
-from catmaster.tools.base import system_root
+from catmaster.tools.base import system_root, workspace_root
 
 
 @dataclass(frozen=True)
@@ -39,23 +39,24 @@ class ContextPackBuilder:
             journal_excerpt = self.whiteboard.read_sections(["Journal"], max_chars=policy.max_journal_chars)
 
         key_files = _parse_key_files(core_excerpt)
-        workspace = self.whiteboard.path.parent.parent
-        artifact_log = ArtifactLog(system_root(workspace=workspace) / "artifacts.csv", workspace=workspace)
+        project_space = self.whiteboard.path.parent.parent
+        files_root = workspace_root(project_space)
+        artifact_log = ArtifactLog(system_root(workspace=project_space) / "artifacts.csv", workspace=project_space)
         artifact_log.ensure_exists()
         artifact_log_entries = _sort_artifacts_by_time(_artifact_log_slice(artifact_log.load()))
         artifact_slice = _merge_artifacts(
             key_files,
             artifact_log_entries,
             policy.max_artifacts,
-            workspace=workspace,
+            workspace=project_space,
         )
 
         constraints = self.whiteboard.read_sections(["Constraints"])
-        workspace_policy = _workspace_policy_summary(role, workspace_root=str(workspace))
+        workspace_policy = _workspace_policy_summary(role, files_root=str(files_root))
         return {
             "task_goal": task_goal,
             "role": role,
-            "workspace_root": str(workspace),
+            "workspace_root": str(files_root),
             "whiteboard_excerpt": _with_current_state_header(core_excerpt, journal_excerpt),
             "artifact_slice": artifact_slice,
             "constraints": constraints,
@@ -70,13 +71,12 @@ def _with_current_state_header(core_excerpt: str, journal_excerpt: str) -> str:
     return "\n\n".join(chunk for chunk in chunks if chunk).strip()
 
 
-def _workspace_policy_summary(role: str, *, workspace_root: str) -> str:
+def _workspace_policy_summary(role: str, *, files_root: str) -> str:
     return (
-        "Workspace policy:\n"
-        f"- Current workspace root: {workspace_root}\n"
-        "- Use user workspace only (view='user').\n"
-        "- Tool path params are resolved relative to this workspace root.\n"
-        "- Do not read or write system metadata.\n"
+        "Project files policy:\n"
+        f"- Current files root: {files_root}\n"
+        "- Tool path params are resolved relative to this files root.\n"
+        "- Metadata is internal; do not read or write metadata paths from tasks.\n"
         "- Reuse existing artifacts; avoid scanning the full workspace.\n"
         f"- Role: {role}"
     )

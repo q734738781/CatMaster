@@ -254,49 +254,6 @@ class TaskStepper:
                     continue
                 toolcall_id = f"{task_id}_step{step + 1}_{method}"
                 refs = self.artifact_store.toolcall_refs(toolcall_id)
-                if self.role == "task_runner" and isinstance(params, dict) and params.get("view") == "system":
-                    tool_output = {
-                        "status": "failed",
-                        "tool_name": method,
-                        "data": {},
-                        "error": "System view is not available to task_runner. Use view='user' and the provided artifact list.",
-                    }
-                    self.artifact_store.write_input(toolcall_id, {
-                        "raw_params": params,
-                        "validated_params": None,
-                        "tool_name": method,
-                        "toolcall_id": toolcall_id,
-                        "status": "validation_failed",
-                    })
-                    self.artifact_store.write_output(toolcall_id, {
-                        "toolresult": tool_output,
-                        "full_output": tool_output,
-                    })
-                    record = self._toolcall_record(
-                        task_id=task_id,
-                        step=step,
-                        method=method,
-                        validated_params=None,
-                        tool_output=tool_output,
-                        toolcall_id=toolcall_id,
-                        refs=refs,
-                    )
-                    self.trace_store.append_toolcall(record)
-                    memories["observations"].append({"step": step, "method": method, "result": tool_output})
-                    memories["next_step"] = (
-                        "System view is not available. Use view='user' and the provided artifact list."
-                    )
-                    reason = tool_output.get("error", "")
-                    self._emit("TOOL_VALIDATE_FAILED", level="warning", category="tool", task_id=task_id, step_id=step, payload={
-                        "tool": method,
-                        "reason": self._snippet(reason, 200),
-                    })
-                    self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
-                        "tool": method,
-                        "status": "validation_failed",
-                        "highlights": self._snippet(reason, 200),
-                    })
-                    continue
                 self._emit("TOOL_CALL_START", category="tool", task_id=task_id, step_id=step, payload={
                     "tool": method,
                     "params_compact": self._compact_params(params),
@@ -554,6 +511,7 @@ class TaskSummarizer:
         task_goal: str,
         finish_reason: str,
         local_observations: List[Dict[str, Any]],
+        final_output_text: str = "",
         whiteboard_text: str,
         error: Optional[str] = None,
         use_repair_prompt: bool = False,
@@ -564,6 +522,7 @@ class TaskSummarizer:
             task_goal=task_goal,
             finish_reason=finish_reason,
             local_observations=json.dumps(local_observations, ensure_ascii=False),
+            final_output_text=final_output_text or "",
             whiteboard_text=whiteboard_text,
             error=error or "",
         )

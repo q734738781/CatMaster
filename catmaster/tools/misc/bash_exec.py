@@ -8,7 +8,7 @@ import subprocess
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_view_path, view_relpath
+from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
 
 
@@ -21,8 +21,7 @@ class BashExecInput(BaseModel):
     """
 
     script: str = Field(..., description="Bash script to execute (multi-line).")
-    cwd: str = Field(".", description="Working directory inside the selected view.")
-    view: str = Field("user", description="user or system")
+    cwd: str = Field(".", description="Working directory inside project files root.")
     timeout_s: float = Field(3600.0, ge=0.1, description="Timeout seconds.")
     max_output_chars: int = Field(10000, ge=1000, description="Max chars returned for stdout/stderr each.")
     strict: bool = Field(True, description="Prepend 'set -euo pipefail' for safer scripting.")
@@ -73,7 +72,7 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = BashExecInput(**payload)
     t0 = time.perf_counter()
 
-    cwd_path = resolve_view_path(params.cwd, params.view, must_exist=True)
+    cwd_path = resolve_workspace_path(params.cwd, must_exist=True)
 
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
@@ -92,7 +91,7 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "exit_code": None,
                 "timed_out": False,
                 "cmd": [],
-                "cwd": view_relpath(cwd_path, params.view),
+                "cwd": workspace_relpath(cwd_path),
                 "timeout_s": params.timeout_s,
                 "blocked_reason": blocked_reason,
             },
@@ -169,7 +168,7 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             "exit_code": exit_code,
             "timed_out": timed_out,
             "cmd": cmd,
-            "cwd": view_relpath(cwd_path, params.view),
+            "cwd": workspace_relpath(cwd_path),
             "timeout_s": params.timeout_s,
         }
 

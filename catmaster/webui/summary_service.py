@@ -56,7 +56,8 @@ def summarize_run(run_dir: Path, *, run_error: Optional[str] = None) -> Dict[str
     merged = _merge_summary(fallback, llm_payload)
     merged["generated_at"] = _utcnow()
     merged["run_id"] = run_dir.name
-    merged["workspace"] = str(meta.get("workspace") or "")
+    merged["project_space"] = str(meta.get("workspace") or "")
+    merged["workspace"] = merged["project_space"]
 
     path = summary_path(run_dir)
     try:
@@ -81,7 +82,8 @@ def snapshot_summary(run_dir: Path) -> Dict[str, Any]:
         run_error=None,
     )
     fallback["run_id"] = run_dir.name
-    fallback["workspace"] = str(meta.get("workspace") or "")
+    fallback["project_space"] = str(meta.get("workspace") or "")
+    fallback["workspace"] = fallback["project_space"]
     fallback["generated_at"] = _utcnow()
     return fallback
 
@@ -151,13 +153,13 @@ def _rule_next_actions(*, run_status: str, has_report: bool, has_error: bool) ->
     if has_error or run_status == "error":
         return [
             "Open event/tool traces and locate the first failed step.",
-            "Fix inputs or tool parameters, then rerun from the same workspace.",
+            "Fix inputs or tool parameters, then rerun from the same project space.",
             "If needed, start a new run with a narrower prompt scope.",
         ]
     if run_status in {"running", "starting"}:
         return [
             "Keep this run selected and monitor new events.",
-            "Avoid switching workspace in the same page while the run is active.",
+            "Avoid switching project spaces in the same page while the run is active.",
             "Prepare follow-up instructions for the next HITL prompt.",
         ]
     if has_report:

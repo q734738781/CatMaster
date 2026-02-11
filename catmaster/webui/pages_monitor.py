@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
 
+from catmaster.tools.base import workspace_root
 from .constants import EVENT_POLL_INTERVAL, MAX_EVENT_FEED
 from .session_registry import SessionRegistry
 from .view_utils import format_event_line, render_run_cards_html
@@ -128,7 +129,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         if not raw:
             return None
         try:
-            p = Path(raw).expanduser().resolve()
+            p = workspace_root(Path(raw).expanduser().resolve())
         except Exception:
             return None
         if not p.exists() or not p.is_dir():
@@ -153,7 +154,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
     def _read_workspace_file(session, selected_path: Any) -> str:
         base = _workspace_dir(session)
         if base is None:
-            return "(no workspace opened) Open a workspace first."
+            return "(no project space opened) Open a project space first."
         if selected_path is None:
             return ""
         if isinstance(selected_path, (list, tuple)):
@@ -168,7 +169,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         except Exception:
             return f"(unavailable) Invalid path: {selected_path}"
         if base not in target.parents and target != base:
-            return f"(blocked) Path is outside the workspace: {selected_path}"
+            return f"(blocked) Path is outside project files root: {selected_path}"
         try:
             rel_path = str(target.relative_to(base))
         except Exception:
@@ -204,31 +205,31 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             f"**Next Actions**\n{action_lines}"
         )
 
-    def _monitor_link(ctx: str, ws: str, run_name: str) -> str:
-        url = registry.monitor_url(ctx=ctx, ws=ws, run=run_name)
+    def _monitor_link(ctx: str, project_space_name: str, run_name: str) -> str:
+        url = registry.monitor_url(ctx=ctx, project_space=project_space_name, run=run_name)
         return f'<a href="{url}" target="_blank">Permalink</a>'
 
     def _on_load(request: gr.Request) -> Tuple[str, str, gr.Dropdown, str, str, str, str]:
         params = dict(getattr(request, "query_params", {}) or {})
-        state = registry.bootstrap(ctx=params.get("ctx"), ws=params.get("ws"), run=params.get("run"))
+        state = registry.bootstrap(ctx=params.get("ctx"), project_space=params.get("project_space"), run=params.get("run"))
         session = registry.get_session(state.ctx)
         workspaces = session.list_workspaces()
-        ws_name = registry.workspace_name_for_session(session)
+        project_space_name = registry.project_space_name_for_session(session)
         return (
             state.ctx,
-            state.workspace_root,
-            gr.update(choices=workspaces, value=ws_name or None),
-            state.workspace_path,
+            state.project_space_root,
+            gr.update(choices=workspaces, value=project_space_name or None),
+            state.project_space_path,
             state.status,
             state.run_name,
-            _monitor_link(state.ctx, ws_name, state.run_name),
+            _monitor_link(state.ctx, project_space_name, state.run_name),
         )
 
     def _refresh_workspaces(root_path: str, ctx: str) -> Tuple[gr.Dropdown, str, str]:
         session = registry.get_session(ctx)
         ok, msg, choices = session.set_workspace_root(root_path)
-        ws_name = registry.workspace_name_for_session(session)
-        return gr.update(choices=choices, value=ws_name if ok and ws_name else None), msg, session.current_workspace_path()
+        project_space_name = registry.project_space_name_for_session(session)
+        return gr.update(choices=choices, value=project_space_name if ok and project_space_name else None), msg, session.current_workspace_path()
 
     def _open_workspace(root_path: str, name: str, ctx: str) -> Tuple[str, str]:
         session = registry.get_session(ctx)
@@ -244,8 +245,8 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         created, create_msg = session.create_workspace(name)
         if created:
             choices = session.list_workspaces()
-        ws_name = registry.workspace_name_for_session(session)
-        return gr.update(choices=choices, value=ws_name if created else None), (create_msg if create_msg else msg), session.current_workspace_path(), ""
+        project_space_name = registry.project_space_name_for_session(session)
+        return gr.update(choices=choices, value=project_space_name if created else None), (create_msg if create_msg else msg), session.current_workspace_path(), ""
 
     def _sync_and_render(ctx: str, selected_run: str, search_text: str) -> Tuple[str, str, gr.Dropdown, str, str, str, str, str, str, str, Any, str, str, str]:
         session = registry.get_session(ctx)
@@ -275,14 +276,14 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
 
         run_info = session.run_status_text()
         run_select_status = f"Selected run: {selected}" if selected else "No run selected."
-        ws_name = registry.workspace_name_for_session(session)
+        project_space_name = registry.project_space_name_for_session(session)
 
         cards = session.list_run_cards()
         cards_html = render_run_cards_html(
             cards,
             selected_run=selected,
             search_text=search_text,
-            run_link_builder=lambda run_name: registry.monitor_url(ctx=ctx, ws=ws_name, run=run_name),
+            run_link_builder=lambda run_name: registry.monitor_url(ctx=ctx, project_space=project_space_name, run=run_name),
         )
         summary_md = _cards_markdown(cards, selected)
 
@@ -327,7 +328,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             prompt_body,
             gr.update(visible=prompt_visible),
             prompt_id,
-            _monitor_link(ctx, ws_name, selected),
+            _monitor_link(ctx, project_space_name, selected),
             selected,
         )
 
@@ -362,19 +363,19 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         root = _workspace_dir(session)
         if root is None:
             return (
-                gr.FileExplorer(label="Workspace files", root_dir=str(Path.cwd()), glob="**/*", file_count="single", interactive=True, height=420),
-                "Workspace: *(not opened yet)*",
+                gr.FileExplorer(label="Project files", root_dir=str(Path.cwd()), glob="**/*", file_count="single", interactive=True, height=420),
+                "Project files root: *(not opened yet)*",
                 "",
             )
         glob = _fileexplorer_filter_to_glob(filter_text)
         ignore_glob = _fileexplorer_ignore_glob(include_hidden=bool(include_hidden))
         status = (
-            f"Workspace: `{root}`\n\n"
+            f"Project files root: `{root}`\n\n"
             f"glob: `{glob}`\n\n"
-            f"ignore_glob: `{ignore_glob}`" if ignore_glob else f"Workspace: `{root}`\n\nglob: `{glob}`\n\nignore_glob: *(none)*"
+            f"ignore_glob: `{ignore_glob}`" if ignore_glob else f"Project files root: `{root}`\n\nglob: `{glob}`\n\nignore_glob: *(none)*"
         )
         explorer = gr.FileExplorer(
-            label="Workspace files",
+            label="Project files",
             root_dir=str(root),
             glob=glob,
             ignore_glob=ignore_glob,
@@ -391,7 +392,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         glob = _fileexplorer_filter_to_glob(filter_text)
         ignore_glob = _fileexplorer_ignore_glob(include_hidden=bool(include_hidden))
         status = (
-            f"Workspace: `{root}`\n\nglob: `{glob}`\n\nignore_glob: `{ignore_glob}`" if ignore_glob else f"Workspace: `{root}`\n\nglob: `{glob}`\n\nignore_glob: *(none)*"
+            f"Project files root: `{root}`\n\nglob: `{glob}`\n\nignore_glob: `{ignore_glob}`" if ignore_glob else f"Project files root: `{root}`\n\nglob: `{glob}`\n\nignore_glob: *(none)*"
         )
         return content, status
 
@@ -404,23 +405,23 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         with gr.Column(elem_classes=["cm-monitor-shell"]):
             gr.Markdown("# CatMaster Monitor")
             with gr.Row():
-                workspace_root_box = gr.Textbox(label="Workspace Root", value=default_workspace)
+                workspace_root_box = gr.Textbox(label="Project Space Root", value=default_workspace)
                 refresh_workspaces_btn = gr.Button("Refresh")
 
             with gr.Row():
-                workspace_list = gr.Dropdown(label="Workspaces", choices=[])
+                workspace_list = gr.Dropdown(label="Project Spaces", choices=[])
                 open_workspace_btn = gr.Button("Open")
-                new_workspace_name = gr.Textbox(label="New Workspace")
+                new_workspace_name = gr.Textbox(label="New Project Space")
                 create_workspace_btn = gr.Button("Create", variant="primary")
                 permalink_html = gr.HTML("")
 
             with gr.Row():
-                current_workspace_box = gr.Textbox(label="Current Workspace", interactive=False)
+                current_workspace_box = gr.Textbox(label="Current Project Space", interactive=False)
                 status_box = gr.Markdown("")
 
             with gr.Row():
                 runs_dropdown = gr.Dropdown(label="Runs", choices=[])
-                search_box = gr.Textbox(label="Search", placeholder="Filter by run/status/model/workspace")
+                search_box = gr.Textbox(label="Search", placeholder="Filter by run/status/model/project_space")
                 refresh_monitor_btn = gr.Button("Refresh", variant="primary")
 
             run_info = gr.Markdown("")
@@ -470,7 +471,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
                         include_hidden = gr.Checkbox(label="Include hidden", value=False)
                         refresh_files_btn = gr.Button("Refresh File Explorer")
                         files_status = gr.Markdown("")
-                        files_explorer = gr.FileExplorer(label="Workspace files", root_dir=default_workspace, glob="**/*", file_count="single", interactive=True, height=420)
+                        files_explorer = gr.FileExplorer(label="Project files", root_dir=default_workspace, glob="**/*", file_count="single", interactive=True, height=420)
                     with gr.Column(scale=2):
                         file_content = gr.Code(label="File content")
 

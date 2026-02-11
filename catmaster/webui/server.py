@@ -31,13 +31,13 @@ def _make_theme() -> Optional[Any]:
         return None
 
 
-def create_app(*, workspace: str) -> FastAPI:
-    default_workspace = str(Path(workspace).expanduser().resolve())
-    registry = SessionRegistry(default_workspace_root=default_workspace)
+def create_app(*, project_space_root: str) -> FastAPI:
+    default_project_space_root = str(Path(project_space_root).expanduser().resolve())
+    registry = SessionRegistry(default_project_space_root=default_project_space_root)
     theme = _make_theme()
 
-    home_page = build_home_page(registry=registry, default_workspace=default_workspace, theme=theme)
-    monitor_page = build_monitor_page(registry=registry, default_workspace=default_workspace, theme=theme)
+    home_page = build_home_page(registry=registry, default_workspace=default_project_space_root, theme=theme)
+    monitor_page = build_monitor_page(registry=registry, default_workspace=default_project_space_root, theme=theme)
 
     app = FastAPI(title="CatMaster WebUI")
 
@@ -54,10 +54,10 @@ def create_app(*, workspace: str) -> FastAPI:
     return app
 
 
-def launch(*, host: str = "127.0.0.1", port: int = 7860, workspace: Optional[str] = None) -> None:
-    if workspace is None:
-        workspace = str(Path.cwd() / "workspace")
-    app = create_app(workspace=workspace)
+def launch(*, host: str = "127.0.0.1", port: int = 7860, project_space_root: Optional[str] = None) -> None:
+    if project_space_root is None:
+        project_space_root = str(Path.cwd() / "project_space")
+    app = create_app(project_space_root=project_space_root)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

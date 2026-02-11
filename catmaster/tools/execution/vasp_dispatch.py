@@ -73,6 +73,7 @@ def _is_within(path: Path, root: Path) -> bool:
 def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
     input_dirs: list[Path] = []
     skip_prefixes = ("vasp_batch_", "mace_batch_")
+    internal_dirs = {"metadata", ".catmaster"}
     for dirpath, dirnames, _ in os.walk(root):
         path = Path(dirpath)
         if exclude_root is not None and _is_within(path, exclude_root):
@@ -82,12 +83,12 @@ def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) ->
         if any(part.startswith(skip_prefixes) for part in rel.parts):
             dirnames[:] = []
             continue
-        if ".catmaster" in path.parts:
+        if any(part in internal_dirs for part in path.parts):
             dirnames[:] = []
             continue
         dirnames[:] = [
             d for d in dirnames
-            if d != ".catmaster" and not d.startswith(skip_prefixes)
+            if d not in internal_dirs and not d.startswith(skip_prefixes)
         ]
         if _is_vasp_input_dir(path):
             if path != root:

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Callable
 import logging
 
 from catmaster.tools.registry import get_tool_registry
-from catmaster.tools.base import system_root, workspace_root
+from catmaster.tools.base import project_space_root, system_root, workspace_root
 from catmaster.runtime import (
     RunContext,
     ToolExecutor,
@@ -245,10 +245,10 @@ class Orchestrator:
     def _resolve_resume_run_dir(self, resume_dir: Optional[str], resume: bool) -> Optional[Path]:
         if not resume and not resume_dir:
             return None
-        base = Path(resume_dir).expanduser().resolve() if resume_dir else workspace_root(self.workspace)
+        base = Path(resume_dir).expanduser().resolve() if resume_dir else project_space_root(self.workspace)
         if (base / "meta.json").exists():
             return base
-        sys_root = base if base.name == ".catmaster" else (base / ".catmaster")
+        sys_root = base if base.name == "metadata" else (base / "metadata")
         runs_root = sys_root / "runs"
         if not runs_root.exists():
             raise FileNotFoundError(f"Resume requested but runs directory not found: {runs_root}")
@@ -2211,6 +2211,7 @@ class Orchestrator:
     ) -> Dict[str, Any]:
         finish_reason = step_result.get("finish_reason", "")
         local_observations = step_result.get("local_observations", [])
+        final_output_text = str(step_result.get("output_text") or "")
         whiteboard_text = self.whiteboard.read()
         error = None
         self._emit("TASK_SUMMARIZE_START", category="summary", task_id=task_id, payload={
@@ -2222,6 +2223,7 @@ class Orchestrator:
             task_goal=task_goal,
             finish_reason=finish_reason,
             local_observations=local_observations,
+            final_output_text=final_output_text,
             whiteboard_text=whiteboard_text,
             error=error,
             use_repair_prompt=False,
@@ -2312,6 +2314,7 @@ class Orchestrator:
                     task_goal=task_goal,
                     finish_reason=finish_reason,
                     local_observations=local_observations,
+                    final_output_text=final_output_text,
                     whiteboard_text=whiteboard_text,
                     error=error,
                     use_repair_prompt=True,
@@ -2392,6 +2395,7 @@ class Orchestrator:
                 task_goal=task_goal,
                 finish_reason=finish_reason,
                 local_observations=local_observations,
+                final_output_text=final_output_text,
                 whiteboard_text=whiteboard_text,
                 error=error,
                 use_repair_prompt=True,
@@ -2456,6 +2460,7 @@ class Orchestrator:
         task_goal: str,
         finish_reason: str,
         local_observations: List[Dict[str, Any]],
+        final_output_text: str,
         whiteboard_text: str,
         error: Optional[str],
         use_repair_prompt: bool,
@@ -2473,6 +2478,7 @@ class Orchestrator:
                     task_goal=task_goal,
                     finish_reason=finish_reason,
                     local_observations=local_observations,
+                    final_output_text=final_output_text,
                     whiteboard_text=whiteboard_text,
                     error=last_error,
                     use_repair_prompt=use_repair_prompt or attempt > 0,
@@ -2511,7 +2517,7 @@ class Orchestrator:
             if not path:
                 continue
             path_parts = Path(path).parts
-            if ".catmaster" in path_parts:
+            if "metadata" in path_parts:
                 continue
             if path.startswith("/"):
                 try:

@@ -93,7 +93,7 @@ def render_run_cards_html(
                 str(card.get("summary") or ""),
                 str(card.get("status") or ""),
                 str(card.get("model_name") or ""),
-                str(card.get("workspace") or ""),
+                str(card.get("project_space") or card.get("workspace") or ""),
             ]
         ).lower()
         if needle and needle not in hay:

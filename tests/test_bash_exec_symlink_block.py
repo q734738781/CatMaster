@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from catmaster.tools.base import workspace_scope
+from catmaster.tools.base import workspace_root, workspace_scope
 from catmaster.tools.misc.bash_exec import bash_exec
 
 
@@ -21,7 +21,6 @@ def test_bash_exec_blocks_symlink_usage(tmp_path, script: str, expected_flag: st
             {
                 "script": script,
                 "cwd": ".",
-                "view": "user",
                 "strict": True,
                 "no_network": False,
                 "timeout_s": 5.0,
@@ -34,12 +33,12 @@ def test_bash_exec_blocks_symlink_usage(tmp_path, script: str, expected_flag: st
 
 def test_bash_exec_allows_regular_copy(tmp_path) -> None:
     with workspace_scope(tmp_path):
-        (tmp_path / "a.txt").write_text("ok", encoding="utf-8")
+        files_root = workspace_root(tmp_path)
+        (files_root / "a.txt").write_text("ok", encoding="utf-8")
         out = bash_exec(
             {
                 "script": "cp a.txt b.txt && cat b.txt",
                 "cwd": ".",
-                "view": "user",
                 "strict": True,
                 "no_network": False,
                 "timeout_s": 5.0,
@@ -47,17 +46,17 @@ def test_bash_exec_allows_regular_copy(tmp_path) -> None:
         )
     assert out["status"] == "success"
     assert "ok" in str(out.get("data", {}).get("stdout", ""))
-    assert (tmp_path / "b.txt").exists()
+    assert (files_root / "b.txt").exists()
 
 
 def test_bash_exec_does_not_block_cp_long_options_without_symlink(tmp_path) -> None:
     with workspace_scope(tmp_path):
-        (tmp_path / "a.txt").write_text("ok", encoding="utf-8")
+        files_root = workspace_root(tmp_path)
+        (files_root / "a.txt").write_text("ok", encoding="utf-8")
         out = bash_exec(
             {
                 "script": "cp --preserve=mode a.txt c.txt && cat c.txt",
                 "cwd": ".",
-                "view": "user",
                 "strict": True,
                 "no_network": False,
                 "timeout_s": 5.0,
@@ -65,4 +64,4 @@ def test_bash_exec_does_not_block_cp_long_options_without_symlink(tmp_path) -> N
         )
     assert out["status"] == "success"
     assert "ok" in str(out.get("data", {}).get("stdout", ""))
-    assert (tmp_path / "c.txt").exists()
+    assert (files_root / "c.txt").exists()

@@ -140,15 +140,8 @@ class ToolCallingTaskStepper:
                     "method": "builtin_calls",
                     "result": builtin_calls,
                 })
-                state.append_input_message("user", self._format_builtin_calls_summary(builtin_calls))
 
             if not turn.tool_calls:
-                if turn.output_text:
-                    observations.append({
-                        "step": step,
-                        "method": "model_output",
-                        "result": {"text": turn.output_text},
-                    })
                 # If we saw builtin calls but no assistant text yet, allow another turn.
                 if builtin_calls and not (turn.output_text or "").strip():
                     continue
@@ -160,7 +153,6 @@ class ToolCallingTaskStepper:
                 }
 
             tool_calls = list(turn.tool_calls)
-            pending_summaries: list[str] = []
             has_normal_calls = any(
                 tool_call.name not in self.control_tool_names for tool_call in tool_calls
             )
@@ -194,19 +186,13 @@ class ToolCallingTaskStepper:
                 )
                 for index, tool_call in enumerate(tool_calls):
                     call_id = tool_call.call_id or f"{task_id}_s{step + 1}_{index + 1}"
-                    summary = self._skip_tool_call(
+                    self._skip_tool_call(
                         state=state,
                         observations=observations,
                         step=step,
                         tool_call=tool_call,
                         call_id=call_id,
                         reason=reason,
-                    )
-                    pending_summaries.append(summary)
-                if pending_summaries:
-                    state.append_input_message(
-                        "user",
-                        "Tool observations (this turn):\n" + "\n".join(pending_summaries),
                     )
                 continue
 
@@ -216,7 +202,7 @@ class ToolCallingTaskStepper:
                     reason = (
                         "task_finish/task_fail must be called alone after reviewing tool outputs."
                     )
-                    summary = self._skip_tool_call(
+                    self._skip_tool_call(
                         state=state,
                         observations=observations,
                         step=step,
@@ -224,7 +210,6 @@ class ToolCallingTaskStepper:
                         call_id=call_id,
                         reason=reason,
                     )
-                    pending_summaries.append(summary)
                     continue
 
                 raw_params = self._parse_arguments(tool_call.arguments)
@@ -232,39 +217,21 @@ class ToolCallingTaskStepper:
                     "tool": tool_call.name,
                     "params_compact": self._compact_params(raw_params),
                 })
-                if self.role == "task_runner" and self._is_system_view_request(tool_call.name, raw_params):
-                    tool_output = {
-                        "status": "failed",
-                        "tool_name": tool_call.name,
-                        "data": {},
-                        "error": (
-                            "System view is not available to task_runner. "
-                            "Use view='user' and the provided artifact list."
-                        ),
-                    }
+                toolcall_id = self._toolcall_id(task_id, step, tool_call.name, call_id)
+                tool_output = self.backend.call(
+                    tool_call.name,
+                    tool_call.arguments,
+                    toolcall_key=toolcall_id,
+                    call_id=call_id,
+                )
+                if self._is_validation_error(tool_output):
                     reason = tool_output.get("error", "")
                     self._emit("TOOL_VALIDATE_FAILED", level="warning", category="tool", task_id=task_id, step_id=step, payload={
                         "tool": tool_call.name,
                         "reason": self._snippet(reason, 200),
                     })
-                else:
-                    toolcall_id = self._toolcall_id(task_id, step, tool_call.name, call_id)
-                    tool_output = self.backend.call(
-                        tool_call.name,
-                        tool_call.arguments,
-                        toolcall_key=toolcall_id,
-                        call_id=call_id,
-                    )
-                    if self._is_validation_error(tool_output):
-                        reason = tool_output.get("error", "")
-                        self._emit("TOOL_VALIDATE_FAILED", level="warning", category="tool", task_id=task_id, step_id=step, payload={
-                            "tool": tool_call.name,
-                            "reason": self._snippet(reason, 200),
-                        })
                 event_status = tool_output.get("status", "")
                 if self._is_validation_error(tool_output):
-                    event_status = "validation_failed"
-                if self.role == "task_runner" and self._is_system_view_request(tool_call.name, raw_params):
                     event_status = "validation_failed"
                 self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
                     "tool": tool_call.name,
@@ -273,16 +240,13 @@ class ToolCallingTaskStepper:
 
                 observations.append({"step": step, "method": tool_call.name, "params": raw_params, "result": tool_output})
                 state.append_function_call_output(call_id, tool_output)
-                pending_summaries.append(
-                    self._format_tool_observation_summary(tool_call.name, call_id, tool_output),
-                )
 
                 status = str(tool_output.get("status", "")).lower()
                 if status != "success":
                     reason = "Skipped due to earlier tool failure; please replan."
                     for offset, remaining in enumerate(tool_calls[idx + 1:], start=idx + 2):
                         remaining_id = remaining.call_id or f"{task_id}_s{step + 1}_{offset}"
-                        summary = self._skip_tool_call(
+                        self._skip_tool_call(
                             state=state,
                             observations=observations,
                             step=step,
@@ -290,13 +254,7 @@ class ToolCallingTaskStepper:
                             call_id=remaining_id,
                             reason=reason,
                         )
-                        pending_summaries.append(summary)
                     break
-            if pending_summaries:
-                state.append_input_message(
-                    "user",
-                    "Tool observations (this turn):\n" + "\n".join(pending_summaries),
-                )
             continue
 
         return {
@@ -419,14 +377,6 @@ class ToolCallingTaskStepper:
         return text
 
     @staticmethod
-    def _is_system_view_request(tool_name: str, params: Any) -> bool:
-        if not (tool_name.startswith("workspace_") or tool_name == "bash_exec"):
-            return False
-        if not isinstance(params, dict):
-            return False
-        return params.get("view") == "system"
-
-    @staticmethod
     def _is_validation_error(tool_output: dict) -> bool:
         data = tool_output.get("data")
         if isinstance(data, dict) and data.get("error_type") == "validation_error":
@@ -494,64 +444,6 @@ class ToolCallingTaskStepper:
             calls.append(summary)
         return calls
 
-    @staticmethod
-    def _format_builtin_calls_summary(
-        builtin_calls: list[dict],
-        *,
-        limit: int = 5,
-        max_chars: int = 1500,
-    ) -> str:
-        lines = ["Builtin tool calls observed:"]
-        for call in builtin_calls[:limit]:
-            parts = [call.get("type", "builtin_call")]
-            if call.get("call_id"):
-                parts.append(f"id={call.get('call_id')}")
-            if call.get("status"):
-                parts.append(f"status={call.get('status')}")
-            if call.get("query"):
-                parts.append(f"query={call.get('query')}")
-            if call.get("url"):
-                parts.append(f"url={call.get('url')}")
-            lines.append("- " + " ".join(parts))
-        text = "\n".join(lines)
-        if len(text) > max_chars:
-            return text[: max_chars - 3] + "..."
-        return text
-
-    @staticmethod
-    def _format_tool_observation_summary(
-        tool_name: str,
-        call_id: str,
-        tool_output: dict,
-        *,
-        max_chars: int = 2000,
-    ) -> str:
-        status = tool_output.get("status", "")
-        error = tool_output.get("error")
-        data = tool_output.get("data", {})
-        hints: list[str] = []
-        if isinstance(data, dict):
-            for key in ("path", "paths", "root", "destination", "output_path", "dir", "directory"):
-                if key in data:
-                    hints.append(f"{key}={data.get(key)}")
-            if "entries" in data and isinstance(data.get("entries"), list):
-                hints.append(f"entries={len(data.get('entries') or [])}")
-            if "next_token" in data:
-                hints.append(f"next_token={data.get('next_token')}")
-            if "attempt_count" in data:
-                hints.append(f"attempt={data.get('attempt_count')}/{data.get('max_attempts')}")
-            if "next_step" in data and data.get("next_step"):
-                hints.append(f"hint={data.get('next_step')}")
-        parts = [f"Tool observation: {tool_name}", f"id={call_id}", f"status={status}"]
-        if error:
-            parts.append(f"error={error}")
-        if hints:
-            parts.append(" ".join(hints))
-        text = " | ".join(parts)
-        if len(text) > max_chars:
-            return text[: max_chars - 3] + "..."
-        return text
-
     def _skip_tool_call(
         self,
         *,
@@ -561,7 +453,7 @@ class ToolCallingTaskStepper:
         tool_call: Any,
         call_id: str,
         reason: str,
-    ) -> str:
+    ) -> None:
         tool_output = {
             "status": "failed",
             "tool_name": getattr(tool_call, "name", ""),
@@ -570,7 +462,6 @@ class ToolCallingTaskStepper:
         }
         observations.append({"step": step, "method": tool_output["tool_name"], "result": tool_output})
         state.append_function_call_output(call_id, tool_output)
-        return self._format_tool_observation_summary(tool_output["tool_name"], call_id, tool_output)
 
     @staticmethod
     def _has_builtin_calls(output_items: list[dict]) -> bool:

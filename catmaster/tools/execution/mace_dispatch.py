@@ -134,6 +134,7 @@ def _is_within(path: Path, root: Path) -> bool:
 def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
     files: list[Path] = []
     skip_prefixes = ("mace_batch_", "vasp_batch_")
+    internal_dirs = {"metadata", ".catmaster"}
     for dirpath, dirnames, filenames in os.walk(root):
         path = Path(dirpath)
         if exclude_root is not None and _is_within(path, exclude_root):
@@ -142,7 +143,7 @@ def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) ->
         if any(part.startswith(skip_prefixes) for part in path.parts):
             dirnames[:] = []
             continue
-        if ".catmaster" in path.parts:
+        if any(part in internal_dirs for part in path.parts):
             dirnames[:] = []
             continue
         if "summary.json" in filenames:
@@ -150,7 +151,7 @@ def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) ->
             continue
         dirnames[:] = [
             d for d in dirnames
-            if d != ".catmaster" and not d.startswith(skip_prefixes)
+            if d not in internal_dirs and not d.startswith(skip_prefixes)
         ]
         for fname in filenames:
             p = path / fname
