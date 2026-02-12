@@ -30,7 +30,6 @@ from catmaster.runtime import (
     whiteboard_ops_validate,
     write_usage_summary,
 )
-from catmaster.runtime.artifact_log import ArtifactLog
 from catmaster.runtime.whiteboard_ops import persist_whiteboard_diff, append_task_journal_entry, _section_bounds
 from catmaster.agents.logo import logo_str
 from catmaster.agents.task_runner import TaskSummarizer
@@ -52,7 +51,6 @@ from catmaster.runtime.conversation_state import message_item
 from catmaster.runtime.tool_policy import ToolPolicy
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.runtime.local_tool_backend import LocalToolBackend
-from catmaster.skills.registry import SkillRegistry
 from catmaster.ui import Reporter, NullReporter, make_event
 from catmaster.agents.orchestrator_prompts import (
     build_plan_prompt,
@@ -98,7 +96,6 @@ class Orchestrator:
         tool_policy: Optional[ToolPolicy] = None,
         tool_policy_path: Optional[str] = None,
         tool_backend: Optional[ToolBackend] = None,
-        skill_registry: Optional[SkillRegistry] = None,
     ):
         self.logger = logging.getLogger(__name__)
         self.reporter = reporter or NullReporter()
@@ -179,7 +176,6 @@ class Orchestrator:
         self.artifact_store = ArtifactStore(self.run_context.run_dir)
         policy_path = Path(tool_policy_path) if tool_policy_path else Path("configs/tool_policy.yaml")
         self.tool_policy = tool_policy or ToolPolicy.from_file(policy_path)
-        self.skill_registry = skill_registry or SkillRegistry.load_builtin_skills()
         self.tool_backend = tool_backend or LocalToolBackend(
             registry=self.registry,
             tool_executor=self.tool_executor,
@@ -190,11 +186,6 @@ class Orchestrator:
 
         self.whiteboard = WhiteboardStore.create_default(workspace=self.run_context.workspace)
         self.whiteboard.ensure_exists()
-        self.artifact_log = ArtifactLog(
-            system_root(workspace=self.run_context.workspace) / "artifacts.csv",
-            workspace=self.run_context.workspace,
-        )
-        self.artifact_log.ensure_exists()
         self.context_builder = ContextPackBuilder(self.whiteboard)
 
         default_log = self.run_context.run_dir / "llm.jsonl"
@@ -647,10 +638,57 @@ class Orchestrator:
         return state
 
     def _artifact_index(self) -> List[Dict[str, Any]]:
-        entries = self.artifact_log.load()
-        if not isinstance(entries, list):
+        return self._whiteboard_file_records(limit=500)
+
+    def _whiteboard_file_records(self, *, limit: int = 200) -> List[Dict[str, Any]]:
+        try:
+            text = self.whiteboard.read()
+        except Exception:
             return []
-        return entries
+        pattern = re.compile(r"^\s*(?:-\s*)?FILE\[[^\]]+\]\s*:\s*([^|]+)(?:\s*\|\s*(.*))?$")
+        records: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw in text.splitlines():
+            match = pattern.match(raw)
+            if not match:
+                continue
+            path = (match.group(1) or "").strip()
+            if not path or path in seen:
+                continue
+            attrs_text = (match.group(2) or "").strip()
+            attrs: Dict[str, str] = {}
+            if attrs_text:
+                for part in attrs_text.split("|"):
+                    token = part.strip()
+                    if "=" not in token:
+                        continue
+                    key, value = token.split("=", 1)
+                    attrs[key.strip().lower()] = value.strip()
+            desc = attrs.get("desc") or attrs.get("description") or ""
+            kind = attrs.get("kind") or "output"
+            records.append({
+                "path": path,
+                "description": desc,
+                "kind": kind,
+                "type": self._infer_artifact_type(path),
+            })
+            seen.add(path)
+            if len(records) >= limit:
+                break
+        return records
+
+    def _infer_artifact_type(self, path: str) -> str:
+        if path.endswith("/"):
+            return "dir"
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = workspace_root(self.run_context.workspace) / candidate
+        try:
+            if candidate.exists():
+                return "dir" if candidate.is_dir() else "file"
+        except Exception:
+            pass
+        return "file"
 
     def _proposal_path(self) -> Path:
         return self.run_context.run_dir / "proposal.md"
@@ -939,19 +977,8 @@ class Orchestrator:
             "excerpt_chars": len(context_pack.get("whiteboard_excerpt", "") or ""),
             "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
         })
-        skills = self.skill_registry.select_skills(task_goal)
-        skill_allowlist: set[str] = set()
-        for skill in skills:
-            skill_allowlist.update(skill.tool_allowlist)
-        if skills:
-            self._emit("SKILLS_SELECTED", category="task", task_id=task_id, payload={
-                "skills": [skill.id for skill in skills],
-            })
-
         function_tools = self.tool_backend.list_function_tools()
         filtered_tools = self.tool_policy.filter_function_tools(function_tools)
-        if self.tool_policy.use_skill_allowlist and skill_allowlist:
-            filtered_tools = [tool for tool in filtered_tools if tool.get("name") in skill_allowlist]
         builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
         stepper = ToolCallingTaskStepper(
             driver=self.tool_driver,
@@ -1414,9 +1441,13 @@ class Orchestrator:
                 )
                 state = decision.get("state")
                 if state == "PerformNextTask":
-                    task_goal = decision.get("next_task_goal")
-                    if not task_goal:
+                    task_goal_raw = decision.get("next_task_goal")
+                    if not task_goal_raw:
                         raise ValueError("Director PerformNextTask missing next_task_goal")
+                    task_goal = self._with_suggested_tools_hint(
+                        task_goal_raw,
+                        decision.get("suggested_tools"),
+                    )
                     task_id = f"task_{self._next_task_index(tasks):02d}"
                     tasks.append({
                         "task_id": task_id,
@@ -2367,7 +2398,6 @@ class Orchestrator:
                 })
                 result["ops_path"] = ops_path
                 result["diff_path"] = diff_path
-                self._update_artifact_log(result.get("key_artifacts", []))
                 return result
 
             error = "; ".join(apply_result.get("errors", []))
@@ -2425,7 +2455,6 @@ class Orchestrator:
             "attempt": attempt,
         })
         result["ops_failed"] = True
-        self._update_artifact_log(result.get("key_artifacts", []))
         return result
 
     def _initialize_whiteboard_goal(self, user_request: str) -> None:
@@ -2507,39 +2536,6 @@ class Orchestrator:
             self._emit("LLM_CALL_END", category="llm", task_id=task_id, payload=payload)
             return result
         return None
-
-    def _update_artifact_log(self, key_artifacts: List[Dict[str, Any]]) -> None:
-        if not key_artifacts:
-            return
-        entries: List[Dict[str, str]] = []
-        for item in key_artifacts:
-            path = (item.get("path") or "").strip()
-            if not path:
-                continue
-            path_parts = Path(path).parts
-            if "metadata" in path_parts:
-                continue
-            if path.startswith("/"):
-                try:
-                    resolved = Path(path).resolve()
-                except Exception:
-                    continue
-                try:
-                    resolved.relative_to(workspace_root(self.run_context.workspace))
-                except Exception:
-                    continue
-                try:
-                    resolved.relative_to(system_root(workspace=self.run_context.workspace))
-                    continue
-                except Exception:
-                    pass
-            entries.append({
-                "path": path,
-                "description": (item.get("description") or "").strip(),
-                "type": ArtifactLog.infer_type(path, workspace=self.run_context.workspace),
-            })
-        if entries:
-            self.artifact_log.update(entries)
 
     def _trace_whiteboard_update(
         self,
@@ -2676,9 +2672,7 @@ class Orchestrator:
         return "\n".join(lines)
 
     def _artifact_log_excerpt(self, limit: int = 200) -> List[Dict[str, Any]]:
-        entries = self.artifact_log.load()
-        entries.sort(key=lambda e: e.get("updated_time", ""), reverse=True)
-        return entries[:limit]
+        return self._whiteboard_file_records(limit=limit)
 
     @staticmethod
     def _count_ops(ops: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -2704,6 +2698,39 @@ class Orchestrator:
             if section in {"open questions", "open question", "questions", "question"}:
                 counts["QUESTION"] += 1
         return counts
+
+    @staticmethod
+    def _with_suggested_tools_hint(task_goal: Any, suggested_tools: Any) -> str:
+        base = str(task_goal or "").strip()
+        if not base:
+            return base
+        lowered = base.lower()
+        if "suggested tools:" in lowered or "建议工具" in lowered:
+            return base
+        tools = Orchestrator._normalize_suggested_tools(suggested_tools)
+        if not tools:
+            return base
+        hint = f"(Suggested tools: {', '.join(tools)}; optional)"
+        return f"{base} {hint}"
+
+    @staticmethod
+    def _normalize_suggested_tools(value: Any, *, limit: int = 5) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for item in value:
+            tool = str(item or "").strip()
+            if not tool:
+                continue
+            key = tool.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(tool)
+            if len(cleaned) >= limit:
+                break
+        return cleaned
 
     def _publish_report(self, user_request: str, final_answer: str) -> Dict[str, str]:
         reports_dir = workspace_root(self.run_context.workspace) / "reports"

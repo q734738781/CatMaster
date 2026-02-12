@@ -194,7 +194,7 @@ When adding new run phases or behaviors, emit events via the Reporter to preserv
 
 Whiteboard content rules:
 
-- Paths recorded in Key Files must be project-files-relative paths (no `metadata/...`).
+- Paths recorded in Key Files/Folders must be project-files-relative paths (no `metadata/...`).
 - Use stable IDs (FACT/FILE/CONSTRAINT identifiers) and UPSERT existing IDs when updating.
 
 ---

@@ -10,8 +10,7 @@ from typing import Dict, List, Optional
 import re
 
 from catmaster.runtime.whiteboard import WhiteboardStore
-from catmaster.runtime.artifact_log import ArtifactLog
-from catmaster.tools.base import system_root, workspace_root
+from catmaster.tools.base import workspace_root
 
 
 @dataclass(frozen=True)
@@ -29,9 +28,9 @@ class ContextPackBuilder:
     def build(self, task_goal: str, role: str, *, policy: Optional[ContextPackPolicy] = None) -> Dict[str, str]:
         policy = policy or ContextPackPolicy()
         if role == "task_runner":
-            core_sections = ["Key Facts", "Key Files", "Constraints", "Open Questions"]
+            core_sections = ["Key Facts", "Key Files/Folders", "Constraints", "Open Questions"]
         else:
-            core_sections = ["Goal", "Key Facts", "Key Files", "Constraints", "Open Questions"]
+            core_sections = ["Goal", "Key Facts", "Key Files/Folders", "Constraints", "Open Questions"]
         core_excerpt = self.whiteboard.read_sections(core_sections, max_chars=policy.max_whiteboard_chars)
 
         journal_excerpt = ""
@@ -41,15 +40,7 @@ class ContextPackBuilder:
         key_files = _parse_key_files(core_excerpt)
         project_space = self.whiteboard.path.parent.parent
         files_root = workspace_root(project_space)
-        artifact_log = ArtifactLog(system_root(workspace=project_space) / "artifacts.csv", workspace=project_space)
-        artifact_log.ensure_exists()
-        artifact_log_entries = _sort_artifacts_by_time(_artifact_log_slice(artifact_log.load()))
-        artifact_slice = _merge_artifacts(
-            key_files,
-            artifact_log_entries,
-            policy.max_artifacts,
-            workspace=project_space,
-        )
+        artifact_slice = _key_files_artifacts(key_files, policy.max_artifacts)
 
         constraints = self.whiteboard.read_sections(["Constraints"])
         workspace_policy = _workspace_policy_summary(role, files_root=str(files_root))
@@ -95,34 +86,9 @@ def _parse_key_files(whiteboard_excerpt: str) -> List[str]:
     return paths
 
 
-def _artifact_log_slice(entries: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    sliced: List[Dict[str, str]] = []
-    for entry in entries:
-        path = entry.get("path")
-        if not path:
-            continue
-        sliced.append({
-            "path": path,
-            "kind": "output",
-            "description": entry.get("description", ""),
-            "type": entry.get("type", ""),
-        })
-    return sliced
-
-
-def _sort_artifacts_by_time(entries: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    def _key(entry: Dict[str, str]) -> str:
-        return entry.get("updated_time", "")
-
-    return sorted(entries, key=_key, reverse=True)
-
-
-def _merge_artifacts(
+def _key_files_artifacts(
     key_files: List[str],
-    artifact_log_entries: List[Dict[str, str]],
     limit: int,
-    *,
-    workspace: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     merged: List[Dict[str, str]] = []
     seen = set()
@@ -132,17 +98,9 @@ def _merge_artifacts(
         merged.append({
             "path": path,
             "kind": "input",
-            "description": "Whiteboard key file",
-            "type": ArtifactLog.infer_type(path, workspace=workspace),
+            "description": "Whiteboard key file/folder",
+            "type": "dir" if path.endswith("/") else "file",
         })
-        seen.add(path)
-        if len(merged) >= limit:
-            break
-    for entry in artifact_log_entries:
-        path = entry.get("path")
-        if not path or path in seen:
-            continue
-        merged.append(entry)
         seen.add(path)
         if len(merged) >= limit:
             break

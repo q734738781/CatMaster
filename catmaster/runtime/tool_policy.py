@@ -18,7 +18,6 @@ class ToolPolicy:
     builtin_tools: list[dict] = field(default_factory=list)
     parallel_tool_calls: bool = False
     max_tool_calls_per_task: int = 100
-    use_skill_allowlist: bool = False
 
     def filter_function_tools(self, function_tools: list[dict]) -> list[dict]:
         allowed = self.allowed_tools
@@ -49,7 +48,6 @@ class ToolPolicy:
             builtin_tools=list(data.get("builtin_tools", []) or []),
             parallel_tool_calls=bool(data.get("parallel_tool_calls", False)),
             max_tool_calls_per_task=int(data.get("max_tool_calls_per_task", 100)),
-            use_skill_allowlist=bool(data.get("use_skill_allowlist", False)),
         )
 
     @classmethod

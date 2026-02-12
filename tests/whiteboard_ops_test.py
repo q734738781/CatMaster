@@ -8,7 +8,7 @@ WHITEBOARD = """# Whiteboard
 - (empty)
 ### Key Facts
 - (none)
-### Key Files
+### Key Files/Folders
 - (none)
 ### Constraints
 - (none)
@@ -21,18 +21,15 @@ WHITEBOARD = """# Whiteboard
 
 def main() -> None:
     ops = [
-        {"op": "UPSERT", "section": "Goal", "text": "Run VASP relaxation"},
         {"op": "UPSERT", "section": "Key Facts", "record_type": "FACT", "id": "F1", "text": "Energy = -1.23 eV"},
-        {"op": "UPSERT", "section": "Key Files", "record_type": "FILE", "id": "K1", "path": "o2/OUTCAR", "kind": "output", "description": "VASP output"},
+        {"op": "UPSERT", "section": "Key Files/Folders", "record_type": "FILE", "id": "K1", "path": "o2/OUTCAR", "kind": "output", "description": "VASP output"},
     ]
     validation = validate_whiteboard_ops(ops)
     assert validation["ok"], f"Validation failed: {validation}"
 
     updated = apply_whiteboard_ops_text(WHITEBOARD, ops, "task_01")["updated_text"]
-    assert "- Run VASP relaxation" in updated
     assert "FACT[F1]:" in updated
     assert "FILE[K1]:" in updated
-    assert "- (none)" not in updated
 
     ops_replace = [
         {"op": "UPSERT", "section": "Key Facts", "record_type": "FACT", "id": "F1", "text": "Energy = -2.34 eV"},

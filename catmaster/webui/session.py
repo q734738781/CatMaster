@@ -310,8 +310,8 @@ class WebSession:
     def read_artifacts(self):
         ws = self._workspace_path()
         if ws is None:
-            return io.read_artifacts_csv(Path("/__catmaster_missing__/artifacts.csv"))
-        return io.read_artifacts_csv(system_root(workspace=ws) / "artifacts.csv", project_space=ws)
+            return io.read_key_files_table(Path("/__catmaster_missing__/whiteboard.md"))
+        return io.read_key_files_table(system_root(workspace=ws) / "whiteboard.md", project_space=ws)
 
     def read_task_state(self, run_dir: Optional[Path]) -> str:
         ws = self._workspace_path()

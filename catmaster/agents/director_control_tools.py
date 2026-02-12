@@ -20,6 +20,10 @@ class DirectorDecideInput(BaseModel):
 
     # PerformNextTask fields
     next_task_goal: str | None = Field(default=None, description="Concrete task goal to execute next.")
+    suggested_tools: list[str] | None = Field(
+        default=None,
+        description="Optional suggested tool names for task runner; hints only, not mandatory.",
+    )
     success_criteria: str | None = Field(default=None, description="Success criteria for the next task.")
     expected_outputs: str | None = Field(default=None, description="Expected outputs for the next task.")
 

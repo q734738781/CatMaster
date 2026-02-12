@@ -4,7 +4,7 @@ from catmaster.runtime.context_pack import _parse_key_files
 
 def main() -> None:
     sample = """
-### Key Files
+### Key Files/Folders
 - FILE[core]: data/input.txt | core input
   FILE[aux]: outputs/result.json | generated
     - FILE[spaced]:  logs/run.log  | trailing spaces

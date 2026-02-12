@@ -12,6 +12,9 @@ import hashlib
 
 from catmaster.tools.base import ensure_system_root, system_root
 
+KEY_FILES_SECTION = "Key Files/Folders"
+LEGACY_KEY_FILES_SECTION = "Key Files"
+
 
 DEFAULT_WHITEBOARD = """# Whiteboard
 ## Current State
@@ -19,7 +22,7 @@ DEFAULT_WHITEBOARD = """# Whiteboard
 - (empty)
 ### Key Facts
 - (none)
-### Key Files
+### Key Files/Folders
 - (none)
 ### Constraints
 - (none)
@@ -69,10 +72,11 @@ class WhiteboardStore:
         section_map = _extract_sections(content)
         chunks = []
         for section in sections:
-            if section not in section_map:
+            canonical = _normalize_section_name(section)
+            if canonical not in section_map:
                 raise ValueError(f"Missing whiteboard section: {section}")
-            header = "## " + section if section == "Journal" else "### " + section
-            body = section_map[section].strip()
+            header = "## " + canonical if canonical == "Journal" else "### " + canonical
+            body = section_map[canonical].strip()
             if body:
                 chunks.append(f"{header}\n{body}")
             else:
@@ -89,16 +93,23 @@ def _extract_sections(content: str) -> Dict[str, str]:
     current: Optional[str] = None
     for line in lines:
         if line.startswith("### "):
-            current = line[4:].strip()
+            current = _normalize_section_name(line[4:].strip())
             sections[current] = []
             continue
         if line.startswith("## "):
-            current = line[3:].strip()
+            current = _normalize_section_name(line[3:].strip())
             sections[current] = []
             continue
         if current is not None:
             sections[current].append(line)
     return {key: "\n".join(value).rstrip() for key, value in sections.items()}
+
+
+def _normalize_section_name(section: str) -> str:
+    s = section.strip()
+    if s == LEGACY_KEY_FILES_SECTION:
+        return KEY_FILES_SECTION
+    return s
 
 
 __all__ = ["WhiteboardStore"]

@@ -217,6 +217,7 @@ Inputs you will receive:
 
 Allowed states:
 - PerformNextTask: emit one concrete next_task_goal that can be executed by the task runner.
+  - You may also provide suggested_tools (1-3 tool names) as optional hints.
 - MinorReviseProposal: minimal necessary update; no human approval.
 - MajorReviseProposal: major route change; requires needs_human=true and questions_for_human (unless full-auto is enabled by the outer system).
 - StopAndSynthesize: stop execution and let the system produce the final project summary report.
@@ -225,6 +226,7 @@ Rules:
 - Avoid repeating completed work; consult AlreadyDone + whiteboard Journal.
 - Do not emit meta tasks like "write a plan/proposal".
 - If you need information from a file, emit a task that reads that file.
+- For PerformNextTask, suggested_tools are advisory only. Do not force exact tool order or mandatory tool usage.
 - One decision per turn: you MUST call director_decide exactly once.
 - If the proposal contains unresolved BLOCKING human decisions (look for "BLOCKING:" in "Items needing human decision"),
   you MUST NOT continue with PerformNextTask. Instead, return MajorReviseProposal with:
@@ -311,14 +313,14 @@ Rules:
 - Set task_outcome="needs_intervention" when the task cannot be completed without human input due to missing/ambiguous critical requirements (not just hardware/software failures).
 - Do NOT use needs_intervention for minor preference questions that do not block delivery.
 - If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
-- Ops must be only of UPSERT or DEPRECATE and target: Key Facts, Key Files, Constraints, Open Questions.
+- Ops must be only of UPSERT or DEPRECATE and target: Key Facts, Key Files/Folders, Constraints, Open Questions.
 - UPSERT requirements:
   - Key Facts: record_type=FACT, id, text required
-  - Key Files: record_type=FILE, id, path required
+  - Key Files/Folders: record_type=FILE, id, path required
   - Constraints: record_type=CONSTRAINT, id, text required
   - Open Questions: text required (id optional)
 - DEPRECATE requirements:
-  - Only valid for Key Facts/Key Files/Constraints with record_type + id.
+  - Only valid for Key Facts/Key Files/Folders/Constraints with record_type + id.
 - Do not include any metadata paths in key_artifacts or ops.
 - Source for FACT is optional; include it only if it is a meaningful file pointer, otherwise omit it.
 - Keep entries salient to the global goal. Include only final results, irreversible decisions/assumptions, and minimal pointers needed to continue.
@@ -341,14 +343,14 @@ Rules:
 - Set task_outcome="needs_intervention" when the task cannot be completed without human input due to missing/ambiguous critical requirements (not just hardware/software failures).
 - Do NOT use needs_intervention for minor preference questions that do not block delivery.
 - If some things are not clear but do not affect the global goal, you can set task_outcome="success" and add a note in OpenQuestion in whiteboard.
-- Ops must only target: Key Facts, Key Files, Constraints, Open Questions.
+- Ops must only target: Key Facts, Key Files/Folders, Constraints, Open Questions.
 - UPSERT requirements:
   - Key Facts: record_type=FACT, id, text required
-  - Key Files: record_type=FILE, id, path required
+  - Key Files/Folders: record_type=FILE, id, path required
   - Constraints: record_type=CONSTRAINT, id, text required
   - Open Questions: text required (id optional)
 - DEPRECATE requirements:
-  - Only valid for Key Facts/Key Files/Constraints with record_type + id.
+  - Only valid for Key Facts/Key Files/Folders/Constraints with record_type + id.
 - Do not include any metadata paths in key_artifacts or ops.
 - Source for FACT is optional; include it only if it is a meaningful file pointer, otherwise omit it.
 - Keep entries salient to the global goal. Include only final results, irreversible decisions/assumptions, and minimal pointers needed to continue.

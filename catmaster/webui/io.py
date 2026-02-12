@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Literal, Optional
+import re
 
 import pandas as pd
 
@@ -78,16 +79,53 @@ def read_json_pretty(
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def read_artifacts_csv(path: str | Path, *, project_space: Path | str | None = None) -> pd.DataFrame:
+def read_key_files_table(path: str | Path, *, project_space: Path | str | None = None) -> pd.DataFrame:
+    text = read_text(path, scope="metadata", project_space=project_space, max_chars=None)
+    if text.startswith("(unavailable)") or text.startswith("(failed to read)"):
+        return pd.DataFrame(columns=["id", "path", "description", "kind", "type"])
+    rows = []
+    pattern = r"^\s*(?:-\s*)?FILE\[([^\]]+)\]\s*:\s*([^|]+)(?:\s*\|\s*(.*))?$"
+    for raw in text.splitlines():
+        m = re.match(pattern, raw)
+        if not m:
+            continue
+        record_id = (m.group(1) or "").strip()
+        record_path = (m.group(2) or "").strip()
+        attrs_text = (m.group(3) or "").strip()
+        attrs: dict[str, str] = {}
+        if attrs_text:
+            for part in attrs_text.split("|"):
+                token = part.strip()
+                if "=" not in token:
+                    continue
+                key, value = token.split("=", 1)
+                attrs[key.strip().lower()] = value.strip()
+        description = attrs.get("desc") or attrs.get("description") or ""
+        kind = attrs.get("kind") or ""
+        path_type = _infer_path_type(record_path, project_space=project_space)
+        rows.append({
+            "id": record_id,
+            "path": record_path,
+            "description": description,
+            "kind": kind,
+            "type": path_type,
+        })
+    return pd.DataFrame(rows, columns=["id", "path", "description", "kind", "type"])
+
+
+def _infer_path_type(path_text: str, *, project_space: Path | str | None = None) -> str:
+    if path_text.endswith("/"):
+        return "dir"
+    root = workspace_root(project_space)
+    candidate = Path(path_text)
+    if not candidate.is_absolute():
+        candidate = root / candidate
     try:
-        p = resolve_path(path, scope="metadata", project_space=project_space, must_exist=True)
+        if candidate.exists():
+            return "dir" if candidate.is_dir() else "file"
     except Exception:
-        return pd.DataFrame(columns=["path", "description", "type", "updated_time"])
-    try:
-        df = pd.read_csv(p)
-    except Exception:
-        return pd.DataFrame(columns=["path", "description", "type", "updated_time"])
-    return df
+        pass
+    return "file"
 
 
 def tail_jsonl(path: str | Path, *, project_space: Path | str | None = None, max_lines: int = 200) -> str:

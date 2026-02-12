@@ -13,12 +13,21 @@ import hashlib
 import json
 
 
-TARGET_SECTIONS = {"Goal", "Key Facts", "Key Files", "Constraints", "Open Questions", "Journal"}
+KEY_FILES_SECTION = "Key Files/Folders"
+LEGACY_KEY_FILES_SECTION = "Key Files"
+TARGET_SECTIONS = {"Goal", "Key Facts", KEY_FILES_SECTION, "Constraints", "Open Questions", "Journal"}
 PLACEHOLDERS = {"- (none)", "- (empty)"}
 
 
 def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _normalize_section(section: str) -> str:
+    value = section.strip()
+    if value == LEGACY_KEY_FILES_SECTION:
+        return KEY_FILES_SECTION
+    return value
 
 
 def validate_whiteboard_ops(ops: Any) -> Dict[str, Any]:
@@ -31,7 +40,7 @@ def validate_whiteboard_ops(ops: Any) -> Dict[str, Any]:
             errors.append(f"ops[{idx}] must be an object")
             continue
         op_type = str(op.get("op", "")).strip().upper()
-        section = str(op.get("section", "")).strip()
+        section = _normalize_section(str(op.get("section", "")).strip())
         if op_type not in {"UPSERT", "DEPRECATE"}:
             errors.append(f"ops[{idx}].op must be UPSERT or DEPRECATE")
         if section not in TARGET_SECTIONS:
@@ -40,30 +49,30 @@ def validate_whiteboard_ops(ops: Any) -> Dict[str, Any]:
             if section == "Open Questions":
                 if not op.get("text"):
                     errors.append(f"ops[{idx}] Open Questions UPSERT requires text")
-            elif section in {"Key Facts", "Key Files", "Constraints"}:
+            elif section in {"Key Facts", KEY_FILES_SECTION, "Constraints"}:
                 record_type = str(op.get("record_type", "")).strip().upper()
                 if section == "Key Facts" and record_type != "FACT":
                     errors.append(f"ops[{idx}] Key Facts UPSERT requires record_type=FACT")
-                if section == "Key Files" and record_type != "FILE":
-                    errors.append(f"ops[{idx}] Key Files UPSERT requires record_type=FILE")
+                if section == KEY_FILES_SECTION and record_type != "FILE":
+                    errors.append(f"ops[{idx}] {KEY_FILES_SECTION} UPSERT requires record_type=FILE")
                 if section == "Constraints" and record_type != "CONSTRAINT":
                     errors.append(f"ops[{idx}] Constraints UPSERT requires record_type=CONSTRAINT")
                 if not op.get("id"):
                     errors.append(f"ops[{idx}] UPSERT requires id")
-                if section == "Key Files":
+                if section == KEY_FILES_SECTION:
                     if not op.get("path"):
                         errors.append(f"ops[{idx}] FILE UPSERT requires path")
                 else:
                     if not op.get("text"):
                         errors.append(f"ops[{idx}] UPSERT requires text")
         if op_type == "DEPRECATE":
-            if section not in {"Key Facts", "Key Files", "Constraints"}:
-                errors.append(f"ops[{idx}] DEPRECATE is only valid for Key Facts/Key Files/Constraints")
+            if section not in {"Key Facts", KEY_FILES_SECTION, "Constraints"}:
+                errors.append(f"ops[{idx}] DEPRECATE is only valid for Key Facts/{KEY_FILES_SECTION}/Constraints")
             record_type = str(op.get("record_type", "")).strip().upper()
             if section == "Key Facts" and record_type != "FACT":
                 errors.append(f"ops[{idx}] Key Facts DEPRECATE requires record_type=FACT")
-            if section == "Key Files" and record_type != "FILE":
-                errors.append(f"ops[{idx}] Key Files DEPRECATE requires record_type=FILE")
+            if section == KEY_FILES_SECTION and record_type != "FILE":
+                errors.append(f"ops[{idx}] {KEY_FILES_SECTION} DEPRECATE requires record_type=FILE")
             if section == "Constraints" and record_type != "CONSTRAINT":
                 errors.append(f"ops[{idx}] Constraints DEPRECATE requires record_type=CONSTRAINT")
             if not op.get("id"):
@@ -81,21 +90,23 @@ def apply_whiteboard_ops_text(whiteboard_text: str, ops: List[Dict[str, Any]], t
     for op in ops:
         try:
             op_type = str(op.get("op", "")).strip().upper()
-            section = str(op.get("section", "")).strip()
+            section = _normalize_section(str(op.get("section", "")).strip())
             bounds = _section_bounds(lines)
             if section not in bounds:
                 raise ValueError(f"Missing section: {section}")
+            normalized_op = dict(op)
+            normalized_op["section"] = section
             if op_type == "UPSERT":
-                _apply_upsert(lines, bounds, op, task_id)
-                applied_ops.append(op)
+                _apply_upsert(lines, bounds, normalized_op, task_id)
+                applied_ops.append(normalized_op)
             elif op_type == "DEPRECATE":
-                deprecated = _apply_deprecate(lines, bounds, op, task_id, warnings)
+                deprecated = _apply_deprecate(lines, bounds, normalized_op, task_id, warnings)
                 if deprecated:
-                    applied_ops.append(op)
+                    applied_ops.append(normalized_op)
                 else:
-                    failed_ops.append(op)
+                    failed_ops.append(normalized_op)
             else:
-                failed_ops.append(op)
+                failed_ops.append(normalized_op)
                 warnings.append(f"Unknown op type: {op_type}")
         except Exception as exc:
             failed_ops.append(op)
@@ -181,9 +192,9 @@ def _section_bounds(lines: List[str]) -> Dict[str, Tuple[int, int]]:
     headers: List[Tuple[str, int]] = []
     for idx, line in enumerate(lines):
         if line.startswith("### "):
-            name = line[4:].strip()
+            name = _normalize_section(line[4:].strip())
         elif line.startswith("## "):
-            name = line[3:].strip()
+            name = _normalize_section(line[3:].strip())
         else:
             continue
         if name in TARGET_SECTIONS:
@@ -227,7 +238,7 @@ def _apply_upsert(lines: List[str], bounds: Dict[str, Tuple[int, int]], op: Dict
         text = str(op.get("text", "")).strip()
         new_line = _build_fact_line(record_id, text, "active", source, now, task_id=task_id)
         _replace_or_append(body, f"FACT[{record_id}]:", new_line)
-    elif section == "Key Files":
+    elif section == KEY_FILES_SECTION:
         path = str(op.get("path", "")).strip()
         kind = str(op.get("kind") or "output").strip()
         desc = _truncate_desc(str(op.get("description") or op.get("desc") or "").strip())
