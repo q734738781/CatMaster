@@ -6,12 +6,12 @@ from pydantic import ValidationError
 pytest.importorskip("pymatgen")
 
 from catmaster.tools.geometry_inputs.vasp_inputs import StructWriter
-from catmaster.tools.geometry_inputs.vasp_prepare import RelaxPrepareInput
+from catmaster.tools.geometry_inputs.vasp_prepare import VaspRelaxPrepareInput, VaspSPPrepareInput
 
 
-def test_relax_prepare_input_rejects_legacy_lattice_calc_type() -> None:
+def test_vasp_relax_prepare_input_rejects_legacy_lattice_calc_type() -> None:
     with pytest.raises(ValidationError):
-        RelaxPrepareInput(
+        VaspRelaxPrepareInput(
             input_path="tests/assets/Fe.cif",
             output_root="tests/test_output/relax_prepare",
             calc_type="lattice",
@@ -19,9 +19,9 @@ def test_relax_prepare_input_rejects_legacy_lattice_calc_type() -> None:
 
 
 @pytest.mark.parametrize("calc_type", ["gas", "slab"])
-def test_relax_prepare_input_rejects_relax_cell_conflict(calc_type: str) -> None:
+def test_vasp_relax_prepare_input_rejects_relax_cell_conflict(calc_type: str) -> None:
     with pytest.raises(ValidationError, match="relax_cell=True is not allowed"):
-        RelaxPrepareInput(
+        VaspRelaxPrepareInput(
             input_path="tests/assets/Fe.cif",
             output_root="tests/test_output/relax_prepare",
             calc_type=calc_type,
@@ -39,8 +39,56 @@ def test_struct_writer_required_overrides_bulk_isif_controlled_by_relax_cell() -
     assert bulk_relax_cell["ISIF"] == 3
 
 
+def test_struct_writer_lorbit_controlled_by_compute_dos() -> None:
+    writer = StructWriter()
+    required = writer._required_overrides("bulk", False, {})
+    settings_no_dos = writer._build_user_incar_settings(
+        calc_type="bulk",
+        required_overrides=required,
+        use_d3=False,
+        use_dft_plus_u=False,
+        user_incar_overrides={},
+        single_point=False,
+        compute_dos=False,
+    )
+    settings_with_dos = writer._build_user_incar_settings(
+        calc_type="bulk",
+        required_overrides=required,
+        use_d3=False,
+        use_dft_plus_u=False,
+        user_incar_overrides={},
+        single_point=False,
+        compute_dos=True,
+    )
+    assert settings_no_dos["LORBIT"] == 0
+    assert settings_with_dos["LORBIT"] == 11
+
+
+def test_struct_writer_single_point_defaults() -> None:
+    writer = StructWriter()
+    required = writer._required_overrides("bulk", False, {})
+    settings_sp = writer._build_user_incar_settings(
+        calc_type="bulk",
+        required_overrides=required,
+        use_d3=False,
+        use_dft_plus_u=False,
+        user_incar_overrides={},
+        single_point=True,
+        compute_dos=False,
+    )
+    assert settings_sp["NSW"] == 0
+    assert settings_sp["IBRION"] == -1
+    assert "EDIFFG" not in settings_sp
+
+
 @pytest.mark.parametrize("calc_type", ["gas", "slab"])
 def test_struct_writer_required_overrides_rejects_relax_cell_conflict(calc_type: str) -> None:
     writer = StructWriter()
     with pytest.raises(ValueError, match="relax_cell=True is not allowed"):
         writer._required_overrides(calc_type, True, {})
+
+
+def test_vasp_sp_prepare_input_defaults() -> None:
+    params = VaspSPPrepareInput(input_path="tests/assets/Fe.cif", output_root="tests/test_output/sp_prepare")
+    assert params.calc_type == "bulk"
+    assert params.compute_dos is False

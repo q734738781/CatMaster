@@ -827,6 +827,10 @@ class Orchestrator:
     ) -> Dict[str, Any]:
         whiteboard_full = self.whiteboard.read()
         artifacts_index = self._artifact_index()
+        function_tools = self.tool_backend.list_function_tools()
+        function_tools = self.tool_policy.filter_function_tools(function_tools)
+        builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
+        tools_for_director = self._tool_descriptions_from_tools(function_tools, builtin_tools, [])
         messages = self.director_prompt.format_messages(
             user_request=user_request,
             proposal_md=proposal_md,
@@ -834,6 +838,7 @@ class Orchestrator:
             whiteboard_full=whiteboard_full,
             artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
             already_done_json=json.dumps(observations, ensure_ascii=False),
+            tools=tools_for_director,
         )
         input_items = self._messages_to_input_items(messages)
         stepper = ToolCallingTaskStepper(
@@ -2360,15 +2365,25 @@ class Orchestrator:
             if apply_result.get("ok"):
                 diff_path = ""
                 final_text = apply_result.get("after_text", "")
+                artifacts = [item.get("path", "") for item in result.get("key_artifacts", []) if item.get("path")]
                 journal_text = append_task_journal_entry(
                     final_text,
                     task_id=task_id,
                     outcome=result.get("task_outcome", ""),
                     summary=result.get("task_summary", ""),
-                    artifacts=[item.get("path", "") for item in result.get("key_artifacts", [])],
+                    artifacts=artifacts,
                 )
                 if journal_text != final_text:
                     self.whiteboard.path.write_text(journal_text, encoding="utf-8")
+                self._emit("TASK_JOURNAL_APPEND", category="summary", task_id=task_id, payload={
+                    "outcome": result.get("task_outcome", ""),
+                    "summary_snippet": self._snippet(result.get("task_summary", ""), 220),
+                    "artifacts": artifacts[:8],
+                    "journal_entry_snippet": self._snippet(
+                        f"{result.get('task_outcome', '')}: {result.get('task_summary', '')}",
+                        260,
+                    ),
+                })
                 after_hash = self.whiteboard.get_hash()
                 try:
                     diff_path = persist_whiteboard_diff(
@@ -2573,14 +2588,21 @@ class Orchestrator:
         key_artifacts: List[Dict[str, Any]],
     ) -> None:
         text = self.whiteboard.read()
+        artifacts = [item.get("path", "") for item in key_artifacts if item.get("path")]
         updated = append_task_journal_entry(
             text,
             task_id=task_id,
             outcome=outcome,
             summary=summary,
-            artifacts=[item.get("path", "") for item in key_artifacts if item.get("path")],
+            artifacts=artifacts,
         )
         self.whiteboard.path.write_text(updated, encoding="utf-8")
+        self._emit("TASK_JOURNAL_APPEND", category="summary", task_id=task_id, payload={
+            "outcome": outcome,
+            "summary_snippet": self._snippet(summary, 220),
+            "artifacts": artifacts[:8],
+            "journal_entry_snippet": self._snippet(f"{outcome}: {summary}", 260),
+        })
 
     def _compile_tasks(self, todo: List[str]) -> List[Dict[str, Any]]:
         tasks: List[Dict[str, Any]] = []
@@ -2705,12 +2727,12 @@ class Orchestrator:
         if not base:
             return base
         lowered = base.lower()
-        if "suggested tools:" in lowered or "建议工具" in lowered:
+        if "suggested tools:" in lowered or "tool-call hints:" in lowered or "建议工具" in lowered:
             return base
         tools = Orchestrator._normalize_suggested_tools(suggested_tools)
         if not tools:
             return base
-        hint = f"(Suggested tools: {', '.join(tools)}; optional)"
+        hint = f"(Tool-call hints: {', '.join(tools)}; optional, function-tool names not shell commands)"
         return f"{base} {hint}"
 
     @staticmethod

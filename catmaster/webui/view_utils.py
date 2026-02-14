@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from html import escape
 from typing import Any, Callable, Dict, List, Optional
@@ -139,8 +140,115 @@ def render_run_cards_html(
     return "".join(out)
 
 
+def render_live_tracker_markdown(state: Dict[str, Any]) -> str:
+    if not isinstance(state, dict) or not state:
+        return "### Live Tracker\nNo active run state."
+
+    summary = state.get("live_summary") if isinstance(state.get("live_summary"), dict) else {}
+    headline = str(summary.get("live_headline") or "").strip()
+    live_summary = str(summary.get("live_summary") or "").strip()
+    next_expected = str(summary.get("next_expected_step") or "").strip()
+    source = str(summary.get("source") or "rule")
+
+    progress = state.get("progress") if isinstance(state.get("progress"), dict) else {}
+    completed = int(progress.get("completed", 0))
+    pending = int(progress.get("pending", 0))
+    failed = int(progress.get("failed", 0))
+    needs_intervention = int(progress.get("needs_intervention", 0))
+    total = int(progress.get("total", 0))
+
+    task_id = str(state.get("current_task_id") or "")
+    task_goal = str(state.get("current_task_goal") or "")
+    phase = str(state.get("current_phase") or "")
+    status = str(state.get("status") or "unknown")
+
+    lines: List[str] = ["### Live Tracker"]
+    if headline:
+        lines.append(f"**{headline}**")
+    lines.append(f"Status: `{status}` | Phase: `{phase or 'n/a'}`")
+    lines.append(
+        "Progress: "
+        f"`{completed}` completed / `{pending}` pending / `{failed}` failed / "
+        f"`{needs_intervention}` needs_intervention / total `{total}`"
+    )
+    if live_summary:
+        lines.append("")
+        lines.append(live_summary)
+    if next_expected:
+        lines.append(f"Next: {next_expected}")
+    lines.append(f"Summary source: `{source}`")
+
+    if task_id or task_goal:
+        lines.append("")
+        lines.append("#### Current Task")
+        if task_id:
+            lines.append(f"- Task ID: `{task_id}`")
+        if task_goal:
+            lines.append(f"- Goal: {task_goal}")
+
+    active = state.get("active_toolcall")
+    lines.append("")
+    lines.append("#### Active Tool Call")
+    if isinstance(active, dict) and active.get("tool"):
+        elapsed = active.get("elapsed_sec")
+        elapsed_text = f"{int(elapsed)}s" if isinstance(elapsed, (int, float)) else "n/a"
+        lines.append(f"- Tool: `{active.get('tool')}`")
+        lines.append(f"- Status: `{active.get('status') or 'running'}` | Elapsed: `{elapsed_text}`")
+        if active.get("toolcall_id"):
+            lines.append(f"- Toolcall ID: `{active.get('toolcall_id')}`")
+        params_full = active.get("params_full")
+        if params_full is not None:
+            lines.append(_render_json_block(params_full, max_chars=3000))
+    else:
+        lines.append("- (none)")
+
+    recent = state.get("recent_toolcalls")
+    lines.append("")
+    lines.append("#### Recent Tool Calls")
+    if isinstance(recent, list) and recent:
+        for item in recent[-5:]:
+            if not isinstance(item, dict):
+                continue
+            tool = str(item.get("tool") or "")
+            status_i = str(item.get("status") or "")
+            task_i = str(item.get("task_id") or "")
+            duration = item.get("duration_sec")
+            duration_text = f"{int(duration)}s" if isinstance(duration, (int, float)) else "n/a"
+            details = f"{task_i} | `{tool}` | `{status_i}` | {duration_text}"
+            lines.append(f"- {details}")
+    else:
+        lines.append("- (none)")
+
+    journal = state.get("journal_recent")
+    lines.append("")
+    lines.append("#### Task Journal")
+    if isinstance(journal, list) and journal:
+        for item in journal[-5:]:
+            if not isinstance(item, dict):
+                continue
+            task = str(item.get("task_id") or "")
+            outcome = str(item.get("outcome") or "")
+            summary_snippet = truncate(item.get("summary_snippet"), 180)
+            lines.append(f"- `{task}` `{outcome}` {summary_snippet}")
+    else:
+        lines.append("- (none)")
+
+    return "\n".join(lines).strip()
+
+
+def _render_json_block(value: Any, *, max_chars: int) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, indent=2)
+    except Exception:
+        text = str(value)
+    if len(text) > max_chars:
+        text = text[: max_chars - 3] + "..."
+    return "```json\n" + text + "\n```"
+
+
 __all__ = [
     "format_event_line",
+    "render_live_tracker_markdown",
     "render_run_cards_html",
     "summarize_event",
     "truncate",

@@ -26,6 +26,9 @@ _HOME_CSS = """
   max-width: 1280px;
   margin: 0 auto;
 }
+.cm-top-align {
+  align-items: flex-start !important;
+}
 .cm-panel {
   background: var(--cm-card);
   border: 1px solid var(--cm-border);
@@ -227,7 +230,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
 
             status_box = gr.Markdown(elem_classes=["cm-mini-note"])
 
-            with gr.Row(equal_height=True):
+            with gr.Row(equal_height=True, elem_classes=["cm-top-align"]):
                 with gr.Column(scale=5, elem_classes=["cm-panel"]):
                     gr.Markdown("## Prompt")
                     prompt_box = gr.Textbox(label="User Request", lines=6, placeholder="Describe what CatMaster should do.")

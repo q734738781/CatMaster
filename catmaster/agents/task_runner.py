@@ -117,6 +117,14 @@ class TaskStepper:
             return ""
         return TaskStepper._snippet(str(data), max_len)
 
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        try:
+            json.dumps(value, ensure_ascii=False)
+            return value
+        except Exception:
+            return str(value)
+
     def run(
         self,
         *,
@@ -257,6 +265,8 @@ class TaskStepper:
                 self._emit("TOOL_CALL_START", category="tool", task_id=task_id, step_id=step, payload={
                     "tool": method,
                     "params_compact": self._compact_params(params),
+                    "params_full": self._json_safe(params),
+                    "toolcall_id": toolcall_id,
                 })
                 pending = memories.get("pending_toolcall") or {}
                 if pending.get("method") == method:
@@ -293,11 +303,15 @@ class TaskStepper:
                     self._emit("TOOL_VALIDATE_FAILED", level="warning", category="tool", task_id=task_id, step_id=step, payload={
                         "tool": method,
                         "reason": self._snippet(reason, 200),
+                        "toolcall_id": toolcall_id,
                     })
                     self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
                         "tool": method,
                         "status": "validation_failed",
                         "highlights": self._snippet(reason, 200),
+                        "toolcall_id": toolcall_id,
+                        "input_ref": refs.get("input_ref", ""),
+                        "output_ref": refs.get("output_ref", ""),
                     })
                     memories["next_step"] = validation.get(
                         "next_step",
@@ -361,6 +375,9 @@ class TaskStepper:
                     "tool": method,
                     "status": result.get("status", ""),
                     "highlights": self._tool_highlights(result),
+                    "toolcall_id": toolcall_id,
+                    "input_ref": refs.get("input_ref", ""),
+                    "output_ref": refs.get("output_ref", ""),
                 })
                 memories["observations"].append({"step": step, "method": method, "result": result})
                 if result.get("status") == "success":

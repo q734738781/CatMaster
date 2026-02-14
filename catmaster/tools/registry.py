@@ -21,7 +21,8 @@ class ToolRegistry:
         # Geometry/Input tools
         from catmaster.tools.geometry_inputs import (
             create_molecule_from_smiles,
-            relax_prepare,
+            vasp_relax_prepare,
+            vasp_sp_prepare,
             build_slab,
             fix_atoms_by_layers,
             fix_atoms_by_height,
@@ -34,7 +35,8 @@ class ToolRegistry:
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
-            RelaxPrepareInput,
+            VaspRelaxPrepareInput,
+            VaspSPPrepareInput,
             SlabBuildInput,
             FixAtomsByLayersInput,
             FixAtomsByHeightInput,
@@ -47,8 +49,8 @@ class ToolRegistry:
         )
         
         # Execution tools  
-        from catmaster.tools.execution import mace_relax_batch, vasp_execute_batch
-        from catmaster.tools.execution import MaceRelaxBatchInput, VaspExecuteBatchInput
+        from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, vasp_execute_batch
+        from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, VaspExecuteBatchInput
 
         # File management tools
         from catmaster.tools.misc.bash_exec import bash_exec, BashExecInput
@@ -68,7 +70,9 @@ class ToolRegistry:
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
-        self.register_tool("relax_prepare", relax_prepare, RelaxPrepareInput)
+        self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
+        self.register_tool("vasp_relax_prepare", vasp_relax_prepare, VaspRelaxPrepareInput)
+        self.register_tool("vasp_sp_prepare", vasp_sp_prepare, VaspSPPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
         self.register_tool("fix_atoms_by_layers", fix_atoms_by_layers, FixAtomsByLayersInput)
         self.register_tool("fix_atoms_by_height", fix_atoms_by_height, FixAtomsByHeightInput)

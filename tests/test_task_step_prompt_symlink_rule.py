@@ -18,3 +18,4 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     )
     system_content = str(messages[0].content)
     assert "Symbolic link operations are forbidden in bash_exec" in system_content
+    assert "Do NOT put function tool names into bash_exec commands" in system_content

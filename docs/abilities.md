@@ -47,7 +47,7 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - **create_molecule_from_smiles**: RDKit + ASE 3D conformer generation, optimization, XYZ/POSCAR output.
 
-- **relax_prepare**: MPRelaxSet-based VASP inputs with `calc_type` presets, k-product mesh, D3/DFT+U toggles, INCAR overrides; supports batch directories.
+- **vasp_relax_prepare**: MPRelaxSet-based VASP relax inputs with `calc_type` presets, k-product mesh, D3/DFT+U toggles, INCAR overrides; supports batch directories.
 
 - **build_slab**: slab construction for all terminations of a Miller index; thickness/vacuum, symmetry slabs, orthogonalization, LLL reduction, supercell expansion; batch mode supported.
 

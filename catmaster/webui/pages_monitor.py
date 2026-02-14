@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import gradio as gr
 
 from catmaster.tools.base import workspace_root
-from .constants import EVENT_POLL_INTERVAL, MAX_EVENT_FEED
+from .constants import EVENT_POLL_INTERVAL, LIVE_SUMMARY_ENABLED_DEFAULT, MAX_EVENT_FEED
 from .session_registry import SessionRegistry
-from .view_utils import format_event_line, render_run_cards_html
+from .view_utils import format_event_line, render_live_tracker_markdown, render_run_cards_html
 
 _MONITOR_CSS = """
 :root {
@@ -27,6 +27,9 @@ _MONITOR_CSS = """
 .cm-monitor-shell {
   max-width: 1480px;
   margin: 0 auto;
+}
+.cm-top-align {
+  align-items: flex-start !important;
 }
 .cm-panel {
   background: var(--cm-card);
@@ -248,7 +251,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         project_space_name = registry.project_space_name_for_session(session)
         return gr.update(choices=choices, value=project_space_name if created else None), (create_msg if create_msg else msg), session.current_workspace_path(), ""
 
-    def _sync_and_render(ctx: str, selected_run: str, search_text: str) -> Tuple[str, str, gr.Dropdown, str, str, str, str, str, str, str, Any, str, str, str]:
+    def _sync_and_render(ctx: str, selected_run: str, search_text: str, live_llm_enabled: bool) -> Tuple[str, str, gr.Dropdown, str, str, str, str, str, str, str, Any, str, str, str]:
         session = registry.get_session(ctx)
         runs = session.list_runs()
         run_names = {name for _, name in runs}
@@ -261,6 +264,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             session.select_run(selected)
 
         run_dir = session.get_selected_run_dir()
+        live_state: Dict[str, Any] = {}
         reporter = session.reporter
         active_run_dir = reporter.get_run_dir() if reporter else None
         if reporter and active_run_dir and run_dir and active_run_dir == run_dir:
@@ -271,8 +275,10 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
                 if len(session.event_lines) > MAX_EVENT_FEED:
                     session.event_lines = session.event_lines[-MAX_EVENT_FEED:]
             event_feed = "\n".join(session.event_lines)
+            live_state = session.update_live_state(run_dir, events, live_llm_enabled=bool(live_llm_enabled))
         else:
             event_feed = session.read_ui_events_from_file(run_dir)
+            live_state = session.snapshot_live_state(run_dir)
 
         run_info = session.run_status_text()
         run_select_status = f"Selected run: {selected}" if selected else "No run selected."
@@ -285,7 +291,8 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             search_text=search_text,
             run_link_builder=lambda run_name: registry.monitor_url(ctx=ctx, project_space=project_space_name, run=run_name),
         )
-        summary_md = _cards_markdown(cards, selected)
+        summary_parts = [part for part in [_cards_markdown(cards, selected), render_live_tracker_markdown(live_state)] if part]
+        summary_md = "\n\n---\n\n".join(summary_parts)
 
         final_report, report_source = session.read_final_report_with_source(run_dir)
         report_source_md = f"<small>Report Source: `{report_source}`</small>"
@@ -422,12 +429,13 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             with gr.Row():
                 runs_dropdown = gr.Dropdown(label="Runs", choices=[])
                 search_box = gr.Textbox(label="Search", placeholder="Filter by run/status/model/project_space")
+                live_llm_toggle = gr.Checkbox(label="Live LLM summary", value=LIVE_SUMMARY_ENABLED_DEFAULT)
                 refresh_monitor_btn = gr.Button("Refresh", variant="primary")
 
             run_info = gr.Markdown("")
             run_select_status = gr.Markdown("")
 
-            with gr.Row(equal_height=True):
+            with gr.Row(equal_height=True, elem_classes=["cm-top-align"]):
                 with gr.Column(scale=4, elem_classes=["cm-panel"]):
                     gr.Markdown("## Run Inbox")
                     cards_html = gr.HTML("", elem_classes=["cm-scroll-html"])
@@ -454,7 +462,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
 
             with gr.Accordion("Advanced", open=False):
                 refresh_detail_btn = gr.Button("Refresh Advanced")
-                with gr.Row(equal_height=True):
+                with gr.Row(equal_height=True, elem_classes=["cm-top-align"]):
                     with gr.Column(scale=1):
                         whiteboard_md = gr.Markdown()
                     with gr.Column(scale=1):
@@ -490,7 +498,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             queue=False,
         ).then(
             _sync_and_render,
-            inputs=[ctx_state, selected_run_state, search_box],
+            inputs=[ctx_state, selected_run_state, search_box, live_llm_toggle],
             outputs=[
                 run_info,
                 run_select_status,
@@ -543,7 +551,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
 
         refresh_monitor_btn.click(
             _sync_and_render,
-            inputs=[ctx_state, selected_run_state, search_box],
+            inputs=[ctx_state, selected_run_state, search_box, live_llm_toggle],
             outputs=[
                 run_info,
                 run_select_status,
@@ -565,7 +573,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
 
         runs_dropdown.change(
             _sync_and_render,
-            inputs=[ctx_state, runs_dropdown, search_box],
+            inputs=[ctx_state, runs_dropdown, search_box, live_llm_toggle],
             outputs=[
                 run_info,
                 run_select_status,
@@ -592,7 +600,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
 
         search_box.change(
             _sync_and_render,
-            inputs=[ctx_state, selected_run_state, search_box],
+            inputs=[ctx_state, selected_run_state, search_box, live_llm_toggle],
             outputs=[
                 run_info,
                 run_select_status,
@@ -648,7 +656,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         timer = gr.Timer(EVENT_POLL_INTERVAL)
         timer.tick(
             _sync_and_render,
-            inputs=[ctx_state, selected_run_state, search_box],
+            inputs=[ctx_state, selected_run_state, search_box, live_llm_toggle],
             outputs=[
                 run_info,
                 run_select_status,

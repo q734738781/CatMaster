@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo]
+
+Options:
+  --target DIR
+      Runtime checkout directory to update.
+      Default: ../CatMaster_Run (relative to repo root)
+
+  --project-space-root DIR
+      Project-space root that runtime WebUI should use.
+      Default: <target>/../project_space
+
+  --dry-run
+      Show rsync changes without writing files.
+
+  --no-delete
+      Do not delete files in target that are removed from source.
+
+  --full-repo
+      Sync full repository instead of runtime-only paths.
+EOF
+}
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TARGET_DIR="${REPO_ROOT}/../CatMaster_Run"
+PROJECT_SPACE_ROOT=""
+DRY_RUN=0
+NO_DELETE=0
+FULL_REPO=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target)
+      TARGET_DIR="$2"
+      shift 2
+      ;;
+    --project-space-root)
+      PROJECT_SPACE_ROOT="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --no-delete)
+      NO_DELETE=1
+      shift
+      ;;
+    --full-repo)
+      FULL_REPO=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+TARGET_DIR="$(cd "$(dirname "$TARGET_DIR")" && pwd)/$(basename "$TARGET_DIR")"
+mkdir -p "$TARGET_DIR"
+
+if [[ -z "$PROJECT_SPACE_ROOT" ]]; then
+  PROJECT_SPACE_ROOT="$(cd "$TARGET_DIR/.." && pwd)/project_space"
+else
+  PROJECT_SPACE_ROOT="$(cd "$(dirname "$PROJECT_SPACE_ROOT")" && pwd)/$(basename "$PROJECT_SPACE_ROOT")"
+fi
+
+RSYNC_ARGS=(
+  -a
+  --human-readable
+  --itemize-changes
+  --exclude ".git/"
+  --exclude ".idea/"
+  --exclude ".vscode/"
+  --exclude ".pytest_cache/"
+  --exclude "__pycache__/"
+  --exclude "*.pyc"
+  --exclude ".venv/"
+  --exclude "project_space/"
+  --exclude "workspace/"
+  --exclude "dpdispatcher.log"
+)
+
+if [[ $NO_DELETE -eq 0 ]]; then
+  RSYNC_ARGS+=(--delete)
+fi
+if [[ $DRY_RUN -eq 1 ]]; then
+  RSYNC_ARGS+=(--dry-run)
+fi
+
+echo "Source: $REPO_ROOT"
+echo "Target: $TARGET_DIR"
+echo "Project space root for launcher: $PROJECT_SPACE_ROOT"
+echo
+if [[ $FULL_REPO -eq 1 ]]; then
+  rsync "${RSYNC_ARGS[@]}" "$REPO_ROOT/" "$TARGET_DIR/"
+else
+  RUNTIME_PATHS=(
+    "catmaster"
+    "configs"
+    "requirements"
+    "main.py"
+    "README.md"
+    "LICENSE"
+  )
+  for rel in "${RUNTIME_PATHS[@]}"; do
+    src="$REPO_ROOT/$rel"
+    dst="$TARGET_DIR/$rel"
+    if [[ -d "$src" ]]; then
+      mkdir -p "$dst"
+      rsync "${RSYNC_ARGS[@]}" "$src/" "$dst/"
+    elif [[ -f "$src" ]]; then
+      mkdir -p "$(dirname "$dst")"
+      rsync "${RSYNC_ARGS[@]}" "$src" "$dst"
+    fi
+  done
+fi
+
+if [[ $DRY_RUN -eq 0 ]]; then
+  COMMIT="unknown"
+  if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  fi
+  DEPLOY_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  cat > "$TARGET_DIR/.deploy_info" <<EOF
+source_repo=$REPO_ROOT
+source_commit=$COMMIT
+deployed_at_utc=$DEPLOY_TIME
+project_space_root_default=$PROJECT_SPACE_ROOT
+EOF
+
+  cat > "$TARGET_DIR/start_webui.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_PROJECT_SPACE_ROOT="$(cd "$ROOT/.." && pwd)/project_space"
+PROJECT_SPACE_ROOT="${CATMASTER_PROJECT_SPACE_ROOT:-$DEFAULT_PROJECT_SPACE_ROOT}"
+cd "$ROOT"
+exec python main.py --project-space-root "$PROJECT_SPACE_ROOT" "$@"
+EOF
+  chmod +x "$TARGET_DIR/start_webui.sh"
+
+  # Bake the current default into a helper file for visibility.
+  printf '%s\n' "$PROJECT_SPACE_ROOT" > "$TARGET_DIR/.project_space_root_default"
+
+  echo
+  echo "Deploy completed."
+  echo "Next run command:"
+  echo "  cd \"$TARGET_DIR\" && CATMASTER_PROJECT_SPACE_ROOT=\"$PROJECT_SPACE_ROOT\" ./start_webui.sh --port 7991"
+else
+  echo
+  echo "Dry-run completed (no files were changed)."
+fi

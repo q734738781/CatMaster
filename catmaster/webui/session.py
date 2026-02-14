@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,7 +11,19 @@ from catmaster.tools.base import ensure_project_space_layout, system_root, works
 from catmaster.ui import make_event
 
 from . import io
-from .constants import MAX_EVENT_FEED, MAX_TEXT_PREVIEW_CHARS, MAX_TRACE_LINES
+from .constants import (
+    LIVE_SUMMARY_MAX_EVENTS,
+    LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+    LIVE_SUMMARY_MAX_PARAMS_CHARS,
+    LIVE_SUMMARY_MIN_INTERVAL_SEC,
+    LIVE_SUMMARY_TIMEOUT_SEC,
+    LIVE_SUMMARY_TOOL_EVENT_BATCH,
+    MAX_EVENT_FEED,
+    MAX_TEXT_PREVIEW_CHARS,
+    MAX_TRACE_LINES,
+)
+from .live_state import apply_events, new_live_state, should_refresh_live_summary
+from .live_summary_service import summarize_live_state
 from .summary_service import snapshot_summary, summarize_run
 from .web_reporter import PromptBroker, WebReporter
 
@@ -30,6 +43,7 @@ class WebSession:
         self.last_event_seq: int = 0
         self.current_prompt_id: str = ""
         self.event_lines: List[str] = []
+        self.live_state_by_run: Dict[str, Dict[str, Any]] = {}
 
     def set_workspace_root(self, path: str) -> Tuple[bool, str, List[Tuple[str, str]]]:
         try:
@@ -61,6 +75,7 @@ class WebSession:
             self.selected_run_dir = None
             self.last_event_seq = 0
             self.event_lines = []
+            self.live_state_by_run = {}
             self.run_info = {}
             if self.run_status != "running":
                 self.run_status = "idle"
@@ -114,6 +129,7 @@ class WebSession:
             self.selected_run_dir = None
             self.last_event_seq = 0
             self.event_lines = []
+            self.live_state_by_run = {}
             if self.run_status != "running":
                 self.run_status = "idle"
         return True, f"Project space cleared: {ws}"
@@ -191,6 +207,7 @@ class WebSession:
             self.run_error = ""
             self.last_event_seq = 0
             self.event_lines = []
+            self.live_state_by_run = {}
             self.broker = PromptBroker()
             self.reporter = WebReporter(broker=self.broker, max_events=2000)
         resume_dir = self._resolve_resume_dir(lane, workspace=ws) if resume else None
@@ -223,6 +240,7 @@ class WebSession:
                         "model_name": orch.run_context.model_name,
                     }
                     self.selected_run_dir = run_dir
+                    self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
                 orch.run(
                     prompt,
                     log_llm=log_llm,
@@ -429,6 +447,126 @@ class WebSession:
             return ""
         return io.tail_jsonl(run_dir / "ui_events.jsonl", project_space=ws, max_lines=MAX_EVENT_FEED)
 
+    def read_ui_events_objects(self, run_dir: Optional[Path], *, max_lines: int = MAX_EVENT_FEED) -> List[Dict[str, Any]]:
+        if not run_dir:
+            return []
+        path = run_dir / "ui_events.jsonl"
+        if not path.exists():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return []
+        out: List[Dict[str, Any]] = []
+        for raw in lines[-max_lines:]:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                out.append(payload)
+        return out
+
+    def update_live_state(
+        self,
+        run_dir: Optional[Path],
+        events: List[Dict[str, Any]],
+        *,
+        live_llm_enabled: bool,
+    ) -> Dict[str, Any]:
+        if run_dir is None:
+            return {}
+        key = self._run_key(run_dir)
+        with self._lock:
+            state = self.live_state_by_run.get(key)
+        if state is None:
+            state = new_live_state(run_id=run_dir.name)
+            if not events:
+                history = self.read_ui_events_objects(run_dir, max_lines=MAX_EVENT_FEED)
+                state, _ = apply_events(
+                    state,
+                    history,
+                    max_recent_toolcalls=20,
+                    max_recent_events=80,
+                    max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+                )
+        state, changed = apply_events(
+            state,
+            events,
+            max_recent_toolcalls=20,
+            max_recent_events=80,
+            max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+        )
+        if events and changed and should_refresh_live_summary(
+            state,
+            events,
+            min_interval_s=LIVE_SUMMARY_MIN_INTERVAL_SEC,
+            tool_event_batch=LIVE_SUMMARY_TOOL_EVENT_BATCH,
+        ):
+            state["live_summary"] = summarize_live_state(
+                state,
+                enabled=bool(live_llm_enabled),
+                max_events=LIVE_SUMMARY_MAX_EVENTS,
+                max_params_chars=LIVE_SUMMARY_MAX_PARAMS_CHARS,
+                max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+                timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
+            )
+        elif not state.get("live_summary"):
+            state["live_summary"] = summarize_live_state(
+                state,
+                enabled=False,
+                max_events=LIVE_SUMMARY_MAX_EVENTS,
+                max_params_chars=LIVE_SUMMARY_MAX_PARAMS_CHARS,
+                max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+                timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
+            )
+        if (not live_llm_enabled) and isinstance(state.get("live_summary"), dict):
+            if str(state["live_summary"].get("source") or "") == "llm":
+                state["live_summary"] = summarize_live_state(
+                    state,
+                    enabled=False,
+                    max_events=LIVE_SUMMARY_MAX_EVENTS,
+                    max_params_chars=LIVE_SUMMARY_MAX_PARAMS_CHARS,
+                    max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+                    timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
+                )
+        if events:
+            self._update_active_tool_elapsed(state)
+        with self._lock:
+            self.live_state_by_run[key] = state
+        return self._public_live_state(state)
+
+    def snapshot_live_state(self, run_dir: Optional[Path]) -> Dict[str, Any]:
+        if run_dir is None:
+            return {}
+        events = self.read_ui_events_objects(run_dir, max_lines=MAX_EVENT_FEED)
+        state = new_live_state(run_id=run_dir.name)
+        state, _ = apply_events(
+            state,
+            events,
+            max_recent_toolcalls=20,
+            max_recent_events=80,
+            max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+        )
+        key = self._run_key(run_dir)
+        with self._lock:
+            cached = self.live_state_by_run.get(key)
+        if isinstance(cached, dict) and isinstance(cached.get("live_summary"), dict):
+            state["live_summary"] = cached.get("live_summary")
+        else:
+            state["live_summary"] = summarize_live_state(
+                state,
+                enabled=False,
+                max_events=LIVE_SUMMARY_MAX_EVENTS,
+                max_params_chars=LIVE_SUMMARY_MAX_PARAMS_CHARS,
+                max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
+                timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
+            )
+        return self._public_live_state(state)
+
     def list_run_cards(self) -> List[Dict[str, Any]]:
         ws = self._workspace_path()
         if ws is None:
@@ -519,6 +657,32 @@ class WebSession:
                 continue
             choices.append((name, name))
         return choices
+
+    @staticmethod
+    def _run_key(run_dir: Path) -> str:
+        try:
+            return str(run_dir.expanduser().resolve())
+        except Exception:
+            return str(run_dir)
+
+    @staticmethod
+    def _update_active_tool_elapsed(state: Dict[str, Any]) -> None:
+        active = state.get("active_toolcall")
+        if not isinstance(active, dict):
+            return
+        started = active.get("started_ts")
+        if not isinstance(started, (int, float)):
+            return
+        active["elapsed_sec"] = max(0, int(time.time() - float(started)))
+
+    @staticmethod
+    def _public_live_state(state: Dict[str, Any]) -> Dict[str, Any]:
+        public: Dict[str, Any] = {}
+        for key, value in state.items():
+            if str(key).startswith("_"):
+                continue
+            public[key] = value
+        return public
 
     def _workspace_path(self) -> Optional[Path]:
         with self._lock:

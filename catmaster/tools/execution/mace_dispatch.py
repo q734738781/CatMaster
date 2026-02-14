@@ -91,6 +91,33 @@ class MaceRelaxBatchInput(BaseModel):
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
+class MaceSPBatchInput(BaseModel):
+    """Run MACE single-point jobs for structures under one directory."""
+
+    input_dir: str = Field(
+        ...,
+        description="Input directory containing structures (POSCAR/CONTCAR/CIF/VASP).",
+    )
+    output_root: str = Field(
+        ...,
+        description="Output root for batch results. Must be outside input_dir.",
+    )
+    model: str = Field(
+        "mh-1",
+        description="MACE model name (e.g., mh-1, medium-mpa-0).",
+        examples=["mh-1", "medium-mpa-0"],
+    )
+    head: Optional[str] = Field(
+        "omat_pbe",
+        description="Model head for multi-head models. Use empty string to disable.",
+    )
+    dispersion: bool = Field(
+        False,
+        description="Enable dispersion correction.",
+    )
+    check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
+
+
 def _resolve_machine_for_resources(resources_key: str) -> str:
     reg = MachineRegister()
     res_cfg = reg.get_resources(resources_key)
@@ -133,7 +160,7 @@ def _is_within(path: Path, root: Path) -> bool:
 
 def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
     files: list[Path] = []
-    skip_prefixes = ("mace_batch_", "vasp_batch_")
+    skip_prefixes = ("mace_batch_", "mace_sp_batch_", "vasp_batch_")
     internal_dirs = {"metadata", ".catmaster"}
     for dirpath, dirnames, filenames in os.walk(root):
         path = Path(dirpath)
@@ -284,6 +311,119 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
+def mace_sp_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
+    params = MaceSPBatchInput(**payload)
+    reg = TaskRegistry()
+    cfg = reg.get("mace_sp_dir")
+    resources_key = cfg.resources
+    if not resources_key:
+        raise KeyError("mace_sp_dir missing resources in task config")
+    machine = _resolve_machine_for_resources(resources_key)
+    model = params.model
+    if not model:
+        raise ValueError("model is required.")
+    head = _resolve_mace_head(params.head)
+    head_arg = shlex.quote(head or "")
+    dispersion = bool(params.dispersion)
+
+    input_root = resolve_workspace_path(params.input_dir, must_exist=True)
+    if not input_root.is_dir():
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error=f"input_dir is not a directory: {input_root}",
+        )
+    output_root = resolve_workspace_path(params.output_root)
+    if output_root.exists() and not output_root.is_dir():
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error=f"output_root is not a directory: {output_root}",
+        )
+    if _is_within(output_root, input_root):
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+        )
+    output_root.mkdir(parents=True, exist_ok=True)
+    structures = _collect_structure_files(input_root, exclude_root=None)
+    if not structures:
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+        )
+
+    work_base = make_work_base("mace_sp_batch")
+    stage_root = output_root / work_base
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+    stage_input = stage_root / "input"
+    stage_output = stage_root / "output"
+    shutil.copytree(input_root, stage_input)
+    stage_output.mkdir(parents=True, exist_ok=True)
+    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_sp.py"
+    if not script_src.is_file():
+        raise FileNotFoundError(f"Missing MACE SP remote script: {script_src}")
+    script_dst = stage_root / "task_script" / "mace_sp.py"
+    script_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(script_src, script_dst)
+
+    ctx = {
+        "input_path": "input",
+        "output_root": "output",
+        "model": model,
+        "head": head_arg,
+        "dispersion": "true" if dispersion else "false",
+    }
+    rendered = render_task_fields(cfg, ctx, stage_root)
+    task = TaskSpec(
+        command=rendered["command"],
+        task_work_path=".",
+        forward_files=rendered["forward_files"],
+        backward_files=rendered["backward_files"],
+    )
+
+    batch_req = BatchDispatchRequest(
+        machine=machine,
+        resources=resources_key,
+        work_base=work_base,
+        local_root=str(output_root),
+        tasks=[task],
+        forward_common_files=[],
+        backward_common_files=[],
+        clean_remote=False,
+        check_interval=params.check_interval,
+    )
+
+    result = dispatch_submission(batch_req)
+
+    if stage_output.exists():
+        shutil.copytree(stage_output, output_root, dirs_exist_ok=True)
+
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+
+    return create_tool_output(
+        tool_name="mace_sp_batch",
+        success=True,
+        data={
+            "task_states": result.task_states,
+            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result.submission_dir else "",
+            "work_base": result.work_base,
+            "input_root_rel": workspace_relpath(input_root),
+            "output_root_rel": workspace_relpath(output_root),
+            "batch_summary_rel": workspace_relpath(output_root / "batch_summary.json") if (output_root / "batch_summary.json").exists() else None,
+            "structures_found": len(structures),
+            "model": model,
+            "head": head,
+            "dispersion": dispersion,
+        },
+        execution_time=result.duration_s,
+    )
+
+
 def _read_summary(path: Path) -> Dict[str, Any]:
     try:
         import json
@@ -339,5 +479,7 @@ def _build_mace_relax_request(
 __all__ = [
     "MaceRelaxInput",
     "MaceRelaxBatchInput",
+    "MaceSPBatchInput",
     "mace_relax_batch",
+    "mace_sp_batch",
 ]

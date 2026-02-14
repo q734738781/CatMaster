@@ -109,7 +109,8 @@ Plan contract (must hold in the revised plan):
 - Each ToDo item must be self-contained:
   - Include explicit pointers to required prior artifacts (relative paths / identifiers).
   - Always use workspace-relative paths.
-- Apply the smallest change that satisfies the feedback; if tradeoffs/assumptions remain, record them in plan_description as checkpoints for HITL review.
+- Return a full replacement plan in plan_finish (complete todo list + complete plan_description), not a patch/diff.
+- Keep unchanged milestones in the returned plan unless feedback explicitly requests removing/reordering them.
 
 """),
         ("human", "User request: {user_request}\nCurrent plan: {plan_json}\nHuman feedback: {feedback}\nFeedback history: {feedback_history}")
@@ -214,6 +215,7 @@ Inputs you will receive:
 - Full whiteboard (including Journal)
 - Artifacts index
 - AlreadyDone: summaries of completed tasks and their key outputs
+- Available tools for task runner
 
 Allowed states:
 - PerformNextTask: emit one concrete next_task_goal that can be executed by the task runner.
@@ -227,6 +229,8 @@ Rules:
 - Do not emit meta tasks like "write a plan/proposal".
 - If you need information from a file, emit a task that reads that file.
 - For PerformNextTask, suggested_tools are advisory only. Do not force exact tool order or mandatory tool usage.
+- suggested_tools must be selected from "Available tools for task runner". If unsure, leave suggested_tools empty.
+- suggested_tools must be tool names (for tool calling), not shell commands.
 - One decision per turn: you MUST call director_decide exactly once.
 - If the proposal contains unresolved BLOCKING human decisions (look for "BLOCKING:" in "Items needing human decision"),
   you MUST NOT continue with PerformNextTask. Instead, return MajorReviseProposal with:
@@ -252,6 +256,9 @@ Artifacts index:
 
 AlreadyDone:
 {already_done_json}
+
+Available tools for task runner:
+{tools}
 """),
     ])
 
@@ -273,6 +280,8 @@ Rules:
   (c) returned by tool outputs in this task.
 - If the task goal references a placeholder token like <...>, first locate/read the referenced artifact in Key files / artifacts to resolve it; do not guess values.
 - Prefer python_exec for Python calculations/post-analysis. Use bash_exec for shell/file operations.
+- Function tools must be invoked via tool calls. Do NOT put function tool names into bash_exec commands.
+- Wrong example: using bash_exec with commands like "supercell ..." or "place_adsorbate ...".
 - Try to merge file operations into a single tool call if possible (especially for bash_exec/python_exec). Avoid printing large outputs to stdout and use a summarized text for stdout and store bulk data in files instead.
 - Symbolic link operations are forbidden in bash_exec. Do not use ln/cp symbolic-link options or Python symlink APIs; use normal copy/move operations.
 - Always provide file or directory paths as relative paths; they will be resolved relative to the project files root.

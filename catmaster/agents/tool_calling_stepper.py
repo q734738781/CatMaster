@@ -160,9 +160,12 @@ class ToolCallingTaskStepper:
                 if len(tool_calls) == 1:
                     tool_call = tool_calls[0]
                     raw_params = self._parse_arguments(tool_call.arguments)
+                    call_id = tool_call.call_id or f"{task_id}_s{step + 1}_1"
                     self._emit("TOOL_CALL_START", category="tool", task_id=task_id, step_id=step, payload={
                         "tool": tool_call.name,
                         "params_compact": self._compact_params(raw_params),
+                        "params_full": self._json_safe(raw_params),
+                        "toolcall_id": call_id,
                     })
                     control_payload = raw_params if isinstance(raw_params, dict) else {"raw": raw_params}
                     observations.append({
@@ -173,6 +176,7 @@ class ToolCallingTaskStepper:
                     self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
                         "tool": tool_call.name,
                         "status": "control",
+                        "toolcall_id": call_id,
                     })
                     return {
                         "status": "done",
@@ -213,11 +217,14 @@ class ToolCallingTaskStepper:
                     continue
 
                 raw_params = self._parse_arguments(tool_call.arguments)
+                toolcall_id = self._toolcall_id(task_id, step, tool_call.name, call_id)
+                refs = self._toolcall_refs(toolcall_id)
                 self._emit("TOOL_CALL_START", category="tool", task_id=task_id, step_id=step, payload={
                     "tool": tool_call.name,
                     "params_compact": self._compact_params(raw_params),
+                    "params_full": self._json_safe(raw_params),
+                    "toolcall_id": toolcall_id,
                 })
-                toolcall_id = self._toolcall_id(task_id, step, tool_call.name, call_id)
                 tool_output = self.backend.call(
                     tool_call.name,
                     tool_call.arguments,
@@ -236,6 +243,10 @@ class ToolCallingTaskStepper:
                 self._emit("TOOL_CALL_END", category="tool", task_id=task_id, step_id=step, payload={
                     "tool": tool_call.name,
                     "status": event_status,
+                    "highlights": self._tool_highlights(tool_output),
+                    "toolcall_id": toolcall_id,
+                    "input_ref": refs.get("input_ref", ""),
+                    "output_ref": refs.get("output_ref", ""),
                 })
 
                 observations.append({"step": step, "method": tool_call.name, "params": raw_params, "result": tool_output})
@@ -342,6 +353,32 @@ class ToolCallingTaskStepper:
                 sval = type(val).__name__
             parts.append(f"{key}={sval}")
         return ToolCallingTaskStepper._snippet(", ".join(parts), max_len)
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        try:
+            json.dumps(value, ensure_ascii=False)
+            return value
+        except Exception:
+            return str(value)
+
+    @staticmethod
+    def _tool_highlights(result: Dict[str, Any], max_len: int = 160) -> str:
+        if not isinstance(result, dict):
+            return ToolCallingTaskStepper._snippet(result, max_len)
+        if result.get("error"):
+            return ToolCallingTaskStepper._snippet(result.get("error", ""), max_len)
+        data = result.get("data")
+        if isinstance(data, dict):
+            keys = list(data.keys())
+            if keys:
+                return ToolCallingTaskStepper._snippet("keys: " + ", ".join(keys[:6]), max_len)
+            return "data: {}"
+        if isinstance(data, list):
+            return f"list[{len(data)}]"
+        if isinstance(data, str):
+            return ToolCallingTaskStepper._snippet(data, max_len)
+        return ToolCallingTaskStepper._snippet(str(data), max_len)
 
     @staticmethod
     def _format_artifact_slice(
@@ -489,3 +526,10 @@ class ToolCallingTaskStepper:
         safe_tool = tool_name.replace("/", "_")
         suffix = str(call_id)[-8:] if call_id else f"s{step + 1}"
         return f"{task_id}_s{step + 1}_{safe_tool}_{suffix}"
+
+    @staticmethod
+    def _toolcall_refs(toolcall_id: str) -> Dict[str, str]:
+        return {
+            "input_ref": f"toolcalls/{toolcall_id}/input.json",
+            "output_ref": f"toolcalls/{toolcall_id}/output.json",
+        }

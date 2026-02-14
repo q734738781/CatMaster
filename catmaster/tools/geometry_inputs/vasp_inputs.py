@@ -24,6 +24,8 @@ class StructWriter:
         use_d3: bool = True,
         user_incar_overrides: Optional[Dict[str, Any]] = None,  
         use_dft_plus_u: bool = False,
+        single_point: bool = False,
+        compute_dos: bool = False,
         run_template: Optional[Path] = None,
     ) -> None:
         """
@@ -36,39 +38,23 @@ class StructWriter:
             relax_cell: If True for bulk, set ISIF=3; otherwise ISIF=2
             k_product: K-point density product 
             user_incar_overrides: User INCAR overrides
+            single_point: If True, prepare static single-point settings (NSW=0, IBRION=-1).
+            compute_dos: If True, keep orbital projection output (LORBIT=11); else set LORBIT=0.
             run_template: Optional run.yaml template path
         """
         output_dir = resolve_workspace_path(str(output_dir))
         output_dir.mkdir(parents=True, exist_ok=True)
 
         required_overrides = self._required_overrides(calc_type, relax_cell, user_incar_overrides or {})
-
-        def _clean(d: Dict[str, Any]) -> Dict[str, Any]:
-            return {k: v for k, v in (d or {}).items() if v is not None}
-
-        # User settings then task-required overrides (task wins per-key)
-        user_incar_settings: Dict[str, Any] = {}
-        user_incar_settings.update(_clean(user_incar_overrides or {}))
-        user_incar_settings.update(required_overrides)
-        # Global overrides for all relaxations
-        user_incar_settings.setdefault("EDIFF", 1e-6)
-        user_incar_settings.setdefault("NSW", 500)
-        user_incar_settings.setdefault("NELM", 100)
-        user_incar_settings.setdefault("EDIFFG", -0.02)
-        user_incar_settings.setdefault("LCHARG", False)
-        user_incar_settings.setdefault("LWAVE", False)
-        if calc_type != "gas":
-            user_incar_settings.setdefault("ISMEAR", 0)
-            user_incar_settings.setdefault("SIGMA", 0.1)
-        # DFT-D3 toggle
-        if use_d3:
-            user_incar_settings.setdefault("IVDW", 11)
-        
-        # DFT+U toggle
-        if use_dft_plus_u:
-            user_incar_settings.setdefault("LDAU", True)
-        else:
-            user_incar_settings.setdefault("LDAU", False)
+        user_incar_settings = self._build_user_incar_settings(
+            calc_type=calc_type,
+            required_overrides=required_overrides,
+            use_d3=use_d3,
+            use_dft_plus_u=use_dft_plus_u,
+            user_incar_overrides=user_incar_overrides or {},
+            single_point=single_point,
+            compute_dos=compute_dos,
+        )
         
         # Build VASP input set; k-points handled manually to match reference logic
         vasp_input_set = MPRelaxSet(
@@ -103,6 +89,60 @@ class StructWriter:
         if run_template and run_template.exists():
             import shutil
             shutil.copy(run_template, output_dir / "run.yaml")
+
+    def _build_user_incar_settings(
+        self,
+        *,
+        calc_type: str,
+        required_overrides: Dict[str, Any],
+        use_d3: bool,
+        use_dft_plus_u: bool,
+        user_incar_overrides: Dict[str, Any],
+        single_point: bool,
+        compute_dos: bool,
+    ) -> Dict[str, Any]:
+        def _clean(d: Dict[str, Any]) -> Dict[str, Any]:
+            return {k: v for k, v in (d or {}).items() if v is not None}
+
+        # User settings then task-required overrides (task wins per-key)
+        user_incar_settings: Dict[str, Any] = {}
+        user_incar_settings.update(_clean(user_incar_overrides or {}))
+        user_incar_settings.update(required_overrides)
+
+        # Global baseline
+        user_incar_settings.setdefault("EDIFF", 1e-6)
+        user_incar_settings.setdefault("NELM", 100)
+        user_incar_settings.setdefault("LCHARG", False)
+        user_incar_settings.setdefault("LWAVE", False)
+
+        # Keep DOS/projection data optional; default off to reduce disk usage.
+        if compute_dos:
+            user_incar_settings.setdefault("LORBIT", 11)
+        else:
+            user_incar_settings.setdefault("LORBIT", 0)
+
+        if single_point:
+            user_incar_settings.setdefault("NSW", 0)
+            user_incar_settings.setdefault("IBRION", -1)
+        else:
+            user_incar_settings.setdefault("NSW", 500)
+            user_incar_settings.setdefault("EDIFFG", -0.02)
+
+        if calc_type != "gas":
+            user_incar_settings.setdefault("ISMEAR", 0)
+            user_incar_settings.setdefault("SIGMA", 0.1)
+
+        # DFT-D3 toggle
+        if use_d3:
+            user_incar_settings.setdefault("IVDW", 11)
+
+        # DFT+U toggle
+        if use_dft_plus_u:
+            user_incar_settings.setdefault("LDAU", True)
+        else:
+            user_incar_settings.setdefault("LDAU", False)
+
+        return user_incar_settings
 
     def _required_overrides(
         self,

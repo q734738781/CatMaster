@@ -2,7 +2,12 @@ from __future__ import annotations
 
 # Re-export tool functions and input models
 from catmaster.tools.geometry_inputs.molecule import MoleculeFromSmilesInput, create_molecule_from_smiles
-from catmaster.tools.geometry_inputs.vasp_prepare import RelaxPrepareInput, relax_prepare
+from catmaster.tools.geometry_inputs.vasp_prepare import (
+    VaspRelaxPrepareInput,
+    VaspSPPrepareInput,
+    vasp_relax_prepare,
+    vasp_sp_prepare,
+)
 from catmaster.tools.geometry_inputs.slab_tools import (
     SlabBuildInput,
     FixAtomsByLayersInput,
@@ -30,7 +35,8 @@ from catmaster.tools.geometry_inputs.neb_tools import (
 __all__ = [
     "MoleculeFromSmilesInput",
     "create_molecule_from_smiles",
-    "RelaxPrepareInput",
+    "VaspRelaxPrepareInput",
+    "VaspSPPrepareInput",
     "SlabBuildInput",
     "FixAtomsByLayersInput",
     "FixAtomsByHeightInput",
@@ -40,7 +46,8 @@ __all__ = [
     "build_slab",
     "fix_atoms_by_layers",
     "fix_atoms_by_height",
-    "relax_prepare",
+    "vasp_relax_prepare",
+    "vasp_sp_prepare",
     "SupercellInput",
     "supercell",
     "enumerate_adsorption_sites",
