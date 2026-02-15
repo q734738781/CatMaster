@@ -19,3 +19,9 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     system_content = str(messages[0].content)
     assert "Symbolic link operations are forbidden in bash_exec" in system_content
     assert "Do NOT put function tool names into bash_exec commands" in system_content
+    assert "ase, pymatgen, numpy, matplotlib, scipy, pandas, fitz, requests" in system_content
+    assert "Default to script-file persistence for Python code" in system_content
+    assert "Use inline heredoc" in system_content
+    assert "quick result analysis or file inspection" in system_content
+    assert "actual workload execution" in system_content
+    assert "python - <<'PY'" in system_content

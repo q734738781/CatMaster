@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from catmaster.llm.config import LLMConfig, ToolCallingConfig
+from catmaster.llm.config import LLMProfile
 
 
 def test_llm_config_parses_prompt_cache_retention() -> None:
@@ -66,3 +69,25 @@ def test_llm_config_env_fallback_proposal_browse_tools(monkeypatch) -> None:
     cfg.apply_env_fallbacks()
 
     assert cfg.tool_calling.proposal_browse_tools_enabled is False
+
+
+def test_llm_profile_reads_top_level_summary_override(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join([
+            "main:",
+            "  provider: openrouter",
+            "  model: openai/gpt-5.2:online",
+            "  tool_calling:",
+            "    driver: openai_chat_completions",
+            "summary:",
+            "  provider: openrouter",
+            "  model: openai/gpt-5-nano",
+        ]),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.summary is not None
+    assert profile.summary.model == "openai/gpt-5-nano"

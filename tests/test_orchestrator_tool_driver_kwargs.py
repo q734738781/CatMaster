@@ -65,14 +65,13 @@ def test_orchestrator_proposal_function_tools_default_allowlist() -> None:
     orch = _orchestrator_for_kwargs(profile)
     orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
         {"name": "bash_exec"},
-        {"name": "python_exec"},
         {"name": "write_note"},
     ])
     orch.tool_policy = SimpleNamespace(denied_tools=set())
 
     tools = orch._proposal_function_tools()
 
-    assert [tool["name"] for tool in tools] == ["bash_exec", "python_exec"]
+    assert [tool["name"] for tool in tools] == ["bash_exec"]
 
 
 def test_orchestrator_proposal_function_tools_respects_denied() -> None:
@@ -84,13 +83,13 @@ def test_orchestrator_proposal_function_tools_respects_denied() -> None:
     orch = _orchestrator_for_kwargs(profile)
     orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
         {"name": "bash_exec"},
-        {"name": "python_exec"},
+        {"name": "write_note"},
     ])
-    orch.tool_policy = SimpleNamespace(denied_tools={"python_exec"})
+    orch.tool_policy = SimpleNamespace(denied_tools={"bash_exec"})
 
     tools = orch._proposal_function_tools()
 
-    assert [tool["name"] for tool in tools] == ["bash_exec"]
+    assert tools == []
 
 
 def test_orchestrator_proposal_function_tools_disabled_returns_empty() -> None:
@@ -102,7 +101,7 @@ def test_orchestrator_proposal_function_tools_disabled_returns_empty() -> None:
     orch = _orchestrator_for_kwargs(profile)
     orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
         {"name": "bash_exec"},
-        {"name": "python_exec"},
+        {"name": "write_note"},
     ])
     orch.tool_policy = SimpleNamespace(denied_tools=set())
 

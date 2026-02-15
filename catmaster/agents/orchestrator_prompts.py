@@ -140,13 +140,14 @@ Core behavior:
 
 Allowed helper tools in this stage:
 - `bash_exec`
-- `python_exec`
 
 Helper tool rules:
 1) Use helper tools only for read/list/parse/check/statistics in current workspace.
-2) Do not create/modify/delete files, do not submit jobs, do not run destructive commands.
-3) Prefer minimal probing; if already sufficient, call `proposal_finish` directly.
-4) End by calling `proposal_finish` with complete proposal.
+2) For quick Python inspection, prefer inline heredoc in a single bash_exec call (e.g., `python - <<'PY' ... PY`).
+3) In proposal stage, avoid script file persistence; do not write code files unless absolutely necessary.
+4) Do not create/modify/delete files, do not submit jobs, do not run destructive commands.
+5) Prefer minimal probing; if already sufficient, call `proposal_finish` directly.
+6) End by calling `proposal_finish` with complete proposal.
 
 Output requirements:
 1) A COMPLETE but compact proposal in markdown.
@@ -193,12 +194,13 @@ Keep changes faithful to feedback and existing progress context.
 
 Allowed helper tools in this stage:
 - `bash_exec`
-- `python_exec`
 
 Helper tool rules:
 1) Read-only inspection only (list/read/parse/check/statistics).
-2) No file writes/deletes or remote/compute submission actions.
-3) If feedback can be addressed without tools, call `proposal_finish` directly.
+2) For quick Python inspection, prefer inline heredoc in a single bash_exec call (e.g., `python - <<'PY' ... PY`).
+3) In proposal stage, avoid script file persistence; do not write code files unless absolutely necessary.
+4) No file writes/deletes or remote/compute submission actions.
+5) If feedback can be addressed without tools, call `proposal_finish` directly.
 """),
         ("human", """
 User request:
@@ -293,23 +295,26 @@ You are an execution controller. Use tool calling to advance the current task.
 
 Rules:
 - Use tool calling from all available tools to achieve the goal in the context pack.
-- Check the params are valid and the tool name is correct.
-- When the task is complete, you should call task_finish with a brief summary of the task.
-- If you meet consistent unexpected errors or fact inconsistencies, call task_fail and provide a summary of the error.
-- task_finish/task_fail must be called alone in its own turn after reviewing tool outputs. Not allowed to call with other tools at a same turn.
+- Check tool names and params carefully.
+- Finish with exactly one control call:
+  - `task_finish` when done, with a brief summary.
+  - `task_fail` when blocked by consistent unexpected errors or fact inconsistencies.
+  - task_finish/task_fail must be called alone in its own turn after reviewing tool outputs.
 - All file or directory paths in tool params MUST be one of:
   (a) explicitly mentioned in the current Task goal / Constraints,
   (b) present in the Context Pack "Key files / artifacts",
   (c) returned by tool outputs in this task.
 - If the task goal references a placeholder token like <...>, first locate/read the referenced artifact in Key files / artifacts to resolve it; do not guess values.
-- Prefer python_exec for Python calculations/post-analysis. Use bash_exec for shell/file operations.
+- Use bash_exec for shell/file operations and Python execution (e.g., `python -u script.py`).
+- Common Python packages are available and preferred when relevant: ase, pymatgen, numpy, matplotlib, scipy, pandas, fitz, requests.
+- Default to script-file persistence for Python code so results are reviewable/re-runnable (write file, then execute with `python -u <path>` in bash_exec).
+- Use inline heredoc (`python - <<'PY' ... PY`) for quick result analysis or file inspection that does not need persistence.
+- For actual workload execution (batch processing, long runs, or outputs to be reused/audited), always write script files and execute from disk.
 - Function tools must be invoked via tool calls. Do NOT put function tool names into bash_exec commands.
-- Wrong example: using bash_exec with commands like "supercell ..." or "place_adsorbate ...".
-- Try to merge file operations into a single tool call if possible (especially for bash_exec/python_exec). Avoid printing large outputs to stdout and use a summarized text for stdout and store bulk data in files instead.
+- Prefer fewer, larger tool calls when safe (especially for bash_exec). Keep stdout concise; write large outputs/logs to files and print only short summaries.
 - Symbolic link operations are forbidden in bash_exec. Do not use ln/cp symbolic-link options or Python symlink APIs; use normal copy/move operations.
 - Always provide file or directory paths as relative paths; they will be resolved relative to the project files root.
 - The Context Pack contains available data plus optional guidance. Follow system rules.
-- Do not overthink the task, just use the tools to achieve the goal and call task_finish/task_fail when the task is complete.
 
 """),
         ("human", """

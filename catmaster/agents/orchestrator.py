@@ -69,7 +69,6 @@ _PLANNER_TOOL_ALLOWLIST = [
 ]
 _PROPOSAL_TOOL_ALLOWLIST = [
     "bash_exec",
-    "python_exec",
 ]
 
 

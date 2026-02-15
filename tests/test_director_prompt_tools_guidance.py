@@ -16,7 +16,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
         whiteboard_full="",
         artifacts_index="[]",
         already_done_json="[]",
-        tools="python_exec : run python\nbash_exec : run shell",
+        tools="bash_exec : run shell",
     )
     system_content = str(messages[0].content)
     human_content = str(messages[1].content)

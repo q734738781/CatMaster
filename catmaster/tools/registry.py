@@ -54,7 +54,6 @@ class ToolRegistry:
 
         # File management tools
         from catmaster.tools.misc.bash_exec import bash_exec, BashExecInput
-        from catmaster.tools.misc.python_repl import python_exec, PythonExecInput
 
         # Retrieval tools
         from catmaster.tools.retrieval.matdb import (
@@ -86,7 +85,6 @@ class ToolRegistry:
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)
-        self.register_tool("python_exec", python_exec, PythonExecInput)
         self.register_tool("write_note", memory.write_note, memory.MemoryNoteInput)
     
     def register_tool(
