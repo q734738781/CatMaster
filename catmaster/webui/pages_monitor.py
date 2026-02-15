@@ -123,6 +123,17 @@ _MONITOR_CSS = """
   overflow-x: hidden;
   padding-right: 6px;
 }
+.cm-live-summary-box {
+  max-height: 560px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+}
+.cm-live-summary-box pre,
+.cm-live-summary-box code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 """
 
 
@@ -444,7 +455,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
                     event_feed = gr.Code(label="ui_events", lines=30, elem_classes=["cm-scroll-code"])
                 with gr.Column(scale=4, elem_classes=["cm-panel"]):
                     gr.Markdown("## Run Detail")
-                    run_summary_md = gr.Markdown()
+                    run_summary_md = gr.Markdown(elem_classes=["cm-live-summary-box"])
                     report_source_md = gr.Markdown("<small>Report Source: `unavailable`</small>")
                     final_report_md = gr.Markdown(elem_classes=["cm-scroll-markdown"])
 

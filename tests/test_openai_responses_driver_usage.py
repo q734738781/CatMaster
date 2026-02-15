@@ -52,3 +52,22 @@ def test_openai_responses_driver_usage_missing(monkeypatch) -> None:
     assert turn.usage is not None
     assert turn.usage.source == "missing"
     assert turn.usage.input_tokens is None
+
+
+def test_openai_responses_driver_passes_prompt_cache_retention(monkeypatch) -> None:
+    monkeypatch.setattr("catmaster.llm.openai_responses_driver.OpenAI", object())
+    fake_response = _build_driver_response(usage=None)
+    captured: dict = {}
+
+    def _create(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=_create),
+    )
+    driver = OpenAIResponsesDriver(client=client, model="gpt-test")
+
+    driver.create_turn(input_items=[], prompt_cache_retention="24h")
+
+    assert captured.get("prompt_cache_retention") == "24h"

@@ -181,6 +181,13 @@ class WebSession:
         if not candidate.exists():
             return "Invalid run selection"
         with self._lock:
+            if self.selected_run_dir is not None:
+                try:
+                    current = self.selected_run_dir.resolve()
+                except Exception:
+                    current = self.selected_run_dir
+                if current == candidate:
+                    return f"Selected run: {candidate.name}"
             self.selected_run_dir = candidate
             self.last_event_seq = 0
             self.event_lines = []

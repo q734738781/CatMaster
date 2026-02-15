@@ -67,6 +67,10 @@ from catmaster.agents.orchestrator_prompts import (
 _PLANNER_TOOL_ALLOWLIST = [
     "bash_exec",
 ]
+_PROPOSAL_TOOL_ALLOWLIST = [
+    "bash_exec",
+    "python_exec",
+]
 
 
 class Orchestrator:
@@ -222,6 +226,8 @@ class Orchestrator:
             "provider": self._llm_provider or "",
             "driver_kind": self._tool_driver_kind or "",
             "base_url": self._llm_base_url or "",
+            "prompt_cache_retention": self._prompt_cache_retention() or "",
+            "proposal_browse_tools_enabled": self._proposal_browse_tools_enabled(),
             "resuming": self.resuming,
             "llm_log_path": str(self.llm_log_file),
             "trace_paths": {
@@ -301,6 +307,16 @@ class Orchestrator:
         return [
             tool for tool in tools
             if tool.get("name") in _PLANNER_TOOL_ALLOWLIST and tool.get("name") not in denied
+        ]
+
+    def _proposal_function_tools(self) -> list[dict]:
+        if not self._proposal_browse_tools_enabled():
+            return []
+        tools = self.tool_backend.list_function_tools()
+        denied = self.tool_policy.denied_tools or set()
+        return [
+            tool for tool in tools
+            if tool.get("name") in _PROPOSAL_TOOL_ALLOWLIST and tool.get("name") not in denied
         ]
 
     @staticmethod
@@ -409,7 +425,31 @@ class Orchestrator:
             driver_kwargs["max_output_tokens"] = kwargs["max_output_tokens"]
         elif "max_tokens" in kwargs and kwargs.get("max_tokens") is not None:
             driver_kwargs["max_output_tokens"] = kwargs["max_tokens"]
+        prompt_cache_retention = self._prompt_cache_retention()
+        if prompt_cache_retention:
+            driver_kwargs["prompt_cache_retention"] = prompt_cache_retention
         return driver_kwargs
+
+    def _prompt_cache_retention(self) -> Optional[str]:
+        if self.llm_profile is None:
+            return None
+        tool_calling = getattr(self.llm_profile.main, "tool_calling", None)
+        if tool_calling is None:
+            return None
+        value = getattr(tool_calling, "prompt_cache_retention", None)
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return None
+
+    def _proposal_browse_tools_enabled(self) -> bool:
+        if self.llm_profile is None:
+            return True
+        tool_calling = getattr(self.llm_profile.main, "tool_calling", None)
+        if tool_calling is None:
+            return True
+        value = getattr(tool_calling, "proposal_browse_tools_enabled", None)
+        return True if value is None else bool(value)
 
     def _trace_event(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
         record = {"event": event, "payload": payload or {}}
@@ -700,6 +740,7 @@ class Orchestrator:
 
     def _create_proposal(self, user_request: str, *, log_llm: bool = False) -> Dict[str, Any]:
         tools = self._tool_schema()
+        proposal_function_tools = self._proposal_function_tools()
         whiteboard_full = self.whiteboard.read()
         artifacts_index = self._artifact_index()
         messages = self.proposal_prompt.format_messages(
@@ -730,7 +771,7 @@ class Orchestrator:
             task_goal="Create proposal",
             context_pack={},
             seed_messages=input_items,
-            function_tools=[],
+            function_tools=proposal_function_tools,
             builtin_tools=[],
         )
         finish_reason = step_result.get("finish_reason", "")
@@ -763,6 +804,8 @@ class Orchestrator:
         feedback: str,
         log_llm: bool = False,
     ) -> Dict[str, Any]:
+        tools = self._tool_schema()
+        proposal_function_tools = self._proposal_function_tools()
         whiteboard_full = self.whiteboard.read()
         artifacts_index = self._artifact_index()
         messages = self.proposal_feedback_prompt.format_messages(
@@ -771,6 +814,7 @@ class Orchestrator:
             work_packages_json=json.dumps(work_packages, ensure_ascii=False),
             whiteboard_full=whiteboard_full,
             artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
+            tools=tools,
             feedback=feedback,
         )
         input_items = self._messages_to_input_items(messages)
@@ -794,7 +838,7 @@ class Orchestrator:
             task_goal="Revise proposal",
             context_pack={},
             seed_messages=input_items,
-            function_tools=[],
+            function_tools=proposal_function_tools,
             builtin_tools=[],
         )
         finish_reason = step_result.get("finish_reason", "")

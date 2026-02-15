@@ -13,7 +13,7 @@ Options:
 
   --project-space-root DIR
       Project-space root that runtime WebUI should use.
-      Default: <target>/../project_space
+      Default: <target>/../cm_project_space
 
   --dry-run
       Show rsync changes without writing files.
@@ -28,7 +28,7 @@ EOF
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${REPO_ROOT}/../CatMaster_Run"
-PROJECT_SPACE_ROOT=""
+PROJECT_SPACE_ROOT="${REPO_ROOT}/../cm_project_space"
 DRY_RUN=0
 NO_DELETE=0
 FULL_REPO=0

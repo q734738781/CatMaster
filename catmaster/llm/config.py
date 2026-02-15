@@ -24,6 +24,8 @@ class ToolCallingConfig:
     parallel_tool_calls: bool = False
     supports_builtin_tools: bool = False
     strict_json_schema: bool = False
+    prompt_cache_retention: Optional[str] = None
+    proposal_browse_tools_enabled: bool = True
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCallingConfig":
@@ -34,6 +36,15 @@ class ToolCallingConfig:
             parallel_tool_calls=bool(data.get("parallel_tool_calls", cls.parallel_tool_calls)),
             supports_builtin_tools=bool(data.get("supports_builtin_tools", cls.supports_builtin_tools)),
             strict_json_schema=bool(data.get("strict_json_schema", cls.strict_json_schema)),
+            prompt_cache_retention=_normalize_prompt_cache_retention(
+                data.get("prompt_cache_retention"),
+                source="tool_calling.prompt_cache_retention",
+            ),
+            proposal_browse_tools_enabled=_to_bool(
+                data.get("proposal_browse_tools_enabled"),
+                default=cls.proposal_browse_tools_enabled,
+                source="tool_calling.proposal_browse_tools_enabled",
+            ),
         )
 
 
@@ -133,6 +144,20 @@ class LLMConfig:
         if self.reasoning_effort is None:
             effort = os.getenv("CATMASTER_REASONING_EFFORT", "").strip()
             self.reasoning_effort = effort or None
+        if self.tool_calling.prompt_cache_retention is None:
+            retention = _normalize_prompt_cache_retention(
+                os.getenv("CATMASTER_PROMPT_CACHE_RETENTION", ""),
+                source="CATMASTER_PROMPT_CACHE_RETENTION",
+            )
+            if retention is not None:
+                self.tool_calling.prompt_cache_retention = retention
+        env_prop_tools = os.getenv("CATMASTER_PROPOSAL_BROWSE_TOOLS_ENABLED", "")
+        if env_prop_tools.strip():
+            self.tool_calling.proposal_browse_tools_enabled = _to_bool(
+                env_prop_tools,
+                default=self.tool_calling.proposal_browse_tools_enabled,
+                source="CATMASTER_PROPOSAL_BROWSE_TOOLS_ENABLED",
+            )
         driver_env = os.getenv("CATMASTER_TOOL_DRIVER", "").strip()
         if driver_env:
             self.tool_calling.driver = driver_env  # type: ignore[assignment]
@@ -248,6 +273,35 @@ def _to_str_or_none(value: Any) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _normalize_prompt_cache_retention(value: Any, *, source: str) -> Optional[str]:
+    text = _to_str_or_none(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    if normalized in {"in_memory", "24h"}:
+        return normalized
+    _logger.warning("Ignoring invalid %s=%r (allowed: in_memory, 24h)", source, text)
+    return None
+
+
+def _to_bool(value: Any, *, default: bool, source: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    _logger.warning("Ignoring invalid %s=%r (allowed: true/false)", source, value)
+    return default
 
 
 __all__ = [

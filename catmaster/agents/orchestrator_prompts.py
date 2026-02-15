@@ -136,6 +136,17 @@ Core behavior:
 - Prefer making reasonable default assumptions and proceeding, instead of asking the human to specify everything.
 - Only ask the human about decisions that are truly BLOCKING (cannot proceed safely / would change the final deliverable drastically).
 - If the user request includes an explicit clarification in parentheses or bilingual form (e.g., "PX (toluene)"), treat that clarification as authoritative.
+- If critical file/workspace facts are missing, you may inspect the workspace before finalizing.
+
+Allowed helper tools in this stage:
+- `bash_exec`
+- `python_exec`
+
+Helper tool rules:
+1) Use helper tools only for read/list/parse/check/statistics in current workspace.
+2) Do not create/modify/delete files, do not submit jobs, do not run destructive commands.
+3) Prefer minimal probing; if already sufficient, call `proposal_finish` directly.
+4) End by calling `proposal_finish` with complete proposal.
 
 Output requirements:
 1) A COMPLETE but compact proposal in markdown.
@@ -177,8 +188,17 @@ def build_proposal_feedback_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", """
 You revise a proposal based on human feedback. Output a complete updated proposal and updated work_packages.
-You MUST call proposal_finish.
+You may use helper tools for workspace inspection when needed, then call proposal_finish.
 Keep changes faithful to feedback and existing progress context.
+
+Allowed helper tools in this stage:
+- `bash_exec`
+- `python_exec`
+
+Helper tool rules:
+1) Read-only inspection only (list/read/parse/check/statistics).
+2) No file writes/deletes or remote/compute submission actions.
+3) If feedback can be addressed without tools, call `proposal_finish` directly.
 """),
         ("human", """
 User request:
@@ -195,6 +215,9 @@ Full whiteboard:
 
 Artifacts index:
 {artifacts_index}
+
+Tool descriptions (reference only):
+{tools}
 
 Human feedback:
 {feedback}
