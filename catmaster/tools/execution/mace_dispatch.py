@@ -88,6 +88,10 @@ class MaceRelaxBatchInput(BaseModel):
         False,
         description="Enable dispersion correction in mace_mp. Default: false.",
     )
+    relax_lattice: bool = Field(
+        False,
+        description="Whether to relax lattice/cell together with atomic positions via ASE FrechetCellFilter.",
+    )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
@@ -201,6 +205,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     head = _resolve_mace_head(params.head)
     head_arg = shlex.quote(head or "")
     dispersion = bool(params.dispersion)
+    relax_lattice = bool(params.relax_lattice)
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
@@ -263,6 +268,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         "model": model,
         "head": head_arg,
         "dispersion": "true" if dispersion else "false",
+        "relax_lattice": "true" if relax_lattice else "false",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     task = TaskSpec(
@@ -306,6 +312,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             "model": model,
             "head": head,
             "dispersion": dispersion,
+            "relax_lattice": relax_lattice,
         },
         execution_time=result.duration_s,
     )
@@ -457,6 +464,7 @@ def _build_mace_relax_request(
         "model": params.model,
         "head": shlex.quote(_resolve_mace_head(getattr(params, "head", None)) or ""),
         "dispersion": "true" if bool(getattr(params, "dispersion", False)) else "false",
+        "relax_lattice": "true" if bool(getattr(params, "relax_lattice", False)) else "false",
     }
 
     rendered = render_task_fields(cfg, ctx, work_dir)

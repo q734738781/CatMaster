@@ -161,7 +161,7 @@ vasp_execute:
   task_work_path: "."
 
 mace_relax_dir:
-  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head}"
+  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice}"
   forward_files:
     - "input"
     - "task_script/mace_relax.py"

@@ -14,6 +14,7 @@ def run_mace(
     model: str = "mh-1",
     head: Optional[str] = "omat_pbe",
     dispersion: bool = False,
+    relax_lattice: bool = False,
     device: str = "auto",
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
@@ -27,6 +28,7 @@ def run_mace(
         model: MACE model name
         head: MACE model head for multi-head models; use None to disable.
         dispersion: Enable D3 dispersion correction in mace_mp.
+        relax_lattice: Whether to relax cell vectors together with atomic positions.
         device: Device to use (auto/cpu/cuda)
         output_root: Directory to write outputs; defaults to the structure file's directory.
     
@@ -41,6 +43,7 @@ def run_mace(
         model=model,
         head=head,
         dispersion=dispersion,
+        relax_lattice=relax_lattice,
         device=device,
     )
 
@@ -90,11 +93,14 @@ def _run_mace_single(
     model: str,
     head: Optional[str],
     dispersion: bool,
+    relax_lattice: bool,
     device: str,
     calc=None,
 ) -> Dict[str, object]:
     from ase.io import read, write
-    from ase.optimize import BFGS
+    from ase.filters import FrechetCellFilter
+    from ase.io.trajectory import Trajectory
+    from ase.optimize import FIRE
     import numpy as np
     import torch
     from mace.calculators import mace_mp
@@ -114,15 +120,23 @@ def _run_mace_single(
 
     traj_path = output_dir / "opt.traj"
     log_path = output_dir / "opt.log"
-    opt = BFGS(atoms, trajectory=str(traj_path), logfile=str(log_path))
-    opt.run(fmax=fmax, steps=steps)
+    has_lattice = atoms.cell is not None and getattr(atoms.cell, "volume", 0) > 1e-6
+    if relax_lattice and not has_lattice:
+        raise ValueError("relax_lattice=True requires periodic structure with a valid lattice.")
+    target = FrechetCellFilter(atoms) if relax_lattice else atoms
+    traj = Trajectory(str(traj_path), "w", atoms)
+    opt = FIRE(target, logfile=str(log_path))
+    opt.attach(traj)
+    try:
+        opt.run(fmax=fmax, steps=steps)
+    finally:
+        traj.close()
 
     final_energy = float(atoms.get_potential_energy())
     final_forces = atoms.get_forces()
     max_force = float(np.max(np.abs(final_forces)))
     converged = max_force < fmax
 
-    has_lattice = atoms.cell is not None and getattr(atoms.cell, "volume", 0) > 1e-6
     if has_lattice:
         output_structure = output_dir / "opt.vasp"
         write(str(output_structure), atoms, format="vasp")
@@ -135,6 +149,7 @@ def _run_mace_single(
         "model": model,
         "head": head,
         "dispersion": dispersion,
+        "relax_lattice": relax_lattice,
         "final_energy_eV": final_energy,
         "fmax": fmax,
         "max_force": max_force,
@@ -159,6 +174,7 @@ def run_mace_path(
     model: str = "mh-1",
     head: Optional[str] = "omat_pbe",
     dispersion: bool = False,
+    relax_lattice: bool = False,
     device: str = "auto",
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
@@ -208,6 +224,7 @@ def run_mace_path(
                 model=model,
                 head=head,
                 dispersion=dispersion,
+                relax_lattice=relax_lattice,
                 device=device,
                 calc=calc,
             )
@@ -227,6 +244,7 @@ def run_mace_path(
         "model": model,
         "head": head,
         "dispersion": dispersion,
+        "relax_lattice": relax_lattice,
         "device": device,
         "fmax": fmax,
         "steps": steps,
@@ -269,6 +287,12 @@ def _cli() -> None:
         default=False,
         help="Enable dispersion correction in mace_mp (true|false). Default: false.",
     )
+    parser.add_argument(
+        "--relax_lattice",
+        type=_parse_bool,
+        default=False,
+        help="Relax lattice/cell together with atomic positions (true|false). Default: false.",
+    )
     parser.add_argument("--device", default="auto", help="Device to use: auto|cpu|cuda|cuda:0")
     parser.add_argument("--output_root", required=True, help="Output root directory")
     args = parser.parse_args()
@@ -284,6 +308,7 @@ def _cli() -> None:
         model=args.model,
         head=head,
         dispersion=args.dispersion,
+        relax_lattice=args.relax_lattice,
         device=args.device,
         output_root=args.output_root,
     )
