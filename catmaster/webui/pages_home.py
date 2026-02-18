@@ -50,6 +50,20 @@ _HOME_CSS = """
 
 
 def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme: Optional[Any] = None) -> gr.Blocks:
+    def _prompt_box_for_resume(resume: bool) -> Dict[str, Any]:
+        if resume:
+            return gr.update(
+                label="Interrupt Guidance (optional)",
+                placeholder=(
+                    "Resuming interrupted run: provide guidance for next action. "
+                    "Leave empty to continue with no feedback."
+                ),
+            )
+        return gr.update(
+            label="User Request",
+            placeholder="Describe what CatMaster should do.",
+        )
+
     def _monitor_link(ctx: str, project_space_name: str, run_name: str) -> str:
         url = registry.monitor_url(ctx=ctx, project_space=project_space_name, run=run_name)
         return (
@@ -151,6 +165,10 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         status = session.submit_prompt(prompt_id, "yes")
         return status, ""
 
+    def _interrupt_run(note: str, ctx: str) -> str:
+        session = registry.get_session(ctx)
+        return session.request_interrupt_current_run(note=note or "")
+
     def _poll_home(ctx: str, selected_run: str) -> Tuple[str, str, str, str, Any, str, str, str]:
         session = registry.get_session(ctx)
         runs = session.list_runs()
@@ -191,6 +209,13 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
                 prompt_body = payload.get("report_text", "") or ""
                 report_path = payload.get("report_path", "") or ""
                 prompt_meta = f"Report: {report_path}" if report_path else ""
+            elif kind == "interrupt_feedback":
+                prompt_title = "Interrupt Guidance Required"
+                prompt_body = payload.get("guidance", "") or "Run was interrupted."
+                run_id = payload.get("run_id", "") or ""
+                phase = payload.get("phase", "") or ""
+                bits = [f"run_id={run_id}" if run_id else "", f"phase={phase}" if phase else ""]
+                prompt_meta = " ".join([b for b in bits if b])
             else:
                 prompt_title = "Input Required"
 
@@ -237,6 +262,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
                     with gr.Row():
                         lane_box = gr.Dropdown(label="Lane", choices=["fast", "standard"], value="standard")
                         start_btn = gr.Button("Start Run", variant="primary")
+                        interrupt_btn = gr.Button("Interrupt")
                     with gr.Accordion("Advanced", open=False):
                         with gr.Row():
                             resume_box = gr.Checkbox(label="Resume", value=False)
@@ -287,6 +313,19 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
             _start_run,
             inputs=[prompt_box, lane_box, resume_box, plan_review_box, log_llm_box, full_auto_major_box, ctx_state],
             outputs=[status_box],
+        )
+
+        interrupt_btn.click(
+            _interrupt_run,
+            inputs=[prompt_box, ctx_state],
+            outputs=[status_box],
+        )
+
+        resume_box.change(
+            _prompt_box_for_resume,
+            inputs=[resume_box],
+            outputs=[prompt_box],
+            queue=False,
         )
 
         submit_btn.click(

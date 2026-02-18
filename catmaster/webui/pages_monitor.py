@@ -330,6 +330,13 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
                 prompt_body = payload.get("report_text", "") or ""
                 report_path = payload.get("report_path", "") or ""
                 prompt_meta = f"Report path: {report_path}" if report_path else ""
+            elif kind == "interrupt_feedback":
+                prompt_title = "Interrupt Guidance Required"
+                prompt_body = payload.get("guidance", "") or "Run was interrupted."
+                run_id = payload.get("run_id", "") or ""
+                phase = payload.get("phase", "") or ""
+                bits = [f"run_id={run_id}" if run_id else "", f"phase={phase}" if phase else ""]
+                prompt_meta = " ".join([b for b in bits if b])
             else:
                 prompt_title = "Input Required"
 
@@ -375,6 +382,10 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         session = registry.get_session(ctx)
         status = session.submit_prompt(prompt_id, "yes")
         return status, ""
+
+    def _interrupt_run(ctx: str) -> str:
+        session = registry.get_session(ctx)
+        return session.request_interrupt_current_run()
 
     def _refresh_files_ui(ctx: str, filter_text: str, include_hidden: bool) -> Tuple[gr.FileExplorer, str, str]:
         session = registry.get_session(ctx)
@@ -442,6 +453,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
                 search_box = gr.Textbox(label="Search", placeholder="Filter by run/status/model/project_space")
                 live_llm_toggle = gr.Checkbox(label="Live LLM summary", value=LIVE_SUMMARY_ENABLED_DEFAULT)
                 refresh_monitor_btn = gr.Button("Refresh", variant="primary")
+                interrupt_btn = gr.Button("Interrupt")
 
             run_info = gr.Markdown("")
             run_select_status = gr.Markdown("")
@@ -579,6 +591,13 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
                 permalink_html,
                 selected_run_state,
             ],
+            queue=False,
+        )
+
+        interrupt_btn.click(
+            _interrupt_run,
+            inputs=[ctx_state],
+            outputs=[status_box],
             queue=False,
         )
 

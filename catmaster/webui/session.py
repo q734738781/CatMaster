@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from catmaster.tools.base import ensure_project_space_layout, system_root, workspace_root
+from catmaster.runtime import RunControl
 from catmaster.ui import make_event
 
 from . import io
@@ -36,6 +37,7 @@ class WebSession:
         self.reporter: Optional[WebReporter] = None
         self.broker: Optional[PromptBroker] = None
         self.run_thread: Optional[threading.Thread] = None
+        self.run_control: Optional[RunControl] = None
         self.run_status: str = "idle"
         self.run_error: str = ""
         self.run_info: Dict[str, Any] = {}
@@ -77,6 +79,7 @@ class WebSession:
             self.event_lines = []
             self.live_state_by_run = {}
             self.run_info = {}
+            self.run_control = None
             if self.run_status != "running":
                 self.run_status = "idle"
         return True, f"Project space: {ws}"
@@ -130,6 +133,7 @@ class WebSession:
             self.last_event_seq = 0
             self.event_lines = []
             self.live_state_by_run = {}
+            self.run_control = None
             if self.run_status != "running":
                 self.run_status = "idle"
         return True, f"Project space cleared: {ws}"
@@ -204,6 +208,7 @@ class WebSession:
         full_auto_major: bool,
         llm_config: Optional[str] = None,
     ) -> str:
+        resume_feedback = (prompt or "").strip() if resume else ""
         with self._lock:
             ws = self.workspace
             if ws is None:
@@ -217,6 +222,7 @@ class WebSession:
             self.live_state_by_run = {}
             self.broker = PromptBroker()
             self.reporter = WebReporter(broker=self.broker, max_events=2000)
+            self.run_control = RunControl()
         resume_dir = self._resolve_resume_dir(lane, workspace=ws) if resume else None
 
         def _run() -> None:
@@ -234,7 +240,10 @@ class WebSession:
                     workspace=str(ws),
                     resume=resume,
                     resume_dir=resume_dir,
+                    run_control=self.run_control,
                 )
+                if self.run_control is not None:
+                    self.run_control.run_id = orch.run_context.run_id
                 run_dir = orch.run_context.run_dir
                 if self.reporter:
                     self.reporter.set_run_dir(run_dir)
@@ -248,15 +257,22 @@ class WebSession:
                     }
                     self.selected_run_dir = run_dir
                     self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
-                orch.run(
+                result = orch.run(
                     prompt,
                     log_llm=log_llm,
                     plan_review=plan_review,
                     lane=lane,
                     full_auto_major=full_auto_major,
+                    resume_feedback=resume_feedback,
                 )
                 with self._lock:
-                    self.run_status = "done"
+                    run_status = str((result or {}).get("status") or "done")
+                    if run_status == "interrupted_paused":
+                        self.run_status = "paused"
+                    elif run_status in {"done", "failure", "needs_intervention"}:
+                        self.run_status = "done"
+                    else:
+                        self.run_status = run_status
             except Exception as exc:
                 run_error = str(exc)
                 with self._lock:
@@ -288,6 +304,40 @@ class WebSession:
             return "No active prompt."
         ok = broker.submit(prompt_id, text)
         return "Submitted." if ok else "Prompt not found."
+
+    def request_interrupt_current_run(self, *, note: str = "") -> str:
+        with self._lock:
+            run_thread = self.run_thread
+            run_control = self.run_control
+            reporter = self.reporter
+            info = dict(self.run_info)
+        if not run_thread or not run_thread.is_alive():
+            return "No running run to interrupt."
+        if run_control is None:
+            return "Run control is unavailable."
+        snapshot = run_control.request_interrupt(source="ui", note=note or "")
+        if reporter is not None:
+            reporter.emit(make_event(
+                "INTERRUPT_REQUESTED",
+                category="run",
+                payload={
+                    "source": snapshot.get("source", "ui"),
+                    "note": snapshot.get("note", ""),
+                    "run_id": info.get("run_id", ""),
+                },
+                run_id=info.get("run_id") or None,
+            ))
+        return "Interrupt requested."
+
+    def interrupt_status(self) -> Dict[str, Any]:
+        with self._lock:
+            run_control = self.run_control
+            running = bool(self.run_thread and self.run_thread.is_alive())
+            status = self.run_status
+        if run_control is None:
+            return {"running": running, "run_status": status, "interrupt": {}}
+        snap = run_control.snapshot()
+        return {"running": running, "run_status": status, "interrupt": snap}
 
     def get_prompt(self) -> Optional[Dict[str, Any]]:
         broker = self.broker
@@ -609,29 +659,51 @@ class WebSession:
         return cards
 
     def _resolve_resume_dir(self, lane: str, *, workspace: Path) -> Optional[str]:
-        active_runs_path = system_root(workspace=workspace) / "active_runs.json"
-        if not active_runs_path.exists():
-            return None
-        try:
-            active_runs = json.loads(active_runs_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if not isinstance(active_runs, dict):
-            return None
-        lane_run = active_runs.get(lane)
-        if not lane_run:
-            return None
-        candidate = Path(lane_run)
         sys_root = system_root(workspace=workspace).resolve()
-        if not candidate.is_absolute():
-            candidate = (sys_root / lane_run).resolve()
-        else:
-            candidate = candidate.resolve()
-        try:
-            candidate.relative_to(sys_root)
-        except ValueError:
+
+        # Priority 1: explicit selected run in UI.
+        with self._lock:
+            selected = self.selected_run_dir
+        if isinstance(selected, Path):
+            try:
+                selected_resolved = selected.expanduser().resolve()
+                selected_resolved.relative_to(sys_root)
+                if (selected_resolved / "task_state.json").exists():
+                    return str(selected_resolved)
+            except Exception:
+                pass
+
+        # Priority 2: active run by lane pointer.
+        active_runs_path = sys_root / "active_runs.json"
+        if active_runs_path.exists():
+            try:
+                active_runs = json.loads(active_runs_path.read_text(encoding="utf-8"))
+            except Exception:
+                active_runs = {}
+            if isinstance(active_runs, dict):
+                lane_run = active_runs.get(lane)
+                if lane_run:
+                    candidate = Path(lane_run)
+                    if not candidate.is_absolute():
+                        candidate = (sys_root / lane_run).resolve()
+                    else:
+                        candidate = candidate.resolve()
+                    try:
+                        candidate.relative_to(sys_root)
+                        if (candidate / "task_state.json").exists():
+                            return str(candidate)
+                    except Exception:
+                        pass
+
+        # Priority 3: latest resumable run.
+        runs_root = sys_root / "runs"
+        if not runs_root.exists():
             return None
-        return str(candidate)
+        candidates = [d for d in runs_root.iterdir() if d.is_dir() and (d / "task_state.json").exists()]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+        return str(candidates[0].resolve())
 
     def _write_active_runs(self, lane: str, run_dir: Path, *, workspace: Path) -> None:
         sys_root = system_root(workspace=workspace)

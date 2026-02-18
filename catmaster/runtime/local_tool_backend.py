@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from catmaster.runtime.artifact_store import ArtifactStore
 from catmaster.runtime.trace_store import TraceStore
+from catmaster.runtime.tool_runtime import toolcall_context
 from catmaster.runtime.tool_executor import ToolExecutor
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.tools.base import workspace_scope
@@ -31,6 +33,8 @@ class LocalToolBackend(ToolBackend):
         self.role = role
         self.workspace = Path(workspace).expanduser().resolve() if workspace is not None else None
         self.logger = logging.getLogger(__name__)
+        self._active_lock = threading.Lock()
+        self._active_calls: Dict[str, Dict[str, Any]] = {}
 
     def list_function_tools(self) -> list[dict]:
         return self.registry.as_openai_tools()
@@ -85,11 +89,17 @@ class LocalToolBackend(ToolBackend):
             func = self.registry.get_tool_function(name)
             try:
                 payload = validated_params or {}
-                if self.workspace is not None:
-                    with workspace_scope(self.workspace):
+                self._set_active_call(
+                    toolcall_key=toolcall_key,
+                    tool_name=name,
+                    call_id=call_id,
+                )
+                with toolcall_context(toolcall_key):
+                    if self.workspace is not None:
+                        with workspace_scope(self.workspace):
+                            tool_output = func(payload)
+                    else:
                         tool_output = func(payload)
-                else:
-                    tool_output = func(payload)
             except Exception as exc:
                 tool_output = {
                     "status": "failed",
@@ -97,6 +107,8 @@ class LocalToolBackend(ToolBackend):
                     "data": {},
                     "error": f"{type(exc).__name__}: {exc}",
                 }
+            finally:
+                self._clear_active_call(toolcall_key)
 
         if not isinstance(tool_output, dict):
             tool_output = {
@@ -126,6 +138,38 @@ class LocalToolBackend(ToolBackend):
         }
         self.trace_store.append_toolcall(record)
         return tool_output
+
+    def cancel_active_call(self, toolcall_key: str) -> bool:
+        with self._active_lock:
+            active = dict(self._active_calls.get(toolcall_key) or {})
+        if not active:
+            return False
+        tool_name = str(active.get("tool_name") or "")
+        if tool_name == "bash_exec":
+            try:
+                from catmaster.tools.misc.bash_exec import cancel_bash_exec_toolcall
+
+                return bool(cancel_bash_exec_toolcall(toolcall_key))
+            except Exception:
+                return False
+        return False
+
+    def _set_active_call(
+        self,
+        *,
+        toolcall_key: str,
+        tool_name: str,
+        call_id: str | None,
+    ) -> None:
+        with self._active_lock:
+            self._active_calls[toolcall_key] = {
+                "tool_name": tool_name,
+                "call_id": call_id or "",
+            }
+
+    def _clear_active_call(self, toolcall_key: str) -> None:
+        with self._active_lock:
+            self._active_calls.pop(toolcall_key, None)
 
     @staticmethod
     def _parse_arguments(arguments: Any) -> Any:

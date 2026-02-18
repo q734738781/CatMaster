@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Optional
+import threading
+from typing import Any, Callable, Dict, Optional
 
 from catmaster.llm.driver import ToolCallingDriver
 from catmaster.llm.types import LLMTokenUsage
+from catmaster.runtime.checkpoint_store import CheckpointStore
 from catmaster.runtime.conversation_state import ConversationState, message_item
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.runtime.trace_store import TraceStore
@@ -23,10 +25,14 @@ class ToolCallingTaskStepper:
         control_tools: Optional[list[dict]] = None,
         control_tool_names: Optional[set[str]] = None,
         trace_store: Optional[TraceStore] = None,
+        checkpoint_store: Optional[CheckpointStore] = None,
         reporter: Optional[Reporter] = None,
         role: str = "tool_calling_stepper",
         max_steps: int = 20,
         driver_kwargs: Optional[Dict[str, Any]] = None,
+        run_id: str = "",
+        interrupt_checker: Optional[Callable[[], bool]] = None,
+        interrupt_ack: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         self.driver = driver
         self.backend = backend
@@ -42,11 +48,15 @@ class ToolCallingTaskStepper:
         else:
             self.control_tool_names = control_tool_names
         self.trace_store = trace_store
+        self.checkpoint_store = checkpoint_store
         self.reporter = reporter or NullReporter()
         self.role = role
         self.max_steps = max_steps
         self.driver_kwargs = driver_kwargs or {}
         self.logger = logging.getLogger(__name__)
+        self.run_id = run_id or ""
+        self.interrupt_checker = interrupt_checker
+        self.interrupt_ack = interrupt_ack
 
     def _emit(
         self,
@@ -62,6 +72,7 @@ class ToolCallingTaskStepper:
             name,
             level=level,
             category=category,
+            run_id=self.run_id or None,
             task_id=task_id,
             step_id=step_id,
             payload=payload or {},
@@ -78,10 +89,20 @@ class ToolCallingTaskStepper:
         builtin_tools: Optional[list[dict]] = None,
         tool_descriptions: Optional[str] = None,
         seed_messages: Optional[list[dict]] = None,
+        resume_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         state = ConversationState()
         observations: list[dict] = []
-        if seed_messages:
+        start_step = 0
+        if isinstance(resume_state, dict):
+            restored_items = resume_state.get("input_items")
+            if isinstance(restored_items, list):
+                state.input_items.extend(restored_items)
+            restored_obs = resume_state.get("observations")
+            if isinstance(restored_obs, list):
+                observations = list(restored_obs)
+            start_step = int(resume_state.get("next_step", 0) or 0)
+        elif seed_messages:
             state.input_items.extend(seed_messages)
         else:
             self._seed_state(
@@ -92,10 +113,32 @@ class ToolCallingTaskStepper:
                 tool_descriptions=tool_descriptions,
             )
 
-        for step in range(self.max_steps):
+        for step in range(start_step, self.max_steps):
+            if self._interrupt_requested():
+                self._ack_interrupt("task_step", {"task_id": task_id, "step_id": step})
+                snapshot = self._resume_snapshot(state, observations, next_step=step)
+                self._checkpoint(
+                    "INTERRUPTED_AT_STEP",
+                    task_id=task_id,
+                    step_id=step,
+                    payload={"resume_snapshot": snapshot},
+                )
+                return {
+                    "status": "interrupted",
+                    "finish_reason": "interrupted",
+                    "interrupt_phase": "task_step",
+                    "local_observations": observations,
+                    "resume_state": snapshot,
+                }
             tools_schema = list(function_tools or [])
             tools_schema.extend(builtin_tools or [])
             tools_schema.extend(self.control_tools)
+            self._checkpoint(
+                "STEP_START",
+                task_id=task_id,
+                step_id=step,
+                payload={"n_input_items": len(state.input_items)},
+            )
             self._emit("LLM_CALL_START", category="llm", task_id=task_id, step_id=step, payload={
                 "kind": "tool_calling",
             })
@@ -131,6 +174,15 @@ class ToolCallingTaskStepper:
                         "output_items": turn.output_items_raw,
                     },
                 })
+            self._checkpoint(
+                "LLM_TURN_DONE",
+                task_id=task_id,
+                step_id=step,
+                payload={
+                    "tool_calls": [call.name for call in list(turn.tool_calls or [])],
+                    "has_output_text": bool((turn.output_text or "").strip()),
+                },
+            )
 
             builtin_calls = self._collect_builtin_calls(turn.output_items_raw)
             if builtin_calls:
@@ -145,6 +197,12 @@ class ToolCallingTaskStepper:
                 # If we saw builtin calls but no assistant text yet, allow another turn.
                 if builtin_calls and not (turn.output_text or "").strip():
                     continue
+                self._checkpoint(
+                    "STEP_FINISH_MODEL_TEXT",
+                    task_id=task_id,
+                    step_id=step,
+                    payload={"output_text_snippet": self._snippet(turn.output_text or "", 200)},
+                )
                 return {
                     "status": "done",
                     "finish_reason": "model_text",
@@ -178,6 +236,12 @@ class ToolCallingTaskStepper:
                         "status": "control",
                         "toolcall_id": call_id,
                     })
+                    self._checkpoint(
+                        "CONTROL_TOOL_FINISH",
+                        task_id=task_id,
+                        step_id=step,
+                        payload={"tool": tool_call.name, "toolcall_id": call_id},
+                    )
                     return {
                         "status": "done",
                         "finish_reason": tool_call.name,
@@ -225,12 +289,82 @@ class ToolCallingTaskStepper:
                     "params_full": self._json_safe(raw_params),
                     "toolcall_id": toolcall_id,
                 })
-                tool_output = self.backend.call(
-                    tool_call.name,
-                    tool_call.arguments,
-                    toolcall_key=toolcall_id,
-                    call_id=call_id,
+                self._checkpoint(
+                    "TOOLCALL_START",
+                    task_id=task_id,
+                    step_id=step,
+                    payload={"tool": tool_call.name, "toolcall_id": toolcall_id},
                 )
+                done = threading.Event()
+                call_error: Exception | None = None
+                tool_output: dict = {}
+
+                def _invoke_tool_call() -> None:
+                    nonlocal tool_output, call_error
+                    try:
+                        tool_output = self.backend.call(
+                            tool_call.name,
+                            tool_call.arguments,
+                            toolcall_key=toolcall_id,
+                            call_id=call_id,
+                        )
+                    except Exception as exc:  # defensive fallback
+                        call_error = exc
+                        tool_output = {
+                            "status": "failed",
+                            "tool_name": tool_call.name,
+                            "data": {},
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    finally:
+                        done.set()
+
+                call_thread = threading.Thread(target=_invoke_tool_call, daemon=True)
+                call_thread.start()
+                interrupted_during_call = False
+                cancel_requested = False
+                cancel_accepted = False
+                while not done.wait(0.2):
+                    if not self._interrupt_requested():
+                        continue
+                    interrupted_during_call = True
+                    if not cancel_requested:
+                        cancel_requested = True
+                        self._ack_interrupt(
+                            "toolcall",
+                            {
+                                "task_id": task_id,
+                                "step_id": step,
+                                "toolcall_id": toolcall_id,
+                                "tool": tool_call.name,
+                            },
+                        )
+                        try:
+                            cancel_accepted = bool(self.backend.cancel_active_call(toolcall_id))
+                        except Exception:
+                            cancel_accepted = False
+                        self._emit("INTERRUPT_ACKED", category="run", task_id=task_id, step_id=step, payload={
+                            "phase": "toolcall",
+                            "toolcall_id": toolcall_id,
+                            "tool": tool_call.name,
+                            "cancel_accepted": cancel_accepted,
+                        })
+                        self._checkpoint(
+                            "TOOLCALL_CANCEL_REQUESTED",
+                            task_id=task_id,
+                            step_id=step,
+                            payload={
+                                "toolcall_id": toolcall_id,
+                                "tool": tool_call.name,
+                                "cancel_accepted": cancel_accepted,
+                            },
+                        )
+                call_thread.join(timeout=0.01)
+                if call_error is not None:
+                    self.logger.debug(
+                        "tool call raised after fallback output: %s",
+                        call_error,
+                    )
                 if self._is_validation_error(tool_output):
                     reason = tool_output.get("error", "")
                     self._emit("TOOL_VALIDATE_FAILED", level="warning", category="tool", task_id=task_id, step_id=step, payload={
@@ -248,9 +382,57 @@ class ToolCallingTaskStepper:
                     "input_ref": refs.get("input_ref", ""),
                     "output_ref": refs.get("output_ref", ""),
                 })
+                self._checkpoint(
+                    "TOOLCALL_END",
+                    task_id=task_id,
+                    step_id=step,
+                    payload={
+                        "tool": tool_call.name,
+                        "toolcall_id": toolcall_id,
+                        "status": event_status,
+                        "interrupted_during_call": interrupted_during_call,
+                    },
+                )
 
                 observations.append({"step": step, "method": tool_call.name, "params": raw_params, "result": tool_output})
                 state.append_function_call_output(call_id, tool_output)
+
+                if interrupted_during_call or self._interrupt_requested():
+                    interrupted_payload = {
+                        "tool": tool_call.name,
+                        "toolcall_id": toolcall_id,
+                        "status": tool_output.get("status", ""),
+                        "highlights": self._tool_highlights(tool_output),
+                        "cancel_accepted": bool(cancel_accepted),
+                    }
+                    self._emit(
+                        "TOOL_CALL_INTERRUPTED",
+                        level="warning",
+                        category="tool",
+                        task_id=task_id,
+                        step_id=step,
+                        payload=interrupted_payload,
+                    )
+                    snapshot = self._resume_snapshot(state, observations, next_step=step + 1)
+                    self._checkpoint(
+                        "INTERRUPTED_DURING_TOOLCALL",
+                        task_id=task_id,
+                        step_id=step,
+                        payload={
+                            "toolcall_id": toolcall_id,
+                            "tool": tool_call.name,
+                            "cancel_accepted": bool(cancel_accepted),
+                            "resume_snapshot": snapshot,
+                        },
+                    )
+                    return {
+                        "status": "interrupted",
+                        "finish_reason": "interrupted",
+                        "interrupt_phase": "toolcall",
+                        "interrupted_toolcall": interrupted_payload,
+                        "local_observations": observations,
+                        "resume_state": snapshot,
+                    }
 
                 status = str(tool_output.get("status", "")).lower()
                 if status != "success":
@@ -268,10 +450,71 @@ class ToolCallingTaskStepper:
                     break
             continue
 
+        self._checkpoint(
+            "STEP_MAX_STEPS",
+            task_id=task_id,
+            step_id=self.max_steps,
+            payload={"observations_count": len(observations)},
+        )
         return {
             "status": "max_steps",
             "finish_reason": "max_steps",
             "local_observations": observations,
+        }
+
+    def _interrupt_requested(self) -> bool:
+        if self.interrupt_checker is None:
+            return False
+        try:
+            return bool(self.interrupt_checker())
+        except Exception:
+            return False
+
+    def _ack_interrupt(self, phase: str, details: Dict[str, Any]) -> None:
+        if self.interrupt_ack is None:
+            return
+        try:
+            self.interrupt_ack(phase, details)
+        except Exception:
+            return
+
+    def _checkpoint(
+        self,
+        event: str,
+        *,
+        task_id: str,
+        step_id: int,
+        payload: Dict[str, Any],
+    ) -> None:
+        if self.checkpoint_store is None:
+            return
+        body = {
+            "run_id": self.run_id or "",
+            "task_id": task_id,
+            "step_id": step_id,
+            "role": self.role,
+            "payload": payload or {},
+        }
+        self.checkpoint_store.append(event, body)
+        self.checkpoint_store.write_latest({
+            "event": event,
+            "task_id": task_id,
+            "step_id": step_id,
+            "role": self.role,
+            "payload": payload or {},
+        })
+
+    @staticmethod
+    def _resume_snapshot(
+        state: ConversationState,
+        observations: list[dict],
+        *,
+        next_step: int,
+    ) -> Dict[str, Any]:
+        return {
+            "input_items": list(state.input_items),
+            "observations": list(observations),
+            "next_step": max(0, int(next_step)),
         }
 
     @staticmethod

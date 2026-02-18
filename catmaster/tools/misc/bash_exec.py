@@ -5,11 +5,13 @@ import os
 import re
 import time
 import subprocess
+import threading
 
 from pydantic import BaseModel, Field
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
+from catmaster.runtime.tool_runtime import current_toolcall_key
 
 
 class BashExecInput(BaseModel):
@@ -54,6 +56,39 @@ _FORBIDDEN_SYMLINK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("os.symlink()", re.compile(r"\bos\.symlink\s*\(", flags=re.IGNORECASE)),
     ("Path.symlink_to()", re.compile(r"\.symlink_to\s*\(", flags=re.IGNORECASE)),
 ]
+
+
+_ACTIVE_PROC_LOCK = threading.Lock()
+_ACTIVE_PROCS: dict[str, subprocess.Popen] = {}
+_CANCELLED_KEYS: set[str] = set()
+
+
+def _register_active_proc(toolcall_key: str, proc: subprocess.Popen) -> None:
+    if not toolcall_key:
+        return
+    with _ACTIVE_PROC_LOCK:
+        _ACTIVE_PROCS[toolcall_key] = proc
+
+
+def _unregister_active_proc(toolcall_key: str) -> None:
+    if not toolcall_key:
+        return
+    with _ACTIVE_PROC_LOCK:
+        _ACTIVE_PROCS.pop(toolcall_key, None)
+        _CANCELLED_KEYS.discard(toolcall_key)
+
+
+def cancel_bash_exec_toolcall(toolcall_key: str) -> bool:
+    key = (toolcall_key or "").strip()
+    if not key:
+        return False
+    with _ACTIVE_PROC_LOCK:
+        proc = _ACTIVE_PROCS.get(key)
+        if proc is None:
+            return False
+        _CANCELLED_KEYS.add(key)
+    kill_process_tree(proc)
+    return True
 
 
 def _detect_forbidden_symlink_usage(script: str) -> Optional[str]:
@@ -121,9 +156,11 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
         cmd = prefix + base_cmd
 
     timed_out = False
+    cancelled = False
     stdout = ""
     stderr = ""
     exit_code = None
+    toolcall_key = current_toolcall_key()
 
     try:
         proc = subprocess.Popen(
@@ -138,6 +175,7 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             errors="replace",
             start_new_session=True,
         )
+        _register_active_proc(toolcall_key, proc)
         try:
             stdout, stderr = proc.communicate(input=script, timeout=params.timeout_s)
         except subprocess.TimeoutExpired as e:
@@ -152,6 +190,8 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
+        with _ACTIVE_PROC_LOCK:
+            cancelled = bool(toolcall_key and toolcall_key in _CANCELLED_KEYS)
         exit_code = proc.returncode
 
         stdout, cut_out = _truncate_text_tail(stdout, params.max_output_chars)
@@ -167,6 +207,7 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             "stderr": stderr,
             "exit_code": exit_code,
             "timed_out": timed_out,
+            "cancelled": cancelled,
             "cmd": cmd,
             "cwd": workspace_relpath(cwd_path),
             "timeout_s": params.timeout_s,
@@ -181,8 +222,13 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
                 execution_time=time.perf_counter() - t0,
             )
         err_msg = (
-            f"Bash timed out (>{params.timeout_s}s)" if timed_out
-            else f"Bash exited with code {exit_code}"
+            "Bash interrupted by user"
+            if cancelled
+            else (
+                f"Bash timed out (>{params.timeout_s}s)"
+                if timed_out
+                else f"Bash exited with code {exit_code}"
+            )
         )
         return create_tool_output(
             "bash_exec",
@@ -200,6 +246,8 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             error=f"Failed to start/execute bash subprocess: {exc}",
             execution_time=time.perf_counter() - t0,
         )
+    finally:
+        _unregister_active_proc(toolcall_key)
 
 
-__all__ = ["bash_exec", "BashExecInput"]
+__all__ = ["bash_exec", "BashExecInput", "cancel_bash_exec_toolcall"]

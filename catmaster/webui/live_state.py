@@ -17,6 +17,7 @@ _TOOL_TRIGGER_EVENTS = {
     "TOOL_CALL_START",
     "TOOL_CALL_END",
     "TOOL_VALIDATE_FAILED",
+    "TOOL_CALL_INTERRUPTED",
 }
 
 
@@ -159,11 +160,27 @@ def apply_event(
         }
         state["active_toolcall"] = active
         changed = True
+    elif name == "INTERRUPT_REQUESTED":
+        state["status"] = "interrupting"
+        state["current_phase"] = "interrupting"
+        changed = True
+    elif name == "INTERRUPT_ACKED":
+        state["status"] = "interrupting"
+        phase = str(payload.get("phase") or "")
+        state["current_phase"] = f"interrupt:{phase}" if phase else "interrupting"
+        changed = True
     elif name == "TOOL_VALIDATE_FAILED":
         active = state.get("active_toolcall")
         if isinstance(active, dict):
             active["status"] = "validation_failed"
             changed = True
+    elif name == "TOOL_CALL_INTERRUPTED":
+        active = state.get("active_toolcall")
+        if isinstance(active, dict):
+            active["status"] = "interrupted"
+        state["status"] = "interrupted_paused"
+        state["current_phase"] = "interrupted"
+        changed = True
     elif name == "TOOL_CALL_END":
         active = state.get("active_toolcall")
         toolcall_id = str(payload.get("toolcall_id") or "")
@@ -217,8 +234,13 @@ def apply_event(
     elif name == "RUN_END":
         status = str(payload.get("status") or "").strip().lower()
         state["status"] = status or state.get("status", "done")
-        state["current_phase"] = "finalizing"
+        state["current_phase"] = "paused" if status == "interrupted_paused" else "finalizing"
         state["active_toolcall"] = None
+        changed = True
+    elif name == "RUN_PAUSED":
+        state["status"] = "interrupted_paused"
+        phase = str(payload.get("phase") or "")
+        state["current_phase"] = f"paused:{phase}" if phase else "paused"
         changed = True
 
     if changed:

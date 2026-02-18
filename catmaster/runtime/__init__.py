@@ -12,6 +12,8 @@ from .tool_policy import ToolPolicy
 from .tool_backend import ToolBackend
 from .local_tool_backend import LocalToolBackend
 from .mcp_tool_backend import MCPToolBackend
+from .run_control import RunControl
+from .checkpoint_store import CheckpointStore
 from .context_pack import ContextPackBuilder, ContextPackPolicy
 from .whiteboard_ops import (
     apply_whiteboard_ops_atomic as whiteboard_ops_apply_atomic,
@@ -42,6 +44,8 @@ __all__ = [
     "ToolBackend",
     "LocalToolBackend",
     "MCPToolBackend",
+    "RunControl",
+    "CheckpointStore",
     "ContextPackBuilder",
     "ContextPackPolicy",
     "whiteboard_ops_apply_atomic",

@@ -32,6 +32,15 @@ class Reporter:
     def prompt_hitl_feedback(self, *, report_text: str, report_path: str) -> str:
         return ""
 
+    def prompt_interrupt_feedback(
+        self,
+        *,
+        guidance: str,
+        run_id: str,
+        phase: str,
+    ) -> str:
+        return ""
+
     def show_final_summary(self, summary: str) -> None:
         return
 

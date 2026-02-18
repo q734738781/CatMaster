@@ -23,6 +23,8 @@ from catmaster.runtime import (
     ArtifactStore,
     WhiteboardStore,
     TraceStore,
+    CheckpointStore,
+    RunControl,
     ContextPackBuilder,
     ContextPackPolicy,
     whiteboard_ops_apply_atomic,
@@ -99,6 +101,7 @@ class Orchestrator:
         tool_policy: Optional[ToolPolicy] = None,
         tool_policy_path: Optional[str] = None,
         tool_backend: Optional[ToolBackend] = None,
+        run_control: Optional[RunControl] = None,
     ):
         self.logger = logging.getLogger(__name__)
         self.reporter = reporter or NullReporter()
@@ -175,6 +178,10 @@ class Orchestrator:
                 self.resuming = False
 
         self.trace_store = TraceStore(self.run_context.run_dir)
+        self.checkpoint_store = CheckpointStore(self.run_context.run_dir)
+        self.run_control = run_control or RunControl(run_id=self.run_context.run_id)
+        if not self.run_control.run_id:
+            self.run_control.run_id = self.run_context.run_id
         self.tool_executor = tool_executor or ToolExecutor(self.registry, max_attempts=max_tool_attempts)
         self.artifact_store = ArtifactStore(self.run_context.run_dir)
         policy_path = Path(tool_policy_path) if tool_policy_path else Path("configs/tool_policy.yaml")
@@ -237,6 +244,7 @@ class Orchestrator:
                 "whiteboard": str(self.whiteboard.path),
             },
         })
+        self._interrupt_context_note = ""
 
     def _resolve_resume_run_dir(self, resume_dir: Optional[str], resume: bool) -> Optional[Path]:
         if not resume and not resume_dir:
@@ -497,6 +505,58 @@ class Orchestrator:
     def _ui_debug(self) -> bool:
         return bool(getattr(self.reporter, "ui_debug", False))
 
+    def _interrupt_requested(self) -> bool:
+        try:
+            return bool(self.run_control.is_interrupt_requested())
+        except Exception:
+            return False
+
+    def _ack_interrupt(self, phase: str, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        info: Dict[str, Any]
+        try:
+            info = self.run_control.ack_interrupt(phase=phase, details=details or {})
+        except Exception:
+            info = {
+                "requested": True,
+                "acked": True,
+                "phase": phase,
+                "details": details or {},
+            }
+        self._emit("INTERRUPT_ACKED", category="run", payload={
+            "phase": phase,
+            "details": details or {},
+            "requested": bool(info.get("requested")),
+            "acked": bool(info.get("acked")),
+        })
+        self.checkpoint_store.append("INTERRUPT_ACKED", {
+            "run_id": self.run_context.run_id,
+            "phase": phase,
+            "details": details or {},
+        })
+        return info
+
+    def _interrupt_context_text(self, feedback: str, *, phase: str) -> str:
+        text = (feedback or "").strip()
+        if text:
+            return f"Interrupted once at {phase}. User guidance: {text}"
+        return f"Interrupted once at {phase}. User provided no feedback."
+
+    def _prompt_interrupt_feedback(self, *, phase: str) -> str:
+        guidance = (
+            "Execution was interrupted. Provide optional guidance for resume. "
+            "Leave empty to continue with no feedback."
+        )
+        if hasattr(self.reporter, "prompt_interrupt_feedback") and self.reporter.is_live():
+            try:
+                return str(self.reporter.prompt_interrupt_feedback(
+                    guidance=guidance,
+                    run_id=self.run_context.run_id,
+                    phase=phase,
+                ) or "")
+            except Exception:
+                return ""
+        return ""
+
     @staticmethod
     def _snippet(text: Any, limit: int = 160) -> str:
         if text is None:
@@ -522,6 +582,7 @@ class Orchestrator:
             control_tools=get_plan_control_tool_schemas(),
             control_tool_names=PLAN_CONTROL_TOOL_NAMES,
             trace_store=self.trace_store,
+            checkpoint_store=self.checkpoint_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -529,6 +590,7 @@ class Orchestrator:
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="planner",
+            run_id=self.run_context.run_id,
         )
         step_result = stepper.run(
             task_id="plan",
@@ -581,6 +643,7 @@ class Orchestrator:
             control_tools=get_plan_control_tool_schemas(),
             control_tool_names=PLAN_CONTROL_TOOL_NAMES,
             trace_store=self.trace_store,
+            checkpoint_store=self.checkpoint_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -588,6 +651,7 @@ class Orchestrator:
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="planner",
+            run_id=self.run_context.run_id,
         )
         step_result = stepper.run(
             task_id="plan_feedback",
@@ -757,6 +821,7 @@ class Orchestrator:
             control_tools=get_proposal_control_tool_schemas(),
             control_tool_names=PROPOSAL_CONTROL_TOOL_NAMES,
             trace_store=self.trace_store,
+            checkpoint_store=self.checkpoint_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -764,6 +829,7 @@ class Orchestrator:
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="proposal",
+            run_id=self.run_context.run_id,
         )
         step_result = stepper.run(
             task_id="proposal",
@@ -824,6 +890,7 @@ class Orchestrator:
             control_tools=get_proposal_control_tool_schemas(),
             control_tool_names=PROPOSAL_CONTROL_TOOL_NAMES,
             trace_store=self.trace_store,
+            checkpoint_store=self.checkpoint_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -831,6 +898,7 @@ class Orchestrator:
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="proposal",
+            run_id=self.run_context.run_id,
         )
         step_result = stepper.run(
             task_id="proposal_feedback",
@@ -867,6 +935,7 @@ class Orchestrator:
         proposal_md: str,
         work_packages: List[str],
         observations: List[Dict[str, Any]],
+        resume_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         whiteboard_full = self.whiteboard.read()
         artifacts_index = self._artifact_index()
@@ -891,6 +960,7 @@ class Orchestrator:
             control_tools=get_director_control_tool_schemas(),
             control_tool_names=DIRECTOR_CONTROL_TOOL_NAMES,
             trace_store=self.trace_store,
+            checkpoint_store=self.checkpoint_store,
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
@@ -898,6 +968,9 @@ class Orchestrator:
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="director",
+            run_id=self.run_context.run_id,
+            interrupt_checker=self._interrupt_requested,
+            interrupt_ack=self._ack_interrupt,
         )
         step_result = stepper.run(
             task_id="director",
@@ -906,8 +979,15 @@ class Orchestrator:
             seed_messages=input_items,
             function_tools=[],
             builtin_tools=[],
+            resume_state=resume_state,
         )
         finish_reason = step_result.get("finish_reason", "")
+        if finish_reason == "interrupted":
+            return {
+                "state": "Interrupted",
+                "interrupt_phase": step_result.get("interrupt_phase", "director"),
+                "resume_state": step_result.get("resume_state"),
+            }
         if finish_reason != "director_decide":
             raise ValueError(f"Director did not finish with director_decide (got {finish_reason})")
         payload = step_result.get("control_payload") or {}
@@ -1009,6 +1089,7 @@ class Orchestrator:
         task_id: str,
         task_goal: str,
         log_llm: bool,
+        resume_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         context_pack = self.context_builder.build(
             task_goal,
@@ -1021,6 +1102,12 @@ class Orchestrator:
             ),
         )
         context_pack["whiteboard_excerpt"] = self.whiteboard.read()
+        if self._interrupt_context_note:
+            base_constraints = str(context_pack.get("constraints", "") or "").strip()
+            if base_constraints:
+                context_pack["constraints"] = f"{base_constraints}\n\n{self._interrupt_context_note}"
+            else:
+                context_pack["constraints"] = self._interrupt_context_note
         self._emit("TASK_CONTEXT_READY", category="task", task_id=task_id, payload={
             "excerpt_chars": len(context_pack.get("whiteboard_excerpt", "") or ""),
             "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
@@ -1039,7 +1126,11 @@ class Orchestrator:
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             trace_store=self.trace_store,
+            checkpoint_store=self.checkpoint_store,
             role="task_runner",
+            run_id=self.run_context.run_id,
+            interrupt_checker=self._interrupt_requested,
+            interrupt_ack=self._ack_interrupt,
         )
         step_result = stepper.run(
             task_id=task_id,
@@ -1048,7 +1139,17 @@ class Orchestrator:
             initial_instruction=None,
             function_tools=filtered_tools,
             builtin_tools=builtin_tools,
+            resume_state=resume_state,
         )
+        if step_result.get("finish_reason") == "interrupted":
+            return {
+                "task_id": task_id,
+                "outcome": "interrupted",
+                "summary": "Execution interrupted by user.",
+                "resume_state": step_result.get("resume_state"),
+                "interrupt_phase": step_result.get("interrupt_phase", "toolcall"),
+                "interrupted_toolcall": step_result.get("interrupted_toolcall"),
+            }
         summarizer = TaskSummarizer(
             llm=self.summary_llm,
             prompt=self.task_summary_prompt,
@@ -1087,9 +1188,11 @@ class Orchestrator:
         user_request: str,
         *,
         log_llm: bool,
+        resume_feedback: str,
         defer_ui: bool,
         start_ui: Callable[[str, bool], None],
     ) -> Dict[str, Any]:
+        self._interrupt_context_note = ""
         if self.resuming:
             state = self._load_task_state()
             if state.get("lane") != "fast":
@@ -1099,8 +1202,23 @@ class Orchestrator:
             observations = state["observations"]
             status = state.get("status", "running")
             hitl_history = state.get("hitl_history") or []
+            task_resume_checkpoint = state.get("task_resume_checkpoint")
+            last_interrupt = state.get("last_interrupt") if isinstance(state.get("last_interrupt"), dict) else {}
             if status in {"done", "failure"}:
                 raise ValueError(f"Cannot resume; run already ended with status {status}")
+            if status == "interrupted_paused":
+                phase = str(last_interrupt.get("phase") or "task_step")
+                feedback = (resume_feedback or "").strip() or str(last_interrupt.get("feedback") or "").strip()
+                feedback_empty = not bool(feedback)
+                self._interrupt_context_note = self._interrupt_context_text(feedback, phase=phase)
+                last_interrupt = {
+                    **last_interrupt,
+                    "feedback": feedback,
+                    "feedback_empty": feedback_empty,
+                    "resumed_at": datetime.utcnow().isoformat() + "Z",
+                }
+                status = "running"
+                self.run_control.clear_interrupt()
             self._initialize_whiteboard_goal(user_request)
         else:
             self._initialize_whiteboard_goal(user_request)
@@ -1112,6 +1230,8 @@ class Orchestrator:
             observations = []
             status = "running"
             hitl_history = []
+            task_resume_checkpoint = None
+            last_interrupt = {}
             self._write_task_state({
                 "schema_version": 2,
                 "lane": "fast",
@@ -1120,6 +1240,8 @@ class Orchestrator:
                 "observations": observations,
                 "status": status,
                 "hitl_history": hitl_history,
+                "task_resume_checkpoint": task_resume_checkpoint,
+                "last_interrupt": last_interrupt,
             })
 
         self._emit("TASKS_COMPILED", category="task", payload={
@@ -1148,10 +1270,58 @@ class Orchestrator:
             task_goal = next_task["goal"]
             self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
             self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
-            obs = self._execute_task(task_id=task_id, task_goal=task_goal, log_llm=log_llm)
-            observations.append(obs)
-            next_task["status"] = obs["outcome"]
+            resume_state = None
+            if isinstance(task_resume_checkpoint, dict) and str(task_resume_checkpoint.get("task_id") or "") == task_id:
+                resume_state = task_resume_checkpoint.get("resume_state")
+            obs = self._execute_task(
+                task_id=task_id,
+                task_goal=task_goal,
+                log_llm=log_llm,
+                resume_state=resume_state if isinstance(resume_state, dict) else None,
+            )
             outcome = obs["outcome"]
+            if outcome == "interrupted":
+                phase = str(obs.get("interrupt_phase") or "toolcall")
+                interrupt_req = self.run_control.snapshot()
+                self._ack_interrupt(phase, {
+                    "task_id": task_id,
+                    "task_goal": task_goal,
+                    "interrupted_toolcall": obs.get("interrupted_toolcall"),
+                })
+                feedback = self._prompt_interrupt_feedback(phase=phase).strip()
+                last_interrupt = {
+                    "phase": phase,
+                    "source": interrupt_req.get("source", ""),
+                    "note": interrupt_req.get("note", ""),
+                    "requested_at": interrupt_req.get("request_ts"),
+                    "feedback": feedback,
+                    "feedback_empty": not bool(feedback),
+                }
+                task_resume_checkpoint = {
+                    "task_id": task_id,
+                    "task_goal": task_goal,
+                    "resume_state": obs.get("resume_state") if isinstance(obs.get("resume_state"), dict) else {},
+                }
+                status = "interrupted_paused"
+                self._emit("RUN_PAUSED", category="run", task_id=task_id, payload={
+                    "phase": phase,
+                    "status": status,
+                })
+                self._write_task_state({
+                    "schema_version": 2,
+                    "lane": "fast",
+                    "user_request": user_request,
+                    "tasks": tasks,
+                    "observations": observations,
+                    "status": status,
+                    "hitl_history": hitl_history,
+                    "task_resume_checkpoint": task_resume_checkpoint,
+                    "last_interrupt": last_interrupt,
+                })
+                break
+            observations.append(obs)
+            task_resume_checkpoint = None
+            next_task["status"] = obs["outcome"]
             self._emit("TASK_END", category="task", task_id=task_id, payload={
                 "outcome": outcome,
                 "summary_snippet": self._snippet(obs.get("summary", ""), 200),
@@ -1178,6 +1348,8 @@ class Orchestrator:
                         "status": status,
                         "hitl": hitl_meta,
                         "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
                     })
                     break
                 follow_goal = (
@@ -1199,6 +1371,8 @@ class Orchestrator:
                     "status": status,
                     "hitl": hitl_meta,
                     "hitl_history": hitl_history,
+                    "task_resume_checkpoint": task_resume_checkpoint,
+                    "last_interrupt": last_interrupt,
                 })
                 continue
 
@@ -1212,6 +1386,8 @@ class Orchestrator:
                     "observations": observations,
                     "status": status,
                     "hitl_history": hitl_history,
+                    "task_resume_checkpoint": task_resume_checkpoint,
+                    "last_interrupt": last_interrupt,
                 })
                 break
 
@@ -1224,6 +1400,8 @@ class Orchestrator:
                 "observations": observations,
                 "status": status,
                 "hitl_history": hitl_history,
+                "task_resume_checkpoint": task_resume_checkpoint,
+                "last_interrupt": last_interrupt,
             })
 
         state_payload = {
@@ -1234,6 +1412,8 @@ class Orchestrator:
             "observations": observations,
             "status": status,
             "hitl_history": hitl_history,
+            "task_resume_checkpoint": task_resume_checkpoint,
+            "last_interrupt": last_interrupt,
         }
         self._write_task_state(state_payload)
         final_answer = observations[-1]["summary"] if observations else ""
@@ -1284,12 +1464,14 @@ class Orchestrator:
         user_request: str,
         *,
         log_llm: bool,
+        resume_feedback: str,
         plan_review: bool,
         plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]],
         full_auto_major: bool,
         defer_ui: bool,
         start_ui: Callable[[str, bool], None],
     ) -> Dict[str, Any]:
+        self._interrupt_context_note = ""
         if self.resuming:
             if plan_review:
                 self.logger.warning("plan_review requested while resuming; ignoring and continuing with stored proposal.")
@@ -1302,6 +1484,8 @@ class Orchestrator:
             observations = state["observations"]
             status = state.get("status", "running")
             hitl_history = state.get("hitl_history") or []
+            task_resume_checkpoint = state.get("task_resume_checkpoint")
+            last_interrupt = state.get("last_interrupt") if isinstance(state.get("last_interrupt"), dict) else {}
             proposal_info = state.get("proposal") or {}
             proposal_path = proposal_info.get("proposal_path") or "proposal.md"
             work_packages = proposal_info.get("work_packages") or []
@@ -1311,6 +1495,29 @@ class Orchestrator:
             proposal_md = proposal_file.read_text(encoding="utf-8")
             if status in {"done", "failure"}:
                 raise ValueError(f"Cannot resume; run already ended with status {status}")
+            if status == "interrupted_paused":
+                phase = str(last_interrupt.get("phase") or "task_step")
+                feedback = (resume_feedback or "").strip() or str(last_interrupt.get("feedback") or "").strip()
+                feedback_empty = not bool(feedback)
+                self._interrupt_context_note = self._interrupt_context_text(feedback, phase=phase)
+                interrupt_obs = {
+                    "task_id": f"interrupt_{datetime.utcnow().strftime('%H%M%S')}",
+                    "outcome": "interrupted",
+                    "summary": self._interrupt_context_note,
+                    "phase": phase,
+                    "feedback": feedback,
+                    "feedback_empty": feedback_empty,
+                }
+                observations.append(interrupt_obs)
+                last_interrupt = {
+                    **last_interrupt,
+                    "phase": phase,
+                    "feedback": feedback,
+                    "feedback_empty": feedback_empty,
+                    "resumed_at": datetime.utcnow().isoformat() + "Z",
+                }
+                status = "running"
+                self.run_control.clear_interrupt()
             self._initialize_whiteboard_goal(user_request)
         else:
             self._initialize_whiteboard_goal(user_request)
@@ -1322,6 +1529,8 @@ class Orchestrator:
             observations = []
             status = "running"
             hitl_history = []
+            task_resume_checkpoint = None
+            last_interrupt = {}
             self._write_task_state({
                 "schema_version": 2,
                 "lane": "standard",
@@ -1334,6 +1543,8 @@ class Orchestrator:
                 "observations": observations,
                 "status": status,
                 "hitl_history": hitl_history,
+                "task_resume_checkpoint": task_resume_checkpoint,
+                "last_interrupt": last_interrupt,
             })
 
             if plan_review:
@@ -1351,6 +1562,8 @@ class Orchestrator:
                         "observations": observations,
                         "status": status,
                         "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
                     })
 
                 proposal_md, work_packages, approved, _ = self._review_proposal(
@@ -1376,6 +1589,8 @@ class Orchestrator:
                         "observations": observations,
                         "status": status,
                         "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
                     })
 
         self._emit("TASKS_COMPILED", category="task", payload={
@@ -1397,10 +1612,62 @@ class Orchestrator:
                 task_goal = task["goal"]
                 self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
                 self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
-                obs = self._execute_task(task_id=task_id, task_goal=task_goal, log_llm=log_llm)
-                observations.append(obs)
-                task["status"] = obs["outcome"]
+                resume_state = None
+                if isinstance(task_resume_checkpoint, dict) and str(task_resume_checkpoint.get("task_id") or "") == task_id:
+                    resume_state = task_resume_checkpoint.get("resume_state")
+                obs = self._execute_task(
+                    task_id=task_id,
+                    task_goal=task_goal,
+                    log_llm=log_llm,
+                    resume_state=resume_state if isinstance(resume_state, dict) else None,
+                )
                 outcome = obs["outcome"]
+                if outcome == "interrupted":
+                    phase = str(obs.get("interrupt_phase") or "toolcall")
+                    interrupt_req = self.run_control.snapshot()
+                    self._ack_interrupt(phase, {
+                        "task_id": task_id,
+                        "task_goal": task_goal,
+                        "interrupted_toolcall": obs.get("interrupted_toolcall"),
+                    })
+                    feedback = self._prompt_interrupt_feedback(phase=phase).strip()
+                    last_interrupt = {
+                        "phase": phase,
+                        "source": interrupt_req.get("source", ""),
+                        "note": interrupt_req.get("note", ""),
+                        "requested_at": interrupt_req.get("request_ts"),
+                        "feedback": feedback,
+                        "feedback_empty": not bool(feedback),
+                    }
+                    task_resume_checkpoint = {
+                        "task_id": task_id,
+                        "task_goal": task_goal,
+                        "resume_state": obs.get("resume_state") if isinstance(obs.get("resume_state"), dict) else {},
+                    }
+                    status = "interrupted_paused"
+                    self._emit("RUN_PAUSED", category="run", task_id=task_id, payload={
+                        "phase": phase,
+                        "status": status,
+                    })
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": self._proposal_path().name,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                        "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
+                    })
+                    break
+                observations.append(obs)
+                task_resume_checkpoint = None
+                task["status"] = obs["outcome"]
                 self._emit("TASK_END", category="task", task_id=task_id, payload={
                     "outcome": outcome,
                     "summary_snippet": self._snippet(obs.get("summary", ""), 200),
@@ -1433,6 +1700,8 @@ class Orchestrator:
                         "status": status,
                         "hitl": hitl_meta,
                         "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
                     })
                     break
                 if outcome == "failure":
@@ -1449,6 +1718,8 @@ class Orchestrator:
                         "observations": observations,
                         "status": status,
                         "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
                     })
                     break
                 self._write_task_state({
@@ -1463,6 +1734,8 @@ class Orchestrator:
                     "observations": observations,
                     "status": status,
                     "hitl_history": hitl_history,
+                    "task_resume_checkpoint": task_resume_checkpoint,
+                    "last_interrupt": last_interrupt,
                 })
 
         if status == "needs_intervention":
@@ -1479,15 +1752,75 @@ class Orchestrator:
                 "status": status,
             }
 
+        if status == "interrupted_paused":
+            self._emit("RUN_END", category="run", payload={
+                "status": status,
+                "run_dir": str(self.run_context.run_dir),
+            })
+            final_answer = observations[-1]["summary"] if observations else ""
+            return {
+                "tasks": tasks,
+                "observations": observations,
+                "summary": final_answer,
+                "final_answer": final_answer,
+                "status": status,
+            }
+
         if status != "failure":
             while True:
+                director_resume = None
+                if isinstance(task_resume_checkpoint, dict) and str(task_resume_checkpoint.get("task_id") or "") == "director":
+                    candidate = task_resume_checkpoint.get("resume_state")
+                    if isinstance(candidate, dict):
+                        director_resume = candidate
                 decision = self._director_decide(
                     user_request=user_request,
                     proposal_md=proposal_md,
                     work_packages=work_packages,
                     observations=observations,
+                    resume_state=director_resume,
                 )
                 state = decision.get("state")
+                if state == "Interrupted":
+                    phase = str(decision.get("interrupt_phase") or "director")
+                    interrupt_req = self.run_control.snapshot()
+                    self._ack_interrupt(phase, {"state": "director"})
+                    feedback = self._prompt_interrupt_feedback(phase=phase).strip()
+                    last_interrupt = {
+                        "phase": phase,
+                        "source": interrupt_req.get("source", ""),
+                        "note": interrupt_req.get("note", ""),
+                        "requested_at": interrupt_req.get("request_ts"),
+                        "feedback": feedback,
+                        "feedback_empty": not bool(feedback),
+                    }
+                    task_resume_checkpoint = {
+                        "task_id": "director",
+                        "task_goal": "Decide next action",
+                        "resume_state": decision.get("resume_state") if isinstance(decision.get("resume_state"), dict) else {},
+                    }
+                    status = "interrupted_paused"
+                    self._emit("RUN_PAUSED", category="run", payload={
+                        "phase": phase,
+                        "status": status,
+                    })
+                    self._write_task_state({
+                        "schema_version": 2,
+                        "lane": "standard",
+                        "user_request": user_request,
+                        "proposal": {
+                            "proposal_path": self._proposal_path().name,
+                            "work_packages": work_packages,
+                        },
+                        "tasks": tasks,
+                        "observations": observations,
+                        "status": status,
+                        "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
+                    })
+                    break
+                task_resume_checkpoint = None
                 if state == "PerformNextTask":
                     task_goal_raw = decision.get("next_task_goal")
                     if not task_goal_raw:
@@ -1514,13 +1847,67 @@ class Orchestrator:
                         "observations": observations,
                         "status": status,
                         "hitl_history": hitl_history,
+                        "task_resume_checkpoint": task_resume_checkpoint,
+                        "last_interrupt": last_interrupt,
                     })
                     self._trace_event("TASK_STARTED", {"task_id": task_id, "goal": task_goal})
                     self._emit("TASK_START", category="task", task_id=task_id, payload={"goal": task_goal})
-                    obs = self._execute_task(task_id=task_id, task_goal=task_goal, log_llm=log_llm)
-                    observations.append(obs)
-                    tasks[-1]["status"] = obs["outcome"]
+                    resume_state = None
+                    if isinstance(task_resume_checkpoint, dict) and str(task_resume_checkpoint.get("task_id") or "") == task_id:
+                        resume_state = task_resume_checkpoint.get("resume_state")
+                    obs = self._execute_task(
+                        task_id=task_id,
+                        task_goal=task_goal,
+                        log_llm=log_llm,
+                        resume_state=resume_state if isinstance(resume_state, dict) else None,
+                    )
                     outcome = obs["outcome"]
+                    if outcome == "interrupted":
+                        phase = str(obs.get("interrupt_phase") or "toolcall")
+                        interrupt_req = self.run_control.snapshot()
+                        self._ack_interrupt(phase, {
+                            "task_id": task_id,
+                            "task_goal": task_goal,
+                            "interrupted_toolcall": obs.get("interrupted_toolcall"),
+                        })
+                        feedback = self._prompt_interrupt_feedback(phase=phase).strip()
+                        last_interrupt = {
+                            "phase": phase,
+                            "source": interrupt_req.get("source", ""),
+                            "note": interrupt_req.get("note", ""),
+                            "requested_at": interrupt_req.get("request_ts"),
+                            "feedback": feedback,
+                            "feedback_empty": not bool(feedback),
+                        }
+                        task_resume_checkpoint = {
+                            "task_id": task_id,
+                            "task_goal": task_goal,
+                            "resume_state": obs.get("resume_state") if isinstance(obs.get("resume_state"), dict) else {},
+                        }
+                        status = "interrupted_paused"
+                        self._emit("RUN_PAUSED", category="run", task_id=task_id, payload={
+                            "phase": phase,
+                            "status": status,
+                        })
+                        self._write_task_state({
+                            "schema_version": 2,
+                            "lane": "standard",
+                            "user_request": user_request,
+                            "proposal": {
+                                "proposal_path": self._proposal_path().name,
+                                "work_packages": work_packages,
+                            },
+                            "tasks": tasks,
+                            "observations": observations,
+                            "status": status,
+                            "hitl_history": hitl_history,
+                            "task_resume_checkpoint": task_resume_checkpoint,
+                            "last_interrupt": last_interrupt,
+                        })
+                        break
+                    observations.append(obs)
+                    task_resume_checkpoint = None
+                    tasks[-1]["status"] = obs["outcome"]
                     self._emit("TASK_END", category="task", task_id=task_id, payload={
                         "outcome": outcome,
                         "summary_snippet": self._snippet(obs.get("summary", ""), 200),
@@ -1756,6 +2143,7 @@ class Orchestrator:
         plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
         lane: str = "standard",
         full_auto_major: bool = False,
+        resume_feedback: str = "",
     ) -> Dict[str, Any]:
         if initial_plan is not None:
             raise ValueError("initial_plan is no longer supported; use lane=standard proposal flow instead")
@@ -1789,6 +2177,7 @@ class Orchestrator:
                 result = self._run_fast(
                     user_request,
                     log_llm=log_llm,
+                    resume_feedback=resume_feedback,
                     defer_ui=False,
                     start_ui=start_ui,
                 )
@@ -1796,6 +2185,7 @@ class Orchestrator:
                 result = self._run_standard(
                     user_request,
                     log_llm=log_llm,
+                    resume_feedback=resume_feedback,
                     plan_review=plan_review,
                     plan_feedback_provider=plan_feedback_provider,
                     full_auto_major=full_auto_major,
@@ -2693,7 +3083,23 @@ class Orchestrator:
 
     def _write_task_state(self, payload: Dict[str, Any]) -> None:
         path = self.run_context.run_dir / "task_state.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        body = dict(payload or {})
+        existing: Dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except Exception:
+                existing = {}
+        status = str(body.get("status") or "")
+        if "interrupt_history" not in body and "interrupt_history" in existing:
+            body["interrupt_history"] = existing.get("interrupt_history")
+        if status == "interrupted_paused":
+            for key in ("task_resume_checkpoint", "last_interrupt"):
+                if key not in body and key in existing:
+                    body[key] = existing.get(key)
+        path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _summarize_tasks(self, user_request: str, observations: List[Dict[str, Any]], status: str) -> str:
         fallback = self._summarize_tasks_fallback(user_request, observations)

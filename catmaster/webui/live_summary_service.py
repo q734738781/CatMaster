@@ -110,6 +110,8 @@ def _rule_live_summary(state: Dict[str, Any]) -> Dict[str, Any]:
 def _next_expected_from_phase(*, phase: str, active_tool: bool) -> str:
     if active_tool:
         return "Wait for the current tool call to finish."
+    if phase.startswith("interrupt") or phase.startswith("paused"):
+        return "Provide interrupt guidance and resume the run."
     if phase == "planning":
         return "Wait for planning/proposal to complete."
     if phase == "summarizing":

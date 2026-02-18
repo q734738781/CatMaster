@@ -51,6 +51,17 @@ def summarize_event(event: Dict[str, Any]) -> str:
         tool = payload.get("tool", "")
         status = payload.get("status", "")
         return f"{tool} status={status}".strip()
+    if name == "TOOL_CALL_INTERRUPTED":
+        tool = payload.get("tool", "")
+        return f"{tool} interrupted".strip()
+    if name == "INTERRUPT_REQUESTED":
+        return "interrupt requested"
+    if name == "INTERRUPT_ACKED":
+        phase = payload.get("phase", "")
+        return f"interrupt acked phase={phase}".strip()
+    if name == "RUN_PAUSED":
+        phase = payload.get("phase", "")
+        return f"paused phase={phase}".strip()
     if name == "TASK_SUMMARY":
         outcome = payload.get("outcome", "")
         summary = payload.get("summary_snippet", "")

@@ -129,6 +129,13 @@ class WebReporter(Reporter):
             "report_path": report_path or "",
         })
 
+    def prompt_interrupt_feedback(self, *, guidance: str, run_id: str, phase: str) -> str:
+        return self._broker.request_prompt("interrupt_feedback", {
+            "guidance": guidance or "",
+            "run_id": run_id or "",
+            "phase": phase or "",
+        })
+
     def show_final_summary(self, summary: str) -> None:
         with self._lock:
             self._final_summary = summary

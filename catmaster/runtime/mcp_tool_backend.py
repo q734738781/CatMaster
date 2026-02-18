@@ -17,5 +17,9 @@ class MCPToolBackend(ToolBackend):
     ) -> dict:
         raise NotImplementedError("MCPToolBackend is a placeholder. Implement MCP connectivity in PR4+.")
 
+    def cancel_active_call(self, toolcall_key: str) -> bool:
+        _ = toolcall_key
+        return False
+
 
 __all__ = ["MCPToolBackend"]
