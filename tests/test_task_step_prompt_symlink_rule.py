@@ -13,7 +13,7 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
         goal="dummy",
         constraints="none",
         workspace_policy="none",
-        whiteboard_excerpt="",
+        memory_index_excerpt="",
         artifact_slice="",
     )
     system_content = str(messages[0].content)
@@ -25,3 +25,10 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     assert "quick result analysis or file inspection" in system_content
     assert "actual workload execution" in system_content
     assert "python - <<'PY'" in system_content
+    assert "MEMORY/** for read-only memory lookup" in system_content
+    assert "Core output hygiene" in system_content
+    assert "Do NOT paste raw tables, long snippets, logs, or scripts into task_finish.summary." in system_content
+    assert "Scientific invariants memory protocol" in system_content
+    assert "reports/latest_run/** is for audit/debug" in system_content
+    assert "primary script(s) written/executed (kind=script)" in system_content
+    assert ".logs/bash_exec/..." in system_content

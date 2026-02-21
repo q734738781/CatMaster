@@ -7,6 +7,26 @@ from pydantic import BaseModel, Field
 from catmaster.tools.registry import sanitize_json_schema
 
 
+class TaskPacket(BaseModel):
+    """Structured packet for a worker task."""
+
+    goal: str = Field(..., description="Concrete task goal for worker execution.")
+    success_criteria: str = Field(..., description="Completion criteria for this task.")
+    expected_outputs: list[str] = Field(default_factory=list, description="Expected outputs and deliverables.")
+    suggested_tools: list[str] = Field(
+        default_factory=list,
+        description="Optional tool-name hints for worker; advisory only.",
+    )
+    memory_hints: list[str] = Field(
+        default_factory=list,
+        description="Keyword hints for memory retrieval (rg query terms).",
+    )
+    path_hints: list[str] = Field(
+        default_factory=list,
+        description="Optional workspace-relative path hints relevant to the task.",
+    )
+
+
 class DirectorDecideInput(BaseModel):
     """Return the director's decision for the next action."""
 
@@ -19,6 +39,7 @@ class DirectorDecideInput(BaseModel):
     rationale: str = Field(..., description="Reasoning behind the decision.")
 
     # PerformNextTask fields
+    task_packet: TaskPacket | None = Field(default=None, description="Structured worker task packet.")
     next_task_goal: str | None = Field(default=None, description="Concrete task goal to execute next.")
     suggested_tools: list[str] | None = Field(
         default=None,

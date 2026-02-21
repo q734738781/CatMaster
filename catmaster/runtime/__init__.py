@@ -5,7 +5,7 @@
 from .run_context import RunContext
 from .tool_executor import ToolExecutor
 from .artifact_store import ArtifactStore
-from .whiteboard import WhiteboardStore
+from .memory_store import MemoryStore
 from .trace_store import TraceStore
 from .conversation_state import ConversationState, message_item
 from .tool_policy import ToolPolicy
@@ -15,14 +15,9 @@ from .mcp_tool_backend import MCPToolBackend
 from .run_control import RunControl
 from .checkpoint_store import CheckpointStore
 from .context_pack import ContextPackBuilder, ContextPackPolicy
-from .whiteboard_ops import (
-    apply_whiteboard_ops_atomic as whiteboard_ops_apply_atomic,
-    validate_whiteboard_ops as whiteboard_ops_validate,
-    whiteboard_ops_persist,
-)
 from .manager_tools import (
-    whiteboard_read,
-    whiteboard_get_hash,
+    memory_read_index,
+    memory_events_tail,
     context_pack_build,
 )
 from .usage_stats import (
@@ -36,7 +31,7 @@ __all__ = [
     "RunContext",
     "ToolExecutor",
     "ArtifactStore",
-    "WhiteboardStore",
+    "MemoryStore",
     "TraceStore",
     "ConversationState",
     "message_item",
@@ -48,11 +43,8 @@ __all__ = [
     "CheckpointStore",
     "ContextPackBuilder",
     "ContextPackPolicy",
-    "whiteboard_ops_apply_atomic",
-    "whiteboard_ops_validate",
-    "whiteboard_ops_persist",
-    "whiteboard_read",
-    "whiteboard_get_hash",
+    "memory_read_index",
+    "memory_events_tail",
     "context_pack_build",
     "load_usage_summary",
     "summarize_usage_from_event_trace",

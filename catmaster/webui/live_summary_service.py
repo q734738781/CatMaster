@@ -116,8 +116,8 @@ def _next_expected_from_phase(*, phase: str, active_tool: bool) -> str:
         return "Wait for planning/proposal to complete."
     if phase == "summarizing":
         return "Wait for task summarizer output."
-    if phase == "whiteboard_apply":
-        return "Wait for whiteboard ops apply result."
+    if phase == "memory_merge":
+        return "Wait for memory merge result."
     if phase == "waiting_human":
         return "Provide requested human feedback to continue."
     if phase == "finalizing":

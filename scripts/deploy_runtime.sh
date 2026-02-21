@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo]
+  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--autorun|--no-autorun]
 
 Options:
   --target DIR
@@ -23,6 +23,12 @@ Options:
 
   --full-repo
       Sync full repository instead of runtime-only paths.
+
+  --autorun
+      Start runtime WebUI automatically after deployment (default).
+
+  --no-autorun
+      Do not start runtime WebUI automatically after deployment.
 EOF
 }
 
@@ -32,6 +38,7 @@ PROJECT_SPACE_ROOT="${REPO_ROOT}/../cm_project_space"
 DRY_RUN=0
 NO_DELETE=0
 FULL_REPO=0
+AUTORUN=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +60,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full-repo)
       FULL_REPO=1
+      shift
+      ;;
+    --autorun)
+      AUTORUN=1
+      shift
+      ;;
+    --no-autorun)
+      AUTORUN=0
       shift
       ;;
     -h|--help)
@@ -157,8 +172,14 @@ EOF
 
   echo
   echo "Deploy completed."
-  echo "Next run command:"
-  echo "  cd \"$TARGET_DIR\" && CATMASTER_PROJECT_SPACE_ROOT=\"$PROJECT_SPACE_ROOT\" ./start_webui.sh --port 7991"
+  if [[ $AUTORUN -eq 1 ]]; then
+    echo "Autorun enabled. Starting WebUI now..."
+    cd "$TARGET_DIR"
+    CATMASTER_PROJECT_SPACE_ROOT="$PROJECT_SPACE_ROOT" ./start_webui.sh --port 7991
+  else
+    echo "Next run command:"
+    echo "  cd \"$TARGET_DIR\" && CATMASTER_PROJECT_SPACE_ROOT=\"$PROJECT_SPACE_ROOT\" ./start_webui.sh --port 7991"
+  fi
 else
   echo
   echo "Dry-run completed (no files were changed)."

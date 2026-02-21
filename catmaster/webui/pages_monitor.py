@@ -364,7 +364,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             session.select_run(selected)
         run_dir = session.get_selected_run_dir()
         return (
-            session.read_whiteboard(),
+            session.read_memory_index(),
             session.read_artifacts(),
             session.read_proposal(run_dir),
             session.read_task_state(run_dir),
@@ -487,7 +487,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
                 refresh_detail_btn = gr.Button("Refresh Advanced")
                 with gr.Row(equal_height=True, elem_classes=["cm-top-align"]):
                     with gr.Column(scale=1):
-                        whiteboard_md = gr.Markdown()
+                        memory_md = gr.Markdown()
                     with gr.Column(scale=1):
                         artifacts_df = gr.Dataframe(interactive=False)
                 proposal_md = gr.Markdown()
@@ -542,7 +542,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         ).then(
             _refresh_details,
             inputs=[ctx_state, selected_run_state],
-            outputs=[whiteboard_md, artifacts_df, proposal_md, task_state_text, trace_event, trace_tool, trace_patch],
+            outputs=[memory_md, artifacts_df, proposal_md, task_state_text, trace_event, trace_tool, trace_patch],
             queue=False,
         ).then(
             _refresh_files_ui,
@@ -624,7 +624,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         ).then(
             _refresh_details,
             inputs=[ctx_state, selected_run_state],
-            outputs=[whiteboard_md, artifacts_df, proposal_md, task_state_text, trace_event, trace_tool, trace_patch],
+            outputs=[memory_md, artifacts_df, proposal_md, task_state_text, trace_event, trace_tool, trace_patch],
             queue=False,
         )
 
@@ -653,7 +653,7 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
         refresh_detail_btn.click(
             _refresh_details,
             inputs=[ctx_state, selected_run_state],
-            outputs=[whiteboard_md, artifacts_df, proposal_md, task_state_text, trace_event, trace_tool, trace_patch],
+            outputs=[memory_md, artifacts_df, proposal_md, task_state_text, trace_event, trace_tool, trace_patch],
             queue=False,
         )
 

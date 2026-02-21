@@ -395,7 +395,8 @@ class ToolCallingTaskStepper:
                 )
 
                 observations.append({"step": step, "method": tool_call.name, "params": raw_params, "result": tool_output})
-                state.append_function_call_output(call_id, tool_output)
+                compact_output = self._compact_tool_output_for_llm(tool_call.name, tool_output)
+                state.append_function_call_output(call_id, compact_output)
 
                 if interrupted_during_call or self._interrupt_requested():
                     interrupted_payload = {
@@ -692,7 +693,7 @@ class ToolCallingTaskStepper:
             goal=task_goal,
             constraints=context_pack.get("constraints", ""),
             workspace_policy=context_pack.get("workspace_policy", ""),
-            whiteboard_excerpt=context_pack.get("whiteboard_excerpt", ""),
+            memory_index_excerpt=context_pack.get("memory_index_excerpt", ""),
             artifact_slice=self._format_artifact_slice(context_pack.get("artifact_slice", [])),
         )
         for msg in messages:
@@ -741,7 +742,89 @@ class ToolCallingTaskStepper:
             "error": reason,
         }
         observations.append({"step": step, "method": tool_output["tool_name"], "result": tool_output})
-        state.append_function_call_output(call_id, tool_output)
+        compact_output = self._compact_tool_output_for_llm(tool_output["tool_name"], tool_output)
+        state.append_function_call_output(call_id, compact_output)
+
+    @staticmethod
+    def _compact_tool_output_for_llm(
+        tool_name: str,
+        tool_output: Any,
+        *,
+        text_limit: int = 800,
+    ) -> Dict[str, Any]:
+        if not isinstance(tool_output, dict):
+            return {
+                "status": "failed",
+                "tool_name": tool_name or "",
+                "data": {},
+                "warnings": [],
+                "error": ToolCallingTaskStepper._snippet(tool_output, text_limit),
+            }
+
+        compact: Dict[str, Any] = {
+            "status": str(tool_output.get("status") or ""),
+            "tool_name": str(tool_output.get("tool_name") or tool_name or ""),
+            "warnings": list(tool_output.get("warnings") or [])[:6],
+            "error": ToolCallingTaskStepper._snippet(tool_output.get("error"), text_limit),
+        }
+        data = tool_output.get("data")
+        if not isinstance(data, dict):
+            compact["data"] = {}
+            return compact
+
+        if tool_name == "bash_exec":
+            compact_data: Dict[str, Any] = {}
+            for key in (
+                "exit_code",
+                "timed_out",
+                "cancelled",
+                "cwd",
+                "timeout_s",
+                "stdout_path",
+                "stderr_path",
+                "stdout_tail",
+                "stderr_tail",
+                "blocked_reason",
+            ):
+                if key not in data:
+                    continue
+                value = data.get(key)
+                if isinstance(value, str):
+                    value = ToolCallingTaskStepper._snippet(value, text_limit)
+                compact_data[key] = value
+            if "stdout_tail" not in compact_data and data.get("stdout"):
+                compact_data["stdout_tail"] = ToolCallingTaskStepper._snippet(data.get("stdout"), text_limit)
+            if "stderr_tail" not in compact_data and data.get("stderr"):
+                compact_data["stderr_tail"] = ToolCallingTaskStepper._snippet(data.get("stderr"), text_limit)
+            compact["data"] = compact_data
+            return compact
+
+        data_keys = [str(k) for k in list(data.keys())[:20]]
+        scalars: Dict[str, Any] = {}
+        paths: Dict[str, str] = {}
+        for key, value in data.items():
+            if len(scalars) >= 10 and len(paths) >= 10:
+                break
+            key_s = str(key)
+            if isinstance(value, (int, float, bool)) and len(scalars) < 10:
+                scalars[key_s] = value
+                continue
+            if not isinstance(value, str):
+                continue
+            key_l = key_s.lower()
+            if any(token in key_l for token in ("path", "file", "dir", "artifact", "ref")) and len(paths) < 10:
+                paths[key_s] = ToolCallingTaskStepper._snippet(value, 300)
+                continue
+            if len(value) <= 200 and len(scalars) < 10:
+                scalars[key_s] = value
+
+        compact_data: Dict[str, Any] = {"data_keys": data_keys}
+        if scalars:
+            compact_data["scalars"] = scalars
+        if paths:
+            compact_data["paths"] = paths
+        compact["data"] = compact_data
+        return compact
 
     @staticmethod
     def _has_builtin_calls(output_items: list[dict]) -> bool:

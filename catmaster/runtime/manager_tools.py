@@ -1,38 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Manager-facing tool interfaces for whiteboard reads and context pack building.
-"""
+"""Manager-facing helpers for file-based memory reads and context pack building."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from catmaster.runtime.whiteboard import WhiteboardStore
 from catmaster.runtime.context_pack import ContextPackBuilder, ContextPackPolicy
+from catmaster.runtime.memory_store import MemoryStore
 
 
-def whiteboard_read(
-    sections: Optional[List[str]] = None,
+def memory_read_index(
+    max_lines: Optional[int] = 200,
     max_chars: Optional[int] = None,
     *,
     workspace: Optional[str | Path] = None,
 ) -> str:
-    store = WhiteboardStore.create_default(workspace=workspace)
+    store = MemoryStore.create_default(workspace=workspace)
     store.ensure_exists()
-    if sections:
-        return store.read_sections(sections, max_chars=max_chars)
-    text = store.read()
-    if max_chars is not None and len(text) > max_chars:
-        return text[:max_chars]
-    return text
+    return store.read_index(max_lines=max_lines, max_chars=max_chars)
 
 
-def whiteboard_get_hash(*, workspace: Optional[str | Path] = None) -> Dict[str, Any]:
-    store = WhiteboardStore.create_default(workspace=workspace)
+def memory_events_tail(
+    limit: int = 20,
+    *,
+    workspace: Optional[str | Path] = None,
+) -> Dict[str, Any]:
+    store = MemoryStore.create_default(workspace=workspace)
     store.ensure_exists()
-    data = store.path.read_bytes()
-    return {"hash": store.get_hash(), "bytes": len(data)}
+    return {"events": store.read_events_tail(limit=limit)}
 
 
 def context_pack_build(
@@ -42,7 +38,7 @@ def context_pack_build(
     *,
     workspace: Optional[str | Path] = None,
 ) -> Dict[str, Any]:
-    store = WhiteboardStore.create_default(workspace=workspace)
+    store = MemoryStore.create_default(workspace=workspace)
     store.ensure_exists()
     builder = ContextPackBuilder(store)
     context_policy = ContextPackPolicy(**policy) if policy else None
@@ -50,7 +46,7 @@ def context_pack_build(
 
 
 __all__ = [
-    "whiteboard_read",
-    "whiteboard_get_hash",
+    "memory_read_index",
+    "memory_events_tail",
     "context_pack_build",
 ]

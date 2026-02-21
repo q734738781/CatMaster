@@ -9,8 +9,7 @@ _TASK_TRIGGER_EVENTS = {
     "TASK_SUMMARY",
     "TASK_END",
     "TASK_JOURNAL_APPEND",
-    "WHITEBOARD_APPLY_OK",
-    "WHITEBOARD_APPLY_FAIL",
+    "MEMORY_MERGE_DONE",
 }
 
 _TOOL_TRIGGER_EVENTS = {
@@ -212,10 +211,7 @@ def apply_event(
             ended_record["params_compact"] = str(payload.get("params_compact") or "")
         _push_limited(state, "recent_toolcalls", ended_record, max_recent_toolcalls)
         changed = True
-    elif name == "WHITEBOARD_APPLY_START":
-        state["current_phase"] = "whiteboard_apply"
-        changed = True
-    elif name in {"WHITEBOARD_APPLY_OK", "WHITEBOARD_APPLY_FAIL"}:
+    elif name == "MEMORY_MERGE_DONE":
         state["current_phase"] = "executing"
         changed = True
     elif name == "TASK_JOURNAL_APPEND":

@@ -80,18 +80,31 @@ def read_json_pretty(
 
 
 def read_key_files_table(path: str | Path, *, project_space: Path | str | None = None) -> pd.DataFrame:
-    text = read_text(path, scope="metadata", project_space=project_space, max_chars=None)
+    scope: PathScope = "metadata"
+    p = Path(path)
+    if "files" in p.parts:
+        scope = "files"
+    text = read_text(path, scope=scope, project_space=project_space, max_chars=None)
     if text.startswith("(unavailable)") or text.startswith("(failed to read)"):
         return pd.DataFrame(columns=["id", "path", "description", "kind", "type"])
     rows = []
     pattern = r"^\s*(?:-\s*)?FILE\[([^\]]+)\]\s*:\s*([^|]+)(?:\s*\|\s*(.*))?$"
+    path_pattern = r"^\s*-\s*PATH:\s*([^|]+)(?:\s*\|\s*(.*))?$"
     for raw in text.splitlines():
         m = re.match(pattern, raw)
-        if not m:
-            continue
-        record_id = (m.group(1) or "").strip()
-        record_path = (m.group(2) or "").strip()
-        attrs_text = (m.group(3) or "").strip()
+        record_id = ""
+        record_path = ""
+        attrs_text = ""
+        if m:
+            record_id = (m.group(1) or "").strip()
+            record_path = (m.group(2) or "").strip()
+            attrs_text = (m.group(3) or "").strip()
+        else:
+            m2 = re.match(path_pattern, raw)
+            if not m2:
+                continue
+            record_path = (m2.group(1) or "").strip()
+            attrs_text = (m2.group(2) or "").strip()
         attrs: dict[str, str] = {}
         if attrs_text:
             for part in attrs_text.split("|"):

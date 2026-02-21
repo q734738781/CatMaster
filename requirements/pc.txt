@@ -24,11 +24,12 @@ dpdispatcher>=0.6.12
 paramiko>=3.3.0
 
 # LLM agent system (avoid umbrella 'langchain')
-openai>=1.0.0
-langchain-core>=0.1.0
-langchain-openai>=0.0.5
-langchain-community>=0.0.10
-langgraph>=0.0.20
+openai
+aider-chat
+langchain-core
+langchain-openai
+langchain-community
+langgraph
 
 # Utilities
 python-dotenv>=1.0.0

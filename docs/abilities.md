@@ -8,13 +8,13 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - Task-based orchestrator (`catmaster/agents/orchestrator.py`) that:
   - generates a JSON plan (`todo` + `plan_description`), supports iterative plan review (`yes` to approve),
-  - runs each task via `TaskStepper` + tool calls,
-  - summarizes each task and updates a structured whiteboard via UPSERT/DEPRECATE ops.
+  - runs each task via `ToolCallingTaskStepper` + tool calls,
+  - writes structured task results and merges them into file-based memory.
 
 - Whiteboard memory + context packs:
   - Whiteboard sections: Goal, Key Facts, Key Files, Constraints, Open Questions, Journal.
-  - Task summarizer proposes whiteboard ops; ops are validated/applied and diffs are traced.
-  - Context packs include whiteboard excerpts + key files + artifact-log slice + workspace policy.
+  - Director merges task results into `MEMORY/**` (relative to files root) and appends `metadata/memory/events.jsonl`.
+  - Context packs include memory index excerpts + key files + artifact-log slice + workspace policy.
 
 - HITL (human-in-the-loop) loop for `needs_intervention`:
   - on intervention, generates an interrupted report, prompts for free-form feedback, and replans only remaining work.
@@ -24,7 +24,7 @@ This document summarizes what the codebase can do right now, based on the curren
 - Run tracking & auditability:
   - per-run directory under `.catmaster/runs/<run_id>` with `meta.json`, `task_state.json`, `observations/`, `toolcalls/`, `llm.jsonl`.
   - unified traces: `event_trace.jsonl`, `tool_trace.jsonl`, `patch_trace.jsonl`.
-  - reports: `workspace/reports/FINAL_REPORT.md`, `workspace/reports/WHITEBOARD.md`, `workspace/reports/latest_run` symlink.
+  - reports: `workspace/reports/FINAL_REPORT.md`, `workspace/reports/MEMORY.md`, `workspace/reports/latest_run`.
 
 - Tool execution:
   - `ToolExecutor` validates inputs with Pydantic schemas, rejects extra fields.
@@ -33,7 +33,7 @@ This document summarizes what the codebase can do right now, based on the curren
 
 ## UI
 
-- WebUI workbench (Gradio) for event feed, whiteboard, artifacts, task state, traces, and final report.
+- WebUI workbench (Gradio) for event feed, memory index, artifacts, task state, traces, and final report.
 - Plan/Proposal review and HITL feedback are handled in WebUI and unblock the orchestrator.
 - Console UI has been removed; CLI is non-interactive.
 

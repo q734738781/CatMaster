@@ -14,11 +14,11 @@
 |                                                          |
 +----------------------------------------------------------+
 ```
-CatMaster is a **open-source** task-based LLM orchestration and tooling framework for computational materials workflows. It is build on the classical Planner-Executor-Summarizer architecture now, provides a structured planning/execution loop, tool registry for geometry/input preparation and job submission (VASP, MACE via DPDispatcher), and unified tracing/reporting (task state, tool calls, whiteboard diffs, and final reports).
+CatMaster is a **open-source** task-based LLM orchestration and tooling framework for computational materials workflows. It provides a structured planning/execution loop, tool registry for geometry/input preparation and job submission (VASP, MACE via DPDispatcher), and unified tracing/reporting (task state, tool calls, memory events, and final reports).
 
 ## Highlights
 
-- Task-based orchestrator with plan review, structured whiteboard memory carried along tasks, and per-task summaries to support complex question.
+- Task-based orchestrator with plan review and file-based memory (`files/MEMORY/**` + `metadata/memory/events.jsonl`) carried along tasks.
 - Tool registry for materials workflows (Materials Project retrieval, slab construction, adsorption site enumeration, VASP/MACE job submission), and long-tail tools with powerful LLM and python_exec
 - HITL (human-in-the-loop) intervention for blocked runs with replanning.
 - Unified run artifacts and traces (event/tool/patch traces, observations, final report).

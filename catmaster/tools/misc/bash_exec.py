@@ -6,6 +6,7 @@ import re
 import time
 import subprocess
 import threading
+import uuid
 
 from pydantic import BaseModel, Field
 
@@ -25,7 +26,7 @@ class BashExecInput(BaseModel):
     script: str = Field(..., description="Bash script to execute (multi-line).")
     cwd: str = Field(".", description="Working directory inside project files root.")
     timeout_s: float = Field(86400.0, ge=0.1, description="Timeout seconds.")
-    max_output_chars: int = Field(10000, ge=1000, description="Max chars returned for stdout/stderr each.")
+    max_output_chars: int = Field(3000, ge=1000, description="Max chars returned for stdout/stderr each.")
     strict: bool = Field(True, description="Prepend 'set -euo pipefail' for safer scripting.")
     no_network: bool = Field(True, description="Disable network using unshare network namespace.")
 
@@ -36,6 +37,16 @@ def _truncate_text_tail(text: str, limit: int) -> Tuple[str, bool]:
     if len(text) <= limit:
         return text, False
     return "\n...[output truncated]...\n" + text[-limit:], True
+
+
+def _tail_text(text: str, limit: int) -> str:
+    if text is None:
+        return ""
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
 
 
 _FORBIDDEN_SYMLINK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -89,6 +100,30 @@ def cancel_bash_exec_toolcall(toolcall_key: str) -> bool:
         _CANCELLED_KEYS.add(key)
     kill_process_tree(proc)
     return True
+
+
+def _safe_log_token(toolcall_key: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", (toolcall_key or "").strip())
+    token = token.strip("._")
+    if token:
+        return token[:120]
+    return f"manual_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+
+
+def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> Tuple[str, str, list[str]]:
+    warnings: list[str] = []
+    logs_dir = resolve_workspace_path(".logs/bash_exec", must_exist=False)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    token = _safe_log_token(toolcall_key)
+    stdout_path = logs_dir / f"{token}.stdout.txt"
+    stderr_path = logs_dir / f"{token}.stderr.txt"
+    try:
+        stdout_path.write_text(stdout or "", encoding="utf-8")
+        stderr_path.write_text(stderr or "", encoding="utf-8")
+    except Exception as exc:
+        warnings.append(f"failed to persist bash_exec logs: {type(exc).__name__}: {exc}")
+        return "", "", warnings
+    return workspace_relpath(stdout_path), workspace_relpath(stderr_path), warnings
 
 
 def _detect_forbidden_symlink_usage(script: str) -> Optional[str]:
@@ -161,6 +196,10 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     stderr = ""
     exit_code = None
     toolcall_key = current_toolcall_key()
+    stdout_path = ""
+    stderr_path = ""
+    stdout_tail = ""
+    stderr_tail = ""
 
     try:
         proc = subprocess.Popen(
@@ -194,6 +233,11 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             cancelled = bool(toolcall_key and toolcall_key in _CANCELLED_KEYS)
         exit_code = proc.returncode
 
+        stdout_path, stderr_path, log_warnings = _write_stream_logs(toolcall_key, stdout, stderr)
+        warnings.extend(log_warnings)
+        stdout_tail = _tail_text(stdout, params.max_output_chars)
+        stderr_tail = _tail_text(stderr, params.max_output_chars)
+
         stdout, cut_out = _truncate_text_tail(stdout, params.max_output_chars)
         stderr, cut_err = _truncate_text_tail(stderr, params.max_output_chars)
         if cut_out:
@@ -211,6 +255,10 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             "cmd": cmd,
             "cwd": workspace_relpath(cwd_path),
             "timeout_s": params.timeout_s,
+            "stdout_path": stdout_path,
+            "stderr_path": stderr_path,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
         }
 
         if ok:

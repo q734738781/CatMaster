@@ -28,6 +28,10 @@ from .live_summary_service import summarize_live_state
 from .summary_service import snapshot_summary, summarize_run
 from .web_reporter import PromptBroker, WebReporter
 
+RUN_MODE_NEW = "new_run"
+RUN_MODE_RESUME_SELECTED = "resume_selected_run"
+SUPPORTED_LANES = {"fast", "standard"}
+
 
 class WebSession:
     def __init__(self) -> None:
@@ -202,19 +206,43 @@ class WebSession:
         *,
         prompt: str,
         lane: str,
-        resume: bool,
+        run_mode: str,
+        resume_run_name: str,
         plan_review: bool,
         log_llm: bool,
         full_auto_major: bool,
         llm_config: Optional[str] = None,
     ) -> str:
-        resume_feedback = (prompt or "").strip() if resume else ""
+        mode = str(run_mode or RUN_MODE_NEW).strip()
+        if mode not in {RUN_MODE_NEW, RUN_MODE_RESUME_SELECTED}:
+            return f"Invalid run mode: {mode}"
+        requested_lane = str(lane or "standard").strip() or "standard"
+        if requested_lane not in SUPPORTED_LANES:
+            requested_lane = "standard"
+        is_resume = mode == RUN_MODE_RESUME_SELECTED
+        resume_feedback = (prompt or "").strip() if is_resume else ""
+
         with self._lock:
             ws = self.workspace
             if ws is None:
                 return "Open a project space first."
             if self.run_thread and self.run_thread.is_alive():
                 return "Run already in progress."
+
+        resume_dir: Optional[str] = None
+        effective_lane = requested_lane
+        resume_target: Optional[Path] = None
+        if is_resume:
+            resume_target, resume_lane, err = self._resolve_resume_target(
+                resume_run_name=resume_run_name,
+                workspace=ws,
+            )
+            if err:
+                return err
+            resume_dir = str(resume_target) if resume_target else None
+            effective_lane = resume_lane or "standard"
+
+        with self._lock:
             self.run_status = "starting"
             self.run_error = ""
             self.last_event_seq = 0
@@ -223,7 +251,8 @@ class WebSession:
             self.broker = PromptBroker()
             self.reporter = WebReporter(broker=self.broker, max_events=2000)
             self.run_control = RunControl()
-        resume_dir = self._resolve_resume_dir(lane, workspace=ws) if resume else None
+            if resume_target is not None:
+                self.selected_run_dir = resume_target
 
         def _run() -> None:
             run_dir: Optional[Path] = None
@@ -238,7 +267,7 @@ class WebSession:
                     reporter=self.reporter,
                     log_llm_console=False,
                     workspace=str(ws),
-                    resume=resume,
+                    resume=is_resume,
                     resume_dir=resume_dir,
                     run_control=self.run_control,
                 )
@@ -247,7 +276,7 @@ class WebSession:
                 run_dir = orch.run_context.run_dir
                 if self.reporter:
                     self.reporter.set_run_dir(run_dir)
-                self._write_active_runs(lane, run_dir, workspace=ws)
+                self._write_active_runs(effective_lane, run_dir, workspace=ws)
                 with self._lock:
                     self.run_status = "running"
                     self.run_info = {
@@ -261,7 +290,7 @@ class WebSession:
                     prompt,
                     log_llm=log_llm,
                     plan_review=plan_review,
-                    lane=lane,
+                    lane=effective_lane,
                     full_auto_major=full_auto_major,
                     resume_feedback=resume_feedback,
                 )
@@ -295,6 +324,68 @@ class WebSession:
         self.run_thread = threading.Thread(target=_run, daemon=True)
         self.run_thread.start()
         return "Run started."
+
+    def _resolve_resume_target(
+        self,
+        *,
+        resume_run_name: str,
+        workspace: Path,
+    ) -> Tuple[Optional[Path], Optional[str], Optional[str]]:
+        run_name = str(resume_run_name or "").strip()
+        candidate: Optional[Path] = None
+        if run_name:
+            candidate = self._resolve_run_dir_by_name(run_name, workspace=workspace)
+            if candidate is None:
+                return None, None, "Invalid run selection"
+        else:
+            with self._lock:
+                selected = self.selected_run_dir
+            if isinstance(selected, Path):
+                sys_root = system_root(workspace=workspace).resolve()
+                try:
+                    selected_resolved = selected.expanduser().resolve()
+                    selected_resolved.relative_to(sys_root)
+                    candidate = selected_resolved
+                except Exception:
+                    candidate = None
+        if candidate is None:
+            return None, None, "Select a run to resume."
+        lane, err = self._load_run_lane(candidate)
+        if err:
+            return None, None, err
+        return candidate, lane, None
+
+    @staticmethod
+    def _load_run_lane(run_dir: Path) -> Tuple[Optional[str], Optional[str]]:
+        state_path = run_dir / "task_state.json"
+        if not state_path.exists():
+            return None, f"Selected run is not resumable (missing task_state.json): {run_dir.name}"
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return None, f"Invalid task_state.json in selected run: {exc}"
+        if not isinstance(data, dict):
+            return None, "Invalid task_state.json in selected run: expected JSON object"
+        lane = str(data.get("lane") or "standard").strip() or "standard"
+        if lane not in SUPPORTED_LANES:
+            return None, f"Invalid lane in selected run task_state.json: {lane}"
+        return lane, None
+
+    @staticmethod
+    def _resolve_run_dir_by_name(run_name: str, *, workspace: Path) -> Optional[Path]:
+        name = str(run_name or "").strip()
+        if not name:
+            return None
+        runs_root = system_root(workspace=workspace) / "runs"
+        candidate = (runs_root / name).resolve()
+        sys_root = system_root(workspace=workspace).resolve()
+        try:
+            candidate.relative_to(sys_root)
+        except ValueError:
+            return None
+        if not candidate.exists() or not candidate.is_dir():
+            return None
+        return candidate
 
     def submit_prompt(self, prompt_id: str, text: str) -> str:
         broker = self.broker
@@ -371,13 +462,13 @@ class WebSession:
         with self._lock:
             return str(self.workspace) if self.workspace else ""
 
-    def read_whiteboard(self) -> str:
+    def read_memory_index(self) -> str:
         ws = self._workspace_path()
         if ws is None:
             return ""
         return io.read_text(
-            system_root(workspace=ws) / "whiteboard.md",
-            scope="metadata",
+            workspace_root(ws) / "MEMORY" / "MEMORY.md",
+            scope="files",
             project_space=ws,
             max_chars=MAX_TEXT_PREVIEW_CHARS,
         )
@@ -385,8 +476,8 @@ class WebSession:
     def read_artifacts(self):
         ws = self._workspace_path()
         if ws is None:
-            return io.read_key_files_table(Path("/__catmaster_missing__/whiteboard.md"))
-        return io.read_key_files_table(system_root(workspace=ws) / "whiteboard.md", project_space=ws)
+            return io.read_key_files_table(Path("/__catmaster_missing__/MEMORY/topics/FILES.md"))
+        return io.read_key_files_table(workspace_root(ws) / "MEMORY" / "topics" / "FILES.md", project_space=ws)
 
     def read_task_state(self, run_dir: Optional[Path]) -> str:
         ws = self._workspace_path()

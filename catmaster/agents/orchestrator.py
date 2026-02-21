@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Task-based orchestrator with whiteboard patch workflow and unified tracing.
+Task-based orchestrator with file-based memory and unified tracing.
 """
 from __future__ import annotations
 
 import json
 import re
-import os
 import shutil
 import time
 from datetime import datetime
@@ -21,20 +20,15 @@ from catmaster.runtime import (
     RunContext,
     ToolExecutor,
     ArtifactStore,
-    WhiteboardStore,
+    MemoryStore,
     TraceStore,
     CheckpointStore,
     RunControl,
     ContextPackBuilder,
     ContextPackPolicy,
-    whiteboard_ops_apply_atomic,
-    whiteboard_ops_persist,
-    whiteboard_ops_validate,
     write_usage_summary,
 )
-from catmaster.runtime.whiteboard_ops import persist_whiteboard_diff, append_task_journal_entry, _section_bounds
 from catmaster.agents.logo import logo_str
-from catmaster.agents.task_runner import TaskSummarizer
 from catmaster.agents.tool_calling_stepper import ToolCallingTaskStepper
 from catmaster.agents.plan_control_tools import PLAN_CONTROL_TOOL_NAMES, get_plan_control_tool_schemas
 from catmaster.agents.proposal_control_tools import (
@@ -58,12 +52,13 @@ from catmaster.agents.orchestrator_prompts import (
     build_plan_prompt,
     build_plan_feedback_prompt,
     build_task_step_prompt,
-    build_task_summarizer_prompt,
-    build_task_summarizer_repair_prompt,
+    build_task_step_repair_prompt,
     build_summary_prompt,
     build_proposal_prompt,
     build_proposal_feedback_prompt,
     build_director_prompt,
+    build_memory_patch_prompt,
+    build_memory_patch_repair_prompt,
 )
 
 _PLANNER_TOOL_ALLOWLIST = [
@@ -72,6 +67,22 @@ _PLANNER_TOOL_ALLOWLIST = [
 _PROPOSAL_TOOL_ALLOWLIST = [
     "bash_exec",
 ]
+SUPPORTED_LANES = {"fast", "standard"}
+
+
+class MemoryPatchApplyError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        event_path: str = "",
+        patch_path: str = "",
+        check_error: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.event_path = event_path
+        self.patch_path = patch_path
+        self.check_error = check_error
 
 
 class Orchestrator:
@@ -184,7 +195,7 @@ class Orchestrator:
             self.run_control.run_id = self.run_context.run_id
         self.tool_executor = tool_executor or ToolExecutor(self.registry, max_attempts=max_tool_attempts)
         self.artifact_store = ArtifactStore(self.run_context.run_dir)
-        policy_path = Path(tool_policy_path) if tool_policy_path else Path("configs/tool_policy.yaml")
+        policy_path = self._resolve_tool_policy_path(tool_policy_path)
         self.tool_policy = tool_policy or ToolPolicy.from_file(policy_path)
         self.tool_backend = tool_backend or LocalToolBackend(
             registry=self.registry,
@@ -194,9 +205,9 @@ class Orchestrator:
             workspace=self.run_context.workspace,
         )
 
-        self.whiteboard = WhiteboardStore.create_default(workspace=self.run_context.workspace)
-        self.whiteboard.ensure_exists()
-        self.context_builder = ContextPackBuilder(self.whiteboard)
+        self.memory_store = MemoryStore.create_default(workspace=self.run_context.workspace)
+        self.memory_store.ensure_exists()
+        self.context_builder = ContextPackBuilder(self.memory_store)
 
         default_log = self.run_context.run_dir / "llm.jsonl"
         self.llm_log_file = Path(llm_log_path).expanduser().resolve() if llm_log_path else default_log
@@ -208,8 +219,9 @@ class Orchestrator:
         self.proposal_feedback_prompt = build_proposal_feedback_prompt()
         self.director_prompt = build_director_prompt()
         self.task_step_prompt = build_task_step_prompt()
-        self.task_summary_prompt = build_task_summarizer_prompt()
-        self.task_summary_repair_prompt = build_task_summarizer_repair_prompt()
+        self.task_step_repair_prompt = build_task_step_repair_prompt()
+        self.memory_patch_prompt = build_memory_patch_prompt()
+        self.memory_patch_repair_prompt = build_memory_patch_repair_prompt()
         self.summary_prompt = build_summary_prompt()
         self.tool_driver = tool_driver
         if self.tool_driver is None:
@@ -241,7 +253,8 @@ class Orchestrator:
                 "tool_trace": str(self.run_context.run_dir / "tool_trace.jsonl"),
                 "patch_trace": str(self.run_context.run_dir / "patch_trace.jsonl"),
                 "task_state": str(self.run_context.run_dir / "task_state.json"),
-                "whiteboard": str(self.whiteboard.path),
+                "memory_index": str(self.memory_store.index_path),
+                "memory_events": str(self.memory_store.events_path),
             },
         })
         self._interrupt_context_note = ""
@@ -285,7 +298,7 @@ class Orchestrator:
             if key not in data:
                 raise ValueError(f"task_state.json missing required key: {key}")
         lane = data.get("lane")
-        if lane not in {"fast", "standard"}:
+        if lane not in SUPPORTED_LANES:
             raise ValueError(f"task_state.json has invalid lane: {lane}")
         if not isinstance(data["tasks"], list):
             raise ValueError("task_state.json tasks must be a list")
@@ -300,31 +313,79 @@ class Orchestrator:
         return data
 
     def _tool_schema(self) -> str:
-        return self.registry.get_tool_descriptions_for_llm()
+        return self.registry.get_tool_descriptions_for_llm(
+            allowlist=self._visible_function_tool_names()
+        )
 
     def _tool_schema_short(self) -> str:
-        return self.registry.get_short_tool_descriptions_for_llm()
+        return self.registry.get_short_tool_descriptions_for_llm(
+            allowlist=self._visible_function_tool_names()
+        )
 
     def _planner_tool_schema(self) -> str:
-        return self.registry.get_tool_descriptions_for_llm(allowlist=_PLANNER_TOOL_ALLOWLIST)
+        visible = set(self._visible_function_tool_names())
+        allowlist = [name for name in _PLANNER_TOOL_ALLOWLIST if name in visible]
+        return self.registry.get_tool_descriptions_for_llm(allowlist=allowlist)
 
     def _planner_function_tools(self) -> list[dict]:
-        tools = self.tool_backend.list_function_tools()
-        denied = self.tool_policy.denied_tools or set()
+        tools = self._filtered_function_tools()
         return [
             tool for tool in tools
-            if tool.get("name") in _PLANNER_TOOL_ALLOWLIST and tool.get("name") not in denied
+            if tool.get("name") in _PLANNER_TOOL_ALLOWLIST
         ]
 
     def _proposal_function_tools(self) -> list[dict]:
         if not self._proposal_browse_tools_enabled():
             return []
-        tools = self.tool_backend.list_function_tools()
-        denied = self.tool_policy.denied_tools or set()
+        tools = self._filtered_function_tools()
         return [
             tool for tool in tools
-            if tool.get("name") in _PROPOSAL_TOOL_ALLOWLIST and tool.get("name") not in denied
+            if tool.get("name") in _PROPOSAL_TOOL_ALLOWLIST
         ]
+
+    @staticmethod
+    def _resolve_tool_policy_path(tool_policy_path: Optional[str]) -> Path:
+        if tool_policy_path:
+            return Path(tool_policy_path).expanduser()
+        cwd_default = Path("configs/tool_policy.yaml")
+        if cwd_default.exists():
+            return cwd_default
+        repo_default = Path(__file__).resolve().parents[2] / "configs" / "tool_policy.yaml"
+        return repo_default
+
+    def _filtered_function_tools(self) -> list[dict]:
+        function_tools = list(self.tool_backend.list_function_tools() or [])
+        policy_filter = getattr(self.tool_policy, "filter_function_tools", None)
+        if callable(policy_filter):
+            try:
+                return list(policy_filter(function_tools))
+            except Exception:
+                pass
+
+        allowed = getattr(self.tool_policy, "allowed_tools", None)
+        denied = set(getattr(self.tool_policy, "denied_tools", None) or [])
+        filtered: list[dict] = []
+        for tool in function_tools:
+            name = str(tool.get("name") or "").strip()
+            if not name:
+                continue
+            if allowed is not None and name not in allowed:
+                continue
+            if name in denied:
+                continue
+            filtered.append(tool)
+        return filtered
+
+    def _visible_function_tool_names(self) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for tool in self._filtered_function_tools():
+            name = str(tool.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            names.append(name)
+            seen.add(name)
+        return names
 
     @staticmethod
     def _tool_descriptions_from_tools(
@@ -741,57 +802,10 @@ class Orchestrator:
         return state
 
     def _artifact_index(self) -> List[Dict[str, Any]]:
-        return self._whiteboard_file_records(limit=500)
-
-    def _whiteboard_file_records(self, *, limit: int = 200) -> List[Dict[str, Any]]:
         try:
-            text = self.whiteboard.read()
+            return self.memory_store.artifact_index(limit=500)
         except Exception:
             return []
-        pattern = re.compile(r"^\s*(?:-\s*)?FILE\[[^\]]+\]\s*:\s*([^|]+)(?:\s*\|\s*(.*))?$")
-        records: List[Dict[str, Any]] = []
-        seen: set[str] = set()
-        for raw in text.splitlines():
-            match = pattern.match(raw)
-            if not match:
-                continue
-            path = (match.group(1) or "").strip()
-            if not path or path in seen:
-                continue
-            attrs_text = (match.group(2) or "").strip()
-            attrs: Dict[str, str] = {}
-            if attrs_text:
-                for part in attrs_text.split("|"):
-                    token = part.strip()
-                    if "=" not in token:
-                        continue
-                    key, value = token.split("=", 1)
-                    attrs[key.strip().lower()] = value.strip()
-            desc = attrs.get("desc") or attrs.get("description") or ""
-            kind = attrs.get("kind") or "output"
-            records.append({
-                "path": path,
-                "description": desc,
-                "kind": kind,
-                "type": self._infer_artifact_type(path),
-            })
-            seen.add(path)
-            if len(records) >= limit:
-                break
-        return records
-
-    def _infer_artifact_type(self, path: str) -> str:
-        if path.endswith("/"):
-            return "dir"
-        candidate = Path(path)
-        if not candidate.is_absolute():
-            candidate = workspace_root(self.run_context.workspace) / candidate
-        try:
-            if candidate.exists():
-                return "dir" if candidate.is_dir() else "file"
-        except Exception:
-            pass
-        return "file"
 
     def _proposal_path(self) -> Path:
         return self.run_context.run_dir / "proposal.md"
@@ -804,11 +818,11 @@ class Orchestrator:
     def _create_proposal(self, user_request: str, *, log_llm: bool = False) -> Dict[str, Any]:
         tools = self._tool_schema()
         proposal_function_tools = self._proposal_function_tools()
-        whiteboard_full = self.whiteboard.read()
+        memory_index_excerpt = self.memory_store.read_index(max_lines=200, max_chars=12000)
         artifacts_index = self._artifact_index()
         messages = self.proposal_prompt.format_messages(
             user_request=user_request,
-            whiteboard_full=whiteboard_full,
+            memory_index_excerpt=memory_index_excerpt,
             artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
             tools=tools,
         )
@@ -871,13 +885,13 @@ class Orchestrator:
     ) -> Dict[str, Any]:
         tools = self._tool_schema()
         proposal_function_tools = self._proposal_function_tools()
-        whiteboard_full = self.whiteboard.read()
+        memory_index_excerpt = self.memory_store.read_index(max_lines=200, max_chars=12000)
         artifacts_index = self._artifact_index()
         messages = self.proposal_feedback_prompt.format_messages(
             user_request=user_request,
             proposal_md=proposal_md,
             work_packages_json=json.dumps(work_packages, ensure_ascii=False),
-            whiteboard_full=whiteboard_full,
+            memory_index_excerpt=memory_index_excerpt,
             artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
             tools=tools,
             feedback=feedback,
@@ -937,19 +951,19 @@ class Orchestrator:
         observations: List[Dict[str, Any]],
         resume_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        whiteboard_full = self.whiteboard.read()
+        memory_index_excerpt = self.memory_store.read_index(max_lines=200, max_chars=12000)
         artifacts_index = self._artifact_index()
-        function_tools = self.tool_backend.list_function_tools()
-        function_tools = self.tool_policy.filter_function_tools(function_tools)
+        director_observations = self._director_observations_view(observations)
+        function_tools = self._filtered_function_tools()
         builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
         tools_for_director = self._tool_descriptions_from_tools(function_tools, builtin_tools, [])
         messages = self.director_prompt.format_messages(
             user_request=user_request,
             proposal_md=proposal_md,
             work_packages_json=json.dumps(work_packages, ensure_ascii=False),
-            whiteboard_full=whiteboard_full,
+            memory_index_excerpt=memory_index_excerpt,
             artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
-            already_done_json=json.dumps(observations, ensure_ascii=False),
+            already_done_json=json.dumps(director_observations, ensure_ascii=False),
             tools=tools_for_director,
         )
         input_items = self._messages_to_input_items(messages)
@@ -992,6 +1006,53 @@ class Orchestrator:
             raise ValueError(f"Director did not finish with director_decide (got {finish_reason})")
         payload = step_result.get("control_payload") or {}
         return payload
+
+    @staticmethod
+    def _director_observations_view(observations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        sanitized: List[Dict[str, Any]] = []
+        for item in observations or []:
+            if not isinstance(item, dict):
+                continue
+            row: Dict[str, Any] = {}
+            for key in ("task_id", "outcome", "summary"):
+                value = item.get(key)
+                if value is None:
+                    continue
+                text = " ".join(str(value).split())
+                if text:
+                    row[key] = text
+
+            raw_artifacts = item.get("key_artifacts")
+            key_artifacts: List[Dict[str, str]] = []
+            if isinstance(raw_artifacts, list):
+                for artifact in raw_artifacts:
+                    if not isinstance(artifact, dict):
+                        continue
+                    path = str(artifact.get("path") or "").strip()
+                    if not path:
+                        continue
+                    entry: Dict[str, str] = {"path": path}
+                    desc = str(artifact.get("description") or "").strip()
+                    kind = str(artifact.get("kind") or "").strip()
+                    if desc:
+                        entry["description"] = desc
+                    if kind:
+                        entry["kind"] = kind
+                    key_artifacts.append(entry)
+            row["key_artifacts"] = key_artifacts
+
+            interrupted = item.get("interrupted_toolcall")
+            if isinstance(interrupted, dict):
+                safe_interrupt: Dict[str, Any] = {}
+                for key in ("tool", "status", "highlights", "cancel_accepted"):
+                    if key in interrupted:
+                        safe_interrupt[key] = interrupted.get(key)
+                if safe_interrupt:
+                    row["interrupted_toolcall"] = safe_interrupt
+
+            if row:
+                sanitized.append(row)
+        return sanitized
 
     def _review_proposal(
         self,
@@ -1088,6 +1149,7 @@ class Orchestrator:
         *,
         task_id: str,
         task_goal: str,
+        task_goal_short: Optional[str] = None,
         log_llm: bool,
         resume_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -1095,13 +1157,12 @@ class Orchestrator:
             task_goal,
             role="task_runner",
             policy=ContextPackPolicy(
-                max_whiteboard_chars=10**9,
-                include_journal=True,
-                max_journal_chars=10**9,
-                max_artifacts=10**6,
+                memory_head_lines=200,
+                max_memory_chars=12000,
+                max_artifacts=300,
+                inject_goal_for_worker=False,
             ),
         )
-        context_pack["whiteboard_excerpt"] = self.whiteboard.read()
         if self._interrupt_context_note:
             base_constraints = str(context_pack.get("constraints", "") or "").strip()
             if base_constraints:
@@ -1109,11 +1170,10 @@ class Orchestrator:
             else:
                 context_pack["constraints"] = self._interrupt_context_note
         self._emit("TASK_CONTEXT_READY", category="task", task_id=task_id, payload={
-            "excerpt_chars": len(context_pack.get("whiteboard_excerpt", "") or ""),
+            "excerpt_chars": len(context_pack.get("memory_index_excerpt", "") or ""),
             "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
         })
-        function_tools = self.tool_backend.list_function_tools()
-        filtered_tools = self.tool_policy.filter_function_tools(function_tools)
+        filtered_tools = self._filtered_function_tools()
         builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
         stepper = ToolCallingTaskStepper(
             driver=self.tool_driver,
@@ -1150,20 +1210,61 @@ class Orchestrator:
                 "interrupt_phase": step_result.get("interrupt_phase", "toolcall"),
                 "interrupted_toolcall": step_result.get("interrupted_toolcall"),
             }
-        summarizer = TaskSummarizer(
-            llm=self.summary_llm,
-            prompt=self.task_summary_prompt,
-            repair_prompt=self.task_summary_repair_prompt,
-            log_fn=self._write_llm_log,
-            log_llm_console=log_llm,
-        )
-        task_result = self._summarize_and_update_whiteboard(
-            summarizer,
-            task_id=task_id,
+        finish_reason = str(step_result.get("finish_reason") or "")
+        control_payload = step_result.get("control_payload")
+        task_result = self._normalize_task_result_payload(
             task_goal=task_goal,
-            step_result=step_result,
+            finish_reason=finish_reason,
+            payload=control_payload,
+            output_text=str(step_result.get("output_text") or ""),
         )
         outcome = task_result["task_outcome"]
+        merge_info: Dict[str, Any] = {}
+        patch_merge_failed = False
+        merge_error = ""
+        try:
+            merge_info = self._merge_memory_via_git_apply(
+                run_id=self.run_context.run_id,
+                task_id=task_id,
+                outcome=outcome,
+                task_goal_short=task_goal_short or task_goal,
+                structured_result=task_result["structured_result"],
+            )
+            self._emit("MEMORY_MERGE_DONE", category="summary", task_id=task_id, payload={
+                "event_path": merge_info.get("event_path", ""),
+                "memory_index": merge_info.get("memory_index", ""),
+                "patch_path": merge_info.get("patch_path", ""),
+                "attempts": merge_info.get("attempts", 0),
+            })
+        except Exception as exc:
+            patch_merge_failed = True
+            merge_error = str(exc)
+            merge_info = {
+                "event_path": getattr(exc, "event_path", ""),
+                "memory_index": str(self.memory_store.index_path.relative_to(workspace_root(self.run_context.workspace))),
+                "patch_path": getattr(exc, "patch_path", ""),
+                "check_error": getattr(exc, "check_error", ""),
+            }
+            self._emit("MEMORY_MERGE_FAILED", level="warning", category="summary", task_id=task_id, payload={
+                "event_path": merge_info.get("event_path", ""),
+                "memory_index": merge_info.get("memory_index", ""),
+                "patch_path": merge_info.get("patch_path", ""),
+                "error": merge_error,
+            })
+            task_result["task_summary"] = (
+                f"{task_result['task_summary']} | memory_merge=failed: {self._snippet(merge_error, 280)}"
+            ).strip()
+            task_result["structured_result"]["summary"] = task_result["task_summary"]
+            outcome = "needs_intervention"
+            task_result["task_outcome"] = outcome
+            patch_path = str(merge_info.get("patch_path") or "").strip()
+            if patch_path:
+                task_result["key_artifacts"].append({
+                    "path": patch_path,
+                    "description": "memory patch failed to apply",
+                    "kind": "log",
+                })
+
         observation_path = self._write_observation(
             task_id=task_id,
             outcome=outcome,
@@ -1179,9 +1280,395 @@ class Orchestrator:
             "summary": task_result["task_summary"],
             "observation_path": observation_path,
             "key_artifacts": task_result["key_artifacts"],
-            "ops_path": task_result.get("ops_path"),
-            "diff_path": task_result.get("diff_path"),
+            "event_path": merge_info.get("event_path"),
+            "memory_merge_failed": patch_merge_failed,
+            "memory_merge_error": merge_error if patch_merge_failed else "",
         }
+
+    def _normalize_task_result_payload(
+        self,
+        *,
+        task_goal: str,
+        finish_reason: str,
+        payload: Any,
+        output_text: str,
+    ) -> Dict[str, Any]:
+        body = payload if isinstance(payload, dict) else {}
+        if finish_reason == "task_finish":
+            summary = str(body.get("summary") or "").strip() or "Task finished."
+            structured = {
+                "summary": summary,
+                "facts": self._clean_text_list(body.get("facts")),
+                "files": self._clean_file_records(body.get("files")),
+                "constraints": self._clean_text_list(body.get("constraints")),
+                "open_questions": self._clean_text_list(body.get("open_questions")),
+                "decisions": self._clean_decisions(body.get("decisions")),
+                "next_steps": self._clean_text_list(body.get("next_steps")),
+                "artifacts": self._clean_text_list(body.get("artifacts")),
+            }
+            key_artifacts = [
+                {
+                    "path": item["path"],
+                    "description": item.get("description", ""),
+                    "kind": item.get("kind", "output"),
+                }
+                for item in structured["files"]
+            ]
+            for path in structured["artifacts"]:
+                key_artifacts.append({"path": path, "description": "", "kind": "artifact"})
+            return {
+                "task_outcome": "success",
+                "task_summary": summary,
+                "key_artifacts": key_artifacts,
+                "structured_result": structured,
+            }
+
+        if finish_reason == "task_fail":
+            partial = body.get("partial_result") if isinstance(body.get("partial_result"), dict) else {}
+            err = str(body.get("error") or output_text or "Task failed").strip()
+            needs_human = bool(body.get("needs_human", True))
+            structured = {
+                "summary": err,
+                "facts": self._clean_text_list(partial.get("facts")),
+                "files": self._clean_file_records(partial.get("files")),
+                "constraints": self._clean_text_list(partial.get("constraints")),
+                "open_questions": self._clean_text_list(partial.get("open_questions")),
+                "decisions": self._clean_decisions(partial.get("decisions")),
+                "next_steps": self._clean_text_list(partial.get("next_steps")),
+                "artifacts": self._clean_text_list(partial.get("artifacts")),
+            }
+            if needs_human and not structured["open_questions"]:
+                structured["open_questions"] = [f"Human intervention required for task: {task_goal}"]
+            key_artifacts = [
+                {
+                    "path": item["path"],
+                    "description": item.get("description", ""),
+                    "kind": item.get("kind", "output"),
+                }
+                for item in structured["files"]
+            ]
+            for path in structured["artifacts"]:
+                key_artifacts.append({"path": path, "description": "", "kind": "artifact"})
+            return {
+                "task_outcome": "needs_intervention" if needs_human else "failure",
+                "task_summary": err,
+                "key_artifacts": key_artifacts,
+                "structured_result": structured,
+            }
+
+        text = " ".join(output_text.split()).strip()
+        summary = text or f"Task ended with unexpected finish_reason={finish_reason or 'unknown'}"
+        structured = {
+            "summary": summary,
+            "facts": [],
+            "files": [],
+            "constraints": [],
+            "open_questions": [],
+            "decisions": [],
+            "next_steps": [],
+            "artifacts": [],
+        }
+        return {
+            "task_outcome": "failure",
+            "task_summary": summary,
+            "key_artifacts": [],
+            "structured_result": structured,
+        }
+
+    def _merge_memory_via_git_apply(
+        self,
+        *,
+        run_id: str,
+        task_id: str,
+        outcome: str,
+        task_goal_short: str,
+        structured_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        self.memory_store.ensure_exists()
+        event = {
+            "ts": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "run_id": run_id,
+            "task_id": task_id,
+            "goal": " ".join(str(task_goal_short or "").split()),
+            "outcome": str(outcome or "").strip(),
+            "summary": str(structured_result.get("summary") or "").strip(),
+            "facts": self._clean_text_list(structured_result.get("facts")),
+            "constraints": self._clean_text_list(structured_result.get("constraints")),
+            "open_questions": self._clean_text_list(structured_result.get("open_questions")),
+            "next_steps": self._clean_text_list(structured_result.get("next_steps")),
+            "files": self._clean_file_records(structured_result.get("files")),
+            "decisions": self._clean_decisions(structured_result.get("decisions")),
+            "artifacts": self._clean_text_list(structured_result.get("artifacts")),
+        }
+        event_rel = self.memory_store.append_event(event)
+        memory_index_text = self.memory_store.read_index(max_lines=2000, max_chars=200000)
+        topic_tldrs = self._read_memory_topic_tldrs()
+        files_root = workspace_root(self.run_context.workspace)
+        patch_dir = files_root / ".logs" / "memory_patches"
+        patch_dir.mkdir(parents=True, exist_ok=True)
+
+        max_attempts = max(1, int(self.patch_repair_attempts or 0) + 1)
+        last_error = ""
+        last_error_context: Dict[str, Any] = {}
+        patch_rel = ""
+        previous_edit_text = ""
+
+        for attempt in range(1, max_attempts + 1):
+            if attempt == 1:
+                messages = self.memory_patch_prompt.format_messages(
+                    run_id=run_id,
+                    task_id=task_id,
+                    task_goal=task_goal_short,
+                    outcome=outcome,
+                    event_path=event_rel,
+                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
+                    memory_index_text=memory_index_text,
+                    topic_tldrs_json=json.dumps(topic_tldrs, ensure_ascii=False),
+                )
+                llm_kind = "memory_patch"
+            else:
+                messages = self.memory_patch_repair_prompt.format_messages(
+                    previous_edit_text=previous_edit_text,
+                    apply_error=last_error or "(none)",
+                    apply_error_context_json=json.dumps(last_error_context, ensure_ascii=False),
+                    run_id=run_id,
+                    task_id=task_id,
+                    task_goal=task_goal_short,
+                    outcome=outcome,
+                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
+                    memory_index_text=memory_index_text,
+                    topic_tldrs_json=json.dumps(topic_tldrs, ensure_ascii=False),
+                )
+                llm_kind = "memory_patch_repair"
+
+            self._emit("LLM_CALL_START", category="llm", payload={"kind": llm_kind, "task_id": task_id, "attempt": attempt})
+            t0 = time.perf_counter()
+            resp = self.llm.invoke(messages)
+            patch_raw = llm_text(resp).strip()
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            self._emit("LLM_CALL_END", category="llm", payload={
+                "kind": llm_kind,
+                "task_id": task_id,
+                "attempt": attempt,
+                "elapsed_ms": elapsed_ms,
+            })
+            self._write_llm_log(f"{llm_kind}_prompt", messages=self._messages_to_dict(messages), task_id=task_id, attempt=attempt)
+            self._write_llm_log(f"{llm_kind}_response", content=patch_raw, task_id=task_id, attempt=attempt)
+
+            edit_text = self._normalize_patch_text(patch_raw)
+            previous_edit_text = edit_text
+            edits_rel = f".logs/memory_patches/memory_{run_id}_{task_id}_a{attempt}.aider"
+            edits_abs = files_root / edits_rel
+            edits_abs.write_text(edit_text if edit_text.endswith("\n") else f"{edit_text}\n", encoding="utf-8")
+
+            tool_out = self.tool_backend.call(
+                "memory_apply_aider_edits",
+                json.dumps({
+                    "edits_text": edit_text,
+                    "allowed_paths": ["MEMORY/", "notes/"],
+                    "emit_diff": True,
+                }, ensure_ascii=False),
+                toolcall_key=f"{task_id}_memory_patch_a{attempt}",
+            )
+            status = str(tool_out.get("status") or "").strip().lower()
+            data = tool_out.get("data") if isinstance(tool_out.get("data"), dict) else {}
+            patch_rel = f".logs/memory_patches/memory_{run_id}_{task_id}_a{attempt}.diff"
+            patch_abs = files_root / patch_rel
+            diff_text = str(data.get("diff_text") or "")
+            patch_abs.write_text(diff_text if diff_text.endswith("\n") else f"{diff_text}\n", encoding="utf-8")
+
+            if status == "success":
+                self.trace_store.append_patch({
+                    "event": "MEMORY_PATCH_ATTEMPT",
+                    "payload": {
+                        "task_id": task_id,
+                        "attempt": attempt,
+                        "status": "applied",
+                        "event_path": event_rel,
+                        "edits_path": edits_rel,
+                        "patch_path": patch_rel,
+                    },
+                })
+                return {
+                    "event_path": event_rel,
+                    "memory_index": str(self.memory_store.index_path.relative_to(workspace_root(self.run_context.workspace))),
+                    "patch_path": patch_rel,
+                    "attempts": attempt,
+                }
+
+            error_code = str(data.get("error_code") or "").strip()
+            error_detail = str(data.get("error_detail") or "").strip()
+            failed_path = str(data.get("failed_path") or "").strip()
+            failed_block_index_raw = data.get("failed_block_index")
+            try:
+                failed_block_index = int(failed_block_index_raw or 0)
+            except Exception:
+                failed_block_index = 0
+            last_error_context = {
+                "error_code": error_code,
+                "error_detail": error_detail,
+                "failed_path": failed_path,
+                "failed_block_index": failed_block_index,
+            }
+            last_error = " | ".join(
+                [
+                    part
+                    for part in [
+                        f"[{error_code}]" if error_code else "",
+                        str(tool_out.get("error") or "").strip(),
+                        error_detail,
+                    ]
+                    if part
+                ]
+            ).strip()
+            self.trace_store.append_patch({
+                "event": "MEMORY_PATCH_ATTEMPT",
+                "payload": {
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "status": "failed",
+                    "event_path": event_rel,
+                    "edits_path": edits_rel,
+                    "patch_path": patch_rel,
+                    "error": last_error,
+                    "error_context": last_error_context,
+                },
+            })
+
+        raise MemoryPatchApplyError(
+            f"Memory patch apply failed after {max_attempts} attempts: {last_error or 'unknown error'}",
+            event_path=event_rel,
+            patch_path=patch_rel,
+            check_error=last_error,
+        )
+
+    def _read_memory_topic_tldrs(self) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        for topic_path in sorted(self.memory_store.topics_dir.glob("*.md")):
+            try:
+                text = topic_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            out[topic_path.name] = self._topic_tldr_excerpt(text)
+        return out
+
+    @staticmethod
+    def _topic_tldr_excerpt(text: str, *, fallback_lines: int = 40, max_chars: int = 4000) -> str:
+        lines = text.splitlines()
+        start_idx = -1
+        for i, raw in enumerate(lines):
+            if raw.strip().lower() == "## tl;dr":
+                start_idx = i
+                break
+        if start_idx >= 0:
+            excerpt_lines: List[str] = [lines[start_idx]]
+            for raw in lines[start_idx + 1:]:
+                if raw.startswith("## "):
+                    break
+                excerpt_lines.append(raw)
+            excerpt = "\n".join(excerpt_lines).strip()
+        else:
+            excerpt = "\n".join(lines[:fallback_lines]).strip()
+        if len(excerpt) > max_chars:
+            return excerpt[:max_chars]
+        return excerpt
+
+    @staticmethod
+    def _normalize_patch_text(raw: str) -> str:
+        text = str(raw or "").strip()
+        if text.startswith("```") and text.endswith("```"):
+            m = re.match(r"^```[^\n]*\n(.*?)\n```$", text, re.DOTALL)
+            if m:
+                text = m.group(1).strip()
+        return text
+
+    @staticmethod
+    def _validate_memory_patch_paths(patch_text: str) -> None:
+        text = str(patch_text or "").strip()
+        if not text:
+            raise ValueError("empty patch")
+        touched: set[str] = set()
+        for raw in text.splitlines():
+            line = raw.strip()
+            if line.startswith("diff --git "):
+                m = re.match(r"^diff --git a/(.+?) b/(.+?)$", line)
+                if m:
+                    touched.add(m.group(1).strip())
+                    touched.add(m.group(2).strip())
+            elif line.startswith("--- "):
+                token = line[4:].strip()
+                if token != "/dev/null":
+                    touched.add(token[2:] if token.startswith("a/") else token)
+            elif line.startswith("+++ "):
+                token = line[4:].strip()
+                if token != "/dev/null":
+                    touched.add(token[2:] if token.startswith("b/") else token)
+
+        bad: List[str] = []
+        for path in sorted(touched):
+            norm = path.strip()
+            if not norm:
+                continue
+            pure = Path(norm)
+            if pure.is_absolute() or ".." in pure.parts:
+                bad.append(norm)
+                continue
+            if not (norm.startswith("MEMORY/") or norm.startswith("notes/")):
+                bad.append(norm)
+        if bad:
+            raise ValueError(f"patch touches forbidden paths: {', '.join(bad)}")
+
+    @staticmethod
+    def _clean_text_list(raw: Any) -> List[str]:
+        if not isinstance(raw, list):
+            return []
+        out: List[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            text = " ".join(str(item or "").split())
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+        return out
+
+    @staticmethod
+    def _clean_file_records(raw: Any) -> List[Dict[str, str]]:
+        if not isinstance(raw, list):
+            return []
+        out: List[Dict[str, str]] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            out.append({
+                "path": path,
+                "description": str(item.get("description") or "").strip(),
+                "kind": str(item.get("kind") or "output").strip() or "output",
+            })
+        return out
+
+    @staticmethod
+    def _clean_decisions(raw: Any) -> List[Dict[str, str]]:
+        if not isinstance(raw, list):
+            return []
+        out: List[Dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            decision = " ".join(str(item.get("decision") or "").split())
+            rationale = " ".join(str(item.get("rationale") or "").split())
+            if not decision:
+                continue
+            out.append({"decision": decision, "rationale": rationale})
+        return out
 
     def _run_fast(
         self,
@@ -1219,9 +1706,9 @@ class Orchestrator:
                 }
                 status = "running"
                 self.run_control.clear_interrupt()
-            self._initialize_whiteboard_goal(user_request)
+            self._initialize_memory_goal(user_request)
         else:
-            self._initialize_whiteboard_goal(user_request)
+            self._initialize_memory_goal(user_request)
             tasks = [{
                 "task_id": "task_01",
                 "goal": user_request,
@@ -1276,6 +1763,7 @@ class Orchestrator:
             obs = self._execute_task(
                 task_id=task_id,
                 task_goal=task_goal,
+                task_goal_short=(next_task.get("task_packet") or {}).get("goal") if isinstance(next_task.get("task_packet"), dict) else task_goal,
                 log_llm=log_llm,
                 resume_state=resume_state if isinstance(resume_state, dict) else None,
             )
@@ -1448,7 +1936,7 @@ class Orchestrator:
         if report_paths:
             run_end_payload.update({
                 "final_report": report_paths.get("final_report", ""),
-                "whiteboard_report": report_paths.get("whiteboard_report", ""),
+                "memory_report": report_paths.get("memory_report", ""),
                 "latest_link": report_paths.get("latest_link", ""),
             })
         self._emit("RUN_END", category="run", payload=run_end_payload)
@@ -1518,9 +2006,9 @@ class Orchestrator:
                 }
                 status = "running"
                 self.run_control.clear_interrupt()
-            self._initialize_whiteboard_goal(user_request)
+            self._initialize_memory_goal(user_request)
         else:
-            self._initialize_whiteboard_goal(user_request)
+            self._initialize_memory_goal(user_request)
             proposal = self._create_proposal(user_request, log_llm=log_llm)
             proposal_md = proposal["proposal_md"]
             work_packages = proposal["work_packages"]
@@ -1618,6 +2106,7 @@ class Orchestrator:
                 obs = self._execute_task(
                     task_id=task_id,
                     task_goal=task_goal,
+                    task_goal_short=(task.get("task_packet") or {}).get("goal") if isinstance(task.get("task_packet"), dict) else task_goal,
                     log_llm=log_llm,
                     resume_state=resume_state if isinstance(resume_state, dict) else None,
                 )
@@ -1822,17 +2311,12 @@ class Orchestrator:
                     break
                 task_resume_checkpoint = None
                 if state == "PerformNextTask":
-                    task_goal_raw = decision.get("next_task_goal")
-                    if not task_goal_raw:
-                        raise ValueError("Director PerformNextTask missing next_task_goal")
-                    task_goal = self._with_suggested_tools_hint(
-                        task_goal_raw,
-                        decision.get("suggested_tools"),
-                    )
+                    task_goal, task_packet = self._resolve_task_goal_from_decision(decision)
                     task_id = f"task_{self._next_task_index(tasks):02d}"
                     tasks.append({
                         "task_id": task_id,
                         "goal": task_goal,
+                        "task_packet": task_packet,
                         "status": "pending",
                     })
                     self._write_task_state({
@@ -1858,6 +2342,7 @@ class Orchestrator:
                     obs = self._execute_task(
                         task_id=task_id,
                         task_goal=task_goal,
+                        task_goal_short=task_packet.get("goal") if isinstance(task_packet, dict) else task_goal,
                         log_llm=log_llm,
                         resume_state=resume_state if isinstance(resume_state, dict) else None,
                     )
@@ -2110,7 +2595,7 @@ class Orchestrator:
                 "status": status,
                 "run_dir": report_paths.get("run_dir", ""),
                 "final_report": report_paths.get("final_report", ""),
-                "whiteboard_report": report_paths.get("whiteboard_report", ""),
+                "memory_report": report_paths.get("memory_report", ""),
                 "latest_link": report_paths.get("latest_link", ""),
             })
             try:
@@ -2147,7 +2632,7 @@ class Orchestrator:
     ) -> Dict[str, Any]:
         if initial_plan is not None:
             raise ValueError("initial_plan is no longer supported; use lane=standard proposal flow instead")
-        if lane not in {"fast", "standard"}:
+        if lane not in SUPPORTED_LANES:
             raise ValueError(f"Invalid lane: {lane}")
 
         ui_started = False
@@ -2305,737 +2790,87 @@ class Orchestrator:
         constraint_text = f"HITL guidance ({hitl_tag}): {guidance_snippet}"
         if report_ref:
             constraint_text += f" | report: {report_ref}"
-
-        ops = [{
-            "op": "UPSERT",
-            "section": "Constraints",
-            "record_type": "CONSTRAINT",
-            "id": f"HITL_{hitl_index:03d}",
-            "text": constraint_text,
-            "rationale": f"HITL intervention {hitl_tag}",
-        }]
-        ops_file = hitl_dir / "whiteboard_ops.json"
-        ops_file.write_text(json.dumps(ops, ensure_ascii=False, indent=2), encoding="utf-8")
-        hitl_meta["whiteboard_ops"] = self._rel_run_path(ops_file)
-
-        validation = whiteboard_ops_validate(ops)
-        before_hash = self.whiteboard.get_hash()
-        if not validation.get("ok"):
-            self._trace_whiteboard_update(
-                task_id=hitl_tag,
-                ops_path=self._rel_run_path(ops_file),
-                diff_path="",
-                status="ops_validation_failed",
-                errors=validation.get("errors", []),
-                warnings=validation.get("warnings", []),
-                before_hash=before_hash,
-                after_hash=None,
-                repair_attempt=0,
-            )
-            hitl_meta["whiteboard_ops_status"] = "ops_validation_failed"
-            return hitl_meta
-
         try:
-            apply_result = whiteboard_ops_apply_atomic(self.whiteboard.path, ops, hitl_tag)
-        except Exception as exc:
-            apply_result = {"ok": False, "errors": [str(exc)], "warnings": []}
-
-        if apply_result.get("ok"):
-            diff_path = ""
-            after_hash = self.whiteboard.get_hash()
-            try:
-                    diff_path = persist_whiteboard_diff(
-                        apply_result.get("before_text", ""),
-                        apply_result.get("after_text", ""),
-                        {"run_id": self.run_context.run_id, "task_id": hitl_tag, "attempt": 0},
-                        root=system_root(workspace=self.run_context.workspace),
-                        whiteboard_path=self.whiteboard.path,
-                    )["diff_path"]
-            except Exception:
-                diff_path = ""
-            self._trace_whiteboard_update(
+            merge_info = self._merge_memory_via_git_apply(
+                run_id=self.run_context.run_id,
                 task_id=hitl_tag,
-                ops_path=self._rel_run_path(ops_file),
-                diff_path=diff_path,
-                status="applied",
-                errors=[],
-                warnings=apply_result.get("warnings", []),
-                before_hash=apply_result.get("before_hash"),
-                after_hash=after_hash,
-                repair_attempt=0,
+                outcome="needs_intervention",
+                task_goal_short=f"HITL guidance ({hitl_tag})",
+                structured_result={
+                    "summary": f"HITL guidance captured from human feedback ({hitl_tag}).",
+                    "facts": [],
+                    "files": [],
+                    "constraints": [constraint_text],
+                    "open_questions": [],
+                    "decisions": [],
+                    "next_steps": [],
+                    "artifacts": [report_ref] if report_ref else [],
+                },
             )
-            hitl_meta["whiteboard_ops_status"] = "applied"
-            hitl_meta["whiteboard_diff"] = diff_path
-            return hitl_meta
-
-        self._trace_whiteboard_update(
-            task_id=hitl_tag,
-            ops_path=self._rel_run_path(ops_file),
-            diff_path="",
-            status="apply_failed",
-            errors=apply_result.get("errors", []),
-            warnings=apply_result.get("warnings", []),
-            before_hash=before_hash,
-            after_hash=None,
-            repair_attempt=0,
-        )
-        hitl_meta["whiteboard_ops_status"] = "apply_failed"
+            hitl_meta["memory_update_status"] = "applied"
+            hitl_meta["memory_event"] = merge_info.get("event_path", "")
+        except Exception as exc:
+            hitl_meta["memory_update_status"] = "failed"
+            hitl_meta["memory_update_error"] = str(exc)
         return hitl_meta
 
-    def _hitl_intervene(
-        self,
-        *,
-        user_request: str,
-        plan: Dict[str, Any],
-        tasks: List[Dict[str, Any]],
-        observations: List[Dict[str, Any]],
-        log_llm: bool = False,
-        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
-    ) -> Dict[str, Any]:
-        hitl_index = self._next_hitl_index()
-        hitl_tag = f"hitl_{hitl_index:03d}"
-        hitl_dir = self.run_context.run_dir / "hitl" / hitl_tag
-        hitl_dir.mkdir(parents=True, exist_ok=True)
+    def _initialize_memory_goal(self, user_request: str) -> None:
+        goal = " ".join((user_request or "").split()).strip()
+        if not goal:
+            return
+        self.memory_store.ensure_exists()
+        goal_path = self.memory_store.topics_dir / "GOAL.md"
+        original = goal_path.read_text(encoding="utf-8") if goal_path.exists() else ""
+        updated = original
 
-        summary = self._summarize_tasks(user_request, observations, status="needs_intervention")
-        report_paths = self._publish_report(user_request, summary)
-        report_path = report_paths.get("final_report", "")
-        report_text = ""
-        if report_path:
-            try:
-                report_text = Path(report_path).read_text(encoding="utf-8")
-            except Exception:
-                report_text = summary or ""
-        else:
-            report_text = summary or ""
-        interrupted_report_path = hitl_dir / "interrupted_report.md"
-        interrupted_report_path.write_text(report_text or "", encoding="utf-8")
+        primary_match = re.search(r"(?m)^- Primary objective:\s*(.*)$", updated)
+        current_primary = (primary_match.group(1) if primary_match else "").strip()
+        primary_changed = current_primary != goal
 
-        feedback_state = {
-            "user_request": user_request,
-            "plan": plan,
-            "tasks": tasks,
-            "observations": observations,
-            "status": "needs_intervention",
-            "report_path": report_path,
-            "report_text": report_text,
-            "hitl_dir": str(hitl_dir),
-            "hitl_id": hitl_tag,
-        }
-        feedback = ""
-        if plan_feedback_provider:
-            feedback = plan_feedback_provider({**feedback_state, "stage": "hitl_feedback"}) or ""
-        else:
-            if hasattr(self.reporter, "prompt_hitl_feedback") and self.reporter.is_live():
-                feedback = self.reporter.prompt_hitl_feedback(
-                    report_text=report_text,
-                    report_path=report_path,
-                )
-            else:
-                raise ValueError("HITL feedback requires a live reporter (WebUI). Start WebUI or provide feedback provider.")
-
-        human_feedback_path = hitl_dir / "human_feedback.txt"
-        human_feedback_path.write_text(feedback or "", encoding="utf-8")
-
-        hitl_meta = {
-            "hitl_id": hitl_tag,
-            "hitl_dir": self._rel_run_path(hitl_dir),
-            "interrupted_report": self._rel_run_path(interrupted_report_path),
-            "human_feedback": self._rel_run_path(human_feedback_path),
-            "report_path": report_path,
-        }
-
-        if not feedback:
-            self._write_task_state({
-                "user_request": user_request,
-                "plan": plan,
-                "tasks": tasks,
-                "observations": observations,
-                "status": "needs_intervention",
-                "summary": summary,
-                "hitl": hitl_meta,
-            })
-            return {
-                "tasks": tasks,
-                "observations": observations,
-                "summary": summary,
-                "final_answer": summary,
-                "status": "needs_intervention",
-                "plan": plan,
-                "report_path": report_path,
-                "hitl_dir": str(hitl_dir),
-            }
-
-        report_ref = ""
-        if report_path:
-            try:
-                report_ref = str(
-                    Path(report_path).resolve().relative_to(workspace_root(self.run_context.workspace))
-                )
-            except Exception:
-                report_ref = os.path.basename(report_path)
-
-        guidance_snippet = self._snippet(feedback, 9999)
-        constraint_text = f"HITL guidance ({hitl_tag}): {guidance_snippet}"
-        if report_ref:
-            constraint_text += f" | report: {report_ref}"
-
-        ops = [{
-            "op": "UPSERT",
-            "section": "Constraints",
-            "record_type": "CONSTRAINT",
-            "id": f"HITL_{hitl_index:03d}",
-            "text": constraint_text,
-            "rationale": f"HITL intervention {hitl_tag}",
-        }]
-        ops_file = hitl_dir / "whiteboard_ops.json"
-        ops_file.write_text(json.dumps(ops, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        validation = whiteboard_ops_validate(ops)
-        before_hash = self.whiteboard.get_hash()
-        if not validation.get("ok"):
-            self._trace_whiteboard_update(
-                task_id=hitl_tag,
-                ops_path=self._rel_run_path(ops_file),
-                diff_path="",
-                status="ops_validation_failed",
-                errors=validation.get("errors", []),
-                warnings=validation.get("warnings", []),
-                before_hash=before_hash,
-                after_hash=None,
-                repair_attempt=0,
+        if primary_match:
+            updated = re.sub(
+                r"(?m)^- Primary objective:.*$",
+                f"- Primary objective: {goal}",
+                updated,
+                count=1,
             )
         else:
-            try:
-                apply_result = whiteboard_ops_apply_atomic(self.whiteboard.path, ops, hitl_tag)
-            except Exception as exc:
-                apply_result = {"ok": False, "errors": [str(exc)], "warnings": []}
-
-            if apply_result.get("ok"):
-                diff_path = ""
-                after_hash = self.whiteboard.get_hash()
-                try:
-                    diff_path = persist_whiteboard_diff(
-                        apply_result.get("before_text", ""),
-                        apply_result.get("after_text", ""),
-                        {"run_id": self.run_context.run_id, "task_id": hitl_tag, "attempt": 0},
-                        root=system_root(workspace=self.run_context.workspace),
-                        whiteboard_path=self.whiteboard.path,
-                    )["diff_path"]
-                except Exception:
-                    diff_path = ""
-                self._trace_whiteboard_update(
-                    task_id=hitl_tag,
-                    ops_path=self._rel_run_path(ops_file),
-                    diff_path=diff_path,
-                    status="applied",
-                    errors=[],
-                    warnings=apply_result.get("warnings", []),
-                    before_hash=apply_result.get("before_hash"),
-                    after_hash=after_hash,
-                    repair_attempt=0,
-                )
+            line = f"- Primary objective: {goal}\n"
+            marker = "## TL;DR\n"
+            if marker in updated:
+                updated = updated.replace(marker, marker + line, 1)
             else:
-                self._trace_whiteboard_update(
-                    task_id=hitl_tag,
-                    ops_path=self._rel_run_path(ops_file),
-                    diff_path="",
-                    status="apply_failed",
-                    errors=apply_result.get("errors", []),
-                    warnings=apply_result.get("warnings", []),
-                    before_hash=before_hash,
-                    after_hash=None,
-                    repair_attempt=0,
-                )
+                updated = updated.rstrip()
+                if updated:
+                    updated += "\n\n"
+                updated += "## TL;DR\n" + line
+            primary_changed = True
 
-        completed_ids = [t.get("task_id") for t in tasks if t.get("status") == "success"]
-        blocked_ids = [t.get("task_id") for t in tasks if t.get("status") == "needs_intervention"]
-        pending_ids = [t.get("task_id") for t in tasks if t.get("status") == "pending"]
-        packed_feedback = "\n".join([
-            "=== Interrupted Report ===",
-            report_text or "(none)",
-            "",
-            "=== Progress Summary ===",
-            f"Completed task_ids: {', '.join([tid for tid in completed_ids if tid]) or '(none)'}",
-            f"Blocked task_ids: {', '.join([tid for tid in blocked_ids if tid]) or '(none)'}",
-            f"Pending task_ids: {', '.join([tid for tid in pending_ids if tid]) or '(none)'}",
-            "",
-            "=== Human Feedback ===",
-            feedback,
-            "",
-            "Instruction: produce a plan ONLY for remaining work; do not repeat completed tasks unless requested.",
-        ])
-        packed_feedback_path = hitl_dir / "packed_feedback.txt"
-        packed_feedback_path.write_text(packed_feedback, encoding="utf-8")
+        lines = updated.splitlines()
+        compacted: List[str] = []
+        seen_change_log = False
+        for raw in lines:
+            if raw.strip() == "## Change log":
+                if seen_change_log:
+                    continue
+                seen_change_log = True
+            compacted.append(raw)
+        updated = "\n".join(compacted)
 
-        new_plan = self.revise_plan(user_request, plan, packed_feedback, log_llm=log_llm)
+        if primary_changed:
+            ts = datetime.utcnow().strftime("%Y-%m-%d")
+            entry = f"- [{ts}] {goal}"
+            if "## Change log" not in updated:
+                updated = updated.rstrip()
+                if updated:
+                    updated += "\n\n"
+                updated += "## Change log\n"
+            if entry not in updated:
+                updated = updated.rstrip() + "\n" + entry + "\n"
 
-        review_state = {
-            "user_request": user_request,
-            "plan": new_plan,
-            "feedback_history": [{
-                "round": 0,
-                "feedback": packed_feedback,
-                "approved": False,
-                "plan_before": plan,
-                "plan_after": new_plan,
-                "kind": "hitl_packed",
-            }],
-            "approved": False,
-            "round": 0,
-        }
-
-        if plan_feedback_provider is None and not self.reporter.is_live():
-            raise ValueError("plan_review requires a live reporter (WebUI). Start WebUI or provide feedback provider.")
-
-        while not review_state.get("approved"):
-            plan_description = (review_state["plan"].get("plan_description") or "").strip()
-            self._emit("PLAN_REVIEW_SHOW", category="plan", payload={
-                "todo": review_state["plan"].get("todo", []),
-                "plan_description_snippet": self._snippet(plan_description, 240),
-            })
-            self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan")
-            if plan_feedback_provider:
-                feedback = plan_feedback_provider({
-                    **review_state,
-                    "stage": "hitl_plan_review",
-                    "hitl": hitl_meta,
-                })
-                used_ui_prompt = False
-            else:
-                if hasattr(self.reporter, "prompt_plan_feedback") and self.reporter.is_live():
-                    feedback = self.reporter.prompt_plan_feedback(
-                        todo=review_state["plan"].get("todo", []),
-                        plan_description=plan_description,
-                    )
-                    used_ui_prompt = True
-                else:
-                    print("\n=== Proposed Plan (HITL) ===")
-                    print("Plan Description:")
-                    print(plan_description if plan_description else "(none)")
-                    print("\nTherefore, Here is a proposed plan:")
-                    for i, item in enumerate(review_state["plan"].get("todo", []), start=1):
-                        print(f"{i}. {item}")
-                    print("\nEnter feedback to revise, or type 'yes' to approve:")
-                    feedback = input("> ").strip()
-                    used_ui_prompt = False
-            if not feedback:
-                if plan_feedback_provider:
-                    raise ValueError("HITL plan_review feedback cannot be empty")
-                if not used_ui_prompt:
-                    print("Empty input. Please enter feedback to revise, or type 'yes' to approve.")
-                self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan", payload={"error": "empty_input"})
-                continue
-            review_state = self.apply_plan_feedback(review_state, feedback, log_llm=log_llm)
-
-        new_plan = review_state["plan"]
-        revised_plan_path = hitl_dir / "revised_plan.json"
-        revised_plan_path.write_text(json.dumps(new_plan, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        for task in tasks:
-            if task.get("status") in {"pending", "running"}:
-                task["status"] = "skipped_deprecated"
-
-        next_index = self._next_task_index(tasks)
-        for item in new_plan.get("todo", []) or []:
-            tasks.append({
-                "task_id": f"task_{next_index:02d}",
-                "goal": str(item),
-                "status": "pending",
-            })
-            next_index += 1
-
-        status = "running"
-        self._write_task_state({
-            "user_request": user_request,
-            "plan": new_plan,
-            "tasks": tasks,
-            "observations": observations,
-            "status": status,
-            "hitl": {
-                **hitl_meta,
-                "packed_feedback": self._rel_run_path(packed_feedback_path),
-                "revised_plan": self._rel_run_path(revised_plan_path),
-                "whiteboard_ops": self._rel_run_path(ops_file),
-            },
-        })
-
-        return {
-            "status": status,
-            "plan": new_plan,
-            "tasks": tasks,
-            "observations": observations,
-            "summary": summary,
-            "report_path": report_path,
-            "hitl_dir": str(hitl_dir),
-        }
-
-    def _summarize_and_update_whiteboard(
-        self,
-        summarizer: TaskSummarizer,
-        *,
-        task_id: str,
-        task_goal: str,
-        step_result: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        finish_reason = step_result.get("finish_reason", "")
-        local_observations = step_result.get("local_observations", [])
-        final_output_text = str(step_result.get("output_text") or "")
-        whiteboard_text = self.whiteboard.read()
-        error = None
-        self._emit("TASK_SUMMARIZE_START", category="summary", task_id=task_id, payload={
-            "task_goal": self._snippet(task_goal, 200),
-        })
-        result = self._run_task_summarizer(
-            summarizer,
-            task_id=task_id,
-            task_goal=task_goal,
-            finish_reason=finish_reason,
-            local_observations=local_observations,
-            final_output_text=final_output_text,
-            whiteboard_text=whiteboard_text,
-            error=error,
-            use_repair_prompt=False,
-        )
-        if result is None:
-            fallback_before = self.whiteboard.get_hash()
-            fallback_summary = "Task summarizer failed; journal entry added for manual review."
-            self._append_journal_entry(
-                task_id=task_id,
-                outcome="needs_intervention",
-                summary=fallback_summary,
-                key_artifacts=[],
-            )
-            fallback_after = self.whiteboard.get_hash()
-            self._trace_whiteboard_update(
-                task_id=task_id,
-                ops_path="",
-                diff_path="",
-                status="summary_failed",
-                errors=["summary_failed"],
-                warnings=[],
-                before_hash=fallback_before,
-                after_hash=fallback_after,
-                repair_attempt=0,
-            )
-            self._emit("TASK_SUMMARY", category="summary", task_id=task_id, payload={
-                "outcome": "needs_intervention",
-                "summary_snippet": self._snippet(fallback_summary, 200),
-                "artifacts": [],
-                "ops_counts": self._count_ops([]),
-            })
-            self._emit("WHITEBOARD_APPLY_FAIL", level="warning", category="summary", task_id=task_id, payload={
-                "error": "summary_failed",
-            })
-            return {
-                "task_outcome": "needs_intervention",
-                "task_summary": fallback_summary,
-                "key_artifacts": [],
-                "whiteboard_ops": [],
-                "ops_failed": True,
-                "summary_failed": True,
-            }
-
-        attempt = 0
-        self._emit("TASK_SUMMARY", category="summary", task_id=task_id, payload={
-            "outcome": result.get("task_outcome", ""),
-            "summary_snippet": self._snippet(result.get("task_summary", ""), 200),
-            "artifacts": [item.get("path", "") for item in result.get("key_artifacts", [])][:5],
-            "ops_counts": self._count_ops(result.get("whiteboard_ops", [])),
-        })
-        while attempt <= self.patch_repair_attempts:
-            ops = [op for op in result.get("whiteboard_ops", []) if op.get("section") != "Goal"]
-            dropped_goal_ops = len(result.get("whiteboard_ops", [])) - len(ops)
-            ops_path = whiteboard_ops_persist(
-                ops,
-                {"run_id": self.run_context.run_id, "task_id": task_id, "attempt": attempt},
-                root=system_root(workspace=self.run_context.workspace),
-            )["ops_path"]
-            before_hash = self.whiteboard.get_hash()
-            self._emit("WHITEBOARD_APPLY_START", category="summary", task_id=task_id, payload={
-                "ops_count": len(ops),
-                "attempt": attempt,
-            })
-            validation = whiteboard_ops_validate(ops)
-            if not validation.get("ok"):
-                error = "; ".join(validation.get("errors", []))
-                self._trace_whiteboard_update(
-                    task_id=task_id,
-                    ops_path=ops_path,
-                    diff_path="",
-                    status="ops_validation_failed",
-                    errors=validation.get("errors", []),
-                    warnings=validation.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
-                    before_hash=before_hash,
-                    after_hash=None,
-                    repair_attempt=attempt,
-                )
-                self._emit("WHITEBOARD_APPLY_FAIL", level="warning", category="summary", task_id=task_id, payload={
-                    "error": error,
-                    "warnings": validation.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
-                    "attempt": attempt,
-                })
-                attempt += 1
-                whiteboard_text = self.whiteboard.read()
-                result = self._run_task_summarizer(
-                    summarizer,
-                    task_id=task_id,
-                    task_goal=task_goal,
-                    finish_reason=finish_reason,
-                    local_observations=local_observations,
-                    final_output_text=final_output_text,
-                    whiteboard_text=whiteboard_text,
-                    error=error,
-                    use_repair_prompt=True,
-                ) or result
-                continue
-
-            try:
-                apply_result = whiteboard_ops_apply_atomic(self.whiteboard.path, ops, task_id)
-            except Exception as exc:
-                apply_result = {"ok": False, "errors": [str(exc)], "warnings": []}
-
-            if apply_result.get("ok"):
-                diff_path = ""
-                final_text = apply_result.get("after_text", "")
-                artifacts = [item.get("path", "") for item in result.get("key_artifacts", []) if item.get("path")]
-                journal_text = append_task_journal_entry(
-                    final_text,
-                    task_id=task_id,
-                    outcome=result.get("task_outcome", ""),
-                    summary=result.get("task_summary", ""),
-                    artifacts=artifacts,
-                )
-                if journal_text != final_text:
-                    self.whiteboard.path.write_text(journal_text, encoding="utf-8")
-                self._emit("TASK_JOURNAL_APPEND", category="summary", task_id=task_id, payload={
-                    "outcome": result.get("task_outcome", ""),
-                    "summary_snippet": self._snippet(result.get("task_summary", ""), 220),
-                    "artifacts": artifacts[:8],
-                    "journal_entry_snippet": self._snippet(
-                        f"{result.get('task_outcome', '')}: {result.get('task_summary', '')}",
-                        260,
-                    ),
-                })
-                after_hash = self.whiteboard.get_hash()
-                try:
-                    diff_path = persist_whiteboard_diff(
-                        apply_result.get("before_text", ""),
-                        journal_text,
-                        {"run_id": self.run_context.run_id, "task_id": task_id, "attempt": attempt},
-                        root=system_root(workspace=self.run_context.workspace),
-                        whiteboard_path=self.whiteboard.path,
-                    )["diff_path"]
-                except Exception:
-                    diff_path = ""
-                self._trace_whiteboard_update(
-                    task_id=task_id,
-                    ops_path=ops_path,
-                    diff_path=diff_path,
-                    status="applied",
-                    errors=[],
-                    warnings=apply_result.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
-                    before_hash=apply_result.get("before_hash"),
-                    after_hash=after_hash,
-                    repair_attempt=attempt,
-                )
-                self._emit("WHITEBOARD_APPLY_OK", category="summary", task_id=task_id, payload={
-                    "counts": self._count_ops(ops),
-                    "warnings": apply_result.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
-                    "attempt": attempt,
-                })
-                result["ops_path"] = ops_path
-                result["diff_path"] = diff_path
-                return result
-
-            error = "; ".join(apply_result.get("errors", []))
-            self._trace_whiteboard_update(
-                task_id=task_id,
-                ops_path=ops_path,
-                diff_path="",
-                status="apply_failed",
-                errors=apply_result.get("errors", []),
-                warnings=apply_result.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
-                before_hash=before_hash,
-                after_hash=None,
-                repair_attempt=attempt,
-            )
-            self._emit("WHITEBOARD_APPLY_FAIL", level="warning", category="summary", task_id=task_id, payload={
-                "error": error,
-                "warnings": apply_result.get("warnings", []) + (["Dropped Goal ops"] if dropped_goal_ops else []),
-                "attempt": attempt,
-            })
-            attempt += 1
-            whiteboard_text = self.whiteboard.read()
-            result = self._run_task_summarizer(
-                summarizer,
-                task_id=task_id,
-                task_goal=task_goal,
-                finish_reason=finish_reason,
-                local_observations=local_observations,
-                final_output_text=final_output_text,
-                whiteboard_text=whiteboard_text,
-                error=error,
-                use_repair_prompt=True,
-            ) or result
-
-        fallback_before = self.whiteboard.get_hash()
-        self._append_journal_entry(
-            task_id=task_id,
-            outcome=result["task_outcome"],
-            summary=result["task_summary"],
-            key_artifacts=result["key_artifacts"],
-        )
-        fallback_after = self.whiteboard.get_hash()
-        self._trace_whiteboard_update(
-            task_id=task_id,
-            ops_path="",
-            diff_path="",
-            status="ops_failed",
-            errors=[error or "ops_failed"],
-            warnings=[],
-            before_hash=fallback_before,
-            after_hash=fallback_after,
-            repair_attempt=attempt,
-        )
-        self._emit("WHITEBOARD_APPLY_FAIL", level="warning", category="summary", task_id=task_id, payload={
-            "error": error or "ops_failed",
-            "attempt": attempt,
-        })
-        result["ops_failed"] = True
-        return result
-
-    def _initialize_whiteboard_goal(self, user_request: str) -> None:
-        try:
-            text = self.whiteboard.read()
-        except Exception:
-            return
-        lines = text.splitlines()
-        bounds = None
-        try:
-            bounds = _section_bounds(lines)
-        except Exception:
-            bounds = None
-        if not bounds or "Goal" not in bounds:
-            return
-        start, end = bounds["Goal"]
-        body = [line for line in lines[start + 1:end] if line.strip()]
-        if any(line.strip() not in {"- (empty)", "- (none)"} for line in body):
-            return
-        goal_text = " ".join(user_request.strip().split())
-        if not goal_text:
-            return
-        lines[start + 1:end] = [f"- {goal_text}"]
-        updated = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
-        self.whiteboard.path.write_text(updated, encoding="utf-8")
-
-    def _run_task_summarizer(
-        self,
-        summarizer: TaskSummarizer,
-        *,
-        task_id: str,
-        task_goal: str,
-        finish_reason: str,
-        local_observations: List[Dict[str, Any]],
-        final_output_text: str,
-        whiteboard_text: str,
-        error: Optional[str],
-        use_repair_prompt: bool,
-    ) -> Optional[Dict[str, Any]]:
-        last_error = error
-        for attempt in range(self.summary_repair_attempts + 1):
-            self._emit("LLM_CALL_START", category="llm", task_id=task_id, payload={
-                "kind": "task_summary",
-                "attempt": attempt,
-            })
-            t0 = time.perf_counter()
-            try:
-                result = summarizer.run(
-                    task_id=task_id,
-                    task_goal=task_goal,
-                    finish_reason=finish_reason,
-                    local_observations=local_observations,
-                    final_output_text=final_output_text,
-                    whiteboard_text=whiteboard_text,
-                    error=last_error,
-                    use_repair_prompt=use_repair_prompt or attempt > 0,
-                )
-            except Exception as exc:
-                elapsed_ms = int((time.perf_counter() - t0) * 1000)
-                payload = {
-                    "kind": "task_summary",
-                    "attempt": attempt,
-                    "elapsed_ms": elapsed_ms,
-                    "error": str(exc),
-                }
-                if self._ui_debug():
-                    payload["raw_snippet"] = self._snippet(getattr(summarizer, "last_raw", ""), 240)
-                self._emit("LLM_CALL_END", level="warning", category="llm", task_id=task_id, payload=payload)
-                last_error = str(exc)
-                continue
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
-            payload = {
-                "kind": "task_summary",
-                "attempt": attempt,
-                "elapsed_ms": elapsed_ms,
-            }
-            if self._ui_debug():
-                payload["raw_snippet"] = self._snippet(getattr(summarizer, "last_raw", ""), 240)
-            self._emit("LLM_CALL_END", category="llm", task_id=task_id, payload=payload)
-            return result
-        return None
-
-    def _trace_whiteboard_update(
-        self,
-        *,
-        task_id: str,
-        ops_path: str,
-        diff_path: str,
-        status: str,
-        errors: List[str],
-        warnings: List[str],
-        before_hash: Optional[str],
-        after_hash: Optional[str],
-        repair_attempt: int,
-    ) -> None:
-        self.trace_store.append_patch({
-            "task_id": task_id,
-            "role": "manager",
-            "whiteboard_path": str(self.whiteboard.path),
-            "ops_path": ops_path,
-            "diff_path": diff_path,
-            "status": status,
-            "errors": errors,
-            "warnings": warnings,
-            "before_hash": before_hash,
-            "after_hash": after_hash,
-            "repair_attempt": repair_attempt,
-        })
-
-    def _append_journal_entry(
-        self,
-        *,
-        task_id: str,
-        outcome: str,
-        summary: str,
-        key_artifacts: List[Dict[str, Any]],
-    ) -> None:
-        text = self.whiteboard.read()
-        artifacts = [item.get("path", "") for item in key_artifacts if item.get("path")]
-        updated = append_task_journal_entry(
-            text,
-            task_id=task_id,
-            outcome=outcome,
-            summary=summary,
-            artifacts=artifacts,
-        )
-        self.whiteboard.path.write_text(updated, encoding="utf-8")
-        self._emit("TASK_JOURNAL_APPEND", category="summary", task_id=task_id, payload={
-            "outcome": outcome,
-            "summary_snippet": self._snippet(summary, 220),
-            "artifacts": artifacts[:8],
-            "journal_entry_snippet": self._snippet(f"{outcome}: {summary}", 260),
-        })
+        normalized = updated.rstrip() + "\n"
+        if normalized != (original.rstrip() + "\n"):
+            goal_path.write_text(normalized, encoding="utf-8")
 
     def _compile_tasks(self, todo: List[str]) -> List[Dict[str, Any]]:
         tasks: List[Dict[str, Any]] = []
@@ -3104,15 +2939,15 @@ class Orchestrator:
     def _summarize_tasks(self, user_request: str, observations: List[Dict[str, Any]], status: str) -> str:
         fallback = self._summarize_tasks_fallback(user_request, observations)
         try:
-            whiteboard_excerpt = self.whiteboard.read()
+            memory_index_excerpt = self.memory_store.read_index(max_lines=200, max_chars=12000)
         except Exception:
-            whiteboard_excerpt = ""
+            memory_index_excerpt = ""
         artifacts = self._artifact_log_excerpt(limit=200)
         try:
             messages = self.summary_prompt.format_messages(
                 user_request=user_request,
                 observations=json.dumps(observations, ensure_ascii=False),
-                whiteboard_excerpt=whiteboard_excerpt,
+                memory_index_excerpt=memory_index_excerpt,
                 artifacts=json.dumps(artifacts, ensure_ascii=False),
                 status=status,
             )
@@ -3143,32 +2978,55 @@ class Orchestrator:
         return "\n".join(lines)
 
     def _artifact_log_excerpt(self, limit: int = 200) -> List[Dict[str, Any]]:
-        return self._whiteboard_file_records(limit=limit)
+        return self.memory_store.artifact_index(limit=limit)
 
-    @staticmethod
-    def _count_ops(ops: List[Dict[str, Any]]) -> Dict[str, int]:
-        counts = {
-            "FACT": 0,
-            "FILE": 0,
-            "CONSTRAINT": 0,
-            "QUESTION": 0,
-            "DEPRECATE": 0,
+    def _resolve_task_goal_from_decision(self, decision: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        packet = decision.get("task_packet")
+        if isinstance(packet, dict):
+            goal = str(packet.get("goal") or "").strip()
+            if not goal:
+                raise ValueError("Director PerformNextTask missing task_packet.goal")
+            success = str(packet.get("success_criteria") or "").strip()
+            outputs = self._clean_text_list(packet.get("expected_outputs"))
+            hints = self._clean_text_list(packet.get("memory_hints"))
+            paths = self._clean_text_list(packet.get("path_hints"))
+            suggested_tools = self._normalize_suggested_tools(packet.get("suggested_tools"))
+            rendered = [goal]
+            if success:
+                rendered.append(f"Success criteria: {success}")
+            if outputs:
+                rendered.append("Expected outputs: " + "; ".join(outputs))
+            if hints:
+                rendered.append("Memory hints: " + ", ".join(hints))
+            if paths:
+                rendered.append("Path hints: " + ", ".join(paths))
+            task_goal = self._with_suggested_tools_hint(" ".join(rendered), suggested_tools)
+            packet_norm = {
+                "goal": goal,
+                "success_criteria": success,
+                "expected_outputs": outputs,
+                "memory_hints": hints,
+                "path_hints": paths,
+                "suggested_tools": suggested_tools,
+            }
+            return task_goal, packet_norm
+
+        task_goal_raw = decision.get("next_task_goal")
+        if not task_goal_raw:
+            raise ValueError("Director PerformNextTask missing next_task_goal")
+        task_goal = self._with_suggested_tools_hint(
+            task_goal_raw,
+            decision.get("suggested_tools"),
+        )
+        packet_norm = {
+            "goal": str(task_goal_raw).strip(),
+            "success_criteria": str(decision.get("success_criteria") or "").strip(),
+            "expected_outputs": self._clean_text_list(decision.get("expected_outputs")),
+            "memory_hints": [],
+            "path_hints": [],
+            "suggested_tools": self._normalize_suggested_tools(decision.get("suggested_tools")),
         }
-        for op in ops or []:
-            if not isinstance(op, dict):
-                continue
-            op_type = str(op.get("op", "")).upper()
-            if op_type == "DEPRECATE":
-                counts["DEPRECATE"] += 1
-                continue
-            record_type = str(op.get("record_type", "")).upper()
-            if record_type in {"FACT", "FILE", "CONSTRAINT"}:
-                counts[record_type] += 1
-                continue
-            section = str(op.get("section", "")).strip().lower()
-            if section in {"open questions", "open question", "questions", "question"}:
-                counts["QUESTION"] += 1
-        return counts
+        return task_goal, packet_norm
 
     @staticmethod
     def _with_suggested_tools_hint(task_goal: Any, suggested_tools: Any) -> str:
@@ -3224,14 +3082,14 @@ class Orchestrator:
             encoding="utf-8",
         )
 
-        whiteboard_src = self.whiteboard.path
-        run_whiteboard_dst = run_reports_dir / "WHITEBOARD.md"
+        memory_src = self.memory_store.index_path
+        run_memory_dst = run_reports_dir / "MEMORY.md"
         try:
-            shutil.copy2(whiteboard_src, run_whiteboard_dst)
+            shutil.copy2(memory_src, run_memory_dst)
         except Exception:
             # Best-effort copy
-            if whiteboard_src.exists():
-                run_whiteboard_dst.write_text(whiteboard_src.read_text(encoding="utf-8"), encoding="utf-8")
+            if memory_src.exists():
+                run_memory_dst.write_text(memory_src.read_text(encoding="utf-8"), encoding="utf-8")
 
         latest_run_copy = reports_dir / "latest_run"
         try:
@@ -3256,22 +3114,44 @@ class Orchestrator:
                 pass
             (latest_run_copy / "reports").mkdir(parents=True, exist_ok=True)
             shutil.copy2(run_final_report, latest_run_copy / "reports" / "FINAL_REPORT.md")
-            if run_whiteboard_dst.exists():
-                shutil.copy2(run_whiteboard_dst, latest_run_copy / "reports" / "WHITEBOARD.md")
+            if run_memory_dst.exists():
+                shutil.copy2(run_memory_dst, latest_run_copy / "reports" / "MEMORY.md")
             (latest_run_copy / "SOURCE_RUN_DIR.txt").write_text(str(self.run_context.run_dir), encoding="utf-8")
+
+        self._write_latest_run_readme(latest_run_copy)
 
         return {
             "run_dir": str(self.run_context.run_dir),
-            # Backward-compatible aliases (existing callers use these keys).
             "final_report": str(run_final_report),
-            "whiteboard_report": str(run_whiteboard_dst),
+            "memory_report": str(run_memory_dst),
             # Explicit run-scoped report paths.
             "run_final_report": str(run_final_report),
-            "run_whiteboard_report": str(run_whiteboard_dst),
+            "run_memory_report": str(run_memory_dst),
             # Workspace-level latest run snapshot (copy, not symlink).
             "latest_link": str(latest_run_copy),
             "workspace_latest_link": str(latest_run_copy),
         }
+
+    def _write_latest_run_readme(self, latest_run_copy: Path) -> None:
+        readme = latest_run_copy / "README.md"
+        text = "\n".join([
+            "# latest_run snapshot",
+            "",
+            "This directory is an audit/debug snapshot of the most recent run.",
+            "It is not canonical memory for planning.",
+            "",
+            "Preferred sources for agent context:",
+            "- files/MEMORY/**",
+            "- reports/FINAL_REPORT.md",
+            "",
+            "Open files here only when debugging or when a specific evidence pointer is missing.",
+            "",
+        ])
+        try:
+            readme.parent.mkdir(parents=True, exist_ok=True)
+            readme.write_text(text, encoding="utf-8")
+        except Exception:
+            return
 
     def _messages_to_dict(self, messages: List[Any]) -> List[Dict[str, Any]]:
         formatted: List[Dict[str, Any]] = []

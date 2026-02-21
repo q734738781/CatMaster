@@ -1,65 +1,49 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Context pack builder for deterministic task context assembly.
-"""
+"""Context pack builder for file-based memory with progressive disclosure."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
-import re
+from typing import Dict, Optional
 
-from catmaster.runtime.whiteboard import WhiteboardStore
+from catmaster.runtime.memory_store import MemoryStore
 from catmaster.tools.base import workspace_root
 
 
 @dataclass(frozen=True)
 class ContextPackPolicy:
-    max_whiteboard_chars: int = 8000
+    memory_head_lines: int = 200
+    max_memory_chars: int = 12000
     max_artifacts: int = 50
-    include_journal: bool = False
-    max_journal_chars: int = 2000
+    inject_goal_for_worker: bool = False
 
 
 class ContextPackBuilder:
-    def __init__(self, whiteboard: WhiteboardStore):
-        self.whiteboard = whiteboard
+    def __init__(self, memory: MemoryStore):
+        self.memory = memory
 
-    def build(self, task_goal: str, role: str, *, policy: Optional[ContextPackPolicy] = None) -> Dict[str, str]:
+    def build(self, task_goal: str, role: str, *, policy: Optional[ContextPackPolicy] = None) -> Dict[str, object]:
         policy = policy or ContextPackPolicy()
-        if role == "task_runner":
-            core_sections = ["Key Facts", "Key Files/Folders", "Constraints", "Open Questions"]
-        else:
-            core_sections = ["Goal", "Key Facts", "Key Files/Folders", "Constraints", "Open Questions"]
-        core_excerpt = self.whiteboard.read_sections(core_sections, max_chars=policy.max_whiteboard_chars)
+        memory_excerpt = self.memory.read_index(
+            max_lines=policy.memory_head_lines,
+            max_chars=policy.max_memory_chars,
+        )
+        constraints = _extract_top_constraints(memory_excerpt)
+        artifacts = self.memory.artifact_index(limit=policy.max_artifacts)
+        files_root = workspace_root(self.memory.workspace)
 
-        journal_excerpt = ""
-        if policy.include_journal:
-            journal_excerpt = self.whiteboard.read_sections(["Journal"], max_chars=policy.max_journal_chars)
+        if role == "task_runner" and not policy.inject_goal_for_worker:
+            memory_excerpt = _remove_goal_pointer(memory_excerpt)
 
-        key_files = _parse_key_files(core_excerpt)
-        project_space = self.whiteboard.path.parent.parent
-        files_root = workspace_root(project_space)
-        artifact_slice = _key_files_artifacts(key_files, policy.max_artifacts)
-
-        constraints = self.whiteboard.read_sections(["Constraints"])
-        workspace_policy = _workspace_policy_summary(role, files_root=str(files_root))
         return {
             "task_goal": task_goal,
             "role": role,
             "workspace_root": str(files_root),
-            "whiteboard_excerpt": _with_current_state_header(core_excerpt, journal_excerpt),
-            "artifact_slice": artifact_slice,
+            "memory_index_excerpt": memory_excerpt,
+            "artifact_slice": artifacts,
             "constraints": constraints,
-            "workspace_policy": workspace_policy,
+            "workspace_policy": _workspace_policy_summary(role, files_root=str(files_root)),
         }
-
-
-def _with_current_state_header(core_excerpt: str, journal_excerpt: str) -> str:
-    chunks = ["## Current State", core_excerpt]
-    if journal_excerpt:
-        chunks.append(journal_excerpt)
-    return "\n\n".join(chunk for chunk in chunks if chunk).strip()
 
 
 def _workspace_policy_summary(role: str, *, files_root: str) -> str:
@@ -68,43 +52,47 @@ def _workspace_policy_summary(role: str, *, files_root: str) -> str:
         f"- Current files root: {files_root}\n"
         "- Tool path params are resolved relative to this files root.\n"
         "- Metadata is internal; do not read or write metadata paths from tasks.\n"
-        "- Reuse existing artifacts; avoid scanning the full workspace.\n"
+        "- Use progressive disclosure: locate with rg, then read small excerpts with sed/head/tail.\n"
+        "- Do not cat large files into context. Persist large outputs and cite paths.\n"
         f"- Role: {role}"
     )
 
 
-def _parse_key_files(whiteboard_excerpt: str) -> List[str]:
-    paths: List[str] = []
-    pattern = re.compile(r"^\s*(?:-\s*)?FILE\[[^\]]+\]\s*:\s*([^|]+)")
-    for raw in whiteboard_excerpt.splitlines():
-        match = pattern.match(raw)
-        if not match:
+def _remove_goal_pointer(text: str) -> str:
+    lines = []
+    for raw in text.splitlines():
+        if raw.strip().lower().startswith("- goal / principles:"):
             continue
-        path_part = match.group(1).strip()
-        if path_part:
-            paths.append(path_part)
-    return paths
+        lines.append(raw)
+    return "\n".join(lines)
 
 
-def _key_files_artifacts(
-    key_files: List[str],
-    limit: int,
-) -> List[Dict[str, str]]:
-    merged: List[Dict[str, str]] = []
-    seen = set()
-    for path in key_files:
-        if path in seen:
+def _extract_top_constraints(memory_excerpt: str) -> str:
+    section_started = False
+    items: list[str] = []
+    for raw in memory_excerpt.splitlines():
+        line = raw.strip()
+        if not section_started:
+            if line.lower().startswith("## top constraints"):
+                section_started = True
             continue
-        merged.append({
-            "path": path,
-            "kind": "input",
-            "description": "Whiteboard key file/folder",
-            "type": "dir" if path.endswith("/") else "file",
-        })
-        seen.add(path)
-        if len(merged) >= limit:
+        if line.startswith("## "):
             break
-    return merged
+        if not line:
+            continue
+        if line.startswith("- "):
+            text = line[2:].strip()
+        elif "." in line and line[0].isdigit():
+            _, _, text = line.partition(".")
+            text = text.strip()
+        else:
+            continue
+        if not text or text.lower() == "(empty)":
+            continue
+        items.append(f"- {text}")
+    if not items:
+        return "(none)"
+    return "\n".join(items)
 
 
 __all__ = ["ContextPackBuilder", "ContextPackPolicy"]

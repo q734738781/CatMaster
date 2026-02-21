@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 from types import SimpleNamespace
 
 sys.modules.setdefault("langchain_openai", types.SimpleNamespace(ChatOpenAI=object))
-if "langchain_core.prompts" not in sys.modules:
+if importlib.util.find_spec("langchain_core.prompts") is None and "langchain_core.prompts" not in sys.modules:
     _lc_prompts = types.ModuleType("langchain_core.prompts")
 
     class _FakeChatPromptTemplate:
@@ -21,6 +22,7 @@ if "langchain_core.prompts" not in sys.modules:
 
 from catmaster.agents.orchestrator import Orchestrator
 from catmaster.llm.config import LLMConfig, LLMProfile, ToolCallingConfig
+from catmaster.runtime.tool_policy import ToolPolicy
 
 
 def _orchestrator_for_kwargs(profile: LLMProfile) -> Orchestrator:
@@ -108,3 +110,35 @@ def test_orchestrator_proposal_function_tools_disabled_returns_empty() -> None:
     tools = orch._proposal_function_tools()
 
     assert tools == []
+
+
+def test_orchestrator_tool_schema_respects_policy_filter() -> None:
+    profile = LLMProfile(
+        main=LLMConfig(
+            tool_calling=ToolCallingConfig(),
+        )
+    )
+    orch = _orchestrator_for_kwargs(profile)
+    orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
+        {"name": "bash_exec"},
+        {"name": "memory_apply_aider_edits"},
+    ])
+    orch.tool_policy = ToolPolicy(denied_tools={"memory_apply_aider_edits"})
+
+    class _Registry:
+        @staticmethod
+        def get_tool_descriptions_for_llm(allowlist=None):
+            return "\n".join(allowlist or [])
+
+        @staticmethod
+        def get_short_tool_descriptions_for_llm(allowlist=None):
+            return "\n".join(allowlist or [])
+
+    orch.registry = _Registry()
+
+    text = orch._tool_schema()
+    short = orch._tool_schema_short()
+    assert "bash_exec" in text
+    assert "bash_exec" in short
+    assert "memory_apply_aider_edits" not in text
+    assert "memory_apply_aider_edits" not in short

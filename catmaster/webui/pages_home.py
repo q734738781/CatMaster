@@ -50,8 +50,8 @@ _HOME_CSS = """
 
 
 def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme: Optional[Any] = None) -> gr.Blocks:
-    def _prompt_box_for_resume(resume: bool) -> Dict[str, Any]:
-        if resume:
+    def _prompt_box_for_mode(run_mode: str) -> Dict[str, Any]:
+        if run_mode == "resume_selected_run":
             return gr.update(
                 label="Interrupt Guidance (optional)",
                 placeholder=(
@@ -72,7 +72,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
             f"</div>"
         )
 
-    def _on_load(request: gr.Request) -> Tuple[str, str, gr.Dropdown, str, str, str, str, str, str]:
+    def _on_load(request: gr.Request) -> Tuple[str, str, gr.Dropdown, str, str, str, str, str, str, gr.Dropdown]:
         params = dict(getattr(request, "query_params", {}) or {})
         state = registry.bootstrap(
             ctx=params.get("ctx"),
@@ -99,6 +99,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
             run_info,
             final_report,
             selected,
+            gr.update(choices=runs, value=selected or None),
         )
 
     def _refresh_workspaces(root_path: str, ctx: str) -> Tuple[gr.Dropdown, str, str, str]:
@@ -139,7 +140,8 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
     def _start_run(
         prompt: str,
         lane: str,
-        resume: bool,
+        run_mode: str,
+        resume_run_name: str,
         plan_review: bool,
         log_llm: bool,
         full_auto_major: bool,
@@ -149,10 +151,29 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         return session.start_run(
             prompt=prompt,
             lane=lane,
-            resume=resume,
+            run_mode=run_mode,
+            resume_run_name=resume_run_name,
             plan_review=plan_review,
             log_llm=log_llm,
             full_auto_major=full_auto_major,
+        )
+
+    def _select_run(run_name: str, ctx: str) -> Tuple[str, str]:
+        selected = (run_name or "").strip()
+        if not selected:
+            return "", ""
+        session = registry.get_session(ctx)
+        msg = session.select_run(selected)
+        if msg.startswith("Invalid") or msg.startswith("Open"):
+            return msg, ""
+        return msg, selected
+
+    def _on_run_mode_change(run_mode: str, selected_run: str) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        resume_mode = run_mode == "resume_selected_run"
+        return (
+            _prompt_box_for_mode(run_mode),
+            gr.update(visible=not resume_mode),
+            gr.update(visible=resume_mode, value=(selected_run or None)),
         )
 
     def _submit_prompt(prompt_id: str, text: str, ctx: str) -> Tuple[str, str]:
@@ -169,7 +190,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         session = registry.get_session(ctx)
         return session.request_interrupt_current_run(note=note or "")
 
-    def _poll_home(ctx: str, selected_run: str) -> Tuple[str, str, str, str, Any, str, str, str]:
+    def _poll_home(ctx: str, selected_run: str) -> Tuple[str, str, str, str, Any, str, str, str, str, gr.Dropdown]:
         session = registry.get_session(ctx)
         runs = session.list_runs()
         selected = (selected_run or "").strip()
@@ -229,6 +250,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
             gr.update(visible=prompt_visible),
             prompt_id,
             selected,
+            gr.update(choices=runs, value=selected or None),
         )
 
     _ = theme
@@ -260,12 +282,19 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
                     gr.Markdown("## Prompt")
                     prompt_box = gr.Textbox(label="User Request", lines=6, placeholder="Describe what CatMaster should do.")
                     with gr.Row():
+                        run_mode_box = gr.Dropdown(
+                            label="Run Mode",
+                            choices=[("New Run", "new_run"), ("Resume Selected Run", "resume_selected_run")],
+                            value="new_run",
+                        )
                         lane_box = gr.Dropdown(label="Lane", choices=["fast", "standard"], value="standard")
+                    with gr.Row():
+                        resume_run_box = gr.Dropdown(label="Resume Run", choices=[], visible=False)
+                    with gr.Row():
                         start_btn = gr.Button("Start Run", variant="primary")
                         interrupt_btn = gr.Button("Interrupt")
                     with gr.Accordion("Advanced", open=False):
                         with gr.Row():
-                            resume_box = gr.Checkbox(label="Resume", value=False)
                             plan_review_box = gr.Checkbox(label="Plan/Proposal Review", value=True)
                             log_llm_box = gr.Checkbox(label="Log LLM", value=False)
                             full_auto_major_box = gr.Checkbox(label="Full Auto Major", value=False)
@@ -311,7 +340,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
 
         start_btn.click(
             _start_run,
-            inputs=[prompt_box, lane_box, resume_box, plan_review_box, log_llm_box, full_auto_major_box, ctx_state],
+            inputs=[prompt_box, lane_box, run_mode_box, resume_run_box, plan_review_box, log_llm_box, full_auto_major_box, ctx_state],
             outputs=[status_box],
         )
 
@@ -321,10 +350,17 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
             outputs=[status_box],
         )
 
-        resume_box.change(
-            _prompt_box_for_resume,
-            inputs=[resume_box],
-            outputs=[prompt_box],
+        run_mode_box.change(
+            _on_run_mode_change,
+            inputs=[run_mode_box, selected_run_state],
+            outputs=[prompt_box, lane_box, resume_run_box],
+            queue=False,
+        )
+
+        resume_run_box.change(
+            _select_run,
+            inputs=[resume_run_box, ctx_state],
+            outputs=[status_box, selected_run_state],
             queue=False,
         )
 
@@ -354,6 +390,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
                 prompt_group,
                 prompt_id_box,
                 selected_run_state,
+                resume_run_box,
             ],
             queue=False,
             trigger_mode="always_last",
@@ -372,6 +409,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
                 run_info,
                 final_report_md,
                 selected_run_state,
+                resume_run_box,
             ],
             queue=False,
         )

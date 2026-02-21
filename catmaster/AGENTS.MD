@@ -4,7 +4,7 @@ This repository implements **CatMaster**, a task-based orchestration system for 
 
 - The LLM produces plans and step decisions.
 - Tools perform concrete work (structure generation, batch job dispatch, file operations, parsing).
-- The runtime records events, toolcalls, artifacts, and whiteboard patches for traceability and resumability.
+- The runtime records events, toolcalls, artifacts, and memory updates for traceability and resumability.
 
 This document defines coding conventions intended for code-generation agents (e.g., Codex) to prevent style drift and to keep changes consistent with the existing architecture.
 
@@ -18,7 +18,7 @@ This document defines coding conventions intended for code-generation agents (e.
   - Orchestration, planning, task execution control, summarization, and prompt templates.
   - Only agents should directly call the LLM.
 - `catmaster/runtime/`
-  - Deterministic run state, tracing, artifact persistence, whiteboard operations, context pack building.
+  - Deterministic run state, tracing, artifact persistence, file-based memory operations, context pack building.
   - Anything involving `metadata/runs/...` lives here.
 - `catmaster/tools/`
   - All executable “capabilities” exposed to the LLM.
@@ -30,8 +30,8 @@ This document defines coding conventions intended for code-generation agents (e.
 
 - `task_state.json` is the run’s single source of truth for:
   - `user_request`, `plan`, `tasks`, `observations`, and `status`.
-- The whiteboard (`metadata/whiteboard.md`) is the durable, human-readable memory:
-  - Updated via deterministic whiteboard ops (UPSERT/DEPRECATE).
+- File-based memory (`files/MEMORY/**` + `metadata/memory/events.jsonl`) is the durable memory layer:
+  - Director merges structured task results into memory index/topics and appends immutable event logs.
 - Artifacts/toolcalls are persisted under `metadata/runs/<run_id>/...`.
 
 ---
@@ -186,16 +186,14 @@ When adding new run phases or behaviors, emit events via the Reporter to preserv
 
 ---
 
-## 7) Whiteboard and memory rules
+## 7) Memory rules
 
-- Do not directly edit `metadata/whiteboard.md` with ad-hoc text operations in new code.
-- Use whiteboard ops (UPSERT/DEPRECATE) and apply them with `whiteboard_ops_apply_atomic(...)`.
-- Allowed sections are limited (see `catmaster/runtime/whiteboard_ops.py`); do not invent new sections without updating validators, templates, and context pack builder.
-
-Whiteboard content rules:
-
-- Paths recorded in Key Files/Folders must be project-files-relative paths (no `metadata/...`).
-- Use stable IDs (FACT/FILE/CONSTRAINT identifiers) and UPSERT existing IDs when updating.
+- Do not write ad-hoc long-form memory blobs into prompts or metadata files.
+- Use `files/MEMORY/MEMORY.md` as the short index (autoload excerpt), and put details in `files/MEMORY/topics/*.md`.
+- Persist per-task memory updates via Aider SEARCH/REPLACE edit flow (`MEMORY/**` + optional `notes/**`) and apply with `memory_apply_aider_edits`.
+- `MemoryStore.merge_task_result(...)` is compatibility-only (event logging), not the canonical MEMORY updater.
+- Keep immutable audit trails in `metadata/memory/events.jsonl`.
+- Paths recorded in memory files must be project-files-relative paths (no `metadata/...`).
 
 ---
 
