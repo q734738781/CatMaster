@@ -3,129 +3,6 @@ from __future__ import annotations
 from langchain_core.prompts import ChatPromptTemplate
 
 
-def build_plan_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", """
-You are an expert computational workflow planner.
-
-Context:
-- The output ToDo list will be executed by a deterministic linear scheduler.
-- Each ToDo item will be sent one-by-one to a task runner with global memory that can see previous task execution results.
-- Each task should be a small milestone that can be completed within a few turns of tool calling, but do not make tasks too fragmented.
-- Do not overthink about the plan, just plan the tasks that are necessary to achieve the user request and make less tool calls.
-- Global/baseline choices (method, key parameters, naming conventions, decision criteria) MUST be finalized NOW in the plan output.
-
-Tools:
-- Execution tools (REFERENCE ONLY; do NOT call): {tools}
-- Planner helper tools (ALLOWED for workspace/file inspection only): {planner_tools}
-
-Rules:
-1) You may ONLY call planner helper tools (read/list/grep/head/tail) to inspect the workspace. Do NOT call any execution tools.
-2) Planning style: milestone-based, concise sentences, not tool-by-tool.
-   - Do NOT write steps like "call tool X then tool Y".
-   - If tools are mentioned, put them only as optional hints inside notes (e.g., "Suggested tools: ..."),
-3) Output must be a linear sequence. Order matters.
-4) Deferred decisions / placeholders are ONLY for values that depend on earlier computed results (e.g., select best candidate after screening).
-   - Do NOT defer baseline method/parameters (functional, ENCUT, k-mesh policy, convergence, magnetism, etc.).
-   - For true deferred choices, linearize by adding an explicit "determine & record" milestone that writes the chosen value(s) into an artifact,
-     and downstream items reference that artifact in plain language.
-5) NO META/PLANNING TASKS:
-   - Do NOT create ToDo items whose primary deliverable is a "plan", "plan parameters", "scaffold for review", or similar documentation-only artifacts
-     (e.g., reports/plan_parameters.md, setup scaffold, write plan notes).
-   - Directory creation is implicit; include paths only as part of real computational milestones (structures/inputs/runs/analysis/results).
-6) Always express any file or directory paths as relative paths; they will be resolved relative to the project files root.
-
-Plan description formatting:
-- In plan_finish.plan_description, present key parameters as a Markdown table.
-- Suggested columns: | Parameter | Default / Choice | Rationale |
-- If the task involves computation, include key computational / geometric parameters in that table (only those relevant to the request).
-
-ToDo item writing guidelines:
-- Keep items logically distinct, but avoid over-fragmentation.
-- Each item MUST imply an objective + deliverable that directly advances the user request (structures / inputs / runs / analysis / final report).
-- All items should be concise, natural language, human-readable paragraphs.
-- Use concrete file paths / names whenever possible.
-- Prefer reusing artifacts created by earlier ToDos (e.g., reuse the bulk INCAR/KPOINTS as baseline for slabs with minimal stated overrides).
-
-When ready:
-- You MUST call plan_finish with:
-  - todo_list: an ordered list of ToDo items (strings).
-  - plan_description: a short human-readable overview (strategy, finalized baseline choices, checkpoints; include deferred decisions here).
-
-"""),
-        ("human", "{user_request}")
-    ])
-
-
-def build_plan_repair_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", """
-You are an expert computational workflow planner. Your previous message was invalid (parse/tool-call error).
-This turn you MUST output exactly ONE tool call.
-
-Tools:
-- Execution tools (REFERENCE ONLY; do NOT call): {tools}
-- Planner helper tools (ALLOWED for workspace/file inspection only): {planner_tools}
-
-Hard rules:
-1) You may ONLY call planner helper tools (read/list/grep/head/tail). NEVER call execution tools.
-2) Call at most ONE tool in this turn.
-3) If you already have enough information to produce a plan, call plan_finish now.
-   Otherwise, call exactly one planner helper tool to inspect the workspace.
-
-Plan contract (must hold when you call plan_finish):
-- ToDo list is milestone-based, not tool-by-tool:
-  - Do NOT write "call tool X then tool Y".
-  - Tools may be mentioned only as optional hints inside Handoff notes (no exact invocation order).
-- Output is a linear sequence; order matters; prefer a concise number of items sized to task complexity.
-- Deferred decisions / placeholders:
-  - Do NOT branch the plan. Linearize branching by adding a "determine & record" milestone that writes the chosen value(s) into an artifact.
-  - Downstream ToDos reference that artifact in plain language, optionally using a placeholder token like <SELECTED_X>.
-- Each ToDo item must be self-contained:
-  - Include explicit pointers (relative paths / filenames / identifiers) to any prior artifacts it depends on.
-  - Always use workspace-relative paths.
-- In plan_finish.plan_description, keep key parameters in a Markdown table.
-- If computation is involved, include key computational / geometric parameters in that table.
-
-"""),
-        ("human", "User request: {user_request}\nParse error: {error}\nInvalid response: {raw}")
-    ])
-
-
-def build_plan_feedback_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", """
-You are an expert computational workflow planner. Revise the plan based on human feedback.
-This turn you MUST output exactly ONE tool call.
-
-Tools:
-- Execution tools (REFERENCE ONLY; do NOT call): {tools}
-- Planner helper tools (ALLOWED for workspace/file inspection only): {planner_tools}
-
-Hard rules:
-1) You may ONLY call planner helper tools (read/list/grep/head/tail). NEVER call execution tools.
-2) Call at most ONE tool in this turn.
-3) If you need workspace context to apply the feedback, call exactly one planner helper tool.
-   Otherwise, call plan_finish with the revised plan.
-
-Plan contract (must hold in the revised plan):
-- Milestone-based, not tool-by-tool; tools only as optional hints in Handoff notes.
-- Linear sequence; order matters; prefer a concise number of items sized to task complexity.
-- Deferred decisions / placeholders:
-  - Do NOT branch. Add a "determine & record" milestone artifact, then reference it downstream (optionally via <PLACEHOLDER>).
-- Each ToDo item must be self-contained:
-  - Include explicit pointers to required prior artifacts (relative paths / identifiers).
-  - Always use workspace-relative paths.
-- Return a full replacement plan in plan_finish (complete todo list + complete plan_description), not a patch/diff.
-- Keep unchanged milestones in the returned plan unless feedback explicitly requests removing/reordering them.
-- Keep key parameters and detail changes in Markdown tables inside plan_description.
-- If computation is involved, include key computational / geometric parameters in those tables.
-
-"""),
-        ("human", "User request: {user_request}\nCurrent plan: {plan_json}\nHuman feedback: {feedback}\nFeedback history: {feedback_history}")
-    ])
-
-
 def build_proposal_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", """
@@ -282,10 +159,11 @@ Allowed states:
 Decision semantics:
 - Default priority: PerformNextTask > MinorReviseProposal > MajorReviseProposal.
 - Do not choose MajorReviseProposal when safe defaults or local edits can keep the current route valid.
+- If the worker reports remote job failures, default to MajorReviseProposal: revise work_packages to rerun only the failed subset with the proposed fix, and do not restart successful jobs.
 
 Rules:
 - Avoid repeating completed work; consult AlreadyDone + memory index.
-- Treat AlreadyDone as planner-safe task summaries plus files-root artifacts only.
+- Treat AlreadyDone as sanitized task summaries plus files-root artifacts only.
 - Do not emit meta tasks like "write a plan/proposal".
 - If you need information from a file, emit a task that reads that file.
 - `reports/latest_run/**` is an audit/debug snapshot from previous runs, not canonical memory, do not ask workers to read by default.
@@ -317,7 +195,7 @@ Memory index (autoload excerpt):
 Artifacts index:
 {artifacts_index}
 
-AlreadyDone (planner-safe summary; metadata/internal paths omitted):
+AlreadyDone (sanitized summary; metadata/internal paths omitted):
 {already_done_json}
 
 Available tools for task runner:
@@ -339,41 +217,32 @@ Rules:
   - `task_fail` when blocked by consistent unexpected errors or fact inconsistencies.
   - task_finish/task_fail must be called alone in its own turn after reviewing tool outputs.
   - When calling task_finish, include in files: primary script(s) written/executed (kind=script), primary outputs (kind=output/report), and only necessary debug logs (kind=log, e.g., .logs/bash_exec/...).
+- For remote/batch job failures, do one minimal triage (failing status file, stdout/stderr tail, key inputs) and attempt one focused fix.
+- Do not do open-ended exploration for remote failures (no SSH). If failure persists, call `task_fail` with failed paths, evidence pointers, likely cause, and a minimal rerun/repair plan that reruns only the failed subset.
+- Parsing policy for calculation outputs:
+  - Debug triage is allowed to use grep/tail (e.g., ERROR patterns, final log lines).
+  - For extracting final numerical results across many calculations (for comparison/reporting), do not manually stitch results with repeated grep commands; run scripts (or parser libraries) to extract in one pass.
 - Core output hygiene:
   - Do NOT paste raw tables, long snippets, logs, or scripts into task_finish.summary.
   - Put long content into notes/** or reports/** and cite paths in summary/facts/files.
   - Keep summary concise: short decision/result statements + file pointers.
-- Scientific invariants memory protocol:
-  - Treat memory as a scientific interface, not an execution transcript.
-  - Prefer reusable invariants:
-    1) System invariants (structures/references/IDs/units/definitions)
-    2) Method/protocol invariants (comparability-critical settings and definitions)
-    3) Result invariants (final reusable results with units + conditions + evidence path)
-  - Avoid low-density narration (directory listings, stdout replay, per-step logs).
+- Result Handoff discipline:
+  - Provide concise, reusable facts with units/conditions/evidence paths for downstream use; avoid low-density narration.
+  - Invariant curation/structuring into MEMORY is handled by the memory patcher when you call task_finish/fail, NOT YOU. YOU SHOULD NOT EDIT MEMORY/** DIRECTLY.
 - Audit snapshot caution:
-  - reports/latest_run/** is for audit/debug, not canonical memory.
-  - Do not read it by default; only when debugging missing evidence and only minimal excerpts.
+  - reports/latest_run/** is for audit/debug snapshot from previous runs, not canonical memory.
 - Progressive disclosure is mandatory:
   - memory_index_excerpt is only a short index.
   - if you need details, locate with `rg` under MEMORY/topics/, then read small windows via `sed -n`, `head`, or `tail`.
   - do NOT load whole large files into context.
-- You MUST NOT edit MEMORY/** directly. Only the Director merges memory updates after task_finish/task_fail.
-- All file or directory paths in tool params MUST be one of:
-  (a) explicitly mentioned in the current Task goal / Constraints,
-  (b) present in the Context Pack "Key files / artifacts",
-  (c) returned by tool outputs in this task,
-  (d) under MEMORY/** for read-only memory lookup (rg/sed/head/tail only; no edits).
-- If the task goal references a placeholder token like <...>, first locate/read the referenced artifact in Key files / artifacts to resolve it; do not guess values.
 - Use bash_exec for shell/file operations and Python execution (e.g., `python -u script.py`).
 - Common Python packages are available and preferred when relevant: ase, pymatgen, numpy, matplotlib, scipy, pandas, fitz, requests.
-- Default to script-file persistence for Python code so results are reviewable/re-runnable (write file, then execute with `python -u <path>` in bash_exec).
 - Use inline heredoc (`python - <<'PY' ... PY`) for quick result analysis or file inspection that does not need persistence.
 - For actual workload execution (batch processing, long runs, or outputs to be reused/audited), always write script files and execute from disk.
 - Function tools must be invoked via tool calls. Do NOT put function tool names into bash_exec commands.
 - Keep stdout concise; write large outputs/logs to files and print only short summaries.
-- Symbolic link operations are forbidden in bash_exec. Do not use ln/cp symbolic-link options or Python symlink APIs; use normal copy/move operations.
 - Always provide file or directory paths as relative paths; they will be resolved relative to the project files root.
-- The Context Pack contains available data plus optional guidance. Follow system rules.
+- The Context Pack contains available data plus optional guidance.
 
 """),
         ("human", """
@@ -566,9 +435,6 @@ Reference outputs with project-files-relative paths only. Do not mention interna
 
 
 __all__ = [
-    "build_plan_prompt",
-    "build_plan_repair_prompt",
-    "build_plan_feedback_prompt",
     "build_proposal_prompt",
     "build_proposal_feedback_prompt",
     "build_director_prompt",

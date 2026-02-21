@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 import os
 
-from catmaster.llm.config import LLMProfile, LLMConfig
+from catmaster.llm.config import LLMProfile, LLMConfig, ToolCallingRole
 
 
 @dataclass
@@ -26,7 +26,7 @@ def _require_api_key(cfg: LLMConfig) -> str:
     raise ValueError(f"Missing API key. Set env {cfg.api_key_env!r} or provide api_key in config.")
 
 
-def _build_langchain_chat_model(cfg: LLMConfig) -> Any:
+def build_chat_model(cfg: LLMConfig) -> Any:
     if cfg.provider in ("openai", "openrouter", "oai_compatible", "deepseek"):
         from langchain_openai import ChatOpenAI
 
@@ -77,44 +77,57 @@ def _build_langchain_chat_model(cfg: LLMConfig) -> Any:
     raise ValueError(f"Unsupported provider: {cfg.provider}")
 
 
-def build_llm_bundle(profile: LLMProfile) -> LLMBundle:
-    main = profile.main
-    summary_cfg = profile.summary or profile.main
-
-    llm = _build_langchain_chat_model(main)
-    summary_llm = _build_langchain_chat_model(summary_cfg)
-
-    driver_kind = main.tool_calling.driver
+def build_tool_driver(cfg: LLMConfig) -> Any:
+    driver_kind = cfg.tool_calling.driver
     if driver_kind == "openai_responses":
         from catmaster.llm.openai_responses_driver import OpenAIResponsesDriver
 
-        tool_driver = OpenAIResponsesDriver(
-            model=main.model,
-            api_key=_require_api_key(main),
-            base_url=main.base_url,
-            default_headers=main.default_headers or None,
+        return OpenAIResponsesDriver(
+            model=cfg.model,
+            api_key=_require_api_key(cfg),
+            base_url=cfg.base_url,
+            default_headers=cfg.default_headers or None,
         )
-    elif driver_kind == "openai_chat_completions":
+    if driver_kind == "openai_chat_completions":
         from catmaster.llm.openai_chat_completions_driver import OpenAIChatCompletionsDriver
 
-        tool_driver = OpenAIChatCompletionsDriver(
-            model=main.model,
-            api_key=_require_api_key(main),
-            base_url=main.base_url,
-            default_headers=main.default_headers or None,
+        return OpenAIChatCompletionsDriver(
+            model=cfg.model,
+            api_key=_require_api_key(cfg),
+            base_url=cfg.base_url,
+            default_headers=cfg.default_headers or None,
         )
-    elif driver_kind == "langchain_bind_tools":
+    if driver_kind == "langchain_bind_tools":
         raise NotImplementedError("langchain_bind_tools driver is reserved for future providers.")
-    else:
-        raise ValueError(f"Unknown driver kind: {driver_kind}")
+    raise ValueError(f"Unknown driver kind: {driver_kind}")
+
+
+def build_role_tool_driver(profile: LLMProfile, role: ToolCallingRole) -> Any:
+    return build_tool_driver(profile.config_for_role(role))
+
+
+def build_llm_bundle(profile: LLMProfile) -> LLMBundle:
+    task_runner_cfg = profile.config_for_role("task_runner")
+    memory_patch_cfg = profile.config_for_role("memory_patch")
+    summary_cfg = profile.config_for_role("summary")
+
+    llm = build_chat_model(memory_patch_cfg)
+    summary_llm = build_chat_model(summary_cfg)
+    tool_driver = build_tool_driver(task_runner_cfg)
 
     return LLMBundle(
         llm=llm,
         summary_llm=summary_llm,
         tool_driver=tool_driver,
-        model_name=main.model,
-        provider=main.provider,
+        model_name=task_runner_cfg.model,
+        provider=task_runner_cfg.provider,
     )
 
 
-__all__ = ["LLMBundle", "build_llm_bundle"]
+__all__ = [
+    "LLMBundle",
+    "build_llm_bundle",
+    "build_chat_model",
+    "build_tool_driver",
+    "build_role_tool_driver",
+]

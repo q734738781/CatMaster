@@ -1,6 +1,7 @@
 """
 VASP input writer using pymatgen input sets.
 """
+import math
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from pymatgen.core import Structure
@@ -26,6 +27,7 @@ class StructWriter:
         use_dft_plus_u: bool = False,
         single_point: bool = False,
         compute_dos: bool = False,
+        enable_dipole: bool = False,
         run_template: Optional[Path] = None,
     ) -> None:
         """
@@ -40,6 +42,7 @@ class StructWriter:
             user_incar_overrides: User INCAR overrides
             single_point: If True, prepare static single-point settings (NSW=0, IBRION=-1).
             compute_dos: If True, keep orbital projection output (LORBIT=11); else set LORBIT=0.
+            enable_dipole: If True, default IDIPOL=3 and DIPOL to atomic center-of-mass fractional coordinates.
             run_template: Optional run.yaml template path
         """
         output_dir = resolve_workspace_path(str(output_dir))
@@ -55,6 +58,9 @@ class StructWriter:
             single_point=single_point,
             compute_dos=compute_dos,
         )
+        if enable_dipole:
+            user_incar_settings.setdefault("IDIPOL", 3)
+            user_incar_settings.setdefault("DIPOL", self._compute_com_frac_dipol(structure))
         
         # Build VASP input set; k-points handled manually to match reference logic
         vasp_input_set = MPRelaxSet(
@@ -72,6 +78,8 @@ class StructWriter:
                 changed = False
                 for key, val in user_incar_overrides.items():
                     if val is None and key in incar_obj and key not in required_overrides:
+                        if enable_dipole and str(key).strip().upper() in {"DIPOL", "IDIPOL"}:
+                            continue
                         del incar_obj[key]
                         changed = True
                 if changed:
@@ -89,6 +97,28 @@ class StructWriter:
         if run_template and run_template.exists():
             import shutil
             shutil.copy(run_template, output_dir / "run.yaml")
+
+    def _compute_com_frac_dipol(self, structure: Structure) -> Tuple[float, float, float]:
+        total_mass = 0.0
+        com_x = 0.0
+        com_y = 0.0
+        com_z = 0.0
+
+        for site in structure.sites:
+            mass = float(site.species.weight)
+            x, y, z = site.coords
+            total_mass += mass
+            com_x += mass * float(x)
+            com_y += mass * float(y)
+            com_z += mass * float(z)
+
+        if total_mass <= 0:
+            raise ValueError("Cannot compute DIPOL center of mass: total atomic mass is non-positive.")
+
+        com_cart = (com_x / total_mass, com_y / total_mass, com_z / total_mass)
+        frac = structure.lattice.get_fractional_coords(com_cart)
+        wrapped = tuple(float(v - math.floor(float(v))) for v in frac)
+        return wrapped
 
     def _build_user_incar_settings(
         self,

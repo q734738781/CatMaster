@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import time
 import uuid
 from pathlib import Path
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field
 import re
 from dpdispatcher import Machine, Resources, Task, Submission
 from catmaster.tools.execution.machine_registry import MachineRegister
+
+STATUS_FILE_NAME = ".catmaster_status.json"
 
 _DP_PATTERNS = [
     re.compile(r"^[0-9a-f]{40}_task_tag_finished$"),
@@ -131,6 +134,58 @@ def _task_state(task: Task) -> str:
     return "unknown"
 
 
+def _ensure_status_backward_files(files: List[str]) -> List[str]:
+    out = list(files or [])
+    if STATUS_FILE_NAME not in out:
+        out.append(STATUS_FILE_NAME)
+    return out
+
+
+def _wrap_command_for_dpdispatcher(command: str) -> str:
+    status_file_repr = repr(STATUS_FILE_NAME)
+    py_script = (
+        "import json\n"
+        "import os\n"
+        "import pathlib\n"
+        "import time\n"
+        "rc_raw = os.environ.get('__CM_RC', '-999').strip()\n"
+        "try:\n"
+        "    rc = int(rc_raw)\n"
+        "except Exception:\n"
+        "    rc = -999\n"
+        "def _to_float(name: str) -> float:\n"
+        "    raw = os.environ.get(name, '').strip()\n"
+        "    try:\n"
+        "        return float(raw)\n"
+        "    except Exception:\n"
+        "        return time.time()\n"
+        "data = {\n"
+        "    'returncode': rc,\n"
+        "    'command': os.environ.get('__CM_COMMAND', ''),\n"
+        "    'cwd': os.getcwd(),\n"
+        "    't_start': _to_float('__CM_T0'),\n"
+        "    't_end': _to_float('__CM_T1'),\n"
+        "}\n"
+        f"pathlib.Path({status_file_repr}).write_text(json.dumps(data, indent=2) + '\\n', encoding='utf-8')\n"
+    )
+    script = "\n".join(
+        [
+            "set -o pipefail",
+            f"__CM_COMMAND={shlex.quote(command)}",
+            "__CM_T0=$(python -c 'import time; print(time.time())')",
+            '( eval "$__CM_COMMAND" )',
+            "__CM_RC=$?",
+            "__CM_T1=$(python -c 'import time; print(time.time())')",
+            "export __CM_COMMAND __CM_RC __CM_T0 __CM_T1",
+            "python - <<'PY' || true",
+            py_script,
+            "PY",
+            "exit 0",
+        ]
+    )
+    return "bash -lc " + shlex.quote(script)
+
+
 def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None, register: Optional[MachineRegister] = None) -> DispatchResult:
     """Submit a single task through DPDispatcher and wait for completion."""
 
@@ -146,10 +201,10 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
     resources = _build_resources(res_cfg, env_setup)
 
     task = Task(
-        command=request.command,
+        command=_wrap_command_for_dpdispatcher(request.command),
         task_work_path=request.task_work_path,
         forward_files=request.forward_files,
-        backward_files=request.backward_files,
+        backward_files=_ensure_status_backward_files(request.backward_files),
     )
 
     task_list = [task]
@@ -201,10 +256,10 @@ def dispatch_submission(
 
     task_list = [
         Task(
-            command=t.command,
+            command=_wrap_command_for_dpdispatcher(t.command),
             task_work_path=t.task_work_path,
             forward_files=t.forward_files,
-            backward_files=t.backward_files,
+            backward_files=_ensure_status_backward_files(t.backward_files),
         )
         for t in batch.tasks
     ]

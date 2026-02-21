@@ -117,10 +117,10 @@ class WebReporter(Reporter):
             new_seq = events[-1]["seq"] if events else last_seq
         return events, new_seq
 
-    def prompt_plan_feedback(self, *, todo: List[str], plan_description: str) -> str:
-        return self._broker.request_prompt("plan_review", {
+    def prompt_proposal_feedback(self, *, todo: List[str], proposal_description: str) -> str:
+        return self._broker.request_prompt("proposal_review", {
             "todo": list(todo),
-            "plan_description": plan_description or "",
+            "proposal_description": proposal_description or "",
         })
 
     def prompt_hitl_feedback(self, *, report_text: str, report_path: str) -> str:

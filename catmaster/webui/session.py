@@ -208,7 +208,7 @@ class WebSession:
         lane: str,
         run_mode: str,
         resume_run_name: str,
-        plan_review: bool,
+        proposal_review: bool,
         log_llm: bool,
         full_auto_major: bool,
         llm_config: Optional[str] = None,
@@ -289,7 +289,7 @@ class WebSession:
                 result = orch.run(
                     prompt,
                     log_llm=log_llm,
-                    plan_review=plan_review,
+                    proposal_review=proposal_review,
                     lane=effective_lane,
                     full_auto_major=full_auto_major,
                     resume_feedback=resume_feedback,

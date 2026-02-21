@@ -319,9 +319,9 @@ def build_monitor_page(*, registry: SessionRegistry, default_workspace: str, the
             prompt_id = pending.get("prompt_id", "")
             kind = pending.get("kind", "")
             payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
-            if kind == "plan_review":
-                prompt_title = "Plan Review"
-                prompt_body = payload.get("plan_description", "") or ""
+            if kind == "proposal_review":
+                prompt_title = "Proposal Review"
+                prompt_body = payload.get("proposal_description", "") or ""
                 todo = payload.get("todo", []) or []
                 if isinstance(todo, list) and todo:
                     prompt_meta = "Work packages:\n" + "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(todo)])

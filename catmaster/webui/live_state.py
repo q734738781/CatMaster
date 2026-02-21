@@ -90,11 +90,11 @@ def apply_event(
     if name in {"RUN_INIT_DONE"}:
         state["status"] = "starting"
         changed = True
-    elif name in {"PLAN_START", "PROPOSAL_START"}:
+    elif name == "PROPOSAL_START":
         state["current_phase"] = "planning"
         state["status"] = "running"
         changed = True
-    elif name in {"PLAN_REVIEW_WAIT_INPUT", "PLAN_REVIEW_SHOW"}:
+    elif name in {"PROPOSAL_REVIEW_WAIT_INPUT", "PROPOSAL_REVIEW_SHOW"}:
         state["current_phase"] = "waiting_human"
         state["status"] = "running"
         changed = True

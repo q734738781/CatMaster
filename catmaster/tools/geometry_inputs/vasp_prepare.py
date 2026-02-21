@@ -71,6 +71,13 @@ class VaspRelaxPrepareInput(BaseModel):
         False,
         description="Enable DOS/projection output by setting LORBIT=11. Default false (LORBIT=0) to reduce disk usage.",
     )
+    enable_dipole: bool = Field(
+        False,
+        description=(
+            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to "
+            "the atomic center of mass in fractional coordinates."
+        ),
+    )
     user_incar_settings: Optional[Dict[str, Any]] = Field(
         None,
         description=(
@@ -113,6 +120,13 @@ class VaspSPPrepareInput(BaseModel):
         False,
         description="Enable DOS/projection output by setting LORBIT=11. Default false (LORBIT=0).",
     )
+    enable_dipole: bool = Field(
+        False,
+        description=(
+            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to "
+            "the atomic center of mass in fractional coordinates."
+        ),
+    )
     user_incar_settings: Optional[Dict[str, Any]] = Field(
         None,
         description="Additional INCAR overrides.",
@@ -147,6 +161,7 @@ def _prepare_structures(
     use_d3: bool,
     use_dft_plus_u: bool,
     compute_dos: bool,
+    enable_dipole: bool,
     single_point: bool,
 ) -> Dict[str, object]:
 
@@ -181,6 +196,7 @@ def _prepare_structures(
                 user_incar_overrides=user_incar_settings,
                 single_point=single_point,
                 compute_dos=compute_dos,
+                enable_dipole=enable_dipole,
             )
             emitted.append(
                 {
@@ -200,6 +216,7 @@ def _prepare_structures(
                         "relax_cell": relax_cell,
                         "single_point": single_point,
                         "compute_dos": compute_dos,
+                        "enable_dipole": enable_dipole,
                         "k_product": k_product,
                         "structures_processed": 0,
                         "errors": errors,
@@ -217,6 +234,7 @@ def _prepare_structures(
             "relax_cell": relax_cell,
             "single_point": single_point,
             "compute_dos": compute_dos,
+            "enable_dipole": enable_dipole,
             "k_product": k_product,
             "structures_processed": len(emitted),
             "prepared_directories_rel": [str(e["output_dir_rel"]) for e in emitted],
@@ -239,6 +257,7 @@ def vasp_relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
         use_d3=bool(params.use_d3),
         use_dft_plus_u=bool(params.use_dft_plus_u),
         compute_dos=bool(params.compute_dos),
+        enable_dipole=bool(params.enable_dipole),
         single_point=False,
     )
 
@@ -256,6 +275,7 @@ def vasp_sp_prepare(payload: Dict[str, object]) -> Dict[str, object]:
         use_d3=bool(params.use_d3),
         use_dft_plus_u=bool(params.use_dft_plus_u),
         compute_dos=bool(params.compute_dos),
+        enable_dipole=bool(params.enable_dipole),
         single_point=True,
     )
 

@@ -21,12 +21,6 @@ def summarize_event(event: Dict[str, Any]) -> str:
         run_id = event.get("run_id") or payload.get("run_id", "")
         model = payload.get("model_name", "")
         return f"run_id={run_id} model={model}".strip()
-    if name == "PLAN_CREATED":
-        n_items = payload.get("n_items")
-        return f"{n_items} tasks" if n_items is not None else "Plan created"
-    if name == "PLAN_REVIEW_REVISED":
-        n_items = payload.get("n_items")
-        return f"Plan revised ({n_items} tasks)" if n_items is not None else "Plan revised"
     if name == "TASK_START":
         goal = payload.get("goal", "")
         return f"{event.get('task_id','')}: {truncate(goal, 120)}".strip()

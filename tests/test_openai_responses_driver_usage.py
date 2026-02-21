@@ -54,7 +54,7 @@ def test_openai_responses_driver_usage_missing(monkeypatch) -> None:
     assert turn.usage.input_tokens is None
 
 
-def test_openai_responses_driver_passes_prompt_cache_retention(monkeypatch) -> None:
+def test_openai_responses_driver_passes_request_options(monkeypatch) -> None:
     monkeypatch.setattr("catmaster.llm.openai_responses_driver.OpenAI", object())
     fake_response = _build_driver_response(usage=None)
     captured: dict = {}

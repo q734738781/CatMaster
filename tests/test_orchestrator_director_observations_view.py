@@ -13,6 +13,8 @@ def test_director_observations_view_drops_metadata_paths() -> None:
             "task_id": "task_01",
             "outcome": "success",
             "summary": "done",
+            "failure_kind": "max_steps",
+            "auto_replan": True,
             "observation_path": "observations/obs_001_task_01.md",
             "event_path": "memory/events.jsonl",
             "key_artifacts": [
@@ -36,6 +38,8 @@ def test_director_observations_view_drops_metadata_paths() -> None:
     assert row["task_id"] == "task_01"
     assert row["outcome"] == "success"
     assert row["summary"] == "done"
+    assert row["failure_kind"] == "max_steps"
+    assert row["auto_replan"] is True
     assert row["key_artifacts"] == [{"path": "results/final.csv", "description": "table", "kind": "report"}]
     assert "observation_path" not in row
     assert "event_path" not in row

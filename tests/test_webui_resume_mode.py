@@ -45,7 +45,7 @@ def test_start_run_resume_requires_selected_run(tmp_path: Path) -> None:
         lane="standard",
         run_mode="resume_selected_run",
         resume_run_name="",
-        plan_review=True,
+        proposal_review=True,
         log_llm=False,
         full_auto_major=False,
     )
@@ -97,7 +97,7 @@ def test_start_run_resume_uses_selected_run_lane(tmp_path: Path, monkeypatch) ->
         lane="standard",
         run_mode="resume_selected_run",
         resume_run_name="run_fast",
-        plan_review=True,
+        proposal_review=True,
         log_llm=False,
         full_auto_major=False,
     )

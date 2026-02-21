@@ -26,7 +26,7 @@ class Reporter:
     def resume(self) -> None:
         pass
 
-    def prompt_plan_feedback(self, *, todo: List[str], plan_description: str) -> str:
+    def prompt_proposal_feedback(self, *, todo: List[str], proposal_description: str) -> str:
         return ""
 
     def prompt_hitl_feedback(self, *, report_text: str, report_path: str) -> str:

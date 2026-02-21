@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 import os
@@ -7,6 +9,7 @@ import shlex
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
+    STATUS_FILE_NAME,
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
@@ -19,6 +22,8 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
 from pydantic import BaseModel, Field
+
+BATCH_STATE_FILENAME = "_BATCH_STATE.json"
 
 
 class MaceRelaxInput(BaseModel):
@@ -191,6 +196,56 @@ def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) ->
     return sorted(files, key=lambda p: str(p))
 
 
+def _write_batch_state(
+    output_root: Path,
+    *,
+    work_base: str,
+    state: str,
+    details: Dict[str, Any] | None = None,
+) -> Path:
+    payload: Dict[str, Any] = {
+        "work_base": work_base,
+        "state": state,
+        "timestamp": float(time.time()),
+    }
+    if details:
+        payload["details"] = details
+    state_path = output_root / BATCH_STATE_FILENAME
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return state_path
+
+
+def _collect_mace_outputs(stage_root: Path, stage_output: Path, output_root: Path) -> tuple[Dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    out: Dict[str, Any] = {}
+
+    try:
+        if stage_output.exists():
+            shutil.copytree(stage_output, output_root, dirs_exist_ok=True)
+    except Exception as exc:
+        warnings.append(f"collect output failed: {type(exc).__name__}: {exc}")
+
+    status_src = stage_root / STATUS_FILE_NAME
+    status_dst = output_root / STATUS_FILE_NAME
+    try:
+        if status_src.is_file():
+            status_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(status_src, status_dst)
+    except Exception as exc:
+        warnings.append(f"collect status failed: {type(exc).__name__}: {exc}")
+    if status_dst.is_file():
+        out["status_file_rel"] = workspace_relpath(status_dst)
+    else:
+        out["status_file_rel"] = None
+
+    out["batch_summary_rel"] = (
+        workspace_relpath(output_root / "batch_summary.json")
+        if (output_root / "batch_summary.json").exists()
+        else None
+    )
+    return out, warnings
+
+
 def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     params = MaceRelaxBatchInput(**payload)
     reg = TaskRegistry()
@@ -290,31 +345,68 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         check_interval=params.check_interval,
     )
 
-    result = dispatch_submission(batch_req)
+    dispatch_error: Exception | None = None
+    result = None
+    collect_info: Dict[str, Any] = {}
+    collect_warnings: list[str] = []
+    state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": 1})
+    try:
+        _write_batch_state(output_root, work_base=work_base, state="running", details={"tasks": 1})
+        result = dispatch_submission(batch_req)
+    except Exception as exc:
+        dispatch_error = exc
+    finally:
+        collect_info, collect_warnings = _collect_mace_outputs(stage_root, stage_output, output_root)
+        final_state = "collected_partial" if dispatch_error else "collected_complete"
+        _write_batch_state(
+            output_root,
+            work_base=work_base,
+            state=final_state,
+            details={
+                "tasks": 1,
+                "errors": [str(dispatch_error)] if dispatch_error else [],
+            },
+        )
+        if stage_root.exists():
+            try:
+                shutil.rmtree(stage_root)
+            except Exception as exc:
+                collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
 
-    if stage_output.exists():
-        shutil.copytree(stage_output, output_root, dirs_exist_ok=True)
-
-    if stage_root.exists():
-        shutil.rmtree(stage_root)
+    if dispatch_error is not None:
+        return create_tool_output(
+            tool_name="mace_relax_batch",
+            success=False,
+            error=f"DPDispatcher submission failed: {dispatch_error}",
+            warnings=collect_warnings,
+            data={
+                "work_base": work_base,
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "batch_state_rel": workspace_relpath(state_path),
+                **collect_info,
+            },
+        )
 
     return create_tool_output(
         tool_name="mace_relax_batch",
         success=True,
+        warnings=collect_warnings,
         data={
-            "task_states": result.task_states,
-            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result.submission_dir else "",
-            "work_base": result.work_base,
+            "task_states": result.task_states if result else [],
+            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+            "work_base": result.work_base if result else work_base,
             "input_root_rel": workspace_relpath(input_root),
             "output_root_rel": workspace_relpath(output_root),
-            "batch_summary_rel": workspace_relpath(output_root / "batch_summary.json") if (output_root / "batch_summary.json").exists() else None,
+            "batch_state_rel": workspace_relpath(state_path),
             "structures_found": len(structures),
             "model": model,
             "head": head,
             "dispersion": dispersion,
             "relax_lattice": relax_lattice,
+            **collect_info,
         },
-        execution_time=result.duration_s,
+        execution_time=result.duration_s if result else None,
     )
 
 
@@ -404,30 +496,67 @@ def mace_sp_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         check_interval=params.check_interval,
     )
 
-    result = dispatch_submission(batch_req)
+    dispatch_error: Exception | None = None
+    result = None
+    collect_info: Dict[str, Any] = {}
+    collect_warnings: list[str] = []
+    state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": 1})
+    try:
+        _write_batch_state(output_root, work_base=work_base, state="running", details={"tasks": 1})
+        result = dispatch_submission(batch_req)
+    except Exception as exc:
+        dispatch_error = exc
+    finally:
+        collect_info, collect_warnings = _collect_mace_outputs(stage_root, stage_output, output_root)
+        final_state = "collected_partial" if dispatch_error else "collected_complete"
+        _write_batch_state(
+            output_root,
+            work_base=work_base,
+            state=final_state,
+            details={
+                "tasks": 1,
+                "errors": [str(dispatch_error)] if dispatch_error else [],
+            },
+        )
+        if stage_root.exists():
+            try:
+                shutil.rmtree(stage_root)
+            except Exception as exc:
+                collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
 
-    if stage_output.exists():
-        shutil.copytree(stage_output, output_root, dirs_exist_ok=True)
-
-    if stage_root.exists():
-        shutil.rmtree(stage_root)
+    if dispatch_error is not None:
+        return create_tool_output(
+            tool_name="mace_sp_batch",
+            success=False,
+            error=f"DPDispatcher submission failed: {dispatch_error}",
+            warnings=collect_warnings,
+            data={
+                "work_base": work_base,
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "batch_state_rel": workspace_relpath(state_path),
+                **collect_info,
+            },
+        )
 
     return create_tool_output(
         tool_name="mace_sp_batch",
         success=True,
+        warnings=collect_warnings,
         data={
-            "task_states": result.task_states,
-            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result.submission_dir else "",
-            "work_base": result.work_base,
+            "task_states": result.task_states if result else [],
+            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+            "work_base": result.work_base if result else work_base,
             "input_root_rel": workspace_relpath(input_root),
             "output_root_rel": workspace_relpath(output_root),
-            "batch_summary_rel": workspace_relpath(output_root / "batch_summary.json") if (output_root / "batch_summary.json").exists() else None,
+            "batch_state_rel": workspace_relpath(state_path),
             "structures_found": len(structures),
             "model": model,
             "head": head,
             "dispersion": dispersion,
+            **collect_info,
         },
-        execution_time=result.duration_s,
+        execution_time=result.duration_s if result else None,
     )
 
 

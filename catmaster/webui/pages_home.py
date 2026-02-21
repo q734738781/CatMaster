@@ -142,7 +142,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
         lane: str,
         run_mode: str,
         resume_run_name: str,
-        plan_review: bool,
+        proposal_review: bool,
         log_llm: bool,
         full_auto_major: bool,
         ctx: str,
@@ -153,7 +153,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
             lane=lane,
             run_mode=run_mode,
             resume_run_name=resume_run_name,
-            plan_review=plan_review,
+            proposal_review=proposal_review,
             log_llm=log_llm,
             full_auto_major=full_auto_major,
         )
@@ -219,9 +219,9 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
             prompt_id = pending.get("prompt_id", "")
             kind = pending.get("kind", "")
             payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
-            if kind == "plan_review":
-                prompt_title = "Plan Review"
-                prompt_body = payload.get("plan_description", "") or ""
+            if kind == "proposal_review":
+                prompt_title = "Proposal Review"
+                prompt_body = payload.get("proposal_description", "") or ""
                 todo = payload.get("todo", []) or []
                 if isinstance(todo, list) and todo:
                     prompt_meta = "Next tasks:\n" + "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(todo)])
@@ -295,7 +295,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
                         interrupt_btn = gr.Button("Interrupt")
                     with gr.Accordion("Advanced", open=False):
                         with gr.Row():
-                            plan_review_box = gr.Checkbox(label="Plan/Proposal Review", value=True)
+                            proposal_review_box = gr.Checkbox(label="Proposal Review", value=True)
                             log_llm_box = gr.Checkbox(label="Log LLM", value=False)
                             full_auto_major_box = gr.Checkbox(label="Full Auto Major", value=False)
                     run_info = gr.Markdown("")
@@ -340,7 +340,7 @@ def build_home_page(*, registry: SessionRegistry, default_workspace: str, theme:
 
         start_btn.click(
             _start_run,
-            inputs=[prompt_box, lane_box, run_mode_box, resume_run_box, plan_review_box, log_llm_box, full_auto_major_box, ctx_state],
+            inputs=[prompt_box, lane_box, run_mode_box, resume_run_box, proposal_review_box, log_llm_box, full_auto_major_box, ctx_state],
             outputs=[status_box],
         )
 

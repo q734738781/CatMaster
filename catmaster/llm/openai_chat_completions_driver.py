@@ -284,13 +284,10 @@ class OpenAIChatCompletionsDriver(ToolCallingDriver):
             payload["max_tokens"] = max_output_tokens
 
         reasoning_effort = kwargs.pop("reasoning_effort", None)
-        prompt_cache_retention = kwargs.pop("prompt_cache_retention", None)
         reasoning_cfg = kwargs.pop("reasoning", None)
         extra_body = kwargs.pop("extra_body", None) or {}
         if not isinstance(extra_body, dict):
             raise TypeError("extra_body must be a dict")
-        if prompt_cache_retention is not None:
-            extra_body["prompt_cache_retention"] = prompt_cache_retention
         if reasoning_cfg is not None:
             if not isinstance(reasoning_cfg, dict):
                 raise TypeError("reasoning must be a dict")

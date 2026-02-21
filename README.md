@@ -235,36 +235,54 @@ export OPENAI_BASE_URL="https://your-proxy-or-custom-endpoint/v1"
 
 ### Switch provider via configs/llm.yaml
 
-OpenRouter example:
+Driver-template example (OpenRouter chat-completions + OpenAI responses):
 ```yaml
-main:
-  provider: openrouter
-  model: openai/gpt-4o-mini
-  api_key_env: OPENROUTER_API_KEY
-  base_url: https://openrouter.ai/api/v1
-  tool_calling:
+tool_calling_profiles:
+  openrouter_chat_completions:
     driver: openai_chat_completions
-```
-
-OpenAI (Responses API) example:
-```yaml
-main:
-  provider: openai
-  model: gpt-5.2
-  api_key_env: OPENAI_API_KEY
-  tool_calling:
+    supports_builtin_tools: false
+    parallel_tool_calls: false
+    request_options: {}
+    extra_body: {}
+  openai_responses:
     driver: openai_responses
-```
+    supports_builtin_tools: true
+    parallel_tool_calls: true
+    request_options: {}
+    extra_body: {}
 
-Deepseek (OpenAI-compatible) example:
-```yaml
-main:
-  provider: deepseek
-  model: deepseek-chat
-  api_key_env: DEEPSEEK_API_KEY
-  base_url: https://api.deepseek.com/v1
-  tool_calling:
-    driver: openai_chat_completions
+models:
+  "openai/gpt-5.2:online":
+    provider: openrouter
+    model: openai/gpt-5.2:online
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    tool_calling:
+      profile: openrouter_chat_completions
+      request_options: {}
+      extra_body:
+        # OpenRouter/provider-specific fields go here.
+        # prompt_cache_retention: 24h
+
+  "gpt-5.2":
+    provider: openai
+    model: gpt-5.2
+    api_key_env: OPENAI_API_KEY
+    tool_calling:
+      profile: openai_responses
+      request_options: {}
+      extra_body: {}
+
+agents:
+  proposal: "openai/gpt-5.2:online"
+  director: "openai/gpt-5.2:online"
+  task_runner: "openai/gpt-5.2:online"
+  memory_patch: "openai/gpt-5.2:online"
+  summary: "gpt-5.2"
+
+agent_policies:
+  proposal:
+    browse_tools_enabled: true
 ```
 
 ## Quick test (LLM entry)

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
+import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path
 from catmaster.tools.base import workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
+    STATUS_FILE_NAME,
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
@@ -19,6 +22,8 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
 from pydantic import BaseModel, Field
+
+BATCH_STATE_FILENAME = "_BATCH_STATE.json"
 
 
 class VaspExecuteInput(BaseModel):
@@ -97,6 +102,59 @@ def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) ->
     return sorted(input_dirs, key=lambda p: str(p))
 
 
+def _write_batch_state(
+    output_root: Path,
+    *,
+    work_base: str,
+    state: str,
+    details: Dict[str, Any] | None = None,
+) -> Path:
+    payload: Dict[str, Any] = {
+        "work_base": work_base,
+        "state": state,
+        "timestamp": float(time.time()),
+    }
+    if details:
+        payload["details"] = details
+    state_path = output_root / BATCH_STATE_FILENAME
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return state_path
+
+
+def _collect_vasp_outputs(task_meta: List[Dict[str, Any]]) -> tuple[list[Dict[str, Any]], list[str]]:
+    outputs: list[Dict[str, Any]] = []
+    warnings: list[str] = []
+    for meta in task_meta:
+        inp = meta["input_dir"]
+        stage = meta["stage_dir"]
+        output_dir = meta["output_dir"]
+        backward_files = list(meta.get("backward_files") or [])
+        try:
+            if output_dir.exists():
+                shutil.copytree(inp, output_dir, dirs_exist_ok=True)
+            else:
+                output_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(inp, output_dir)
+            for bf in backward_files:
+                for p in stage.glob(bf):
+                    dest = output_dir / p.name
+                    if p.is_dir():
+                        shutil.copytree(p, dest, dirs_exist_ok=True)
+                    else:
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(p, dest)
+            outputs.append(
+                {
+                    "input_dir_rel": workspace_relpath(inp),
+                    "output_dir_rel": workspace_relpath(output_dir),
+                    "output_files": backward_files,
+                }
+            )
+        except Exception as exc:
+            warnings.append(f"collect failed for {workspace_relpath(inp)}: {type(exc).__name__}: {exc}")
+    return outputs, warnings
+
+
 def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
     _ = VaspExecuteInput(**payload)
     return create_tool_output(
@@ -170,12 +228,15 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         shutil.copy2(script_src, script_dst)
 
         rendered = render_task_fields(cfg, {}, stage_dir)
+        backward_files = list(rendered["backward_files"])
+        if "*" not in backward_files and STATUS_FILE_NAME not in backward_files:
+            backward_files.append(STATUS_FILE_NAME)
         tasks.append(
             TaskSpec(
                 command=rendered["command"],
                 task_work_path=rel_path.as_posix(),
                 forward_files=rendered["forward_files"],
-                backward_files=rendered["backward_files"],
+                backward_files=backward_files,
             )
         )
         task_meta.append(
@@ -183,7 +244,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "input_dir": inp,
                 "stage_dir": stage_dir,
                 "output_dir": output_root / rel_path,
-                "backward_files": rendered["backward_files"],
+                "backward_files": backward_files,
             }
         )
 
@@ -199,49 +260,65 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         check_interval=params.check_interval,
     )
 
-    result = dispatch_submission(batch_req)
-
-    outputs = []
-    for meta in task_meta:
-        inp = meta["input_dir"]
-        stage = meta["stage_dir"]
-        output_dir = meta["output_dir"]
-        if output_dir.exists():
-            shutil.copytree(inp, output_dir, dirs_exist_ok=True)
-        else:
-            output_dir.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(inp, output_dir)
-        for bf in meta["backward_files"]:
-            for p in stage.glob(bf):
-                dest = output_dir / p.name
-                if p.is_dir():
-                    shutil.copytree(p, dest, dirs_exist_ok=True)
-                else:
-                    dest.write_bytes(p.read_bytes())
-        outputs.append(
-            {
-                "input_dir_rel": workspace_relpath(inp),
-                "output_dir_rel": workspace_relpath(output_dir),
-                "output_files": meta["backward_files"],
-            }
+    dispatch_error: Exception | None = None
+    result = None
+    outputs: list[Dict[str, Any]] = []
+    collect_warnings: list[str] = []
+    state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": len(tasks)})
+    try:
+        _write_batch_state(output_root, work_base=work_base, state="running", details={"tasks": len(tasks)})
+        result = dispatch_submission(batch_req)
+    except Exception as exc:
+        dispatch_error = exc
+    finally:
+        outputs, collect_warnings = _collect_vasp_outputs(task_meta)
+        final_state = "collected_partial" if dispatch_error else "collected_complete"
+        _write_batch_state(
+            output_root,
+            work_base=work_base,
+            state=final_state,
+            details={
+                "tasks": len(tasks),
+                "outputs_collected": len(outputs),
+                "errors": [str(dispatch_error)] if dispatch_error else [],
+            },
         )
-
     stage_root = output_root / work_base
     if stage_root.exists():
-        shutil.rmtree(stage_root)
+        try:
+            shutil.rmtree(stage_root)
+        except Exception as exc:
+            collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
+
+    if dispatch_error is not None:
+        return create_tool_output(
+            tool_name="vasp_execute_batch",
+            success=False,
+            error=f"DPDispatcher submission failed: {dispatch_error}",
+            warnings=collect_warnings,
+            data={
+                "work_base": work_base,
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "outputs": outputs,
+                "batch_state_rel": workspace_relpath(state_path),
+            },
+        )
 
     return create_tool_output(
         tool_name="vasp_execute_batch",
         success=True,
+        warnings=collect_warnings,
         data={
-            "task_states": result.task_states,
-            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result.submission_dir else "",
-            "work_base": result.work_base,
+            "task_states": result.task_states if result else [],
+            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+            "work_base": result.work_base if result else work_base,
             "input_root_rel": workspace_relpath(input_root),
             "output_root_rel": workspace_relpath(output_root),
             "outputs": outputs,
+            "batch_state_rel": workspace_relpath(state_path),
         },
-        execution_time=result.duration_s,
+        execution_time=result.duration_s if result else None,
     )
 
 

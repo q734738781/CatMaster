@@ -30,7 +30,6 @@ from catmaster.runtime import (
 )
 from catmaster.agents.logo import logo_str
 from catmaster.agents.tool_calling_stepper import ToolCallingTaskStepper
-from catmaster.agents.plan_control_tools import PLAN_CONTROL_TOOL_NAMES, get_plan_control_tool_schemas
 from catmaster.agents.proposal_control_tools import (
     PROPOSAL_CONTROL_TOOL_NAMES,
     get_proposal_control_tool_schemas,
@@ -41,16 +40,14 @@ from catmaster.agents.director_control_tools import (
 )
 from catmaster.agents.llm_utils import llm_text
 from catmaster.llm.driver import ToolCallingDriver
-from catmaster.llm.config import LLMProfile
-from catmaster.llm.factory import build_llm_bundle
+from catmaster.llm.config import LLMProfile, TOOL_CALLING_AGENT_ROLES, LLMConfig
+from catmaster.llm.factory import build_chat_model, build_tool_driver
 from catmaster.runtime.conversation_state import message_item
 from catmaster.runtime.tool_policy import ToolPolicy
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.runtime.local_tool_backend import LocalToolBackend
 from catmaster.ui import Reporter, NullReporter, make_event
 from catmaster.agents.orchestrator_prompts import (
-    build_plan_prompt,
-    build_plan_feedback_prompt,
     build_task_step_prompt,
     build_task_step_repair_prompt,
     build_summary_prompt,
@@ -61,9 +58,6 @@ from catmaster.agents.orchestrator_prompts import (
     build_memory_patch_repair_prompt,
 )
 
-_PLANNER_TOOL_ALLOWLIST = [
-    "bash_exec",
-]
 _PROPOSAL_TOOL_ALLOWLIST = [
     "bash_exec",
 ]
@@ -131,23 +125,29 @@ class Orchestrator:
         self._llm_base_url: Optional[str] = None
         self._tool_driver_kind: Optional[str] = None
         self._supports_builtin_tools = True
+        self._tool_drivers_by_role: Dict[str, ToolCallingDriver] = {}
+        profile = llm_profile
         if llm is None:
-            profile = llm_profile or LLMProfile.from_env_or_file()
-            bundle = build_llm_bundle(profile)
-            llm = bundle.llm
-            summary_llm = summary_llm or bundle.summary_llm
-            if tool_driver is None:
-                tool_driver = bundle.tool_driver
+            profile = profile or LLMProfile.from_env_or_file()
             self.llm_profile = profile
-            self._llm_provider = bundle.provider
-            self._llm_base_url = profile.main.base_url
-            self._tool_driver_kind = profile.main.tool_calling.driver
-            self._supports_builtin_tools = bool(profile.main.tool_calling.supports_builtin_tools)
-        elif llm_profile is not None:
-            self._llm_provider = llm_profile.main.provider
-            self._llm_base_url = llm_profile.main.base_url
-            self._tool_driver_kind = llm_profile.main.tool_calling.driver
-            self._supports_builtin_tools = bool(llm_profile.main.tool_calling.supports_builtin_tools)
+        if profile is not None:
+            task_cfg = profile.config_for_role("task_runner")
+            self._llm_provider = task_cfg.provider
+            self._llm_base_url = task_cfg.base_url
+            self._tool_driver_kind = task_cfg.tool_calling.driver
+            self._supports_builtin_tools = bool(task_cfg.tool_calling.supports_builtin_tools)
+            if llm is None:
+                llm = build_chat_model(profile.config_for_role("memory_patch"))
+                summary_llm = summary_llm or build_chat_model(profile.config_for_role("summary"))
+            if tool_driver is None:
+                for role in TOOL_CALLING_AGENT_ROLES:
+                    self._tool_drivers_by_role[role] = build_tool_driver(profile.config_for_role(role))
+            else:
+                for role in TOOL_CALLING_AGENT_ROLES:
+                    self._tool_drivers_by_role[role] = tool_driver
+        elif tool_driver is not None:
+            for role in TOOL_CALLING_AGENT_ROLES:
+                self._tool_drivers_by_role[role] = tool_driver
         if self._tool_driver_kind is None and tool_driver is not None:
             self._tool_driver_kind = tool_driver.__class__.__name__
         if llm is None:
@@ -213,8 +213,6 @@ class Orchestrator:
         self.llm_log_file = Path(llm_log_path).expanduser().resolve() if llm_log_path else default_log
         self.llm_log_file.parent.mkdir(parents=True, exist_ok=True)
 
-        self.plan_prompt = build_plan_prompt()
-        self.plan_feedback_prompt = build_plan_feedback_prompt()
         self.proposal_prompt = build_proposal_prompt()
         self.proposal_feedback_prompt = build_proposal_feedback_prompt()
         self.director_prompt = build_director_prompt()
@@ -223,7 +221,7 @@ class Orchestrator:
         self.memory_patch_prompt = build_memory_patch_prompt()
         self.memory_patch_repair_prompt = build_memory_patch_repair_prompt()
         self.summary_prompt = build_summary_prompt()
-        self.tool_driver = tool_driver
+        self.tool_driver = self._tool_drivers_by_role.get("task_runner") or tool_driver
         if self.tool_driver is None:
             try:
                 from catmaster.llm.openai_responses_driver import OpenAIResponsesDriver
@@ -236,6 +234,8 @@ class Orchestrator:
                 self._tool_driver_kind = "openai_responses"
                 if self._llm_provider is None:
                     self._llm_provider = "openai"
+        for role in TOOL_CALLING_AGENT_ROLES:
+            self._tool_drivers_by_role.setdefault(role, self.tool_driver)
         self._emit("RUN_INIT_DONE", payload={
             "run_id": self.run_context.run_id,
             "run_dir": str(self.run_context.run_dir),
@@ -244,7 +244,6 @@ class Orchestrator:
             "provider": self._llm_provider or "",
             "driver_kind": self._tool_driver_kind or "",
             "base_url": self._llm_base_url or "",
-            "prompt_cache_retention": self._prompt_cache_retention() or "",
             "proposal_browse_tools_enabled": self._proposal_browse_tools_enabled(),
             "resuming": self.resuming,
             "llm_log_path": str(self.llm_log_file),
@@ -321,18 +320,6 @@ class Orchestrator:
         return self.registry.get_short_tool_descriptions_for_llm(
             allowlist=self._visible_function_tool_names()
         )
-
-    def _planner_tool_schema(self) -> str:
-        visible = set(self._visible_function_tool_names())
-        allowlist = [name for name in _PLANNER_TOOL_ALLOWLIST if name in visible]
-        return self.registry.get_tool_descriptions_for_llm(allowlist=allowlist)
-
-    def _planner_function_tools(self) -> list[dict]:
-        tools = self._filtered_function_tools()
-        return [
-            tool for tool in tools
-            if tool.get("name") in _PLANNER_TOOL_ALLOWLIST
-        ]
 
     def _proposal_function_tools(self) -> list[dict]:
         if not self._proposal_browse_tools_enabled():
@@ -413,9 +400,26 @@ class Orchestrator:
             descriptions.append(f"{name} : {desc}".strip())
         return "\n\n".join(descriptions)
 
+    def _role_llm_config(self, role: str) -> Optional[LLMConfig]:
+        if self.llm_profile is None:
+            return None
+        try:
+            return self.llm_profile.config_for_role(role)
+        except Exception:
+            return None
+
+    def _role_tool_driver(self, role: str) -> ToolCallingDriver:
+        driver = self._tool_drivers_by_role.get(role)
+        if driver is not None:
+            return driver
+        if self.tool_driver is None:
+            raise ValueError(f"No tool driver available for role: {role}")
+        return self.tool_driver
+
     def _resolve_model_name(self) -> str:
-        if self.llm_profile is not None:
-            model = getattr(self.llm_profile.main, "model", None)
+        cfg = self._role_llm_config("task_runner")
+        if cfg is not None:
+            model = getattr(cfg, "model", None)
             if isinstance(model, str) and model:
                 return model
         for attr in ("model_name", "model"):
@@ -442,10 +446,10 @@ class Orchestrator:
             joined = self._snippet(joined, 80)
         return f"{name}({joined})"
 
-    def _collect_model_kwargs(self) -> Dict[str, Any]:
+    def _collect_model_kwargs(self, role: str = "task_runner") -> Dict[str, Any]:
         merged: Dict[str, Any] = {}
-        if self.llm_profile is not None:
-            cfg = self.llm_profile.main
+        cfg = self._role_llm_config(role)
+        if cfg is not None:
             for key in (
                 "reasoning_effort",
                 "temperature",
@@ -458,26 +462,28 @@ class Orchestrator:
                 value = getattr(cfg, key, None)
                 if value is not None:
                     merged[key] = value
-        raw = getattr(self.llm, "model_kwargs", None)
-        if isinstance(raw, dict):
-            merged.update(raw)
-        for key in (
-            "reasoning_effort",
-            "temperature",
-            "max_tokens",
-            "max_output_tokens",
-            "top_p",
-            "frequency_penalty",
-            "presence_penalty",
-        ):
-            value = getattr(self.llm, key, None)
-            if value is None or key in merged:
-                continue
-            merged[key] = value
+        if cfg is None:
+            model_obj = self.summary_llm if role == "summary" else self.llm
+            raw = getattr(model_obj, "model_kwargs", None)
+            if isinstance(raw, dict):
+                merged.update(raw)
+            for key in (
+                "reasoning_effort",
+                "temperature",
+                "max_tokens",
+                "max_output_tokens",
+                "top_p",
+                "frequency_penalty",
+                "presence_penalty",
+            ):
+                value = getattr(model_obj, key, None)
+                if value is None or key in merged:
+                    continue
+                merged[key] = value
         return merged
 
-    def _tool_driver_kwargs(self) -> Dict[str, Any]:
-        kwargs = self._collect_model_kwargs()
+    def _tool_driver_kwargs(self, role: str = "task_runner") -> Dict[str, Any]:
+        kwargs = self._collect_model_kwargs(role)
         driver_kwargs: Dict[str, Any] = {}
         for key in (
             "reasoning_effort",
@@ -493,30 +499,45 @@ class Orchestrator:
             driver_kwargs["max_output_tokens"] = kwargs["max_output_tokens"]
         elif "max_tokens" in kwargs and kwargs.get("max_tokens") is not None:
             driver_kwargs["max_output_tokens"] = kwargs["max_tokens"]
-        prompt_cache_retention = self._prompt_cache_retention()
-        if prompt_cache_retention:
-            driver_kwargs["prompt_cache_retention"] = prompt_cache_retention
+        cfg = self._role_llm_config(role)
+        if cfg is not None:
+            tool_calling = getattr(cfg, "tool_calling", None)
+            if tool_calling is not None:
+                request_options = getattr(tool_calling, "request_options", None)
+                if isinstance(request_options, dict) and request_options:
+                    driver_kwargs.update(dict(request_options))
+                extra_body = getattr(tool_calling, "extra_body", None)
+                driver_kind = str(getattr(tool_calling, "driver", "") or "")
+                if (
+                    driver_kind == "openai_chat_completions"
+                    and isinstance(extra_body, dict)
+                    and extra_body
+                ):
+                    existing = driver_kwargs.get("extra_body")
+                    merged = dict(existing) if isinstance(existing, dict) else {}
+                    merged.update(extra_body)
+                    driver_kwargs["extra_body"] = merged
         return driver_kwargs
 
-    def _prompt_cache_retention(self) -> Optional[str]:
-        if self.llm_profile is None:
-            return None
-        tool_calling = getattr(self.llm_profile.main, "tool_calling", None)
+    def _supports_builtin_tools_for(self, role: str) -> bool:
+        cfg = self._role_llm_config(role)
+        if cfg is None:
+            return bool(self._supports_builtin_tools)
+        tool_calling = getattr(cfg, "tool_calling", None)
         if tool_calling is None:
-            return None
-        value = getattr(tool_calling, "prompt_cache_retention", None)
-        if isinstance(value, str):
-            stripped = value.strip()
-            return stripped or None
-        return None
+            return False
+        return bool(getattr(tool_calling, "supports_builtin_tools", False))
 
     def _proposal_browse_tools_enabled(self) -> bool:
         if self.llm_profile is None:
             return True
-        tool_calling = getattr(self.llm_profile.main, "tool_calling", None)
-        if tool_calling is None:
+        policies = getattr(self.llm_profile, "agent_policies", None)
+        if policies is None:
             return True
-        value = getattr(tool_calling, "proposal_browse_tools_enabled", None)
+        proposal_policy = getattr(policies, "proposal", None)
+        if proposal_policy is None:
+            return True
+        value = getattr(proposal_policy, "browse_tools_enabled", None)
         return True if value is None else bool(value)
 
     def _trace_event(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -627,179 +648,164 @@ class Orchestrator:
             return cleaned
         return cleaned[: max(0, limit - 3)] + "..."
 
-    def plan(self, user_request: str) -> Dict[str, Any]:
-        tools = self._tool_schema()
-        messages = self.plan_prompt.format_messages(
-            user_request=user_request,
-            tools=tools,
-            planner_tools=self._planner_tool_schema(),
-        )
-        self._emit("PLAN_START", category="plan", payload={"attempts": self.max_plan_steps})
-        input_items = self._messages_to_input_items(messages)
-        stepper = ToolCallingTaskStepper(
-            driver=self.tool_driver,
-            backend=self.tool_backend,
-            prompt=None,
-            control_tools=get_plan_control_tool_schemas(),
-            control_tool_names=PLAN_CONTROL_TOOL_NAMES,
-            trace_store=self.trace_store,
-            checkpoint_store=self.checkpoint_store,
-            reporter=self.reporter,
-            max_steps=self.max_plan_steps,
-            driver_kwargs={
-                **self._tool_driver_kwargs(),
-                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
-            },
-            role="planner",
-            run_id=self.run_context.run_id,
-        )
-        step_result = stepper.run(
-            task_id="plan",
-            task_goal="Plan tasks",
-            context_pack={},
-            seed_messages=input_items,
-            function_tools=self._planner_function_tools(),
-            builtin_tools=[],
-        )
-        finish_reason = step_result.get("finish_reason", "")
-        if finish_reason != "plan_finish":
-            raise ValueError(f"Planner did not finish with plan_finish (got {finish_reason})")
-        payload = step_result.get("control_payload") or {}
-        normalized = self._normalize_plan(payload, user_request)
-        self._trace_event("PLAN_CREATED", {
-            "todo": normalized.get("todo", []),
-            "plan_description": normalized.get("plan_description", ""),
-        })
-        todo = normalized.get("todo", [])
-        self._emit("PLAN_CREATED", category="plan", payload={
-            "n_items": len(todo),
-            "todo": todo,
-            "plan_description_snippet": self._snippet(normalized.get("plan_description", ""), 200),
-        })
-        self._emit("PLAN_DONE", category="plan", payload={"n_items": len(todo)})
-        return normalized
+    @staticmethod
+    def _json_roundtrip(value: Any) -> Any:
+        try:
+            return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+        except Exception:
+            return str(value)
 
-    def revise_plan(
-        self,
-        user_request: str,
-        plan: Dict[str, Any],
-        feedback: str,
+    @staticmethod
+    def _compact_params_for_memory(params: Any, max_items: int = 6, max_len: int = 220) -> str:
+        if not isinstance(params, dict):
+            return Orchestrator._snippet(params, max_len)
+        parts: List[str] = []
+        for key in list(params.keys())[:max_items]:
+            val = params.get(key)
+            if isinstance(val, (str, int, float, bool)):
+                sval = str(val)
+            elif isinstance(val, list):
+                sval = f"list[{len(val)}]"
+            elif isinstance(val, dict):
+                sval = f"dict[{len(val)}]"
+            else:
+                sval = type(val).__name__
+            parts.append(f"{key}={sval}")
+        return Orchestrator._snippet(", ".join(parts), max_len)
+
+    @staticmethod
+    def _compact_tool_output_for_memory(
+        tool_name: str,
+        tool_output: Any,
         *,
-        feedback_history: Optional[List[Dict[str, Any]]] = None,
-        log_llm: bool = False,
+        text_limit: int = 800,
     ) -> Dict[str, Any]:
-        messages = self.plan_feedback_prompt.format_messages(
-            user_request=user_request,
-            tools=self._tool_schema_short(),
-            planner_tools=self._planner_tool_schema(),
-            plan_json=json.dumps(plan, ensure_ascii=False),
-            feedback=feedback,
-            feedback_history=json.dumps(feedback_history or [], ensure_ascii=False),
-        )
-        input_items = self._messages_to_input_items(messages)
-        stepper = ToolCallingTaskStepper(
-            driver=self.tool_driver,
-            backend=self.tool_backend,
-            prompt=None,
-            control_tools=get_plan_control_tool_schemas(),
-            control_tool_names=PLAN_CONTROL_TOOL_NAMES,
-            trace_store=self.trace_store,
-            checkpoint_store=self.checkpoint_store,
-            reporter=self.reporter,
-            max_steps=self.max_plan_steps,
-            driver_kwargs={
-                **self._tool_driver_kwargs(),
-                "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
-            },
-            role="planner",
-            run_id=self.run_context.run_id,
-        )
-        step_result = stepper.run(
-            task_id="plan_feedback",
-            task_goal="Revise plan",
-            context_pack={},
-            seed_messages=input_items,
-            function_tools=self._planner_function_tools(),
-            builtin_tools=[],
-        )
-        finish_reason = step_result.get("finish_reason", "")
-        if finish_reason != "plan_finish":
-            raise ValueError(f"Plan feedback did not finish with plan_finish (got {finish_reason})")
-        payload = step_result.get("control_payload") or {}
-        normalized = self._normalize_plan(payload, user_request)
-        self._trace_event("PLAN_REVISION", {
-            "feedback": feedback,
-            "plan_before": plan,
-            "plan_after": normalized,
-        })
-        return normalized
+        if not isinstance(tool_output, dict):
+            return {
+                "status": "failed",
+                "tool_name": tool_name or "",
+                "data": {},
+                "warnings": [],
+                "error": Orchestrator._snippet(tool_output, text_limit),
+            }
 
-    def start_plan_review(self, user_request: str) -> Dict[str, Any]:
-        plan = self.plan(user_request)
-        return {
-            "user_request": user_request,
-            "plan": plan,
-            "feedback_history": [],
-            "approved": False,
-            "round": 0,
+        compact: Dict[str, Any] = {
+            "status": str(tool_output.get("status") or ""),
+            "tool_name": str(tool_output.get("tool_name") or tool_name or ""),
+            "warnings": list(tool_output.get("warnings") or [])[:6],
+            "error": Orchestrator._snippet(tool_output.get("error"), text_limit),
         }
+        data = tool_output.get("data")
+        if not isinstance(data, dict):
+            compact["data"] = {}
+            return compact
 
-    def apply_plan_feedback(
+        if tool_name == "bash_exec":
+            compact_data: Dict[str, Any] = {}
+            for key in (
+                "exit_code",
+                "timed_out",
+                "cancelled",
+                "cwd",
+                "timeout_s",
+                "stdout_path",
+                "stderr_path",
+                "stdout_tail",
+                "stderr_tail",
+                "blocked_reason",
+            ):
+                if key not in data:
+                    continue
+                value = data.get(key)
+                if isinstance(value, str):
+                    value = Orchestrator._snippet(value, text_limit)
+                compact_data[key] = value
+            if "stdout_tail" not in compact_data and data.get("stdout"):
+                compact_data["stdout_tail"] = Orchestrator._snippet(data.get("stdout"), text_limit)
+            if "stderr_tail" not in compact_data and data.get("stderr"):
+                compact_data["stderr_tail"] = Orchestrator._snippet(data.get("stderr"), text_limit)
+            compact["data"] = compact_data
+            return compact
+
+        data_keys = [str(k) for k in list(data.keys())[:20]]
+        scalars: Dict[str, Any] = {}
+        paths: Dict[str, str] = {}
+        for key, value in data.items():
+            if len(scalars) >= 10 and len(paths) >= 10:
+                break
+            key_s = str(key)
+            if isinstance(value, (int, float, bool)) and len(scalars) < 10:
+                scalars[key_s] = value
+                continue
+            if not isinstance(value, str):
+                continue
+            key_l = key_s.lower()
+            if any(token in key_l for token in ("path", "file", "dir", "artifact", "ref")) and len(paths) < 10:
+                paths[key_s] = Orchestrator._snippet(value, 300)
+                continue
+            if len(value) <= 200 and len(scalars) < 10:
+                scalars[key_s] = value
+
+        compact_data: Dict[str, Any] = {"data_keys": data_keys}
+        if scalars:
+            compact_data["scalars"] = scalars
+        if paths:
+            compact_data["paths"] = paths
+        compact["data"] = compact_data
+        return compact
+
+    @staticmethod
+    def _compact_local_observations_for_memory(value: Any) -> List[Dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        compact: List[Dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            row: Dict[str, Any] = {}
+            step = item.get("step")
+            if isinstance(step, (int, float, str)):
+                row["step"] = step
+            method = str(item.get("method") or "").strip()
+            if method:
+                row["method"] = method
+            if "params" in item:
+                row["params_compact"] = Orchestrator._compact_params_for_memory(item.get("params"))
+            result = item.get("result")
+            if isinstance(result, dict):
+                row["result"] = Orchestrator._compact_tool_output_for_memory(
+                    method,
+                    result,
+                )
+            elif isinstance(result, list):
+                row["result"] = {
+                    "list_len": len(result),
+                    "list_preview": result[:6],
+                }
+            elif result is not None:
+                row["result"] = Orchestrator._snippet(result, 400)
+            if row:
+                compact.append(row)
+        return compact
+
+    def _write_toolcall_context_log(
         self,
-        state: Dict[str, Any],
-        feedback: str,
         *,
-        log_llm: bool = False,
-    ) -> Dict[str, Any]:
-        if not isinstance(state, dict) or "plan" not in state or "user_request" not in state:
-            raise ValueError("Invalid plan review state; expected keys: user_request, plan")
-        state.setdefault("feedback_history", [])
-        state.setdefault("round", 0)
-        feedback_text = feedback or ""
-        self._emit("PLAN_REVIEW_FEEDBACK_SUBMITTED", category="plan", payload={
-            "feedback_snippet": self._snippet(feedback_text, 160),
-        })
-        if self._is_plan_approved(feedback_text):
-            state["approved"] = True
-            state["feedback_history"].append({
-                "round": state.get("round", 0),
-                "feedback": feedback_text,
-                "approved": True,
-                "plan": state["plan"],
-            })
-            self._trace_event("PLAN_APPROVED", {
-                "feedback": feedback_text,
-                "plan": state["plan"],
-            })
-            self._emit("PLAN_REVIEW_APPROVED", category="plan", payload={
-                "feedback_snippet": self._snippet(feedback_text, 160),
-            })
-            return state
-        self._emit("PLAN_REVIEW_REVISING", category="plan", payload={
-            "feedback_snippet": self._snippet(feedback_text, 160),
-        })
-        new_plan = self.revise_plan(
-            state["user_request"],
-            state["plan"],
-            feedback_text,
-            feedback_history=state.get("feedback_history", []),
-            log_llm=log_llm,
-        )
-        self._emit("PLAN_REVIEW_REVISED", category="plan", payload={
-            "n_items": len(new_plan.get("todo", [])),
-            "todo": new_plan.get("todo", []),
-        })
-        state["feedback_history"].append({
-            "round": state.get("round", 0),
-            "feedback": feedback_text,
-            "approved": False,
-            "plan_before": state["plan"],
-            "plan_after": new_plan,
-        })
-        state["plan"] = new_plan
-        state["approved"] = False
-        state["round"] = state.get("round", 0) + 1
-        return state
+        task_id: str,
+        suffix: str,
+        content: Dict[str, Any],
+    ) -> str:
+        files_root = workspace_root(self.run_context.workspace)
+        out_dir = files_root / ".logs" / "toolcall_context"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        name = f"{self.run_context.run_id}_{task_id}_{suffix}.json"
+        out_path = out_dir / name
+        payload = self._json_roundtrip(content)
+        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            return str(out_path.relative_to(files_root))
+        except Exception:
+            return str(out_path)
 
     def _artifact_index(self) -> List[Dict[str, Any]]:
         try:
@@ -829,7 +835,7 @@ class Orchestrator:
         self._emit("PROPOSAL_START", category="plan", payload={"attempts": self.max_plan_steps})
         input_items = self._messages_to_input_items(messages)
         stepper = ToolCallingTaskStepper(
-            driver=self.tool_driver,
+            driver=self._role_tool_driver("proposal"),
             backend=self.tool_backend,
             prompt=None,
             control_tools=get_proposal_control_tool_schemas(),
@@ -839,7 +845,7 @@ class Orchestrator:
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
-                **self._tool_driver_kwargs(),
+                **self._tool_driver_kwargs("proposal"),
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="proposal",
@@ -898,7 +904,7 @@ class Orchestrator:
         )
         input_items = self._messages_to_input_items(messages)
         stepper = ToolCallingTaskStepper(
-            driver=self.tool_driver,
+            driver=self._role_tool_driver("proposal"),
             backend=self.tool_backend,
             prompt=None,
             control_tools=get_proposal_control_tool_schemas(),
@@ -908,7 +914,7 @@ class Orchestrator:
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
-                **self._tool_driver_kwargs(),
+                **self._tool_driver_kwargs("proposal"),
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="proposal",
@@ -955,7 +961,7 @@ class Orchestrator:
         artifacts_index = self._artifact_index()
         director_observations = self._director_observations_view(observations)
         function_tools = self._filtered_function_tools()
-        builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
+        builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools_for("director") else []
         tools_for_director = self._tool_descriptions_from_tools(function_tools, builtin_tools, [])
         messages = self.director_prompt.format_messages(
             user_request=user_request,
@@ -968,7 +974,7 @@ class Orchestrator:
         )
         input_items = self._messages_to_input_items(messages)
         stepper = ToolCallingTaskStepper(
-            driver=self.tool_driver,
+            driver=self._role_tool_driver("director"),
             backend=self.tool_backend,
             prompt=None,
             control_tools=get_director_control_tool_schemas(),
@@ -978,7 +984,7 @@ class Orchestrator:
             reporter=self.reporter,
             max_steps=self.max_plan_steps,
             driver_kwargs={
-                **self._tool_driver_kwargs(),
+                **self._tool_driver_kwargs("director"),
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             role="director",
@@ -1014,13 +1020,15 @@ class Orchestrator:
             if not isinstance(item, dict):
                 continue
             row: Dict[str, Any] = {}
-            for key in ("task_id", "outcome", "summary"):
+            for key in ("task_id", "outcome", "summary", "failure_kind"):
                 value = item.get(key)
                 if value is None:
                     continue
                 text = " ".join(str(value).split())
                 if text:
                     row[key] = text
+            if bool(item.get("auto_replan", False)):
+                row["auto_replan"] = True
 
             raw_artifacts = item.get("key_artifacts")
             key_artifacts: List[Dict[str, str]] = []
@@ -1061,7 +1069,7 @@ class Orchestrator:
         proposal_md: str,
         work_packages: List[str],
         log_llm: bool,
-        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]],
+        proposal_feedback_provider: Optional[Callable[[Dict[str, Any]], str]],
         allow_revise: bool = True,
         persist_fn: Optional[Callable[[str, List[str]], None]] = None,
     ) -> tuple[str, List[str], bool, str]:
@@ -1069,57 +1077,57 @@ class Orchestrator:
             "user_request": user_request,
             "proposal_md": proposal_md,
             "work_packages": work_packages,
-            "plan": {"todo": list(work_packages), "plan_description": proposal_md},
+            "proposal": {"work_packages": list(work_packages), "proposal_md": proposal_md},
             "feedback_history": [],
             "approved": False,
             "round": 0,
         }
-        if plan_feedback_provider is None and not self.reporter.is_live():
-            raise ValueError("plan_review requires a live reporter (WebUI). Start WebUI or disable plan_review.")
+        if proposal_feedback_provider is None and not self.reporter.is_live():
+            raise ValueError("proposal_review requires a live reporter (WebUI). Start WebUI or disable proposal_review.")
 
         last_feedback = ""
         while not review_state.get("approved"):
-            plan_description = (review_state["proposal_md"] or "").strip()
-            self._emit("PLAN_REVIEW_SHOW", category="plan", payload={
+            proposal_description = (review_state["proposal_md"] or "").strip()
+            self._emit("PROPOSAL_REVIEW_SHOW", category="plan", payload={
                 "todo": review_state["work_packages"],
-                "plan_description_snippet": self._snippet(plan_description, 240),
+                "proposal_description_snippet": self._snippet(proposal_description, 240),
             })
-            self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan")
-            if plan_feedback_provider:
-                feedback = plan_feedback_provider({
+            self._emit("PROPOSAL_REVIEW_WAIT_INPUT", category="plan")
+            if proposal_feedback_provider:
+                feedback = proposal_feedback_provider({
                     **review_state,
                     "stage": "proposal_review",
                 })
             else:
-                if hasattr(self.reporter, "prompt_plan_feedback") and self.reporter.is_live():
-                    feedback = self.reporter.prompt_plan_feedback(
+                if hasattr(self.reporter, "prompt_proposal_feedback") and self.reporter.is_live():
+                    feedback = self.reporter.prompt_proposal_feedback(
                         todo=review_state["work_packages"],
-                        plan_description=plan_description,
+                        proposal_description=proposal_description,
                     )
                 else:
-                    raise ValueError("plan_review requires a live reporter (WebUI). Start WebUI or disable plan_review.")
+                    raise ValueError("proposal_review requires a live reporter (WebUI). Start WebUI or disable proposal_review.")
             if not feedback:
-                if plan_feedback_provider:
-                    raise ValueError("plan_review feedback cannot be empty")
-                self._emit("PLAN_REVIEW_WAIT_INPUT", category="plan", payload={"error": "empty_input"})
+                if proposal_feedback_provider:
+                    raise ValueError("proposal_review feedback cannot be empty")
+                self._emit("PROPOSAL_REVIEW_WAIT_INPUT", category="plan", payload={"error": "empty_input"})
                 continue
 
             last_feedback = feedback
-            if self._is_plan_approved(feedback):
+            if self._is_proposal_review_approved(feedback):
                 review_state["approved"] = True
                 review_state["feedback_history"].append({
                     "round": review_state.get("round", 0),
                     "feedback": feedback,
                     "approved": True,
                 })
-                self._emit("PLAN_REVIEW_APPROVED", category="plan", payload={
+                self._emit("PROPOSAL_REVIEW_APPROVED", category="plan", payload={
                     "feedback_snippet": self._snippet(feedback, 160),
                 })
                 break
             if not allow_revise:
                 return proposal_md, work_packages, False, feedback
 
-            self._emit("PLAN_REVIEW_REVISING", category="plan", payload={
+            self._emit("PROPOSAL_REVIEW_REVISING", category="plan", payload={
                 "feedback_snippet": self._snippet(feedback, 160),
             })
             revised = self._revise_proposal(
@@ -1135,7 +1143,7 @@ class Orchestrator:
                 persist_fn(proposal_md, work_packages)
             review_state["proposal_md"] = proposal_md
             review_state["work_packages"] = work_packages
-            review_state["plan"] = {"todo": list(work_packages), "plan_description": proposal_md}
+            review_state["proposal"] = {"work_packages": list(work_packages), "proposal_md": proposal_md}
             review_state["feedback_history"].append({
                 "round": review_state.get("round", 0),
                 "feedback": feedback,
@@ -1174,15 +1182,15 @@ class Orchestrator:
             "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
         })
         filtered_tools = self._filtered_function_tools()
-        builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools else []
+        builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools_for("task_runner") else []
         stepper = ToolCallingTaskStepper(
-            driver=self.tool_driver,
+            driver=self._role_tool_driver("task_runner"),
             backend=self.tool_backend,
             prompt=self.task_step_prompt,
             reporter=self.reporter,
             max_steps=min(self.max_steps, self.tool_policy.max_tool_calls_per_task),
             driver_kwargs={
-                **self._tool_driver_kwargs(),
+                **self._tool_driver_kwargs("task_runner"),
                 "parallel_tool_calls": self.tool_policy.parallel_tool_calls,
             },
             trace_store=self.trace_store,
@@ -1201,7 +1209,13 @@ class Orchestrator:
             builtin_tools=builtin_tools,
             resume_state=resume_state,
         )
-        if step_result.get("finish_reason") == "interrupted":
+        local_observations_raw = step_result.get("local_observations")
+        local_observations = self._json_roundtrip(
+            local_observations_raw if isinstance(local_observations_raw, list) else []
+        )
+        local_observations_for_memory = self._compact_local_observations_for_memory(local_observations)
+        finish_reason_raw = str(step_result.get("finish_reason") or "")
+        if finish_reason_raw == "interrupted":
             return {
                 "task_id": task_id,
                 "outcome": "interrupted",
@@ -1210,14 +1224,91 @@ class Orchestrator:
                 "interrupt_phase": step_result.get("interrupt_phase", "toolcall"),
                 "interrupted_toolcall": step_result.get("interrupted_toolcall"),
             }
-        finish_reason = str(step_result.get("finish_reason") or "")
+        finish_reason = finish_reason_raw
         control_payload = step_result.get("control_payload")
+        max_steps_context_rel = ""
+        if finish_reason == "max_steps":
+            max_limit = min(self.max_steps, self.tool_policy.max_tool_calls_per_task)
+            try:
+                max_steps_context_rel = self._write_toolcall_context_log(
+                    task_id=task_id,
+                    suffix="max_steps",
+                    content={
+                        "task_id": task_id,
+                        "finish_reason": "max_steps",
+                        "max_tool_calls_limit": int(max_limit),
+                        "toolcall_context": local_observations_for_memory,
+                    },
+                )
+            except Exception as exc:
+                max_steps_context_rel = ""
+                self._emit("TOOLCALL_CONTEXT_LOG_FAILED", level="warning", category="task", task_id=task_id, payload={
+                    "error": self._snippet(str(exc), 240),
+                })
+            facts = [
+                f"failure_kind=max_steps",
+                f"max_tool_calls_limit={int(max_limit)}",
+                f"toolcall_observations={len(local_observations_for_memory)}",
+            ]
+            files: List[Dict[str, str]] = []
+            artifacts: List[str] = []
+            if max_steps_context_rel:
+                files.append({
+                    "path": max_steps_context_rel,
+                    "description": "Toolcall context snapshot captured when max_steps was reached.",
+                    "kind": "log",
+                })
+            control_payload = {
+                "error": (
+                    f"Tool-call limit reached ({int(max_limit)}) before completion "
+                    "without task_finish/task_fail."
+                ),
+                "needs_human": False,
+                "hint": "Auto-replan with smaller scope and continue from existing outputs.",
+                "auto_replan": True,
+                "failure_kind": "max_steps",
+                "partial_result": {
+                    "summary": "Task hit tool-call limit; prepared for director auto-replan.",
+                    "facts": facts,
+                    "files": files,
+                    "constraints": [],
+                    "open_questions": [],
+                    "decisions": [
+                        {
+                            "decision": "Stop current task at tool-call limit.",
+                            "rationale": "Prevent open-ended loop and hand off to director for route adjustment.",
+                        }
+                    ],
+                    "next_steps": [
+                        "Director should split or narrow the task and re-dispatch.",
+                        "Reuse existing outputs and rerun only unfinished subset.",
+                    ],
+                    "artifacts": artifacts,
+                },
+            }
+            finish_reason = "task_fail"
         task_result = self._normalize_task_result_payload(
             task_goal=task_goal,
             finish_reason=finish_reason,
             payload=control_payload,
             output_text=str(step_result.get("output_text") or ""),
         )
+        if str(task_result.get("failure_kind") or "") == "max_steps":
+            task_result["structured_result"]["toolcall_context"] = local_observations_for_memory
+            task_result["structured_result"]["toolcall_context_count"] = len(local_observations_for_memory)
+            if max_steps_context_rel:
+                task_result["structured_result"]["toolcall_context_path"] = max_steps_context_rel
+                existing_paths = {
+                    str(item.get("path") or "").strip().lower()
+                    for item in (task_result.get("key_artifacts") or [])
+                    if isinstance(item, dict)
+                }
+                if max_steps_context_rel.strip().lower() not in existing_paths:
+                    task_result["key_artifacts"].append({
+                        "path": max_steps_context_rel,
+                        "description": "Toolcall context snapshot captured when max_steps was reached.",
+                        "kind": "log",
+                    })
         outcome = task_result["task_outcome"]
         merge_info: Dict[str, Any] = {}
         patch_merge_failed = False
@@ -1280,6 +1371,8 @@ class Orchestrator:
             "summary": task_result["task_summary"],
             "observation_path": observation_path,
             "key_artifacts": task_result["key_artifacts"],
+            "auto_replan": bool(task_result.get("auto_replan", False)),
+            "failure_kind": str(task_result.get("failure_kind") or ""),
             "event_path": merge_info.get("event_path"),
             "memory_merge_failed": patch_merge_failed,
             "memory_merge_error": merge_error if patch_merge_failed else "",
@@ -1321,12 +1414,16 @@ class Orchestrator:
                 "task_summary": summary,
                 "key_artifacts": key_artifacts,
                 "structured_result": structured,
+                "auto_replan": False,
+                "failure_kind": "",
             }
 
         if finish_reason == "task_fail":
             partial = body.get("partial_result") if isinstance(body.get("partial_result"), dict) else {}
             err = str(body.get("error") or output_text or "Task failed").strip()
             needs_human = bool(body.get("needs_human", True))
+            auto_replan = bool(body.get("auto_replan", False))
+            failure_kind = str(body.get("failure_kind") or "").strip()
             structured = {
                 "summary": err,
                 "facts": self._clean_text_list(partial.get("facts")),
@@ -1354,6 +1451,8 @@ class Orchestrator:
                 "task_summary": err,
                 "key_artifacts": key_artifacts,
                 "structured_result": structured,
+                "auto_replan": auto_replan,
+                "failure_kind": failure_kind,
             }
 
         text = " ".join(output_text.split()).strip()
@@ -1373,7 +1472,91 @@ class Orchestrator:
             "task_summary": summary,
             "key_artifacts": [],
             "structured_result": structured,
+            "auto_replan": False,
+            "failure_kind": str(finish_reason or "unknown").strip(),
         }
+
+    def _commit_director_memory(
+        self,
+        *,
+        commit_reason: str,
+        proposal_md: str,
+        work_packages: List[str],
+        proposal_path: str,
+        decision_state: str = "",
+        rationale: str = "",
+        change_log: str = "",
+    ) -> None:
+        commit_tag = re.sub(r"[^a-z0-9]+", "_", commit_reason.lower()).strip("_") or "director_commit"
+        commit_id = f"director_{commit_tag}_{datetime.utcnow().strftime('%H%M%S%f')}"
+        proposal_focus = self._snippet(" ".join(str(proposal_md or "").split()), 600)
+        clean_packages = self._clean_text_list(work_packages)
+        summary = self._snippet(" ".join(commit_reason.split()), 500) or "Director committed planning decision."
+
+        facts: List[str] = []
+        if proposal_focus:
+            facts.append(f"Run focus: {proposal_focus}")
+        if clean_packages:
+            facts.append(f"Work package count: {len(clean_packages)}")
+            facts.append("Work packages: " + " | ".join(clean_packages[:8]))
+
+        decisions: List[Dict[str, str]] = []
+        clean_rationale = self._snippet(" ".join(str(rationale or "").split()), 600)
+        clean_change_log = self._snippet(" ".join(str(change_log or "").split()), 600)
+        if decision_state:
+            decisions.append({
+                "topic": "director_decision",
+                "decision": decision_state,
+                "rationale": clean_rationale,
+            })
+        if clean_change_log:
+            decisions.append({
+                "topic": "proposal_change_log",
+                "decision": clean_change_log,
+                "rationale": "Major route revision accepted.",
+            })
+
+        structured_result = {
+            "summary": summary,
+            "facts": facts,
+            "files": [{"path": proposal_path, "description": "Current approved proposal", "kind": "plan"}] if proposal_path else [],
+            "constraints": [],
+            "open_questions": [],
+            "decisions": decisions,
+            "next_steps": clean_packages[:5],
+            "artifacts": [proposal_path] if proposal_path else [],
+        }
+
+        self._emit("MEMORY_MERGE_START", category="summary", task_id=commit_id, payload={
+            "source": "director",
+            "reason": summary,
+        })
+        try:
+            merge_info = self._merge_memory_via_git_apply(
+                run_id=self.run_context.run_id,
+                task_id=commit_id,
+                outcome="success",
+                task_goal_short=summary,
+                structured_result=structured_result,
+            )
+            self._emit("MEMORY_MERGE_DONE", category="summary", task_id=commit_id, payload={
+                "source": "director",
+                "event_path": merge_info.get("event_path", ""),
+                "memory_index": merge_info.get("memory_index", ""),
+                "patch_path": merge_info.get("patch_path", ""),
+                "attempts": merge_info.get("attempts", 0),
+            })
+        except Exception as exc:
+            memory_index = ""
+            try:
+                memory_index = str(self.memory_store.index_path.relative_to(workspace_root(self.run_context.workspace)))
+            except Exception:
+                memory_index = ""
+            self._emit("MEMORY_MERGE_FAILED", level="warning", category="summary", task_id=commit_id, payload={
+                "source": "director",
+                "memory_index": memory_index,
+                "error": str(exc),
+            })
 
     def _merge_memory_via_git_apply(
         self,
@@ -1953,17 +2136,17 @@ class Orchestrator:
         *,
         log_llm: bool,
         resume_feedback: str,
-        plan_review: bool,
-        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]],
+        proposal_review: bool,
+        proposal_feedback_provider: Optional[Callable[[Dict[str, Any]], str]],
         full_auto_major: bool,
         defer_ui: bool,
         start_ui: Callable[[str, bool], None],
     ) -> Dict[str, Any]:
         self._interrupt_context_note = ""
         if self.resuming:
-            if plan_review:
-                self.logger.warning("plan_review requested while resuming; ignoring and continuing with stored proposal.")
-                plan_review = False
+            if proposal_review:
+                self.logger.warning("proposal_review requested while resuming; ignoring and continuing with stored proposal.")
+                proposal_review = False
             state = self._load_task_state()
             if state.get("lane") != "standard":
                 raise ValueError(f"Cannot resume; lane mismatch ({state.get('lane')})")
@@ -2035,7 +2218,7 @@ class Orchestrator:
                 "last_interrupt": last_interrupt,
             })
 
-            if plan_review:
+            if proposal_review:
                 def persist(proposal_text: str, packages: List[str]) -> None:
                     relpath = self._write_proposal(proposal_text)
                     self._write_task_state({
@@ -2059,7 +2242,7 @@ class Orchestrator:
                     proposal_md=proposal_md,
                     work_packages=work_packages,
                     log_llm=log_llm,
-                    plan_feedback_provider=plan_feedback_provider,
+                    proposal_feedback_provider=proposal_feedback_provider,
                     allow_revise=True,
                     persist_fn=persist,
                 )
@@ -2080,6 +2263,14 @@ class Orchestrator:
                         "task_resume_checkpoint": task_resume_checkpoint,
                         "last_interrupt": last_interrupt,
                     })
+
+            self._commit_director_memory(
+                commit_reason="Initial plan committed for execution.",
+                proposal_md=proposal_md,
+                work_packages=work_packages,
+                proposal_path=proposal_relpath,
+                decision_state="InitialPlanCommitted",
+            )
 
         self._emit("TASKS_COMPILED", category="task", payload={
             "n_tasks": len(tasks),
@@ -2169,7 +2360,7 @@ class Orchestrator:
                         tasks=tasks,
                         reason=f"task:{task_id}",
                         log_llm=log_llm,
-                        plan_feedback_provider=plan_feedback_provider,
+                        proposal_feedback_provider=proposal_feedback_provider,
                     )
                     hitl_history.append(hitl_meta)
                     if not hitl_meta.get("feedback"):
@@ -2405,7 +2596,7 @@ class Orchestrator:
                             tasks=tasks,
                             reason=f"task:{task_id}",
                             log_llm=log_llm,
-                            plan_feedback_provider=plan_feedback_provider,
+                            proposal_feedback_provider=proposal_feedback_provider,
                         )
                         hitl_history.append(hitl_meta)
                         if not hitl_meta.get("feedback"):
@@ -2430,6 +2621,26 @@ class Orchestrator:
                             break
                         continue
                     if outcome == "failure":
+                        if bool(obs.get("auto_replan", False)):
+                            status = "running"
+                            self._emit("TASK_AUTO_REPLAN", level="warning", category="task", task_id=task_id, payload={
+                                "failure_kind": str(obs.get("failure_kind") or "unknown"),
+                                "summary_snippet": self._snippet(obs.get("summary", ""), 240),
+                            })
+                            self._write_task_state({
+                                "schema_version": 2,
+                                "lane": "standard",
+                                "user_request": user_request,
+                                "proposal": {
+                                    "proposal_path": self._proposal_path().name,
+                                    "work_packages": work_packages,
+                                },
+                                "tasks": tasks,
+                                "observations": observations,
+                                "status": status,
+                                "hitl_history": hitl_history,
+                            })
+                            continue
                         status = "failure"
                         self._write_task_state({
                             "schema_version": 2,
@@ -2506,6 +2717,15 @@ class Orchestrator:
                             "status": status,
                             "hitl_history": hitl_history,
                         })
+                        self._commit_director_memory(
+                            commit_reason="Major proposal revision committed automatically.",
+                            proposal_md=proposal_md,
+                            work_packages=work_packages,
+                            proposal_path=proposal_relpath,
+                            decision_state="MajorReviseProposal",
+                            rationale=str(decision.get("rationale") or ""),
+                            change_log=str(decision.get("change_log") or ""),
+                        )
                         continue
 
                     proposal_md, work_packages, approved, feedback = self._review_proposal(
@@ -2513,7 +2733,7 @@ class Orchestrator:
                         proposal_md=updated_md,
                         work_packages=updated_packages,
                         log_llm=log_llm,
-                        plan_feedback_provider=plan_feedback_provider,
+                        proposal_feedback_provider=proposal_feedback_provider,
                         allow_revise=False,
                         persist_fn=None,
                     )
@@ -2552,6 +2772,15 @@ class Orchestrator:
                         "status": status,
                         "hitl_history": hitl_history,
                     })
+                    self._commit_director_memory(
+                        commit_reason="Major proposal revision approved and committed.",
+                        proposal_md=proposal_md,
+                        work_packages=work_packages,
+                        proposal_path=proposal_relpath,
+                        decision_state="MajorReviseProposal",
+                        rationale=str(decision.get("rationale") or ""),
+                        change_log=str(decision.get("change_log") or ""),
+                    )
                     continue
 
                 if state == "StopAndSynthesize":
@@ -2624,8 +2853,8 @@ class Orchestrator:
         *,
         log_llm: bool = False,
         initial_plan: Optional[Dict[str, Any]] = None,
-        plan_review: bool = True,
-        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
+        proposal_review: bool = True,
+        proposal_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
         lane: str = "standard",
         full_auto_major: bool = False,
         resume_feedback: str = "",
@@ -2671,8 +2900,8 @@ class Orchestrator:
                     user_request,
                     log_llm=log_llm,
                     resume_feedback=resume_feedback,
-                    plan_review=plan_review,
-                    plan_feedback_provider=plan_feedback_provider,
+                    proposal_review=proposal_review,
+                    proposal_feedback_provider=proposal_feedback_provider,
                     full_auto_major=full_auto_major,
                     defer_ui=False,
                     start_ui=start_ui,
@@ -2728,7 +2957,7 @@ class Orchestrator:
         tasks: List[Dict[str, Any]],
         reason: str = "",
         log_llm: bool = False,
-        plan_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
+        proposal_feedback_provider: Optional[Callable[[Dict[str, Any]], str]] = None,
     ) -> Dict[str, Any]:
         hitl_index = self._next_hitl_index()
         hitl_tag = f"hitl_{hitl_index:03d}"
@@ -2760,8 +2989,8 @@ class Orchestrator:
         except Exception:
             report_ref = self._rel_run_path(interrupted_report_path)
 
-        if plan_feedback_provider:
-            feedback = plan_feedback_provider({**feedback_state, "stage": "hitl_feedback"}) or ""
+        if proposal_feedback_provider:
+            feedback = proposal_feedback_provider({**feedback_state, "stage": "hitl_feedback"}) or ""
         else:
             if hasattr(self.reporter, "prompt_hitl_feedback") and self.reporter.is_live():
                 feedback = self.reporter.prompt_hitl_feedback(
@@ -3186,28 +3415,11 @@ class Orchestrator:
         return json.loads(json_text)
 
     @staticmethod
-    def _is_plan_approved(feedback: str) -> bool:
+    def _is_proposal_review_approved(feedback: str) -> bool:
         if not isinstance(feedback, str):
             return False
         normalized = feedback.strip().lower()
         return normalized in {"yes", "y", "approve", "approved", "ok", "okay"}
-
-    def _normalize_plan(self, data: Dict[str, Any], user_request: str) -> Dict[str, Any]:
-        if not isinstance(data, dict):
-            raise ValueError("Plan must be a JSON object")
-        normalized = dict(data)
-        todo = normalized.get("todo")
-        if not isinstance(todo, list) or not todo:
-            raise ValueError("Plan.todo must be a non-empty list")
-        plan_description = normalized.get("plan_description")
-        if plan_description is None:
-            plan_description = ""
-        if not isinstance(plan_description, str):
-            raise ValueError("Plan.plan_description must be a string")
-        normalized["todo"] = todo
-        normalized.pop("next_step", None)
-        normalized["plan_description"] = plan_description
-        return normalized
 
     def _write_llm_log(self, event: str, *, content: Optional[str] = None, messages: Optional[List[Dict[str, Any]]] = None, step: Optional[int] = None, **extra: Any) -> None:
         if not self.llm_log_file:

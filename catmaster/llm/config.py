@@ -13,38 +13,82 @@ except Exception:  # pragma: no cover
 
 Provider = Literal["openai", "openrouter", "deepseek", "gemini", "oai_compatible", "langchain"]
 DriverKind = Literal["openai_responses", "openai_chat_completions", "langchain_bind_tools"]
+ToolCallingRole = Literal["proposal", "director", "task_runner"]
+AgentRole = Literal["proposal", "director", "task_runner", "memory_patch", "summary"]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
 _logger = logging.getLogger(__name__)
+TOOL_CALLING_AGENT_ROLES: tuple[ToolCallingRole, ...] = ("proposal", "director", "task_runner")
+AGENT_ROLES: tuple[AgentRole, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
 
 
 @dataclass
 class ToolCallingConfig:
+    profile: Optional[str] = None
     driver: DriverKind = "openai_responses"
     parallel_tool_calls: bool = False
     supports_builtin_tools: bool = False
     strict_json_schema: bool = False
-    prompt_cache_retention: Optional[str] = None
-    proposal_browse_tools_enabled: bool = True
+    request_options: Dict[str, Any] = field(default_factory=dict)
+    extra_body: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCallingConfig":
         if not isinstance(data, dict):
             return cls()
+        request_options = data.get("request_options")
+        extra_body = data.get("extra_body")
         return cls(
+            profile=_to_str_or_none(data.get("profile")),
             driver=data.get("driver", cls.driver),  # type: ignore[arg-type]
-            parallel_tool_calls=bool(data.get("parallel_tool_calls", cls.parallel_tool_calls)),
-            supports_builtin_tools=bool(data.get("supports_builtin_tools", cls.supports_builtin_tools)),
-            strict_json_schema=bool(data.get("strict_json_schema", cls.strict_json_schema)),
-            prompt_cache_retention=_normalize_prompt_cache_retention(
-                data.get("prompt_cache_retention"),
-                source="tool_calling.prompt_cache_retention",
+            parallel_tool_calls=_to_bool(
+                data.get("parallel_tool_calls"),
+                default=cls.parallel_tool_calls,
+                source="tool_calling.parallel_tool_calls",
             ),
-            proposal_browse_tools_enabled=_to_bool(
-                data.get("proposal_browse_tools_enabled"),
-                default=cls.proposal_browse_tools_enabled,
-                source="tool_calling.proposal_browse_tools_enabled",
+            supports_builtin_tools=_to_bool(
+                data.get("supports_builtin_tools"),
+                default=cls.supports_builtin_tools,
+                source="tool_calling.supports_builtin_tools",
             ),
+            strict_json_schema=_to_bool(
+                data.get("strict_json_schema"),
+                default=cls.strict_json_schema,
+                source="tool_calling.strict_json_schema",
+            ),
+            request_options=dict(request_options) if isinstance(request_options, dict) else {},
+            extra_body=dict(extra_body) if isinstance(extra_body, dict) else {},
+        )
+
+
+@dataclass
+class ProposalPolicyConfig:
+    browse_tools_enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ProposalPolicyConfig":
+        if not isinstance(data, dict):
+            return cls()
+        return cls(
+            browse_tools_enabled=_to_bool(
+                data.get("browse_tools_enabled"),
+                default=cls.browse_tools_enabled,
+                source="agent_policies.proposal.browse_tools_enabled",
+            )
+        )
+
+
+@dataclass
+class AgentPoliciesConfig:
+    proposal: ProposalPolicyConfig = field(default_factory=ProposalPolicyConfig)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AgentPoliciesConfig":
+        if not isinstance(data, dict):
+            return cls()
+        proposal_raw = data.get("proposal")
+        return cls(
+            proposal=ProposalPolicyConfig.from_dict(proposal_raw if isinstance(proposal_raw, dict) else {}),
         )
 
 
@@ -144,20 +188,6 @@ class LLMConfig:
         if self.reasoning_effort is None:
             effort = os.getenv("CATMASTER_REASONING_EFFORT", "").strip()
             self.reasoning_effort = effort or None
-        if self.tool_calling.prompt_cache_retention is None:
-            retention = _normalize_prompt_cache_retention(
-                os.getenv("CATMASTER_PROMPT_CACHE_RETENTION", ""),
-                source="CATMASTER_PROMPT_CACHE_RETENTION",
-            )
-            if retention is not None:
-                self.tool_calling.prompt_cache_retention = retention
-        env_prop_tools = os.getenv("CATMASTER_PROPOSAL_BROWSE_TOOLS_ENABLED", "")
-        if env_prop_tools.strip():
-            self.tool_calling.proposal_browse_tools_enabled = _to_bool(
-                env_prop_tools,
-                default=self.tool_calling.proposal_browse_tools_enabled,
-                source="CATMASTER_PROPOSAL_BROWSE_TOOLS_ENABLED",
-            )
         driver_env = os.getenv("CATMASTER_TOOL_DRIVER", "").strip()
         if driver_env:
             self.tool_calling.driver = driver_env  # type: ignore[assignment]
@@ -169,10 +199,32 @@ class LLMConfig:
 
 @dataclass
 class LLMProfile:
-    """Orchestrator LLM profile: main + optional summary config."""
+    """Role-routed LLM profile: named model configs + explicit role bindings."""
 
-    main: LLMConfig = field(default_factory=LLMConfig)
-    summary: Optional[LLMConfig] = None
+    models: Dict[str, LLMConfig] = field(default_factory=dict)
+    agents: Dict[str, str] = field(default_factory=dict)
+    tool_calling_profiles: Dict[str, ToolCallingConfig] = field(default_factory=dict)
+    agent_policies: AgentPoliciesConfig = field(default_factory=AgentPoliciesConfig)
+
+    def label_for_role(self, role: str) -> str:
+        label = self.agents.get(role)
+        if not label:
+            raise ValueError(f"Missing model label binding for role: {role}")
+        if label not in self.models:
+            raise ValueError(f"Role {role} references unknown model label: {label}")
+        return label
+
+    def config_for_role(self, role: str) -> LLMConfig:
+        return self.models[self.label_for_role(role)]
+
+    @property
+    def main(self) -> LLMConfig:
+        # Task runner is the canonical "main" execution model in runtime metadata.
+        return self.config_for_role("task_runner")
+
+    @property
+    def summary(self) -> LLMConfig:
+        return self.config_for_role("summary")
 
     @staticmethod
     def from_env() -> "LLMProfile":
@@ -201,7 +253,13 @@ class LLMProfile:
             ),
         )
         main.apply_env_fallbacks()
-        return LLMProfile(main=main, summary=None)
+        label = main.model
+        return LLMProfile(
+            models={label: main},
+            agents={role: label for role in AGENT_ROLES},
+            tool_calling_profiles={},
+            agent_policies=AgentPoliciesConfig(),
+        )
 
     @staticmethod
     def from_env_or_file(path: Optional[str] = None) -> "LLMProfile":
@@ -213,24 +271,89 @@ class LLMProfile:
                 raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
                 if not isinstance(raw, dict):
                     raise ValueError(f"LLM config must be a mapping: {config_path}")
-                main_raw = raw.get("main") if "main" in raw else raw
-                summary_raw = raw.get("summary")
-                if isinstance(main_raw, dict):
-                    provider = (main_raw.get("provider") or os.getenv("CATMASTER_LLM_PROVIDER", "openai")).strip().lower()
-                    if provider == "openrouter":
-                        tool_calling = main_raw.get("tool_calling")
-                        if not isinstance(tool_calling, dict):
-                            tool_calling = {}
-                            main_raw["tool_calling"] = tool_calling
-                        tool_calling.setdefault("driver", "openai_chat_completions")
-                profile = LLMProfile(
-                    main=LLMConfig.from_dict(main_raw if isinstance(main_raw, dict) else {}),
-                    summary=LLMConfig.from_dict(summary_raw) if isinstance(summary_raw, dict) else None,
+                models_raw = raw.get("models")
+                agents_raw = raw.get("agents")
+                profiles_raw = raw.get("tool_calling_profiles")
+                agent_policies_raw = raw.get("agent_policies")
+                if not isinstance(models_raw, dict):
+                    raise ValueError(f"LLM config requires top-level 'models' mapping: {config_path}")
+                if not models_raw:
+                    raise ValueError(f"LLM config 'models' cannot be empty: {config_path}")
+                if not isinstance(agents_raw, dict):
+                    raise ValueError(f"LLM config requires top-level 'agents' mapping: {config_path}")
+                if not isinstance(profiles_raw, dict):
+                    raise ValueError(f"LLM config requires top-level 'tool_calling_profiles' mapping: {config_path}")
+                if not profiles_raw:
+                    raise ValueError(f"LLM config 'tool_calling_profiles' cannot be empty: {config_path}")
+
+                unknown_roles = sorted(set(agents_raw.keys()) - set(AGENT_ROLES))
+                if unknown_roles:
+                    joined = ", ".join(unknown_roles)
+                    raise ValueError(f"Unknown role(s) in llm config agents: {joined}")
+                missing_roles = [role for role in AGENT_ROLES if role not in agents_raw]
+                if missing_roles:
+                    joined = ", ".join(missing_roles)
+                    raise ValueError(f"Missing required role binding(s) in llm config agents: {joined}")
+
+                tool_calling_profiles: Dict[str, ToolCallingConfig] = {}
+                for name_raw, item in profiles_raw.items():
+                    name = str(name_raw).strip()
+                    if not name:
+                        raise ValueError("tool_calling_profiles labels must be non-empty strings")
+                    if not isinstance(item, dict):
+                        raise ValueError(f"tool_calling_profiles[{name!r}] must be a mapping")
+                    cfg = ToolCallingConfig.from_dict(item)
+                    driver = str(cfg.driver or "").strip()
+                    if not driver:
+                        raise ValueError(f"tool_calling_profiles[{name!r}] requires non-empty driver")
+                    cfg.profile = name
+                    tool_calling_profiles[name] = cfg
+
+                models: Dict[str, LLMConfig] = {}
+                for label_raw, item in models_raw.items():
+                    label = str(label_raw).strip()
+                    if not label:
+                        raise ValueError("LLM config model labels must be non-empty strings")
+                    if not isinstance(item, dict):
+                        raise ValueError(f"LLM config model {label!r} must be a mapping")
+                    merged_model = dict(item)
+                    tool_calling_raw = merged_model.get("tool_calling")
+                    if not isinstance(tool_calling_raw, dict):
+                        raise ValueError(f"LLM config model {label!r} requires tool_calling mapping")
+                    profile_name = str(tool_calling_raw.get("profile") or "").strip()
+                    if not profile_name:
+                        raise ValueError(f"LLM config model {label!r} requires tool_calling.profile")
+                    template = tool_calling_profiles.get(profile_name)
+                    if template is None:
+                        raise ValueError(f"LLM config model {label!r} references unknown tool_calling profile: {profile_name!r}")
+                    merged_tool_calling = _merge_tool_calling_config(template, tool_calling_raw)
+                    merged_model["tool_calling"] = _tool_calling_config_to_dict(merged_tool_calling)
+                    cfg = LLMConfig.from_dict(merged_model)
+                    cfg.apply_env_fallbacks()
+                    cfg.tool_calling.profile = profile_name
+                    models[label] = cfg
+
+                agents: Dict[str, str] = {}
+                for role in AGENT_ROLES:
+                    bound = str(agents_raw.get(role, "")).strip()
+                    if not bound:
+                        raise ValueError(f"Role {role!r} must bind to a non-empty model label")
+                    if bound not in models:
+                        raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
+                    agents[role] = bound
+
+                for role in TOOL_CALLING_AGENT_ROLES:
+                    cfg = models[agents[role]]
+                    driver = str(getattr(cfg.tool_calling, "driver", "") or "").strip()
+                    if not driver:
+                        raise ValueError(f"Role {role!r} requires tool_calling.driver in model {agents[role]!r}")
+
+                return LLMProfile(
+                    models=models,
+                    agents=agents,
+                    tool_calling_profiles=tool_calling_profiles,
+                    agent_policies=AgentPoliciesConfig.from_dict(agent_policies_raw if isinstance(agent_policies_raw, dict) else {}),
                 )
-                profile.main.apply_env_fallbacks()
-                if profile.summary is not None:
-                    profile.summary.apply_env_fallbacks()
-                return profile
         return LLMProfile.from_env()
 
 
@@ -275,17 +398,6 @@ def _to_str_or_none(value: Any) -> Optional[str]:
     return text or None
 
 
-def _normalize_prompt_cache_retention(value: Any, *, source: str) -> Optional[str]:
-    text = _to_str_or_none(value)
-    if text is None:
-        return None
-    normalized = text.lower()
-    if normalized in {"in_memory", "24h"}:
-        return normalized
-    _logger.warning("Ignoring invalid %s=%r (allowed: in_memory, 24h)", source, text)
-    return None
-
-
 def _to_bool(value: Any, *, default: bool, source: str) -> bool:
     if isinstance(value, bool):
         return value
@@ -304,10 +416,62 @@ def _to_bool(value: Any, *, default: bool, source: str) -> bool:
     return default
 
 
+def _merge_tool_calling_config(template: ToolCallingConfig, model_tool_calling_raw: Dict[str, Any]) -> ToolCallingConfig:
+    if not isinstance(model_tool_calling_raw, dict):
+        return template
+    request_options = dict(template.request_options)
+    request_options_raw = model_tool_calling_raw.get("request_options")
+    if isinstance(request_options_raw, dict):
+        request_options.update(request_options_raw)
+    extra_body = dict(template.extra_body)
+    extra_body_raw = model_tool_calling_raw.get("extra_body")
+    if isinstance(extra_body_raw, dict):
+        extra_body.update(extra_body_raw)
+    return ToolCallingConfig(
+        profile=template.profile,
+        driver=model_tool_calling_raw.get("driver", template.driver),  # type: ignore[arg-type]
+        parallel_tool_calls=_to_bool(
+            model_tool_calling_raw.get("parallel_tool_calls"),
+            default=template.parallel_tool_calls,
+            source="models.*.tool_calling.parallel_tool_calls",
+        ),
+        supports_builtin_tools=_to_bool(
+            model_tool_calling_raw.get("supports_builtin_tools"),
+            default=template.supports_builtin_tools,
+            source="models.*.tool_calling.supports_builtin_tools",
+        ),
+        strict_json_schema=_to_bool(
+            model_tool_calling_raw.get("strict_json_schema"),
+            default=template.strict_json_schema,
+            source="models.*.tool_calling.strict_json_schema",
+        ),
+        request_options=request_options,
+        extra_body=extra_body,
+    )
+
+
+def _tool_calling_config_to_dict(cfg: ToolCallingConfig) -> Dict[str, Any]:
+    return {
+        "profile": cfg.profile,
+        "driver": cfg.driver,
+        "parallel_tool_calls": cfg.parallel_tool_calls,
+        "supports_builtin_tools": cfg.supports_builtin_tools,
+        "strict_json_schema": cfg.strict_json_schema,
+        "request_options": dict(cfg.request_options),
+        "extra_body": dict(cfg.extra_body),
+    }
+
+
 __all__ = [
     "LLMConfig",
     "LLMProfile",
     "ToolCallingConfig",
+    "ProposalPolicyConfig",
+    "AgentPoliciesConfig",
     "Provider",
     "DriverKind",
+    "ToolCallingRole",
+    "AgentRole",
+    "TOOL_CALLING_AGENT_ROLES",
+    "AGENT_ROLES",
 ]
