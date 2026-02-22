@@ -120,6 +120,15 @@ def test_merge_memory_via_git_apply_success(tmp_path: Path) -> None:
     assert result["attempts"] == 1
     assert backend.calls[0][0] == "memory_apply_aider_edits"
     assert backend.calls[0][1]["allowed_paths"] == ["MEMORY/", "notes/"]
+    prompt_kwargs = orch.memory_patch_prompt.calls[0]
+    assert "topic_goal_text" in prompt_kwargs
+    assert "topic_facts_text" in prompt_kwargs
+    assert "topic_files_text" in prompt_kwargs
+    assert "topic_constraints_text" in prompt_kwargs
+    assert "topic_questions_text" in prompt_kwargs
+    assert "topic_runbook_text" in prompt_kwargs
+    assert "topic_tldrs_json" not in prompt_kwargs
+    assert "event_path" not in prompt_kwargs
     patch_path = tmp_path / "files" / result["patch_path"]
     assert patch_path.exists()
 
@@ -153,6 +162,13 @@ def test_merge_memory_via_git_apply_repair_after_rejected_patch(tmp_path: Path) 
     assert orch.memory_patch_repair_prompt.calls
     repair_kwargs = orch.memory_patch_repair_prompt.calls[0]
     assert "apply_error_context_json" in repair_kwargs
+    assert "topic_goal_text" in repair_kwargs
+    assert "topic_facts_text" in repair_kwargs
+    assert "topic_files_text" in repair_kwargs
+    assert "topic_constraints_text" in repair_kwargs
+    assert "topic_questions_text" in repair_kwargs
+    assert "topic_runbook_text" in repair_kwargs
+    assert "topic_tldrs_json" not in repair_kwargs
 
 
 def test_merge_memory_via_git_apply_passes_structured_error_to_repair_prompt(tmp_path: Path) -> None:

@@ -110,7 +110,7 @@ User request:
 Current proposal:
 {proposal_md}
 
-Work packages:
+Work packages (ordered advisory milestones, not a fixed task script):
 {work_packages_json}
 
 Memory index (autoload excerpt):
@@ -133,20 +133,23 @@ def build_director_prompt() -> ChatPromptTemplate:
         ("system", """
 You are the Director of the Standard lane (dynamic execution controller).
 
-You do NOT execute tools. You only decide the next action by calling director_decide.
+You may use helper tools for read/check inspection before deciding.
+You MUST finish with exactly one `director_decide` control call in its own turn.
+Helper tool available in this stage:
+- `bash_exec`
 
 Inputs you will receive:
 - User request
 - Current proposal (markdown) + work_packages order
 - Memory index (autoload excerpt)
-- Artifacts index
-- AlreadyDone: summaries of completed tasks and their key outputs
+- AlreadyDone: summaries of completed tasks
 - Available tools for task runner
 
 Allowed states:
 - PerformNextTask: emit one concrete `task_packet` that can be executed by the task runner.
-  - task_packet fields: goal, success_criteria, expected_outputs, suggested_tools, memory_hints, path_hints.
-  - Keep task_packet small and action-oriented.
+  - task_packet fields: goal, task_detail, expected_outputs, suggested_tools, reference_hint.
+  - task_detail MUST include detailed execution points, explicit key parameter values, and non-weakenable requirements.
+  - reference_hint is a list of concrete hints for worker discovery (memory files, rg keywords, done-check points).
 - MinorReviseProposal: small/local edits that keep the same route.
   - Examples: clarifying wording, filling missing defaults, minor local re-ordering of work_packages,
     tightening invariants, adding/removing a small step.
@@ -163,13 +166,17 @@ Decision semantics:
 
 Rules:
 - Avoid repeating completed work; consult AlreadyDone + memory index.
-- Treat AlreadyDone as sanitized task summaries plus files-root artifacts only.
+- Treat AlreadyDone as sanitized task summaries only.
+- Before dispatching a task, verify completion state via memory pointers and targeted checks.
 - Do not emit meta tasks like "write a plan/proposal".
 - If you need information from a file, emit a task that reads that file.
 - `reports/latest_run/**` is an audit/debug snapshot from previous runs, not canonical memory, do not ask workers to read by default.
 - Never ask the worker to read metadata/internal run paths; worker tools can access files root only.
+- Helper tool use is inspection-first; prefer checking MEMORY pointer files and focused reads over broad file dumps.
+- If proposal/default tables specify key parameters, preserve the same values in task_detail. Do NOT weaken into conditional language like "if enabled".
+- If you must change a key parameter value, do MinorReviseProposal/MajorReviseProposal and explain the change.
 - For PerformNextTask, task_packet.suggested_tools are advisory only. Do not force exact tool order and must be selected from "Available tools for task runner"
-- One decision per turn: you MUST call director_decide exactly once.
+- One decision finalization per turn: call director_decide exactly once, alone, after any helper tool checks.
 - Assume runtime environment is correctly configured per project README, never escalate runtime/tooling environment prerequisites as human-blocking decisions unless error met.
 - Do not revise or ask for confirmation for minor execution details (e.g., calculation-detail confirmation, execution confirmation); apply safe defaults and continue.
 - If the proposal contains unresolved BLOCKING human decisions (look for "BLOCKING:" in "Items needing human decision"),
@@ -186,14 +193,11 @@ User request:
 Proposal:
 {proposal_md}
 
-Work packages (ordered):
+Work packages (ordered advisory milestones, not a fixed task script):
 {work_packages_json}
 
 Memory index (autoload excerpt):
 {memory_index_excerpt}
-
-Artifacts index:
-{artifacts_index}
 
 AlreadyDone (sanitized summary; metadata/internal paths omitted):
 {already_done_json}
@@ -212,6 +216,8 @@ You are an execution controller. Use tool calling to advance the current task.
 Rules:
 - Use tool calling from all available tools to achieve the goal in the context pack.
 - Check tool names and params carefully.
+- Task detail is the execution spec for this task. Follow it strictly.
+- Do NOT weaken/skip explicit parameter values in task detail. If task detail conflicts with observed facts, do minimal evidence checks then call `task_fail` with the conflict and evidence.
 - Finish with exactly one control call:
   - `task_finish` when done, with structured fields (summary/facts/files/constraints/open_questions/decisions/next_steps/artifacts).
   - `task_fail` when blocked by consistent unexpected errors or fact inconsistencies.
@@ -250,17 +256,23 @@ Rules:
 Task goal:
 {goal}
 
-Constraints:
-{constraints}
+Task detail:
+{task_detail}
+
+Expected outputs:
+{expected_outputs}
+
+Suggested tools:
+{suggested_tools}
+
+Reference hint:
+{reference_hint}
 
 Workspace policy:
 {workspace_policy}
 
 Memory index excerpt:
 {memory_index_excerpt}
-
-Key files / artifacts (from previous tasks):
-{artifact_slice}
 
 </context_pack>
 """),
@@ -292,17 +304,23 @@ Reminders:
 Task goal:
 {goal}
 
-Constraints:
-{constraints}
+Task detail:
+{task_detail}
+
+Expected outputs:
+{expected_outputs}
+
+Suggested tools:
+{suggested_tools}
+
+Reference hint:
+{reference_hint}
 
 Workspace policy:
 {workspace_policy}
 
 Memory index excerpt:
 {memory_index_excerpt}
-
-Key files / artifacts (from previous tasks):
-{artifact_slice}
 
 </context_pack>
 
@@ -348,19 +366,57 @@ Memory rules:
 - Long content must be written to notes/** and referenced by pointer.
 - Keep section schema stable so downstream parsers still work (e.g., Top Constraints / Active Open Questions headings).
 
+Topic schema contract:
+- `MEMORY/topics/GOAL.md`:
+  - Keep objective, definition of success, non-goals, and scope boundary.
+  - Do not put run-by-run logs or tool traces here.
+- `MEMORY/topics/FACTS.md`:
+  - Keep canonical definitions, verified facts, and decision log entries.
+  - For key results, include condition/method, units, and evidence path.
+- `MEMORY/topics/FILES.md`:
+  - Keep reusable file/artifact index records.
+  - Prefer normalized records: `- PATH: <rel_path> | kind=<kind> | desc=<desc> | source=<task_id>`.
+- `MEMORY/topics/CONSTRAINTS.md`:
+  - Keep hard constraints and soft preferences, with short source context when possible.
+- `MEMORY/topics/QUESTIONS.md`:
+  - Keep unresolved blockers in Active and move resolved items to Resolved with closure evidence.
+- `MEMORY/topics/RUNBOOK.md`:
+  - Keep stable reusable operating checklist and common recovery playbook.
+- `MEMORY/MEMORY.md`:
+  - Keep pointer-first index and concise state only.
+  - Do not duplicate detailed facts/path inventories from topic files.
+
 Additional caution:
 - reports/latest_run/** is an audit snapshot and should not be treated as canonical memory source.
 - Text matching rules:
   - Treat only text inside `<editable_file path="...">...</editable_file>` as existing file content.
-  - Never use labels/headers from reference context as SEARCH text (for example, "Topic TL;DR excerpts (JSON)").
   - If adding new content, anchor under an existing heading from the editable file text.
+- File-role routing:
+  - Keep `MEMORY/MEMORY.md` concise and pointer-first (current state + short summaries + pointers).
+  - Put reusable facts/decisions into `MEMORY/topics/FACTS.md`.
+  - Put artifact/path index entries into `MEMORY/topics/FILES.md` (prefer `- PATH:` records).
+  - Keep constraints/questions/runbook updates in their corresponding topic files.
+- Write-routing from task structured result:
+  - `facts` and `decisions` -> `MEMORY/topics/FACTS.md`
+  - `files` and `artifacts` -> `MEMORY/topics/FILES.md`
+  - `constraints` -> `MEMORY/topics/CONSTRAINTS.md`
+  - `open_questions` -> `MEMORY/topics/QUESTIONS.md`
+  - goal/success-boundary changes -> `MEMORY/topics/GOAL.md`
+  - reusable procedure/checklist updates -> `MEMORY/topics/RUNBOOK.md`
+- Conflict precedence:
+  - If `MEMORY/MEMORY.md` conflicts with `FACTS.md` or `FILES.md`, topic files are authoritative.
+  - Keep single-source updates; avoid duplicating the same fact/path across multiple files.
+- Quality checks before output:
+  - Ensure detailed facts and path inventories are not dumped into `MEMORY/MEMORY.md`.
+  - Ensure key claims include evidence path pointers.
+  - Ensure `FILES.md` path records follow the `- PATH:` style where applicable.
+  - Ensure `QUESTIONS.md` reflects Active vs Resolved transitions when answers are available.
 """),
         ("human", """
 Run id: {run_id}
 Task id: {task_id}
 Task goal (short): {task_goal}
 Outcome: {outcome}
-Event path: {event_path}
 
 Task structured result (JSON):
 {structured_result_json}
@@ -369,11 +425,24 @@ Editable file snapshot (authoritative):
 <editable_file path="MEMORY/MEMORY.md">
 {memory_index_text}
 </editable_file>
-
-Reference context (NOT file content; do NOT use as SEARCH source):
-<reference_context name="topic_tldrs_json">
-{topic_tldrs_json}
-</reference_context>
+<editable_file path="MEMORY/topics/GOAL.md">
+{topic_goal_text}
+</editable_file>
+<editable_file path="MEMORY/topics/FACTS.md">
+{topic_facts_text}
+</editable_file>
+<editable_file path="MEMORY/topics/FILES.md">
+{topic_files_text}
+</editable_file>
+<editable_file path="MEMORY/topics/CONSTRAINTS.md">
+{topic_constraints_text}
+</editable_file>
+<editable_file path="MEMORY/topics/QUESTIONS.md">
+{topic_questions_text}
+</editable_file>
+<editable_file path="MEMORY/topics/RUNBOOK.md">
+{topic_runbook_text}
+</editable_file>
 """),
     ])
 
@@ -392,6 +461,10 @@ Output ONLY corrected Aider SEARCH/REPLACE edit blocks:
   - Treat only text inside `<editable_file path="...">...</editable_file>` as existing file content.
   - If `apply_error_context_json.error_code == "replace_no_match"`, fix SEARCH text to exact file text (or anchor to an existing heading).
   - Prefer minimal edits: keep already-valid blocks unchanged and only repair failing block/path when possible.
+- Keep the same topic schema contract and write-routing rules as the primary memory patch prompt.
+- File-role routing:
+  - Keep `MEMORY/MEMORY.md` concise and pointer-first.
+  - Route facts to `MEMORY/topics/FACTS.md` and artifact/path index records to `MEMORY/topics/FILES.md`.
 """),
         ("human", """
 Previous edits:
@@ -415,11 +488,24 @@ Editable file snapshot (authoritative):
 <editable_file path="MEMORY/MEMORY.md">
 {memory_index_text}
 </editable_file>
-
-Reference context (NOT file content; do NOT use as SEARCH source):
-<reference_context name="topic_tldrs_json">
-{topic_tldrs_json}
-</reference_context>
+<editable_file path="MEMORY/topics/GOAL.md">
+{topic_goal_text}
+</editable_file>
+<editable_file path="MEMORY/topics/FACTS.md">
+{topic_facts_text}
+</editable_file>
+<editable_file path="MEMORY/topics/FILES.md">
+{topic_files_text}
+</editable_file>
+<editable_file path="MEMORY/topics/CONSTRAINTS.md">
+{topic_constraints_text}
+</editable_file>
+<editable_file path="MEMORY/topics/QUESTIONS.md">
+{topic_questions_text}
+</editable_file>
+<editable_file path="MEMORY/topics/RUNBOOK.md">
+{topic_runbook_text}
+</editable_file>
 """),
     ])
 

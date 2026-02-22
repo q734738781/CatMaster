@@ -40,7 +40,7 @@ def test_director_observations_view_drops_metadata_paths() -> None:
     assert row["summary"] == "done"
     assert row["failure_kind"] == "max_steps"
     assert row["auto_replan"] is True
-    assert row["key_artifacts"] == [{"path": "results/final.csv", "description": "table", "kind": "report"}]
+    assert "key_artifacts" not in row
     assert "observation_path" not in row
     assert "event_path" not in row
     assert "resume_state" not in row

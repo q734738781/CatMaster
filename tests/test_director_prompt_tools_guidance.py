@@ -14,13 +14,15 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
         proposal_md="demo proposal",
         work_packages_json='["wp1"]',
         memory_index_excerpt="",
-        artifacts_index="[]",
         already_done_json="[]",
         tools="bash_exec : run shell",
     )
     system_content = str(messages[0].content)
     human_content = str(messages[1].content)
     assert "Available tools for task runner" in system_content
+    assert "You may use helper tools for read/check inspection before deciding." in system_content
+    assert "task_packet fields: goal, task_detail, expected_outputs, suggested_tools, reference_hint." in system_content
+    assert "Do NOT weaken into conditional language like \"if enabled\"." in system_content
     assert 'task_packet.suggested_tools must be selected from "Available tools for task runner"' in system_content
     assert "reports/latest_run/** is an audit/debug snapshot" in system_content
     assert "Never ask the worker to read metadata/internal run paths" in system_content

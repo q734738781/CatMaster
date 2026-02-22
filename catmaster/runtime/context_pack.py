@@ -28,8 +28,6 @@ class ContextPackBuilder:
             max_lines=policy.memory_head_lines,
             max_chars=policy.max_memory_chars,
         )
-        constraints = _extract_top_constraints(memory_excerpt)
-        artifacts = self.memory.artifact_index(limit=policy.max_artifacts)
         files_root = workspace_root(self.memory.workspace)
 
         if role == "task_runner" and not policy.inject_goal_for_worker:
@@ -40,8 +38,6 @@ class ContextPackBuilder:
             "role": role,
             "workspace_root": str(files_root),
             "memory_index_excerpt": memory_excerpt,
-            "artifact_slice": artifacts,
-            "constraints": constraints,
             "workspace_policy": _workspace_policy_summary(role, files_root=str(files_root)),
         }
 
@@ -65,34 +61,6 @@ def _remove_goal_pointer(text: str) -> str:
             continue
         lines.append(raw)
     return "\n".join(lines)
-
-
-def _extract_top_constraints(memory_excerpt: str) -> str:
-    section_started = False
-    items: list[str] = []
-    for raw in memory_excerpt.splitlines():
-        line = raw.strip()
-        if not section_started:
-            if line.lower().startswith("## top constraints"):
-                section_started = True
-            continue
-        if line.startswith("## "):
-            break
-        if not line:
-            continue
-        if line.startswith("- "):
-            text = line[2:].strip()
-        elif "." in line and line[0].isdigit():
-            _, _, text = line.partition(".")
-            text = text.strip()
-        else:
-            continue
-        if not text or text.lower() == "(empty)":
-            continue
-        items.append(f"- {text}")
-    if not items:
-        return "(none)"
-    return "\n".join(items)
 
 
 __all__ = ["ContextPackBuilder", "ContextPackPolicy"]

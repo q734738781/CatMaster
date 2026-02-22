@@ -61,6 +61,9 @@ from catmaster.agents.orchestrator_prompts import (
 _PROPOSAL_TOOL_ALLOWLIST = [
     "bash_exec",
 ]
+_DIRECTOR_TOOL_ALLOWLIST = [
+    "bash_exec",
+]
 SUPPORTED_LANES = {"fast", "standard"}
 
 
@@ -328,6 +331,13 @@ class Orchestrator:
         return [
             tool for tool in tools
             if tool.get("name") in _PROPOSAL_TOOL_ALLOWLIST
+        ]
+
+    def _director_function_tools(self) -> list[dict]:
+        tools = self._filtered_function_tools()
+        return [
+            tool for tool in tools
+            if tool.get("name") in _DIRECTOR_TOOL_ALLOWLIST
         ]
 
     @staticmethod
@@ -958,9 +968,9 @@ class Orchestrator:
         resume_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         memory_index_excerpt = self.memory_store.read_index(max_lines=200, max_chars=12000)
-        artifacts_index = self._artifact_index()
         director_observations = self._director_observations_view(observations)
         function_tools = self._filtered_function_tools()
+        director_function_tools = self._director_function_tools()
         builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools_for("director") else []
         tools_for_director = self._tool_descriptions_from_tools(function_tools, builtin_tools, [])
         messages = self.director_prompt.format_messages(
@@ -968,7 +978,6 @@ class Orchestrator:
             proposal_md=proposal_md,
             work_packages_json=json.dumps(work_packages, ensure_ascii=False),
             memory_index_excerpt=memory_index_excerpt,
-            artifacts_index=json.dumps(artifacts_index, ensure_ascii=False),
             already_done_json=json.dumps(director_observations, ensure_ascii=False),
             tools=tools_for_director,
         )
@@ -997,7 +1006,7 @@ class Orchestrator:
             task_goal="Decide next action",
             context_pack={},
             seed_messages=input_items,
-            function_tools=[],
+            function_tools=director_function_tools,
             builtin_tools=[],
             resume_state=resume_state,
         )
@@ -1029,25 +1038,6 @@ class Orchestrator:
                     row[key] = text
             if bool(item.get("auto_replan", False)):
                 row["auto_replan"] = True
-
-            raw_artifacts = item.get("key_artifacts")
-            key_artifacts: List[Dict[str, str]] = []
-            if isinstance(raw_artifacts, list):
-                for artifact in raw_artifacts:
-                    if not isinstance(artifact, dict):
-                        continue
-                    path = str(artifact.get("path") or "").strip()
-                    if not path:
-                        continue
-                    entry: Dict[str, str] = {"path": path}
-                    desc = str(artifact.get("description") or "").strip()
-                    kind = str(artifact.get("kind") or "").strip()
-                    if desc:
-                        entry["description"] = desc
-                    if kind:
-                        entry["kind"] = kind
-                    key_artifacts.append(entry)
-            row["key_artifacts"] = key_artifacts
 
             interrupted = item.get("interrupted_toolcall")
             if isinstance(interrupted, dict):
@@ -1158,6 +1148,7 @@ class Orchestrator:
         task_id: str,
         task_goal: str,
         task_goal_short: Optional[str] = None,
+        task_packet: Optional[Dict[str, Any]] = None,
         log_llm: bool,
         resume_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -1167,19 +1158,30 @@ class Orchestrator:
             policy=ContextPackPolicy(
                 memory_head_lines=200,
                 max_memory_chars=12000,
-                max_artifacts=300,
                 inject_goal_for_worker=False,
             ),
         )
+        packet = task_packet if isinstance(task_packet, dict) else {}
+        goal_text = str(packet.get("goal") or task_goal_short or task_goal).strip() or task_goal
+        task_detail = str(packet.get("task_detail") or "").strip()
+        expected_outputs = self._clean_text_list(packet.get("expected_outputs"))
+        suggested_tools = self._normalize_suggested_tools(packet.get("suggested_tools"))
+        reference_hint = self._clean_text_list(packet.get("reference_hint"))
+        context_pack["goal"] = goal_text
+        context_pack["task_detail"] = task_detail or "(none)"
+        context_pack["expected_outputs"] = "\n".join(f"- {item}" for item in expected_outputs) if expected_outputs else "(none)"
+        context_pack["suggested_tools"] = ", ".join(suggested_tools) if suggested_tools else "(none)"
+        context_pack["reference_hint"] = "\n".join(f"- {item}" for item in reference_hint) if reference_hint else "(none)"
         if self._interrupt_context_note:
-            base_constraints = str(context_pack.get("constraints", "") or "").strip()
-            if base_constraints:
-                context_pack["constraints"] = f"{base_constraints}\n\n{self._interrupt_context_note}"
+            base_detail = str(context_pack.get("task_detail", "") or "").strip()
+            if base_detail and base_detail != "(none)":
+                context_pack["task_detail"] = f"{base_detail}\n\nInterrupt guidance:\n- {self._interrupt_context_note}"
             else:
-                context_pack["constraints"] = self._interrupt_context_note
+                context_pack["task_detail"] = f"Interrupt guidance:\n- {self._interrupt_context_note}"
         self._emit("TASK_CONTEXT_READY", category="task", task_id=task_id, payload={
             "excerpt_chars": len(context_pack.get("memory_index_excerpt", "") or ""),
-            "artifact_slice_count": len(context_pack.get("artifact_slice", []) or []),
+            "reference_hint_count": len(reference_hint),
+            "suggested_tools_count": len(suggested_tools),
         })
         filtered_tools = self._filtered_function_tools()
         builtin_tools = self.tool_policy.builtin_tools if self._supports_builtin_tools_for("task_runner") else []
@@ -1202,7 +1204,7 @@ class Orchestrator:
         )
         step_result = stepper.run(
             task_id=task_id,
-            task_goal=task_goal,
+            task_goal=goal_text,
             context_pack=context_pack,
             initial_instruction=None,
             function_tools=filtered_tools,
@@ -1585,7 +1587,7 @@ class Orchestrator:
         }
         event_rel = self.memory_store.append_event(event)
         memory_index_text = self.memory_store.read_index(max_lines=2000, max_chars=200000)
-        topic_tldrs = self._read_memory_topic_tldrs()
+        topic_texts = self._read_memory_topic_snapshots()
         files_root = workspace_root(self.run_context.workspace)
         patch_dir = files_root / ".logs" / "memory_patches"
         patch_dir.mkdir(parents=True, exist_ok=True)
@@ -1603,10 +1605,14 @@ class Orchestrator:
                     task_id=task_id,
                     task_goal=task_goal_short,
                     outcome=outcome,
-                    event_path=event_rel,
                     structured_result_json=json.dumps(structured_result, ensure_ascii=False),
                     memory_index_text=memory_index_text,
-                    topic_tldrs_json=json.dumps(topic_tldrs, ensure_ascii=False),
+                    topic_goal_text=topic_texts.get("GOAL.md", ""),
+                    topic_facts_text=topic_texts.get("FACTS.md", ""),
+                    topic_files_text=topic_texts.get("FILES.md", ""),
+                    topic_constraints_text=topic_texts.get("CONSTRAINTS.md", ""),
+                    topic_questions_text=topic_texts.get("QUESTIONS.md", ""),
+                    topic_runbook_text=topic_texts.get("RUNBOOK.md", ""),
                 )
                 llm_kind = "memory_patch"
             else:
@@ -1620,7 +1626,12 @@ class Orchestrator:
                     outcome=outcome,
                     structured_result_json=json.dumps(structured_result, ensure_ascii=False),
                     memory_index_text=memory_index_text,
-                    topic_tldrs_json=json.dumps(topic_tldrs, ensure_ascii=False),
+                    topic_goal_text=topic_texts.get("GOAL.md", ""),
+                    topic_facts_text=topic_texts.get("FACTS.md", ""),
+                    topic_files_text=topic_texts.get("FILES.md", ""),
+                    topic_constraints_text=topic_texts.get("CONSTRAINTS.md", ""),
+                    topic_questions_text=topic_texts.get("QUESTIONS.md", ""),
+                    topic_runbook_text=topic_texts.get("RUNBOOK.md", ""),
                 )
                 llm_kind = "memory_patch_repair"
 
@@ -1725,36 +1736,22 @@ class Orchestrator:
             check_error=last_error,
         )
 
-    def _read_memory_topic_tldrs(self) -> Dict[str, str]:
+    def _read_memory_topic_snapshots(self) -> Dict[str, str]:
         out: Dict[str, str] = {}
-        for topic_path in sorted(self.memory_store.topics_dir.glob("*.md")):
+        for name in [
+            "GOAL.md",
+            "FACTS.md",
+            "FILES.md",
+            "CONSTRAINTS.md",
+            "QUESTIONS.md",
+            "RUNBOOK.md",
+        ]:
+            topic_path = self.memory_store.topics_dir / name
             try:
-                text = topic_path.read_text(encoding="utf-8")
+                out[name] = topic_path.read_text(encoding="utf-8")
             except Exception:
-                continue
-            out[topic_path.name] = self._topic_tldr_excerpt(text)
+                out[name] = ""
         return out
-
-    @staticmethod
-    def _topic_tldr_excerpt(text: str, *, fallback_lines: int = 40, max_chars: int = 4000) -> str:
-        lines = text.splitlines()
-        start_idx = -1
-        for i, raw in enumerate(lines):
-            if raw.strip().lower() == "## tl;dr":
-                start_idx = i
-                break
-        if start_idx >= 0:
-            excerpt_lines: List[str] = [lines[start_idx]]
-            for raw in lines[start_idx + 1:]:
-                if raw.startswith("## "):
-                    break
-                excerpt_lines.append(raw)
-            excerpt = "\n".join(excerpt_lines).strip()
-        else:
-            excerpt = "\n".join(lines[:fallback_lines]).strip()
-        if len(excerpt) > max_chars:
-            return excerpt[:max_chars]
-        return excerpt
 
     @staticmethod
     def _normalize_patch_text(raw: str) -> str:
@@ -1947,6 +1944,7 @@ class Orchestrator:
                 task_id=task_id,
                 task_goal=task_goal,
                 task_goal_short=(next_task.get("task_packet") or {}).get("goal") if isinstance(next_task.get("task_packet"), dict) else task_goal,
+                task_packet=(next_task.get("task_packet") if isinstance(next_task.get("task_packet"), dict) else None),
                 log_llm=log_llm,
                 resume_state=resume_state if isinstance(resume_state, dict) else None,
             )
@@ -2298,6 +2296,7 @@ class Orchestrator:
                     task_id=task_id,
                     task_goal=task_goal,
                     task_goal_short=(task.get("task_packet") or {}).get("goal") if isinstance(task.get("task_packet"), dict) else task_goal,
+                    task_packet=(task.get("task_packet") if isinstance(task.get("task_packet"), dict) else None),
                     log_llm=log_llm,
                     resume_state=resume_state if isinstance(resume_state, dict) else None,
                 )
@@ -2534,6 +2533,7 @@ class Orchestrator:
                         task_id=task_id,
                         task_goal=task_goal,
                         task_goal_short=task_packet.get("goal") if isinstance(task_packet, dict) else task_goal,
+                        task_packet=(task_packet if isinstance(task_packet, dict) else None),
                         log_llm=log_llm,
                         resume_state=resume_state if isinstance(resume_state, dict) else None,
                     )
@@ -3211,49 +3211,29 @@ class Orchestrator:
 
     def _resolve_task_goal_from_decision(self, decision: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
         packet = decision.get("task_packet")
-        if isinstance(packet, dict):
-            goal = str(packet.get("goal") or "").strip()
-            if not goal:
-                raise ValueError("Director PerformNextTask missing task_packet.goal")
-            success = str(packet.get("success_criteria") or "").strip()
-            outputs = self._clean_text_list(packet.get("expected_outputs"))
-            hints = self._clean_text_list(packet.get("memory_hints"))
-            paths = self._clean_text_list(packet.get("path_hints"))
-            suggested_tools = self._normalize_suggested_tools(packet.get("suggested_tools"))
-            rendered = [goal]
-            if success:
-                rendered.append(f"Success criteria: {success}")
-            if outputs:
-                rendered.append("Expected outputs: " + "; ".join(outputs))
-            if hints:
-                rendered.append("Memory hints: " + ", ".join(hints))
-            if paths:
-                rendered.append("Path hints: " + ", ".join(paths))
-            task_goal = self._with_suggested_tools_hint(" ".join(rendered), suggested_tools)
-            packet_norm = {
-                "goal": goal,
-                "success_criteria": success,
-                "expected_outputs": outputs,
-                "memory_hints": hints,
-                "path_hints": paths,
-                "suggested_tools": suggested_tools,
-            }
-            return task_goal, packet_norm
-
-        task_goal_raw = decision.get("next_task_goal")
-        if not task_goal_raw:
-            raise ValueError("Director PerformNextTask missing next_task_goal")
-        task_goal = self._with_suggested_tools_hint(
-            task_goal_raw,
-            decision.get("suggested_tools"),
-        )
+        if not isinstance(packet, dict):
+            raise ValueError("Director PerformNextTask missing task_packet")
+        goal = str(packet.get("goal") or "").strip()
+        if not goal:
+            raise ValueError("Director PerformNextTask missing task_packet.goal")
+        task_detail = str(packet.get("task_detail") or "").strip()
+        if not task_detail:
+            raise ValueError("Director PerformNextTask missing task_packet.task_detail")
+        outputs = self._clean_text_list(packet.get("expected_outputs"))
+        reference_hint = self._clean_text_list(packet.get("reference_hint"))
+        suggested_tools = self._normalize_suggested_tools(packet.get("suggested_tools"))
+        rendered = [f"Goal: {goal}", f"Task detail: {task_detail}"]
+        if outputs:
+            rendered.append("Expected outputs: " + "; ".join(outputs))
+        if reference_hint:
+            rendered.append("Reference hint: " + "; ".join(reference_hint))
+        task_goal = self._with_suggested_tools_hint(" ".join(rendered), suggested_tools)
         packet_norm = {
-            "goal": str(task_goal_raw).strip(),
-            "success_criteria": str(decision.get("success_criteria") or "").strip(),
-            "expected_outputs": self._clean_text_list(decision.get("expected_outputs")),
-            "memory_hints": [],
-            "path_hints": [],
-            "suggested_tools": self._normalize_suggested_tools(decision.get("suggested_tools")),
+            "goal": goal,
+            "task_detail": task_detail,
+            "expected_outputs": outputs,
+            "reference_hint": reference_hint,
+            "suggested_tools": suggested_tools,
         }
         return task_goal, packet_norm
 

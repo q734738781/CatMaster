@@ -689,13 +689,26 @@ class ToolCallingTaskStepper:
             state.append_input_message("user", initial_text)
             return
 
-        messages = self.prompt.format_messages(
-            goal=task_goal,
-            constraints=context_pack.get("constraints", ""),
-            workspace_policy=context_pack.get("workspace_policy", ""),
-            memory_index_excerpt=context_pack.get("memory_index_excerpt", ""),
-            artifact_slice=self._format_artifact_slice(context_pack.get("artifact_slice", [])),
-        )
+        format_kwargs: Dict[str, Any] = {
+            "goal": context_pack.get("goal", task_goal),
+            "task_detail": context_pack.get("task_detail", ""),
+            "expected_outputs": context_pack.get("expected_outputs", ""),
+            "suggested_tools": context_pack.get("suggested_tools", ""),
+            "reference_hint": context_pack.get("reference_hint", ""),
+            "workspace_policy": context_pack.get("workspace_policy", ""),
+            "memory_index_excerpt": context_pack.get("memory_index_excerpt", ""),
+            # Backward-compatible placeholders for legacy prompts/tests.
+            "constraints": context_pack.get("constraints", ""),
+            "artifact_slice": self._format_artifact_slice(context_pack.get("artifact_slice", [])),
+        }
+        input_vars = getattr(self.prompt, "input_variables", None)
+        if isinstance(input_vars, list) and input_vars:
+            format_kwargs = {
+                key: value
+                for key, value in format_kwargs.items()
+                if key in input_vars
+            }
+        messages = self.prompt.format_messages(**format_kwargs)
         for msg in messages:
             role = getattr(msg, "role", None) or getattr(msg, "type", "user")
             if role == "human":

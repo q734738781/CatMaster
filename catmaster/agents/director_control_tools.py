@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from catmaster.tools.registry import sanitize_json_schema
 
@@ -11,19 +11,22 @@ class TaskPacket(BaseModel):
     """Structured packet for a worker task."""
 
     goal: str = Field(..., description="Concrete task goal for worker execution.")
-    success_criteria: str = Field(..., description="Completion criteria for this task.")
+    task_detail: str = Field(
+        ...,
+        description=(
+            "Detailed execution guidance with explicit key parameters and non-weakenable requirements."
+        ),
+    )
     expected_outputs: list[str] = Field(default_factory=list, description="Expected outputs and deliverables.")
     suggested_tools: list[str] = Field(
         default_factory=list,
         description="Optional tool-name hints for worker; advisory only.",
     )
-    memory_hints: list[str] = Field(
+    reference_hint: list[str] = Field(
         default_factory=list,
-        description="Keyword hints for memory retrieval (rg query terms).",
-    )
-    path_hints: list[str] = Field(
-        default_factory=list,
-        description="Optional workspace-relative path hints relevant to the task.",
+        description=(
+            "Reference hints for worker discovery, such as memory topic files, rg keywords, and done-check points."
+        ),
     )
 
 
@@ -40,13 +43,6 @@ class DirectorDecideInput(BaseModel):
 
     # PerformNextTask fields
     task_packet: TaskPacket | None = Field(default=None, description="Structured worker task packet.")
-    next_task_goal: str | None = Field(default=None, description="Concrete task goal to execute next.")
-    suggested_tools: list[str] | None = Field(
-        default=None,
-        description="Optional suggested tool names for task runner; hints only, not mandatory.",
-    )
-    success_criteria: str | None = Field(default=None, description="Success criteria for the next task.")
-    expected_outputs: str | None = Field(default=None, description="Expected outputs for the next task.")
 
     # Proposal revision fields
     updated_proposal_md: str | None = Field(default=None, description="Updated proposal markdown.")
@@ -60,6 +56,12 @@ class DirectorDecideInput(BaseModel):
     # Stop fields
     stop_reason: str | None = Field(default=None, description="Reason for stopping.")
     deliverables: list[str] | None = Field(default=None, description="Expected deliverables when stopping.")
+
+    @model_validator(mode="after")
+    def _validate_state_payload(self) -> "DirectorDecideInput":
+        if self.state == "PerformNextTask" and self.task_packet is None:
+            raise ValueError("PerformNextTask requires task_packet")
+        return self
 
 
 DIRECTOR_CONTROL_TOOL_NAMES = {"director_decide"}

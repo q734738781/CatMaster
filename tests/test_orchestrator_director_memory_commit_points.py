@@ -129,10 +129,9 @@ def test_run_standard_failure_auto_replan_returns_to_director(tmp_path: Path) ->
                 "state": "PerformNextTask",
                 "task_packet": {
                     "goal": "Investigate failed subset",
-                    "success_criteria": "Produce actionable retry plan",
+                    "task_detail": "Inspect failed subset only and produce actionable retry plan.",
                     "expected_outputs": ["reports/retry_plan.md"],
-                    "memory_hints": [],
-                    "path_hints": ["reports"],
+                    "reference_hint": ["MEMORY/topics/FACTS.md", "rg keywords: failed subset", "done-check: do not rerun successes"],
                     "suggested_tools": ["bash_exec"],
                 },
             },

@@ -30,3 +30,8 @@ def test_tool_policy_ignores_legacy_skill_flag() -> None:
         {"name": "c", "type": "function"},
     ])
     assert {tool["name"] for tool in filtered} == {"a"}
+
+
+def test_tool_policy_default_max_tool_calls_per_task_is_100() -> None:
+    policy = ToolPolicy.from_dict({})
+    assert policy.max_tool_calls_per_task == 100

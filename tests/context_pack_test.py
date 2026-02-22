@@ -18,12 +18,14 @@ def main() -> None:
             policy=ContextPackPolicy(memory_head_lines=50, max_memory_chars=2000, max_artifacts=20),
         )
         assert "memory_index_excerpt" in pack
-        assert "constraints" in pack
-        assert "artifact_slice" in pack
+        assert "workspace_policy" in pack
+        assert "workspace_root" in pack
+        assert "constraints" not in pack
+        assert "artifact_slice" not in pack
         assert "whiteboard_excerpt" not in pack
 
 
-def test_context_pack_constraints_from_memory_index(tmp_path) -> None:
+def test_context_pack_task_runner_removes_goal_pointer(tmp_path) -> None:
     store = MemoryStore.create_default(workspace=tmp_path)
     store.ensure_exists()
     store.index_path.write_text(
@@ -31,9 +33,9 @@ def test_context_pack_constraints_from_memory_index(tmp_path) -> None:
             [
                 "# MEMORY (AUTOLOADED INDEX)",
                 "",
-                "## Top Constraints (max 5)",
-                "1. Always keep files-root relative paths",
-                "2. Avoid network operations by default",
+                "## Pointers",
+                "- Goal / principles: MEMORY/topics/GOAL.md",
+                "- Facts / decisions: MEMORY/topics/FACTS.md",
                 "",
                 "## Active Open Questions (max 5)",
                 "1. (empty)",
@@ -43,17 +45,11 @@ def test_context_pack_constraints_from_memory_index(tmp_path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    (store.topics_dir / "CONSTRAINTS.md").write_text(
-        "# CONSTRAINTS\n\n## TL;DR\n- stale constraint from head\n",
-        encoding="utf-8",
-    )
-
     builder = ContextPackBuilder(store)
     pack = builder.build("demo goal", role="task_runner", policy=ContextPackPolicy())
-    constraints = str(pack.get("constraints") or "")
-    assert "Always keep files-root relative paths" in constraints
-    assert "Avoid network operations by default" in constraints
-    assert "stale constraint from head" not in constraints
+    memory_excerpt = str(pack.get("memory_index_excerpt") or "")
+    assert "Goal / principles: MEMORY/topics/GOAL.md" not in memory_excerpt
+    assert "Facts / decisions: MEMORY/topics/FACTS.md" in memory_excerpt
 
 
 if __name__ == "__main__":

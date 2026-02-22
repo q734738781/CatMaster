@@ -11,12 +11,17 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     prompt = build_task_step_prompt()
     messages = prompt.format_messages(
         goal="dummy",
-        constraints="none",
+        task_detail="do X with fixed params",
+        expected_outputs="- out/a.txt",
+        suggested_tools="bash_exec",
+        reference_hint="- MEMORY/topics/FACTS.md\n- rg keyword: foo",
         workspace_policy="none",
         memory_index_excerpt="",
-        artifact_slice="",
     )
     system_content = str(messages[0].content)
+    human_content = str(messages[1].content)
+    assert "Task detail is the execution spec for this task. Follow it strictly." in system_content
+    assert "Do NOT weaken/skip explicit parameter values in task detail." in system_content
     assert "Do NOT put function tool names into bash_exec commands" in system_content
     assert "ase, pymatgen, numpy, matplotlib, scipy, pandas, fitz, requests" in system_content
     assert "always write script files and execute from disk" in system_content
@@ -35,3 +40,7 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     assert "reports/latest_run/** is for audit/debug" in system_content
     assert "primary script(s) written/executed (kind=script)" in system_content
     assert ".logs/bash_exec/..." in system_content
+    assert "Task detail:" in human_content
+    assert "Expected outputs:" in human_content
+    assert "Suggested tools:" in human_content
+    assert "Reference hint:" in human_content

@@ -74,8 +74,7 @@ class VaspRelaxPrepareInput(BaseModel):
     enable_dipole: bool = Field(
         False,
         description=(
-            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to "
-            "the atomic center of mass in fractional coordinates."
+            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to the atomic center of mass of cell in fractional coordinates."
         ),
     )
     user_incar_settings: Optional[Dict[str, Any]] = Field(
