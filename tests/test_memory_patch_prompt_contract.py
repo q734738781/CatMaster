@@ -36,6 +36,8 @@ def test_memory_patch_prompt_requires_aider_edits_and_path_scope() -> None:
     assert "Treat only text inside `<editable_file path=\"...\">...</editable_file>`" in system_content
     assert "Topic schema contract:" in system_content
     assert "Write-routing from task structured result:" in system_content
+    assert "Merge-first policy for `MEMORY/topics/FILES.md`:" in system_content
+    assert "Do NOT append blindly. Canonicalize and merge before writing." in system_content
     assert "- PATH: <rel_path> | kind=<kind> | desc=<desc> | source=<task_id>" in system_content
     assert "<editable_file path=\"MEMORY/MEMORY.md\">" in human_content
     assert "Event path:" not in human_content
@@ -69,9 +71,10 @@ def test_memory_patch_repair_prompt_requires_aider_format_output() -> None:
     system_content = str(messages[0].content)
     human_content = str(messages[1].content)
     assert "Output ONLY corrected Aider SEARCH/REPLACE edit blocks" in system_content
-    assert "allowed paths: MEMORY/** and notes/** only" in system_content
+    assert "allowed paths: MEMORY/** only" in system_content
     assert "replace_no_match" in system_content
     assert "Keep the same topic schema contract and write-routing rules" in system_content
+    assert "preserve merge-first behavior for `FILES.md`" in system_content
     assert "Apply error context (JSON, reference only)" in human_content
 
 

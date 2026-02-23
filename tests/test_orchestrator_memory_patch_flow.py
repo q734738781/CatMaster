@@ -119,7 +119,7 @@ def test_merge_memory_via_git_apply_success(tmp_path: Path) -> None:
     assert result["event_path"] == "memory/events.jsonl"
     assert result["attempts"] == 1
     assert backend.calls[0][0] == "memory_apply_aider_edits"
-    assert backend.calls[0][1]["allowed_paths"] == ["MEMORY/", "notes/"]
+    assert backend.calls[0][1]["allowed_paths"] == ["MEMORY/"]
     prompt_kwargs = orch.memory_patch_prompt.calls[0]
     assert "topic_goal_text" in prompt_kwargs
     assert "topic_facts_text" in prompt_kwargs
