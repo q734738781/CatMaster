@@ -33,6 +33,8 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "If the worker reports remote job failures, default to MajorReviseProposal" in system_content
     assert "rerun only the failed subset" in system_content
     assert "do not restart successful jobs" in system_content
+    assert "StopAndSynthesize is allowed only when execution required by the user request is already complete" in system_content
+    assert "Do not treat proposal-format requirements" in system_content
     assert "small/local edits that keep the same route" in system_content
     assert "clarifying wording, filling missing defaults" in system_content
     assert "route-level change is required" in system_content

@@ -163,6 +163,8 @@ Decision semantics:
 - Default priority: PerformNextTask > MinorReviseProposal > MajorReviseProposal.
 - Do not choose MajorReviseProposal when safe defaults or local edits can keep the current route valid.
 - If the worker reports remote job failures, default to MajorReviseProposal: revise work_packages to rerun only the failed subset with the proposed fix, and do not restart successful jobs.
+- StopAndSynthesize is allowed only when execution required by the user request is already complete, or the user explicitly asked for planning-only output.
+- Do not treat proposal-format requirements (e.g., "Items needing human decision", "Key parameters (defaults)", or "list plan parameters") as completion criteria for Director stage.
 
 Rules:
 - Avoid repeating completed work; consult AlreadyDone + memory index.
