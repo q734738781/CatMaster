@@ -718,10 +718,8 @@ class Orchestrator:
                 "cancelled",
                 "cwd",
                 "timeout_s",
-                "stdout_path",
-                "stderr_path",
-                "stdout_tail",
-                "stderr_tail",
+                "stdout",
+                "stderr",
                 "blocked_reason",
             ):
                 if key not in data:
@@ -730,10 +728,10 @@ class Orchestrator:
                 if isinstance(value, str):
                     value = Orchestrator._snippet(value, text_limit)
                 compact_data[key] = value
-            if "stdout_tail" not in compact_data and data.get("stdout"):
-                compact_data["stdout_tail"] = Orchestrator._snippet(data.get("stdout"), text_limit)
-            if "stderr_tail" not in compact_data and data.get("stderr"):
-                compact_data["stderr_tail"] = Orchestrator._snippet(data.get("stderr"), text_limit)
+            if "stdout" not in compact_data and data.get("stdout"):
+                compact_data["stdout"] = Orchestrator._snippet(data.get("stdout"), text_limit)
+            if "stderr" not in compact_data and data.get("stderr"):
+                compact_data["stderr"] = Orchestrator._snippet(data.get("stderr"), text_limit)
             compact["data"] = compact_data
             return compact
 
@@ -805,15 +803,15 @@ class Orchestrator:
         suffix: str,
         content: Dict[str, Any],
     ) -> str:
-        files_root = workspace_root(self.run_context.workspace)
-        out_dir = files_root / ".logs" / "toolcall_context"
+        run_root = self.run_context.run_dir
+        out_dir = run_root / "audit" / "toolcall_context"
         out_dir.mkdir(parents=True, exist_ok=True)
         name = f"{self.run_context.run_id}_{task_id}_{suffix}.json"
         out_path = out_dir / name
         payload = self._json_roundtrip(content)
         out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         try:
-            return str(out_path.relative_to(files_root))
+            return str(out_path.relative_to(run_root))
         except Exception:
             return str(out_path)
 
@@ -1254,12 +1252,6 @@ class Orchestrator:
             ]
             files: List[Dict[str, str]] = []
             artifacts: List[str] = []
-            if max_steps_context_rel:
-                files.append({
-                    "path": max_steps_context_rel,
-                    "description": "Toolcall context snapshot captured when max_steps was reached.",
-                    "kind": "log",
-                })
             control_payload = {
                 "error": (
                     f"Tool-call limit reached ({int(max_limit)}) before completion "
@@ -1298,19 +1290,6 @@ class Orchestrator:
         if str(task_result.get("failure_kind") or "") == "max_steps":
             task_result["structured_result"]["toolcall_context"] = local_observations_for_memory
             task_result["structured_result"]["toolcall_context_count"] = len(local_observations_for_memory)
-            if max_steps_context_rel:
-                task_result["structured_result"]["toolcall_context_path"] = max_steps_context_rel
-                existing_paths = {
-                    str(item.get("path") or "").strip().lower()
-                    for item in (task_result.get("key_artifacts") or [])
-                    if isinstance(item, dict)
-                }
-                if max_steps_context_rel.strip().lower() not in existing_paths:
-                    task_result["key_artifacts"].append({
-                        "path": max_steps_context_rel,
-                        "description": "Toolcall context snapshot captured when max_steps was reached.",
-                        "kind": "log",
-                    })
         outcome = task_result["task_outcome"]
         merge_info: Dict[str, Any] = {}
         patch_merge_failed = False
@@ -1350,13 +1329,6 @@ class Orchestrator:
             task_result["structured_result"]["summary"] = task_result["task_summary"]
             outcome = "needs_intervention"
             task_result["task_outcome"] = outcome
-            patch_path = str(merge_info.get("patch_path") or "").strip()
-            if patch_path:
-                task_result["key_artifacts"].append({
-                    "path": patch_path,
-                    "description": "memory patch failed to apply",
-                    "kind": "log",
-                })
 
         observation_path = self._write_observation(
             task_id=task_id,
@@ -1588,8 +1560,7 @@ class Orchestrator:
         event_rel = self.memory_store.append_event(event)
         memory_index_text = self.memory_store.read_index(max_lines=2000, max_chars=200000)
         topic_texts = self._read_memory_topic_snapshots()
-        files_root = workspace_root(self.run_context.workspace)
-        patch_dir = files_root / ".logs" / "memory_patches"
+        patch_dir = self.run_context.run_dir / "audit" / "memory_patches"
         patch_dir.mkdir(parents=True, exist_ok=True)
 
         max_attempts = max(1, int(self.patch_repair_attempts or 0) + 1)
@@ -1651,8 +1622,8 @@ class Orchestrator:
 
             edit_text = self._normalize_patch_text(patch_raw)
             previous_edit_text = edit_text
-            edits_rel = f".logs/memory_patches/memory_{run_id}_{task_id}_a{attempt}.aider"
-            edits_abs = files_root / edits_rel
+            edits_rel = f"audit/memory_patches/memory_{run_id}_{task_id}_a{attempt}.aider"
+            edits_abs = self.run_context.run_dir / edits_rel
             edits_abs.write_text(edit_text if edit_text.endswith("\n") else f"{edit_text}\n", encoding="utf-8")
 
             tool_out = self.tool_backend.call(
@@ -1666,8 +1637,8 @@ class Orchestrator:
             )
             status = str(tool_out.get("status") or "").strip().lower()
             data = tool_out.get("data") if isinstance(tool_out.get("data"), dict) else {}
-            patch_rel = f".logs/memory_patches/memory_{run_id}_{task_id}_a{attempt}.diff"
-            patch_abs = files_root / patch_rel
+            patch_rel = f"audit/memory_patches/memory_{run_id}_{task_id}_a{attempt}.diff"
+            patch_abs = self.run_context.run_dir / patch_rel
             diff_text = str(data.get("diff_text") or "")
             patch_abs.write_text(diff_text if diff_text.endswith("\n") else f"{diff_text}\n", encoding="utf-8")
 
@@ -1826,6 +1797,18 @@ class Orchestrator:
                 continue
             path = str(item.get("path") or "").strip()
             if not path or path in seen:
+                continue
+            lowered = path.replace("\\", "/").lower()
+            normalized = lowered.lstrip("./")
+            if (
+                lowered == ".logs"
+                or lowered.startswith(".logs/")
+                or normalized == "metadata"
+                or normalized.startswith("metadata/")
+                or normalized == "audit"
+                or normalized.startswith("audit/")
+                or "/metadata/" in lowered
+            ):
                 continue
             seen.add(path)
             out.append({

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
 import os
 import re
@@ -10,9 +11,9 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath, system_root
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
-from catmaster.runtime.tool_runtime import current_toolcall_key
+from catmaster.runtime.tool_runtime import current_toolcall_key, current_run_dir
 
 
 class BashExecInput(BaseModel):
@@ -20,7 +21,8 @@ class BashExecInput(BaseModel):
     Execute a multi-line bash script inside the workspace (default) and return stdout/stderr.
     Network access is disabled by default using Linux network namespaces (unshare).
     Symbolic link operations are disabled; use copy/move operations instead.
-    Stdout/stderr are returned up to max_output_chars per stream; for longer output use stdout_path/stderr_path logs.
+    Stdout/stderr are returned up to max_output_chars per stream.
+    Full streams are persisted to internal metadata audit logs (not for task planning/reading).
     Keep output short in scripts and print one-line summaries when possible.
     """
 
@@ -37,17 +39,11 @@ def _truncate_text_tail(text: str, limit: int) -> Tuple[str, bool]:
         return "", False
     if len(text) <= limit:
         return text, False
-    return "\n...[output truncated]...\n" + text[-limit:], True
-
-
-def _tail_text(text: str, limit: int) -> str:
-    if text is None:
-        return ""
-    if limit <= 0:
-        return ""
-    if len(text) <= limit:
-        return text
-    return text[-limit:]
+    marker = "\n...[output truncated]...\n"
+    if limit <= len(marker):
+        return text[-limit:], True
+    tail_len = limit - len(marker)
+    return marker + text[-tail_len:], True
 
 
 _FORBIDDEN_SYMLINK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -111,20 +107,29 @@ def _safe_log_token(toolcall_key: str) -> str:
     return f"manual_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
 
 
-def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> Tuple[str, str, list[str]]:
+def _resolve_audit_logs_dir() -> Path:
+    run_dir = (current_run_dir() or "").strip()
+    if run_dir:
+        try:
+            return Path(run_dir).expanduser().resolve() / "audit" / "bash_exec"
+        except Exception:
+            pass
+    return system_root() / "audit" / "bash_exec"
+
+
+def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> list[str]:
     warnings: list[str] = []
-    logs_dir = resolve_workspace_path(".logs/bash_exec", must_exist=False)
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = _resolve_audit_logs_dir()
     token = _safe_log_token(toolcall_key)
     stdout_path = logs_dir / f"{token}.stdout.txt"
     stderr_path = logs_dir / f"{token}.stderr.txt"
     try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
         stdout_path.write_text(stdout or "", encoding="utf-8")
         stderr_path.write_text(stderr or "", encoding="utf-8")
     except Exception as exc:
         warnings.append(f"failed to persist bash_exec logs: {type(exc).__name__}: {exc}")
-        return "", "", warnings
-    return workspace_relpath(stdout_path), workspace_relpath(stderr_path), warnings
+    return warnings
 
 
 def _detect_forbidden_symlink_usage(script: str) -> Optional[str]:
@@ -197,10 +202,6 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     stderr = ""
     exit_code = None
     toolcall_key = current_toolcall_key()
-    stdout_path = ""
-    stderr_path = ""
-    stdout_tail = ""
-    stderr_tail = ""
 
     try:
         proc = subprocess.Popen(
@@ -234,10 +235,7 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             cancelled = bool(toolcall_key and toolcall_key in _CANCELLED_KEYS)
         exit_code = proc.returncode
 
-        stdout_path, stderr_path, log_warnings = _write_stream_logs(toolcall_key, stdout, stderr)
-        warnings.extend(log_warnings)
-        stdout_tail = _tail_text(stdout, params.max_output_chars)
-        stderr_tail = _tail_text(stderr, params.max_output_chars)
+        warnings.extend(_write_stream_logs(toolcall_key, stdout, stderr))
 
         stdout, cut_out = _truncate_text_tail(stdout, params.max_output_chars)
         stderr, cut_err = _truncate_text_tail(stderr, params.max_output_chars)
@@ -256,10 +254,6 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             "cmd": cmd,
             "cwd": workspace_relpath(cwd_path),
             "timeout_s": params.timeout_s,
-            "stdout_path": stdout_path,
-            "stderr_path": stderr_path,
-            "stdout_tail": stdout_tail,
-            "stderr_tail": stderr_tail,
         }
 
         if ok:

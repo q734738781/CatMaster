@@ -26,6 +26,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert 'task_packet.suggested_tools must be selected from "Available tools for task runner"' in system_content
     assert "reports/latest_run/** is an audit/debug snapshot" in system_content
     assert "Never ask the worker to read metadata/internal run paths" in system_content
+    assert "cmd 2>&1 | tee reports/<task_desc>/run.log" in system_content
     assert "Assume runtime environment is correctly configured per project README" in system_content
     assert "runtime/tooling environment prerequisites" in system_content
     assert "Do not revise or ask for confirmation for minor execution details" in system_content

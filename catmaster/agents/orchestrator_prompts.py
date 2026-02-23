@@ -174,6 +174,7 @@ Rules:
 - If you need information from a file, emit a task that reads that file.
 - `reports/latest_run/**` is an audit/debug snapshot from previous runs, not canonical memory, do not ask workers to read by default.
 - Never ask the worker to read metadata/internal run paths; worker tools can access files root only.
+- If task execution needs persistent command logs, require pipeline logging into project files outputs (e.g., `cmd 2>&1 | tee reports/<task_desc>/run.log`), not internal metadata audit logs.
 - Helper tool use is inspection-first; prefer checking MEMORY pointer files and focused reads over broad file dumps.
 - If proposal/default tables specify key parameters, preserve the same values in task_detail. Do NOT weaken into conditional language like "if enabled".
 - If you must change a key parameter value, do MinorReviseProposal/MajorReviseProposal and explain the change.
@@ -224,11 +225,11 @@ Rules:
   - `task_finish` when done, with structured fields (summary/facts/files/constraints/open_questions/decisions/next_steps/artifacts).
   - `task_fail` when blocked by consistent unexpected errors or fact inconsistencies.
   - task_finish/task_fail must be called alone in its own turn after reviewing tool outputs.
-  - When calling task_finish, include in files: primary script(s) written/executed (kind=script), primary outputs (kind=output/report), and only necessary debug logs (kind=log, e.g., .logs/bash_exec/...).
-- For remote/batch job failures, do one minimal triage (failing status file, stdout/stderr tail, key inputs) and attempt one focused fix.
+  - When calling task_finish, include in files: primary script(s) written/executed (kind=script), primary outputs (kind=output/report), and only necessary user-facing logs saved under project files paths (kind=log).
+- For remote/batch job failures, do one minimal triage (failing status file, stdout/stderr snippets, key inputs) and attempt one focused fix.
 - Do not do open-ended exploration for remote failures (no SSH). If failure persists, call `task_fail` with failed paths, evidence pointers, likely cause, and a minimal rerun/repair plan that reruns only the failed subset.
 - Parsing policy for calculation outputs:
-  - Debug triage is allowed to use grep/tail (e.g., ERROR patterns, final log lines).
+  - Debug triage should prioritize focused, minimal evidence extraction and concise failure signatures.
   - For extracting final numerical results across many calculations (for comparison/reporting), do not manually stitch results with repeated grep commands; run scripts (or parser libraries) to extract in one pass.
 - Core output hygiene:
   - Do NOT paste raw tables, long snippets, logs, or scripts into task_finish.summary.
@@ -248,7 +249,8 @@ Rules:
 - Use inline heredoc (`python - <<'PY' ... PY`) for quick result analysis or file inspection that does not need persistence.
 - For actual workload execution (batch processing, long runs, or outputs to be reused/audited), always write script files and execute from disk.
 - Function tools must be invoked via tool calls. Do NOT put function tool names into bash_exec commands.
-- Keep stdout concise; write large outputs/logs to files and print only short summaries.
+- Keep stdout concise; if persistent command logs are needed, use pipeline logging to project files (e.g., `cmd 2>&1 | `) and print short summaries.
+- Internal metadata audit logs are not task inputs; do not read or reference them in task reasoning.
 - Always provide file or directory paths as relative paths; they will be resolved relative to the project files root.
 - The Context Pack contains available data plus optional guidance.
 
@@ -297,8 +299,10 @@ Hard rules:
 Reminders:
 - Do NOT paste large tables/snippets/logs/scripts into summaries.
 - Put long content into notes/** or reports/** and cite paths.
+- If persistent command logs are needed, use pipeline logging to project files (e.g., `cmd 2>&1 | tee reports/<task_desc>/run.log`).
 - Keep memory content high-signal with scientific invariants (system/method/result).
 - reports/latest_run/** is audit/debug snapshot; do not read it by default.
+- Internal metadata audit logs are not task inputs; do not read or reference them.
 - Do NOT edit MEMORY/** directly.
 """),
         ("human", """
@@ -410,7 +414,7 @@ Additional caution:
   - If a `PATH` entry already exists, update that record (kind/desc/source) instead of adding a duplicate line.
   - Keep at most 1 canonical record per `PATH`.
   - Keep `source` concise and deduplicated (prefer latest run/task context; avoid long source history).
-  - Exclude routine debug logs (`.logs/**`) unless they are uniquely required evidence.
+  - Exclude routine internal audit logs (`metadata/**`, `audit/**`, `.logs/**`) unless they are uniquely required evidence.
   - Include scripts only when they are primary/reusable scripts referenced by summary/facts.
   - Prefer scientific reusable artifacts over run-noise.
 - Conflict precedence:

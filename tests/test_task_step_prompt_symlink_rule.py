@@ -34,12 +34,13 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     assert "For remote/batch job failures, do one minimal triage" in system_content
     assert "Do not do open-ended exploration for remote failures (no SSH)." in system_content
     assert "minimal rerun/repair plan that reruns only the failed subset." in system_content
-    assert "Debug triage is allowed to use grep/tail" in system_content
+    assert "Debug triage should prioritize focused, minimal evidence extraction" in system_content
     assert "do not manually stitch results with repeated grep commands" in system_content
     assert "Result Handoff discipline" in system_content
     assert "reports/latest_run/** is for audit/debug" in system_content
     assert "primary script(s) written/executed (kind=script)" in system_content
-    assert ".logs/bash_exec/..." in system_content
+    assert "cmd 2>&1 | tee reports/<task_desc>/run.log" in system_content
+    assert "Internal metadata audit logs are not task inputs" in system_content
     assert "Task detail:" in human_content
     assert "Expected outputs:" in human_content
     assert "Suggested tools:" in human_content

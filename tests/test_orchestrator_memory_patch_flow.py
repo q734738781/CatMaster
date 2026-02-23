@@ -129,7 +129,7 @@ def test_merge_memory_via_git_apply_success(tmp_path: Path) -> None:
     assert "topic_runbook_text" in prompt_kwargs
     assert "topic_tldrs_json" not in prompt_kwargs
     assert "event_path" not in prompt_kwargs
-    patch_path = tmp_path / "files" / result["patch_path"]
+    patch_path = orch.run_context.run_dir / result["patch_path"]
     assert patch_path.exists()
 
 
@@ -231,7 +231,7 @@ def test_merge_memory_via_git_apply_raises_after_retries(tmp_path: Path) -> None
 
     exc = excinfo.value
     assert exc.event_path == "memory/events.jsonl"
-    assert ".logs/memory_patches/" in exc.patch_path
+    assert "audit/memory_patches/" in exc.patch_path
     assert "apply failed" in str(exc)
 
 

@@ -94,7 +94,7 @@ class LocalToolBackend(ToolBackend):
                     tool_name=name,
                     call_id=call_id,
                 )
-                with toolcall_context(toolcall_key):
+                with toolcall_context(toolcall_key, run_dir=str(self.artifact_store.run_dir)):
                     if self.workspace is not None:
                         with workspace_scope(self.workspace):
                             tool_output = func(payload)

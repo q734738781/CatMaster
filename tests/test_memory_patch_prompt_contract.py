@@ -38,6 +38,7 @@ def test_memory_patch_prompt_requires_aider_edits_and_path_scope() -> None:
     assert "Write-routing from task structured result:" in system_content
     assert "Merge-first policy for `MEMORY/topics/FILES.md`:" in system_content
     assert "Do NOT append blindly. Canonicalize and merge before writing." in system_content
+    assert "Exclude routine internal audit logs (`metadata/**`, `audit/**`, `.logs/**`)" in system_content
     assert "- PATH: <rel_path> | kind=<kind> | desc=<desc> | source=<task_id>" in system_content
     assert "<editable_file path=\"MEMORY/MEMORY.md\">" in human_content
     assert "Event path:" not in human_content

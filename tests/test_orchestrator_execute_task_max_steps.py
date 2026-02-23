@@ -99,7 +99,7 @@ def test_execute_task_max_steps_auto_replan_and_context(monkeypatch: pytest.Monk
         return {
             "event_path": "memory/events.jsonl",
             "memory_index": "memory/index.md",
-            "patch_path": ".logs/memory_patches/task_01.patch",
+            "patch_path": "audit/memory_patches/task_01.patch",
             "attempts": 1,
         }
 
@@ -133,9 +133,7 @@ def test_execute_task_max_steps_auto_replan_and_context(monkeypatch: pytest.Monk
     assert "outputs" not in compact_data.get("scalars", {})
     assert compact_data["paths"]["submission_dir"] == "jobs/outputs/vasp_batch_001"
 
-    context_path = str(structured["toolcall_context_path"])
-    assert context_path
-    assert (tmp_path / "files" / context_path).exists()
-
-    artifact_hits = [item for item in result["key_artifacts"] if item.get("path") == context_path]
-    assert len(artifact_hits) == 1
+    assert "toolcall_context_path" not in structured
+    assert not result["key_artifacts"]
+    audit_hits = sorted((tmp_path / "metadata" / "runs" / "run_01" / "audit" / "toolcall_context").glob("*.json"))
+    assert audit_hits
