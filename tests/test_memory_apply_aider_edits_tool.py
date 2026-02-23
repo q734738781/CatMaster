@@ -54,6 +54,25 @@ def test_memory_apply_aider_edits_rejects_forbidden_path(tmp_path) -> None:
     assert data.get("error_code") == "path_forbidden"
 
 
+def test_memory_apply_aider_edits_rejects_notes_path_by_default(tmp_path) -> None:
+    with workspace_scope(tmp_path):
+        out = memory_apply_aider_edits(
+            {
+                "edits_text": (
+                    "notes/tmp.md\n"
+                    "<<<<<<< SEARCH\n"
+                    "\n"
+                    "=======\n"
+                    "x\n"
+                    ">>>>>>> REPLACE\n"
+                )
+            }
+        )
+    assert out["status"] == "failed"
+    data = out.get("data", {})
+    assert data.get("error_code") == "path_forbidden"
+
+
 def test_memory_apply_aider_edits_rejects_invalid_blocks(tmp_path) -> None:
     with workspace_scope(tmp_path):
         out = memory_apply_aider_edits({"edits_text": "not a valid aider edit"})

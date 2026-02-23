@@ -1659,7 +1659,7 @@ class Orchestrator:
                 "memory_apply_aider_edits",
                 json.dumps({
                     "edits_text": edit_text,
-                    "allowed_paths": ["MEMORY/", "notes/"],
+                    "allowed_paths": ["MEMORY/"],
                     "emit_diff": True,
                 }, ensure_ascii=False),
                 toolcall_key=f"{task_id}_memory_patch_a{attempt}",
@@ -1793,7 +1793,7 @@ class Orchestrator:
             if pure.is_absolute() or ".." in pure.parts:
                 bad.append(norm)
                 continue
-            if not (norm.startswith("MEMORY/") or norm.startswith("notes/")):
+            if not norm.startswith("MEMORY/"):
                 bad.append(norm)
         if bad:
             raise ValueError(f"patch touches forbidden paths: {', '.join(bad)}")

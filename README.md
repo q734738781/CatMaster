@@ -54,15 +54,15 @@ pip install -r requirements/pc.txt
 
 Run the web workbench (recommended):
 ```bash
-python -m catmaster.webui --workspace /path/to/workspace
+python -m catmaster.webui --project-space-root /path/to/project_space
 ```
 
 Or use the main entry point:
 ```bash
-python main.py --workspace /path/to/workspace
+python main.py --project-space-root /path/to/project_space
 ```
 
-Workspace selection is parameter-driven (`--workspace`/constructor arguments), not environment-variable driven.
+Project space selection is parameter-driven (`--project-space-root`/constructor arguments), not environment-variable driven.
 
 **For GPU SIDE**: Ensure the remote host has the Python/MACE runtime; the task scripts are forwarded via DPDispatcher, so syncing the full repo is not required.
 **For CPU SIDE**: VASP execution now runs a forwarded Python boot script; ensure the CPU cluster provides Python 3.10+ in the job environment (module/conda).
@@ -170,31 +170,14 @@ mace_relax_dir:
   task_work_path: "."
 ```
 
-`router.yaml` (template): # This file will be considered to remove in future versions
-```yaml
-tasks:
-  mace_relax:
-    resources: mace_gpu
-  vasp_execute:
-    resources: vasp_cpu
-```
-
-
 Notes:
 - Keep `env_setup` / `source_list` aligned with your site environment scripts and MPI setup.
 - For GPU MACE jobs, the MACE script is forwarded via DPDispatcher; only the remote Python/MACE environment is required.
 - For CPU VASP jobs, the boot script is forwarded via DPDispatcher; ensure MPI and VASP binaries are available in the remote env.
 - For Slurm/VASP, ensure your env script exports `vasp_std` and sets MPI bootstrap (e.g., `I_MPI_HYDRA_BOOTSTRAP=ssh` when required).
-<<<<<<< ours
-<<<<<<< ours
-- Tool defaults now live in `configs/dpdispatcher/tasks.yaml` (resources/machine/model). Adjust that file for site defaults.
-=======
-- Tool defaults now live in the tool inputs (e.g., `resources="vasp_cpu"` / `resources="mace_gpu"`, `model="mh-1"`, `head="omat_pbe"`). Override per call when needed.
->>>>>>> theirs
-=======
->>>>>>> theirs
-- Under normal scenarios, you should not modify the name of tasks.yaml in case of program will not find suitable task.
-- 
+- Tool defaults should be configured in `configs/dpdispatcher/tasks.yaml` (for example `resources`, model/head defaults), and can be overridden per tool call when needed.
+- Keep `tasks.yaml` filename stable so the loader can discover it automatically.
+
 ### CPU (VASP) requirements
 
 - Slurm-based HPC environment.
@@ -285,34 +268,29 @@ agent_policies:
     browse_tools_enabled: true
 ```
 
-## Quick test (LLM entry)
+## Quick start (WebUI)
 
-After tough environment settings, finally you can enjoy the CatMaster system. Congratulations!
+After environment setup, start CatMaster from the WebUI entry:
 
-This repo includes a user-friendly entry point `main.py` for prompt-based runs.
-
-Example (prompt string):
 ```bash
-python main.py \
-  --workspace workspace/my_run \
-  --model gpt-5.2 \
-  --reasoning-effort high \
-  --prompt "Compute O2 in a box and report energy per atom."
+python -m catmaster.webui --project-space-root ./project_space
 ```
 
-Example (prompt file):
+Equivalent command:
+
 ```bash
-python main.py \
-  --workspace workspace/my_run \
-  --model gpt-5.2 \
-  --prompt-file prompts/o2.txt
+python main.py --project-space-root ./project_space
+```
+
+Then open:
+
+```text
+http://127.0.0.1:7860
 ```
 
 Notes:
-- We strongly recommend using reasoning effort `high` for tasks. It will be cleverer and make you less angry with an affordable cost.
-- `--clean` is optional and off by default (use it only when you want to delete the workspace).
 - You still need your model provider key (e.g., `OPENAI_API_KEY`) in the environment.
-- The summary of each run will be saved under `<workspace>/reports/FINAL_REPORT.md`.
+- Run summaries are saved in each project under `reports/FINAL_REPORT.md`.
 
 ## Application cases
 

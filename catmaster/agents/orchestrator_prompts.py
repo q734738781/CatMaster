@@ -352,7 +352,7 @@ Required edit format:
 >>>>>>> REPLACE
 
 Scope:
-- Allowed paths to modify: MEMORY/** (primary), notes/** (optional for long tables/snippets).
+- Allowed paths to modify: MEMORY/** only.
 - Never modify any other path.
 
 Memory rules:
@@ -363,7 +363,6 @@ Memory rules:
   3) Result invariants (final reusable values with units/conditions/evidence path)
 - Do NOT copy raw logs/tool traces into MEMORY.
 - Do NOT add empty placeholder blocks (for constraints/questions/etc.).
-- Long content must be written to notes/** and referenced by pointer.
 - Keep section schema stable so downstream parsers still work (e.g., Top Constraints / Active Open Questions headings).
 
 Topic schema contract:
@@ -403,6 +402,15 @@ Additional caution:
   - `open_questions` -> `MEMORY/topics/QUESTIONS.md`
   - goal/success-boundary changes -> `MEMORY/topics/GOAL.md`
   - reusable procedure/checklist updates -> `MEMORY/topics/RUNBOOK.md`
+- Merge-first policy for `MEMORY/topics/FILES.md`:
+  - Do NOT append blindly. Canonicalize and merge before writing.
+  - Treat `PATH` as the merge key (workspace-relative, normalized form).
+  - If a `PATH` entry already exists, update that record (kind/desc/source) instead of adding a duplicate line.
+  - Keep at most 1 canonical record per `PATH`.
+  - Keep `source` concise and deduplicated (prefer latest run/task context; avoid long source history).
+  - Exclude routine debug logs (`.logs/**`) unless they are uniquely required evidence.
+  - Include scripts only when they are primary/reusable scripts referenced by summary/facts.
+  - Prefer scientific reusable artifacts over run-noise.
 - Conflict precedence:
   - If `MEMORY/MEMORY.md` conflicts with `FACTS.md` or `FILES.md`, topic files are authoritative.
   - Keep single-source updates; avoid duplicating the same fact/path across multiple files.
@@ -410,6 +418,7 @@ Additional caution:
   - Ensure detailed facts and path inventories are not dumped into `MEMORY/MEMORY.md`.
   - Ensure key claims include evidence path pointers.
   - Ensure `FILES.md` path records follow the `- PATH:` style where applicable.
+  - Ensure `FILES.md` has no duplicate `PATH` records after merge.
   - Ensure `QUESTIONS.md` reflects Active vs Resolved transitions when answers are available.
 """),
         ("human", """
@@ -455,7 +464,7 @@ You are repairing invalid Aider memory edits.
 Output ONLY corrected Aider SEARCH/REPLACE edit blocks:
 - no explanations
 - no markdown code fences
-- allowed paths: MEMORY/** and notes/** only
+- allowed paths: MEMORY/** only
 - preserve section schema used by memory parsers
 - Text matching rules:
   - Treat only text inside `<editable_file path="...">...</editable_file>` as existing file content.
@@ -465,6 +474,7 @@ Output ONLY corrected Aider SEARCH/REPLACE edit blocks:
 - File-role routing:
   - Keep `MEMORY/MEMORY.md` concise and pointer-first.
   - Route facts to `MEMORY/topics/FACTS.md` and artifact/path index records to `MEMORY/topics/FILES.md`.
+- In repair mode, preserve merge-first behavior for `FILES.md` and remove duplicate `PATH` records if introduced.
 """),
         ("human", """
 Previous edits:

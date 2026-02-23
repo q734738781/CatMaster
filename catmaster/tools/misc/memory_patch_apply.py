@@ -16,7 +16,7 @@ class MemoryApplyAiderEditsInput(BaseModel):
 
     edits_text: str = Field(..., description="Aider edit blocks text.")
     allowed_paths: List[str] = Field(
-        default_factory=lambda: ["MEMORY/", "notes/"],
+        default_factory=lambda: ["MEMORY/"],
         description="Allowed project-files-relative path prefixes.",
     )
     emit_diff: bool = Field(True, description="Whether to return unified diff text for audit.")
