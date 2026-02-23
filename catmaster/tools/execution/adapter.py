@@ -24,7 +24,10 @@ class DPDispatcherAdapter:
     def _submit_mace(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from catmaster.tools.execution import MaceRelaxInput
         params = MaceRelaxInput(**payload)
-        route = self.router.route("mace_relax")
+        try:
+            route = self.router.route("mace_relax")
+        except KeyError:
+            route = self.router.route("mace_relax_dir")
         req = build_mace_relax_request(params, route=route)
         res = dispatch_task(req)
         return {

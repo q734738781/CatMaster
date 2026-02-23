@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 import yaml
 
-DEFAULT_DIRS = []
-if os.environ.get("CATMASTER_DP_CONFIG"):
-    DEFAULT_DIRS.append(Path(os.environ["CATMASTER_DP_CONFIG"]))
-DEFAULT_DIRS.extend([
-    Path.home() / ".catmaster" / "dpdispatcher.yaml",
-    Path.home() / ".catmaster" / "dpdispatcher.d",
+DEFAULT_DIRS = [
     Path(__file__).resolve().parents[3] / "configs" / "dpdispatcher",
-])
+]
 
 
 def _load_file(path: Path) -> Dict:
@@ -41,7 +35,7 @@ def _iter_config_files(base: Path) -> Iterable[Path]:
 class MachineRegister:
     """Aggregates machine/resources definitions from YAML/JSON files.
 
-    - search order: env path, ~/.catmaster/dpdispatcher.yaml, ~/.catmaster/dpdispatcher.d/*, repo configs/dpdispatcher/*
+    - search order: repo configs/dpdispatcher/*
     - supports combined schema with top-level `machines` / `resources` as well as split files named
       `machines*.json|yaml`, `resources*.json|yaml`.
     """

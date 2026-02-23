@@ -22,7 +22,7 @@ CatMaster is a **open-source** task-based LLM orchestration and tooling framewor
 - Tool registry for materials workflows (Materials Project retrieval, slab construction, adsorption site enumeration, VASP/MACE job submission), and long-tail tools with powerful LLM and python_exec
 - HITL (human-in-the-loop) intervention for blocked runs with replanning.
 - Unified run artifacts and traces (event/tool/patch traces, observations, final report).
-- Demo scripts and documented application cases in `demos/` and result summary in `docs/examples/`. You can try them!
+- Demo scripts and documented application cases in `demos/`, with result summaries in `demos/examples/`. You can try them!
 
 ## Project layout
 
@@ -80,103 +80,22 @@ Pymatgen needs POTCAR files to generate VASP inputs. You should download the POT
 Then refer to https://pymatgen.org/installation.html to setup POTCARs for pymatgen.
 
 
-### DPDispatcher config (templates, with required fields)
+### DPDispatcher config (configs folder only)
 
-DPDispatcher config can be provided via:
-- `$CATMASTER_DP_CONFIG` / `$CATMASTER_DP_TASKS`
-- `~/.catmaster/dpdispatcher.yaml` or `~/.catmaster/dpdispatcher.d/*`
-- `configs/dpdispatcher/*` directly under the project dir (relative to main.py)
+All DPDispatcher runtime configs are unified under `configs/dpdispatcher/`.
+
+- `machines_template.yaml`: tracked template for deployment.
+- `machines.yaml`: local machine config (gitignored).
+- `resources.yaml`: tracked resource presets.
+- `tasks.yaml`: tracked task templates and default `resources` bindings.
+
+Setup:
+1. Copy template: `cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml`
+2. Fill SSH/queue/env details in `machines.yaml`.
+3. Verify machine names referenced in `resources.yaml`.
+4. Keep task command patterns in `tasks.yaml` unless you know your site-specific changes are required.
 
 **FOR ANY EXECUTION ON REMOTE MACHINES, PASSWORDLESS SSH CONNECTIONS (PRIVATE KEY LOGIN) SHOULD BE CONFIGURED BEFORE LAUNCHING THE CODE.**
-
-Below are typical **template** examples (local+CPU Slurm Cluster+Dedicated GPU Server(e.g. AutoDL)) based on the current config files. Replace placeholders, but keep the structure and critical commands intact.
-`machines.yaml` (template; keep `env_setup` blocks):\n
-```yaml
-cpu_server:
-  batch_type: Slurm
-  context_type: SSHContext
-  local_root: <LOCAL_WORK_ROOT>
-  remote_root: <REMOTE_WORK_ROOT>
-  remote_profile:
-    hostname: <CPU_LOGIN_HOST>
-    port: 22
-    username: <USERNAME>
-    key_filename: <PATH_TO_SSH_KEY>
-  env_setup: |
-    ulimit -s unlimited # Any commands you want to use for 
-    # Ensure Python 3.10+ is available for task_script/vasp_boot.py
-    # module load python/3.10  (example)
-
-gpu_server:
-  batch_type: Shell
-  context_type: SSHContext
-  local_root: <LOCAL_WORK_ROOT>
-  remote_root: <REMOTE_WORK_ROOT>
-  remote_profile:
-    hostname: <GPU_HOST>
-    port: 22
-    username: <USERNAME>
-    key_filename: <PATH_TO_SSH_KEY>
-  env_setup: |
-    ulimit -s unlimited
-    export PATH=<CONDA_BIN>:$PATH
-    eval "$(conda shell.bash hook)"
-    conda activate <GPU_ENV_NAME>
-    # No repo sync required when using forwarded task scripts.
-```
-
-`resources.yaml` (template; keep `source_list` and Slurm flags as needed):\n
-```yaml
-vasp_cpu:
-  machine: cpu_server
-  number_node: 1
-  cpu_per_node: <CPU_PER_NODE>
-  queue_name: <CPU_QUEUE>
-  group_size: 1
-  custom_flags:
-    - "#SBATCH -t <D-HH:MM:SS>"
-    - "#SBATCH --export=ALL"
-  source_list:
-    - "<REMOTE_VASP_ENV_SCRIPT>"
-
-mace_gpu:
-  machine: gpu_server
-  number_node: 1
-  cpu_per_node: <CPU_PER_NODE>
-  gpu_per_node: 1
-  queue_name: ""
-  group_size: 1
-  custom_flags: []
-```
-
-`tasks.yaml` (template; **do not change the command patterns unless you know what you are doing :)**
-```yaml
-vasp_execute:
-  command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
-  forward_files:
-    - "*"
-    - "task_script/vasp_boot.py"
-  backward_files:
-    - "*"
-  task_work_path: "."
-
-mace_relax_dir:
-  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice}"
-  forward_files:
-    - "input"
-    - "task_script/mace_relax.py"
-  backward_files:
-    - "output"
-  task_work_path: "."
-```
-
-Notes:
-- Keep `env_setup` / `source_list` aligned with your site environment scripts and MPI setup.
-- For GPU MACE jobs, the MACE script is forwarded via DPDispatcher; only the remote Python/MACE environment is required.
-- For CPU VASP jobs, the boot script is forwarded via DPDispatcher; ensure MPI and VASP binaries are available in the remote env.
-- For Slurm/VASP, ensure your env script exports `vasp_std` and sets MPI bootstrap (e.g., `I_MPI_HYDRA_BOOTSTRAP=ssh` when required).
-- Tool defaults should be configured in `configs/dpdispatcher/tasks.yaml` (for example `resources`, model/head defaults), and can be overridden per tool call when needed.
-- Keep `tasks.yaml` filename stable so the loader can discover it automatically.
 
 ### CPU (VASP) requirements
 
@@ -301,8 +220,10 @@ Notes:
 ## Common environment variables
 
 - `MP_API_KEY`: Materials Project API key.
-- `OPENAI_API_KEY` (or your provider key).
-- `CATMASTER_DP_CONFIG` / `CATMASTER_DP_TASKS`: DPDispatcher config overrides.
+- `OPENAI_API_KEY`: OpenAI API key.
+- `OPENROUTER_API_KEY`: OpenRouter API key (when using OpenRouter models).
+- `OPENAI_BASE_URL`: optional custom OpenAI-compatible endpoint.
+- `OPENROUTER_BASE_URL`: optional OpenRouter endpoint override.
 
 ---
 

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-"""Resource routing for tasks via DPDispatcher loaded from YAML (no LLM resource hints)."""
+"""Resource routing derived from DPDispatcher task definitions."""
 
 import json
-import os
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
@@ -12,12 +11,9 @@ from pydantic import BaseModel, Field
 
 from catmaster.tools.execution.machine_registry import MachineRegister
 
-DEFAULT_PATHS = []
-if os.environ.get("CATMASTER_ROUTER_CONFIG"):
-    DEFAULT_PATHS.append(Path(os.environ["CATMASTER_ROUTER_CONFIG"]))
-if os.environ.get("CATMASTER_DP_CONFIG"):
-    DEFAULT_PATHS.append(Path(os.environ["CATMASTER_DP_CONFIG"]))
-DEFAULT_PATHS.append(Path(__file__).resolve().parents[3] / "configs" / "dpdispatcher" / "router.yaml")
+DEFAULT_PATHS = [
+    Path(__file__).resolve().parents[3] / "configs" / "dpdispatcher",
+]
 
 
 class Route(BaseModel):
@@ -39,16 +35,32 @@ class ResourceRouter:
         for base in paths:
             if not base:
                 continue
+            if not base.exists():
+                continue
             if base.is_dir():
-                candidates = sorted(base.glob("router.*")) + sorted(base.glob("*.router.*")) + [base / "router.yaml"]
+                candidates = []
+                for ext in ("*.yaml", "*.yml", "*.json"):
+                    candidates.extend(sorted(base.glob(ext)))
             else:
                 candidates = [base]
             for path in candidates:
                 if not path.exists():
                     continue
                 data = self._read(path)
-                tasks = data.get("tasks") if isinstance(data, dict) else {}
+                if not isinstance(data, dict) or not data:
+                    continue
+
+                tasks: Dict[str, object] | object = {}
+                if path.name.startswith("tasks"):
+                    tasks = data.get("tasks", data)
+                elif "tasks" in data:
+                    tasks = data.get("tasks", {})
+                if not isinstance(tasks, dict):
+                    continue
+
                 for name, cfg in tasks.items():
+                    if not isinstance(cfg, dict):
+                        continue
                     try:
                         route = self._build_route(cfg)
                         if route:

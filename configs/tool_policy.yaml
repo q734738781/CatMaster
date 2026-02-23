@@ -1,0 +1,20 @@
+# Tool policy configuration
+# allowed_tools: null means allow all tools by default
+allowed_tools: null
+# denied_tools can block tools even when allowed_tools is null
+# denied_tools:
+#   - bash_exec
+
+denied_tools: 
+  - memory_apply_aider_edits
+
+# Built-in tools (Responses API) to enable; example:
+# builtin_tools:
+#   - type: web_search
+builtin_tools: []
+
+# Whether the model can emit multiple tool calls in one turn
+parallel_tool_calls: true
+
+# Safety guard to prevent infinite tool loops
+max_tool_calls_per_task: 100

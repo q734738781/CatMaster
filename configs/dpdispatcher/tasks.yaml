@@ -1,0 +1,29 @@
+vasp_execute:
+  resources: vasp_cpu
+  command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
+  forward_files:
+    - "*"
+    - "task_script/vasp_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+mace_relax_dir:
+  resources: mace_gpu
+  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice}"
+  forward_files:
+    - "input"
+    - "task_script/mace_relax.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+mace_sp_dir:
+  resources: mace_gpu
+  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion}"
+  forward_files:
+    - "input"
+    - "task_script/mace_sp.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
