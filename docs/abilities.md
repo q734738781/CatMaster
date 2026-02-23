@@ -8,13 +8,13 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - Task-based orchestrator (`catmaster/agents/orchestrator.py`) that:
   - generates a JSON plan (`todo` + `plan_description`), supports iterative plan review (`yes` to approve),
-  - runs each task via `TaskStepper` + tool calls,
-  - summarizes each task and updates a structured whiteboard via UPSERT/DEPRECATE ops.
+  - runs each task via `ToolCallingTaskStepper` + tool calls,
+  - writes structured task results and merges them into file-based memory.
 
 - Whiteboard memory + context packs:
   - Whiteboard sections: Goal, Key Facts, Key Files, Constraints, Open Questions, Journal.
-  - Task summarizer proposes whiteboard ops; ops are validated/applied and diffs are traced.
-  - Context packs include whiteboard excerpts + key files + artifact-log slice + workspace policy.
+  - Director merges task results into `MEMORY/**` (relative to files root) and appends `metadata/memory/events.jsonl`.
+  - Context packs include memory index excerpts + key files + artifact-log slice + workspace policy.
 
 - HITL (human-in-the-loop) loop for `needs_intervention`:
   - on intervention, generates an interrupted report, prompts for free-form feedback, and replans only remaining work.
@@ -24,7 +24,7 @@ This document summarizes what the codebase can do right now, based on the curren
 - Run tracking & auditability:
   - per-run directory under `.catmaster/runs/<run_id>` with `meta.json`, `task_state.json`, `observations/`, `toolcalls/`, `llm.jsonl`.
   - unified traces: `event_trace.jsonl`, `tool_trace.jsonl`, `patch_trace.jsonl`.
-  - reports: `workspace/reports/FINAL_REPORT.md`, `workspace/reports/WHITEBOARD.md`, `workspace/reports/latest_run` symlink.
+  - reports: `workspace/reports/FINAL_REPORT.md`, `workspace/reports/MEMORY.md`, `workspace/reports/latest_run`.
 
 - Tool execution:
   - `ToolExecutor` validates inputs with Pydantic schemas, rejects extra fields.
@@ -33,10 +33,9 @@ This document summarizes what the codebase can do right now, based on the curren
 
 ## UI
 
-- Reporter abstraction with three modes: `rich`, `plain`, `off` (`catmaster/ui`).
-- Rich live dashboard shows tasks, current step, tool usage, whiteboard counts, and an event feed; optional debug panel.
-- Scrollable plan review prompt and final-summary viewer (rich mode), with plain console fallbacks.
-- HITL report viewer + feedback prompt (rich + plain).
+- WebUI workbench (Gradio) for event feed, memory index, artifacts, task state, traces, and final report.
+- Plan/Proposal review and HITL feedback are handled in WebUI and unblock the orchestrator.
+- Console UI has been removed; CLI is non-interactive.
 
 
 
@@ -48,7 +47,7 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - **create_molecule_from_smiles**: RDKit + ASE 3D conformer generation, optimization, XYZ/POSCAR output.
 
-- **relax_prepare**: MPRelaxSet-based VASP inputs with `calc_type` presets, k-product mesh, D3/DFT+U toggles, INCAR overrides; supports batch directories.
+- **vasp_relax_prepare**: MPRelaxSet-based VASP relax inputs with `calc_type` presets, k-product mesh, D3/DFT+U toggles, INCAR overrides; supports batch directories.
 
 - **build_slab**: slab construction for all terminations of a Miller index; thickness/vacuum, symmetry slabs, orthogonalization, LLL reduction, supercell expansion; batch mode supported.
 
@@ -58,7 +57,7 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - **enumerate_adsorption_sites**: Pymatgen ASF site list to JSON (ontop/bridge/hollow).
 
-- **place_adsorbate**: place a molecule on a selected site, preserving slab selective dynamics.
+- **place_adsorbate**: place a molecule on a selected site, preserving slab selective dynamics; writes per-structure adsorbate index metadata (`*.meta.json`) and `ads_indices.json`.
 
 - **generate_batch_adsorption_structures**: batch adsorbate placement for single or multiple slabs; emits JSON manifest.
 
@@ -79,7 +78,7 @@ This document summarizes what the codebase can do right now, based on the curren
 >>>>>>> theirs
 
 - **mace_relax / mace_relax_batch**: submit MACE relaxations (single or batch) via DPDispatcher; outputs relaxed structure, trajectory, log, `summary.json`.
-- MACE batch runs forward the MACE script to `task_script/mace_jobs.py` in the remote workdir; only the remote Python/MACE environment is required.
+- MACE batch runs forward the MACE script to `task_script/mace_relax.py` in the remote workdir; only the remote Python/MACE environment is required.
 - VASP batch runs forward `task_script/vasp_boot.py` in the remote workdir; the boot script handles launching MPI + VASP.
 
 
@@ -104,55 +103,16 @@ This document summarizes what the codebase can do right now, based on the curren
 
 
 
-## Demos (checked against current files)
+## Demos (prompt-only)
 
-
-
-
-- `demos/demo_llm_o2_vasp.py`:
-
-  - LLM-driven O2-in-a-box VASP workflow.
-
-
-
-- `demos/demo_llm_o2_spin_compare.py`:
-
-  - Singlet vs triplet O2 comparison; writes results markdown.
-
-
-
-- `demos/demo_llm_fe_surface.py`:
-
-  - Fe surface energies for (100)/(110)/(111).
-
-
-
-- `demos/demo_llm_fe_comprehension.py`:
-
-  - Fe surface energies + CO adsorption site screening.
-
-
-
-- `demos/demo_llm_fecuni_111_CO.py`:
-
-  - Fe/Cu/Ni (111) CO adsorption energy comparison.
-
-
-
-- `demos/demo_llm_Alloy_HER.py`:
-
-  - Pt–Ni–Cu alloy HER screening with MACE + DFT validation.
-
-
-- `demos/show_tool_descriptions.py`:
-
-  - Print tool schemas and descriptions.
+- Demo prompts live under `demos/examples/*.md`.
+- Each markdown file includes the original prompt (and may include run artifacts from prior executions).
 
 
 
 ## Config and environment notes
 
-- Workspace root: `CATMASTER_WORKSPACE` (defaults to cwd).
+- Workspace root is now provided by runtime parameters/instances (e.g. WebSession/Orchestrator `workspace`), defaulting to current working directory when unspecified.
 
 - DPDispatcher config lookup:
 

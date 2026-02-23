@@ -16,3 +16,6 @@ class ToolBackend(Protocol):
         call_id: str | None = None,
     ) -> dict:
         ...
+
+    def cancel_active_call(self, toolcall_key: str) -> bool:
+        ...

@@ -1,7 +1,7 @@
 # Demo: demo_llm_o2_spin_compare
 
 ## Run artifacts
-- Script: demos/demo_llm_o2_spin_compare.py
+- Script: (removed; prompt-only demo)
 - Workspace: workspace/demo_llm_o2_vasp_spin_compare_bkp
 - Run dir: workspace/demo_llm_o2_vasp_spin_compare_bkp/.catmaster/runs/run_20260112_063429_de7689 (status: done)
 - Note: used existing workspace demo_llm_o2_vasp_spin_compare_bkp for run artifacts.

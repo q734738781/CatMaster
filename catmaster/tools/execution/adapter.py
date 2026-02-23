@@ -25,7 +25,6 @@ class DPDispatcherAdapter:
         from catmaster.tools.execution import MaceRelaxInput
         params = MaceRelaxInput(**payload)
         route = self.router.route("mace_relax")
-        params.model = params.model or route.defaults.get("model")
         req = build_mace_relax_request(params, route=route)
         res = dispatch_task(req)
         return {

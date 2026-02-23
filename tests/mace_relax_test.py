@@ -9,7 +9,7 @@ from catmaster.tools.registry import get_tool_registry
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    os.environ.setdefault("CATMASTER_WORKSPACE", str(root))
+    os.chdir(root)
 
     out_dir = root / "tests" / "test_output" / "mace_relax"
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -15,10 +15,20 @@ import shutil
 from pathlib import Path
 from pprint import pprint
 
+from catmaster.tools.base import resolve_workspace_path
 from catmaster.tools.execution import vasp_execute_batch, mace_relax_batch
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "tests" / "assets"
+
+
+def _parse_bool(text: str) -> bool:
+    value = text.strip().lower()
+    if value in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {text}")
 
 
 def stage_vasp_inputs(root: Path) -> Path:
@@ -43,16 +53,23 @@ def stage_mace_structures(root: Path) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Batch DPDispatcher demo for VASP + MACE on CO/O2")
-    parser.add_argument("--workspace", default="workspace/test_dpdispatcher_batch", help="Workspace root")
+    parser.add_argument("--workspace", default="test_dpdispatcher_batch", help="Workspace under project files root")
     parser.add_argument("--run", action="store_true", help="Actually submit jobs; otherwise dry-run")
     parser.add_argument("--disable_vasp", action="store_true", help="Disable VASP batch test")
     parser.add_argument("--disable_mace", action="store_true", help="Disable MACE batch test")
+    parser.add_argument(
+        "--mace-relax-lattice",
+        type=_parse_bool,
+        default=False,
+        help="Relax lattice/cell in MACE batch path (true|false).",
+    )
     args = parser.parse_args()
 
-    workspace = Path(args.workspace).resolve()
+    workspace = resolve_workspace_path(args.workspace)
     if workspace.exists():
         shutil.rmtree(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
+    print("Resolved files-scope workspace:", workspace)
 
     vasp_payload = None
     mace_payload = None
@@ -76,7 +93,9 @@ def main() -> None:
             "output_root": str(mace_output),
             "fmax": 0.05,
             "maxsteps": 300,
-            "model": "medium-mpa-0",
+            "model": "mh-1",
+            "head": "omat_pbe",
+            "relax_lattice": args.mace_relax_lattice,
             "check_interval": 10,
         }
         print("\nMACE Batch Payload:")

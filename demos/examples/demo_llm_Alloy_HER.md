@@ -1,7 +1,7 @@
 # Demo: demo_llm_Alloy_HER
 
 ## Run artifacts
-- Script: demos/demo_llm_Alloy_HER.py
+- Script: (removed; prompt-only demo)
 - Workspace: workspace/demo_llm_Alloy_111_HER
 - Run dir: workspace/demo_llm_Alloy_111_HER/.catmaster/runs/run_20260114_064531_a43476 (status: done)
 

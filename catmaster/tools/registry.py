@@ -21,7 +21,8 @@ class ToolRegistry:
         # Geometry/Input tools
         from catmaster.tools.geometry_inputs import (
             create_molecule_from_smiles,
-            relax_prepare,
+            vasp_relax_prepare,
+            vasp_sp_prepare,
             build_slab,
             fix_atoms_by_layers,
             fix_atoms_by_height,
@@ -34,7 +35,8 @@ class ToolRegistry:
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
-            RelaxPrepareInput,
+            VaspRelaxPrepareInput,
+            VaspSPPrepareInput,
             SlabBuildInput,
             FixAtomsByLayersInput,
             FixAtomsByHeightInput,
@@ -47,12 +49,11 @@ class ToolRegistry:
         )
         
         # Execution tools  
-        from catmaster.tools.execution import mace_relax_batch, vasp_execute_batch
-        from catmaster.tools.execution import MaceRelaxBatchInput, VaspExecuteBatchInput
+        from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, vasp_execute_batch
+        from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, VaspExecuteBatchInput
 
         # File management tools
         from catmaster.tools.misc.bash_exec import bash_exec, BashExecInput
-        from catmaster.tools.misc.python_repl import python_exec, PythonExecInput
 
         # Retrieval tools
         from catmaster.tools.retrieval.matdb import (
@@ -64,11 +65,17 @@ class ToolRegistry:
 
         # Memory/notes
         from catmaster.tools.misc import memory
+        from catmaster.tools.misc.memory_patch_apply import (
+            memory_apply_aider_edits,
+            MemoryApplyAiderEditsInput,
+        )
         
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
-        self.register_tool("relax_prepare", relax_prepare, RelaxPrepareInput)
+        self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
+        self.register_tool("vasp_relax_prepare", vasp_relax_prepare, VaspRelaxPrepareInput)
+        self.register_tool("vasp_sp_prepare", vasp_sp_prepare, VaspSPPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
         self.register_tool("fix_atoms_by_layers", fix_atoms_by_layers, FixAtomsByLayersInput)
         self.register_tool("fix_atoms_by_height", fix_atoms_by_height, FixAtomsByHeightInput)
@@ -82,8 +89,8 @@ class ToolRegistry:
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)
-        self.register_tool("python_exec", python_exec, PythonExecInput)
         self.register_tool("write_note", memory.write_note, memory.MemoryNoteInput)
+        self.register_tool("memory_apply_aider_edits", memory_apply_aider_edits, MemoryApplyAiderEditsInput)
     
     def register_tool(
         self, 

@@ -6,7 +6,6 @@ It injects an invalid parameter into a write_file toolcall, then retries with a 
 """
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 import logging
@@ -38,7 +37,6 @@ class DeterministicOrchestrator(Orchestrator):
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     root = Path("workspace/test_validation_loop").resolve()
-    os.environ["CATMASTER_WORKSPACE"] = str(root)
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -73,6 +71,7 @@ def main() -> None:
     orch = DeterministicOrchestrator(
         decisions=decisions,
         llm=DummyLLM(),
+        workspace=str(root),
         max_steps=len(decisions),
         log_llm_console=False,
         max_tool_attempts=3,

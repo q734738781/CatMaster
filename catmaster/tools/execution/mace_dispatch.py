@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 import os
+import shlex
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
+    STATUS_FILE_NAME,
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
@@ -18,6 +22,8 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
 from pydantic import BaseModel, Field
+
+BATCH_STATE_FILENAME = "_BATCH_STATE.json"
 
 
 class MaceRelaxInput(BaseModel):
@@ -33,7 +39,23 @@ class MaceRelaxInput(BaseModel):
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
-    model: Optional[str] = Field(None, description="MACE model name; defaults from task config.")
+    model: str = Field(
+        "mh-1",
+        description=(
+            "MACE model name. Recommended options: "
+            "'mh-1' (slower, higher accuracy) or "
+            "'medium-mpa-0' (faster, lower accuracy)."
+        ),
+        examples=["mh-1", "medium-mpa-0"],
+    )
+    head: Optional[str] = Field(
+        "omat_pbe",
+        description="Model head for multi-head models (e.g. 'omat_pbe'). Use empty string to disable.",
+    )
+    dispersion: bool = Field(
+        False,
+        description="Enable dispersion correction in mace_mp. Default: false.",
+    )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
@@ -54,7 +76,54 @@ class MaceRelaxBatchInput(BaseModel):
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
-    model: Optional[str] = Field(None, description="MACE model name; defaults from task config.")
+    model: str = Field(
+        "mh-1",
+        description=(
+            "MACE model name. Recommended options: "
+            "'mh-1' (slower, higher accuracy) or "
+            "'medium-mpa-0' (faster, lower accuracy)."
+        ),
+        examples=["mh-1", "medium-mpa-0"],
+    )
+    head: Optional[str] = Field(
+        "omat_pbe",
+        description="Model head for multi-head models (e.g. 'omat_pbe'). Use empty string to disable.",
+    )
+    dispersion: bool = Field(
+        False,
+        description="Enable dispersion correction in mace_mp. Default: false.",
+    )
+    relax_lattice: bool = Field(
+        False,
+        description="Whether to relax lattice/cell together with atomic positions via ASE FrechetCellFilter.",
+    )
+    check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
+
+
+class MaceSPBatchInput(BaseModel):
+    """Run MACE single-point jobs for structures under one directory."""
+
+    input_dir: str = Field(
+        ...,
+        description="Input directory containing structures (POSCAR/CONTCAR/CIF/VASP).",
+    )
+    output_root: str = Field(
+        ...,
+        description="Output root for batch results. Must be outside input_dir.",
+    )
+    model: str = Field(
+        "mh-1",
+        description="MACE model name (e.g., mh-1, medium-mpa-0).",
+        examples=["mh-1", "medium-mpa-0"],
+    )
+    head: Optional[str] = Field(
+        "omat_pbe",
+        description="Model head for multi-head models. Use empty string to disable.",
+    )
+    dispersion: bool = Field(
+        False,
+        description="Enable dispersion correction.",
+    )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
 
@@ -65,6 +134,12 @@ def _resolve_machine_for_resources(resources_key: str) -> str:
     if not resolved:
         raise KeyError(f"Resources '{resources_key}' missing machine binding")
     return str(resolved)
+
+
+def _resolve_mace_head(head_value: Any) -> Optional[str]:
+    raw = "omat_pbe" if head_value is None else head_value
+    head = str(raw).strip()
+    return head or None
 
 
 def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -94,7 +169,8 @@ def _is_within(path: Path, root: Path) -> bool:
 
 def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
     files: list[Path] = []
-    skip_prefixes = ("mace_batch_", "vasp_batch_")
+    skip_prefixes = ("mace_batch_", "mace_sp_batch_", "vasp_batch_")
+    internal_dirs = {"metadata", ".catmaster"}
     for dirpath, dirnames, filenames in os.walk(root):
         path = Path(dirpath)
         if exclude_root is not None and _is_within(path, exclude_root):
@@ -103,7 +179,7 @@ def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) ->
         if any(part.startswith(skip_prefixes) for part in path.parts):
             dirnames[:] = []
             continue
-        if ".catmaster" in path.parts:
+        if any(part in internal_dirs for part in path.parts):
             dirnames[:] = []
             continue
         if "summary.json" in filenames:
@@ -111,13 +187,63 @@ def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) ->
             continue
         dirnames[:] = [
             d for d in dirnames
-            if d != ".catmaster" and not d.startswith(skip_prefixes)
+            if d not in internal_dirs and not d.startswith(skip_prefixes)
         ]
         for fname in filenames:
             p = path / fname
             if _is_structure_file(p):
                 files.append(p)
     return sorted(files, key=lambda p: str(p))
+
+
+def _write_batch_state(
+    output_root: Path,
+    *,
+    work_base: str,
+    state: str,
+    details: Dict[str, Any] | None = None,
+) -> Path:
+    payload: Dict[str, Any] = {
+        "work_base": work_base,
+        "state": state,
+        "timestamp": float(time.time()),
+    }
+    if details:
+        payload["details"] = details
+    state_path = output_root / BATCH_STATE_FILENAME
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return state_path
+
+
+def _collect_mace_outputs(stage_root: Path, stage_output: Path, output_root: Path) -> tuple[Dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    out: Dict[str, Any] = {}
+
+    try:
+        if stage_output.exists():
+            shutil.copytree(stage_output, output_root, dirs_exist_ok=True)
+    except Exception as exc:
+        warnings.append(f"collect output failed: {type(exc).__name__}: {exc}")
+
+    status_src = stage_root / STATUS_FILE_NAME
+    status_dst = output_root / STATUS_FILE_NAME
+    try:
+        if status_src.is_file():
+            status_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(status_src, status_dst)
+    except Exception as exc:
+        warnings.append(f"collect status failed: {type(exc).__name__}: {exc}")
+    if status_dst.is_file():
+        out["status_file_rel"] = workspace_relpath(status_dst)
+    else:
+        out["status_file_rel"] = None
+
+    out["batch_summary_rel"] = (
+        workspace_relpath(output_root / "batch_summary.json")
+        if (output_root / "batch_summary.json").exists()
+        else None
+    )
+    return out, warnings
 
 
 def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -128,9 +254,13 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not resources_key:
         raise KeyError("mace_relax_dir missing resources in task config")
     machine = _resolve_machine_for_resources(resources_key)
-    model = params.model or cfg.defaults.get("model")
+    model = params.model
     if not model:
-        raise ValueError("model is required; set in payload or task defaults")
+        raise ValueError("model is required.")
+    head = _resolve_mace_head(params.head)
+    head_arg = shlex.quote(head or "")
+    dispersion = bool(params.dispersion)
+    relax_lattice = bool(params.relax_lattice)
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
@@ -175,10 +305,10 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     stage_output = stage_root / "output"
     shutil.copytree(input_root, stage_input)
     stage_output.mkdir(parents=True, exist_ok=True)
-    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_jobs.py"
+    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_relax.py"
     if not script_src.is_file():
         raise FileNotFoundError(f"Missing MACE remote script: {script_src}")
-    script_dst = stage_root / "task_script" / "mace_jobs.py"
+    script_dst = stage_root / "task_script" / "mace_relax.py"
     script_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(script_src, script_dst)
 
@@ -191,6 +321,9 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         "maxsteps": params.maxsteps,
         "steps": params.maxsteps,
         "model": model,
+        "head": head_arg,
+        "dispersion": "true" if dispersion else "false",
+        "relax_lattice": "true" if relax_lattice else "false",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     task = TaskSpec(
@@ -212,27 +345,218 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         check_interval=params.check_interval,
     )
 
-    result = dispatch_submission(batch_req)
+    dispatch_error: Exception | None = None
+    result = None
+    collect_info: Dict[str, Any] = {}
+    collect_warnings: list[str] = []
+    state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": 1})
+    try:
+        _write_batch_state(output_root, work_base=work_base, state="running", details={"tasks": 1})
+        result = dispatch_submission(batch_req)
+    except Exception as exc:
+        dispatch_error = exc
+    finally:
+        collect_info, collect_warnings = _collect_mace_outputs(stage_root, stage_output, output_root)
+        final_state = "collected_partial" if dispatch_error else "collected_complete"
+        _write_batch_state(
+            output_root,
+            work_base=work_base,
+            state=final_state,
+            details={
+                "tasks": 1,
+                "errors": [str(dispatch_error)] if dispatch_error else [],
+            },
+        )
+        if stage_root.exists():
+            try:
+                shutil.rmtree(stage_root)
+            except Exception as exc:
+                collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
 
-    if stage_output.exists():
-        shutil.copytree(stage_output, output_root, dirs_exist_ok=True)
-
-    if stage_root.exists():
-        shutil.rmtree(stage_root)
+    if dispatch_error is not None:
+        return create_tool_output(
+            tool_name="mace_relax_batch",
+            success=False,
+            error=f"DPDispatcher submission failed: {dispatch_error}",
+            warnings=collect_warnings,
+            data={
+                "work_base": work_base,
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "batch_state_rel": workspace_relpath(state_path),
+                **collect_info,
+            },
+        )
 
     return create_tool_output(
         tool_name="mace_relax_batch",
         success=True,
+        warnings=collect_warnings,
         data={
-            "task_states": result.task_states,
-            "submission_dir": result.submission_dir,
-            "work_base": result.work_base,
+            "task_states": result.task_states if result else [],
+            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+            "work_base": result.work_base if result else work_base,
             "input_root_rel": workspace_relpath(input_root),
             "output_root_rel": workspace_relpath(output_root),
-            "batch_summary_rel": workspace_relpath(output_root / "batch_summary.json") if (output_root / "batch_summary.json").exists() else None,
+            "batch_state_rel": workspace_relpath(state_path),
             "structures_found": len(structures),
+            "model": model,
+            "head": head,
+            "dispersion": dispersion,
+            "relax_lattice": relax_lattice,
+            **collect_info,
         },
-        execution_time=result.duration_s,
+        execution_time=result.duration_s if result else None,
+    )
+
+
+def mace_sp_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
+    params = MaceSPBatchInput(**payload)
+    reg = TaskRegistry()
+    cfg = reg.get("mace_sp_dir")
+    resources_key = cfg.resources
+    if not resources_key:
+        raise KeyError("mace_sp_dir missing resources in task config")
+    machine = _resolve_machine_for_resources(resources_key)
+    model = params.model
+    if not model:
+        raise ValueError("model is required.")
+    head = _resolve_mace_head(params.head)
+    head_arg = shlex.quote(head or "")
+    dispersion = bool(params.dispersion)
+
+    input_root = resolve_workspace_path(params.input_dir, must_exist=True)
+    if not input_root.is_dir():
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error=f"input_dir is not a directory: {input_root}",
+        )
+    output_root = resolve_workspace_path(params.output_root)
+    if output_root.exists() and not output_root.is_dir():
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error=f"output_root is not a directory: {output_root}",
+        )
+    if _is_within(output_root, input_root):
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+        )
+    output_root.mkdir(parents=True, exist_ok=True)
+    structures = _collect_structure_files(input_root, exclude_root=None)
+    if not structures:
+        return create_tool_output(
+            "mace_sp_batch",
+            success=False,
+            error="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+        )
+
+    work_base = make_work_base("mace_sp_batch")
+    stage_root = output_root / work_base
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+    stage_input = stage_root / "input"
+    stage_output = stage_root / "output"
+    shutil.copytree(input_root, stage_input)
+    stage_output.mkdir(parents=True, exist_ok=True)
+    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_sp.py"
+    if not script_src.is_file():
+        raise FileNotFoundError(f"Missing MACE SP remote script: {script_src}")
+    script_dst = stage_root / "task_script" / "mace_sp.py"
+    script_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(script_src, script_dst)
+
+    ctx = {
+        "input_path": "input",
+        "output_root": "output",
+        "model": model,
+        "head": head_arg,
+        "dispersion": "true" if dispersion else "false",
+    }
+    rendered = render_task_fields(cfg, ctx, stage_root)
+    task = TaskSpec(
+        command=rendered["command"],
+        task_work_path=".",
+        forward_files=rendered["forward_files"],
+        backward_files=rendered["backward_files"],
+    )
+
+    batch_req = BatchDispatchRequest(
+        machine=machine,
+        resources=resources_key,
+        work_base=work_base,
+        local_root=str(output_root),
+        tasks=[task],
+        forward_common_files=[],
+        backward_common_files=[],
+        clean_remote=False,
+        check_interval=params.check_interval,
+    )
+
+    dispatch_error: Exception | None = None
+    result = None
+    collect_info: Dict[str, Any] = {}
+    collect_warnings: list[str] = []
+    state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": 1})
+    try:
+        _write_batch_state(output_root, work_base=work_base, state="running", details={"tasks": 1})
+        result = dispatch_submission(batch_req)
+    except Exception as exc:
+        dispatch_error = exc
+    finally:
+        collect_info, collect_warnings = _collect_mace_outputs(stage_root, stage_output, output_root)
+        final_state = "collected_partial" if dispatch_error else "collected_complete"
+        _write_batch_state(
+            output_root,
+            work_base=work_base,
+            state=final_state,
+            details={
+                "tasks": 1,
+                "errors": [str(dispatch_error)] if dispatch_error else [],
+            },
+        )
+        if stage_root.exists():
+            try:
+                shutil.rmtree(stage_root)
+            except Exception as exc:
+                collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
+
+    if dispatch_error is not None:
+        return create_tool_output(
+            tool_name="mace_sp_batch",
+            success=False,
+            error=f"DPDispatcher submission failed: {dispatch_error}",
+            warnings=collect_warnings,
+            data={
+                "work_base": work_base,
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "batch_state_rel": workspace_relpath(state_path),
+                **collect_info,
+            },
+        )
+
+    return create_tool_output(
+        tool_name="mace_sp_batch",
+        success=True,
+        warnings=collect_warnings,
+        data={
+            "task_states": result.task_states if result else [],
+            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+            "work_base": result.work_base if result else work_base,
+            "input_root_rel": workspace_relpath(input_root),
+            "output_root_rel": workspace_relpath(output_root),
+            "batch_state_rel": workspace_relpath(state_path),
+            "structures_found": len(structures),
+            "model": model,
+            "head": head,
+            "dispersion": dispersion,
+            **collect_info,
+        },
+        execution_time=result.duration_s if result else None,
     )
 
 
@@ -267,6 +591,9 @@ def _build_mace_relax_request(
         "maxsteps": params.maxsteps,
         "steps": params.maxsteps,
         "model": params.model,
+        "head": shlex.quote(_resolve_mace_head(getattr(params, "head", None)) or ""),
+        "dispersion": "true" if bool(getattr(params, "dispersion", False)) else "false",
+        "relax_lattice": "true" if bool(getattr(params, "relax_lattice", False)) else "false",
     }
 
     rendered = render_task_fields(cfg, ctx, work_dir)
@@ -289,5 +616,7 @@ def _build_mace_relax_request(
 __all__ = [
     "MaceRelaxInput",
     "MaceRelaxBatchInput",
+    "MaceSPBatchInput",
     "mace_relax_batch",
+    "mace_sp_batch",
 ]

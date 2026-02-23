@@ -12,6 +12,9 @@ from pymatgen.io.vasp.inputs import Poscar
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 
+ADS_META_SCHEMA = "catmaster.adsorbate_meta.v1"
+ADS_INDICES_SCHEMA = "catmaster.ads_indices.v1"
+
 
 class EnumerateAdsorptionSitesInput(BaseModel):
     """
@@ -32,7 +35,8 @@ class EnumerateAdsorptionSitesInput(BaseModel):
 
 class PlaceAdsorbateInput(BaseModel):
     """Place an adsorbate molecule on a slab. Use it only if for small scale placement.
-    This tool keeps selective dynamics of the original slab structure and allows adsorbate to move freely."""
+    This tool keeps selective dynamics of the original slab structure and allows adsorbate to move freely.
+    It writes metadata sidecar <output>.meta.json and an ads_indices index JSON."""
 
     slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
     adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ).")
@@ -49,13 +53,17 @@ class GenerateBatchAdsorptionStructuresInput(BaseModel):
     When slab_dir is used, each slab gets its own subdirectory under output_dir. Max_structures applies per slab.
     For nested slab_dir layouts, slab_id encodes the relative path (without suffix) using '__'.
 
-    The tool writes a JSON list to output_dir/batch_structures.json:
+    The tool writes a JSON list to output_dir/batch_structures.json and a per-structure
+    metadata sidecar <output>.meta.json with ads_indices.
+    It also writes output_dir/ads_indices.json as an index file:
     [
       {
         "slab_file_rel": "slabs/fe111.vasp",
         "slab_id": "fe111",
         "label": "ontop_0",
-        "output_poscar_rel": "adsorption/batch/fe111/ontop_0.vasp"
+        "output_poscar_rel": "adsorption/batch/fe111/ontop_0.vasp",
+        "ads_indices_added": [36],
+        "ads_indices": [36]
       }
     ]
     The returned tool data replaces "structures" with the workspace-relative path to this JSON file.
@@ -113,6 +121,180 @@ def _collect_slab_files(root: Path) -> List[Path]:
         if path.suffix.lower() in {".vasp", ".poscar", ".cif"}:
             files.append(path)
     return sorted(files, key=lambda p: str(p))
+
+
+def _meta_sidecar_path(structure_path: Path) -> Path:
+    try:
+        return structure_path.with_suffix(".meta.json")
+    except ValueError:
+        return Path(f"{structure_path}.meta.json")
+
+
+def _meta_path_candidates(structure_path: Path) -> List[Path]:
+    primary = _meta_sidecar_path(structure_path)
+    alt = Path(f"{structure_path}.meta.json")
+    if alt == primary:
+        return [primary]
+    return [primary, alt]
+
+
+def _normalize_indices(raw: Any) -> List[int]:
+    if not isinstance(raw, list):
+        return []
+    values: List[int] = []
+    for item in raw:
+        try:
+            idx = int(item)
+        except Exception:
+            continue
+        if idx < 0:
+            continue
+        values.append(idx)
+    return sorted(set(values))
+
+
+def _merge_indices(existing: List[int], added: List[int]) -> List[int]:
+    return sorted(set(_normalize_indices(existing) + _normalize_indices(added)))
+
+
+def _load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_indices_from_meta(slab_path: Path, warnings: List[str]) -> List[int]:
+    for meta_path in _meta_path_candidates(slab_path):
+        if not meta_path.exists():
+            continue
+        try:
+            data = _load_json(meta_path)
+        except Exception as exc:
+            warnings.append(f"Failed to parse metadata {workspace_relpath(meta_path)}: {exc}")
+            continue
+        if not isinstance(data, dict):
+            warnings.append(f"Ignoring non-object metadata file: {workspace_relpath(meta_path)}")
+            continue
+        indices = _normalize_indices(data.get("ads_indices"))
+        if "ads_indices" in data and not indices:
+            warnings.append(f"ads_indices in {workspace_relpath(meta_path)} is empty/invalid; ignored.")
+        if indices:
+            return indices
+    return []
+
+
+def _entry_matches_structure(entry: Dict[str, Any], slab_path: Path, slab_rel: str) -> bool:
+    candidates = []
+    for key in ("output_poscar_rel", "output_structure_rel", "structure_rel", "path_rel"):
+        val = entry.get(key)
+        if isinstance(val, str):
+            candidates.append(val)
+    if any(val == slab_rel for val in candidates):
+        return True
+    return any(Path(val).name == slab_path.name for val in candidates)
+
+
+def _load_indices_from_ads_json(slab_path: Path, warnings: List[str]) -> List[int]:
+    ads_json = slab_path.parent / "ads_indices.json"
+    if not ads_json.exists():
+        return []
+    try:
+        data = _load_json(ads_json)
+    except Exception as exc:
+        warnings.append(f"Failed to parse ads_indices index {workspace_relpath(ads_json)}: {exc}")
+        return []
+
+    slab_rel = workspace_relpath(slab_path)
+    entries: List[Dict[str, Any]] = []
+    if isinstance(data, dict) and isinstance(data.get("entries"), list):
+        entries = [e for e in data["entries"] if isinstance(e, dict)]
+    elif isinstance(data, dict) and ("output_poscar_rel" in data or "ads_indices" in data):
+        entries = [data]
+    elif isinstance(data, list):
+        entries = [e for e in data if isinstance(e, dict)]
+    else:
+        warnings.append(f"Ignoring unsupported ads_indices index schema: {workspace_relpath(ads_json)}")
+        return []
+
+    merged: List[int] = []
+    for ent in entries:
+        if _entry_matches_structure(ent, slab_path, slab_rel):
+            merged.extend(_normalize_indices(ent.get("ads_indices")))
+    return sorted(set(merged))
+
+
+def _load_inherited_ads_indices(slab_path: Path) -> Tuple[List[int], List[str]]:
+    warnings: List[str] = []
+    from_meta = _load_indices_from_meta(slab_path, warnings)
+    from_index = _load_indices_from_ads_json(slab_path, warnings)
+    return _merge_indices(from_meta, from_index), warnings
+
+
+def _write_adsorbate_meta(
+    *,
+    output_structure_path: Path,
+    parent_structure_path: Path,
+    adsorbate_path: Path,
+    tool_name: str,
+    site_label: str,
+    distance: float,
+    ads_indices_added: List[int],
+    ads_indices: List[int],
+) -> Path:
+    meta_path = _meta_sidecar_path(output_structure_path)
+    existing: Dict[str, Any] = {}
+    if meta_path.exists():
+        try:
+            raw = _load_json(meta_path)
+            if isinstance(raw, dict):
+                existing = raw
+        except Exception:
+            existing = {}
+
+    existing.update(
+        {
+            "schema": ADS_META_SCHEMA,
+            "source_tool": tool_name,
+            "parent_structure_rel": workspace_relpath(parent_structure_path),
+            "output_structure_rel": workspace_relpath(output_structure_path),
+            "adsorbate_file_rel": workspace_relpath(adsorbate_path),
+            "site_label": site_label,
+            "distance": float(distance),
+            "ads_indices_added": _normalize_indices(ads_indices_added),
+            "ads_indices": _normalize_indices(ads_indices),
+            "ads_count_added": len(_normalize_indices(ads_indices_added)),
+            "ads_count_total": len(_normalize_indices(ads_indices)),
+        }
+    )
+    meta_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    return meta_path
+
+
+def _write_ads_indices_index(index_path: Path, entries: List[Dict[str, Any]]) -> Path:
+    current_entries: List[Dict[str, Any]] = []
+    if index_path.exists():
+        try:
+            raw = _load_json(index_path)
+            if isinstance(raw, dict) and isinstance(raw.get("entries"), list):
+                current_entries = [e for e in raw["entries"] if isinstance(e, dict)]
+            elif isinstance(raw, list):
+                current_entries = [e for e in raw if isinstance(e, dict)]
+            elif isinstance(raw, dict) and "output_poscar_rel" in raw:
+                current_entries = [raw]
+        except Exception:
+            current_entries = []
+
+    merged: Dict[str, Dict[str, Any]] = {}
+    for ent in current_entries + entries:
+        key = str(ent.get("output_poscar_rel") or ent.get("output_structure_rel") or "")
+        if not key:
+            continue
+        merged[key] = ent
+
+    payload = {
+        "schema": ADS_INDICES_SCHEMA,
+        "entries": [merged[key] for key in sorted(merged.keys())],
+    }
+    index_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return index_path
 
 
 def enumerate_adsorption_sites(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -223,6 +405,31 @@ def place_adsorbate(payload: Dict[str, Any]) -> Dict[str, Any]:
         Poscar(ads_struct).write_file(str(out_path))
 
         nat_ads = len(mol)
+        ads_indices_added = list(range(len(slab), len(slab) + nat_ads))
+        inherited_indices, inherit_warnings = _load_inherited_ads_indices(slab_path)
+        ads_indices = _merge_indices(inherited_indices, ads_indices_added)
+        meta_path = _write_adsorbate_meta(
+            output_structure_path=out_path,
+            parent_structure_path=slab_path,
+            adsorbate_path=ads_path,
+            tool_name="place_adsorbate",
+            site_label=site_label,
+            distance=float(params.distance),
+            ads_indices_added=ads_indices_added,
+            ads_indices=ads_indices,
+        )
+        index_entry = {
+            "slab_file_rel": workspace_relpath(slab_path),
+            "label": site_label,
+            "output_poscar_rel": workspace_relpath(out_path),
+            "metadata_rel": workspace_relpath(meta_path),
+            "ads_indices_added": ads_indices_added,
+            "ads_indices": ads_indices,
+            "ads_count_added": len(ads_indices_added),
+            "ads_count_total": len(ads_indices),
+        }
+        ads_indices_json = _write_ads_indices_index(out_path.parent / "ads_indices.json", [index_entry])
+
         ads_only_part = np.array(ads_struct.cart_coords[-nat_ads:, :], dtype=float) if nat_ads else np.zeros((0, 3))
         ads_com = ads_only_part.mean(axis=0).tolist() if len(ads_only_part) else None
 
@@ -233,8 +440,14 @@ def place_adsorbate(payload: Dict[str, Any]) -> Dict[str, Any]:
             "site": {"label": site_label, "cart_coords": _to_list3(site_coord)},
             "geom": {"adsorbate_com": ads_com, "units": {"distance": "Å"}},
             "natoms": len(ads_struct),
+            "ads_indices_added": ads_indices_added,
+            "ads_indices": ads_indices,
+            "ads_count_added": len(ads_indices_added),
+            "ads_count_total": len(ads_indices),
+            "metadata_rel": workspace_relpath(meta_path),
+            "ads_indices_json_rel": workspace_relpath(ads_indices_json),
         }
-        return create_tool_output("place_adsorbate", success=True, data=data)
+        return create_tool_output("place_adsorbate", success=True, data=data, warnings=inherit_warnings)
     except Exception as exc:
         return create_tool_output("place_adsorbate", success=False, error=str(exc))
 
@@ -282,11 +495,15 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, A
         slabs_failed = 0
         errors: List[Dict[str, str]] = []
         truncated_any = False
+        warnings: List[str] = []
+        ads_index_entries: List[Dict[str, Any]] = []
 
         for slab_path in slab_paths:
             try:
                 slab = Structure.from_file(str(slab_path))
                 slab_sd = slab.site_properties.get("selective_dynamics") if slab.site_properties else None
+                inherited_indices, inherit_warnings = _load_inherited_ads_indices(slab_path)
+                warnings.extend([f"{workspace_relpath(slab_path)}: {msg}" for msg in inherit_warnings])
 
                 asf = AdsorbateSiteFinder(slab)
                 ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
@@ -320,13 +537,44 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, A
 
                         file_path = slab_out_dir / f"{kind}_{idx}.vasp"
                         Poscar(ads_struct).write_file(str(file_path))
+                        ads_indices_added = list(range(len(slab), len(slab) + len(mol)))
+                        ads_indices = _merge_indices(inherited_indices, ads_indices_added)
+                        site_label = f"{kind}_{idx}"
+                        meta_path = _write_adsorbate_meta(
+                            output_structure_path=file_path,
+                            parent_structure_path=slab_path,
+                            adsorbate_path=ads_path,
+                            tool_name="generate_batch_adsorption_structures",
+                            site_label=site_label,
+                            distance=float(params.distance),
+                            ads_indices_added=ads_indices_added,
+                            ads_indices=ads_indices,
+                        )
 
                         results.append(
                             {
                                 "slab_file_rel": slab_rel,
                                 "slab_id": slab_id,
-                                "label": f"{kind}_{idx}",
+                                "label": site_label,
                                 "output_poscar_rel": workspace_relpath(file_path),
+                                "ads_indices_added": ads_indices_added,
+                                "ads_indices": ads_indices,
+                                "ads_count_added": len(ads_indices_added),
+                                "ads_count_total": len(ads_indices),
+                                "metadata_rel": workspace_relpath(meta_path),
+                            }
+                        )
+                        ads_index_entries.append(
+                            {
+                                "slab_file_rel": slab_rel,
+                                "slab_id": slab_id,
+                                "label": site_label,
+                                "output_poscar_rel": workspace_relpath(file_path),
+                                "metadata_rel": workspace_relpath(meta_path),
+                                "ads_indices_added": ads_indices_added,
+                                "ads_indices": ads_indices,
+                                "ads_count_added": len(ads_indices_added),
+                                "ads_count_total": len(ads_indices),
                             }
                         )
                         generated += 1
@@ -368,11 +616,24 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, A
 
         structures_path = out_dir / "batch_structures.json"
         structures_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        ads_indices_json = _write_ads_indices_index(out_dir / "ads_indices.json", ads_index_entries)
         data["structures"] = workspace_relpath(structures_path)
+        data["ads_indices_json_rel"] = workspace_relpath(ads_indices_json)
+        data["metadata_files_count"] = len(ads_index_entries)
+        data["ads_indices_summary"] = {
+            "structures": len(ads_index_entries),
+            "ads_atoms_added_total": int(sum(len(ent.get("ads_indices_added", [])) for ent in ads_index_entries)),
+            "ads_atoms_total_sum": int(sum(len(ent.get("ads_indices", [])) for ent in ads_index_entries)),
+        }
         if errors:
             data["errors"] = errors
 
-        return create_tool_output("generate_batch_adsorption_structures", success=True, data=data)
+        return create_tool_output(
+            "generate_batch_adsorption_structures",
+            success=True,
+            data=data,
+            warnings=warnings,
+        )
     except Exception as exc:
         return create_tool_output("generate_batch_adsorption_structures", success=False, error=str(exc))
 

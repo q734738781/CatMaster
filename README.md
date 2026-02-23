@@ -14,11 +14,11 @@
 |                                                          |
 +----------------------------------------------------------+
 ```
-CatMaster is a **open-source** task-based LLM orchestration and tooling framework for computational materials workflows. It is build on the classical Planner-Executor-Summarizer architecture now, provides a structured planning/execution loop, tool registry for geometry/input preparation and job submission (VASP, MACE via DPDispatcher), and unified tracing/reporting (task state, tool calls, whiteboard diffs, and final reports).
+CatMaster is a **open-source** task-based LLM orchestration and tooling framework for computational materials workflows. It provides a structured planning/execution loop, tool registry for geometry/input preparation and job submission (VASP, MACE via DPDispatcher), and unified tracing/reporting (task state, tool calls, memory events, and final reports).
 
 ## Highlights
 
-- Task-based orchestrator with plan review, structured whiteboard memory carried along tasks, and per-task summaries to support complex question.
+- Task-based orchestrator with plan review and file-based memory (`files/MEMORY/**` + `metadata/memory/events.jsonl`) carried along tasks.
 - Tool registry for materials workflows (Materials Project retrieval, slab construction, adsorption site enumeration, VASP/MACE job submission), and long-tail tools with powerful LLM and python_exec
 - HITL (human-in-the-loop) intervention for blocked runs with replanning.
 - Unified run artifacts and traces (event/tool/patch traces, observations, final report).
@@ -49,6 +49,20 @@ Typical installation:
 conda create -n catmaster python=3.11
 pip install -r requirements/pc.txt
 ```
+
+### WebUI
+
+Run the web workbench (recommended):
+```bash
+python -m catmaster.webui --workspace /path/to/workspace
+```
+
+Or use the main entry point:
+```bash
+python main.py --workspace /path/to/workspace
+```
+
+Workspace selection is parameter-driven (`--workspace`/constructor arguments), not environment-variable driven.
 
 **For GPU SIDE**: Ensure the remote host has the Python/MACE runtime; the task scripts are forwarded via DPDispatcher, so syncing the full repo is not required.
 **For CPU SIDE**: VASP execution now runs a forwarded Python boot script; ensure the CPU cluster provides Python 3.10+ in the job environment (module/conda).
@@ -147,10 +161,10 @@ vasp_execute:
   task_work_path: "."
 
 mace_relax_dir:
-  command: "python task_script/mace_jobs.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model}"
+  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice}"
   forward_files:
     - "input"
-    - "task_script/mace_jobs.py"
+    - "task_script/mace_relax.py"
   backward_files:
     - "output"
   task_work_path: "."
@@ -161,8 +175,6 @@ mace_relax_dir:
 tasks:
   mace_relax:
     resources: mace_gpu
-    defaults:
-      model: medium-mpa-0
   vasp_execute:
     resources: vasp_cpu
 ```
@@ -177,7 +189,7 @@ Notes:
 <<<<<<< ours
 - Tool defaults now live in `configs/dpdispatcher/tasks.yaml` (resources/machine/model). Adjust that file for site defaults.
 =======
-- Tool defaults now live in the tool inputs (e.g., `resources="vasp_cpu"` / `resources="mace_gpu"`, `model="medium-mpa-0"`). Override per call when needed.
+- Tool defaults now live in the tool inputs (e.g., `resources="vasp_cpu"` / `resources="mace_gpu"`, `model="mh-1"`, `head="omat_pbe"`). Override per call when needed.
 >>>>>>> theirs
 =======
 >>>>>>> theirs
@@ -223,36 +235,54 @@ export OPENAI_BASE_URL="https://your-proxy-or-custom-endpoint/v1"
 
 ### Switch provider via configs/llm.yaml
 
-OpenRouter example:
+Driver-template example (OpenRouter chat-completions + OpenAI responses):
 ```yaml
-main:
-  provider: openrouter
-  model: openai/gpt-4o-mini
-  api_key_env: OPENROUTER_API_KEY
-  base_url: https://openrouter.ai/api/v1
-  tool_calling:
+tool_calling_profiles:
+  openrouter_chat_completions:
     driver: openai_chat_completions
-```
-
-OpenAI (Responses API) example:
-```yaml
-main:
-  provider: openai
-  model: gpt-5.2
-  api_key_env: OPENAI_API_KEY
-  tool_calling:
+    supports_builtin_tools: false
+    parallel_tool_calls: false
+    request_options: {}
+    extra_body: {}
+  openai_responses:
     driver: openai_responses
-```
+    supports_builtin_tools: true
+    parallel_tool_calls: true
+    request_options: {}
+    extra_body: {}
 
-Deepseek (OpenAI-compatible) example:
-```yaml
-main:
-  provider: deepseek
-  model: deepseek-chat
-  api_key_env: DEEPSEEK_API_KEY
-  base_url: https://api.deepseek.com/v1
-  tool_calling:
-    driver: openai_chat_completions
+models:
+  "openai/gpt-5.2:online":
+    provider: openrouter
+    model: openai/gpt-5.2:online
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    tool_calling:
+      profile: openrouter_chat_completions
+      request_options: {}
+      extra_body:
+        # OpenRouter/provider-specific fields go here.
+        # prompt_cache_retention: 24h
+
+  "gpt-5.2":
+    provider: openai
+    model: gpt-5.2
+    api_key_env: OPENAI_API_KEY
+    tool_calling:
+      profile: openai_responses
+      request_options: {}
+      extra_body: {}
+
+agents:
+  proposal: "openai/gpt-5.2:online"
+  director: "openai/gpt-5.2:online"
+  task_runner: "openai/gpt-5.2:online"
+  memory_patch: "openai/gpt-5.2:online"
+  summary: "gpt-5.2"
+
+agent_policies:
+  proposal:
+    browse_tools_enabled: true
 ```
 
 ## Quick test (LLM entry)

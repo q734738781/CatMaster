@@ -16,3 +16,22 @@ def test_tool_policy_filtering() -> None:
     policy = ToolPolicy(allowed_tools=None, denied_tools={"b"})
     filtered = policy.filter_function_tools(tools)
     assert {tool["name"] for tool in filtered} == {"a", "c"}
+
+
+def test_tool_policy_ignores_legacy_skill_flag() -> None:
+    policy = ToolPolicy.from_dict({
+        "allowed_tools": ["a", "b"],
+        "denied_tools": ["b"],
+        "use_skill_allowlist": True,
+    })
+    filtered = policy.filter_function_tools([
+        {"name": "a", "type": "function"},
+        {"name": "b", "type": "function"},
+        {"name": "c", "type": "function"},
+    ])
+    assert {tool["name"] for tool in filtered} == {"a"}
+
+
+def test_tool_policy_default_max_tool_calls_per_task_is_100() -> None:
+    policy = ToolPolicy.from_dict({})
+    assert policy.max_tool_calls_per_task == 100

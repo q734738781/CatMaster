@@ -4,11 +4,10 @@ Miscellaneous tools that don't fit other catalogs.
 
 from . import file_manager
 from . import memory
-from .python_repl import python_exec, PythonExecInput
+from . import memory_patch_apply
 
 __all__ = [
     "file_manager",
     "memory",
-    "python_exec",
-    "PythonExecInput",
+    "memory_patch_apply",
 ]
