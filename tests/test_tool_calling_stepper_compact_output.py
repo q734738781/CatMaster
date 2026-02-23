@@ -43,7 +43,7 @@ class CaptureInputDriver(FakeDriver):
         return super().create_turn(input_items=input_items, tools=tools, **kwargs)
 
 
-def test_stepper_compacts_tool_output_before_next_turn(tmp_path) -> None:
+def test_stepper_preserves_bash_exec_streams_for_next_turn(tmp_path) -> None:
     registry = ToolRegistry(register_all_tools=False)
     registry.register_tool("bash_exec", _bash_like_tool, BashLikeInput)
 
@@ -92,8 +92,7 @@ def test_stepper_compacts_tool_output_before_next_turn(tmp_path) -> None:
     assert fco_items
     output_payload = json.loads(str(fco_items[-1].get("output") or "{}"))
     data = output_payload.get("data") or {}
-    assert "stdout" not in data
-    assert "stderr" not in data
-    assert "stdout_tail" in data
-    assert "stderr_tail" in data
-    assert len(str(data.get("stdout_tail") or "")) <= 800
+    assert data.get("stdout") == "x" * 6000
+    assert data.get("stderr") == "y" * 4000
+    assert data.get("stdout_path") == ".logs/bash_exec/fake.stdout.txt"
+    assert data.get("stderr_path") == ".logs/bash_exec/fake.stderr.txt"
