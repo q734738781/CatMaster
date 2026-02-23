@@ -11,7 +11,7 @@ __pycache__
 POTCAR
 /devdocs
 /reference_codes
-/configs
+/configs/dpdispatcher/machines.yaml
 /reference_scripts
 /project_space
 /.codex

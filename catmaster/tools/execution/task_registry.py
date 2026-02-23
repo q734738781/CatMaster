@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-"""
-Task metadata loader for DPDispatcher submissions.
+"""Task metadata loader for DPDispatcher submissions.
 
-- Searches the same locations as machine/resources configs:
-  $CATMASTER_DP_TASKS (explicit path), $CATMASTER_DP_CONFIG, ~/.catmaster/dpdispatcher.yaml,
-  ~/.catmaster/dpdispatcher.d/*, and repo configs/dpdispatcher/*.
+- Loads task definitions from repo `configs/dpdispatcher/*`.
 - Supports either a dedicated tasks file (tasks.yaml/json) or a top-level `tasks` section
-  inside the combined dpdispatcher config file.
+  inside a combined dpdispatcher config file.
 """
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional
 
@@ -48,16 +44,9 @@ def _iter_config_files(base: Path) -> Iterable[Path]:
     return files
 
 
-DEFAULT_TASK_PATHS = []
-if os.environ.get("CATMASTER_DP_TASKS"):
-    DEFAULT_TASK_PATHS.append(Path(os.environ["CATMASTER_DP_TASKS"]))
-if os.environ.get("CATMASTER_DP_CONFIG"):
-    DEFAULT_TASK_PATHS.append(Path(os.environ["CATMASTER_DP_CONFIG"]))
-DEFAULT_TASK_PATHS.extend([
-    Path.home() / ".catmaster" / "dpdispatcher.yaml",
-    Path.home() / ".catmaster" / "dpdispatcher.d",
+DEFAULT_TASK_PATHS = [
     Path(__file__).resolve().parents[3] / "configs" / "dpdispatcher",
-])
+]
 
 
 class TaskConfig(BaseModel):
@@ -88,9 +77,6 @@ class TaskRegistry:
     def _load(self, paths: Iterable[Path]) -> None:
         for base in paths:
             for path in _iter_config_files(base):
-                if path.stem.startswith("router"):
-                    # router.yaml is for resource routing, not task templates
-                    continue
                 data = _load_file(path)
                 if not data or not isinstance(data, dict):
                     continue

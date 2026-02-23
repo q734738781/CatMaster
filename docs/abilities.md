@@ -106,12 +106,6 @@ This document summarizes what the codebase can do right now, based on the curren
 
 - Workspace root is now provided by runtime parameters/instances (e.g. WebSession/Orchestrator `workspace`), defaulting to current working directory when unspecified.
 
-- DPDispatcher config lookup:
-
-  - `$CATMASTER_DP_CONFIG` / `$CATMASTER_DP_TASKS`
-
-  - `~/.catmaster/dpdispatcher.yaml` / `~/.catmaster/dpdispatcher.d/*`
-
-  - `configs/dpdispatcher/*` directly in the repo
+- DPDispatcher configs are loaded from `configs/dpdispatcher/*` in the repo.
 
 - Materials Project tools require `MP_API_KEY`.

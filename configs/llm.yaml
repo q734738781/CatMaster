@@ -1,0 +1,98 @@
+# LLM configuration for CatMaster.
+# Secrets (API keys) should come from environment variables.
+
+tool_calling_profiles:
+  openrouter_chat_completions:
+    driver: openai_chat_completions
+    parallel_tool_calls: false
+    supports_builtin_tools: false # Chat completions driver does not support builtin tools
+    strict_json_schema: false
+    request_options: {}
+    extra_body: {}
+
+  openai_responses:
+    driver: openai_responses
+    parallel_tool_calls: true
+    supports_builtin_tools: true
+    strict_json_schema: false
+    request_options: {}
+    extra_body: {}
+
+models:
+  "openai/gpt-5.2:online-high":
+    provider: openrouter
+    model: openai/gpt-5.2:online
+
+    # Sampling / reasoning
+    temperature: 0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning_effort: high
+
+    # OpenAI-compatible endpoint config
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    # Optional OpenRouter headers
+    default_headers: {}
+
+    # Tool-calling driver selection
+    tool_calling:
+      profile: openrouter_chat_completions
+      request_options: {}
+      # OpenRouter-compatible extra payload for chat completions.
+      # Place provider/model-special fields here.
+      extra_body:
+        prompt_cache_retention: 24h
+  
+  "openai/gpt-5.2:online-medium":
+    provider: openrouter
+    model: openai/gpt-5.2:online
+
+    # Sampling / reasoning
+    temperature: 0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning_effort: medium
+
+    # OpenAI-compatible endpoint config
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    # Optional OpenRouter headers
+    default_headers: {}
+
+    # Tool-calling driver selection
+    tool_calling:
+      profile: openrouter_chat_completions
+      request_options: {}
+      # OpenRouter-compatible extra payload for chat completions.
+      # Place provider/model-special fields here.
+      extra_body:
+        prompt_cache_retention: 24h
+
+  "openai/gpt-5-nano":
+    provider: openrouter
+    model: openai/gpt-5-nano
+    temperature: 0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    tool_calling:
+      profile: openrouter_chat_completions
+      request_options: {}
+      extra_body: {}
+
+agents:
+  proposal: "openai/gpt-5.2:online-high"
+  director: "openai/gpt-5.2:online-high"
+  task_runner: "openai/gpt-5.2:online-medium"
+  memory_patch: "openai/gpt-5.2:online-high"
+  summary: "openai/gpt-5-nano"
+
+agent_policies:
+  proposal:
+    browse_tools_enabled: true
