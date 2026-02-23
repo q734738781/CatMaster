@@ -20,7 +20,8 @@ class BashExecInput(BaseModel):
     Execute a multi-line bash script inside the workspace (default) and return stdout/stderr.
     Network access is disabled by default using Linux network namespaces (unshare).
     Symbolic link operations are disabled; use copy/move operations instead.
-    Keep output short; write large logs to files and print a one-line summary.
+    Stdout/stderr are returned up to max_output_chars per stream; for longer output use stdout_path/stderr_path logs.
+    Keep output short in scripts and print one-line summaries when possible.
     """
 
     script: str = Field(..., description="Bash script to execute (multi-line).")

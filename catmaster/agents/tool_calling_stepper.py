@@ -795,20 +795,19 @@ class ToolCallingTaskStepper:
                 "timeout_s",
                 "stdout_path",
                 "stderr_path",
+                "stdout",
+                "stderr",
                 "stdout_tail",
                 "stderr_tail",
                 "blocked_reason",
             ):
                 if key not in data:
                     continue
-                value = data.get(key)
-                if isinstance(value, str):
-                    value = ToolCallingTaskStepper._snippet(value, text_limit)
-                compact_data[key] = value
-            if "stdout_tail" not in compact_data and data.get("stdout"):
-                compact_data["stdout_tail"] = ToolCallingTaskStepper._snippet(data.get("stdout"), text_limit)
-            if "stderr_tail" not in compact_data and data.get("stderr"):
-                compact_data["stderr_tail"] = ToolCallingTaskStepper._snippet(data.get("stderr"), text_limit)
+                compact_data[key] = data.get(key)
+            if "stdout" not in compact_data and "stdout_tail" not in compact_data and data.get("stdout"):
+                compact_data["stdout"] = data.get("stdout")
+            if "stderr" not in compact_data and "stderr_tail" not in compact_data and data.get("stderr"):
+                compact_data["stderr"] = data.get("stderr")
             compact["data"] = compact_data
             return compact
 
