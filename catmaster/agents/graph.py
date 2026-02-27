@@ -1,0 +1,1504 @@
+"""
+LangGraph-based orchestration graph for CatMaster.
+
+Replaces the monolithic Orchestrator class with a composable StateGraph
+that routes between proposal, director, task runner, memory patcher,
+and summarizer nodes.  Proposal / director / task runner are full ReAct
+agents built with ``create_react_agent``.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import shutil
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+from typing import Any, Annotated, Dict, List, Literal, Optional, TypedDict
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AnyMessage, ToolMessage
+from langchain_core.tools import StructuredTool
+from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import create_react_agent
+from langgraph.types import Command, interrupt
+
+from catmaster.agents.nodes import (
+    run_proposal,
+    run_director,
+    run_task,
+    memory_patch_node,
+    finalize_memory_patch_node,
+    plan_commit_node,
+    summarize_node,
+)
+from catmaster.runtime.memory_store import MemoryStore
+from catmaster.runtime.artifact_store import ArtifactStore
+from catmaster.runtime.trace_store import TraceStore
+from catmaster.runtime.run_context import RunContext
+from catmaster.runtime.artifact_callback import build_callbacks
+from catmaster.runtime.tool_backend import ToolBackend
+from catmaster.runtime.run_control import RunControl
+from catmaster.runtime.tool_result_normalizer import (
+    CONTROL_TOOL_NAMES,
+    normalize_tool_result,
+    to_tool_message_status,
+)
+from catmaster.tools.registry import ToolRegistry, get_tool_registry
+from catmaster.runtime.usage_stats import write_usage_summary
+from catmaster.tools.base import workspace_root, workspace_scope
+from catmaster.ui.reporters import Reporter, NullReporter
+from catmaster.ui import make_event
+from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, TaskOutput
+from catmaster.agents.proposal_control_tools import (
+    as_langchain_control_tools as proposal_control_tools,
+)
+from catmaster.agents.director_control_tools import (
+    as_langchain_control_tools as director_control_tools,
+)
+from catmaster.agents.control_tools import (
+    as_langchain_control_tools as task_control_tools,
+)
+from catmaster.agents.orchestrator_prompts import (
+    PROPOSAL_SYSTEM_PROMPT,
+    DIRECTOR_SYSTEM_PROMPT,
+    TASK_RUNNER_SYSTEM_PROMPT,
+    PROPOSAL_CONTROL_FINISH_INSTRUCTION,
+    DIRECTOR_CONTROL_FINISH_INSTRUCTION,
+    TASK_CONTROL_FINISH_INSTRUCTION,
+)
+
+logger = logging.getLogger(__name__)
+TerminationMode = Literal["control_tools", "response_format", "hybrid"]
+
+_TASK_CONTROL_TOOL_NAMES = set(CONTROL_TOOL_NAMES)
+_TASK_RUNNER_TOOL_DENYLIST = {"memory_apply_aider_edits"}
+
+
+# ---------------------------------------------------------------------------
+# Graph state
+# ---------------------------------------------------------------------------
+
+class CatMasterState(TypedDict, total=False):
+    user_request: str
+    lane: str
+
+    # Per-agent message histories
+    proposal_messages: Annotated[list[AnyMessage], add_messages]
+    director_messages: Annotated[list[AnyMessage], add_messages]
+    runner_messages: Annotated[list[AnyMessage], add_messages]
+
+    # Proposal
+    proposal_md: str
+    work_packages: list[str]
+    proposal_approved: bool
+    proposal_feedback: str
+
+    # Director
+    director_decision: dict
+    next_action: str
+
+    # Task tracking
+    tasks: list[dict]
+    observations: list[dict]
+    current_task_id: str
+    current_task_packet: dict
+    task_result: dict
+
+    # Run status
+    status: str
+    summary: str
+    contract_violation: dict
+
+    # HITL
+    hitl_history: list[dict]
+
+
+# ---------------------------------------------------------------------------
+# Agent builders
+# ---------------------------------------------------------------------------
+
+
+def _mode_for_role(termination_mode: TerminationMode, role: str) -> Literal["control_tools", "response_format"]:
+    if termination_mode == "hybrid":
+        # Hybrid strategy: keep planner/controller stable with explicit control tools,
+        # while allowing task worker to use structured response for experimentation.
+        if role in {"proposal", "director"}:
+            return "control_tools"
+        return "response_format"
+    return "control_tools" if termination_mode == "control_tools" else "response_format"
+
+
+def _prompt_for_mode(base_prompt: str, control_finish_instruction: str, mode: str) -> str:
+    if mode == "control_tools":
+        return f"{base_prompt}\n\n{control_finish_instruction}".strip()
+    return base_prompt
+
+
+def _snippet(text: Any, limit: int = 140) -> str:
+    if text is None:
+        return ""
+    cleaned = " ".join(str(text).split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 3)] + "..."
+
+
+def _compact_tool_output_for_llm(
+    tool_name: str,
+    payload: dict[str, Any],
+    *,
+    text_limit: int = 800,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "status": "failed",
+            "tool_name": tool_name or "",
+            "data": {},
+            "warnings": [],
+            "error": _snippet(payload, text_limit),
+        }
+
+    compact: dict[str, Any] = {
+        "status": str(payload.get("status") or ""),
+        "tool_name": str(payload.get("tool_name") or tool_name or ""),
+        "warnings": list(payload.get("warnings") or [])[:6],
+        "error": _snippet(payload.get("error"), text_limit),
+    }
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        compact["data"] = {}
+        return compact
+
+    data_keys = [str(k) for k in list(data.keys())[:20]]
+    scalars: dict[str, Any] = {}
+    paths: dict[str, str] = {}
+    for key, value in data.items():
+        if len(scalars) >= 10 and len(paths) >= 10:
+            break
+        key_s = str(key)
+        if isinstance(value, (int, float, bool)) and len(scalars) < 10:
+            scalars[key_s] = value
+            continue
+        if not isinstance(value, str):
+            continue
+        key_l = key_s.lower()
+        if any(token in key_l for token in ("path", "file", "dir", "artifact", "ref")) and len(paths) < 10:
+            paths[key_s] = _snippet(value, 300)
+            continue
+        if len(value) <= 200 and len(scalars) < 10:
+            scalars[key_s] = value
+
+    compact_data: dict[str, Any] = {"data_keys": data_keys}
+    if scalars:
+        compact_data["scalars"] = scalars
+    if paths:
+        compact_data["paths"] = paths
+    compact["data"] = compact_data
+    return compact
+
+
+def _compact_tool_message_for_llm(message: ToolMessage) -> ToolMessage:
+    name = str(getattr(message, "name", "") or "").strip()
+    if not name or name == "bash_exec" or name in _TASK_CONTROL_TOOL_NAMES:
+        return message
+
+    parsed = normalize_tool_result(message, tool_name=name, is_control_tool=False)
+    compact = _compact_tool_output_for_llm(name, parsed)
+    compact_text = json.dumps(compact, ensure_ascii=False)
+    return ToolMessage(
+        content=compact_text,
+        tool_call_id=str(getattr(message, "tool_call_id", "") or ""),
+        name=name,
+        id=getattr(message, "id", None),
+        status=to_tool_message_status(parsed),
+    )
+
+
+def _task_runner_tools(registry: ToolRegistry) -> list[StructuredTool]:
+    return [
+        tool
+        for tool in registry.as_langchain_tools()
+        if tool.name not in _TASK_RUNNER_TOOL_DENYLIST
+    ]
+
+def _build_proposal_agent(
+    model: BaseChatModel,
+    tools: list[StructuredTool],
+    *,
+    termination_mode: TerminationMode = "control_tools",
+    max_steps: int = 30,
+) -> Any:
+    role_mode = _mode_for_role(termination_mode, "proposal")
+    role_tools = list(tools)
+    if role_mode == "control_tools":
+        role_tools.extend(proposal_control_tools())
+    logger.info(
+        "[build_proposal_agent] mode=%s, response_format=%s, tools=%s",
+        role_mode,
+        role_mode == "response_format",
+        [t.name for t in role_tools],
+    )
+    kwargs: dict[str, Any] = {}
+    if role_mode == "response_format":
+        kwargs["response_format"] = ProposalOutput
+    return create_react_agent(
+        model=model,
+        tools=role_tools,
+        prompt=_prompt_for_mode(
+            PROPOSAL_SYSTEM_PROMPT,
+            PROPOSAL_CONTROL_FINISH_INSTRUCTION,
+            role_mode,
+        ),
+        name="proposal_agent",
+        **kwargs,
+    )
+
+
+def _build_director_agent(
+    model: BaseChatModel,
+    tools: list[StructuredTool],
+    *,
+    termination_mode: TerminationMode = "control_tools",
+    max_steps: int = 30,
+) -> Any:
+    role_mode = _mode_for_role(termination_mode, "director")
+    role_tools = list(tools)
+    if role_mode == "control_tools":
+        role_tools.extend(director_control_tools())
+    logger.info(
+        "[build_director_agent] mode=%s, response_format=%s, tools=%s",
+        role_mode,
+        role_mode == "response_format",
+        [t.name for t in role_tools],
+    )
+    kwargs: dict[str, Any] = {}
+    if role_mode == "response_format":
+        kwargs["response_format"] = DirectorOutput
+    return create_react_agent(
+        model=model,
+        tools=role_tools,
+        prompt=_prompt_for_mode(
+            DIRECTOR_SYSTEM_PROMPT,
+            DIRECTOR_CONTROL_FINISH_INSTRUCTION,
+            role_mode,
+        ),
+        name="director_agent",
+        **kwargs,
+    )
+
+
+def _make_task_runner_pre_hook(memory_store: MemoryStore):
+    """pre_model_hook that compacts non-shell tool observations for model input."""
+    _ = memory_store  # reserved for future hook extensions
+
+    def hook(state: dict) -> dict:
+        raw_messages = list(state.get("messages", []) or [])
+        if not raw_messages:
+            return {"llm_input_messages": []}
+
+        llm_messages: list[AnyMessage] = []
+        for msg in raw_messages:
+            if isinstance(msg, ToolMessage):
+                llm_messages.append(_compact_tool_message_for_llm(msg))
+                continue
+            llm_messages.append(msg)
+
+        return {
+            "llm_input_messages": llm_messages,
+        }
+
+    return hook
+
+
+def _build_task_runner_agent(
+    model: BaseChatModel,
+    tools: list[StructuredTool],
+    memory_store: MemoryStore,
+    *,
+    termination_mode: TerminationMode = "control_tools",
+    max_steps: int = 40,
+) -> Any:
+    role_mode = _mode_for_role(termination_mode, "task_runner")
+    role_tools = list(tools)
+    if role_mode == "control_tools":
+        role_tools.extend(task_control_tools())
+    logger.info(
+        "[build_task_runner_agent] mode=%s, response_format=%s, tools=%s",
+        role_mode,
+        role_mode == "response_format",
+        [t.name for t in role_tools],
+    )
+    kwargs: dict[str, Any] = {}
+    if role_mode == "response_format":
+        kwargs["response_format"] = TaskOutput
+    return create_react_agent(
+        model=model,
+        tools=role_tools,
+        prompt=_prompt_for_mode(
+            TASK_RUNNER_SYSTEM_PROMPT,
+            TASK_CONTROL_FINISH_INSTRUCTION,
+            role_mode,
+        ),
+        pre_model_hook=_make_task_runner_pre_hook(memory_store),
+        name="task_runner_agent",
+        **kwargs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Outer graph node wrappers (delegate to nodes.py functions)
+# ---------------------------------------------------------------------------
+
+def _run_proposal_wrapper(
+    state: CatMasterState,
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    tools_description: str,
+    run_dir: Path,
+    max_steps: int,
+    termination_mode: TerminationMode,
+    strict_control_contract: bool,
+) -> Dict[str, Any]:
+    return run_proposal(
+        state,
+        agent=agent,
+        memory_store=memory_store,
+        tools_description=tools_description,
+        run_dir=run_dir,
+        max_steps=max_steps,
+        termination_mode=_mode_for_role(termination_mode, "proposal"),
+        strict_control_contract=strict_control_contract,
+    )
+
+
+def _run_director_wrapper(
+    state: CatMasterState,
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    tools_description: str,
+    max_steps: int,
+    termination_mode: TerminationMode,
+    strict_control_contract: bool,
+) -> Command:
+    return run_director(
+        state,
+        agent=agent,
+        memory_store=memory_store,
+        tools_description=tools_description,
+        max_steps=max_steps,
+        termination_mode=_mode_for_role(termination_mode, "director"),
+        strict_control_contract=strict_control_contract,
+    )
+
+
+def _run_task_wrapper(
+    state: CatMasterState,
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    max_steps: int,
+    termination_mode: TerminationMode,
+    strict_control_contract: bool,
+) -> Dict[str, Any]:
+    return run_task(
+        state,
+        agent=agent,
+        memory_store=memory_store,
+        max_steps=max_steps,
+        termination_mode=_mode_for_role(termination_mode, "task_runner"),
+        strict_control_contract=strict_control_contract,
+    )
+
+
+def _memory_patch_node_wrapper(
+    state: CatMasterState,
+    *,
+    model: BaseChatModel,
+    memory_store: MemoryStore,
+    run_id: str,
+    patch_repair_attempts: int,
+    tool_backend: Optional[ToolBackend],
+    run_dir: Path,
+) -> Dict[str, Any]:
+    result = memory_patch_node(
+        state,
+        model=model,
+        memory_store=memory_store,
+        run_id=run_id,
+        patch_repair_attempts=patch_repair_attempts,
+        tool_backend=tool_backend,
+    )
+    task_result = result.get("task_result") or {}
+    _write_observation_file(
+        run_dir=run_dir,
+        task_id=state.get("current_task_id", ""),
+        outcome=task_result.get("task_outcome", ""),
+        summary=task_result.get("task_summary", ""),
+        key_artifacts=task_result.get("key_artifacts", []),
+    )
+    return result
+
+
+def _finalize_memory_patch_node_wrapper(
+    state: CatMasterState,
+    *,
+    model: BaseChatModel,
+    memory_store: MemoryStore,
+    run_id: str,
+    patch_repair_attempts: int,
+    tool_backend: Optional[ToolBackend],
+) -> Dict[str, Any]:
+    return finalize_memory_patch_node(
+        state,
+        model=model,
+        memory_store=memory_store,
+        run_id=run_id,
+        patch_repair_attempts=patch_repair_attempts,
+        tool_backend=tool_backend,
+    )
+
+
+def _summarize_node_wrapper(
+    state: CatMasterState,
+    *,
+    model: BaseChatModel,
+    memory_store: MemoryStore,
+) -> Dict[str, Any]:
+    return summarize_node(state, model=model, memory_store=memory_store)
+
+
+def _plan_commit_node_wrapper(
+    state: CatMasterState,
+    *,
+    model: BaseChatModel,
+    memory_store: MemoryStore,
+    run_id: str,
+    tool_backend: Optional[ToolBackend],
+) -> Dict[str, Any]:
+    return plan_commit_node(
+        state,
+        model=model,
+        memory_store=memory_store,
+        run_id=run_id,
+        tool_backend=tool_backend,
+    )
+
+
+def _write_observation_file(
+    *,
+    run_dir: Path,
+    task_id: str,
+    outcome: str,
+    summary: str,
+    key_artifacts: list,
+) -> None:
+    """Write an observation markdown file for a completed task."""
+    try:
+        obs_dir = run_dir / "observations"
+        obs_dir.mkdir(parents=True, exist_ok=True)
+        index = len(list(obs_dir.glob("obs_*.md"))) + 1
+        fname = f"obs_{index:03d}_{task_id}.md"
+        path = obs_dir / fname
+        lines = [
+            f"# Observation {index}",
+            f"- Task: {task_id}",
+            f"- Outcome: {outcome}",
+            "",
+            "## Summary",
+            summary or "",
+            "",
+            "## Key Artifacts",
+        ]
+        if key_artifacts:
+            for item in key_artifacts:
+                kpath = item.get("path", "")
+                desc = item.get("description", "")
+                kind = item.get("kind", "")
+                lines.append(f"- {kpath} ({kind}): {desc}")
+        else:
+            lines.append("- (none)")
+        path.write_text("\n".join(lines), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _proposal_review_node(state: CatMasterState) -> Dict[str, Any]:
+    """HITL checkpoint for proposal review.
+
+    Uses LangGraph ``interrupt()`` to pause execution and wait for human
+    feedback.  The human can reply with "approved" / "approve" / "ok" to
+    accept, or provide textual feedback to trigger a revision loop.
+
+    If proposal_approved is already True (e.g. auto-approve or resume
+    after approval), this is a no-op pass-through.
+    """
+    if state.get("proposal_approved"):
+        return {}
+
+    proposal_md = state.get("proposal_md", "")
+    work_packages = state.get("work_packages", [])
+    logger.info(
+        "[proposal_review] proposal_md_len=%d, work_packages_count=%d",
+        len(proposal_md), len(work_packages),
+    )
+    if not proposal_md:
+        logger.warning("[proposal_review] proposal_md is EMPTY - state keys: %s", list(state.keys()))
+
+    feedback = interrupt({
+        "type": "proposal_review",
+        "proposal_md": proposal_md,
+        "work_packages": work_packages,
+        "message": "Review the proposal. Reply 'approve' to accept, or provide feedback.",
+    })
+
+    feedback_text = str(feedback or "").strip()
+    if feedback_text.lower() in ("approved", "approve", "ok", "yes", "y", "lgtm"):
+        return {"proposal_approved": True, "proposal_feedback": ""}
+
+    return {"proposal_approved": False, "proposal_feedback": feedback_text}
+
+
+# ---------------------------------------------------------------------------
+# Routing functions
+# ---------------------------------------------------------------------------
+
+def _route_after_review(state: CatMasterState) -> str:
+    if state.get("proposal_approved"):
+        return "plan_commit"
+    return "run_proposal"
+
+
+def _route_after_proposal(state: CatMasterState) -> str:
+    status = str(state.get("status") or "").strip().lower()
+    if status == "failure":
+        return "summarize"
+    return "proposal_review"
+
+
+def _route_after_task(state: CatMasterState) -> str:
+    status = str(state.get("status") or "").strip().lower()
+    if status == "failure":
+        return "finalize_memory_patch"
+    return "memory_patch"
+
+
+def _needs_intervention_node(state: CatMasterState) -> Dict[str, Any]:
+    """HITL checkpoint when a task fails and needs human guidance."""
+    result = state.get("task_result") or {}
+    feedback = interrupt({
+        "type": "task_intervention",
+        "task_id": state.get("current_task_id", ""),
+        "task_outcome": result.get("task_outcome", ""),
+        "task_summary": result.get("task_summary", ""),
+        "message": "A task needs intervention. Provide guidance or type 'skip' to continue.",
+    })
+
+    feedback_text = str(feedback or "").strip()
+    existing = list(state.get("hitl_history") or [])
+    existing.append({
+        "task_id": state.get("current_task_id", ""),
+        "feedback": feedback_text,
+    })
+    return {"hitl_history": existing}
+
+
+def _route_after_memory_patch(state: CatMasterState) -> str:
+    result = state.get("task_result") or {}
+    outcome = result.get("task_outcome", "")
+    if outcome == "needs_intervention":
+        return "needs_intervention"
+    return "run_director"
+
+
+# ---------------------------------------------------------------------------
+# Graph builder
+# ---------------------------------------------------------------------------
+
+def build_standard_graph(
+    *,
+    task_runner_model: BaseChatModel,
+    proposal_model: BaseChatModel,
+    director_model: BaseChatModel,
+    memory_patch_model: BaseChatModel,
+    summary_model: BaseChatModel,
+    memory_store: MemoryStore,
+    registry: ToolRegistry,
+    tools_description: str,
+    director_tools_description: Optional[str] = None,
+    run_id: str = "",
+    run_dir: Optional[Path] = None,
+    patch_repair_attempts: int = 1,
+    tool_backend: Optional[ToolBackend] = None,
+    max_task_steps: int = 40,
+    max_plan_steps: int = 30,
+    termination_mode: TerminationMode = "control_tools",
+    strict_control_contract: bool = True,
+    checkpointer: Optional[BaseCheckpointSaver] = None,
+    run_control: Optional[RunControl] = None,
+) -> Any:
+    """Build and compile the standard-lane LangGraph."""
+    effective_run_dir = run_dir or Path(".")
+    effective_director_tools_description = director_tools_description or tools_description
+    lc_tools = _task_runner_tools(registry)
+    bash_tools = [t for t in lc_tools if t.name == "bash_exec"]
+
+    proposal_agent = _build_proposal_agent(
+        proposal_model,
+        bash_tools,
+        max_steps=max_plan_steps,
+        termination_mode=termination_mode,
+    )
+    director_agent = _build_director_agent(
+        director_model,
+        bash_tools,
+        max_steps=max_plan_steps,
+        termination_mode=termination_mode,
+    )
+    task_agent = _build_task_runner_agent(
+        task_runner_model,
+        lc_tools,
+        memory_store,
+        max_steps=max_task_steps,
+        termination_mode=termination_mode,
+    )
+
+    graph = StateGraph(CatMasterState)
+
+    graph.add_node("run_proposal", partial(
+        _run_proposal_wrapper,
+        agent=proposal_agent,
+        memory_store=memory_store,
+        tools_description=tools_description,
+        run_dir=effective_run_dir,
+        max_steps=max_plan_steps,
+        termination_mode=termination_mode,
+        strict_control_contract=strict_control_contract,
+    ))
+
+    graph.add_node("proposal_review", _proposal_review_node)
+
+    graph.add_node("plan_commit", partial(
+        _plan_commit_node_wrapper,
+        model=memory_patch_model,
+        memory_store=memory_store,
+        run_id=run_id,
+        tool_backend=tool_backend,
+    ))
+
+    graph.add_node("run_director", partial(
+        _run_director_wrapper,
+        agent=director_agent,
+        memory_store=memory_store,
+        tools_description=effective_director_tools_description,
+        max_steps=max_plan_steps,
+        termination_mode=termination_mode,
+        strict_control_contract=strict_control_contract,
+    ))
+
+    graph.add_node("run_task", partial(
+        _run_task_wrapper,
+        agent=task_agent,
+        memory_store=memory_store,
+        max_steps=max_task_steps,
+        termination_mode=termination_mode,
+        strict_control_contract=strict_control_contract,
+    ))
+
+    graph.add_node("memory_patch", partial(
+        _memory_patch_node_wrapper,
+        model=memory_patch_model,
+        memory_store=memory_store,
+        run_id=run_id,
+        patch_repair_attempts=patch_repair_attempts,
+        tool_backend=tool_backend,
+        run_dir=effective_run_dir,
+    ))
+
+    graph.add_node("finalize_memory_patch", partial(
+        _finalize_memory_patch_node_wrapper,
+        model=memory_patch_model,
+        memory_store=memory_store,
+        run_id=run_id,
+        patch_repair_attempts=patch_repair_attempts,
+        tool_backend=tool_backend,
+    ))
+
+    graph.add_node("summarize", partial(
+        _summarize_node_wrapper,
+        model=summary_model,
+        memory_store=memory_store,
+    ))
+
+    graph.add_node("needs_intervention", _needs_intervention_node)
+
+    graph.set_entry_point("run_proposal")
+    graph.add_conditional_edges("run_proposal", _route_after_proposal, {
+        "proposal_review": "proposal_review",
+        "summarize": "summarize",
+    })
+    graph.add_conditional_edges("proposal_review", _route_after_review, {
+        "plan_commit": "plan_commit",
+        "run_proposal": "run_proposal",
+    })
+    graph.add_edge("plan_commit", "run_director")
+    # run_director uses Command for routing -- no static edges needed
+    graph.add_conditional_edges("run_task", _route_after_task, {
+        "memory_patch": "memory_patch",
+        "finalize_memory_patch": "finalize_memory_patch",
+    })
+    graph.add_conditional_edges("memory_patch", _route_after_memory_patch, {
+        "run_director": "run_director",
+        "needs_intervention": "needs_intervention",
+    })
+    graph.add_edge("needs_intervention", "run_director")
+    graph.add_edge("finalize_memory_patch", "summarize")
+    graph.add_edge("summarize", END)
+
+    compile_kwargs: dict[str, Any] = {}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+
+    return graph.compile(**compile_kwargs)
+
+
+def build_fast_graph(
+    *,
+    task_runner_model: BaseChatModel,
+    memory_patch_model: BaseChatModel,
+    summary_model: BaseChatModel,
+    memory_store: MemoryStore,
+    registry: ToolRegistry,
+    run_id: str = "",
+    run_dir: Optional[Path] = None,
+    patch_repair_attempts: int = 1,
+    tool_backend: Optional[ToolBackend] = None,
+    max_task_steps: int = 40,
+    termination_mode: TerminationMode = "control_tools",
+    strict_control_contract: bool = True,
+    checkpointer: Optional[BaseCheckpointSaver] = None,
+    run_control: Optional[RunControl] = None,
+) -> Any:
+    """Build and compile the fast-lane LangGraph (single task, no director)."""
+    effective_run_dir = run_dir or Path(".")
+    lc_tools = _task_runner_tools(registry)
+    task_agent = _build_task_runner_agent(
+        task_runner_model,
+        lc_tools,
+        memory_store,
+        max_steps=max_task_steps,
+        termination_mode=termination_mode,
+    )
+
+    graph = StateGraph(CatMasterState)
+
+    graph.add_node("run_task", partial(
+        _run_task_wrapper,
+        agent=task_agent,
+        memory_store=memory_store,
+        max_steps=max_task_steps,
+        termination_mode=termination_mode,
+        strict_control_contract=strict_control_contract,
+    ))
+
+    graph.add_node("memory_patch", partial(
+        _memory_patch_node_wrapper,
+        model=memory_patch_model,
+        memory_store=memory_store,
+        run_id=run_id,
+        patch_repair_attempts=patch_repair_attempts,
+        tool_backend=tool_backend,
+        run_dir=effective_run_dir,
+    ))
+
+    graph.add_node("finalize_memory_patch", partial(
+        _finalize_memory_patch_node_wrapper,
+        model=memory_patch_model,
+        memory_store=memory_store,
+        run_id=run_id,
+        patch_repair_attempts=patch_repair_attempts,
+        tool_backend=tool_backend,
+    ))
+
+    graph.add_node("summarize", partial(
+        _summarize_node_wrapper,
+        model=summary_model,
+        memory_store=memory_store,
+    ))
+
+    graph.set_entry_point("run_task")
+    graph.add_conditional_edges("run_task", _route_after_task, {
+        "memory_patch": "memory_patch",
+        "finalize_memory_patch": "finalize_memory_patch",
+    })
+    graph.add_edge("memory_patch", "finalize_memory_patch")
+    graph.add_edge("finalize_memory_patch", "summarize")
+    graph.add_edge("summarize", END)
+
+    compile_kwargs: dict[str, Any] = {}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+
+    return graph.compile(**compile_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# High-level runner
+# ---------------------------------------------------------------------------
+
+
+class GraphRunner:
+    """Convenience wrapper that builds the graph, sets up callbacks, and runs.
+
+    Handles the interrupt/resume cycle required by HITL nodes
+    (``proposal_review`` and ``needs_intervention``).  When a node calls
+    ``interrupt()``, the runner collects human feedback via the ``Reporter``
+    protocol and resumes the graph automatically.
+    """
+
+    MAX_INTERRUPT_ROUNDS = 20
+
+    def __init__(
+        self,
+        *,
+        task_runner_model: BaseChatModel,
+        proposal_model: Optional[BaseChatModel] = None,
+        director_model: Optional[BaseChatModel] = None,
+        memory_patch_model: BaseChatModel,
+        summary_model: BaseChatModel,
+        registry: Optional[ToolRegistry] = None,
+        memory_store: MemoryStore,
+        run_context: RunContext,
+        reporter: Optional[Reporter] = None,
+        tool_backend: Optional[ToolBackend] = None,
+        run_control: Optional[RunControl] = None,
+        max_task_steps: int = 40,
+        max_plan_steps: int = 20,
+        termination_mode: TerminationMode = "control_tools",
+        strict_control_contract: bool = True,
+        recursion_limit: int = 300,
+        patch_repair_attempts: int = 1,
+        stream_debug_console: bool = False,
+        print_state_messages: bool = False,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
+    ) -> None:
+        self.task_runner_model = task_runner_model
+        self.proposal_model = proposal_model or task_runner_model
+        self.director_model = director_model or task_runner_model
+        self.memory_patch_model = memory_patch_model
+        self.summary_model = summary_model
+        self.registry = registry or get_tool_registry()
+        self.memory_store = memory_store
+        self.run_context = run_context
+        self.reporter = reporter or NullReporter()
+        self.tool_backend = tool_backend
+        self.run_control = run_control
+        self.max_task_steps = max_task_steps
+        self.max_plan_steps = max_plan_steps
+        self.termination_mode: TerminationMode = termination_mode
+        self.strict_control_contract = bool(strict_control_contract)
+        try:
+            parsed_limit = int(recursion_limit)
+        except Exception:
+            parsed_limit = 300
+        self.recursion_limit = parsed_limit if parsed_limit > 0 else 1_000_000
+        self.patch_repair_attempts = patch_repair_attempts
+        self.stream_debug_console = bool(stream_debug_console)
+        self.print_state_messages = bool(print_state_messages)
+        self.checkpointer = checkpointer or MemorySaver()
+
+        self.memory_store.ensure_exists()
+        self.artifact_store = ArtifactStore(run_context.run_dir)
+        self.trace_store = TraceStore(run_context.run_dir)
+
+    def _emit(self, name: str, *, category: str = "run", payload: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            self.reporter.emit(
+                make_event(
+                    name,
+                    category=category,
+                    run_id=self.run_context.run_id,
+                    payload=payload or {},
+                )
+            )
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Interrupt helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_interrupt_value(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extract the interrupt payload from a graph result, if any.
+
+        LangGraph stores pending interrupts under the ``__interrupt__``
+        key.  Each entry has a ``value`` dict produced by the node's
+        ``interrupt(...)`` call.
+        """
+        interrupts = result.get("__interrupt__")
+        if not interrupts:
+            return None
+        if isinstance(interrupts, (list, tuple)) and len(interrupts) > 0:
+            entry = interrupts[0]
+            if hasattr(entry, "value"):
+                return entry.value
+            if isinstance(entry, dict):
+                return entry.get("value")
+        return None
+
+    @staticmethod
+    def _stream_preview(value: Any, *, limit: int = 180) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return _snippet(value, limit)
+        try:
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(value)
+        return _snippet(text, limit)
+
+    def _log_stream_update(self, update: dict[str, Any]) -> None:
+        for node, payload in (update or {}).items():
+            if node == "__interrupt__":
+                logger.info("[graph.stream] interrupt=%s", self._stream_preview(payload))
+                continue
+            if not isinstance(payload, dict):
+                logger.info("[graph.stream] node=%s payload=%s", node, self._stream_preview(payload))
+                continue
+            keys = list(payload.keys())
+            if not keys:
+                logger.info("[graph.stream] node=%s keys=(empty update)", node)
+                continue
+            message_fields: list[str] = []
+            for key, value in payload.items():
+                if not isinstance(value, list):
+                    continue
+                if key == "messages" or key.endswith("_messages"):
+                    message_fields.append(str(key))
+            msg_count = (
+                sum(len(payload.get(field, []) or []) for field in message_fields)
+                if message_fields
+                else None
+            )
+            tool_summary = ""
+            if message_fields:
+                if self.print_state_messages:
+                    for field in message_fields:
+                        field_messages = payload.get(field, []) or []
+                        for idx, msg in enumerate(field_messages):
+                            try:
+                                dumped = msg.model_dump() if hasattr(msg, "model_dump") else str(msg)
+                                msg_text = json.dumps(dumped, ensure_ascii=False, default=str)
+                            except Exception:
+                                dumped = {}
+                                msg_text = str(msg)
+                            logger.info(
+                                "[graph.stream.messages] node=%s field=%s idx=%d payload=%s",
+                                node,
+                                field,
+                                idx,
+                                msg_text,
+                            )
+                            if isinstance(dumped, dict):
+                                msg_type = str(dumped.get("type") or "").strip().lower()
+                                if msg_type == "ai":
+                                    parsed_calls = list(dumped.get("tool_calls") or [])
+                                    for call_idx, call in enumerate(parsed_calls):
+                                        name = str(call.get("name") or "")
+                                        args = call.get("args")
+                                        if isinstance(args, str):
+                                            args_json = args
+                                        else:
+                                            try:
+                                                args_json = json.dumps(args, ensure_ascii=False, default=str)
+                                            except Exception:
+                                                args_json = str(args)
+                                        logger.info(
+                                            "[graph.stream.tool_input] node=%s field=%s msg_idx=%d call_idx=%d name=%s args_json=%s",
+                                            node,
+                                            field,
+                                            idx,
+                                            call_idx,
+                                            name,
+                                            args_json,
+                                        )
+                                    raw_calls = list(
+                                        (dumped.get("additional_kwargs") or {}).get("tool_calls") or []
+                                    )
+                                    for call_idx, call in enumerate(raw_calls):
+                                        fn = call.get("function") if isinstance(call, dict) else {}
+                                        if not isinstance(fn, dict):
+                                            fn = {}
+                                        logger.info(
+                                            "[graph.stream.tool_input.raw] node=%s field=%s msg_idx=%d call_idx=%d name=%s arguments_raw=%s",
+                                            node,
+                                            field,
+                                            idx,
+                                            call_idx,
+                                            str(fn.get("name") or ""),
+                                            str(fn.get("arguments") or ""),
+                                        )
+                # Prefer canonical `messages`; otherwise use the first message field.
+                selected_field = "messages" if "messages" in message_fields else message_fields[0]
+                selected_messages = payload.get(selected_field, []) or []
+                if selected_messages:
+                    tail = selected_messages[-1]
+                    tool_calls = getattr(tail, "tool_calls", None)
+                    if isinstance(tool_calls, list) and tool_calls:
+                        names = [str(call.get("name") or "") for call in tool_calls if isinstance(call, dict)]
+                        names = [name for name in names if name]
+                        if names:
+                            tool_summary = f" tool_calls={','.join(names[:6])}"
+                        # Debug mode: print full toolcall payload per turn without truncation.
+                        for idx, call in enumerate(tool_calls):
+                            try:
+                                payload_text = json.dumps(call, ensure_ascii=False, default=str)
+                            except Exception:
+                                payload_text = str(call)
+                            logger.info(
+                                "[graph.stream.toolcall] node=%s field=%s idx=%d payload=%s",
+                                node,
+                                selected_field,
+                                idx,
+                                payload_text,
+                            )
+            logger.info(
+                "[graph.stream] node=%s keys=%s%s%s",
+                node,
+                ",".join(keys[:8]),
+                f" messages={msg_count}" if msg_count is not None else "",
+                tool_summary,
+            )
+
+    def _invoke_graph_once(
+        self,
+        compiled: Any,
+        graph_input: Any,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not (self.stream_debug_console or self.print_state_messages):
+            return compiled.invoke(graph_input, config=config)
+
+        logger.info(
+            "[graph.stream] enabled stream_mode=updates (stream_debug_console=%s, print_state_messages=%s)",
+            self.stream_debug_console,
+            self.print_state_messages,
+        )
+        streamed_result: Dict[str, Any] = {}
+        for update in compiled.stream(graph_input, config=config, stream_mode="updates"):
+            if isinstance(update, dict):
+                self._log_stream_update(update)
+                if "__interrupt__" in update:
+                    streamed_result["__interrupt__"] = update["__interrupt__"]
+
+        try:
+            snapshot = compiled.get_state(config)
+            values = getattr(snapshot, "values", None)
+            if isinstance(values, dict):
+                result = dict(values)
+                if "__interrupt__" in streamed_result and "__interrupt__" not in result:
+                    result["__interrupt__"] = streamed_result["__interrupt__"]
+                return result
+        except Exception as exc:
+            logger.debug("stream snapshot fallback failed: %s", exc)
+
+        return streamed_result
+
+    def _collect_human_feedback(self, interrupt_payload: Dict[str, Any]) -> str:
+        """Collect feedback from the human via the Reporter protocol."""
+        interrupt_type = interrupt_payload.get("type", "")
+        logger.info(
+            "[_collect_human_feedback] type=%s, payload_keys=%s",
+            interrupt_type, list(interrupt_payload.keys()),
+        )
+
+        if interrupt_type == "proposal_review":
+            proposal_md = interrupt_payload.get("proposal_md", "")
+            work_packages = interrupt_payload.get("work_packages", [])
+            logger.info(
+                "[_collect_human_feedback] proposal_md_len=%d, work_packages=%d",
+                len(proposal_md), len(work_packages),
+            )
+            return self.reporter.prompt_proposal_feedback(
+                todo=work_packages,
+                proposal_description=proposal_md,
+            )
+
+        if interrupt_type == "task_intervention":
+            task_summary = interrupt_payload.get("task_summary", "")
+            task_id = interrupt_payload.get("task_id", "")
+            return self.reporter.prompt_hitl_feedback(
+                report_text=task_summary,
+                report_path=task_id,
+            )
+
+        return self.reporter.prompt_interrupt_feedback(
+            guidance=interrupt_payload.get("message", "Provide feedback."),
+            run_id=self.run_context.run_id,
+            phase=interrupt_type,
+        )
+
+    # ------------------------------------------------------------------
+    # Lifecycle side-effects (ported from old Orchestrator)
+    # ------------------------------------------------------------------
+
+    def _initialize_memory_goal(self, user_request: str) -> None:
+        """Write the user objective into MEMORY/topics/GOAL.md.
+
+        Mirrors old Orchestrator._initialize_memory_goal.
+        """
+        goal = " ".join((user_request or "").split()).strip()
+        if not goal:
+            return
+        self.memory_store.ensure_exists()
+        goal_path = self.memory_store.topics_dir / "GOAL.md"
+        original = goal_path.read_text(encoding="utf-8") if goal_path.exists() else ""
+        updated = original
+
+        primary_match = re.search(r"(?m)^- Primary objective:\s*(.*)$", updated)
+        current_primary = (primary_match.group(1) if primary_match else "").strip()
+        primary_changed = current_primary != goal
+
+        if primary_match:
+            updated = re.sub(
+                r"(?m)^- Primary objective:.*$",
+                f"- Primary objective: {goal}",
+                updated,
+                count=1,
+            )
+        else:
+            line = f"- Primary objective: {goal}\n"
+            marker = "## TL;DR\n"
+            if marker in updated:
+                updated = updated.replace(marker, marker + line, 1)
+            else:
+                updated = updated.rstrip()
+                if updated:
+                    updated += "\n\n"
+                updated += "## TL;DR\n" + line
+            primary_changed = True
+
+        lines = updated.splitlines()
+        compacted: List[str] = []
+        seen_change_log = False
+        for raw in lines:
+            if raw.strip() == "## Change log":
+                if seen_change_log:
+                    continue
+                seen_change_log = True
+            compacted.append(raw)
+        updated = "\n".join(compacted)
+
+        if primary_changed:
+            ts = datetime.utcnow().strftime("%Y-%m-%d")
+            entry = f"- [{ts}] {goal}"
+            if "## Change log" not in updated:
+                updated = updated.rstrip()
+                if updated:
+                    updated += "\n\n"
+                updated += "## Change log\n"
+            if entry not in updated:
+                updated = updated.rstrip() + "\n" + entry + "\n"
+
+        normalized = updated.rstrip() + "\n"
+        if normalized != (original.rstrip() + "\n"):
+            goal_path.write_text(normalized, encoding="utf-8")
+            refresh_fn = getattr(self.memory_store, "refresh_index_from_topics", None)
+            if callable(refresh_fn):
+                try:
+                    refresh_fn()
+                except Exception:
+                    pass
+
+    def _write_task_state(self, state: Dict[str, Any], lane: str) -> None:
+        """Persist task_state.json for resume and WebUI inspection."""
+        path = self.run_context.run_dir / "task_state.json"
+        body: Dict[str, Any] = {
+            "schema_version": 2,
+            "lane": lane,
+            "user_request": state.get("user_request", ""),
+            "tasks": state.get("tasks", []),
+            "observations": state.get("observations", []),
+            "status": state.get("status", "running"),
+            "hitl_history": state.get("hitl_history", []),
+        }
+        contract_violation = state.get("contract_violation")
+        if isinstance(contract_violation, dict) and contract_violation:
+            body["contract_violation"] = contract_violation
+        if lane == "standard":
+            body["proposal"] = {
+                "proposal_path": "proposal.md",
+                "work_packages": state.get("work_packages", []),
+            }
+        existing: Dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except Exception:
+                pass
+        status = str(body.get("status") or "")
+        if "interrupt_history" not in body and "interrupt_history" in existing:
+            body["interrupt_history"] = existing.get("interrupt_history")
+        if status == "interrupted_paused":
+            for key in ("task_resume_checkpoint", "last_interrupt"):
+                if key not in body and key in existing:
+                    body[key] = existing.get(key)
+        path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _publish_report(self, user_request: str, final_answer: str) -> Dict[str, str]:
+        """Generate FINAL_REPORT.md, copy memory, and create latest_run snapshot."""
+        ws_reports = workspace_root(self.run_context.workspace) / "reports"
+        ws_reports.mkdir(parents=True, exist_ok=True)
+        run_reports = self.run_context.run_dir / "reports"
+        run_reports.mkdir(parents=True, exist_ok=True)
+
+        final_report = run_reports / "FINAL_REPORT.md"
+        final_report.write_text("\n".join([
+            "# Final Report",
+            "",
+            "## User Query",
+            user_request,
+            "",
+            "## Final Answer",
+            final_answer,
+            "",
+        ]), encoding="utf-8")
+
+        memory_src = self.memory_store.index_path
+        memory_dst = run_reports / "MEMORY.md"
+        try:
+            shutil.copy2(memory_src, memory_dst)
+        except Exception:
+            if memory_src.exists():
+                memory_dst.write_text(
+                    memory_src.read_text(encoding="utf-8"), encoding="utf-8",
+                )
+
+        latest = ws_reports / "latest_run"
+        try:
+            if latest.is_symlink() or latest.is_file():
+                latest.unlink()
+            elif latest.is_dir():
+                shutil.rmtree(latest)
+        except Exception:
+            pass
+        try:
+            shutil.copytree(self.run_context.run_dir, latest, symlinks=False)
+        except Exception:
+            try:
+                if latest.exists():
+                    if latest.is_dir():
+                        shutil.rmtree(latest)
+                    else:
+                        latest.unlink()
+            except Exception:
+                pass
+            try:
+                (latest / "reports").mkdir(parents=True, exist_ok=True)
+                shutil.copy2(final_report, latest / "reports" / "FINAL_REPORT.md")
+                if memory_dst.exists():
+                    shutil.copy2(memory_dst, latest / "reports" / "MEMORY.md")
+            except Exception:
+                pass
+
+        return {
+            "run_dir": str(self.run_context.run_dir),
+            "final_report": str(final_report),
+            "memory_report": str(memory_dst),
+            "latest_link": str(latest),
+        }
+
+    # ------------------------------------------------------------------
+    # Main run
+    # ------------------------------------------------------------------
+
+    def run(
+        self,
+        user_request: str,
+        *,
+        lane: str = "standard",
+    ) -> Dict[str, Any]:
+        tools_description = self.registry.get_tool_descriptions_for_llm()
+        director_tools_description = self.registry.get_short_tool_descriptions_for_llm()
+        workspace = self.run_context.workspace
+        run_dir = self.run_context.run_dir
+
+        self._initialize_memory_goal(user_request)
+
+        callbacks = build_callbacks(
+            artifact_store=self.artifact_store,
+            trace_store=self.trace_store,
+            reporter=self.reporter,
+            run_id=self.run_context.run_id,
+            print_raw_tool_calls=self.print_state_messages,
+            print_llm_context_messages=self.print_state_messages,
+        )
+
+        if lane == "fast":
+            compiled = build_fast_graph(
+                task_runner_model=self.task_runner_model,
+                memory_patch_model=self.memory_patch_model,
+                summary_model=self.summary_model,
+                memory_store=self.memory_store,
+                registry=self.registry,
+                run_id=self.run_context.run_id,
+                run_dir=run_dir,
+                patch_repair_attempts=self.patch_repair_attempts,
+                tool_backend=self.tool_backend,
+                max_task_steps=self.max_task_steps,
+                termination_mode=self.termination_mode,
+                strict_control_contract=self.strict_control_contract,
+                checkpointer=self.checkpointer,
+                run_control=self.run_control,
+            )
+        else:
+            compiled = build_standard_graph(
+                task_runner_model=self.task_runner_model,
+                proposal_model=self.proposal_model,
+                director_model=self.director_model,
+                memory_patch_model=self.memory_patch_model,
+                summary_model=self.summary_model,
+                memory_store=self.memory_store,
+                registry=self.registry,
+                tools_description=tools_description,
+                director_tools_description=director_tools_description,
+                run_id=self.run_context.run_id,
+                run_dir=run_dir,
+                patch_repair_attempts=self.patch_repair_attempts,
+                tool_backend=self.tool_backend,
+                max_task_steps=self.max_task_steps,
+                max_plan_steps=self.max_plan_steps,
+                termination_mode=self.termination_mode,
+                strict_control_contract=self.strict_control_contract,
+                checkpointer=self.checkpointer,
+                run_control=self.run_control,
+            )
+
+        initial_state: CatMasterState = {
+            "user_request": user_request,
+            "lane": lane,
+            "proposal_messages": [],
+            "director_messages": [],
+            "runner_messages": [],
+            "proposal_md": "",
+            "work_packages": [],
+            "proposal_approved": False,
+            "proposal_feedback": "",
+            "director_decision": {},
+            "next_action": "",
+            "tasks": [],
+            "observations": [],
+            "current_task_id": "task_01",
+            "current_task_packet": {"goal": user_request},
+            "task_result": {},
+            "status": "running",
+            "summary": "",
+            "contract_violation": {},
+            "hitl_history": [],
+        }
+
+        self._write_task_state(initial_state, lane)
+
+        thread_id = self.run_context.run_id
+        config: Dict[str, Any] = {
+            "callbacks": callbacks,
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": self.recursion_limit,
+        }
+
+        try:
+            return self._invoke_loop(compiled, initial_state, config, workspace, lane)
+        finally:
+            try:
+                write_usage_summary(self.run_context.run_dir)
+            except Exception as exc:
+                logger.debug("usage summary write failed: %s", exc)
+
+
+    def _invoke_loop(
+        self,
+        compiled: Any,
+        initial_state: CatMasterState,
+        config: Dict[str, Any],
+        workspace: Optional[Path],
+        lane: str = "standard",
+    ) -> Dict[str, Any]:
+        """Run the graph with workspace scope, handling HITL interrupt/resume."""
+        user_request = initial_state.get("user_request", "")
+
+        def _do_invoke() -> Dict[str, Any]:
+            result = self._invoke_graph_once(compiled, initial_state, config)
+
+            for _ in range(self.MAX_INTERRUPT_ROUNDS):
+                interrupt_payload = self._get_interrupt_value(result)
+                if interrupt_payload is None:
+                    break
+
+                if self.run_control and self.run_control.is_interrupt_requested():
+                    self.run_control.ack_interrupt(phase="hitl_paused")
+                    self._write_task_state(
+                        {**result, "status": "interrupted_paused"}, lane,
+                    )
+                    self._emit("RUN_PAUSED", payload={"phase": "hitl_paused", "status": "interrupted_paused"})
+                    return {
+                        "tasks": result.get("tasks", []),
+                        "observations": result.get("observations", []),
+                        "summary": result.get("summary", ""),
+                        "final_answer": "",
+                        "status": "interrupted_paused",
+                    }
+
+                feedback = self._collect_human_feedback(interrupt_payload)
+                if not feedback and not self.reporter.is_live():
+                    logger.warning("HITL interrupt with no live reporter; auto-approving")
+                    feedback = "approve"
+
+                result = self._invoke_graph_once(
+                    compiled,
+                    Command(resume=feedback),
+                    config,
+                )
+
+            if self.run_control and self.run_control.is_interrupt_requested():
+                self.run_control.ack_interrupt(phase="completed_with_interrupt")
+
+            status = result.get("status", "done")
+            summary = result.get("summary", "")
+
+            self._write_task_state({**result, "status": status}, lane)
+
+            if status in ("done", "failure"):
+                self._publish_report(user_request, summary)
+
+            self._emit("RUN_END", payload={"status": status, "summary_snippet": _snippet(summary, 320)})
+
+            return {
+                "tasks": result.get("tasks", []),
+                "observations": result.get("observations", []),
+                "summary": summary,
+                "final_answer": summary,
+                "status": status,
+            }
+
+        if workspace is not None:
+            with workspace_scope(workspace):
+                return _do_invoke()
+        return _do_invoke()
+
+
+__all__ = [
+    "CatMasterState",
+    "build_standard_graph",
+    "build_fast_graph",
+    "GraphRunner",
+]

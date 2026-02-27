@@ -5,9 +5,16 @@ WebUI entry point for CatMaster.
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from catmaster.webui import launch
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 
 def main() -> None:

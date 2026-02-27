@@ -5,9 +5,9 @@ Prepare MPRelax-style VASP input sets via StructWriter.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 from ase.io import read as ase_read
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pymatgen.core import Structure
 from pymatgen.io.ase import AseAtomsAdaptor
 
@@ -16,6 +16,42 @@ from catmaster.tools.base import create_tool_output, resolve_workspace_path, wor
 
 
 SUPPORTED_EXTS = {".vasp", ".cif"}
+_ELEMENT_MAP_INCAR_KEYS = {"MAGMOM", "LDAUU", "LDAUJ"}
+
+
+def _element_map_error_message(key: str) -> str:
+    return (
+        f"{key} must be an element-map in this tool due to pymatgen constraints, "
+        'e.g. {"Fe": 2.2} or {"O": 1}.'
+    )
+
+
+def _coerce_element_map_value(key: str, raw_val: Any | None) -> Any | None:
+    if raw_val is None:
+        return None
+    if not isinstance(raw_val, dict):
+        raise ValueError(_element_map_error_message(key))
+    normalized: Dict[str, Any] = {}
+    for sym_raw, value in raw_val.items():
+        symbol = str(sym_raw).strip()
+        if not symbol:
+            raise ValueError(_element_map_error_message(key))
+        normalized[symbol] = value
+    return normalized
+
+
+def _normalize_user_incar_settings(
+    value: Dict,
+) -> Dict:
+    normalized: Dict[str, Any] = {}
+    for raw_key, raw_val in value.items():
+        key = str(raw_key).strip().upper()
+        if not key:
+            raise ValueError("INCAR key must be a non-empty string.")
+        if key in _ELEMENT_MAP_INCAR_KEYS:
+            raw_val = _coerce_element_map_value(key, raw_val)
+        normalized[key] = raw_val
+    return normalized
 
 
 class VaspRelaxPrepareInput(BaseModel):
@@ -77,14 +113,24 @@ class VaspRelaxPrepareInput(BaseModel):
             "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to the atomic center of mass of cell in fractional coordinates."
         ),
     )
-    user_incar_settings: Optional[Dict[str, Any]] = Field(
-        None,
+    user_incar_settings: Dict = Field(
+        default_factory=dict,
         description=(
-            "User INCAR overrides (pymatgen Incar semantics) on top of MPRelaxSet (calc_type presets will always win if conflict with params specified here). "
-            "Specify MAGMOM, LDAUU, etc. if user specially needed, format as {\"element\": value}, not a per-atom list. "
-            "You can also specify other params, to adapt specific calculation requirements."
+            "User INCAR overrides as a dict, e.g. "
+            '{"MAGMOM":{"O":1},"NUPDOWN":2}. '
+            "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
+            "Use null value to remove a key from INCAR. "
+            "calc_type/task-required presets still take precedence on key conflict."
         ),
     )
+
+    @field_validator("user_incar_settings")
+    @classmethod
+    def _validate_user_incar_settings(
+        cls,
+        value: Dict,
+    ) -> Dict:
+        return _normalize_user_incar_settings(value)
 
     @model_validator(mode="after")
     def _validate_relax_cell_conflict(self) -> "VaspRelaxPrepareInput":
@@ -122,14 +168,27 @@ class VaspSPPrepareInput(BaseModel):
     enable_dipole: bool = Field(
         False,
         description=(
-            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to "
-            "the atomic center of mass in fractional coordinates."
+            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to the atomic center of mass in fractional coordinates."
         ),
     )
-    user_incar_settings: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Additional INCAR overrides.",
+    user_incar_settings: Dict = Field(
+        default_factory=dict,
+        description=(
+            "Additional INCAR overrides as a dict, e.g. "
+            '{"ISMEAR":0,"SIGMA":0.05}. '
+            "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
+            "Use null value to remove a key from INCAR. "
+            "calc_type/task-required presets still take precedence on key conflict."
+        ),
     )
+
+    @field_validator("user_incar_settings")
+    @classmethod
+    def _validate_user_incar_settings(
+        cls,
+        value: Dict,
+    ) -> Dict:
+        return _normalize_user_incar_settings(value)
 
 
 def _load_structure(path: Path) -> Structure:
@@ -252,7 +311,7 @@ def vasp_relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
         calc_type=params.calc_type,
         relax_cell=bool(params.relax_cell),
         k_product=int(params.k_product),
-        user_incar_settings=params.user_incar_settings or {},
+        user_incar_settings=dict(params.user_incar_settings),
         use_d3=bool(params.use_d3),
         use_dft_plus_u=bool(params.use_dft_plus_u),
         compute_dos=bool(params.compute_dos),
@@ -270,7 +329,7 @@ def vasp_sp_prepare(payload: Dict[str, object]) -> Dict[str, object]:
         calc_type=params.calc_type,
         relax_cell=False,
         k_product=int(params.k_product),
-        user_incar_settings=params.user_incar_settings or {},
+        user_incar_settings=dict(params.user_incar_settings),
         use_d3=bool(params.use_d3),
         use_dft_plus_u=bool(params.use_dft_plus_u),
         compute_dos=bool(params.compute_dos),
@@ -279,4 +338,9 @@ def vasp_sp_prepare(payload: Dict[str, object]) -> Dict[str, object]:
     )
 
 
-__all__ = ["VaspRelaxPrepareInput", "VaspSPPrepareInput", "vasp_relax_prepare", "vasp_sp_prepare"]
+__all__ = [
+    "VaspRelaxPrepareInput",
+    "VaspSPPrepareInput",
+    "vasp_relax_prepare",
+    "vasp_sp_prepare",
+]

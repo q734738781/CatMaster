@@ -5,12 +5,48 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from ase.io import read as ase_read, write as ase_write
 
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 
 _CELL_TOL = 1e-5
+_ELEMENT_MAP_INCAR_KEYS = {"MAGMOM", "LDAUU", "LDAUJ"}
+
+
+def _element_map_error_message(key: str) -> str:
+    return (
+        f"{key} must be an element-map in this tool due to pymatgen constraints, "
+        'e.g. {"Fe": 2.2} or {"O": 1}.'
+    )
+
+
+def _coerce_element_map_value(key: str, raw_val: Any | None) -> Any | None:
+    if raw_val is None:
+        return None
+    if not isinstance(raw_val, dict):
+        raise ValueError(_element_map_error_message(key))
+    normalized: Dict[str, Any] = {}
+    for sym_raw, value in raw_val.items():
+        symbol = str(sym_raw).strip()
+        if not symbol:
+            raise ValueError(_element_map_error_message(key))
+        normalized[symbol] = value
+    return normalized
+
+
+def _normalize_additional_overrides(
+    value: Dict,
+) -> Dict:
+    normalized: Dict[str, Any] = {}
+    for raw_key, raw_val in value.items():
+        key = str(raw_key).strip().upper()
+        if not key:
+            raise ValueError("INCAR key must be a non-empty string.")
+        if key in _ELEMENT_MAP_INCAR_KEYS:
+            raw_val = _coerce_element_map_value(key, raw_val)
+        normalized[key] = raw_val
+    return normalized
 
 
 class MakeNebGeometryInput(BaseModel):
@@ -68,10 +104,23 @@ class MakeNebIncarInput(BaseModel):
     ediffg: Optional[float] = Field(None, description="Override EDIFFG if provided.")
     spring: Optional[float] = Field(None, description="Override SPRING if provided.")
     potim: Optional[float] = Field(0.0, description="Override POTIM (default 0).")
-    additional_overrides: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Additional INCAR overrides; highest priority and can override required defaults.",
+    additional_overrides: Dict = Field(
+        default_factory=dict,
+        description=(
+            "Additional INCAR overrides as a dict; highest priority and can override required defaults. "
+            "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
+            "If not provided, no user override is applied and this tool's default INCAR strategy is used. "
+            "Use null value to remove a key from INCAR."
+        ),
     )
+
+    @field_validator("additional_overrides")
+    @classmethod
+    def _validate_additional_overrides(
+        cls,
+        value: Dict,
+    ) -> Dict:
+        return _normalize_additional_overrides(value)
 
 
 def _read_atoms(path: Path):
@@ -271,7 +320,7 @@ def make_neb_incar(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in overrides.items():
         final_vals[key] = value
 
-    user_overrides = params.additional_overrides or {}
+    user_overrides = params.additional_overrides
     for key, value in user_overrides.items():
         key_upper = str(key).upper()
         if value is None:

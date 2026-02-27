@@ -213,6 +213,12 @@ When adding new run phases or behaviors, emit events via the Reporter to preserv
 - Avoid committing large generated artifacts; tools should write them to the workspace at runtime, not to the repository.
 - Keep changes minimal and localized; do not refactor unrelated modules in the same change.
 
+### Test execution in conda (critical)
+
+- When running tests in the project conda environment, use:
+  - `conda run -n catmaster python -m pytest ...`
+- Do **not** use `conda run -n catmaster pytest ...` directly. In this repository it can pick the wrong interpreter and cause false `importorskip` results (tests appear skipped even when dependencies exist in the env).
+
 ---
 
 ## 10) Quick reference: tool skeleton

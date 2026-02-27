@@ -39,9 +39,9 @@ class MPSearchMaterialsInput(BaseModel):
       band_gap, crystal_system, spacegroup_number, spacegroup_symbol, nsites (or num_sites), density, volume.
     """
 
-    criteria: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Direct summary.search filters (keys listed above). Range values may be [min, max].",
+    criteria: Dict = Field(
+        default_factory=dict,
+        description="Direct summary.search filters as a dict (keys listed above). Range values may be [min, max].",
     )
     fields: List[str] = Field(
         default_factory=lambda: [
@@ -181,7 +181,7 @@ def mp_search_materials(payload: Dict[str, object]) -> Dict[str, object]:
     """
     params = MPSearchMaterialsInput(**payload)
     try:
-        criteria = _normalize_criteria(params.criteria or {})
+        criteria = _normalize_criteria(params.criteria)
     except Exception as exc:
         return create_tool_output("mp_search_materials", success=False, error=str(exc))
     warnings: List[str] = []

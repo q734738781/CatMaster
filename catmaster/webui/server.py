@@ -54,11 +54,32 @@ def create_app(*, project_space_root: str) -> FastAPI:
     return app
 
 
-def launch(*, host: str = "127.0.0.1", port: int = 7860, project_space_root: Optional[str] = None) -> None:
+def launch(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 7860,
+    project_space_root: Optional[str] = None,
+    timeout_keep_alive: int = 0,
+    timeout_graceful_shutdown: int = 0,
+) -> None:
     if project_space_root is None:
         project_space_root = str(Path.cwd() / "project_space")
     app = create_app(project_space_root=project_space_root)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    run_kwargs = {
+        "host": host,
+        "port": port,
+        "log_level": "info",
+        # Default to immediate shutdown to avoid lingering "Waiting for connections to close".
+        "timeout_keep_alive": max(0, int(timeout_keep_alive)),
+        "timeout_graceful_shutdown": max(0, int(timeout_graceful_shutdown)),
+    }
+    try:
+        uvicorn.run(app, **run_kwargs)
+    except TypeError:
+        # Backward compatibility for older uvicorn versions that may not
+        # support timeout_graceful_shutdown.
+        run_kwargs.pop("timeout_graceful_shutdown", None)
+        uvicorn.run(app, **run_kwargs)
 
 
 __all__ = ["create_app", "launch"]

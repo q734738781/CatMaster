@@ -3,8 +3,11 @@ Tool registry that maps tool names to their functions and Pydantic input models.
 """
 from __future__ import annotations
 
-from typing import Dict, Any, Callable
+import json
+from typing import Dict, Any, Callable, Optional
 from pydantic import BaseModel
+from langchain_core.tools import StructuredTool
+from catmaster.runtime.tool_result_normalizer import normalize_tool_result
 
 
 class ToolRegistry:
@@ -181,6 +184,73 @@ class ToolRegistry:
             descriptions.append(f"{name} : {doc}")
 
         return "\n\n".join(descriptions)
+
+    def as_langchain_tools(
+        self,
+        *,
+        allowlist: Optional[list[str]] = None,
+    ) -> list[StructuredTool]:
+        """Convert registered tools to LangChain StructuredTool instances.
+
+        Each CatMaster tool has signature ``func(payload: dict) -> dict``.
+        The wrapper maps LangChain keyword arguments (unpacked from the
+        Pydantic args_schema) back into the ``payload`` dict the tool expects.
+        Tool output dicts are JSON-serialised so LangChain receives a string
+        (required by ToolMessage).
+        """
+        tools: list[StructuredTool] = []
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        for name in names:
+            info = self.tools.get(name)
+            if not info:
+                continue
+            tools.append(_make_langchain_tool(
+                name=name,
+                func=info["function"],
+                input_model=info["input_model"],
+            ))
+        return tools
+
+
+def _make_langchain_tool(
+    name: str,
+    func: Callable,
+    input_model: type[BaseModel],
+) -> StructuredTool:
+    """Wrap a CatMaster ``func(payload) -> dict`` tool as a LangChain StructuredTool."""
+
+    def _wrapper(**kwargs: Any) -> str:
+        try:
+            result = func(kwargs)
+        except Exception as exc:
+            normalized = normalize_tool_result(
+                {
+                    "status": "failed",
+                    "tool_name": name,
+                    "data": {},
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                tool_name=name,
+                is_control_tool=False,
+            )
+            return json.dumps(normalized, ensure_ascii=False)
+
+        normalized = normalize_tool_result(
+            result,
+            tool_name=name,
+            is_control_tool=False,
+        )
+        return json.dumps(normalized, ensure_ascii=False)
+
+    _wrapper.__name__ = name
+    description = (input_model.__doc__ or f"Input for {name}").strip()
+
+    return StructuredTool.from_function(
+        func=_wrapper,
+        name=name,
+        description=description,
+        args_schema=input_model,
+    )
 
 
 def sanitize_json_schema(schema: dict) -> dict:

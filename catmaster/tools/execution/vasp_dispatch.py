@@ -34,19 +34,22 @@ class VaspExecuteInput(BaseModel):
 
 
 class VaspExecuteBatchInput(BaseModel):
-    """Submit multiple VASP runs in one DPDispatcher submission. Preferred tool for batch VASP runs."""
+    """Submit VASP runs in one DPDispatcher submission (single-folder or recursive batch modes)."""
 
     input_dir: str = Field(
         ...,
         description=(
-            "Root directory containing VASP input subdirectories. Any subfolder containing both INCAR and POTCAR "
-            "is treated as a VASP calc folder. Subfolders are discovered recursively."
+            "Input directory for VASP execution. Two modes are supported: "
+            "(1) single-folder mode: input_dir itself is a VASP calc folder containing INCAR and POTCAR; "
+            "(2) batch mode: recursively discover subfolders containing INCAR and POTCAR. "
+            "Nested mode is forbidden when input_dir itself is a calc folder and descendants also contain calc folders."
         ),
     )
     output_dir: str = Field(
         ...,
         description=(
-            "Root directory to store batch outputs. Results mirror the input subfolder layout under output_dir. "
+            "Root directory to store outputs. In single-folder mode, results go to output_dir/<basename(input_dir)>. "
+            "In batch mode, results mirror discovered subfolder layout under output_dir. "
             "Must not be inside input_dir. Staging directories under output_dir are cleaned after completion."
         ),
     )
@@ -100,6 +103,16 @@ def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) ->
                 input_dirs.append(path)
             dirnames[:] = []
     return sorted(input_dirs, key=lambda p: str(p))
+
+
+def _has_nested_vasp_input_dirs(root: Path) -> bool:
+    for dirpath, _, _ in os.walk(root):
+        path = Path(dirpath)
+        if path == root:
+            continue
+        if _is_vasp_input_dir(path):
+            return True
+    return False
 
 
 def _write_batch_state(
@@ -180,12 +193,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             success=False,
             error=f"input_dir is not a directory: {input_root}",
         )
-    if _is_vasp_input_dir(input_root):
-        return create_tool_output(
-            "vasp_execute_batch",
-            success=False,
-            error="input_dir is a single VASP calc folder. Provide a root with subfolders for batch execution.",
-        )
+    single_folder_mode = _is_vasp_input_dir(input_root)
     output_root = resolve_workspace_path(params.output_dir)
     if output_root.exists() and not output_root.is_dir():
         return create_tool_output(
@@ -201,12 +209,25 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
     output_root.mkdir(parents=True, exist_ok=True)
     exclude_root = None
-    input_dirs = _collect_vasp_input_dirs(input_root, exclude_root=exclude_root)
+    nested_calc_dirs = _collect_vasp_input_dirs(input_root, exclude_root=exclude_root)
+    if single_folder_mode:
+        if _has_nested_vasp_input_dirs(input_root):
+            return create_tool_output(
+                "vasp_execute_batch",
+                success=False,
+                error=(
+                    "Nested calc folders are not allowed: input_dir is already a VASP calc folder "
+                    "and descendant calc folders were also found. Split inputs before submission."
+                ),
+            )
+        input_dirs = [input_root]
+    else:
+        input_dirs = nested_calc_dirs
     if not input_dirs:
         return create_tool_output(
             "vasp_execute_batch",
             success=False,
-            error="No VASP input subdirectories found (expected subdirs containing POTCAR and INCAR).",
+            error="No VASP calc folders found (expected directories containing both POTCAR and INCAR).",
         )
     work_base = make_work_base("vasp_batch")
     local_root = output_root
@@ -214,7 +235,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
     tasks: list[TaskSpec] = []
     task_meta = []
     for inp in input_dirs:
-        rel_path = inp.relative_to(input_root)
+        rel_path = Path(inp.name) if single_folder_mode else inp.relative_to(input_root)
         stage_dir = local_root / work_base / rel_path
         if stage_dir.exists():
             shutil.rmtree(stage_dir)

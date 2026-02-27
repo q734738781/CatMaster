@@ -23,10 +23,10 @@ _DEFAULT_TOPICS: dict[str, str] = {
     "FILES.md": """# FILES\n\n## TL;DR\n- Entry points: (empty)\n- Primary artifacts: (empty)\n\n## Index\n- (empty)\n""",
     "CONSTRAINTS.md": """# CONSTRAINTS\n\n## TL;DR\n- Hard constraints:\n  - (empty)\n\n## Hard Constraints\n- (empty)\n\n## Soft Preferences\n- (empty)\n""",
     "QUESTIONS.md": """# QUESTIONS\n\n## TL;DR\n- Active blockers: (empty)\n\n## Active\n- (empty)\n\n## Resolved\n- (empty)\n""",
-    "RUNBOOK.md": """# RUNBOOK\n\n## TL;DR\n- Standard operating procedure pointer file.\n\n## Checklist\n1. Confirm goal and success criteria from task packet.\n2. Read MEMORY.md first, then locate details via rg/sed.\n3. Persist large outputs to files and cite paths.\n4. Finish with structured task_finish/task_fail.\n""",
+    "RUNBOOK.md": """# RUNBOOK\n\n## TL;DR\n- Standard operating procedure pointer file.\n\n## Checklist\n1. Confirm goal and success criteria from task packet.\n2. Read MEMORY.md first, then locate details via rg/sed.\n3. Persist large outputs to files and cite paths.\n4. Finish using the active task runner contract (control tool finish/fail or structured response).\n""",
 }
 
-_DEFAULT_INDEX = """# MEMORY (AUTOLOADED INDEX)\n\n## What this is\n- Autoloaded memory index for this project.\n- Keep this file concise and pointer-first.\n- Put details in MEMORY/topics/*.md.\n\n## Current State\n- Current focus: (empty)\n- Current milestone: (empty)\n- Latest run artifact: (empty)\n- Next action: (empty)\n\n## Top Constraints\n1. (empty)\n\n## Active Open Questions\n1. (empty)\n\n## Pointers\n- Goal / principles: MEMORY/topics/GOAL.md\n- Facts / decisions: MEMORY/topics/FACTS.md\n- Files / artifacts: MEMORY/topics/FILES.md\n- Constraints: MEMORY/topics/CONSTRAINTS.md\n- Open questions: MEMORY/topics/QUESTIONS.md\n- Runbook: MEMORY/topics/RUNBOOK.md\n\n## Keyword Map\n- GOAL: objective, success criteria, scope, non-goals\n- FACTS: definition, verified, result, decision\n- FILES: path, artifact, dataset, output, script\n- CONSTRAINTS: must, cannot, policy, budget\n- QUESTIONS: unknown, blocked, clarify, decide\n- RUNBOOK: steps, checklist, verify\n"""
+_DEFAULT_INDEX = """# MEMORY (AUTOLOADED INDEX)\n\n## What this is\n- Autoloaded memory index for this project.\n- Keep this file concise and pointer-first.\n- Put details in MEMORY/topics/*.md.\n\n## Latest State\n- Current focus: (empty)\n- Current milestone: (empty)\n- Latest run artifact: (empty)\n- Next action: (empty)\n\n## Top Constraints\n1. (empty)\n\n## Active Open Questions\n1. (empty)\n\n## Pointers\n- Goal / principles: MEMORY/topics/GOAL.md\n- Facts / decisions: MEMORY/topics/FACTS.md\n- Files / artifacts: MEMORY/topics/FILES.md\n- Constraints: MEMORY/topics/CONSTRAINTS.md\n- Open questions: MEMORY/topics/QUESTIONS.md\n- Runbook: MEMORY/topics/RUNBOOK.md\n\n## Keyword Map\n- GOAL: objective, success criteria, scope, non-goals\n- FACTS: definition, verified, result, decision\n- FILES: path, artifact, dataset, output, script\n- CONSTRAINTS: must, cannot, policy, budget\n- QUESTIONS: unknown, blocked, clarify, decide\n- RUNBOOK: steps, checklist, verify\n"""
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,96 @@ class MemoryStore:
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.events_path.exists():
             self.events_path.write_text("", encoding="utf-8")
+
+    def refresh_index_from_topics(self) -> None:
+        """Regenerate MEMORY.md index from topic files.
+
+        This keeps the autoload index aligned with topic updates even when
+        agents only patch MEMORY/topics/*.md.
+        """
+        self.ensure_exists()
+        topics: Dict[str, str] = {}
+        for name in _DEFAULT_TOPICS:
+            path = self.topics_dir / name
+            try:
+                topics[name] = path.read_text(encoding="utf-8")
+            except Exception:
+                topics[name] = ""
+
+        goal_text = topics.get("GOAL.md", "")
+        files_text = topics.get("FILES.md", "")
+        constraints_text = topics.get("CONSTRAINTS.md", "")
+        questions_text = topics.get("QUESTIONS.md", "")
+
+        current_focus = _extract_labeled_tldr(goal_text, "Primary objective") or "(empty)"
+        current_milestone = _extract_labeled_tldr(goal_text, "Definition of success") or "(empty)"
+        latest_run_artifact = (
+            _first_non_empty(_extract_bullets_from_section(files_text, "## Index", limit=1))
+            or "(empty)"
+        )
+        next_action = (
+            _first_non_empty(_extract_bullets_from_section(questions_text, "## Active", limit=1))
+            or "(empty)"
+        )
+
+        top_constraints = _extract_bullets_from_section(constraints_text, "## Hard Constraints", limit=5)
+        if not top_constraints:
+            top_constraints = _extract_bullets_from_section(constraints_text, "## TL;DR", limit=5)
+        active_open_questions = _extract_bullets_from_section(questions_text, "## Active", limit=5)
+
+        lines: List[str] = [
+            "# MEMORY (AUTOLOADED INDEX)",
+            "",
+            "## What this is",
+            "- Autoloaded memory index for this project.",
+            "- Keep this file concise and pointer-first.",
+            "- Put details in MEMORY/topics/*.md.",
+            "",
+            "## Latest State",
+            f"- Current focus: {current_focus}",
+            f"- Current milestone: {current_milestone}",
+            f"- Latest run artifact: {latest_run_artifact}",
+            f"- Next action: {next_action}",
+            "",
+            "## Top Constraints",
+        ]
+        if top_constraints:
+            for i, item in enumerate(top_constraints, start=1):
+                lines.append(f"{i}. {item}")
+        else:
+            lines.append("1. (empty)")
+
+        lines.extend([
+            "",
+            "## Active Open Questions",
+        ])
+        if active_open_questions:
+            for i, item in enumerate(active_open_questions, start=1):
+                lines.append(f"{i}. {item}")
+        else:
+            lines.append("1. (empty)")
+
+        lines.extend([
+            "",
+            "## Pointers",
+            "- Goal / principles: MEMORY/topics/GOAL.md",
+            "- Facts / decisions: MEMORY/topics/FACTS.md",
+            "- Files / artifacts: MEMORY/topics/FILES.md",
+            "- Constraints: MEMORY/topics/CONSTRAINTS.md",
+            "- Open questions: MEMORY/topics/QUESTIONS.md",
+            "- Runbook: MEMORY/topics/RUNBOOK.md",
+            "",
+            "## Keyword Map",
+            "- GOAL: objective, success criteria, scope, non-goals",
+            "- FACTS: definition, verified, result, decision",
+            "- FILES: path, artifact, dataset, output, script",
+            "- CONSTRAINTS: must, cannot, policy, budget",
+            "- QUESTIONS: unknown, blocked, clarify, decide",
+            "- RUNBOOK: steps, checklist, verify",
+            "",
+        ])
+
+        self.index_path.write_text("\n".join(lines), encoding="utf-8")
 
     def read_index(self, *, max_lines: Optional[int] = None, max_chars: Optional[int] = None) -> str:
         text = self.index_path.read_text(encoding="utf-8")
@@ -282,6 +372,50 @@ def _parse_pipe_attrs(raw: str) -> Dict[str, str]:
         key, value = token.split("=", 1)
         attrs[key.strip().lower()] = value.strip()
     return attrs
+
+
+def _extract_labeled_tldr(text: str, label: str) -> str:
+    pattern = re.compile(rf"(?mi)^-\s*{re.escape(label)}\s*:[ \t]*(.*)$")
+    m = pattern.search(text or "")
+    if not m:
+        return ""
+    value = " ".join((m.group(1) or "").split()).strip()
+    return "" if not value or value == "(empty)" else value
+
+
+def _extract_bullets_from_section(text: str, heading: str, *, limit: int) -> List[str]:
+    lines = (text or "").splitlines()
+    start = -1
+    for i, raw in enumerate(lines):
+        if raw.strip() == heading:
+            start = i + 1
+            break
+    if start < 0:
+        return []
+
+    out: List[str] = []
+    for raw in lines[start:]:
+        stripped = raw.strip()
+        if stripped.startswith("## "):
+            break
+        m = re.match(r"^\s*[-*]\s+(.*)$", raw)
+        if not m:
+            continue
+        value = " ".join((m.group(1) or "").split()).strip()
+        if not value or value == "(empty)" or value.endswith(":"):
+            continue
+        out.append(value)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _first_non_empty(items: List[str]) -> str:
+    for item in items:
+        text = " ".join(str(item or "").split()).strip()
+        if text and text != "(empty)":
+            return text
+    return ""
 
 
 __all__ = ["MemoryStore"]

@@ -7,7 +7,6 @@ pytest.importorskip("langchain_core")
 from catmaster.agents.orchestrator_prompts import (
     build_memory_patch_prompt,
     build_memory_patch_repair_prompt,
-    build_task_step_repair_prompt,
 )
 
 
@@ -79,20 +78,7 @@ def test_memory_patch_repair_prompt_requires_aider_format_output() -> None:
     assert "Apply error context (JSON, reference only)" in human_content
 
 
-def test_task_step_repair_prompt_requires_single_tool_call() -> None:
-    prompt = build_task_step_repair_prompt()
-    messages = prompt.format_messages(
-        goal="demo",
-        task_detail="detail",
-        expected_outputs="- out",
-        suggested_tools="bash_exec",
-        reference_hint="- MEMORY/topics/FACTS.md",
-        workspace_policy="none",
-        memory_index_excerpt="",
-        error="parse_error",
-        raw="invalid output",
-    )
-    system_content = str(messages[0].content)
-    assert "This turn MUST be exactly one valid tool call." in system_content
-    assert "Call exactly one tool in this turn." in system_content
-    assert "Do not include any plain text outside the tool call." in system_content
+def test_task_runner_system_prompt_has_key_rules() -> None:
+    from catmaster.agents.orchestrator_prompts import TASK_RUNNER_SYSTEM_PROMPT
+    assert "Use tool calling from all available tools" in TASK_RUNNER_SYSTEM_PROMPT
+    assert "status=\"done\"" in TASK_RUNNER_SYSTEM_PROMPT or "status=blocked" in TASK_RUNNER_SYSTEM_PROMPT

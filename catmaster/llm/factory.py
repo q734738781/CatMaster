@@ -1,19 +1,60 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Dict
 import os
+import logging
+import json
 
-from catmaster.llm.config import LLMProfile, LLMConfig, ToolCallingRole
+from catmaster.llm.config import LLMConfig
+
+_logger = logging.getLogger(__name__)
 
 
-@dataclass
-class LLMBundle:
-    llm: Any
-    summary_llm: Any
-    tool_driver: Any
-    model_name: str
-    provider: str
+def _request_content_text(request: Any) -> str:
+    """Best-effort extraction of HTTP request body for logging."""
+    try:
+        content = getattr(request, "content", b"")
+    except Exception as exc:
+        return f"<unavailable: {exc}>"
+    if isinstance(content, bytes):
+        return content.decode("utf-8", errors="replace")
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False, default=str)
+    except Exception:
+        return str(content)
+
+
+def _build_http_debug_clients(cfg: LLMConfig) -> tuple[Any, Any]:
+    """Create httpx clients that log raw POST payloads."""
+    try:
+        import httpx  # type: ignore
+    except Exception as exc:  # pragma: no cover - optional dependency
+        _logger.warning("print_http_raw_post enabled but httpx is unavailable: %s", exc)
+        return None, None
+
+    def _log_request(request: Any) -> None:
+        method = str(getattr(request, "method", "") or "").upper()
+        if method != "POST":
+            return
+        url = str(getattr(request, "url", "") or "")
+        body = _request_content_text(request)
+        _logger.info(
+            "[llm.http.raw_post] provider=%s model=%s method=%s url=%s body=%s",
+            cfg.provider,
+            cfg.model,
+            method,
+            url,
+            body,
+        )
+
+    async def _alog_request(request: Any) -> None:
+        _log_request(request)
+
+    sync_client = httpx.Client(event_hooks={"request": [_log_request]})
+    async_client = httpx.AsyncClient(event_hooks={"request": [_alog_request]})
+    return sync_client, async_client
 
 
 def _require_api_key(cfg: LLMConfig) -> str:
@@ -26,7 +67,74 @@ def _require_api_key(cfg: LLMConfig) -> str:
     raise ValueError(f"Missing API key. Set env {cfg.api_key_env!r} or provide api_key in config.")
 
 
+def _provider_options_for(cfg: LLMConfig, provider: str | None = None) -> Dict[str, Any]:
+    key = str(provider or cfg.provider or "").strip().lower()
+    if not key:
+        return {}
+    options = cfg.provider_options.get(key)
+    return dict(options) if isinstance(options, dict) else {}
+
+
+def _resolve_extra_body(cfg: LLMConfig) -> Dict[str, Any]:
+    provider_extra = _provider_options_for(cfg).get("extra_body")
+    if isinstance(provider_extra, dict) and provider_extra:
+        return dict(provider_extra)
+    return {}
+
+
+def _resolve_reasoning_effort(cfg: LLMConfig) -> str | None:
+    reasoning = cfg.reasoning if isinstance(cfg.reasoning, dict) else {}
+    effort = reasoning.get("effort")
+    if effort is None:
+        return None
+    text = str(effort).strip()
+    return text or None
+
+
+def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> None:
+    if str(cfg.provider or "").strip().lower() != "openai":
+        return
+
+    request_options = _provider_options_for(cfg, "openai").get("request_options")
+    if request_options is None:
+        return
+    if not isinstance(request_options, dict):
+        raise ValueError("models.*.provider_options.openai.request_options must be a mapping")
+
+    allowed = {"timeout", "max_retries", "default_headers", "default_query"}
+    unknown = sorted(set(request_options.keys()) - allowed)
+    if unknown:
+        raise ValueError(
+            "Unsupported models.*.provider_options.openai.request_options keys: "
+            f"{', '.join(unknown)}"
+        )
+
+    if "default_headers" in request_options:
+        raw_headers = request_options.get("default_headers")
+        if raw_headers is not None and not isinstance(raw_headers, dict):
+            raise ValueError("models.*.provider_options.openai.request_options.default_headers must be a mapping")
+        merged_headers = dict(kwargs.get("default_headers") or {})
+        if isinstance(raw_headers, dict):
+            merged_headers.update(raw_headers)
+        if merged_headers:
+            kwargs["default_headers"] = merged_headers
+
+    if "default_query" in request_options:
+        raw_query = request_options.get("default_query")
+        if raw_query is not None and not isinstance(raw_query, dict):
+            raise ValueError("models.*.provider_options.openai.request_options.default_query must be a mapping")
+        if isinstance(raw_query, dict) and raw_query:
+            kwargs["default_query"] = dict(raw_query)
+
+    if request_options.get("timeout") is not None:
+        kwargs["timeout"] = request_options.get("timeout")
+
+    if request_options.get("max_retries") is not None:
+        kwargs["max_retries"] = request_options.get("max_retries")
+
+
 def build_chat_model(cfg: LLMConfig) -> Any:
+    """Build a LangChain ChatModel from an LLMConfig."""
     if cfg.provider in ("openai", "openrouter", "oai_compatible", "deepseek"):
         from langchain_openai import ChatOpenAI
 
@@ -40,6 +148,7 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             kwargs["timeout"] = cfg.timeout_s
         if cfg.max_retries is not None:
             kwargs["max_retries"] = cfg.max_retries
+        _apply_openai_request_options(cfg, kwargs)
 
         model_kwargs: dict[str, Any] = {}
         if cfg.top_p is not None:
@@ -54,14 +163,48 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         if max_tokens is not None:
             model_kwargs["max_tokens"] = max_tokens
 
-        if cfg.extra:
-            model_kwargs.update(cfg.extra)
+        extra_model_kwargs = dict(cfg.extra) if isinstance(cfg.extra, dict) else {}
+        if "extra_body" in extra_model_kwargs:
+            raise ValueError(
+                "models.*.extra.extra_body is not supported. "
+                "Use models.*.provider_options.<provider>.extra_body."
+            )
+        if "reasoning_effort" in extra_model_kwargs:
+            raise ValueError(
+                "models.*.extra.reasoning_effort is not supported. "
+                "Use models.*.reasoning.effort instead."
+            )
+        if extra_model_kwargs:
+            model_kwargs.update(extra_model_kwargs)
+
+        merged_extra_body = _resolve_extra_body(cfg)
+        if merged_extra_body:
+            kwargs["extra_body"] = merged_extra_body
+            _logger.debug(
+                "Using extra_body for ChatOpenAI (provider=%s keys=%s)",
+                cfg.provider,
+                sorted(merged_extra_body.keys()),
+            )
+
+        reasoning_effort = _resolve_reasoning_effort(cfg)
+
+        if cfg.print_http_raw_post:
+            http_client, http_async_client = _build_http_debug_clients(cfg)
+            if http_client is not None:
+                kwargs["http_client"] = http_client
+            if http_async_client is not None:
+                kwargs["http_async_client"] = http_async_client
+            _logger.info(
+                "Enabled raw HTTP POST logging for provider=%s model=%s",
+                cfg.provider,
+                cfg.model,
+            )
 
         return ChatOpenAI(
             model=cfg.model,
             api_key=api_key,
             temperature=cfg.temperature,
-            reasoning_effort=cfg.reasoning_effort,
+            reasoning_effort=reasoning_effort,
             model_kwargs=model_kwargs,
             **kwargs,
         )
@@ -77,57 +220,6 @@ def build_chat_model(cfg: LLMConfig) -> Any:
     raise ValueError(f"Unsupported provider: {cfg.provider}")
 
 
-def build_tool_driver(cfg: LLMConfig) -> Any:
-    driver_kind = cfg.tool_calling.driver
-    if driver_kind == "openai_responses":
-        from catmaster.llm.openai_responses_driver import OpenAIResponsesDriver
-
-        return OpenAIResponsesDriver(
-            model=cfg.model,
-            api_key=_require_api_key(cfg),
-            base_url=cfg.base_url,
-            default_headers=cfg.default_headers or None,
-        )
-    if driver_kind == "openai_chat_completions":
-        from catmaster.llm.openai_chat_completions_driver import OpenAIChatCompletionsDriver
-
-        return OpenAIChatCompletionsDriver(
-            model=cfg.model,
-            api_key=_require_api_key(cfg),
-            base_url=cfg.base_url,
-            default_headers=cfg.default_headers or None,
-        )
-    if driver_kind == "langchain_bind_tools":
-        raise NotImplementedError("langchain_bind_tools driver is reserved for future providers.")
-    raise ValueError(f"Unknown driver kind: {driver_kind}")
-
-
-def build_role_tool_driver(profile: LLMProfile, role: ToolCallingRole) -> Any:
-    return build_tool_driver(profile.config_for_role(role))
-
-
-def build_llm_bundle(profile: LLMProfile) -> LLMBundle:
-    task_runner_cfg = profile.config_for_role("task_runner")
-    memory_patch_cfg = profile.config_for_role("memory_patch")
-    summary_cfg = profile.config_for_role("summary")
-
-    llm = build_chat_model(memory_patch_cfg)
-    summary_llm = build_chat_model(summary_cfg)
-    tool_driver = build_tool_driver(task_runner_cfg)
-
-    return LLMBundle(
-        llm=llm,
-        summary_llm=summary_llm,
-        tool_driver=tool_driver,
-        model_name=task_runner_cfg.model,
-        provider=task_runner_cfg.provider,
-    )
-
-
 __all__ = [
-    "LLMBundle",
-    "build_llm_bundle",
     "build_chat_model",
-    "build_tool_driver",
-    "build_role_tool_driver",
 ]

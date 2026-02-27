@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import threading
 import time
@@ -258,41 +259,72 @@ class WebSession:
             run_dir: Optional[Path] = None
             run_error = ""
             try:
-                from catmaster.agents.orchestrator import Orchestrator
                 from catmaster.llm.config import LLMProfile
+                from catmaster.llm.factory import build_chat_model
+                from catmaster.agents.graph import GraphRunner
+                from catmaster.runtime.run_context import RunContext
+                from catmaster.runtime.memory_store import MemoryStore
+                from catmaster.runtime.local_tool_backend import LocalToolBackend
+                from catmaster.runtime.tool_executor import ToolExecutor
+                from catmaster.runtime.artifact_store import ArtifactStore
+                from catmaster.runtime.trace_store import TraceStore
+                from catmaster.tools.registry import get_tool_registry
 
                 llm_profile = LLMProfile.from_env_or_file(llm_config)
-                orch = Orchestrator(
-                    llm_profile=llm_profile,
-                    reporter=self.reporter,
-                    log_llm_console=False,
-                    workspace=str(ws),
-                    resume=is_resume,
-                    resume_dir=resume_dir,
-                    run_control=self.run_control,
+                run_ctx = RunContext.create(
+                    workspace=ws,
+                    run_dir=Path(resume_dir) if resume_dir else None,
+                    model_name=llm_profile.main.model,
                 )
                 if self.run_control is not None:
-                    self.run_control.run_id = orch.run_context.run_id
-                run_dir = orch.run_context.run_dir
+                    self.run_control.run_id = run_ctx.run_id
+                run_dir = run_ctx.run_dir
                 if self.reporter:
                     self.reporter.set_run_dir(run_dir)
                 self._write_active_runs(effective_lane, run_dir, workspace=ws)
+
+                memory_store = MemoryStore.create_default(workspace=ws)
+                memory_store.ensure_exists()
+                registry = get_tool_registry()
+                tool_backend = LocalToolBackend(
+                    registry=registry,
+                    tool_executor=ToolExecutor(registry),
+                    artifact_store=ArtifactStore(run_ctx.run_dir),
+                    trace_store=TraceStore(run_ctx.run_dir),
+                    role="langgraph",
+                    workspace=ws,
+                )
+
+                runner = GraphRunner(
+                    task_runner_model=build_chat_model(llm_profile.config_for_role("task_runner")),
+                    proposal_model=build_chat_model(llm_profile.config_for_role("proposal")),
+                    director_model=build_chat_model(llm_profile.config_for_role("director")),
+                    memory_patch_model=build_chat_model(llm_profile.config_for_role("memory_patch")),
+                    summary_model=build_chat_model(llm_profile.config_for_role("summary")),
+                    registry=registry,
+                    memory_store=memory_store,
+                    run_context=run_ctx,
+                    reporter=self.reporter,
+                    tool_backend=tool_backend,
+                    run_control=self.run_control,
+                    termination_mode=llm_profile.agent_runtime.termination_mode,
+                    strict_control_contract=llm_profile.agent_runtime.strict_control_contract,
+                    recursion_limit=llm_profile.agent_runtime.recursion_limit,
+                    stream_debug_console=os.environ.get("CATMASTER_STREAM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"},
+                    print_state_messages=llm_profile.agent_runtime.print_state_messages,
+                )
                 with self._lock:
                     self.run_status = "running"
                     self.run_info = {
-                        "run_id": orch.run_context.run_id,
+                        "run_id": run_ctx.run_id,
                         "run_dir": str(run_dir),
-                        "model_name": orch.run_context.model_name,
+                        "model_name": run_ctx.model_name,
                     }
                     self.selected_run_dir = run_dir
                     self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
-                result = orch.run(
+                result = runner.run(
                     prompt,
-                    log_llm=log_llm,
-                    proposal_review=proposal_review,
                     lane=effective_lane,
-                    full_auto_major=full_auto_major,
-                    resume_feedback=resume_feedback,
                 )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
@@ -317,7 +349,6 @@ class WebSession:
             finally:
                 if self.reporter:
                     self.reporter.close()
-                # Generate UI summary only when a run is finalized.
                 if run_dir and run_dir.exists():
                     summarize_run(run_dir, run_error=run_error or None)
 
@@ -648,6 +679,10 @@ class WebSession:
             max_recent_events=80,
             max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
         )
+        terminal_status = self._terminal_status_from_task_state(run_dir)
+        if terminal_status:
+            self._apply_terminal_status(state, terminal_status)
+        effective_live_llm = bool(live_llm_enabled) and not bool(terminal_status)
         if events and changed and should_refresh_live_summary(
             state,
             events,
@@ -656,7 +691,7 @@ class WebSession:
         ):
             state["live_summary"] = summarize_live_state(
                 state,
-                enabled=bool(live_llm_enabled),
+                enabled=effective_live_llm,
                 max_events=LIVE_SUMMARY_MAX_EVENTS,
                 max_params_chars=LIVE_SUMMARY_MAX_PARAMS_CHARS,
                 max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
@@ -671,7 +706,7 @@ class WebSession:
                 max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
                 timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
             )
-        if (not live_llm_enabled) and isinstance(state.get("live_summary"), dict):
+        if (not effective_live_llm) and isinstance(state.get("live_summary"), dict):
             if str(state["live_summary"].get("source") or "") == "llm":
                 state["live_summary"] = summarize_live_state(
                     state,
@@ -699,6 +734,9 @@ class WebSession:
             max_recent_events=80,
             max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
         )
+        terminal_status = self._terminal_status_from_task_state(run_dir)
+        if terminal_status:
+            self._apply_terminal_status(state, terminal_status)
         key = self._run_key(run_dir)
         with self._lock:
             cached = self.live_state_by_run.get(key)
@@ -714,6 +752,34 @@ class WebSession:
                 timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
             )
         return self._public_live_state(state)
+
+    @staticmethod
+    def _terminal_status_from_task_state(run_dir: Optional[Path]) -> str:
+        if run_dir is None:
+            return ""
+        path = run_dir / "task_state.json"
+        if not path.exists():
+            return ""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        status = str(payload.get("status") or "").strip().lower()
+        if status in {"done", "failure", "needs_intervention", "interrupted_paused"}:
+            return status
+        return ""
+
+    @staticmethod
+    def _apply_terminal_status(state: Dict[str, Any], status: str) -> None:
+        state["status"] = status
+        state["active_toolcall"] = None
+        if status == "interrupted_paused":
+            phase = str(state.get("current_phase") or "")
+            state["current_phase"] = phase if phase.startswith("paused") else "paused"
+            return
+        state["current_phase"] = "finalizing"
 
     def list_run_cards(self) -> List[Dict[str, Any]]:
         ws = self._workspace_path()

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, model_validator
 
 from catmaster.tools.registry import sanitize_json_schema
@@ -10,28 +12,34 @@ from catmaster.tools.registry import sanitize_json_schema
 class TaskPacket(BaseModel):
     """Structured packet for a worker task."""
 
-    goal: str = Field(..., description="Concrete task goal for worker execution.")
+    goal: str = Field(
+        ...,
+        description="Concrete worker goal in one short sentence.",
+    )
     task_detail: str = Field(
         ...,
         description=(
-            "Detailed execution guidance with explicit key parameters and non-weakenable requirements."
+            "Concise execution checklist: non-negotiable constraints, key parameters, and minimal done checks."
         ),
     )
-    expected_outputs: list[str] = Field(default_factory=list, description="Expected outputs and deliverables.")
+    expected_outputs: list[str] = Field(
+        default_factory=list,
+        description="Only concrete deliverables needed for next-step decision.",
+    )
     suggested_tools: list[str] = Field(
         default_factory=list,
-        description="Optional tool-name hints for worker; advisory only.",
+        description="Optional concise tool-name hints for worker; advisory only.",
     )
     reference_hint: list[str] = Field(
         default_factory=list,
         description=(
-            "Reference hints for worker discovery, such as memory topic files, rg keywords, and done-check points."
+            "Short high-value discovery hints (memory files, rg keywords, done-check points); avoid exhaustive lists."
         ),
     )
 
 
 class DirectorDecideInput(BaseModel):
-    """Return the director's decision for the next action."""
+    """Return the director decision for next action using compact, high-signal fields."""
 
     state: Literal[
         "PerformNextTask",
@@ -39,21 +47,20 @@ class DirectorDecideInput(BaseModel):
         "MajorReviseProposal",
         "StopAndSynthesize",
     ] = Field(..., description="Decision state for the next action.")
-    rationale: str = Field(..., description="Reasoning behind the decision.")
+    rationale: str = Field(
+        ...,
+        description="Very brief decision rationale (usually 1-2 sentences).",
+    )
 
-    # PerformNextTask fields
     task_packet: TaskPacket | None = Field(default=None, description="Structured worker task packet.")
 
-    # Proposal revision fields
     updated_proposal_md: str | None = Field(default=None, description="Updated proposal markdown.")
     updated_work_packages: list[str] | None = Field(default=None, description="Updated ordered work packages.")
     change_log: str | None = Field(default=None, description="Summary of proposal changes.")
 
-    # Major revise fields
     needs_human: bool | None = Field(default=None, description="Whether human approval is required.")
     questions_for_human: list[str] | None = Field(default=None, description="Questions for human decision.")
 
-    # Stop fields
     stop_reason: str | None = Field(default=None, description="Reason for stopping.")
     deliverables: list[str] | None = Field(default=None, description="Expected deliverables when stopping.")
 
@@ -84,8 +91,44 @@ def get_director_control_tool_schemas(*, strict: bool = False) -> list[dict]:
     ]
 
 
+def _make_control_tool(name: str, model: type[BaseModel]) -> StructuredTool:
+    description = (model.__doc__ or f"Input for {name}").strip()
+
+    def _tool(**kwargs: Any) -> str:
+        normalized = dict(kwargs)
+        task_packet = normalized.get("task_packet")
+        if isinstance(task_packet, BaseModel):
+            normalized["task_packet"] = task_packet.model_dump(mode="json", exclude_none=True)
+        payload = model.model_validate(normalized).model_dump(mode="json", exclude_none=True)
+        return json.dumps(
+            {
+                "status": "control",
+                "tool_name": name,
+                "payload": payload,
+            },
+            ensure_ascii=False,
+        )
+
+    _tool.__name__ = name
+    return StructuredTool.from_function(
+        func=_tool,
+        name=name,
+        description=description,
+        args_schema=model,
+        return_direct=True,
+    )
+
+
+def as_langchain_control_tools() -> list[StructuredTool]:
+    return [
+        _make_control_tool("director_decide", DirectorDecideInput),
+    ]
+
+
 __all__ = [
+    "TaskPacket",
     "DirectorDecideInput",
     "DIRECTOR_CONTROL_TOOL_NAMES",
     "get_director_control_tool_schemas",
+    "as_langchain_control_tools",
 ]
