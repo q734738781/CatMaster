@@ -160,7 +160,12 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_PROJECT_SPACE_ROOT="$(cd "$ROOT/.." && pwd)/project_space"
+DEFAULT_PROJECT_SPACE_ROOT_FILE="$ROOT/.project_space_root_default"
+if [[ -f "$DEFAULT_PROJECT_SPACE_ROOT_FILE" ]]; then
+  DEFAULT_PROJECT_SPACE_ROOT="$(<"$DEFAULT_PROJECT_SPACE_ROOT_FILE")"
+else
+  DEFAULT_PROJECT_SPACE_ROOT="$(cd "$ROOT/.." && pwd)/project_space"
+fi
 PROJECT_SPACE_ROOT="${CATMASTER_PROJECT_SPACE_ROOT:-$DEFAULT_PROJECT_SPACE_ROOT}"
 cd "$ROOT"
 exec python main.py --project-space-root "$PROJECT_SPACE_ROOT" "$@"

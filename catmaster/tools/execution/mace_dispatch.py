@@ -10,6 +10,8 @@ import shlex
 from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     STATUS_FILE_NAME,
+    STDOUT_FILE_NAME,
+    STDERR_FILE_NAME,
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
@@ -225,18 +227,20 @@ def _collect_mace_outputs(stage_root: Path, stage_output: Path, output_root: Pat
     except Exception as exc:
         warnings.append(f"collect output failed: {type(exc).__name__}: {exc}")
 
-    status_src = stage_root / STATUS_FILE_NAME
-    status_dst = output_root / STATUS_FILE_NAME
-    try:
-        if status_src.is_file():
-            status_dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(status_src, status_dst)
-    except Exception as exc:
-        warnings.append(f"collect status failed: {type(exc).__name__}: {exc}")
-    if status_dst.is_file():
-        out["status_file_rel"] = workspace_relpath(status_dst)
-    else:
-        out["status_file_rel"] = None
+    for src_name, field_name in (
+        (STATUS_FILE_NAME, "status_file_rel"),
+        (STDOUT_FILE_NAME, "stdout_file_rel"),
+        (STDERR_FILE_NAME, "stderr_file_rel"),
+    ):
+        src = stage_root / src_name
+        dst = output_root / src_name
+        try:
+            if src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+        except Exception as exc:
+            warnings.append(f"collect {src_name} failed: {type(exc).__name__}: {exc}")
+        out[field_name] = workspace_relpath(dst) if dst.is_file() else None
 
     out["batch_summary_rel"] = (
         workspace_relpath(output_root / "batch_summary.json")

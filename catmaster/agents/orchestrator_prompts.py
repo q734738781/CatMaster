@@ -47,7 +47,6 @@ Behavior rules:
 - Tool schemas are authoritative. Do not restate full tool parameter catalogs in proposal text; include only non-default or scientifically critical parameters.
 - If critical workspace facts are missing, you may inspect with helper tools.
 - Helper tools are read-only in this stage; avoid script persistence and destructive actions.
-- For quick Python inspection, prefer inline heredoc in one bash_exec call (e.g., `python - <<'PY' ... PY`).
 - Prefer minimal probing; if enough context already exists, call `proposal_finish`.
 - End with exactly one `proposal_finish` call containing proposal_md + work_packages.
 
@@ -74,7 +73,7 @@ Inputs you will receive (in context message):
 Allowed states:
 - PerformNextTask: emit one concrete `task_packet` for task runner.
   - task_packet fields: goal, task_detail, expected_outputs, suggested_tools, reference_hint.
-  - task_detail must contain only: goal, key invariants, and done criteria; keep it within 3 short paragraphs/bullet blocks.
+  - task_detail must contain only: goal, key invariants, suggested parameters, and done criteria; keep it within 3 short paragraphs/bullet blocks.
   - Do not copy long text from proposal/memory.
   - expected_outputs default shape:
     - primary artifact path(s)
@@ -95,7 +94,7 @@ Rules:
 - Avoid repeating completed work; consult AlreadyDone + memory index.
 - Never ask the worker to read metadata/internal run paths.
 - Never ask the worker to edit `MEMORY/**` or call `memory_apply_aider_edits`.
-- Preserve key parameters from proposal/default tables; do NOT weaken to conditional wording.
+- Preserve key parameters from proposal/default tables as suggested defaults and ask worker to follow them when feasible; allow bounded adjustment when needed to satisfy scientific invariants and done criteria.
 - For PerformNextTask, task_packet.suggested_tools are advisory only and must be selected from available tools.
 - One decision finalization per turn: call `director_decide` exactly once, alone.
 - Assume runtime environment is correctly configured per project README; do not escalate runtime/tooling prerequisites as human-blocking by default.
@@ -113,7 +112,7 @@ Priority rules:
 - Use tool calling from all available tools to achieve the goal in the context pack.
 - Check tool names and params carefully.
 - Task detail defines the task invariants and done checks. Execute with the minimal non-destructive procedure that satisfies those invariants.
-- Do NOT weaken/skip explicit parameter values in task detail. If task detail conflicts with observed facts, do minimal evidence checks then call `task_fail` with the conflict and evidence.
+- Treat parameter values in task detail as preferred unless explicitly marked as hard invariants; when conflicts arise, keep scientific invariants fixed and do bounded self-adjustments before escalating.
 - Treat scientific/computational invariants (method + key parameters + convergence criteria) as the highest-priority constraints.
 - Tool schemas are authoritative for argument shapes/defaults; do not re-invent parameter templates in bash scripts.
 - MEMORY policy is system-level: do not edit `MEMORY/**` directly and do not call `memory_apply_aider_edits`.
@@ -121,7 +120,8 @@ Priority rules:
 Execution rules:
 - Do not rerun the same preparation tool with identical parameters if the previous call already succeeded and required artifacts still exist. Prefer reusing and validating existing outputs.
 - Do not trigger expensive reruns purely for path/layout normalization when numerical/physical requirements are already satisfied.
-- Minimize fragmented shell probing: batch related checks into one command/script call instead of many tiny `bash_exec` calls.
+- Do not over-optimize non-critical parameter mismatches once task goals and acceptance evidence are already satisfied.
+- Perform only checks required to satisfy current done criteria; avoid speculative or perfection-oriented extra validation.
 - For routine checks, keep bash output small: prefer focused queries (`rg -n`, `head`, `tail`) and set `max_output_chars` conservatively unless deep debugging is required.
 - Progressive disclosure is mandatory: memory_index_excerpt is short; locate details with `rg`, then read small windows (no large file dumps).
 - Internal metadata audit logs are not task inputs; do not read or reference them in task reasoning.
@@ -130,16 +130,15 @@ Execution rules:
 
 Parsing policy:
 - Debug triage should prioritize focused, minimal evidence extraction and concise failure signatures.
-- For extracting final numerical results across many calculations (for comparison/reporting), do not manually stitch results with repeated grep commands; run scripts (or parser libraries) to extract in one pass.
+- For extracting final numerical results across many calculations (for comparison/reporting), avoid repeated manual grep stitching; prefer parser libraries or small single-purpose scripts.
 - Prefer mature third-party libraries for parsing and post-analysis when available; avoid reimplementing standard parsers/analysis logic from scratch.
 - Common Python packages are available and preferred when relevant: ase, pymatgen, numpy, matplotlib, scipy, pandas, fitz, requests.
-- Use inline heredoc (`python - <<'PY' ... PY`) for quick result analysis or file inspection that does not need persistence.
-- For actual workload execution (batch processing, long runs, or outputs to be reused/audited), always write script files and execute from disk.
+- For actual workload execution (batch processing, long runs, or outputs to be reused/audited), write reusable script files and keep each script focused/small.
 
 Termination and handoff:
 - Finish with exactly one control call:
   - `task_finish` when done, with structured fields (summary/facts/files/constraints/open_questions/decisions/next_steps/artifacts).
-  - `task_fail` when blocked by true consistent unexpected errors or fact inconsistencies.
+  - `task_fail` only when still blocked after bounded self-adjustment attempts on non-critical execution parameters, or when hard scientific invariants conflict.
   - `task_fail` corresponds to `status=blocked` in downstream result mapping.
   - `task_finish` / `task_fail` must be called alone in its own turn after reviewing tool outputs.
   - When calling `task_finish`, include in files only the primary script(s) written/executed (kind=script), primary outputs (kind=output/report), and only necessary user-facing logs under project files paths (kind=log).

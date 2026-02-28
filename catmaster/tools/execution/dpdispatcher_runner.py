@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 import shlex
 import time
 import uuid
+import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field
 import re
@@ -13,6 +13,8 @@ from dpdispatcher import Machine, Resources, Task, Submission
 from catmaster.tools.execution.machine_registry import MachineRegister
 
 STATUS_FILE_NAME = ".catmaster_status.json"
+STDOUT_FILE_NAME = ".catmaster_stdout.log"
+STDERR_FILE_NAME = ".catmaster_stderr.log"
 
 _DP_PATTERNS = [
     re.compile(r"^[0-9a-f]{40}_task_tag_finished$"),
@@ -136,8 +138,9 @@ def _task_state(task: Task) -> str:
 
 def _ensure_status_backward_files(files: List[str]) -> List[str]:
     out = list(files or [])
-    if STATUS_FILE_NAME not in out:
-        out.append(STATUS_FILE_NAME)
+    for required in (STATUS_FILE_NAME, STDOUT_FILE_NAME, STDERR_FILE_NAME):
+        if required not in out:
+            out.append(required)
     return out
 
 
@@ -148,6 +151,19 @@ def _wrap_command_for_dpdispatcher(command: str) -> str:
         "import os\n"
         "import pathlib\n"
         "import time\n"
+        "def _read_tail(path: str, max_chars: int = 4000) -> str:\n"
+        "    if not path:\n"
+        "        return ''\n"
+        "    p = pathlib.Path(path)\n"
+        "    if not p.is_file():\n"
+        "        return ''\n"
+        "    try:\n"
+        "        text = p.read_text(encoding='utf-8', errors='replace')\n"
+        "    except Exception:\n"
+        "        return ''\n"
+        "    if len(text) <= max_chars:\n"
+        "        return text\n"
+        "    return text[-max_chars:]\n"
         "rc_raw = os.environ.get('__CM_RC', '-999').strip()\n"
         "try:\n"
         "    rc = int(rc_raw)\n"
@@ -165,6 +181,10 @@ def _wrap_command_for_dpdispatcher(command: str) -> str:
         "    'cwd': os.getcwd(),\n"
         "    't_start': _to_float('__CM_T0'),\n"
         "    't_end': _to_float('__CM_T1'),\n"
+        "    'stdout_file': os.environ.get('__CM_STDOUT', ''),\n"
+        "    'stderr_file': os.environ.get('__CM_STDERR', ''),\n"
+        "    'stdout_tail': _read_tail(os.environ.get('__CM_STDOUT', '')),\n"
+        "    'stderr_tail': _read_tail(os.environ.get('__CM_STDERR', '')),\n"
         "}\n"
         f"pathlib.Path({status_file_repr}).write_text(json.dumps(data, indent=2) + '\\n', encoding='utf-8')\n"
     )
@@ -172,11 +192,13 @@ def _wrap_command_for_dpdispatcher(command: str) -> str:
         [
             "set -o pipefail",
             f"__CM_COMMAND={shlex.quote(command)}",
+            f"__CM_STDOUT={shlex.quote(STDOUT_FILE_NAME)}",
+            f"__CM_STDERR={shlex.quote(STDERR_FILE_NAME)}",
             "__CM_T0=$(python -c 'import time; print(time.time())')",
-            '( eval "$__CM_COMMAND" )',
+            '( eval "$__CM_COMMAND" ) >"$__CM_STDOUT" 2>"$__CM_STDERR"',
             "__CM_RC=$?",
             "__CM_T1=$(python -c 'import time; print(time.time())')",
-            "export __CM_COMMAND __CM_RC __CM_T0 __CM_T1",
+            "export __CM_COMMAND __CM_RC __CM_T0 __CM_T1 __CM_STDOUT __CM_STDERR",
             "python - <<'PY' || true",
             py_script,
             "PY",
@@ -184,6 +206,75 @@ def _wrap_command_for_dpdispatcher(command: str) -> str:
         ]
     )
     return "bash -lc " + shlex.quote(script)
+
+
+def _read_status_file(path: Path) -> Dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _status_details_for_task(work_base_dir: Path, *, task_index: int, task_work_path: str) -> Dict[str, Any]:
+    work_path = task_work_path or "."
+    task_dir = work_base_dir / work_path
+    status_path = task_dir / STATUS_FILE_NAME
+    rec: Dict[str, Any] = {
+        "task_index": task_index,
+        "task_work_path": work_path,
+        "task_dir": str(task_dir),
+        "status_path": str(status_path),
+    }
+    data = _read_status_file(status_path)
+    if not data:
+        rec["status_missing_or_invalid"] = True
+        return rec
+    rec["status_missing_or_invalid"] = False
+    rc_raw = data.get("returncode")
+    try:
+        rc = int(rc_raw)
+    except Exception:
+        rc = None
+    rec["returncode"] = rc
+    rec["cwd"] = data.get("cwd")
+    rec["command"] = data.get("command")
+    rec["stdout_file"] = data.get("stdout_file")
+    rec["stderr_file"] = data.get("stderr_file")
+    rec["stdout_tail"] = data.get("stdout_tail")
+    rec["stderr_tail"] = data.get("stderr_tail")
+    return rec
+
+
+def _assert_remote_success(status_records: List[Dict[str, Any]]) -> None:
+    failed = []
+    for rec in status_records:
+        if rec.get("status_missing_or_invalid"):
+            failed.append(rec)
+            continue
+        if rec.get("returncode") != 0:
+            failed.append(rec)
+    if not failed:
+        return
+    first = failed[0]
+    if first.get("status_missing_or_invalid"):
+        raise RuntimeError(
+            "Remote task failed: missing/invalid status file "
+            f"(task_index={first.get('task_index')}, task_work_path={first.get('task_work_path')}, "
+            f"status_path={first.get('status_path')})"
+        )
+    stderr_tail = str(first.get("stderr_tail") or "").strip()
+    stderr_excerpt = ""
+    if stderr_tail:
+        one_line = " ".join(stderr_tail.split())
+        stderr_excerpt = f", stderr_excerpt={one_line[:240]}"
+    raise RuntimeError(
+        "Remote task failed with non-zero exit code "
+        f"(task_index={first.get('task_index')}, task_work_path={first.get('task_work_path')}, "
+        f"returncode={first.get('returncode')}, cwd={first.get('cwd')}, status_path={first.get('status_path')}"
+        f"{stderr_excerpt})"
+    )
 
 
 def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None, register: Optional[MachineRegister] = None) -> DispatchResult:
@@ -221,6 +312,12 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
     t0 = time.time()
     submission.run_submission(clean=request.clean_remote, check_interval=request.check_interval)
     duration = time.time() - t0
+
+    work_base_dir = Path(machine.context.init_local_root) / request.work_base
+    status_records = [
+        _status_details_for_task(work_base_dir, task_index=0, task_work_path=request.task_work_path)
+    ]
+    _assert_remote_success(status_records)
 
     states = [_task_state(t) for t in task_list]
     output_dir = Path(machine.context.init_local_root) / request.work_base / request.task_work_path
@@ -276,6 +373,13 @@ def dispatch_submission(
     t0 = time.time()
     submission.run_submission(clean=batch.clean_remote, check_interval=batch.check_interval)
     duration = time.time() - t0
+
+    work_base_dir = Path(machine.context.init_local_root) / batch.work_base
+    status_records = [
+        _status_details_for_task(work_base_dir, task_index=i, task_work_path=t.task_work_path)
+        for i, t in enumerate(batch.tasks)
+    ]
+    _assert_remote_success(status_records)
 
     states = [_task_state(t) for t in task_list]
     # If all tasks share the same task_work_path, surface that in output_dir

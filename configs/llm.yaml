@@ -78,7 +78,7 @@ agent_runtime:
   strict_control_contract: true
   recursion_limit: 300
   print_state_messages: false
-  print_http_raw_post: true
+  print_http_raw_post: false
 
 agent_policies:
   proposal:

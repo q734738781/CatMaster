@@ -29,7 +29,7 @@ class BashExecInput(BaseModel):
     script: str = Field(..., description="Bash script to execute (multi-line).")
     cwd: str = Field(".", description="Working directory inside project files root.")
     timeout_s: float = Field(86400.0, ge=0.1, description="Timeout seconds.")
-    max_output_chars: int = Field(3000, ge=1000, description="Max chars returned for stdout/stderr each.")
+    max_output_chars: int = Field(8000, ge=1000, description="Max chars returned for stdout/stderr each.")
     strict: bool = Field(True, description="Prepend 'set -euo pipefail' for safer scripting.")
     no_network: bool = Field(True, description="Disable network using unshare network namespace.")
 
