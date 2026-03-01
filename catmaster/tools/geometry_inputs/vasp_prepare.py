@@ -114,7 +114,7 @@ class VaspRelaxPrepareInput(BaseModel):
     user_incar_settings: Dict = Field(
         default_factory=dict,
         description=(
-            "User INCAR overrides as a dict as per pymatgen's user_incar_settings format, e.g. "
+            "User INCAR overrides as a json object as per pymatgen's user_incar_settings format, e.g. "
             '{"MAGMOM":{"O":1},"ALGO":"Fast"}. '
             "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
             "Use null only as a value inside the override object to remove a specific INCAR key, e.g. "
@@ -173,7 +173,7 @@ class VaspSPPrepareInput(BaseModel):
     user_incar_settings: Dict = Field(
         default_factory=dict,
         description=(
-            "User INCAR overrides as a dict as per pymatgen's user_incar_settings format, e.g. "
+            "User INCAR overrides as a json object as per pymatgen's user_incar_settings format, e.g. "
             '{"MAGMOM":{"O":1},"ALGO":"Fast"}. '
             "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
             "Use null only as a value inside the override object to remove a specific INCAR key, e.g. "
