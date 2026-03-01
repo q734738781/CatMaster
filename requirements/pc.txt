@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# Runtime requirements (minimum versions).
+# Runtime requirements.
 # Notes:
 #   - mp-api requires Python >= 3.10.
 #   - For reproducibility, consider pinning exact versions via a lock/constraints
@@ -7,35 +7,36 @@
 # -----------------------------------------------------------------------------
 
 # Core scientific stack
-numpy>=1.26.0
-scipy>=1.10.0
-pandas>=2.2.0
+numpy
+scipy
+pandas
 
 # Atomistic modeling / materials
-ase>=3.23.0
-pymatgen>=2024.2.23
+ase
+pymatgen
 
 # YAML parsing (PyYAML) and round-trip editing (ruamel.yaml)
-pyyaml>=6.0
-ruamel.yaml>=0.17.32
+pyyaml
+ruamel.yaml
 
 # Remote execution / HPC control plane
-dpdispatcher>=0.6.12
-paramiko>=3.3.0
+dpdispatcher
+paramiko
 
-# LLM agent system (avoid umbrella 'langchain')
+# LLM agent system
 openai
 aider-chat
+langchain
 langchain-core
 langchain-openai
 langchain-community
 langgraph
 
 # Utilities
-python-dotenv>=1.0.0
-pydantic>=2.0.0
-gradio>=4.0.0
+python-dotenv
+pydantic
+gradio
 
 # External data / cheminformatics
-mp-api>=0.40.0     # often shown in docs as: pip install mp_api
-rdkit>=2025.3.6    # PyPI uses 2025.3.6-style versions
+mp-api     # often shown in docs as: pip install mp_api
+rdkit      # PyPI uses 2025.3.6-style versions

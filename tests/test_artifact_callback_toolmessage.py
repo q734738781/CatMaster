@@ -65,7 +65,7 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
 
     rid = uuid.uuid4()
     handler.on_tool_start(
-        serialized={"name": "task_finish"},
+        serialized={"name": "demo_tool"},
         input_str="{}",
         run_id=rid,
     )
@@ -73,12 +73,12 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
     handler.on_tool_end(
         ToolMessage(
             content=json.dumps({
-                "status": "control",
-                "tool_name": "task_finish",
-                "payload": {"summary": "done"},
+                "status": "success",
+                "tool_name": "demo_tool",
+                "data": {"ok": True},
             }, ensure_ascii=False),
             tool_call_id="call_2",
-            name="task_finish",
+            name="demo_tool",
         ),
         run_id=rid,
     )
@@ -86,8 +86,8 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
     end_events = [e for e in reporter.events if e.name == "TOOL_CALL_END"]
     assert end_events
     payload = end_events[-1].payload
-    assert payload.get("tool") == "task_finish"
-    assert payload.get("status") == "control"
+    assert payload.get("tool") == "demo_tool"
+    assert payload.get("status") == "success"
 
 
 def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:

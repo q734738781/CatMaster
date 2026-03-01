@@ -3,8 +3,8 @@ LangGraph-based orchestration graph for CatMaster.
 
 Replaces the monolithic Orchestrator class with a composable StateGraph
 that routes between proposal, director, task runner, memory patcher,
-and summarizer nodes.  Proposal / director / task runner are full ReAct
-agents built with ``create_react_agent``.
+and summarizer nodes. Proposal / director / task runner are built with
+LangChain v1 ``create_agent`` and produce typed structured responses.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import shutil
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Annotated, Dict, List, Literal, Optional, TypedDict
+from typing import Any, Annotated, Dict, List, Optional, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, ToolMessage
@@ -24,7 +24,6 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command, interrupt
 
 from catmaster.agents.nodes import (
@@ -44,39 +43,28 @@ from catmaster.runtime.artifact_callback import build_callbacks
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.runtime.run_control import RunControl
 from catmaster.runtime.tool_result_normalizer import (
-    CONTROL_TOOL_NAMES,
     normalize_tool_result,
     to_tool_message_status,
 )
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
 from catmaster.runtime.usage_stats import write_usage_summary
-from catmaster.tools.base import workspace_root, workspace_scope
+from catmaster.tools.base import workspace_scope
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
 from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, TaskOutput
-from catmaster.agents.proposal_control_tools import (
-    as_langchain_control_tools as proposal_control_tools,
-)
-from catmaster.agents.director_control_tools import (
-    as_langchain_control_tools as director_control_tools,
-)
-from catmaster.agents.control_tools import (
-    as_langchain_control_tools as task_control_tools,
-)
 from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_SYSTEM_PROMPT,
     DIRECTOR_SYSTEM_PROMPT,
     TASK_RUNNER_SYSTEM_PROMPT,
-    PROPOSAL_CONTROL_FINISH_INSTRUCTION,
-    DIRECTOR_CONTROL_FINISH_INSTRUCTION,
-    TASK_CONTROL_FINISH_INSTRUCTION,
 )
 
 logger = logging.getLogger(__name__)
-TerminationMode = Literal["control_tools", "response_format", "hybrid"]
 
-_TASK_CONTROL_TOOL_NAMES = set(CONTROL_TOOL_NAMES)
 _TASK_RUNNER_TOOL_DENYLIST = {"memory_apply_aider_edits"}
+
+
+class ToolCallBudgetExceededError(RuntimeError):
+    """Raised when an agent exceeds its per-invocation tool-call budget."""
 
 
 # ---------------------------------------------------------------------------
@@ -121,23 +109,6 @@ class CatMasterState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 # Agent builders
 # ---------------------------------------------------------------------------
-
-
-def _mode_for_role(termination_mode: TerminationMode, role: str) -> Literal["control_tools", "response_format"]:
-    if termination_mode == "hybrid":
-        # Hybrid strategy: keep planner/controller stable with explicit control tools,
-        # while allowing task worker to use structured response for experimentation.
-        if role in {"proposal", "director"}:
-            return "control_tools"
-        return "response_format"
-    return "control_tools" if termination_mode == "control_tools" else "response_format"
-
-
-def _prompt_for_mode(base_prompt: str, control_finish_instruction: str, mode: str) -> str:
-    if mode == "control_tools":
-        return f"{base_prompt}\n\n{control_finish_instruction}".strip()
-    return base_prompt
-
 
 def _snippet(text: Any, limit: int = 140) -> str:
     if text is None:
@@ -204,10 +175,10 @@ def _compact_tool_output_for_llm(
 
 def _compact_tool_message_for_llm(message: ToolMessage) -> ToolMessage:
     name = str(getattr(message, "name", "") or "").strip()
-    if not name or name == "bash_exec" or name in _TASK_CONTROL_TOOL_NAMES:
+    if not name or name == "bash_exec":
         return message
 
-    parsed = normalize_tool_result(message, tool_name=name, is_control_tool=False)
+    parsed = normalize_tool_result(message, tool_name=name)
     compact = _compact_tool_output_for_llm(name, parsed)
     compact_text = json.dumps(compact, ensure_ascii=False)
     return ToolMessage(
@@ -226,36 +197,82 @@ def _task_runner_tools(registry: ToolRegistry) -> list[StructuredTool]:
         if tool.name not in _TASK_RUNNER_TOOL_DENYLIST
     ]
 
+
+def _load_create_agent():
+    try:
+        from langchain.agents import create_agent as _create_agent
+    except Exception as exc:
+        raise RuntimeError(
+            "LangChain v1 create_agent is unavailable. Install 'langchain>=1.0'."
+        ) from exc
+    return _create_agent
+
+
+def _load_tool_strategy():
+    try:
+        from langchain.agents.structured_output import ToolStrategy as _ToolStrategy
+    except Exception as exc:
+        raise RuntimeError(
+            "LangChain ToolStrategy is unavailable. Install 'langchain>=1.0'."
+        ) from exc
+    return _ToolStrategy
+
+
+def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list[Any]:
+    """Enforce a hard per-invocation tool-call cap based on executed tool calls."""
+    try:
+        from langchain.agents.middleware import before_agent, wrap_tool_call
+    except Exception as exc:
+        raise RuntimeError(
+            "LangChain middleware is unavailable. Install 'langchain>=1.0'."
+        ) from exc
+
+    tool_limit = max(1, int(max_tool_calls))
+    counter: dict[str, int] = {"used": 0}
+
+    @before_agent
+    def _reset_tool_call_counter(state: dict, runtime: Any) -> dict[str, Any] | None:
+        _ = (state, runtime)
+        counter["used"] = 0
+        return None
+
+    @wrap_tool_call
+    def _enforce_tool_call_budget(request: Any, handler: Any) -> Any:
+        used = int(counter.get("used", 0))
+        tool_call = getattr(request, "tool_call", None) or {}
+        tool_name = str(tool_call.get("name") or "")
+        if used >= tool_limit:
+            raise ToolCallBudgetExceededError(
+                f"{role} tool-call budget exceeded: "
+                f"executed={used}, limit={tool_limit}, next_tool={tool_name or 'unknown'}"
+            )
+        result = handler(request)
+        counter["used"] = used + 1
+        return result
+
+    return [_reset_tool_call_counter, _enforce_tool_call_budget]
+
+
 def _build_proposal_agent(
     model: BaseChatModel,
     tools: list[StructuredTool],
     *,
-    termination_mode: TerminationMode = "control_tools",
-    max_steps: int = 30,
+    max_steps: int = 60,
 ) -> Any:
-    role_mode = _mode_for_role(termination_mode, "proposal")
     role_tools = list(tools)
-    if role_mode == "control_tools":
-        role_tools.extend(proposal_control_tools())
     logger.info(
-        "[build_proposal_agent] mode=%s, response_format=%s, tools=%s",
-        role_mode,
-        role_mode == "response_format",
+        "[build_proposal_agent] response_format=%s, tools=%s",
+        True,
         [t.name for t in role_tools],
     )
-    kwargs: dict[str, Any] = {}
-    if role_mode == "response_format":
-        kwargs["response_format"] = ProposalOutput
-    return create_react_agent(
+    create_agent = _load_create_agent()
+    ToolStrategy = _load_tool_strategy()
+    return create_agent(
         model=model,
         tools=role_tools,
-        prompt=_prompt_for_mode(
-            PROPOSAL_SYSTEM_PROMPT,
-            PROPOSAL_CONTROL_FINISH_INSTRUCTION,
-            role_mode,
-        ),
-        name="proposal_agent",
-        **kwargs,
+        system_prompt=PROPOSAL_SYSTEM_PROMPT,
+        response_format=ToolStrategy(ProposalOutput, handle_errors=False),
+        middleware=_make_tool_call_budget_middleware(role="proposal", max_tool_calls=max_steps),
     )
 
 
@@ -263,56 +280,59 @@ def _build_director_agent(
     model: BaseChatModel,
     tools: list[StructuredTool],
     *,
-    termination_mode: TerminationMode = "control_tools",
-    max_steps: int = 30,
+    max_steps: int = 60,
 ) -> Any:
-    role_mode = _mode_for_role(termination_mode, "director")
     role_tools = list(tools)
-    if role_mode == "control_tools":
-        role_tools.extend(director_control_tools())
     logger.info(
-        "[build_director_agent] mode=%s, response_format=%s, tools=%s",
-        role_mode,
-        role_mode == "response_format",
+        "[build_director_agent] response_format=%s, tools=%s",
+        True,
         [t.name for t in role_tools],
     )
-    kwargs: dict[str, Any] = {}
-    if role_mode == "response_format":
-        kwargs["response_format"] = DirectorOutput
-    return create_react_agent(
+    create_agent = _load_create_agent()
+    ToolStrategy = _load_tool_strategy()
+    return create_agent(
         model=model,
         tools=role_tools,
-        prompt=_prompt_for_mode(
-            DIRECTOR_SYSTEM_PROMPT,
-            DIRECTOR_CONTROL_FINISH_INSTRUCTION,
-            role_mode,
-        ),
-        name="director_agent",
-        **kwargs,
+        system_prompt=DIRECTOR_SYSTEM_PROMPT,
+        response_format=ToolStrategy(DirectorOutput, handle_errors=False),
+        middleware=_make_tool_call_budget_middleware(role="director", max_tool_calls=max_steps),
     )
 
 
-def _make_task_runner_pre_hook(memory_store: MemoryStore):
-    """pre_model_hook that compacts non-shell tool observations for model input."""
+def _make_task_runner_middleware(memory_store: MemoryStore) -> list[Any]:
+    """before_model middleware that compacts non-shell tool observations."""
     _ = memory_store  # reserved for future hook extensions
 
-    def hook(state: dict) -> dict:
-        raw_messages = list(state.get("messages", []) or [])
+    try:
+        from langchain.agents.middleware import before_model
+    except Exception as exc:
+        raise RuntimeError(
+            "LangChain middleware is unavailable. Install 'langchain>=1.0'."
+        ) from exc
+
+    @before_model
+    def _compact_before_model(state: dict, runtime: Any) -> dict[str, Any] | None:
+        _ = runtime
+        raw_messages = list((state or {}).get("messages", []) or [])
         if not raw_messages:
-            return {"llm_input_messages": []}
+            return None
 
         llm_messages: list[AnyMessage] = []
+        changed = False
         for msg in raw_messages:
             if isinstance(msg, ToolMessage):
-                llm_messages.append(_compact_tool_message_for_llm(msg))
+                compacted = _compact_tool_message_for_llm(msg)
+                llm_messages.append(compacted)
+                if compacted is not msg:
+                    changed = True
                 continue
             llm_messages.append(msg)
 
-        return {
-            "llm_input_messages": llm_messages,
-        }
+        if not changed:
+            return None
+        return {"messages": llm_messages}
 
-    return hook
+    return [_compact_before_model]
 
 
 def _build_task_runner_agent(
@@ -320,33 +340,26 @@ def _build_task_runner_agent(
     tools: list[StructuredTool],
     memory_store: MemoryStore,
     *,
-    termination_mode: TerminationMode = "control_tools",
-    max_steps: int = 40,
+    max_steps: int = 60,
 ) -> Any:
-    role_mode = _mode_for_role(termination_mode, "task_runner")
     role_tools = list(tools)
-    if role_mode == "control_tools":
-        role_tools.extend(task_control_tools())
     logger.info(
-        "[build_task_runner_agent] mode=%s, response_format=%s, tools=%s",
-        role_mode,
-        role_mode == "response_format",
+        "[build_task_runner_agent] response_format=%s, tools=%s",
+        True,
         [t.name for t in role_tools],
     )
-    kwargs: dict[str, Any] = {}
-    if role_mode == "response_format":
-        kwargs["response_format"] = TaskOutput
-    return create_react_agent(
+    create_agent = _load_create_agent()
+    ToolStrategy = _load_tool_strategy()
+    middleware = _make_task_runner_middleware(memory_store) + _make_tool_call_budget_middleware(
+        role="task_runner",
+        max_tool_calls=max_steps,
+    )
+    return create_agent(
         model=model,
         tools=role_tools,
-        prompt=_prompt_for_mode(
-            TASK_RUNNER_SYSTEM_PROMPT,
-            TASK_CONTROL_FINISH_INSTRUCTION,
-            role_mode,
-        ),
-        pre_model_hook=_make_task_runner_pre_hook(memory_store),
-        name="task_runner_agent",
-        **kwargs,
+        system_prompt=TASK_RUNNER_SYSTEM_PROMPT,
+        response_format=ToolStrategy(TaskOutput, handle_errors=False),
+        middleware=middleware,
     )
 
 
@@ -362,9 +375,7 @@ def _run_proposal_wrapper(
     tools_description: str,
     run_dir: Path,
     max_steps: int,
-    termination_mode: TerminationMode,
-    strict_control_contract: bool,
-) -> Dict[str, Any]:
+) -> Command:
     return run_proposal(
         state,
         agent=agent,
@@ -372,8 +383,6 @@ def _run_proposal_wrapper(
         tools_description=tools_description,
         run_dir=run_dir,
         max_steps=max_steps,
-        termination_mode=_mode_for_role(termination_mode, "proposal"),
-        strict_control_contract=strict_control_contract,
     )
 
 
@@ -384,8 +393,6 @@ def _run_director_wrapper(
     memory_store: MemoryStore,
     tools_description: str,
     max_steps: int,
-    termination_mode: TerminationMode,
-    strict_control_contract: bool,
 ) -> Command:
     return run_director(
         state,
@@ -393,8 +400,6 @@ def _run_director_wrapper(
         memory_store=memory_store,
         tools_description=tools_description,
         max_steps=max_steps,
-        termination_mode=_mode_for_role(termination_mode, "director"),
-        strict_control_contract=strict_control_contract,
     )
 
 
@@ -404,16 +409,12 @@ def _run_task_wrapper(
     agent: Any,
     memory_store: MemoryStore,
     max_steps: int,
-    termination_mode: TerminationMode,
-    strict_control_contract: bool,
-) -> Dict[str, Any]:
+) -> Command:
     return run_task(
         state,
         agent=agent,
         memory_store=memory_store,
         max_steps=max_steps,
-        termination_mode=_mode_for_role(termination_mode, "task_runner"),
-        strict_control_contract=strict_control_contract,
     )
 
 
@@ -426,7 +427,7 @@ def _memory_patch_node_wrapper(
     patch_repair_attempts: int,
     tool_backend: Optional[ToolBackend],
     run_dir: Path,
-) -> Dict[str, Any]:
+) -> Command:
     result = memory_patch_node(
         state,
         model=model,
@@ -443,7 +444,12 @@ def _memory_patch_node_wrapper(
         summary=task_result.get("task_summary", ""),
         key_artifacts=task_result.get("key_artifacts", []),
     )
-    return result
+    lane = str(state.get("lane") or "").strip().lower()
+    if lane == "fast":
+        return Command(goto="finalize_memory_patch", update=result)
+    if str(task_result.get("task_outcome") or "") == "needs_intervention":
+        return Command(goto="needs_intervention", update=result)
+    return Command(goto="run_director", update=result)
 
 
 def _finalize_memory_patch_node_wrapper(
@@ -454,8 +460,8 @@ def _finalize_memory_patch_node_wrapper(
     run_id: str,
     patch_repair_attempts: int,
     tool_backend: Optional[ToolBackend],
-) -> Dict[str, Any]:
-    return finalize_memory_patch_node(
+) -> Command:
+    result = finalize_memory_patch_node(
         state,
         model=model,
         memory_store=memory_store,
@@ -463,6 +469,7 @@ def _finalize_memory_patch_node_wrapper(
         patch_repair_attempts=patch_repair_attempts,
         tool_backend=tool_backend,
     )
+    return Command(goto="summarize", update=result)
 
 
 def _summarize_node_wrapper(
@@ -481,14 +488,15 @@ def _plan_commit_node_wrapper(
     memory_store: MemoryStore,
     run_id: str,
     tool_backend: Optional[ToolBackend],
-) -> Dict[str, Any]:
-    return plan_commit_node(
+) -> Command:
+    result = plan_commit_node(
         state,
         model=model,
         memory_store=memory_store,
         run_id=run_id,
         tool_backend=tool_backend,
     )
+    return Command(goto="run_director", update=result)
 
 
 def _write_observation_file(
@@ -529,7 +537,7 @@ def _write_observation_file(
         pass
 
 
-def _proposal_review_node(state: CatMasterState) -> Dict[str, Any]:
+def _proposal_review_node(state: CatMasterState) -> Command:
     """HITL checkpoint for proposal review.
 
     Uses LangGraph ``interrupt()`` to pause execution and wait for human
@@ -540,7 +548,7 @@ def _proposal_review_node(state: CatMasterState) -> Dict[str, Any]:
     after approval), this is a no-op pass-through.
     """
     if state.get("proposal_approved"):
-        return {}
+        return Command(goto="plan_commit", update={})
 
     proposal_md = state.get("proposal_md", "")
     work_packages = state.get("work_packages", [])
@@ -560,36 +568,15 @@ def _proposal_review_node(state: CatMasterState) -> Dict[str, Any]:
 
     feedback_text = str(feedback or "").strip()
     if feedback_text.lower() in ("approved", "approve", "ok", "yes", "y", "lgtm"):
-        return {"proposal_approved": True, "proposal_feedback": ""}
+        return Command(goto="plan_commit", update={"proposal_approved": True, "proposal_feedback": ""})
 
-    return {"proposal_approved": False, "proposal_feedback": feedback_text}
-
-
-# ---------------------------------------------------------------------------
-# Routing functions
-# ---------------------------------------------------------------------------
-
-def _route_after_review(state: CatMasterState) -> str:
-    if state.get("proposal_approved"):
-        return "plan_commit"
-    return "run_proposal"
+    return Command(
+        goto="run_proposal",
+        update={"proposal_approved": False, "proposal_feedback": feedback_text},
+    )
 
 
-def _route_after_proposal(state: CatMasterState) -> str:
-    status = str(state.get("status") or "").strip().lower()
-    if status == "failure":
-        return "summarize"
-    return "proposal_review"
-
-
-def _route_after_task(state: CatMasterState) -> str:
-    status = str(state.get("status") or "").strip().lower()
-    if status == "failure":
-        return "finalize_memory_patch"
-    return "memory_patch"
-
-
-def _needs_intervention_node(state: CatMasterState) -> Dict[str, Any]:
+def _needs_intervention_node(state: CatMasterState) -> Command:
     """HITL checkpoint when a task fails and needs human guidance."""
     result = state.get("task_result") or {}
     feedback = interrupt({
@@ -606,15 +593,7 @@ def _needs_intervention_node(state: CatMasterState) -> Dict[str, Any]:
         "task_id": state.get("current_task_id", ""),
         "feedback": feedback_text,
     })
-    return {"hitl_history": existing}
-
-
-def _route_after_memory_patch(state: CatMasterState) -> str:
-    result = state.get("task_result") or {}
-    outcome = result.get("task_outcome", "")
-    if outcome == "needs_intervention":
-        return "needs_intervention"
-    return "run_director"
+    return Command(goto="run_director", update={"hitl_history": existing})
 
 
 # ---------------------------------------------------------------------------
@@ -636,10 +615,8 @@ def build_standard_graph(
     run_dir: Optional[Path] = None,
     patch_repair_attempts: int = 1,
     tool_backend: Optional[ToolBackend] = None,
-    max_task_steps: int = 40,
-    max_plan_steps: int = 30,
-    termination_mode: TerminationMode = "control_tools",
-    strict_control_contract: bool = True,
+    max_task_steps: int = 60,
+    max_plan_steps: int = 60,
     checkpointer: Optional[BaseCheckpointSaver] = None,
     run_control: Optional[RunControl] = None,
 ) -> Any:
@@ -653,20 +630,17 @@ def build_standard_graph(
         proposal_model,
         bash_tools,
         max_steps=max_plan_steps,
-        termination_mode=termination_mode,
     )
     director_agent = _build_director_agent(
         director_model,
         bash_tools,
         max_steps=max_plan_steps,
-        termination_mode=termination_mode,
     )
     task_agent = _build_task_runner_agent(
         task_runner_model,
         lc_tools,
         memory_store,
         max_steps=max_task_steps,
-        termination_mode=termination_mode,
     )
 
     graph = StateGraph(CatMasterState)
@@ -678,8 +652,6 @@ def build_standard_graph(
         tools_description=tools_description,
         run_dir=effective_run_dir,
         max_steps=max_plan_steps,
-        termination_mode=termination_mode,
-        strict_control_contract=strict_control_contract,
     ))
 
     graph.add_node("proposal_review", _proposal_review_node)
@@ -698,8 +670,6 @@ def build_standard_graph(
         memory_store=memory_store,
         tools_description=effective_director_tools_description,
         max_steps=max_plan_steps,
-        termination_mode=termination_mode,
-        strict_control_contract=strict_control_contract,
     ))
 
     graph.add_node("run_task", partial(
@@ -707,8 +677,6 @@ def build_standard_graph(
         agent=task_agent,
         memory_store=memory_store,
         max_steps=max_task_steps,
-        termination_mode=termination_mode,
-        strict_control_contract=strict_control_contract,
     ))
 
     graph.add_node("memory_patch", partial(
@@ -739,26 +707,6 @@ def build_standard_graph(
     graph.add_node("needs_intervention", _needs_intervention_node)
 
     graph.set_entry_point("run_proposal")
-    graph.add_conditional_edges("run_proposal", _route_after_proposal, {
-        "proposal_review": "proposal_review",
-        "summarize": "summarize",
-    })
-    graph.add_conditional_edges("proposal_review", _route_after_review, {
-        "plan_commit": "plan_commit",
-        "run_proposal": "run_proposal",
-    })
-    graph.add_edge("plan_commit", "run_director")
-    # run_director uses Command for routing -- no static edges needed
-    graph.add_conditional_edges("run_task", _route_after_task, {
-        "memory_patch": "memory_patch",
-        "finalize_memory_patch": "finalize_memory_patch",
-    })
-    graph.add_conditional_edges("memory_patch", _route_after_memory_patch, {
-        "run_director": "run_director",
-        "needs_intervention": "needs_intervention",
-    })
-    graph.add_edge("needs_intervention", "run_director")
-    graph.add_edge("finalize_memory_patch", "summarize")
     graph.add_edge("summarize", END)
 
     compile_kwargs: dict[str, Any] = {}
@@ -779,9 +727,7 @@ def build_fast_graph(
     run_dir: Optional[Path] = None,
     patch_repair_attempts: int = 1,
     tool_backend: Optional[ToolBackend] = None,
-    max_task_steps: int = 40,
-    termination_mode: TerminationMode = "control_tools",
-    strict_control_contract: bool = True,
+    max_task_steps: int = 60,
     checkpointer: Optional[BaseCheckpointSaver] = None,
     run_control: Optional[RunControl] = None,
 ) -> Any:
@@ -793,7 +739,6 @@ def build_fast_graph(
         lc_tools,
         memory_store,
         max_steps=max_task_steps,
-        termination_mode=termination_mode,
     )
 
     graph = StateGraph(CatMasterState)
@@ -803,8 +748,6 @@ def build_fast_graph(
         agent=task_agent,
         memory_store=memory_store,
         max_steps=max_task_steps,
-        termination_mode=termination_mode,
-        strict_control_contract=strict_control_contract,
     ))
 
     graph.add_node("memory_patch", partial(
@@ -833,12 +776,6 @@ def build_fast_graph(
     ))
 
     graph.set_entry_point("run_task")
-    graph.add_conditional_edges("run_task", _route_after_task, {
-        "memory_patch": "memory_patch",
-        "finalize_memory_patch": "finalize_memory_patch",
-    })
-    graph.add_edge("memory_patch", "finalize_memory_patch")
-    graph.add_edge("finalize_memory_patch", "summarize")
     graph.add_edge("summarize", END)
 
     compile_kwargs: dict[str, Any] = {}
@@ -878,10 +815,8 @@ class GraphRunner:
         reporter: Optional[Reporter] = None,
         tool_backend: Optional[ToolBackend] = None,
         run_control: Optional[RunControl] = None,
-        max_task_steps: int = 40,
-        max_plan_steps: int = 20,
-        termination_mode: TerminationMode = "control_tools",
-        strict_control_contract: bool = True,
+        max_task_steps: int = 60,
+        max_plan_steps: int = 60,
         recursion_limit: int = 300,
         patch_repair_attempts: int = 1,
         stream_debug_console: bool = False,
@@ -901,8 +836,6 @@ class GraphRunner:
         self.run_control = run_control
         self.max_task_steps = max_task_steps
         self.max_plan_steps = max_plan_steps
-        self.termination_mode: TerminationMode = termination_mode
-        self.strict_control_contract = bool(strict_control_contract)
         try:
             parsed_limit = int(recursion_limit)
         except Exception:
@@ -1256,9 +1189,7 @@ class GraphRunner:
         path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _publish_report(self, user_request: str, final_answer: str) -> Dict[str, str]:
-        """Generate FINAL_REPORT.md, copy memory, and create latest_run snapshot."""
-        ws_reports = workspace_root(self.run_context.workspace) / "reports"
-        ws_reports.mkdir(parents=True, exist_ok=True)
+        """Generate FINAL_REPORT.md and copy memory into the current run reports."""
         run_reports = self.run_context.run_dir / "reports"
         run_reports.mkdir(parents=True, exist_ok=True)
 
@@ -1284,38 +1215,10 @@ class GraphRunner:
                     memory_src.read_text(encoding="utf-8"), encoding="utf-8",
                 )
 
-        latest = ws_reports / "latest_run"
-        try:
-            if latest.is_symlink() or latest.is_file():
-                latest.unlink()
-            elif latest.is_dir():
-                shutil.rmtree(latest)
-        except Exception:
-            pass
-        try:
-            shutil.copytree(self.run_context.run_dir, latest, symlinks=False)
-        except Exception:
-            try:
-                if latest.exists():
-                    if latest.is_dir():
-                        shutil.rmtree(latest)
-                    else:
-                        latest.unlink()
-            except Exception:
-                pass
-            try:
-                (latest / "reports").mkdir(parents=True, exist_ok=True)
-                shutil.copy2(final_report, latest / "reports" / "FINAL_REPORT.md")
-                if memory_dst.exists():
-                    shutil.copy2(memory_dst, latest / "reports" / "MEMORY.md")
-            except Exception:
-                pass
-
         return {
             "run_dir": str(self.run_context.run_dir),
             "final_report": str(final_report),
             "memory_report": str(memory_dst),
-            "latest_link": str(latest),
         }
 
     # ------------------------------------------------------------------
@@ -1356,8 +1259,6 @@ class GraphRunner:
                 patch_repair_attempts=self.patch_repair_attempts,
                 tool_backend=self.tool_backend,
                 max_task_steps=self.max_task_steps,
-                termination_mode=self.termination_mode,
-                strict_control_contract=self.strict_control_contract,
                 checkpointer=self.checkpointer,
                 run_control=self.run_control,
             )
@@ -1378,8 +1279,6 @@ class GraphRunner:
                 tool_backend=self.tool_backend,
                 max_task_steps=self.max_task_steps,
                 max_plan_steps=self.max_plan_steps,
-                termination_mode=self.termination_mode,
-                strict_control_contract=self.strict_control_contract,
                 checkpointer=self.checkpointer,
                 run_control=self.run_control,
             )

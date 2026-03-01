@@ -26,7 +26,7 @@ def _memory_store(tmp_path: Path) -> MemoryStore:
     return store
 
 
-def test_run_proposal_strict_contract_violation_marks_failure(tmp_path: Path) -> None:
+def test_run_proposal_missing_structured_response_marks_failure(tmp_path: Path) -> None:
     store = _memory_store(tmp_path)
     agent = _FakeAgent({"messages": [AIMessage(content="plain final text")]})
 
@@ -36,19 +36,17 @@ def test_run_proposal_strict_contract_violation_marks_failure(tmp_path: Path) ->
         memory_store=store,
         tools_description="bash_exec",
         run_dir=tmp_path,
-        termination_mode="control_tools",
-        strict_control_contract=True,
     )
 
-    assert out.get("status") == "failure"
-    assert out.get("contract_violation", {}).get("role") == "proposal"
-    assert out.get("proposal_md", "") == ""
-    assert out.get("work_packages", []) == []
+    assert out.goto == "summarize"
+    assert out.update.get("status") == "failure"
+    assert out.update.get("contract_violation", {}).get("role") == "proposal"
+    assert out.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
 
 
-def test_run_director_strict_contract_violation_marks_failure(tmp_path: Path) -> None:
+def test_run_director_missing_structured_response_marks_failure(tmp_path: Path) -> None:
     store = _memory_store(tmp_path)
-    agent = _FakeAgent({"messages": [AIMessage(content="no control tool emitted")]})
+    agent = _FakeAgent({"messages": [AIMessage(content="no structured response emitted")]})
     command = run_director(
         {
             "user_request": "run",
@@ -59,27 +57,26 @@ def test_run_director_strict_contract_violation_marks_failure(tmp_path: Path) ->
         agent=agent,
         memory_store=store,
         tools_description="bash_exec",
-        termination_mode="control_tools",
-        strict_control_contract=True,
     )
 
     assert command.goto == "finalize_memory_patch"
     assert command.update.get("status") == "failure"
     assert command.update.get("contract_violation", {}).get("role") == "director"
+    assert command.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
 
 
-def test_run_task_strict_contract_violation_marks_failure(tmp_path: Path) -> None:
+def test_run_task_missing_structured_response_marks_failure(tmp_path: Path) -> None:
     store = _memory_store(tmp_path)
-    agent = _FakeAgent({"messages": [AIMessage(content="no terminal tool")]})
+    agent = _FakeAgent({"messages": [AIMessage(content="no structured response")]})
 
     out = run_task(
         {"user_request": "run task", "current_task_packet": {"goal": "run task"}},
         agent=agent,
         memory_store=store,
-        termination_mode="control_tools",
-        strict_control_contract=True,
     )
 
-    assert out.get("status") == "failure"
-    assert out.get("contract_violation", {}).get("role") == "task_runner"
-    assert out.get("task_result", {}).get("task_outcome") == "failure"
+    assert out.goto == "finalize_memory_patch"
+    assert out.update.get("status") == "failure"
+    assert out.update.get("contract_violation", {}).get("role") == "task_runner"
+    assert out.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
+    assert out.update.get("task_result", {}).get("task_outcome") == "failure"

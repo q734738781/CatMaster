@@ -55,6 +55,32 @@ models:
         extra_body:
           prompt_cache_retention: 24h
 
+  "openai/gpt-5.3-codex:online-medium":
+    provider: openrouter
+    model: openai/gpt-5.3-codex:online
+
+    # Sampling / reasoning
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: medium
+
+    # OpenAI-compatible endpoint config
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    # Optional OpenRouter headers
+    default_headers: {}
+
+    # Provider-bound options
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+    
   "openai/gpt-5-nano":
     provider: openrouter
     model: openai/gpt-5-nano
@@ -69,16 +95,15 @@ models:
 agents:
   proposal: "openai/gpt-5.2:online-high"
   director: "openai/gpt-5.2:online-high"
-  task_runner: "openai/gpt-5.3-codex:online-high"
+  task_runner: "openai/gpt-5.3-codex:online-medium"
   memory_patch: "openai/gpt-5.3-codex:online-high"
   summary: "openai/gpt-5-nano"
 
 agent_runtime:
-  termination_mode: control_tools
-  strict_control_contract: true
-  recursion_limit: 300
-  print_state_messages: false
-  print_http_raw_post: false
+  recursion_limit: 1000
+  max_tool_calls: 60
+  print_state_messages: true
+  print_http_raw_post: true
 
 agent_policies:
   proposal:

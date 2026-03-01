@@ -13,7 +13,6 @@ except Exception:  # pragma: no cover
 
 Provider = Literal["openai", "openrouter", "deepseek", "gemini", "oai_compatible", "langchain"]
 AgentRole = Literal["proposal", "director", "task_runner", "memory_patch", "summary"]
-TerminationMode = Literal["control_tools", "response_format", "hybrid"]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
 _logger = logging.getLogger(__name__)
@@ -53,9 +52,8 @@ class AgentPoliciesConfig:
 
 @dataclass
 class AgentRuntimeConfig:
-    termination_mode: TerminationMode = "control_tools"
-    strict_control_contract: bool = True
     recursion_limit: int = 300
+    max_tool_calls: int = 60
     print_state_messages: bool = False
     print_http_raw_post: bool = False
 
@@ -63,20 +61,13 @@ class AgentRuntimeConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "AgentRuntimeConfig":
         if not isinstance(data, dict):
             return cls()
-        raw_mode = _to_str_or_none(data.get("termination_mode")) or cls.termination_mode
-        mode = str(raw_mode).strip().lower()
-        allowed = {"control_tools", "response_format", "hybrid"}
-        if mode not in allowed:
-            _logger.warning(
-                "Ignoring invalid agent_runtime.termination_mode=%r (allowed: control_tools/response_format/hybrid)",
-                raw_mode,
+        legacy_keys = [key for key in ("termination_mode", "strict_control_contract") if key in data]
+        if legacy_keys:
+            joined = ", ".join(legacy_keys)
+            raise ValueError(
+                f"agent_runtime no longer supports: {joined}. "
+                "Remove these keys and use structured-response runtime defaults."
             )
-            mode = cls.termination_mode
-        strict_control_contract = _to_bool(
-            data.get("strict_control_contract"),
-            default=cls.strict_control_contract,
-            source="agent_runtime.strict_control_contract",
-        )
         raw_limit = _to_int(data.get("recursion_limit"))
         if raw_limit is None:
             recursion_limit = cls.recursion_limit
@@ -84,10 +75,16 @@ class AgentRuntimeConfig:
             recursion_limit = 1_000_000
         else:
             recursion_limit = raw_limit
+        raw_max_tool_calls = _to_int(data.get("max_tool_calls"))
+        if raw_max_tool_calls is None:
+            max_tool_calls = cls.max_tool_calls
+        elif raw_max_tool_calls <= 0:
+            max_tool_calls = cls.max_tool_calls
+        else:
+            max_tool_calls = raw_max_tool_calls
         return cls(
-            termination_mode=mode,  # type: ignore[arg-type]
-            strict_control_contract=strict_control_contract,
             recursion_limit=recursion_limit,
+            max_tool_calls=max_tool_calls,
             print_state_messages=_to_bool(
                 data.get("print_state_messages"),
                 default=cls.print_state_messages,
@@ -266,18 +263,6 @@ class LLMProfile:
         )
         main.apply_env_fallbacks()
         label = main.model
-        runtime_mode = os.getenv("CATMASTER_TERMINATION_MODE", "").strip().lower() or "control_tools"
-        if runtime_mode not in {"control_tools", "response_format", "hybrid"}:
-            runtime_mode = "control_tools"
-        strict_env = os.getenv("CATMASTER_STRICT_CONTROL_CONTRACT")
-        if strict_env is None or not str(strict_env).strip():
-            strict_mode = True
-        else:
-            strict_mode = _to_bool(
-                strict_env,
-                default=True,
-                source="CATMASTER_STRICT_CONTROL_CONTRACT",
-            )
         env_limit = _to_int(os.getenv("CATMASTER_RECURSION_LIMIT", ""))
         if env_limit is None:
             recursion_limit = AgentRuntimeConfig.recursion_limit
@@ -285,6 +270,13 @@ class LLMProfile:
             recursion_limit = 1_000_000
         else:
             recursion_limit = env_limit
+        env_max_tool_calls = _to_int(os.getenv("CATMASTER_MAX_TOOL_CALLS", ""))
+        if env_max_tool_calls is None:
+            max_tool_calls = AgentRuntimeConfig.max_tool_calls
+        elif env_max_tool_calls <= 0:
+            max_tool_calls = AgentRuntimeConfig.max_tool_calls
+        else:
+            max_tool_calls = env_max_tool_calls
         raw_http_env = os.getenv("CATMASTER_PRINT_HTTP_RAW_POST")
         if raw_http_env is None or not str(raw_http_env).strip():
             print_http_raw_post = False
@@ -300,9 +292,8 @@ class LLMProfile:
             agents={role: label for role in AGENT_ROLES},
             agent_policies=AgentPoliciesConfig(),
             agent_runtime=AgentRuntimeConfig(
-                termination_mode=runtime_mode,  # type: ignore[arg-type]
-                strict_control_contract=strict_mode,
                 recursion_limit=recursion_limit,
+                max_tool_calls=max_tool_calls,
                 print_state_messages=False,
                 print_http_raw_post=print_http_raw_post,
             ),
@@ -479,7 +470,6 @@ __all__ = [
     "AgentPoliciesConfig",
     "AgentRuntimeConfig",
     "Provider",
-    "TerminationMode",
     "AgentRole",
     "AGENT_ROLES",
 ]

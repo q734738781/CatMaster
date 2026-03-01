@@ -2,9 +2,9 @@
 LangGraph node functions for CatMaster multi-agent pipeline.
 
 Contains:
-  - Context builders (_build_*_context) for each ReAct agent
+  - Context builders (_build_*_context) for each agent
   - Wrapper nodes (run_proposal, run_director, run_task) that invoke
-    ``create_react_agent`` subgraphs and map results back to parent state
+    ``create_agent`` subgraphs and map results back to parent state
   - Downstream nodes (memory_patch_node, plan_commit_node, summarize_node)
   - Helper utilities for task result normalization
 """
@@ -15,7 +15,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AnyMessage, AIMessage, HumanMessage, ToolMessage
 from langchain_core.language_models import BaseChatModel
@@ -139,20 +139,40 @@ def _build_task_context(
     )
 
     task_detail = str(task_packet.get("task_detail") or "(none)").strip()
-    expected_outputs = task_packet.get("expected_outputs") or []
-    suggested_tools = task_packet.get("suggested_tools") or []
-    reference_hint = task_packet.get("reference_hint") or []
+    expected_outputs = task_packet.get("expected_outputs")
+    suggested_tools = task_packet.get("suggested_tools")
+    reference_hint = task_packet.get("reference_hint")
+
+    def _bullet_lines(value: Any) -> str:
+        if isinstance(value, str):
+            item = value.strip()
+            return f"- {item}" if item else "(none)"
+        if isinstance(value, list):
+            items = [str(v).strip() for v in value if str(v).strip()]
+            return "\n".join(f"- {item}" for item in items) if items else "(none)"
+        if value is None:
+            return "(none)"
+        item = str(value).strip()
+        return f"- {item}" if item else "(none)"
+
+    def _csv_items(value: Any) -> str:
+        if isinstance(value, str):
+            item = value.strip()
+            return item if item else "(none)"
+        if isinstance(value, list):
+            items = [str(v).strip() for v in value if str(v).strip()]
+            return ", ".join(items) if items else "(none)"
+        if value is None:
+            return "(none)"
+        item = str(value).strip()
+        return item if item else "(none)"
 
     return TASK_CONTEXT_TEMPLATE.format(
         goal=task_goal,
         task_detail=task_detail,
-        expected_outputs=(
-            "\n".join(f"- {o}" for o in expected_outputs) if expected_outputs else "(none)"
-        ),
-        suggested_tools=", ".join(suggested_tools) if suggested_tools else "(none)",
-        reference_hint=(
-            "\n".join(f"- {h}" for h in reference_hint) if reference_hint else "(none)"
-        ),
+        expected_outputs=_bullet_lines(expected_outputs),
+        suggested_tools=_csv_items(suggested_tools),
+        reference_hint=_bullet_lines(reference_hint),
         workspace_policy=context_pack.get("workspace_policy", ""),
         memory_index_excerpt=context_pack.get("memory_index_excerpt", ""),
     )
@@ -161,54 +181,6 @@ def _build_task_context(
 # ---------------------------------------------------------------------------
 # Wrapper nodes for ReAct agents
 # ---------------------------------------------------------------------------
-
-
-def _parse_json_content(content: Any) -> Any:
-    if isinstance(content, dict):
-        return content
-    if isinstance(content, str):
-        text = content.strip()
-        if not text:
-            return {}
-        try:
-            return json.loads(text)
-        except Exception:
-            return {"raw_text": text}
-    if isinstance(content, list):
-        text_parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                if isinstance(item.get("text"), str):
-                    text_parts.append(item["text"])
-                elif isinstance(item.get("content"), str):
-                    text_parts.append(item["content"])
-        joined = "\n".join(part for part in text_parts if part.strip()).strip()
-        if joined:
-            try:
-                return json.loads(joined)
-            except Exception:
-                return {"raw_text": joined}
-    return {"raw_text": str(content)}
-
-
-def _extract_control_payload(
-    messages: list[AnyMessage],
-    control_tools: set[str],
-) -> tuple[str, dict[str, Any]] | None:
-    for msg in reversed(messages or []):
-        if not isinstance(msg, ToolMessage):
-            continue
-        name = str(getattr(msg, "name", "") or "").strip()
-        if name not in control_tools:
-            continue
-        parsed = _parse_json_content(msg.content)
-        if isinstance(parsed, dict):
-            if isinstance(parsed.get("payload"), dict):
-                return name, parsed["payload"]
-            return name, parsed
-        return name, {"raw": parsed}
-    return None
-
 
 def _last_message_snippet(messages: list[AnyMessage], limit: int = 280) -> str:
     if not messages:
@@ -229,7 +201,7 @@ def _is_need_more_steps(messages: list[AnyMessage]) -> bool:
     return "need more steps" in text
 
 
-def _control_tools_seen(messages: list[AnyMessage]) -> list[str]:
+def _tool_messages_seen(messages: list[AnyMessage]) -> list[str]:
     names: list[str] = []
     for msg in messages or []:
         if not isinstance(msg, ToolMessage):
@@ -240,72 +212,111 @@ def _control_tools_seen(messages: list[AnyMessage]) -> list[str]:
     return names
 
 
-def _contract_violation_payload(
+def _structured_contract_violation(
     *,
     role: str,
+    reason: str,
     messages: list[AnyMessage],
     max_steps: int,
-    expected_terminal: list[str],
+    error: str | None = None,
+    schema_name: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "role": role,
-        "reason": "missing_terminal_control_payload",
-        "expected_terminal_tools": list(expected_terminal),
-        "observed_tool_messages": _control_tools_seen(messages),
+        "reason": reason,
+        "observed_tool_messages": _tool_messages_seen(messages),
         "remaining_steps_exhausted": _is_need_more_steps(messages),
         "message_count": len(messages or []),
         "last_message": _last_message_snippet(messages),
         "max_steps": int(max_steps),
     }
+    if error:
+        payload["error"] = error
+    if schema_name:
+        payload["expected_schema"] = schema_name
+    return payload
 
 
-def _contract_violation_summary(role: str, violation: dict[str, Any]) -> str:
-    expected = ", ".join(violation.get("expected_terminal_tools") or []) or "(none)"
+def _structured_contract_violation_summary(role: str, violation: dict[str, Any]) -> str:
     observed = ", ".join(violation.get("observed_tool_messages") or []) or "(none)"
     exhausted = "yes" if bool(violation.get("remaining_steps_exhausted")) else "no"
+    reason = str(violation.get("reason") or "unknown")
     return (
-        f"{role} agent control contract violation: no valid terminal payload "
-        f"(expected: {expected}; observed tool messages: {observed}; "
-        f"remaining_steps exhausted: {exhausted})."
+        f"{role} agent structured contract violation: {reason} "
+        f"(observed tool messages: {observed}; remaining_steps exhausted: {exhausted})."
     )
 
 
-def _task_output_from_control(
-    tool_name: str,
-    payload: dict[str, Any],
-) -> TaskOutput:
-    if tool_name == "task_finish":
-        return TaskOutput(
-            status="done",
-            summary=str(payload.get("summary") or ""),
-            facts=list(payload.get("facts") or []),
-            files=list(payload.get("files") or []),
-            constraints=list(payload.get("constraints") or []),
-            open_questions=list(payload.get("open_questions") or []),
-            decisions=list(payload.get("decisions") or []),
-            next_steps=list(payload.get("next_steps") or []),
-            artifacts=list(payload.get("artifacts") or []),
-            error="",
-            needs_human=False,
-            hint="",
+def _require_structured_response(
+    result: dict[str, Any],
+    *,
+    schema_cls: type[ProposalOutput] | type[DirectorOutput] | type[TaskOutput],
+    role: str,
+    messages: list[AnyMessage],
+    max_steps: int,
+) -> tuple[ProposalOutput | DirectorOutput | TaskOutput | None, dict[str, Any] | None]:
+    raw = result.get("structured_response")
+    if raw is None:
+        violation = _structured_contract_violation(
+            role=role,
+            reason="missing_structured_response",
+            messages=messages,
+            max_steps=max_steps,
+            schema_name=schema_cls.__name__,
         )
+        return None, violation
+    if isinstance(raw, schema_cls):
+        return raw, None
+    try:
+        return schema_cls.model_validate(raw), None
+    except Exception as exc:
+        violation = _structured_contract_violation(
+            role=role,
+            reason="invalid_structured_response",
+            messages=messages,
+            max_steps=max_steps,
+            error=str(exc),
+            schema_name=schema_cls.__name__,
+        )
+        return None, violation
 
-    partial = payload.get("partial_result") if isinstance(payload.get("partial_result"), dict) else {}
-    summary = str(partial.get("summary") or payload.get("error") or "Task failed.").strip()
-    return TaskOutput(
-        status="blocked",
-        summary=summary,
-        facts=list(partial.get("facts") or []),
-        files=list(partial.get("files") or []),
-        constraints=list(partial.get("constraints") or []),
-        open_questions=list(partial.get("open_questions") or []),
-        decisions=list(partial.get("decisions") or []),
-        next_steps=list(partial.get("next_steps") or []),
-        artifacts=list(partial.get("artifacts") or []),
-        error=str(payload.get("error") or summary),
-        needs_human=bool(payload.get("needs_human", True)),
-        hint=str(payload.get("hint") or ""),
+
+def _supports_remaining_steps_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    if "remaining_steps" not in text:
+        return False
+    markers = (
+        "extra_forbidden",
+        "extra inputs are not permitted",
+        "unexpected keyword",
+        "validationerror",
+        "unknown field",
     )
+    return any(marker in text for marker in markers)
+
+
+def _invoke_agent_with_step_budget(
+    *,
+    agent: Any,
+    messages: list[AnyMessage],
+    max_steps: int,
+    role: str,
+) -> dict[str, Any]:
+    payload = {
+        "messages": list(messages or []),
+        "remaining_steps": max(1, int(max_steps)),
+    }
+    try:
+        return agent.invoke(payload)
+    except Exception as exc:
+        if not _supports_remaining_steps_error(exc):
+            raise
+        logger.info(
+            "[%s] agent.invoke rejected remaining_steps; retrying with messages-only payload",
+            role,
+        )
+        return agent.invoke({"messages": list(messages or [])})
+
 
 def run_proposal(
     state: Dict[str, Any],
@@ -315,23 +326,32 @@ def run_proposal(
     tools_description: str,
     run_dir: Path,
     max_steps: int = 30,
-    termination_mode: Literal["control_tools", "response_format"] = "control_tools",
-    strict_control_contract: bool = True,
-) -> Dict[str, Any]:
+) -> Command:
     """Invoke the proposal ReAct agent and map results to parent state."""
     ctx_text = _build_proposal_context(state, memory_store, tools_description)
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
-        result = agent.invoke({
-            "messages": input_messages,
-            "remaining_steps": max(1, int(max_steps)),
-        })
+        result = _invoke_agent_with_step_budget(
+            agent=agent,
+            messages=input_messages,
+            max_steps=max_steps,
+            role="proposal",
+        )
     except Exception as exc:
         logger.exception("proposal agent invoke failed: %s", exc)
-        if strict_control_contract and termination_mode == "control_tools":
-            summary = f"proposal agent invoke failed before terminal control output: {exc}"
-            return {
+        violation = _structured_contract_violation(
+            role="proposal",
+            reason="invoke_exception",
+            messages=input_messages,
+            max_steps=max_steps,
+            error=str(exc),
+            schema_name=ProposalOutput.__name__,
+        )
+        summary = f"proposal agent invoke failed before structured response: {exc}"
+        return Command(
+            goto="summarize",
+            update={
                 "proposal_messages": input_messages,
                 "proposal_md": "",
                 "work_packages": [],
@@ -339,85 +359,67 @@ def run_proposal(
                 "proposal_feedback": "",
                 "status": "failure",
                 "summary": summary,
-                "contract_violation": {
-                    "role": "proposal",
-                    "reason": "invoke_exception",
-                    "error": str(exc),
-                    "expected_terminal_tools": ["proposal_finish", "proposal_fail"],
-                },
-            }
-        return {
-            "proposal_messages": input_messages,
-            "proposal_md": "",
-            "work_packages": [],
-            "proposal_approved": False,
-            "proposal_feedback": "",
-        }
+                "contract_violation": violation,
+            },
+        )
 
     msgs = list(result.get("messages", []) or [])
-    resp: ProposalOutput | None = None
-    if termination_mode == "response_format":
-        resp = result.get("structured_response")
-    else:
-        control = _extract_control_payload(msgs, {"proposal_finish", "proposal_fail"})
-        if control:
-            tool_name, payload = control
-            if tool_name == "proposal_finish":
-                try:
-                    resp = ProposalOutput(
-                        status="success",
-                        proposal_md=str(payload.get("proposal_md") or ""),
-                        work_packages=list(payload.get("work_packages") or []),
-                        error="",
-                        needs_human=False,
-                    )
-                except Exception:
-                    resp = None
-            elif tool_name == "proposal_fail":
-                resp = ProposalOutput(
-                    status="fail",
-                    proposal_md="",
-                    work_packages=[],
-                    error=str(payload.get("error") or "proposal_fail"),
-                    needs_human=bool(payload.get("needs_human", True)),
-                )
-
-    if resp is None:
+    parsed, violation = _require_structured_response(
+        result,
+        schema_cls=ProposalOutput,
+        role="proposal",
+        messages=msgs,
+        max_steps=max_steps,
+    )
+    if not isinstance(parsed, ProposalOutput):
+        violation_payload = violation or _structured_contract_violation(
+            role="proposal",
+            reason="missing_structured_response",
+            messages=msgs,
+            max_steps=max_steps,
+            schema_name=ProposalOutput.__name__,
+        )
         if _is_need_more_steps(msgs):
             logger.warning("[run_proposal] hit remaining_steps limit (max_steps=%d)", max_steps)
         logger.warning(
-            "[run_proposal] no terminal payload. message_count=%d, last=%s",
+            "[run_proposal] missing/invalid structured response. message_count=%d, last=%s",
             len(msgs), _last_message_snippet(msgs),
         )
-        if strict_control_contract and termination_mode == "control_tools":
-            violation = _contract_violation_payload(
-                role="proposal",
-                messages=msgs,
-                max_steps=max_steps,
-                expected_terminal=["proposal_finish", "proposal_fail"],
-            )
-            return {
+        return Command(
+            goto="summarize",
+            update={
                 "proposal_messages": _cap_messages(msgs),
                 "proposal_md": "",
                 "work_packages": [],
                 "proposal_approved": False,
                 "proposal_feedback": "",
                 "status": "failure",
-                "summary": _contract_violation_summary("proposal", violation),
-                "contract_violation": violation,
-            }
-        return {
-            "proposal_messages": _cap_messages(msgs),
-            "proposal_md": "",
-            "work_packages": [],
-            "proposal_approved": False,
-            "proposal_feedback": "",
-        }
+                "summary": _structured_contract_violation_summary("proposal", violation_payload),
+                "contract_violation": violation_payload,
+            },
+        )
 
+    resp = parsed
     if resp.status == "fail":
         logger.warning(
             "[run_proposal] proposal agent reported FAIL: error=%r, needs_human=%s",
             resp.error, resp.needs_human,
+        )
+        summary = str(resp.error or "Proposal agent reported failure.").strip()
+        if not summary:
+            summary = "Proposal agent reported failure."
+        return Command(
+            goto="summarize",
+            update={
+                "proposal_messages": _cap_messages(msgs),
+                "proposal_md": "",
+                "work_packages": [],
+                "proposal_approved": False,
+                "proposal_feedback": "",
+                "status": "failure",
+                "summary": summary,
+                "contract_violation": {},
+            },
         )
 
     proposal_md = resp.proposal_md
@@ -429,13 +431,17 @@ def run_proposal(
         except Exception:
             pass
 
-    return {
-        "proposal_messages": _cap_messages(msgs),
-        "proposal_md": proposal_md,
-        "work_packages": work_packages,
-        "proposal_approved": False,
-        "proposal_feedback": "",
-    }
+    return Command(
+        goto="proposal_review",
+        update={
+            "proposal_messages": _cap_messages(msgs),
+            "proposal_md": proposal_md,
+            "work_packages": work_packages,
+            "proposal_approved": False,
+            "proposal_feedback": "",
+            "contract_violation": {},
+        },
+    )
 
 
 def run_director(
@@ -445,100 +451,83 @@ def run_director(
     memory_store: MemoryStore,
     tools_description: str,
     max_steps: int = 30,
-    termination_mode: Literal["control_tools", "response_format"] = "control_tools",
-    strict_control_contract: bool = True,
 ) -> Command:
     """Invoke the director ReAct agent and route via Command."""
     ctx_text = _build_director_context(state, memory_store, tools_description)
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
-        result = agent.invoke({
-            "messages": input_messages,
-            "remaining_steps": max(1, int(max_steps)),
-        })
+        result = _invoke_agent_with_step_budget(
+            agent=agent,
+            messages=input_messages,
+            max_steps=max_steps,
+            role="director",
+        )
     except Exception as exc:
         logger.exception("director agent invoke failed: %s", exc)
-        if strict_control_contract and termination_mode == "control_tools":
-            summary = f"director agent invoke failed before terminal control output: {exc}"
-            return Command(
-                goto="finalize_memory_patch",
-                update={
-                    "director_messages": input_messages,
-                    "director_decision": {},
-                    "next_action": "ContractViolation",
-                    "status": "failure",
-                    "summary": summary,
-                    "contract_violation": {
-                        "role": "director",
-                        "reason": "invoke_exception",
-                        "error": str(exc),
-                        "expected_terminal_tools": ["director_decide"],
-                    },
-                },
-            )
+        violation = _structured_contract_violation(
+            role="director",
+            reason="invoke_exception",
+            messages=input_messages,
+            max_steps=max_steps,
+            error=str(exc),
+            schema_name=DirectorOutput.__name__,
+        )
+        summary = f"director agent invoke failed before structured response: {exc}"
         return Command(
             goto="finalize_memory_patch",
             update={
                 "director_messages": input_messages,
                 "director_decision": {},
-                "next_action": "StopAndSynthesize",
+                "next_action": "ContractViolation",
+                "status": "failure",
+                "summary": summary,
+                "contract_violation": violation,
             },
         )
 
     msgs = list(result.get("messages", []) or [])
-    resp: DirectorOutput | None = None
-    if termination_mode == "response_format":
-        resp = result.get("structured_response")
-    else:
-        control = _extract_control_payload(msgs, {"director_decide"})
-        if control:
-            _, payload = control
-            try:
-                resp = DirectorOutput(**payload)
-            except Exception as exc:
-                logger.warning("Invalid director_decide payload: %s", exc)
-
-    if resp is None:
+    parsed, violation = _require_structured_response(
+        result,
+        schema_cls=DirectorOutput,
+        role="director",
+        messages=msgs,
+        max_steps=max_steps,
+    )
+    if not isinstance(parsed, DirectorOutput):
         if _is_need_more_steps(msgs):
             logger.warning("[run_director] hit remaining_steps limit (max_steps=%d)", max_steps)
-        logger.warning("director agent returned no terminal payload")
-        if strict_control_contract and termination_mode == "control_tools":
-            violation = _contract_violation_payload(
-                role="director",
-                messages=msgs,
-                max_steps=max_steps,
-                expected_terminal=["director_decide"],
-            )
-            return Command(
-                goto="finalize_memory_patch",
-                update={
-                    "director_messages": _cap_messages(msgs),
-                    "director_decision": {},
-                    "next_action": "ContractViolation",
-                    "status": "failure",
-                    "summary": _contract_violation_summary("director", violation),
-                    "contract_violation": violation,
-                },
-            )
-        logger.warning("defaulting to StopAndSynthesize")
+        logger.warning("director agent returned missing/invalid structured response")
+        violation_payload = violation or _structured_contract_violation(
+            role="director",
+            reason="missing_structured_response",
+            messages=msgs,
+            max_steps=max_steps,
+            schema_name=DirectorOutput.__name__,
+        )
         return Command(
             goto="finalize_memory_patch",
             update={
                 "director_messages": _cap_messages(msgs),
                 "director_decision": {},
-                "next_action": "StopAndSynthesize",
+                "next_action": "ContractViolation",
+                "status": "failure",
+                "summary": _structured_contract_violation_summary("director", violation_payload),
+                "contract_violation": violation_payload,
             },
         )
 
+    resp = parsed
     update: Dict[str, Any] = {
         "director_messages": _cap_messages(msgs),
         "director_decision": resp.model_dump(),
         "next_action": resp.state,
+        "contract_violation": {},
     }
 
     if resp.state == "PerformNextTask":
-        task_packet = resp.task_packet
+        branch = resp.perform_next_task
+        task_packet = branch.task_packet if branch is not None else None
         task_id = f"task_{_next_task_index(state.get('tasks', [])):02d}"
         update["current_task_id"] = task_id
         update["current_task_packet"] = task_packet.model_dump() if task_packet else {}
@@ -553,19 +542,23 @@ def run_director(
         return Command(goto="run_task", update=update)
 
     if resp.state == "MajorReviseProposal":
-        if isinstance(resp.updated_proposal_md, str):
-            update["proposal_md"] = resp.updated_proposal_md
-        if isinstance(resp.updated_work_packages, list):
-            update["work_packages"] = resp.updated_work_packages
+        branch = resp.major_revise_proposal
+        if branch is not None:
+            if isinstance(branch.updated_proposal_md, str):
+                update["proposal_md"] = branch.updated_proposal_md
+            if isinstance(branch.updated_work_packages, list):
+                update["work_packages"] = branch.updated_work_packages
         update["proposal_approved"] = False
         update["proposal_feedback"] = resp.rationale
         return Command(goto="proposal_review", update=update)
 
     if resp.state == "MinorReviseProposal":
-        if isinstance(resp.updated_proposal_md, str):
-            update["proposal_md"] = resp.updated_proposal_md
-        if isinstance(resp.updated_work_packages, list):
-            update["work_packages"] = resp.updated_work_packages
+        branch = resp.minor_revise_proposal
+        if branch is not None:
+            if isinstance(branch.updated_proposal_md, str):
+                update["proposal_md"] = branch.updated_proposal_md
+            if isinstance(branch.updated_work_packages, list):
+                update["work_packages"] = branch.updated_work_packages
         return Command(goto="run_director", update=update)
 
     # StopAndSynthesize
@@ -578,23 +571,32 @@ def run_task(
     agent: Any,
     memory_store: MemoryStore,
     max_steps: int = 40,
-    termination_mode: Literal["control_tools", "response_format"] = "control_tools",
-    strict_control_contract: bool = True,
-) -> Dict[str, Any]:
+) -> Command:
     """Invoke the task runner ReAct agent and map results to parent state."""
     ctx_text = _build_task_context(state, memory_store)
     ctx_msg = HumanMessage(content=ctx_text)
 
     try:
-        result = agent.invoke({
-            "messages": [ctx_msg],
-            "remaining_steps": max(1, int(max_steps)),
-        })
+        result = _invoke_agent_with_step_budget(
+            agent=agent,
+            messages=[ctx_msg],
+            max_steps=max_steps,
+            role="task_runner",
+        )
     except Exception as exc:
         logger.exception("task runner invoke failed: %s", exc)
-        if strict_control_contract and termination_mode == "control_tools":
-            summary = f"task runner invoke failed before terminal control output: {exc}"
-            return {
+        violation = _structured_contract_violation(
+            role="task_runner",
+            reason="invoke_exception",
+            messages=[ctx_msg],
+            max_steps=max_steps,
+            error=str(exc),
+            schema_name=TaskOutput.__name__,
+        )
+        summary = f"task runner invoke failed before structured response: {exc}"
+        return Command(
+            goto="finalize_memory_patch",
+            update={
                 "runner_messages": [ctx_msg],
                 "task_result": {
                     "task_outcome": "failure",
@@ -613,39 +615,36 @@ def run_task(
                 },
                 "status": "failure",
                 "summary": summary,
-                "contract_violation": {
-                    "role": "task_runner",
-                    "reason": "invoke_exception",
-                    "error": str(exc),
-                    "expected_terminal_tools": ["task_finish", "task_fail"],
-                },
-            }
-        result = {"messages": [ctx_msg]}
+                "contract_violation": violation,
+            },
+        )
 
     msgs = list(result.get("messages", []) or [])
-    resp: TaskOutput | None = None
-    if termination_mode == "response_format":
-        resp = result.get("structured_response")
-    else:
-        control = _extract_control_payload(msgs, {"task_finish", "task_fail"})
-        if control:
-            tool_name, payload = control
-            try:
-                resp = _task_output_from_control(tool_name, payload)
-            except Exception as exc:
-                logger.warning("Invalid %s payload: %s", tool_name, exc)
-
-    if resp is None:
-        base_summary = (
-            "Task runner returned no terminal payload."
-            + (" (remaining_steps exhausted)" if _is_need_more_steps(msgs) else "")
+    parsed, violation = _require_structured_response(
+        result,
+        schema_cls=TaskOutput,
+        role="task_runner",
+        messages=msgs,
+        max_steps=max_steps,
+    )
+    if not isinstance(parsed, TaskOutput):
+        summary = _structured_contract_violation_summary(
+            "task_runner",
+            violation
+            or _structured_contract_violation(
+                role="task_runner",
+                reason="missing_structured_response",
+                messages=msgs,
+                max_steps=max_steps,
+                schema_name=TaskOutput.__name__,
+            ),
         )
         task_result = {
             "task_outcome": "failure",
-            "task_summary": base_summary,
+            "task_summary": summary,
             "key_artifacts": [],
             "structured_result": {
-                "summary": "Task runner returned no terminal payload.",
+                "summary": summary,
                 "facts": [],
                 "files": [],
                 "constraints": [],
@@ -655,30 +654,33 @@ def run_task(
                 "artifacts": [],
             },
         }
-        if strict_control_contract and termination_mode == "control_tools":
-            violation = _contract_violation_payload(
-                role="task_runner",
-                messages=msgs,
-                max_steps=max_steps,
-                expected_terminal=["task_finish", "task_fail"],
-            )
-            summary = _contract_violation_summary("task_runner", violation)
-            task_result["task_summary"] = summary
-            task_result["structured_result"]["summary"] = summary
-            return {
-                "runner_messages": msgs,
+        return Command(
+            goto="finalize_memory_patch",
+            update={
+                "runner_messages": _cap_messages(msgs),
                 "task_result": task_result,
                 "status": "failure",
                 "summary": summary,
-                "contract_violation": violation,
-            }
-    else:
-        task_result = _normalize_task_output(resp)
+                "contract_violation": violation
+                or _structured_contract_violation(
+                    role="task_runner",
+                    reason="missing_structured_response",
+                    messages=msgs,
+                    max_steps=max_steps,
+                    schema_name=TaskOutput.__name__,
+                ),
+            },
+        )
 
-    return {
-        "runner_messages": msgs,
-        "task_result": task_result,
-    }
+    task_result = _normalize_task_output(parsed)
+    return Command(
+        goto="memory_patch",
+        update={
+            "runner_messages": _cap_messages(msgs),
+            "task_result": task_result,
+            "contract_violation": {},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

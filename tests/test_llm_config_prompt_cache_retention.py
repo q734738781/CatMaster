@@ -67,9 +67,8 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
                 "  proposal:",
                 "    browse_tools_enabled: false",
                 "agent_runtime:",
-                "  termination_mode: control_tools",
-                "  strict_control_contract: true",
                 "  recursion_limit: 512",
+                "  max_tool_calls: 72",
                 "  print_state_messages: true",
                 "  print_http_raw_post: true",
             ]
@@ -88,14 +87,13 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert profile.summary.model == "openai/gpt-5-nano"
     assert profile.summary.print_http_raw_post is True
     assert profile.agent_policies.proposal.browse_tools_enabled is False
-    assert profile.agent_runtime.termination_mode == "control_tools"
-    assert profile.agent_runtime.strict_control_contract is True
     assert profile.agent_runtime.recursion_limit == 512
+    assert profile.agent_runtime.max_tool_calls == 72
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
 
 
-def test_llm_profile_agent_runtime_invalid_mode_falls_back(tmp_path: Path) -> None:
+def test_llm_profile_agent_runtime_legacy_keys_are_rejected(tmp_path: Path) -> None:
     cfg = tmp_path / "llm.yaml"
     cfg.write_text(
         "\n".join(
@@ -111,7 +109,7 @@ def test_llm_profile_agent_runtime_invalid_mode_falls_back(tmp_path: Path) -> No
                 "  memory_patch: 'openai/gpt-5.2:online'",
                 "  summary: 'openai/gpt-5.2:online'",
                 "agent_runtime:",
-                "  termination_mode: unknown_mode",
+                "  termination_mode: control_tools",
                 "  strict_control_contract: false",
                 "  recursion_limit: 0",
                 "  print_state_messages: false",
@@ -121,12 +119,55 @@ def test_llm_profile_agent_runtime_invalid_mode_falls_back(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
+    with pytest.raises(ValueError, match="agent_runtime no longer supports"):
+        LLMProfile.from_env_or_file(str(cfg))
+
+
+def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+                "agent_runtime:",
+                "  recursion_limit: 0",
+                "  print_state_messages: false",
+                "  print_http_raw_post: false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     profile = LLMProfile.from_env_or_file(str(cfg))
-    assert profile.agent_runtime.termination_mode == "control_tools"
-    assert profile.agent_runtime.strict_control_contract is False
     assert profile.agent_runtime.recursion_limit == 1_000_000
+    assert profile.agent_runtime.max_tool_calls == 60
     assert profile.agent_runtime.print_state_messages is False
     assert profile.agent_runtime.print_http_raw_post is False
+
+
+def test_llm_profile_from_env_ignores_legacy_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CATMASTER_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("CATMASTER_LLM_MODEL", "gpt-5.2")
+    monkeypatch.setenv("CATMASTER_TERMINATION_MODE", "control_tools")
+    monkeypatch.setenv("CATMASTER_STRICT_CONTROL_CONTRACT", "false")
+    monkeypatch.setenv("CATMASTER_RECURSION_LIMIT", "256")
+    monkeypatch.setenv("CATMASTER_MAX_TOOL_CALLS", "66")
+    monkeypatch.setenv("CATMASTER_PRINT_HTTP_RAW_POST", "true")
+
+    profile = LLMProfile.from_env()
+
+    assert profile.agent_runtime.recursion_limit == 256
+    assert profile.agent_runtime.max_tool_calls == 66
+    assert profile.agent_runtime.print_http_raw_post is True
 
 
 def test_llm_profile_rejects_legacy_tool_calling_profiles(tmp_path: Path) -> None:

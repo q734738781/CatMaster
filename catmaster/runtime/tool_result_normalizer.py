@@ -3,14 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-CONTROL_TOOL_NAMES: set[str] = {
-    "task_finish",
-    "task_fail",
-    "proposal_finish",
-    "proposal_fail",
-    "director_decide",
-}
-
 _FAILURE_STATUSES: set[str] = {
     "failed",
     "error",
@@ -79,15 +71,10 @@ def _parse_message_content(content: Any) -> dict[str, Any]:
     return {"raw_text": str(content)}
 
 
-def is_control_tool_name(tool_name: str | None) -> bool:
-    return str(tool_name or "").strip() in CONTROL_TOOL_NAMES
-
-
 def normalize_tool_result(
     raw: Any,
     *,
     tool_name: str | None = None,
-    is_control_tool: bool | None = None,
 ) -> dict[str, Any]:
     parsed: dict[str, Any]
     status_hint = ""
@@ -121,9 +108,6 @@ def normalize_tool_result(
         resolved_tool_name = str(getattr(raw, "name", "") or "").strip()
     parsed["tool_name"] = resolved_tool_name
 
-    if is_control_tool is None:
-        is_control_tool = is_control_tool_name(resolved_tool_name)
-
     raw_text = str(parsed.get("raw_text") or "").strip()
     parse_failed = bool(raw_text) and "status" not in parsed and "error" not in parsed
     if parse_failed:
@@ -133,28 +117,22 @@ def normalize_tool_result(
     status_raw = str(parsed.get("status") or "").strip().lower()
     error_text = _snippet(parsed.get("error"), 500).strip()
 
-    if is_control_tool:
-        if status_raw in _FAILURE_STATUSES:
-            normalized_status = "failed"
-        else:
-            normalized_status = "control"
+    if status_raw in _FAILURE_STATUSES:
+        normalized_status = "failed"
+    elif status_raw in _SUCCESS_STATUSES:
+        normalized_status = "success"
+    elif error_text:
+        normalized_status = "failed"
+    elif status_hint == "error":
+        normalized_status = "failed"
+    elif status_raw:
+        # Unknown status values should never be silently treated as success.
+        normalized_status = "failed"
     else:
-        if status_raw in _FAILURE_STATUSES:
-            normalized_status = "failed"
-        elif status_raw in _SUCCESS_STATUSES:
-            normalized_status = "success"
-        elif error_text:
-            normalized_status = "failed"
-        elif status_hint == "error":
-            normalized_status = "failed"
-        elif status_raw:
-            # Unknown status values should never be silently treated as success.
-            normalized_status = "failed"
-        else:
-            meaningful_payload = bool(parsed) and not (
-                len(parsed) == 1 and "tool_name" in parsed
-            )
-            normalized_status = "success" if meaningful_payload else "failed"
+        meaningful_payload = bool(parsed) and not (
+            len(parsed) == 1 and "tool_name" in parsed
+        )
+        normalized_status = "success" if meaningful_payload else "failed"
 
     data_raw = parsed.get("data")
     if isinstance(data_raw, Mapping):
@@ -196,7 +174,7 @@ def to_tool_message_status(payload: Mapping[str, Any]) -> str:
     status_raw = str(payload.get("status") or "").strip().lower()
     if status_raw in {"failed", "error"}:
         return "error"
-    if status_raw in {"success", "control"}:
+    if status_raw in {"success"}:
         return "success"
     if payload.get("error"):
         return "error"
@@ -204,9 +182,6 @@ def to_tool_message_status(payload: Mapping[str, Any]) -> str:
 
 
 __all__ = [
-    "CONTROL_TOOL_NAMES",
-    "is_control_tool_name",
     "normalize_tool_result",
     "to_tool_message_status",
 ]
-

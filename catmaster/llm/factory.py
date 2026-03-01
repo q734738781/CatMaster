@@ -91,6 +91,37 @@ def _resolve_reasoning_effort(cfg: LLMConfig) -> str | None:
     return text or None
 
 
+def _resolve_model_kwargs(cfg: LLMConfig) -> dict[str, Any]:
+    model_kwargs: dict[str, Any] = {}
+    if cfg.top_p is not None:
+        model_kwargs["top_p"] = cfg.top_p
+    if cfg.frequency_penalty is not None:
+        model_kwargs["frequency_penalty"] = cfg.frequency_penalty
+    if cfg.presence_penalty is not None:
+        model_kwargs["presence_penalty"] = cfg.presence_penalty
+    max_tokens = cfg.max_tokens
+    if max_tokens is None and cfg.max_output_tokens is not None:
+        max_tokens = cfg.max_output_tokens
+    if max_tokens is not None:
+        model_kwargs["max_tokens"] = max_tokens
+
+    extra_model_kwargs = dict(cfg.extra) if isinstance(cfg.extra, dict) else {}
+    if "extra_body" in extra_model_kwargs:
+        raise ValueError(
+            "models.*.extra.extra_body is not supported. "
+            "Use models.*.provider_options.<provider>.extra_body."
+        )
+    if "reasoning_effort" in extra_model_kwargs:
+        raise ValueError(
+            "models.*.extra.reasoning_effort is not supported. "
+            "Use models.*.reasoning.effort instead."
+        )
+    if extra_model_kwargs:
+        model_kwargs.update(extra_model_kwargs)
+
+    return model_kwargs
+
+
 def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> None:
     if str(cfg.provider or "").strip().lower() != "openai":
         return
@@ -150,32 +181,7 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             kwargs["max_retries"] = cfg.max_retries
         _apply_openai_request_options(cfg, kwargs)
 
-        model_kwargs: dict[str, Any] = {}
-        if cfg.top_p is not None:
-            model_kwargs["top_p"] = cfg.top_p
-        if cfg.frequency_penalty is not None:
-            model_kwargs["frequency_penalty"] = cfg.frequency_penalty
-        if cfg.presence_penalty is not None:
-            model_kwargs["presence_penalty"] = cfg.presence_penalty
-        max_tokens = cfg.max_tokens
-        if max_tokens is None and cfg.max_output_tokens is not None:
-            max_tokens = cfg.max_output_tokens
-        if max_tokens is not None:
-            model_kwargs["max_tokens"] = max_tokens
-
-        extra_model_kwargs = dict(cfg.extra) if isinstance(cfg.extra, dict) else {}
-        if "extra_body" in extra_model_kwargs:
-            raise ValueError(
-                "models.*.extra.extra_body is not supported. "
-                "Use models.*.provider_options.<provider>.extra_body."
-            )
-        if "reasoning_effort" in extra_model_kwargs:
-            raise ValueError(
-                "models.*.extra.reasoning_effort is not supported. "
-                "Use models.*.reasoning.effort instead."
-            )
-        if extra_model_kwargs:
-            model_kwargs.update(extra_model_kwargs)
+        model_kwargs = _resolve_model_kwargs(cfg)
 
         merged_extra_body = _resolve_extra_body(cfg)
         if merged_extra_body:

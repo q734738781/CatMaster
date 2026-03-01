@@ -66,8 +66,7 @@ class ToolRegistry:
             MPDownloadStructureInput,
         )
 
-        # Memory/notes
-        from catmaster.tools.misc import memory
+        # Memory patch
         from catmaster.tools.misc.memory_patch_apply import (
             memory_apply_aider_edits,
             MemoryApplyAiderEditsInput,
@@ -92,7 +91,6 @@ class ToolRegistry:
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)
-        self.register_tool("write_note", memory.write_note, memory.MemoryNoteInput)
         self.register_tool("memory_apply_aider_edits", memory_apply_aider_edits, MemoryApplyAiderEditsInput)
     
     def register_tool(
@@ -231,25 +229,25 @@ def _make_langchain_tool(
                     "error": f"{type(exc).__name__}: {exc}",
                 },
                 tool_name=name,
-                is_control_tool=False,
             )
             return json.dumps(normalized, ensure_ascii=False)
 
         normalized = normalize_tool_result(
             result,
             tool_name=name,
-            is_control_tool=False,
         )
         return json.dumps(normalized, ensure_ascii=False)
 
     _wrapper.__name__ = name
     description = (input_model.__doc__ or f"Input for {name}").strip()
+    args_schema = sanitize_json_schema(input_model.model_json_schema())
 
     return StructuredTool.from_function(
         func=_wrapper,
         name=name,
         description=description,
-        args_schema=input_model,
+        args_schema=args_schema,
+        infer_schema=False,
     )
 
 

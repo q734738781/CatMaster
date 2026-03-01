@@ -87,9 +87,7 @@ class VaspRelaxPrepareInput(BaseModel):
         "bulk",
         description=(
             "Calculation type: 'gas'|'bulk'|'slab'. "
-            "This provides preset INCAR overrides for different calculation types. gas is suitable for small molecules; slab is suitable for surface slab models; "
-            "bulk is suitable for bulk relaxations. Use relax_cell=true for bulk cell+lattice relaxation (ISIF=3), "
-            "or keep relax_cell=false for ion-position-only relaxation (ISIF=2)."
+            "This provides preset INCAR overrides for different calculation types. gas is suitable for small molecules; slab is suitable for surface slab models; bulk is suitable for bulk relaxations."
         ),
     )
     relax_cell: bool = Field(
@@ -116,10 +114,11 @@ class VaspRelaxPrepareInput(BaseModel):
     user_incar_settings: Dict = Field(
         default_factory=dict,
         description=(
-            "User INCAR overrides as a dict, e.g. "
-            '{"MAGMOM":{"O":1},"NUPDOWN":2}. '
+            "User INCAR overrides as a dict as per pymatgen's user_incar_settings format, e.g. "
+            '{"MAGMOM":{"O":1},"ALGO":"Fast"}. '
             "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
-            "Use null value to remove a key from INCAR. "
+            "Use null only as a value inside the override object to remove a specific INCAR key, e.g. "
+            "`{\"LREAL\": null}`. "
             "calc_type/task-required presets still take precedence on key conflict."
         ),
     )
@@ -140,7 +139,7 @@ class VaspRelaxPrepareInput(BaseModel):
 
 
 class VaspSPPrepareInput(BaseModel):
-    """Prepare MPRelaxSet-based VASP single-point inputs for structures under a file or directory."""
+    """Prepare MPRelaxSet-based VASP single-point inputs for structures under a file or directory. Parameters are the same as VaspRelaxPrepareInput, but with single_point relaxation enabled (NSW=0, IBRION=-1)."""
 
     input_path: str = Field(
         ...,
@@ -174,10 +173,11 @@ class VaspSPPrepareInput(BaseModel):
     user_incar_settings: Dict = Field(
         default_factory=dict,
         description=(
-            "Additional INCAR overrides as a dict, e.g. "
-            '{"ISMEAR":0,"SIGMA":0.05}. '
+            "User INCAR overrides as a dict as per pymatgen's user_incar_settings format, e.g. "
+            '{"MAGMOM":{"O":1},"ALGO":"Fast"}. '
             "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
-            "Use null value to remove a key from INCAR. "
+            "Use null only as a value inside the override object to remove a specific INCAR key, e.g. "
+            "`{\"LORBIT\": null}`. "
             "calc_type/task-required presets still take precedence on key conflict."
         ),
     )
