@@ -28,7 +28,6 @@ _MONITOR_EXTRA_CSS = """\
 font-family:var(--font-mono);scroll-behavior:smooth;}
 """
 
-# JS snippet to auto-scroll the event feed container to bottom after each update.
 _AUTOSCROLL_JS = """\
 <script>
 (function(){
@@ -141,10 +140,9 @@ def build_monitor_page(
         return f'<a href="{url}" target="_blank">Permalink</a>'
 
     # ------------------------------------------------------------------
-    # Sync output contract -- one ordered list reused everywhere
+    # Sync output contract
     # ------------------------------------------------------------------
 
-    # _sync_and_render returns values matching _SYNC_KEYS ordering.
     _SYNC_KEYS = [
         "run_info",
         "run_select_status",
@@ -370,16 +368,17 @@ def build_monitor_page(
         gr.HTML(_AUTOSCROLL_JS)
         ctx_state = gr.State("")
         selected_run_state = gr.State("")
+
+        # -- Sidebar workspace controls --
+        ws = build_workspace_controls(
+            registry=registry,
+            default_workspace=default_workspace,
+            ctx_state=ctx_state,
+        )
+
         nav_html = gr.HTML(nav_header_html("monitor"))
 
         with gr.Column(elem_classes=["cm-shell"]):
-
-            # -- Workspace controls (collapsible) --
-            ws = build_workspace_controls(
-                registry=registry,
-                default_workspace=default_workspace,
-                ctx_state=ctx_state,
-            )
 
             # -- Run selector bar --
             with gr.Row():
@@ -408,11 +407,9 @@ def build_monitor_page(
             # -- Tabbed main content --
             with gr.Tabs():
 
-                # Tab 1: Runs
                 with gr.Tab("Runs"):
                     cards_html = gr.HTML("", elem_classes=["cm-scroll-html"])
 
-                # Tab 2: Live View
                 with gr.Tab("Live View"):
                     with gr.Row(equal_height=True, elem_classes=["cm-top-align"]):
                         with gr.Column(scale=1):
@@ -424,14 +421,12 @@ def build_monitor_page(
                                 elem_classes=["cm-scroll-md"],
                             )
 
-                # Tab 3: Detail
                 with gr.Tab("Detail"):
                     report_source_md = gr.Markdown(
                         "<small>Report Source: <code>unavailable</code></small>",
                     )
                     final_report_md = gr.Markdown(elem_classes=["cm-scroll-md"])
 
-                # Tab 4: Advanced
                 with gr.Tab("Advanced"):
                     refresh_detail_btn = gr.Button("Refresh Advanced")
                     with gr.Row(equal_height=True, elem_classes=["cm-top-align"]):
@@ -451,7 +446,6 @@ def build_monitor_page(
                         label="patch_trace.jsonl", language="json", lines=8,
                     )
 
-                # Tab 5: Files
                 with gr.Tab("Files"):
                     with gr.Row():
                         with gr.Column(scale=1):
@@ -475,7 +469,7 @@ def build_monitor_page(
                             file_content = gr.Code(label="File content")
 
         # ------------------------------------------------------------------
-        # Sync outputs -- single ordered list reused by all bindings
+        # Sync outputs
         # ------------------------------------------------------------------
 
         _sync_outputs = [

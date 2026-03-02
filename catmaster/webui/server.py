@@ -17,20 +17,22 @@ def _make_theme() -> Optional[Any]:
     themes = getattr(gr, "themes", None)
     if themes is None:
         return None
-    origin = getattr(themes, "Origin", None)
-    if origin is None:
+    soft = getattr(themes, "Soft", None)
+    if soft is None:
         return None
     try:
-        return origin(
-            primary_hue="teal",
-            secondary_hue="cyan",
-            neutral_hue="slate",
+        return soft(
+            primary_hue="indigo",
+            secondary_hue="violet",
+            neutral_hue="gray",
+            radius_size="lg",
+            text_size="lg",
             font=["IBM Plex Sans", "Space Grotesk", "sans-serif"],
             font_mono=["IBM Plex Mono", "monospace"],
         )
     except TypeError:
         try:
-            return origin()
+            return soft()
         except Exception:
             return None
     except Exception:

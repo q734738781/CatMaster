@@ -5,6 +5,9 @@ from datetime import datetime
 from html import escape
 from typing import Any, Callable, Dict, List, Optional
 
+from .components import status_color
+
+
 def truncate(value: Any, max_len: int = 140) -> str:
     text = "" if value is None else str(value)
     text = " ".join(text.split())
@@ -115,10 +118,17 @@ _EVENT_CATEGORY: Dict[str, str] = {
 }
 
 _CAT_COLORS = {
-    "tool": "#0d9488",
-    "task": "#6366f1",
-    "run": "#64748b",
-    "interrupt": "#d97706",
+    "tool": "#0ea5e9",
+    "task": "#8b5cf6",
+    "run": "#6b7280",
+    "interrupt": "#f59e0b",
+}
+
+_CAT_ICONS = {
+    "tool": "\u2699",
+    "task": "\u25B6",
+    "run": "\u25CF",
+    "interrupt": "\u26A0",
 }
 
 
@@ -134,31 +144,45 @@ def format_event_html(event: Dict[str, Any]) -> str:
     name = str(event.get("name", ""))
     summary = escape(summarize_event(event))
     cat = _EVENT_CATEGORY.get(name, "run")
-    cat_color = _CAT_COLORS.get(cat, "#64748b")
+    cat_color = _CAT_COLORS.get(cat, "#475569")
+    icon = _CAT_ICONS.get(cat, "\u25CF")
     return (
-        f'<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;font-size:0.82rem;'
-        f'border-bottom:1px solid var(--border-color-primary,#e2e8f0);">'
-        f'<span style="color:var(--body-text-color-subdued,#64748b);font-family:monospace;min-width:60px;">{stamp}</span>'
-        f'<code style="background:{cat_color}18;color:{cat_color};padding:1px 6px;border-radius:4px;'
-        f'font-size:0.78rem;white-space:nowrap;">{escape(name)}</code>'
-        f'<span style="color:var(--body-text-color,#1e293b);">{summary}</span>'
-        f"</div>"
+        f'<div style="display:flex;gap:8px;align-items:stretch;padding:0;font-size:0.82rem;'
+        f'position:relative;">'
+        # timeline connector
+        f'<div style="width:2px;background:{cat_color}30;flex-shrink:0;'
+        f'margin:0 4px;border-radius:1px;"></div>'
+        # content row
+        f'<div style="display:flex;gap:8px;align-items:baseline;padding:4px 4px;flex:1;'
+        f'border-radius:6px;transition:background .12s;cursor:default;" '
+        f'onmouseenter="this.style.background=\'{cat_color}08\'" '
+        f'onmouseleave="this.style.background=\'transparent\'">'
+        f'<span style="color:#9ca3af;font-family:monospace;min-width:56px;font-size:0.78rem;">'
+        f'{stamp}</span>'
+        f'<span style="color:{cat_color};font-size:0.82rem;width:14px;text-align:center;'
+        f'flex-shrink:0;">{icon}</span>'
+        f'<code style="background:{cat_color}12;color:{cat_color};padding:1px 7px;'
+        f'border-radius:5px;font-size:0.76rem;white-space:nowrap;font-weight:600;">'
+        f'{escape(name)}</code>'
+        f'<span style="color:var(--body-text-color,#1e293b);font-size:0.8rem;">{summary}</span>'
+        f"</div></div>"
     )
 
 
 # ---------------------------------------------------------------------------
-# Run cards HTML
+# Run cards HTML (with left accent bar, hover, status icons)
 # ---------------------------------------------------------------------------
 
-_CARD_STATUS_COLORS: Dict[str, str] = {
-    "running": "#16a34a",
-    "done": "#64748b",
-    "error": "#dc2626",
-    "failure": "#dc2626",
-    "paused": "#d97706",
-    "interrupted_paused": "#d97706",
-    "awaiting_human_feedback": "#2563eb",
-    "needs_intervention": "#ea580c",
+_CARD_STATUS_ICONS: Dict[str, str] = {
+    "running": "\u25B6",
+    "starting": "\u25B6",
+    "done": "\u2714",
+    "error": "\u2716",
+    "failure": "\u2716",
+    "paused": "\u23F8",
+    "interrupted_paused": "\u23F8",
+    "awaiting_human_feedback": "\u270B",
+    "needs_intervention": "\u26A0",
 }
 
 
@@ -189,8 +213,8 @@ def render_run_cards_html(
 
     if not filtered:
         return (
-            '<div style="color:var(--body-text-color-subdued);font-size:0.9rem;'
-            'border:1px dashed var(--border-color-primary);border-radius:12px;padding:12px;">'
+            '<div style="color:#9ca3af;font-size:0.9rem;'
+            'border:1px dashed #d1d5db;border-radius:14px;padding:20px;text-align:center;">'
             "No runs matched current filter.</div>"
         )
 
@@ -199,15 +223,20 @@ def render_run_cards_html(
         run_name = str(card.get("run_name") or "")
         headline = escape(str(card.get("headline") or run_name))
         summary = escape(str(card.get("summary") or ""))
-        status = str(card.get("status") or "unknown")
-        status_escaped = escape(status)
+        status_str = str(card.get("status") or "unknown")
+        status_escaped = escape(status_str)
         model_name = escape(str(card.get("model_name") or ""))
         source = escape(str(card.get("source") or "rule"))
         is_active = run_name and run_name == selected_run
         next_actions = card.get("next_actions") if isinstance(card.get("next_actions"), list) else []
 
-        badge_color = _CARD_STATUS_COLORS.get(status, "#94a3b8")
-        border_style = f"border-color:{badge_color};box-shadow:0 0 0 1px {badge_color} inset;" if is_active else ""
+        badge_color = status_color(status_str)
+        icon = _CARD_STATUS_ICONS.get(status_str, "\u25CF")
+        active_ring = (
+            f"box-shadow:0 0 0 2px {badge_color}40, 0 4px 20px rgba(0,0,0,.06);"
+            if is_active
+            else "box-shadow:0 2px 12px rgba(0,0,0,.04);"
+        )
 
         link_open = ""
         link_close = ""
@@ -218,35 +247,118 @@ def render_run_cards_html(
 
         out.append(link_open)
         out.append(
-            f'<article style="border:1px solid var(--border-color-primary,#d6deea);border-radius:12px;'
-            f"padding:10px;background:var(--background-fill-primary,#fefefe);"
-            f'transition:transform .12s ease,box-shadow .12s ease;{border_style}">'
+            f'<article style="display:flex;border-radius:14px;overflow:hidden;'
+            f"background:rgba(255,255,255,.92);backdrop-filter:blur(8px);"
+            f"border:1px solid #e5e7eb;"
+            f'transition:transform .15s ease,box-shadow .15s ease;{active_ring}" '
+            f'onmouseenter="this.style.transform=\'translateY(-2px)\';'
+            f"this.style.boxShadow='0 8px 24px rgba(0,0,0,.08)'\" "
+            f'onmouseleave="this.style.transform=\'none\';'
+            f"this.style.boxShadow='{active_ring.split(';')[0]}';\">"
         )
+        # left accent bar
+        out.append(
+            f'<div style="width:4px;flex-shrink:0;background:{badge_color};'
+            f'border-radius:4px 0 0 4px;"></div>'
+        )
+        # card body
+        out.append('<div style="flex:1;padding:12px 14px;">')
+        # header row
         out.append(
             f'<div style="display:flex;justify-content:space-between;align-items:center;'
-            f'font-size:0.84rem;color:var(--body-text-color-subdued,#5b6b7d);">'
-            f"<code>{escape(run_name)}</code>"
-            f'<span style="border:1px solid {badge_color};color:{badge_color};'
-            f'border-radius:999px;padding:1px 8px;font-size:0.75rem;">{status_escaped}</span>'
+            f'margin-bottom:6px;">'
+            f'<code style="font-size:0.8rem;color:#6b7280;background:#f3f4f6;'
+            f'padding:1px 8px;border-radius:6px;">{escape(run_name)}</code>'
+            f'<span style="display:inline-flex;align-items:center;gap:4px;'
+            f"border:1px solid {badge_color}40;color:{badge_color};"
+            f'border-radius:999px;padding:2px 10px;font-size:0.75rem;font-weight:600;">'
+            f'{icon} {status_escaped}</span>'
             f"</div>"
         )
-        out.append(f'<h4 style="margin:0.35rem 0;font-size:0.95rem;">{headline}</h4>')
-        out.append(f'<p style="margin:0;font-size:0.85rem;color:var(--body-text-color-subdued,#5b6b7d);">{summary}</p>')
+        out.append(
+            f'<div style="font-size:0.93rem;font-weight:600;color:#111827;'
+            f'margin-bottom:4px;">{headline}</div>'
+        )
+        if summary:
+            out.append(
+                f'<div style="font-size:0.83rem;color:#6b7280;margin-bottom:6px;'
+                f'line-height:1.4;">{summary}</div>'
+            )
         if next_actions:
-            out.append('<ul style="margin:0.55rem 0;padding-left:1rem;">')
+            out.append(
+                '<div style="margin:6px 0;padding-left:14px;">'
+            )
             for action in next_actions[:3]:
-                out.append(f'<li style="margin:0.15rem 0;font-size:0.83rem;">{escape(str(action))}</li>')
-            out.append("</ul>")
+                out.append(
+                    f'<div style="font-size:0.8rem;color:#4b5563;padding:1px 0;">'
+                    f'\u2022 {escape(str(action))}</div>'
+                )
+            out.append("</div>")
         meta_bits = [bit for bit in [model_name, f"source:{source}"] if bit]
         out.append(
-            f'<div style="font-size:0.76rem;color:var(--body-text-color-subdued,#5b6b7d);">'
-            f'{"  |  ".join(meta_bits)}</div>'
+            f'<div style="font-size:0.73rem;color:#9ca3af;margin-top:4px;">'
+            f'{"  \u00B7  ".join(meta_bits)}</div>'
         )
+        out.append("</div>")  # card body
         out.append("</article>")
         out.append(link_close)
     out.append("</div>")
     return "".join(out)
 
+
+# ---------------------------------------------------------------------------
+# Progress bar HTML
+# ---------------------------------------------------------------------------
+
+def render_progress_bar_html(
+    completed: int,
+    pending: int,
+    failed: int,
+    needs_intervention: int,
+    total: int,
+) -> str:
+    if total <= 0:
+        return (
+            '<div style="height:8px;border-radius:4px;background:#e5e7eb;'
+            'margin:6px 0;"></div>'
+        )
+    segments: List[str] = []
+
+    def _seg(count: int, color: str) -> None:
+        if count > 0:
+            pct = max(1, round(count / total * 100))
+            segments.append(
+                f'<div style="width:{pct}%;height:100%;background:{color};'
+                f'transition:width .3s ease;" '
+                f'title="{count}/{total}"></div>'
+            )
+
+    _seg(completed, "#10b981")
+    _seg(failed, "#ef4444")
+    _seg(needs_intervention, "#f97316")
+    _seg(pending, "#d1d5db")
+
+    bar = "".join(segments)
+    labels = (
+        f'<div style="display:flex;gap:12px;font-size:0.75rem;color:#6b7280;margin-top:3px;flex-wrap:wrap;">'
+        f'<span>\u25CF <span style="color:#10b981">{completed}</span> done</span>'
+        f'<span>\u25CF <span style="color:#d1d5db">{pending}</span> pending</span>'
+        f'<span>\u25CF <span style="color:#ef4444">{failed}</span> failed</span>'
+        f'<span>\u25CF <span style="color:#f97316">{needs_intervention}</span> needs attn</span>'
+        f"<span>/ {total} total</span>"
+        f"</div>"
+    )
+    return (
+        f'<div style="margin:8px 0;">'
+        f'<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;'
+        f'background:#e5e7eb;gap:1px;">{bar}</div>'
+        f"{labels}</div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Live tracker (markdown + inline HTML progress)
+# ---------------------------------------------------------------------------
 
 def render_live_tracker_markdown(state: Dict[str, Any]) -> str:
     if not isinstance(state, dict) or not state:
@@ -268,17 +380,18 @@ def render_live_tracker_markdown(state: Dict[str, Any]) -> str:
     task_id = str(state.get("current_task_id") or "")
     task_goal = str(state.get("current_task_goal") or "")
     phase = str(state.get("current_phase") or "")
-    status = str(state.get("status") or "unknown")
+    status_str = str(state.get("status") or "unknown")
 
     lines: List[str] = ["### Live Tracker"]
     if headline:
         lines.append(f"**{headline}**")
-    lines.append(f"Status: `{status}` | Phase: `{phase or 'n/a'}`")
-    lines.append(
-        "Progress: "
-        f"`{completed}` completed / `{pending}` pending / `{failed}` failed / "
-        f"`{needs_intervention}` needs_intervention / total `{total}`"
+    lines.append(f"Status: `{status_str}` | Phase: `{phase or 'n/a'}`")
+
+    progress_html = render_progress_bar_html(
+        completed, pending, failed, needs_intervention, total,
     )
+    lines.append(progress_html)
+
     if live_summary:
         lines.append("")
         lines.append(live_summary)
@@ -358,6 +471,7 @@ __all__ = [
     "format_event_html",
     "format_event_line",
     "render_live_tracker_markdown",
+    "render_progress_bar_html",
     "render_run_cards_html",
     "summarize_event",
     "truncate",

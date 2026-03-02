@@ -6,11 +6,10 @@ import gradio as gr
 
 from .components import (
     SHARED_CSS,
-    HITLComponents,
     build_hitl_group,
     build_workspace_controls,
+    hero_banner_html,
     nav_header_html,
-    status_badge_html,
     unpack_prompt,
 )
 from .constants import HOME_POLL_INTERVAL
@@ -38,12 +37,9 @@ def build_home_page(
             placeholder="Describe what CatMaster should do.",
         )
 
-    def _monitor_link(ctx: str, project_space_name: str, run_name: str) -> str:
-        url = registry.monitor_url(ctx=ctx, project_space=project_space_name, run=run_name)
-        return (
-            f'<span style="font-size:0.88rem;">'
-            f'<a href="{url}" target="_blank">Open Monitor</a>'
-            f"</span>"
+    def _monitor_url(ctx: str, project_space_name: str, run_name: str) -> str:
+        return registry.monitor_url(
+            ctx=ctx, project_space=project_space_name, run=run_name,
         )
 
     # ------------------------------------------------------------------
@@ -51,7 +47,7 @@ def build_home_page(
     # ------------------------------------------------------------------
 
     def _on_load(request: gr.Request) -> Tuple[
-        str, str, Any, str, str, str, str, str, str, Any, str,
+        str, str, Any, str, str, str, str, str, Any, str,
     ]:
         params = dict(getattr(request, "query_params", {}) or {})
         state = registry.bootstrap(
@@ -69,14 +65,17 @@ def build_home_page(
         workspaces = session.list_workspaces()
         ps_name = registry.project_space_name_for_session(session)
         run_info = session.run_status_text()
+        run_status = session.run_status or "idle"
         return (
             state.ctx,
             state.project_space_root,
             gr.update(choices=workspaces, value=ps_name or None),
             state.project_space_path,
             state.status,
-            _monitor_link(state.ctx, ps_name, selected),
-            run_info,
+            hero_banner_html(
+                run_status, run_info,
+                _monitor_url(state.ctx, ps_name, selected), ps_name,
+            ),
             final_report,
             selected,
             gr.update(choices=runs, value=selected or None),
@@ -130,20 +129,20 @@ def build_home_page(
 
     def _poll_home(
         ctx: str, selected_run: str,
-    ) -> Tuple[str, str, str, str, str, str, Any, str, str, Any, str]:
+    ) -> Tuple[str, str, str, str, str, Any, str, str, Any, str]:
         try:
             return _poll_home_inner(ctx, selected_run)
         except Exception as exc:
             gr.Warning(f"Poll error: {exc}")
             return (
-                "", "", "", "", "", "",
+                "", "", "", "", "",
                 gr.update(), "", selected_run,
                 gr.update(), "",
             )
 
     def _poll_home_inner(
         ctx: str, selected_run: str,
-    ) -> Tuple[str, str, str, str, str, str, Any, str, str, Any, str]:
+    ) -> Tuple[str, str, str, str, str, Any, str, str, Any, str]:
         session = registry.get_session(ctx)
         runs = session.list_runs()
         selected = (selected_run or "").strip()
@@ -159,19 +158,22 @@ def build_home_page(
         run_dir = session.get_selected_run_dir()
         final_report, _ = session.read_final_report_with_source(run_dir)
         run_info = session.run_status_text()
+        run_status = session.run_status or "idle"
         ps_name = registry.project_space_name_for_session(session)
 
         prompt = unpack_prompt(session.get_prompt())
 
         return (
-            run_info,
-            final_report,
-            _monitor_link(ctx, ps_name, selected),
+            hero_banner_html(
+                run_status, run_info,
+                _monitor_url(ctx, ps_name, selected), ps_name,
+            ),
             prompt.title,
             prompt.body,
             prompt.meta,
-            gr.update(visible=prompt.visible),
             prompt.prompt_id,
+            gr.update(visible=prompt.visible),
+            final_report,
             selected,
             gr.update(choices=runs, value=selected or None),
             nav_header_html("home", ps_name),
@@ -185,21 +187,20 @@ def build_home_page(
         gr.HTML(f"<style>{SHARED_CSS}</style>")
         ctx_state = gr.State("")
         selected_run_state = gr.State("")
+
+        # -- Sidebar workspace controls --
+        ws = build_workspace_controls(
+            registry=registry,
+            default_workspace=default_workspace,
+            ctx_state=ctx_state,
+        )
+
         nav_html = gr.HTML(nav_header_html("home"))
 
         with gr.Column(elem_classes=["cm-shell"]):
 
-            # -- Workspace controls (collapsible) --
-            ws = build_workspace_controls(
-                registry=registry,
-                default_workspace=default_workspace,
-                ctx_state=ctx_state,
-            )
-
-            # -- Run status bar --
-            with gr.Row():
-                run_info = gr.Markdown("")
-                monitor_link_html = gr.HTML("")
+            # -- Hero status banner --
+            hero_html = gr.HTML(hero_banner_html("idle", "", "/monitor/", ""))
 
             # -- HITL prompt (prominent, above content) --
             hitl = build_hitl_group(registry=registry, ctx_state=ctx_state)
@@ -281,14 +282,13 @@ def build_home_page(
         )
 
         _poll_outputs = [
-            run_info,
-            final_report_md,
-            monitor_link_html,
+            hero_html,
             hitl.title_md,
             hitl.body_md,
             hitl.meta_md,
-            hitl.group,
             hitl.prompt_id_box,
+            hitl.group,
+            final_report_md,
             selected_run_state,
             resume_run_box,
             nav_html,
@@ -312,8 +312,7 @@ def build_home_page(
                 ws.workspace_list,
                 ws.current_box,
                 ws.status_md,
-                monitor_link_html,
-                run_info,
+                hero_html,
                 final_report_md,
                 selected_run_state,
                 resume_run_box,
