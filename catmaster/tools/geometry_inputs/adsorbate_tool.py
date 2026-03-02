@@ -10,10 +10,54 @@ from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.core import Structure, Molecule
 from pymatgen.io.vasp.inputs import Poscar
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 ADS_META_SCHEMA = "catmaster.adsorbate_meta.v1"
 ADS_INDICES_SCHEMA = "catmaster.ads_indices.v1"
+
+
+def _success(
+    tool_name: str,
+    *,
+    content: str,
+    data: dict[str, Any],
+    warnings: list[str] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    artifact: dict[str, Any] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    return content, artifact
+
+
+def _fail(
+    tool_name: str,
+    *,
+    message: str,
+    data: dict[str, Any] | None = None,
+    error_code: str = "",
+) -> None:
+    details: list[str] = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in (
+            "slab_file_rel",
+            "slab_dir_rel",
+            "output_poscar_rel",
+            "output_dir_rel",
+            "sites_json_rel",
+            "structures",
+            "ads_indices_json_rel",
+        ):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            details.append(f"{key}={value}")
+    raise CatMasterToolExecutionError(
+        tool_name=tool_name,
+        public_message="\n".join(details),
+        artifact={"tool_name": tool_name, "data": data or {}},
+        error_code=error_code,
+    )
 
 
 class EnumerateAdsorptionSitesInput(BaseModel):
@@ -297,7 +341,7 @@ def _write_ads_indices_index(index_path: Path, entries: List[Dict[str, Any]]) ->
     return index_path
 
 
-def enumerate_adsorption_sites(payload: Dict[str, Any]) -> Dict[str, Any]:
+def enumerate_adsorption_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     try:
         params = EnumerateAdsorptionSitesInput(**payload)
         slab_path = resolve_workspace_path(params.slab_file, must_exist=True)
@@ -346,12 +390,27 @@ def enumerate_adsorption_sites(payload: Dict[str, Any]) -> Dict[str, Any]:
             "sites": workspace_relpath(out_json),
             "slab_z_max": z_max,
         }
-        return create_tool_output("enumerate_adsorption_sites", success=True, data=data)
+        lines = [
+            "enumerate_adsorption_sites completed.",
+            f"returned={total_found} mode={params.mode}",
+            f"sites_json_rel={data['sites_json_rel']}",
+            f"slab_file_rel={data['slab_file_rel']}",
+        ]
+        if default_site:
+            lines[1] = f"{lines[1]} default_site_label={default_site}"
+        content = "\n".join(lines)
+        return _success("enumerate_adsorption_sites", content=content, data=data)
+    except CatMasterToolExecutionError:
+        raise
     except Exception as exc:
-        return create_tool_output("enumerate_adsorption_sites", success=False, error=str(exc))
+        _fail(
+            "enumerate_adsorption_sites",
+            message=f"enumerate_adsorption_sites failed: {exc}",
+            error_code="enumerate_failed",
+        )
 
 
-def place_adsorbate(payload: Dict[str, Any]) -> Dict[str, Any]:
+def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     try:
         params = PlaceAdsorbateInput(**payload)
         slab_path = resolve_workspace_path(params.slab_file, must_exist=True)
@@ -447,12 +506,24 @@ def place_adsorbate(payload: Dict[str, Any]) -> Dict[str, Any]:
             "metadata_rel": workspace_relpath(meta_path),
             "ads_indices_json_rel": workspace_relpath(ads_indices_json),
         }
-        return create_tool_output("place_adsorbate", success=True, data=data, warnings=inherit_warnings)
+        content = (
+            "place_adsorbate completed.\n"
+            f"site={site_label} output_poscar_rel={data['output_poscar_rel']}\n"
+            f"ads_count_added={data['ads_count_added']} ads_count_total={data['ads_count_total']}\n"
+            f"metadata_rel={data['metadata_rel']} ads_indices_json_rel={data['ads_indices_json_rel']}"
+        )
+        return _success("place_adsorbate", content=content, data=data, warnings=inherit_warnings)
+    except CatMasterToolExecutionError:
+        raise
     except Exception as exc:
-        return create_tool_output("place_adsorbate", success=False, error=str(exc))
+        _fail(
+            "place_adsorbate",
+            message=f"place_adsorbate failed: {exc}",
+            error_code="place_adsorbate_failed",
+        )
 
 
-def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, Any]:
+def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     try:
         params = GenerateBatchAdsorptionStructuresInput(**payload)
         ads_path = resolve_workspace_path(params.adsorbate_file, must_exist=True)
@@ -464,27 +535,29 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, A
         slab_paths: List[Path] = []
         slab_root: Optional[Path] = None
         if (params.slab_file is None) == (params.slab_dir is None):
-            return create_tool_output(
+            _fail(
                 "generate_batch_adsorption_structures",
-                success=False,
-                error="Provide exactly one of slab_file or slab_dir.",
+                message="Provide exactly one of slab_file or slab_dir.",
+                error_code="invalid_input_mode",
             )
         if params.slab_file is not None:
             slab_paths = [resolve_workspace_path(params.slab_file, must_exist=True)]
         else:
             slab_root = resolve_workspace_path(params.slab_dir, must_exist=True)
             if not slab_root.is_dir():
-                return create_tool_output(
+                _fail(
                     "generate_batch_adsorption_structures",
-                    success=False,
-                    error=f"slab_dir is not a directory: {slab_root}",
+                    message=f"slab_dir is not a directory: {slab_root}",
+                    data={"slab_dir_rel": workspace_relpath(slab_root)},
+                    error_code="invalid_slab_dir",
                 )
             slab_paths = _collect_slab_files(slab_root)
             if not slab_paths:
-                return create_tool_output(
+                _fail(
                     "generate_batch_adsorption_structures",
-                    success=False,
-                    error="No slab files found in slab_dir.",
+                    message="No slab files found in slab_dir.",
+                    data={"slab_dir_rel": workspace_relpath(slab_root)},
+                    error_code="no_slab_files",
                 )
 
         kinds = ["ontop", "bridge", "hollow"] if params.mode == "all" else [params.mode]
@@ -591,10 +664,11 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, A
                 errors.append({"slab_file_rel": workspace_relpath(slab_path), "error": str(exc)})
 
         if slabs_processed == 0:
-            return create_tool_output(
+            _fail(
                 "generate_batch_adsorption_structures",
-                success=False,
-                error="No slabs processed successfully.",
+                message="No slabs processed successfully.",
+                data={"errors": errors},
+                error_code="all_slabs_failed",
             )
 
         data = {
@@ -628,14 +702,26 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> Dict[str, A
         if errors:
             data["errors"] = errors
 
-        return create_tool_output(
+        content = (
+            "generate_batch_adsorption_structures completed.\n"
+            f"generated={generated_total} slabs_processed={slabs_processed} slabs_failed={slabs_failed}\n"
+            f"output_dir_rel={data['output_dir_rel']} structures={data['structures']}\n"
+            f"ads_indices_json_rel={data['ads_indices_json_rel']} truncated={data['truncated']}"
+        )
+        return _success(
             "generate_batch_adsorption_structures",
-            success=True,
+            content=content,
             data=data,
             warnings=warnings,
         )
+    except CatMasterToolExecutionError:
+        raise
     except Exception as exc:
-        return create_tool_output("generate_batch_adsorption_structures", success=False, error=str(exc))
+        _fail(
+            "generate_batch_adsorption_structures",
+            message=f"generate_batch_adsorption_structures failed: {exc}",
+            error_code="batch_adsorption_failed",
+        )
 
 
 __all__ = [

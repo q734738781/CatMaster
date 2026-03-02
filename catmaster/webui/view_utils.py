@@ -5,7 +5,6 @@ from datetime import datetime
 from html import escape
 from typing import Any, Callable, Dict, List, Optional
 
-
 def truncate(value: Any, max_len: int = 140) -> str:
     text = "" if value is None else str(value)
     text = " ".join(text.split())
@@ -56,6 +55,12 @@ def summarize_event(event: Dict[str, Any]) -> str:
     if name == "RUN_PAUSED":
         phase = payload.get("phase", "")
         return f"paused phase={phase}".strip()
+    if name == "RUN_WAITING_INPUT":
+        interrupt_type = payload.get("interrupt_type", "")
+        return f"waiting_input type={interrupt_type}".strip()
+    if name == "RUN_INPUT_RECEIVED":
+        interrupt_type = payload.get("interrupt_type", "")
+        return f"input_received type={interrupt_type}".strip()
     if name == "TASK_SUMMARY":
         outcome = payload.get("outcome", "")
         summary = payload.get("summary_snippet", "")
@@ -79,6 +84,82 @@ def format_event_line(event: Dict[str, Any]) -> str:
         stamp = "--:--:--"
     summary = summarize_event(event)
     return f"{stamp} {event.get('name','')} {summary}".rstrip()
+
+
+# ---------------------------------------------------------------------------
+# Event category for styling
+# ---------------------------------------------------------------------------
+
+_EVENT_CATEGORY: Dict[str, str] = {
+    "TOOL_CALL_START": "tool",
+    "TOOL_CALL_END": "tool",
+    "TOOL_CALL_INTERRUPTED": "tool",
+    "TOOL_VALIDATE_FAILED": "tool",
+    "TASK_START": "task",
+    "TASK_END": "task",
+    "TASK_SUMMARY": "task",
+    "TASK_DECISION": "task",
+    "TASK_JOURNAL_APPEND": "task",
+    "RUN_INIT_DONE": "run",
+    "RUN_END": "run",
+    "RUN_PAUSED": "run",
+    "RUN_WAITING_INPUT": "run",
+    "RUN_INPUT_RECEIVED": "run",
+    "INTERRUPT_REQUESTED": "interrupt",
+    "INTERRUPT_ACKED": "interrupt",
+    "FINAL_SUMMARY_DONE": "run",
+    "FINAL_SUMMARY_START": "run",
+    "PROPOSAL_START": "run",
+    "PROPOSAL_REVIEW_WAIT_INPUT": "run",
+    "PROPOSAL_REVIEW_SHOW": "run",
+}
+
+_CAT_COLORS = {
+    "tool": "#0d9488",
+    "task": "#6366f1",
+    "run": "#64748b",
+    "interrupt": "#d97706",
+}
+
+
+def format_event_html(event: Dict[str, Any]) -> str:
+    ts = event.get("ts")
+    if ts:
+        try:
+            stamp = datetime.fromtimestamp(float(ts)).strftime("%H:%M:%S")
+        except Exception:
+            stamp = "--:--:--"
+    else:
+        stamp = "--:--:--"
+    name = str(event.get("name", ""))
+    summary = escape(summarize_event(event))
+    cat = _EVENT_CATEGORY.get(name, "run")
+    cat_color = _CAT_COLORS.get(cat, "#64748b")
+    return (
+        f'<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;font-size:0.82rem;'
+        f'border-bottom:1px solid var(--border-color-primary,#e2e8f0);">'
+        f'<span style="color:var(--body-text-color-subdued,#64748b);font-family:monospace;min-width:60px;">{stamp}</span>'
+        f'<code style="background:{cat_color}18;color:{cat_color};padding:1px 6px;border-radius:4px;'
+        f'font-size:0.78rem;white-space:nowrap;">{escape(name)}</code>'
+        f'<span style="color:var(--body-text-color,#1e293b);">{summary}</span>'
+        f"</div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Run cards HTML
+# ---------------------------------------------------------------------------
+
+_CARD_STATUS_COLORS: Dict[str, str] = {
+    "running": "#16a34a",
+    "done": "#64748b",
+    "error": "#dc2626",
+    "failure": "#dc2626",
+    "paused": "#d97706",
+    "interrupted_paused": "#d97706",
+    "awaiting_human_feedback": "#2563eb",
+    "needs_intervention": "#ea580c",
+}
 
 
 def render_run_cards_html(
@@ -107,38 +188,60 @@ def render_run_cards_html(
         filtered.append(card)
 
     if not filtered:
-        return '<div class="cm-empty">No runs matched current filter.</div>'
+        return (
+            '<div style="color:var(--body-text-color-subdued);font-size:0.9rem;'
+            'border:1px dashed var(--border-color-primary);border-radius:12px;padding:12px;">'
+            "No runs matched current filter.</div>"
+        )
 
-    out: List[str] = ['<div class="cm-card-list">']
+    out: List[str] = ['<div style="display:flex;flex-direction:column;gap:10px;">']
     for card in filtered:
         run_name = str(card.get("run_name") or "")
         headline = escape(str(card.get("headline") or run_name))
         summary = escape(str(card.get("summary") or ""))
-        status = escape(str(card.get("status") or "unknown"))
+        status = str(card.get("status") or "unknown")
+        status_escaped = escape(status)
         model_name = escape(str(card.get("model_name") or ""))
         source = escape(str(card.get("source") or "rule"))
-        is_active = " cm-active" if run_name and run_name == selected_run else ""
+        is_active = run_name and run_name == selected_run
         next_actions = card.get("next_actions") if isinstance(card.get("next_actions"), list) else []
+
+        badge_color = _CARD_STATUS_COLORS.get(status, "#94a3b8")
+        border_style = f"border-color:{badge_color};box-shadow:0 0 0 1px {badge_color} inset;" if is_active else ""
 
         link_open = ""
         link_close = ""
         if run_link_builder is not None and run_name:
             href = escape(run_link_builder(run_name), quote=True)
-            link_open = f'<a class="cm-card-link" href="{href}">'
+            link_open = f'<a style="text-decoration:none;color:inherit;display:block;" href="{href}">'
             link_close = "</a>"
 
         out.append(link_open)
-        out.append(f'<article class="cm-card{is_active}">')
-        out.append(f'<div class="cm-card-head"><code>{escape(run_name)}</code><span class="cm-badge">{status}</span></div>')
-        out.append(f"<h4>{headline}</h4>")
-        out.append(f"<p>{summary}</p>")
+        out.append(
+            f'<article style="border:1px solid var(--border-color-primary,#d6deea);border-radius:12px;'
+            f"padding:10px;background:var(--background-fill-primary,#fefefe);"
+            f'transition:transform .12s ease,box-shadow .12s ease;{border_style}">'
+        )
+        out.append(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'font-size:0.84rem;color:var(--body-text-color-subdued,#5b6b7d);">'
+            f"<code>{escape(run_name)}</code>"
+            f'<span style="border:1px solid {badge_color};color:{badge_color};'
+            f'border-radius:999px;padding:1px 8px;font-size:0.75rem;">{status_escaped}</span>'
+            f"</div>"
+        )
+        out.append(f'<h4 style="margin:0.35rem 0;font-size:0.95rem;">{headline}</h4>')
+        out.append(f'<p style="margin:0;font-size:0.85rem;color:var(--body-text-color-subdued,#5b6b7d);">{summary}</p>')
         if next_actions:
-            out.append('<ul class="cm-actions">')
+            out.append('<ul style="margin:0.55rem 0;padding-left:1rem;">')
             for action in next_actions[:3]:
-                out.append(f"<li>{escape(str(action))}</li>")
+                out.append(f'<li style="margin:0.15rem 0;font-size:0.83rem;">{escape(str(action))}</li>')
             out.append("</ul>")
         meta_bits = [bit for bit in [model_name, f"source:{source}"] if bit]
-        out.append(f'<div class="cm-meta">{" | ".join(meta_bits)}</div>')
+        out.append(
+            f'<div style="font-size:0.76rem;color:var(--body-text-color-subdued,#5b6b7d);">'
+            f'{"  |  ".join(meta_bits)}</div>'
+        )
         out.append("</article>")
         out.append(link_close)
     out.append("</div>")
@@ -252,6 +355,7 @@ def _render_json_block(value: Any, *, max_chars: int) -> str:
 
 
 __all__ = [
+    "format_event_html",
     "format_event_line",
     "render_live_tracker_markdown",
     "render_run_cards_html",

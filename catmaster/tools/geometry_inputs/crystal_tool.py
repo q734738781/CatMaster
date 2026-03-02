@@ -8,7 +8,8 @@ import numpy as np
 from pydantic import BaseModel, Field
 from pymatgen.core import Structure
 
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath, create_tool_output
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class SupercellInput(BaseModel):
@@ -45,6 +46,17 @@ class SupercellInput(BaseModel):
     )
 
 
+def _error_message(message: str, *, data: Dict[str, Any] | None = None) -> str:
+    lines = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in ("structure_dir_rel", "input_rel", "output_rel", "output_dir_rel"):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            lines.append(f"{key}={value}")
+    return "\n".join(lines)
+
+
 def _collect_structure_files(root: Path) -> List[Path]:
     files: List[Path] = []
     for path in root.rglob("*"):
@@ -63,40 +75,56 @@ def _structure_id_from(rel_path: Path) -> str:
     return "__".join(rel_path.with_suffix("").parts)
 
 
-def supercell(payload: Dict[str, Any]) -> Dict[str, Any]:
+def supercell(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     try:
         params = SupercellInput(**payload)
         if (params.structure_file is None) == (params.structure_dir is None):
-            return create_tool_output(
-                "supercell",
-                success=False,
-                error="Provide exactly one of structure_file or structure_dir.",
-            )
+                raise CatMasterToolExecutionError(
+                    tool_name="supercell",
+                    public_message=_error_message("Provide exactly one of structure_file or structure_dir."),
+                    artifact={"tool_name": "supercell", "data": {}},
+                    error_code="invalid_input_mode",
+                )
 
         matrix = np.diag([int(x) for x in params.supercell])
 
         if params.structure_dir is not None:
             if params.output_dir is None:
-                return create_tool_output(
-                    "supercell",
-                    success=False,
-                    error="output_dir is required when structure_dir is provided.",
+                raise CatMasterToolExecutionError(
+                    tool_name="supercell",
+                    public_message=_error_message("output_dir is required when structure_dir is provided."),
+                    artifact={"tool_name": "supercell", "data": {}},
+                    error_code="missing_output_dir",
                 )
             structure_root = resolve_workspace_path(params.structure_dir, must_exist=True)
             if not structure_root.is_dir():
-                return create_tool_output(
-                    "supercell",
-                    success=False,
-                    error=f"structure_dir is not a directory: {structure_root}",
+                raise CatMasterToolExecutionError(
+                    tool_name="supercell",
+                    public_message=_error_message(
+                        f"structure_dir is not a directory: {structure_root}",
+                        data={"structure_dir_rel": workspace_relpath(structure_root)},
+                    ),
+                    artifact={
+                        "tool_name": "supercell",
+                        "data": {"structure_dir_rel": workspace_relpath(structure_root)},
+                    },
+                    error_code="invalid_structure_dir",
                 )
             output_root = resolve_workspace_path(params.output_dir)
             output_root.mkdir(parents=True, exist_ok=True)
             structures = _collect_structure_files(structure_root)
             if not structures:
-                return create_tool_output(
-                    "supercell",
-                    success=False,
-                    error="No structure files found in structure_dir.",
+                raise CatMasterToolExecutionError(
+                    tool_name="supercell",
+                    public_message=_error_message(
+                        "No structure files found in structure_dir.",
+                        data={"structure_dir_rel": workspace_relpath(structure_root)},
+                    ),
+                    artifact={
+                        "tool_name": "supercell",
+                        "data": {"structure_dir_rel": workspace_relpath(structure_root)},
+                    },
+                    error_code="no_structures",
                 )
 
             results = []
@@ -130,7 +158,7 @@ def supercell(payload: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
-            data = {
+            data: dict[str, Any] = {
                 "structure_dir_rel": workspace_relpath(structure_root),
                 "output_dir_rel": workspace_relpath(output_root),
                 "supercell": params.supercell,
@@ -139,13 +167,27 @@ def supercell(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
                 "errors_count": len(errors),
             }
-            return create_tool_output("supercell", success=True, data=data)
+            if errors:
+                data["errors"] = errors
+            first_output = results[0]["output_rel"] if results else ""
+            lines = [
+                "supercell completed.",
+                f"structures_processed={len(results)} structures_found={len(structures)} errors_count={len(errors)}",
+                f"output_dir_rel={data['output_dir_rel']}",
+            ]
+            if data["batch_json_rel"]:
+                lines.append(f"batch_json_rel={data['batch_json_rel']}")
+            if first_output:
+                lines.append(f"first_output_rel={first_output}")
+            content = "\n".join(lines)
+            return content, {"tool_name": "supercell", "data": data}
 
         if params.output_path is None:
-            return create_tool_output(
-                "supercell",
-                success=False,
-                error="output_path is required when structure_file is provided.",
+            raise CatMasterToolExecutionError(
+                tool_name="supercell",
+                public_message=_error_message("output_path is required when structure_file is provided."),
+                artifact={"tool_name": "supercell", "data": {}},
+                error_code="missing_output_path",
             )
         structure_path = resolve_workspace_path(params.structure_file, must_exist=True)
         out_path = resolve_workspace_path(params.output_path)
@@ -161,9 +203,20 @@ def supercell(payload: Dict[str, Any]) -> Dict[str, Any]:
             "supercell": params.supercell,
             "natoms": len(structure),
         }
-        return create_tool_output("supercell", success=True, data=data)
+        content = (
+            "supercell completed.\n"
+            f"input_rel={data['input_rel']} output_rel={data['output_rel']} natoms={data['natoms']}"
+        )
+        return content, {"tool_name": "supercell", "data": data}
+    except CatMasterToolExecutionError:
+        raise
     except Exception as exc:
-        return create_tool_output("supercell", success=False, error=str(exc))
+        raise CatMasterToolExecutionError(
+            tool_name="supercell",
+            public_message=_error_message(f"supercell failed: {exc}"),
+            artifact={"tool_name": "supercell", "data": {}},
+            error_code="supercell_failed",
+        )
 
 
 __all__ = ["SupercellInput", "supercell"]

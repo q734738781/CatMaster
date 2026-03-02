@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Optional
 import os
 import re
 import time
@@ -11,7 +11,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath, system_root
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath, system_root
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
 from catmaster.runtime.tool_runtime import current_toolcall_key, current_run_dir
 
@@ -21,29 +22,14 @@ class BashExecInput(BaseModel):
     Execute a multi-line bash script inside the workspace (default) and return stdout/stderr.
     Network access is disabled by default using Linux network namespaces (unshare).
     Symbolic link operations are disabled; use copy/move operations instead.
-    Stdout/stderr are returned up to max_output_chars per stream.
-    Full streams are persisted to internal metadata audit logs (not for task planning/reading).
+    Stdout/stderr are returned as-is and projection/offload is handled centrally.
     Keep output short in scripts and print one-line summaries when possible.
     """
 
     script: str = Field(..., description="Bash script to execute (multi-line).")
     cwd: str = Field(".", description="Working directory inside project files root.")
     timeout_s: float = Field(86400.0, ge=0.1, description="Timeout seconds.")
-    max_output_chars: int = Field(8000, ge=1000, description="Max chars returned for stdout/stderr each.")
-    strict: bool = Field(True, description="Prepend 'set -euo pipefail' for safer scripting.")
     no_network: bool = Field(True, description="Disable network using unshare network namespace.")
-
-
-def _truncate_text_tail(text: str, limit: int) -> Tuple[str, bool]:
-    if text is None:
-        return "", False
-    if len(text) <= limit:
-        return text, False
-    marker = "\n...[output truncated]...\n"
-    if limit <= len(marker):
-        return text[-limit:], True
-    tail_len = limit - len(marker)
-    return marker + text[-tail_len:], True
 
 
 _FORBIDDEN_SYMLINK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -117,7 +103,7 @@ def _resolve_audit_logs_dir() -> Path:
     return system_root() / "audit" / "bash_exec"
 
 
-def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> list[str]:
+def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> tuple[list[str], str, str]:
     warnings: list[str] = []
     logs_dir = _resolve_audit_logs_dir()
     token = _safe_log_token(toolcall_key)
@@ -129,7 +115,7 @@ def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> list[str]
         stderr_path.write_text(stderr or "", encoding="utf-8")
     except Exception as exc:
         warnings.append(f"failed to persist bash_exec logs: {type(exc).__name__}: {exc}")
-    return warnings
+    return warnings, str(stdout_path), str(stderr_path)
 
 
 def _detect_forbidden_symlink_usage(script: str) -> Optional[str]:
@@ -144,7 +130,66 @@ def _detect_forbidden_symlink_usage(script: str) -> Optional[str]:
     return None
 
 
-def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _success(
+    *,
+    data: dict[str, Any],
+    warnings: list[str],
+    execution_time: float,
+) -> tuple[str, dict[str, Any]]:
+    content = _render_success_content(data)
+    return content, {
+        "tool_name": "bash_exec",
+        "data": data,
+        "warnings": warnings,
+        "execution_time": execution_time,
+    }
+
+
+def _fail(
+    *,
+    message: str,
+    data: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
+    execution_time: float | None = None,
+    error_code: str = "",
+) -> None:
+    normalized = str(message or "").strip()
+    if not normalized:
+        normalized = "bash_exec failed."
+    raise CatMasterToolExecutionError(
+        tool_name="bash_exec",
+        public_message=normalized,
+        artifact={
+            "tool_name": "bash_exec",
+            "data": data or {},
+            "warnings": warnings or [],
+            "execution_time": execution_time,
+        },
+        error_code=error_code,
+    )
+
+
+def _render_success_content(data: dict[str, Any]) -> str:
+    lines: list[str] = ["bash_exec completed."]
+    details: list[str] = []
+    for key in ("exit_code", "timed_out", "cancelled", "cwd", "timeout_s"):
+        value = data.get(key)
+        if value in (None, ""):
+            continue
+        details.append(f"{key}={value}")
+    if details:
+        lines.append(" ".join(details))
+
+    for label in ("stdout", "stderr"):
+        text = str(data.get(label) or "")
+        if text:
+            lines.append(f"{label}_chars={len(text)}")
+            lines.append(f"{label}:\n{text}")
+
+    return "\n".join(line for line in lines if line)
+
+
+def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params = BashExecInput(**payload)
     t0 = time.perf_counter()
 
@@ -158,9 +203,11 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
     script = params.script
     blocked_reason = _detect_forbidden_symlink_usage(script)
     if blocked_reason:
-        return create_tool_output(
-            "bash_exec",
-            False,
+        _fail(
+            message=(
+                "Symbolic link operations are disabled in bash_exec. "
+                "Use copy/move operations (e.g., cp/rsync/mv) instead."
+            ),
             data={
                 "stdout": "",
                 "stderr": "",
@@ -171,28 +218,22 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "timeout_s": params.timeout_s,
                 "blocked_reason": blocked_reason,
             },
-            error=(
-                "Symbolic link operations are disabled in bash_exec. "
-                "Use copy/move operations (e.g., cp/rsync/mv) instead."
-            ),
             execution_time=time.perf_counter() - t0,
+            error_code="symlink_forbidden",
         )
-    if params.strict:
-        script = "set -euo pipefail\n" + script
-
     base_cmd = ["bash", "-s"]
     cmd = base_cmd
     warnings = []
     if params.no_network:
         prefix = build_no_network_prefix()
         if prefix is None:
-            return create_tool_output(
-                "bash_exec",
-                False,
-                error="No network isolation backend found. Install 'unshare' (util-linux) "
-                      "and ensure unprivileged user namespaces are enabled, "
-                      "or add a bwrap/firejail fallback.",
+            _fail(
+                message=(
+                    "No network isolation backend found. Install 'unshare' (util-linux) and ensure "
+                    "unprivileged user namespaces are enabled, or add a bwrap/firejail fallback."
+                ),
                 execution_time=time.perf_counter() - t0,
+                error_code="no_network_backend",
             )
         cmd = prefix + base_cmd
 
@@ -235,14 +276,8 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             cancelled = bool(toolcall_key and toolcall_key in _CANCELLED_KEYS)
         exit_code = proc.returncode
 
-        warnings.extend(_write_stream_logs(toolcall_key, stdout, stderr))
-
-        stdout, cut_out = _truncate_text_tail(stdout, params.max_output_chars)
-        stderr, cut_err = _truncate_text_tail(stderr, params.max_output_chars)
-        if cut_out:
-            warnings.append("stdout too long; truncated")
-        if cut_err:
-            warnings.append("stderr too long; truncated")
+        log_warnings, stdout_log_path, stderr_log_path = _write_stream_logs(toolcall_key, stdout, stderr)
+        warnings.extend(log_warnings)
 
         ok = (not timed_out) and (exit_code == 0)
         data = {
@@ -254,12 +289,12 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
             "cmd": cmd,
             "cwd": workspace_relpath(cwd_path),
             "timeout_s": params.timeout_s,
+            "stdout_log_path": stdout_log_path,
+            "stderr_log_path": stderr_log_path,
         }
 
         if ok:
-            return create_tool_output(
-                "bash_exec",
-                True,
+            return _success(
                 data=data,
                 warnings=warnings,
                 execution_time=time.perf_counter() - t0,
@@ -273,21 +308,29 @@ def bash_exec(payload: Dict[str, Any]) -> Dict[str, Any]:
                 else f"Bash exited with code {exit_code}"
             )
         )
-        return create_tool_output(
-            "bash_exec",
-            False,
+        stderr_text = str(stderr or "")
+        stdout_text = str(stdout or "")
+        message = (
+            f"{err_msg}\n"
+            f"cwd={workspace_relpath(cwd_path)} timeout_s={params.timeout_s}\n"
+            f"stderr:\n{stderr_text}\n"
+            f"stdout:\n{stdout_text}"
+        )
+        _fail(
+            message=message,
             data=data,
             warnings=warnings,
-            error=err_msg,
             execution_time=time.perf_counter() - t0,
+            error_code="bash_nonzero_exit",
         )
 
+    except CatMasterToolExecutionError:
+        raise
     except Exception as exc:
-        return create_tool_output(
-            "bash_exec",
-            False,
-            error=f"Failed to start/execute bash subprocess: {exc}",
+        _fail(
+            message=f"Failed to start/execute bash subprocess: {exc}",
             execution_time=time.perf_counter() - t0,
+            error_code="bash_exec_runtime_error",
         )
     finally:
         _unregister_active_proc(toolcall_key)

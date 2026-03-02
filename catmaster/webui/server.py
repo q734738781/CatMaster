@@ -21,7 +21,13 @@ def _make_theme() -> Optional[Any]:
     if origin is None:
         return None
     try:
-        return origin(font=["IBM Plex Sans", "Space Grotesk", "sans-serif"])
+        return origin(
+            primary_hue="teal",
+            secondary_hue="cyan",
+            neutral_hue="slate",
+            font=["IBM Plex Sans", "Space Grotesk", "sans-serif"],
+            font_mono=["IBM Plex Mono", "monospace"],
+        )
     except TypeError:
         try:
             return origin()

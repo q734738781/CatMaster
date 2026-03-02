@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.execution.mace_dispatch import MaceRelaxBatchInput, mace_relax_batch
 from catmaster.tools.execution.task_registry import TaskRegistry
@@ -25,15 +28,15 @@ def test_mace_relax_batch_accepts_relax_lattice_field(tmp_path: Path) -> None:
         input_dir = files_root / "inputs"
         input_dir.mkdir(parents=True, exist_ok=True)
         (input_dir / "POSCAR").write_text("dummy", encoding="utf-8")
-        result = mace_relax_batch(
-            {
-                "input_dir": "inputs",
-                "output_root": "inputs/outputs",
-                "relax_lattice": True,
-            }
-        )
-    assert result["status"] == "failed"
-    assert "must not be inside input_dir" in (result.get("error") or "")
+        with pytest.raises(CatMasterToolExecutionError) as excinfo:
+            mace_relax_batch(
+                {
+                    "input_dir": "inputs",
+                    "output_root": "inputs/outputs",
+                    "relax_lattice": True,
+                }
+            )
+    assert "must not be inside input_dir" in str(excinfo.value)
 
 
 def test_mace_relax_dir_task_command_has_relax_lattice_placeholder() -> None:

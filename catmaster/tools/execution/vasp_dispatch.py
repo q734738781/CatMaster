@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path
 from catmaster.tools.base import workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     STATUS_FILE_NAME,
@@ -24,6 +25,45 @@ import shutil
 from pydantic import BaseModel, Field
 
 BATCH_STATE_FILENAME = "_BATCH_STATE.json"
+
+
+def _success(
+    tool_name: str,
+    *,
+    content: str,
+    data: dict[str, Any],
+    warnings: list[str] | None = None,
+    execution_time: float | None = None,
+) -> tuple[str, dict[str, Any]]:
+    artifact: dict[str, Any] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    if execution_time is not None:
+        artifact["execution_time"] = execution_time
+    return content, artifact
+
+
+def _fail(
+    tool_name: str,
+    *,
+    message: str,
+    data: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
+    error_code: str = "",
+) -> None:
+    details: list[str] = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in ("input_root_rel", "output_root_rel", "batch_state_rel", "work_base"):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            details.append(f"{key}={value}")
+    raise CatMasterToolExecutionError(
+        tool_name=tool_name,
+        public_message="\n".join(details),
+        artifact={"tool_name": tool_name, "data": data or {}, "warnings": warnings or []},
+        error_code=error_code,
+    )
 
 
 class VaspExecuteInput(BaseModel):
@@ -168,16 +208,16 @@ def _collect_vasp_outputs(task_meta: List[Dict[str, Any]]) -> tuple[list[Dict[st
     return outputs, warnings
 
 
-def vasp_execute(payload: Dict[str, Any]) -> Dict[str, Any]:
+def vasp_execute(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     _ = VaspExecuteInput(**payload)
-    return create_tool_output(
-        tool_name="vasp_execute",
-        success=False,
-        error="Single-folder VASP relaxation is deprecated. Use vasp_execute_batch with input_root/output_root.",
+    _fail(
+        "vasp_execute",
+        message="Single-folder VASP relaxation is deprecated. Use vasp_execute_batch with input_root/output_root.",
+        error_code="deprecated_single_mode",
     )
 
 
-def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
+def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params = VaspExecuteBatchInput(**payload)
     reg = TaskRegistry()
     cfg = reg.get("vasp_execute")
@@ -188,46 +228,46 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
-        return create_tool_output(
+        _fail(
             "vasp_execute_batch",
-            success=False,
-            error=f"input_dir is not a directory: {input_root}",
+            message=f"input_dir is not a directory: {input_root}",
+            error_code="invalid_input_dir",
         )
     single_folder_mode = _is_vasp_input_dir(input_root)
     output_root = resolve_workspace_path(params.output_dir)
     if output_root.exists() and not output_root.is_dir():
-        return create_tool_output(
+        _fail(
             "vasp_execute_batch",
-            success=False,
-            error=f"output_dir is not a directory: {output_root}",
+            message=f"output_dir is not a directory: {output_root}",
+            error_code="invalid_output_dir",
         )
     if _is_within(output_root, input_root):
-        return create_tool_output(
+        _fail(
             "vasp_execute_batch",
-            success=False,
-            error="output_dir must not be inside input_dir to avoid mixing inputs with outputs.",
+            message="output_dir must not be inside input_dir to avoid mixing inputs with outputs.",
+            error_code="output_inside_input",
         )
     output_root.mkdir(parents=True, exist_ok=True)
     exclude_root = None
     nested_calc_dirs = _collect_vasp_input_dirs(input_root, exclude_root=exclude_root)
     if single_folder_mode:
         if _has_nested_vasp_input_dirs(input_root):
-            return create_tool_output(
+            _fail(
                 "vasp_execute_batch",
-                success=False,
-                error=(
+                message=(
                     "Nested calc folders are not allowed: input_dir is already a VASP calc folder "
                     "and descendant calc folders were also found. Split inputs before submission."
                 ),
+                error_code="nested_calc_forbidden",
             )
         input_dirs = [input_root]
     else:
         input_dirs = nested_calc_dirs
     if not input_dirs:
-        return create_tool_output(
+        _fail(
             "vasp_execute_batch",
-            success=False,
-            error="No VASP calc folders found (expected directories containing both POTCAR and INCAR).",
+            message="No VASP calc folders found (expected directories containing both POTCAR and INCAR).",
+            error_code="no_calc_dirs",
         )
     work_base = make_work_base("vasp_batch")
     local_root = output_root
@@ -312,10 +352,9 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
             collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
 
     if dispatch_error is not None:
-        return create_tool_output(
-            tool_name="vasp_execute_batch",
-            success=False,
-            error=f"DPDispatcher submission failed: {dispatch_error}",
+        _fail(
+            "vasp_execute_batch",
+            message=f"DPDispatcher submission failed: {dispatch_error}",
             warnings=collect_warnings,
             data={
                 "work_base": work_base,
@@ -324,21 +363,34 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "outputs": outputs,
                 "batch_state_rel": workspace_relpath(state_path),
             },
+            error_code="dispatch_failed",
         )
 
-    return create_tool_output(
-        tool_name="vasp_execute_batch",
-        success=True,
+    data = {
+        "task_states": result.task_states if result else [],
+        "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        "work_base": result.work_base if result else work_base,
+        "input_root_rel": workspace_relpath(input_root),
+        "output_root_rel": workspace_relpath(output_root),
+        "outputs": outputs,
+        "batch_state_rel": workspace_relpath(state_path),
+    }
+    first_output = outputs[0]["output_dir_rel"] if outputs else ""
+    lines = [
+        "vasp_execute_batch completed.",
+        f"calc_dirs={len(input_dirs)} outputs_collected={len(outputs)} task_states={len(data['task_states'])}",
+        f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
+    ]
+    if data["submission_dir"]:
+        lines.append(f"submission_dir={data['submission_dir']}")
+    if first_output:
+        lines.append(f"first_output_dir={first_output}")
+    content = "\n".join(lines)
+    return _success(
+        "vasp_execute_batch",
+        content=content,
         warnings=collect_warnings,
-        data={
-            "task_states": result.task_states if result else [],
-            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
-            "work_base": result.work_base if result else work_base,
-            "input_root_rel": workspace_relpath(input_root),
-            "output_root_rel": workspace_relpath(output_root),
-            "outputs": outputs,
-            "batch_state_rel": workspace_relpath(state_path),
-        },
+        data=data,
         execution_time=result.duration_s if result else None,
     )
 

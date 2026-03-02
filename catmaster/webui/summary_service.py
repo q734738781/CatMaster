@@ -172,6 +172,12 @@ def _rule_next_actions(*, run_status: str, has_report: bool, has_error: bool) ->
             "Fix inputs or tool parameters, then rerun from the same project space.",
             "If needed, start a new run with a narrower prompt scope.",
         ]
+    if run_status in {"awaiting_human_feedback"}:
+        return [
+            "Open this run and provide HITL feedback in the prompt panel.",
+            "If prompt panel is empty, refresh Monitor after selecting this run.",
+            "Resume execution after feedback submission.",
+        ]
     if run_status in {"running", "starting"}:
         return [
             "Keep this run selected and monitor new events.",
@@ -216,7 +222,7 @@ def _terminal_status_from_task_state(run_dir: Path) -> str:
     if not isinstance(task_state, dict):
         return ""
     status = str(task_state.get("status") or "").strip().lower()
-    if status in {"done", "failure", "needs_intervention", "interrupted_paused"}:
+    if status in {"done", "failure", "needs_intervention", "interrupted_paused", "awaiting_human_feedback"}:
         return status
     return ""
 

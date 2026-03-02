@@ -38,6 +38,7 @@ from catmaster.agents.response_schemas import (
 from catmaster.agents.llm_utils import llm_text
 from catmaster.runtime.memory_store import MemoryStore
 from catmaster.runtime.context_pack import ContextPackBuilder, ContextPackPolicy
+from catmaster.runtime.tool_output_adapter import content_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,9 @@ def _build_proposal_context(
 ) -> str:
     """Build the HumanMessage text for the proposal agent."""
     user_request = state["user_request"]
-    memory_index = memory_store.read_index(max_lines=200, max_chars=12000)
+    memory_index = memory_store.read_index()
     artifacts_index = json.dumps(
-        memory_store.artifact_index(limit=500), ensure_ascii=False,
+        memory_store.artifact_index(), ensure_ascii=False,
     )
     logger.info(
         "[_build_proposal_context] user_request_len=%d, memory_index_len=%d, "
@@ -110,7 +111,7 @@ def _build_director_context(
         work_packages_json=json.dumps(
             state.get("work_packages", []), ensure_ascii=False,
         ),
-        memory_index_excerpt=memory_store.read_index(max_lines=160, max_chars=8000),
+        memory_index_excerpt=memory_store.read_index(),
         already_done_json=json.dumps(director_observations, ensure_ascii=False),
         task_status_board_json=json.dumps(task_status_board, ensure_ascii=False),
         tools=tools_description,
@@ -132,8 +133,8 @@ def _build_task_context(
         task_goal,
         role="task_runner",
         policy=ContextPackPolicy(
-            memory_head_lines=200,
-            max_memory_chars=12000,
+            memory_head_lines=None,
+            max_memory_chars=None,
             inject_goal_for_worker=False,
         ),
     )
@@ -762,7 +763,7 @@ def memory_patch_node(
         logger.info("[memory_patch_node] skip patch: tool_backend unavailable")
         refresh_needed = True
     else:
-        memory_index_text = memory_store.read_index(max_lines=2000, max_chars=200000)
+        memory_index_text = memory_store.read_index()
         topic_texts = _read_memory_topics(memory_store)
         previous_edit_text = ""
         patch_status = "failed"
@@ -804,12 +805,12 @@ def memory_patch_node(
                     json.dumps({"edits_text": edit_text, "allowed_paths": ["MEMORY/"], "emit_diff": True}, ensure_ascii=False),
                     toolcall_key=f"{task_id}_memory_patch_a{attempt}",
                 )
-                status = str(tool_out.get("status") or "").strip().lower()
+                status = str(getattr(tool_out, "status", "") or "").strip().lower()
                 if status == "success":
                     patch_status = "success"
                     last_error = ""
                     break
-                last_error = str(tool_out.get("error") or "patch apply failed")
+                last_error = content_to_text(getattr(tool_out, "content", "")) or "patch apply failed"
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning("[memory_patch_node] attempt %d failed: %s", attempt, exc)
@@ -842,7 +843,7 @@ def memory_patch_node(
     decision_items = structured_result.get("decisions")
     if isinstance(decision_items, list):
         compact_decisions: list[str] = []
-        for item in decision_items[:5]:
+        for item in decision_items:
             if not isinstance(item, dict):
                 continue
             decision = _trim_text(" ".join(str(item.get("decision") or "").split()), limit=120)
@@ -858,7 +859,7 @@ def memory_patch_node(
     if isinstance(next_steps, list):
         compact_next = [
             _trim_text(" ".join(str(step).split()), limit=140)
-            for step in next_steps[:5]
+            for step in next_steps
             if str(step).strip()
         ]
         compact_next = [step for step in compact_next if step]
@@ -869,7 +870,7 @@ def memory_patch_node(
     if isinstance(open_questions, list):
         compact_questions = [
             _trim_text(" ".join(str(question).split()), limit=140)
-            for question in open_questions[:5]
+            for question in open_questions
             if str(question).strip()
         ]
         compact_questions = [question for question in compact_questions if question]
@@ -880,7 +881,7 @@ def memory_patch_node(
     if isinstance(facts, list):
         compact_facts = [
             _trim_text(" ".join(str(fact).split()), limit=180)
-            for fact in facts[:8]
+            for fact in facts
             if str(fact).strip()
         ]
         compact_facts = [fact for fact in compact_facts if fact]
@@ -958,10 +959,6 @@ def finalize_memory_patch_node(
                 "source": task_id,
             }
             artifact_rows.append(row)
-            if len(artifact_rows) >= 30:
-                break
-        if len(artifact_rows) >= 30:
-            break
 
     facts = structured_source.get("facts")
     facts_payload = facts if isinstance(facts, list) else []
@@ -969,7 +966,7 @@ def finalize_memory_patch_node(
     files_payload: list[Any] = []
     src_files = structured_source.get("files")
     if isinstance(src_files, list):
-        files_payload = list(src_files[:30])
+        files_payload = list(src_files)
     if not files_payload:
         files_payload = [row.get("path") for row in artifact_rows if row.get("path")]
 
@@ -1011,7 +1008,7 @@ def finalize_memory_patch_node(
         logger.info("[finalize_memory_patch_node] skip patch: tool_backend unavailable")
         refresh_needed = True
     else:
-        memory_index_text = memory_store.read_index(max_lines=2000, max_chars=200000)
+        memory_index_text = memory_store.read_index()
         topic_texts = _read_memory_topics(memory_store)
         previous_edit_text = ""
         patch_status = "failed"
@@ -1053,12 +1050,12 @@ def finalize_memory_patch_node(
                     json.dumps({"edits_text": edit_text, "allowed_paths": ["MEMORY/"], "emit_diff": True}, ensure_ascii=False),
                     toolcall_key=f"finalize_memory_patch_a{attempt}",
                 )
-                status = str(tool_out.get("status") or "").strip().lower()
+                status = str(getattr(tool_out, "status", "") or "").strip().lower()
                 if status == "success":
                     patch_status = "success"
                     last_error = ""
                     break
-                last_error = str(tool_out.get("error") or "patch apply failed")
+                last_error = content_to_text(getattr(tool_out, "content", "")) or "patch apply failed"
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning("[finalize_memory_patch_node] attempt %d failed: %s", attempt, exc)
@@ -1093,8 +1090,8 @@ def summarize_node(
     """Generate the final project summary."""
     user_request = state["user_request"]
     observations = state.get("observations", [])
-    memory_index = memory_store.read_index(max_lines=200, max_chars=12000)
-    artifacts = memory_store.artifact_index(limit=200)
+    memory_index = memory_store.read_index()
+    artifacts = memory_store.artifact_index()
 
     prompt = build_summary_prompt()
     messages = prompt.format_messages(
@@ -1129,20 +1126,20 @@ def plan_commit_node(
     if not proposal_md:
         return {}
 
-    _snippet = lambda text, limit=600: (" ".join(str(text or "").split()))[:limit]
+    _snippet = lambda text: " ".join(str(text or "").split())
 
     structured_result = {
         "summary": "Plan committed for execution.",
         "facts": [
             f"Run focus: {_snippet(proposal_md)}",
             f"Work package count: {len(work_packages)}",
-            "Work packages: " + " | ".join(work_packages[:8]),
+            "Work packages: " + " | ".join(work_packages),
         ],
         "files": [],
         "constraints": [],
         "open_questions": [],
         "decisions": [{"decision": "Plan committed", "rationale": "Approved for execution"}],
-        "next_steps": work_packages[:5],
+        "next_steps": list(work_packages),
         "artifacts": [],
     }
 
@@ -1161,7 +1158,7 @@ def plan_commit_node(
         logger.info("[plan_commit_node] skip memory patch: tool_backend unavailable")
         refresh_needed = True
     else:
-        memory_index_text = memory_store.read_index(max_lines=2000, max_chars=200000)
+        memory_index_text = memory_store.read_index()
         topic_texts = _read_memory_topics(memory_store)
 
         prompt = build_memory_patch_prompt()
@@ -1188,7 +1185,7 @@ def plan_commit_node(
                 }, ensure_ascii=False),
                 toolcall_key="plan_commit_memory_patch",
             )
-            status = str(tool_out.get("status") or "").strip().lower()
+            status = str(getattr(tool_out, "status", "") or "").strip().lower()
             if status != "success":
                 refresh_needed = True
         except Exception as exc:
@@ -1205,7 +1202,11 @@ def plan_commit_node(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _director_observations_view(observations: list[dict], *, max_items: int = 60) -> list[dict]:
+def _director_observations_view(
+    observations: list[dict],
+    *,
+    max_items: int | None = None,
+) -> list[dict]:
     sanitized: list[dict] = []
     for item in observations or []:
         if not isinstance(item, dict):
@@ -1238,7 +1239,7 @@ def _director_observations_view(observations: list[dict], *, max_items: int = 60
         decisions = item.get("decisions")
         if isinstance(decisions, list):
             compact_decisions: list[str] = []
-            for entry in decisions[:3]:
+            for entry in decisions:
                 text = _trim_text(" ".join(str(entry).split()), limit=220)
                 if text:
                     compact_decisions.append(text)
@@ -1248,7 +1249,7 @@ def _director_observations_view(observations: list[dict], *, max_items: int = 60
         next_steps = item.get("next_steps")
         if isinstance(next_steps, list):
             compact_next: list[str] = []
-            for entry in next_steps[:3]:
+            for entry in next_steps:
                 text = _trim_text(" ".join(str(entry).split()), limit=180)
                 if text:
                     compact_next.append(text)
@@ -1258,7 +1259,7 @@ def _director_observations_view(observations: list[dict], *, max_items: int = 60
         open_questions = item.get("open_questions")
         if isinstance(open_questions, list):
             compact_questions: list[str] = []
-            for entry in open_questions[:2]:
+            for entry in open_questions:
                 text = _trim_text(" ".join(str(entry).split()), limit=180)
                 if text:
                     compact_questions.append(text)
@@ -1268,7 +1269,7 @@ def _director_observations_view(observations: list[dict], *, max_items: int = 60
         facts = item.get("facts")
         if isinstance(facts, list):
             compact_facts: list[str] = []
-            for entry in facts[:3]:
+            for entry in facts:
                 text = _trim_text(" ".join(str(entry).split()), limit=180)
                 if text:
                     compact_facts.append(text)
@@ -1276,7 +1277,7 @@ def _director_observations_view(observations: list[dict], *, max_items: int = 60
                 row["facts"] = compact_facts
         if row:
             sanitized.append(row)
-    if len(sanitized) > max_items:
+    if max_items is not None and len(sanitized) > max_items:
         return sanitized[-max_items:]
     return sanitized
 
@@ -1285,7 +1286,7 @@ def _director_task_status_board(
     tasks: list[dict],
     observations: list[dict],
     *,
-    max_items: int = 80,
+    max_items: int | None = None,
 ) -> list[dict]:
     obs_map: dict[str, dict] = {}
     for row in observations or []:
@@ -1324,27 +1325,29 @@ def _director_task_status_board(
                 row["decision_count"] = len(decisions)
             next_steps = obs.get("next_steps")
             if isinstance(next_steps, list) and next_steps:
-                hint = _trim_text(" ".join(str(next_steps[0]).split()), limit=140)
-                if hint:
-                    row["next_step_hint"] = hint
+                compact_steps: list[str] = []
+                for step in next_steps:
+                    hint = _trim_text(" ".join(str(step).split()), limit=140)
+                    if hint:
+                        compact_steps.append(hint)
+                if compact_steps:
+                    row["next_steps"] = compact_steps
         board.append(row)
 
-    if len(board) > max_items:
+    if max_items is not None and len(board) > max_items:
         return board[-max_items:]
     return board
 
 
-def _cap_messages(messages: list[AnyMessage], *, max_messages: int = 40) -> list[AnyMessage]:
-    if len(messages or []) <= max_messages:
+def _cap_messages(messages: list[AnyMessage], *, max_messages: int | None = None) -> list[AnyMessage]:
+    if max_messages is None or len(messages or []) <= max_messages:
         return list(messages or [])
     return list(messages[-max_messages:])
 
 
 def _trim_text(text: str, *, limit: int) -> str:
     data = str(text or "").strip()
-    if len(data) <= limit:
-        return data
-    return data[: max(0, limit - 3)] + "..."
+    return data
 
 
 def _refresh_memory_index(memory_store: MemoryStore) -> None:

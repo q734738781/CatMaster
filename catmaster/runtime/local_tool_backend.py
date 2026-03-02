@@ -6,12 +6,20 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from langchain_core.messages import ToolMessage
+
 from catmaster.runtime.artifact_store import ArtifactStore
+from catmaster.runtime.tool_observation_projection import project_tool_observation
+from catmaster.runtime.tool_output_adapter import (
+    CatMasterToolExecutionError,
+    adapt_tool_return,
+    tool_error_to_message,
+)
 from catmaster.runtime.trace_store import TraceStore
 from catmaster.runtime.tool_runtime import toolcall_context
 from catmaster.runtime.tool_executor import ToolExecutor
 from catmaster.runtime.tool_backend import ToolBackend
-from catmaster.tools.base import workspace_scope
+from catmaster.tools.base import workspace_root, workspace_scope
 from catmaster.tools.registry import ToolRegistry
 
 
@@ -46,14 +54,14 @@ class LocalToolBackend(ToolBackend):
         *,
         toolcall_key: str,
         call_id: str | None = None,
-    ) -> dict:
+    ) -> ToolMessage:
         raw_params = self._parse_arguments(arguments_json)
         validation_key = self._validation_key(toolcall_key, name)
         validation = self.tool_executor.validate(name, raw_params, toolcall_key=validation_key)
 
         refs = self.artifact_store.toolcall_refs(toolcall_key)
         validated_params = validation.get("validated_params") if validation.get("ok") else None
-        status = "validated" if validation.get("ok") else "validation_failed"
+        validation_status = "validated" if validation.get("ok") else "validation_failed"
 
         self.artifact_store.write_input(toolcall_key, {
             "raw_params": raw_params,
@@ -61,30 +69,31 @@ class LocalToolBackend(ToolBackend):
             "tool_name": name,
             "toolcall_id": toolcall_key,
             "call_id": call_id,
-            "status": status,
+            "status": validation_status,
             "input_ref": refs["input_ref"],
         })
 
         if not validation.get("ok"):
-            tool_output = validation.get("tool_output") or {
-                "status": "failed",
-                "tool_name": name,
-                "data": {},
-                "error": validation.get("error_digest", "validation failed"),
-            }
-            # Normalize validation output to match create_tool_output conventions.
-            if isinstance(tool_output, dict):
-                if tool_output.get("status") == "error":
-                    tool_output["status"] = "failed"
-                data = tool_output.setdefault("data", {})
-                data.setdefault("error_type", "validation_error")
-                data["attempt_count"] = validation.get("attempt_count")
-                data["max_attempts"] = validation.get("max_attempts")
-                if validation.get("next_step"):
-                    data["next_step"] = validation.get("next_step")
-                attempt = validation.get("attempt_count") or 0
-                max_attempts = validation.get("max_attempts") or 0
-                tool_output["retryable"] = bool(max_attempts and attempt < max_attempts)
+            attempt = int(validation.get("attempt_count") or 0)
+            max_attempts = int(validation.get("max_attempts") or 0)
+            exc = CatMasterToolExecutionError(
+                tool_name=name,
+                public_message=str(validation.get("error_digest") or "validation failed"),
+                artifact={
+                    "validation_errors": validation.get("errors") or [],
+                    "attempt_count": attempt,
+                    "max_attempts": max_attempts,
+                    "next_step": validation.get("next_step") or "",
+                    "raw_params": raw_params,
+                },
+                retryable=bool(max_attempts and attempt < max_attempts),
+                error_code="validation_error",
+            )
+            message = tool_error_to_message(
+                exc=exc,
+                tool_name=name,
+                tool_call_id=toolcall_key,
+            )
         else:
             func = self.registry.get_tool_function(name)
             try:
@@ -97,47 +106,57 @@ class LocalToolBackend(ToolBackend):
                 with toolcall_context(toolcall_key, run_dir=str(self.artifact_store.run_dir)):
                     if self.workspace is not None:
                         with workspace_scope(self.workspace):
-                            tool_output = func(payload)
+                            raw_output = func(payload)
                     else:
-                        tool_output = func(payload)
+                        raw_output = func(payload)
+                content, artifact = adapt_tool_return(
+                    tool_name=name,
+                    raw_result=raw_output,
+                    tool_args=payload,
+                    workspace_files_root=workspace_root(self.workspace),
+                )
+                message = ToolMessage(
+                    content=content,
+                    artifact=artifact,
+                    tool_call_id=toolcall_key,
+                    name=name,
+                    status="success",
+                )
             except Exception as exc:
-                tool_output = {
-                    "status": "failed",
-                    "tool_name": name,
-                    "data": {},
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
+                message = tool_error_to_message(
+                    exc=exc,
+                    tool_name=name,
+                    tool_call_id=toolcall_key,
+                )
             finally:
                 self._clear_active_call(toolcall_key)
 
-        if not isinstance(tool_output, dict):
-            tool_output = {
-                "status": "failed",
-                "tool_name": name,
-                "data": {},
-                "error": f"Tool {name} returned non-dict output",
-            }
+        projection = project_tool_observation(message, tool_name=name)
+        tool_status = str(projection.get("tool_status") or message.status)
+        error_text = str(projection.get("error") or "")
 
         self.artifact_store.write_output(toolcall_key, {
-            "toolresult": tool_output,
-            "full_output": tool_output,
-            "status": status,
-            "tool_status": tool_output.get("status"),
+            "status": tool_status,
+            "validation_status": validation_status,
+            "raw_output": message.model_dump(mode="json"),
+            "projection": projection,
+            "tool_status": tool_status,
+            "tool_name": name,
         })
 
         record = {
             "role": self.role,
             "tool_name": name,
             "validated_params": validated_params,
-            "status": tool_output.get("status"),
-            "error": tool_output.get("error"),
+            "status": tool_status,
+            "error": error_text,
             "toolcall_id": toolcall_key,
             "call_id": call_id,
             "input_ref": refs.get("input_ref"),
             "output_ref": refs.get("output_ref"),
         }
         self.trace_store.append_toolcall(record)
-        return tool_output
+        return message
 
     def cancel_active_call(self, toolcall_key: str) -> bool:
         with self._active_lock:

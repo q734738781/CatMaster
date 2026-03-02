@@ -8,6 +8,7 @@ LangChain v1 ``create_agent`` and produce typed structured responses.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -20,6 +21,7 @@ from typing import Any, Annotated, Dict, List, Optional, TypedDict
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, ToolMessage
 from langchain_core.tools import StructuredTool
+from pydantic import ValidationError
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -42,9 +44,9 @@ from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.artifact_callback import build_callbacks
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.runtime.run_control import RunControl
-from catmaster.runtime.tool_result_normalizer import (
-    normalize_tool_result,
-    to_tool_message_status,
+from catmaster.runtime.tool_output_adapter import (
+    CatMasterToolExecutionError,
+    tool_error_to_message,
 )
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
 from catmaster.runtime.usage_stats import write_usage_summary
@@ -119,81 +121,18 @@ def _snippet(text: Any, limit: int = 140) -> str:
     return cleaned[: max(0, limit - 3)] + "..."
 
 
-def _compact_tool_output_for_llm(
-    tool_name: str,
-    payload: dict[str, Any],
+def _task_runner_tools(
+    registry: ToolRegistry,
     *,
-    text_limit: int = 800,
-) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {
-            "status": "failed",
-            "tool_name": tool_name or "",
-            "data": {},
-            "warnings": [],
-            "error": _snippet(payload, text_limit),
-        }
-
-    compact: dict[str, Any] = {
-        "status": str(payload.get("status") or ""),
-        "tool_name": str(payload.get("tool_name") or tool_name or ""),
-        "warnings": list(payload.get("warnings") or [])[:6],
-        "error": _snippet(payload.get("error"), text_limit),
-    }
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        compact["data"] = {}
-        return compact
-
-    data_keys = [str(k) for k in list(data.keys())[:20]]
-    scalars: dict[str, Any] = {}
-    paths: dict[str, str] = {}
-    for key, value in data.items():
-        if len(scalars) >= 10 and len(paths) >= 10:
-            break
-        key_s = str(key)
-        if isinstance(value, (int, float, bool)) and len(scalars) < 10:
-            scalars[key_s] = value
-            continue
-        if not isinstance(value, str):
-            continue
-        key_l = key_s.lower()
-        if any(token in key_l for token in ("path", "file", "dir", "artifact", "ref")) and len(paths) < 10:
-            paths[key_s] = _snippet(value, 300)
-            continue
-        if len(value) <= 200 and len(scalars) < 10:
-            scalars[key_s] = value
-
-    compact_data: dict[str, Any] = {"data_keys": data_keys}
-    if scalars:
-        compact_data["scalars"] = scalars
-    if paths:
-        compact_data["paths"] = paths
-    compact["data"] = compact_data
-    return compact
-
-
-def _compact_tool_message_for_llm(message: ToolMessage) -> ToolMessage:
-    name = str(getattr(message, "name", "") or "").strip()
-    if not name or name == "bash_exec":
-        return message
-
-    parsed = normalize_tool_result(message, tool_name=name)
-    compact = _compact_tool_output_for_llm(name, parsed)
-    compact_text = json.dumps(compact, ensure_ascii=False)
-    return ToolMessage(
-        content=compact_text,
-        tool_call_id=str(getattr(message, "tool_call_id", "") or ""),
-        name=name,
-        id=getattr(message, "id", None),
-        status=to_tool_message_status(parsed),
-    )
-
-
-def _task_runner_tools(registry: ToolRegistry) -> list[StructuredTool]:
+    run_dir: Path | None = None,
+    workspace: Path | None = None,
+) -> list[StructuredTool]:
     return [
         tool
-        for tool in registry.as_langchain_tools()
+        for tool in registry.as_langchain_tools(
+            run_dir=str(run_dir) if run_dir is not None else None,
+            workspace=str(workspace) if workspace is not None else None,
+        )
         if tool.name not in _TASK_RUNNER_TOOL_DENYLIST
     ]
 
@@ -219,7 +158,7 @@ def _load_tool_strategy():
 
 
 def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list[Any]:
-    """Enforce a hard per-invocation tool-call cap based on executed tool calls."""
+    """Enforce per-invocation tool-call cap and map recoverable errors to ToolMessage."""
     try:
         from langchain.agents.middleware import before_agent, wrap_tool_call
     except Exception as exc:
@@ -240,13 +179,36 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
     def _enforce_tool_call_budget(request: Any, handler: Any) -> Any:
         used = int(counter.get("used", 0))
         tool_call = getattr(request, "tool_call", None) or {}
-        tool_name = str(tool_call.get("name") or "")
+        tool_name = str(tool_call.get("name") or "unknown")
+        tool_call_id = str(tool_call.get("id") or "")
         if used >= tool_limit:
-            raise ToolCallBudgetExceededError(
-                f"{role} tool-call budget exceeded: "
-                f"executed={used}, limit={tool_limit}, next_tool={tool_name or 'unknown'}"
+            exc = ToolCallBudgetExceededError(
+                f"{role} tool-call budget exceeded: executed={used}, limit={tool_limit}, next_tool={tool_name}"
             )
-        result = handler(request)
+            return tool_error_to_message(
+                exc=exc,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+            )
+        try:
+            result = handler(request)
+        except (CatMasterToolExecutionError, ValidationError, ValueError, KeyError) as exc:
+            counter["used"] = used + 1
+            return tool_error_to_message(
+                exc=exc,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+            )
+        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+            counter["used"] = used + 1
+            raise
+        except Exception as exc:
+            counter["used"] = used + 1
+            return tool_error_to_message(
+                exc=exc,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+            )
         counter["used"] = used + 1
         return result
 
@@ -299,42 +261,6 @@ def _build_director_agent(
     )
 
 
-def _make_task_runner_middleware(memory_store: MemoryStore) -> list[Any]:
-    """before_model middleware that compacts non-shell tool observations."""
-    _ = memory_store  # reserved for future hook extensions
-
-    try:
-        from langchain.agents.middleware import before_model
-    except Exception as exc:
-        raise RuntimeError(
-            "LangChain middleware is unavailable. Install 'langchain>=1.0'."
-        ) from exc
-
-    @before_model
-    def _compact_before_model(state: dict, runtime: Any) -> dict[str, Any] | None:
-        _ = runtime
-        raw_messages = list((state or {}).get("messages", []) or [])
-        if not raw_messages:
-            return None
-
-        llm_messages: list[AnyMessage] = []
-        changed = False
-        for msg in raw_messages:
-            if isinstance(msg, ToolMessage):
-                compacted = _compact_tool_message_for_llm(msg)
-                llm_messages.append(compacted)
-                if compacted is not msg:
-                    changed = True
-                continue
-            llm_messages.append(msg)
-
-        if not changed:
-            return None
-        return {"messages": llm_messages}
-
-    return [_compact_before_model]
-
-
 def _build_task_runner_agent(
     model: BaseChatModel,
     tools: list[StructuredTool],
@@ -350,7 +276,8 @@ def _build_task_runner_agent(
     )
     create_agent = _load_create_agent()
     ToolStrategy = _load_tool_strategy()
-    middleware = _make_task_runner_middleware(memory_store) + _make_tool_call_budget_middleware(
+    _ = memory_store
+    middleware = _make_tool_call_budget_middleware(
         role="task_runner",
         max_tool_calls=max_steps,
     )
@@ -613,6 +540,7 @@ def build_standard_graph(
     director_tools_description: Optional[str] = None,
     run_id: str = "",
     run_dir: Optional[Path] = None,
+    workspace: Optional[Path] = None,
     patch_repair_attempts: int = 1,
     tool_backend: Optional[ToolBackend] = None,
     max_task_steps: int = 60,
@@ -622,8 +550,13 @@ def build_standard_graph(
 ) -> Any:
     """Build and compile the standard-lane LangGraph."""
     effective_run_dir = run_dir or Path(".")
+    effective_workspace = workspace
     effective_director_tools_description = director_tools_description or tools_description
-    lc_tools = _task_runner_tools(registry)
+    lc_tools = _task_runner_tools(
+        registry,
+        run_dir=effective_run_dir,
+        workspace=effective_workspace,
+    )
     bash_tools = [t for t in lc_tools if t.name == "bash_exec"]
 
     proposal_agent = _build_proposal_agent(
@@ -725,6 +658,7 @@ def build_fast_graph(
     registry: ToolRegistry,
     run_id: str = "",
     run_dir: Optional[Path] = None,
+    workspace: Optional[Path] = None,
     patch_repair_attempts: int = 1,
     tool_backend: Optional[ToolBackend] = None,
     max_task_steps: int = 60,
@@ -733,7 +667,12 @@ def build_fast_graph(
 ) -> Any:
     """Build and compile the fast-lane LangGraph (single task, no director)."""
     effective_run_dir = run_dir or Path(".")
-    lc_tools = _task_runner_tools(registry)
+    effective_workspace = workspace
+    lc_tools = _task_runner_tools(
+        registry,
+        run_dir=effective_run_dir,
+        workspace=effective_workspace,
+    )
     task_agent = _build_task_runner_agent(
         task_runner_model,
         lc_tools,
@@ -1171,6 +1110,12 @@ class GraphRunner:
                 "proposal_path": "proposal.md",
                 "work_packages": state.get("work_packages", []),
             }
+        last_interrupt = state.get("last_interrupt")
+        if isinstance(last_interrupt, dict) and last_interrupt:
+            body["last_interrupt"] = last_interrupt
+        resume_checkpoint = state.get("task_resume_checkpoint")
+        if resume_checkpoint not in (None, ""):
+            body["task_resume_checkpoint"] = resume_checkpoint
         existing: Dict[str, Any] = {}
         if path.exists():
             try:
@@ -1182,7 +1127,7 @@ class GraphRunner:
         status = str(body.get("status") or "")
         if "interrupt_history" not in body and "interrupt_history" in existing:
             body["interrupt_history"] = existing.get("interrupt_history")
-        if status == "interrupted_paused":
+        if status in {"interrupted_paused", "awaiting_human_feedback"}:
             for key in ("task_resume_checkpoint", "last_interrupt"):
                 if key not in body and key in existing:
                     body[key] = existing.get(key)
@@ -1256,6 +1201,7 @@ class GraphRunner:
                 registry=self.registry,
                 run_id=self.run_context.run_id,
                 run_dir=run_dir,
+                workspace=workspace,
                 patch_repair_attempts=self.patch_repair_attempts,
                 tool_backend=self.tool_backend,
                 max_task_steps=self.max_task_steps,
@@ -1275,6 +1221,7 @@ class GraphRunner:
                 director_tools_description=director_tools_description,
                 run_id=self.run_context.run_id,
                 run_dir=run_dir,
+                workspace=workspace,
                 patch_repair_attempts=self.patch_repair_attempts,
                 tool_backend=self.tool_backend,
                 max_task_steps=self.max_task_steps,
@@ -1357,10 +1304,34 @@ class GraphRunner:
                         "status": "interrupted_paused",
                     }
 
+                interrupt_type = str(interrupt_payload.get("type") or "")
+                self._write_task_state(
+                    {
+                        **result,
+                        "status": "awaiting_human_feedback",
+                        "last_interrupt": interrupt_payload,
+                    },
+                    lane,
+                )
+                self._emit(
+                    "RUN_WAITING_INPUT",
+                    payload={
+                        "status": "awaiting_human_feedback",
+                        "interrupt_type": interrupt_type,
+                        "message": str(interrupt_payload.get("message") or ""),
+                    },
+                )
                 feedback = self._collect_human_feedback(interrupt_payload)
                 if not feedback and not self.reporter.is_live():
                     logger.warning("HITL interrupt with no live reporter; auto-approving")
                     feedback = "approve"
+                self._emit(
+                    "RUN_INPUT_RECEIVED",
+                    payload={
+                        "interrupt_type": interrupt_type,
+                        "feedback_len": len(str(feedback or "")),
+                    },
+                )
 
                 result = self._invoke_graph_once(
                     compiled,

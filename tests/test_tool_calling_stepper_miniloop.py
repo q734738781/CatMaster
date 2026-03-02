@@ -17,12 +17,14 @@ class DummyInput(BaseModel):
     text: str = Field(..., description="Text to echo")
 
 
-def dummy_tool(payload: dict) -> dict:
-    return {
-        "status": "success",
-        "tool_name": "dummy_tool",
-        "data": {"text": payload.get("text")},
-    }
+def dummy_tool(payload: dict) -> tuple[str, dict]:
+    return (
+        "dummy_tool completed.",
+        {
+            "tool_name": "dummy_tool",
+            "data": {"text": payload.get("text")},
+        },
+    )
 
 
 def test_tool_calling_stepper_miniloop(tmp_path) -> None:

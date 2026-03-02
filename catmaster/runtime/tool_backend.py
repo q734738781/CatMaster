@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Protocol
+from langchain_core.messages import ToolMessage
 
 
 class ToolBackend(Protocol):
@@ -14,7 +15,7 @@ class ToolBackend(Protocol):
         *,
         toolcall_key: str,
         call_id: str | None = None,
-    ) -> dict:
+    ) -> ToolMessage:
         ...
 
     def cancel_active_call(self, toolcall_key: str) -> bool:

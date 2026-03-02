@@ -108,7 +108,7 @@ Execution rules:
 - Do not trigger expensive reruns purely for path/layout normalization when numerical/physical requirements are already satisfied.
 - Do not over-optimize non-critical parameter mismatches once task goals and acceptance evidence are already satisfied.
 - Perform only checks required to satisfy current done criteria; avoid speculative or perfection-oriented extra validation.
-- For routine checks, keep bash output small: prefer focused queries (`rg -n`, `head`, `tail`) and set `max_output_chars` conservatively unless deep debugging is required.
+- For routine checks, keep bash output small: prefer focused queries (`rg -n`, `head`, `tail`) and avoid broad/full-file dumps unless deep debugging is required.
 - Progressive disclosure is mandatory: memory_index_excerpt is short; locate details with `rg`, then read small windows (no large file dumps).
 - Internal metadata audit logs are not task inputs; do not read or reference them in task reasoning.
 - By default, do not generate long markdown reports via `cat <<'MD'`.

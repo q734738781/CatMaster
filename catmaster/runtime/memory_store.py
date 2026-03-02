@@ -90,19 +90,15 @@ class MemoryStore:
 
         current_focus = _extract_labeled_tldr(goal_text, "Primary objective") or "(empty)"
         current_milestone = _extract_labeled_tldr(goal_text, "Definition of success") or "(empty)"
-        latest_run_artifact = (
-            _first_non_empty(_extract_bullets_from_section(files_text, "## Index", limit=1))
-            or "(empty)"
-        )
-        next_action = (
-            _first_non_empty(_extract_bullets_from_section(questions_text, "## Active", limit=1))
-            or "(empty)"
-        )
+        latest_run_artifacts = _extract_bullets_from_section(files_text, "## Index", limit=None)
+        latest_run_artifact = " | ".join(latest_run_artifacts) if latest_run_artifacts else "(empty)"
+        next_actions = _extract_bullets_from_section(questions_text, "## Active", limit=None)
+        next_action = " | ".join(next_actions) if next_actions else "(empty)"
 
-        top_constraints = _extract_bullets_from_section(constraints_text, "## Hard Constraints", limit=5)
+        top_constraints = _extract_bullets_from_section(constraints_text, "## Hard Constraints", limit=None)
         if not top_constraints:
-            top_constraints = _extract_bullets_from_section(constraints_text, "## TL;DR", limit=5)
-        active_open_questions = _extract_bullets_from_section(questions_text, "## Active", limit=5)
+            top_constraints = _extract_bullets_from_section(constraints_text, "## TL;DR", limit=None)
+        active_open_questions = _extract_bullets_from_section(questions_text, "## Active", limit=None)
 
         lines: List[str] = [
             "# MEMORY (AUTOLOADED INDEX)",
@@ -181,14 +177,15 @@ class MemoryStore:
             text = text[:max_chars]
         return text
 
-    def read_events_tail(self, *, limit: int = 20) -> List[Dict[str, Any]]:
-        if limit <= 0:
+    def read_events_tail(self, *, limit: Optional[int] = 20) -> List[Dict[str, Any]]:
+        if isinstance(limit, int) and limit <= 0:
             return []
         if not self.events_path.exists():
             return []
         lines = self.events_path.read_text(encoding="utf-8").splitlines()
         out: List[Dict[str, Any]] = []
-        for raw in lines[-limit:]:
+        selected_lines = lines if limit is None else lines[-limit:]
+        for raw in selected_lines:
             raw = raw.strip()
             if not raw:
                 continue
@@ -257,7 +254,7 @@ class MemoryStore:
             "mode": "event_only",
         }
 
-    def artifact_index(self, *, limit: int = 500) -> List[Dict[str, Any]]:
+    def artifact_index(self, *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
         seen: set[str] = set()
         pattern = re.compile(r"^-\s*PATH:\s*([^|]+?)\s*(?:\|\s*(.*))?$")
@@ -279,11 +276,11 @@ class MemoryStore:
                     "type": "dir" if path.endswith("/") else "file",
                 })
                 seen.add(path)
-                if len(records) >= limit:
+                if isinstance(limit, int) and len(records) >= limit:
                     return records
 
         # fallback from recent events
-        for event in reversed(self.read_events_tail(limit=200)):
+        for event in reversed(self.read_events_tail(limit=None)):
             for file_item in event.get("files") or []:
                 if not isinstance(file_item, dict):
                     continue
@@ -297,7 +294,7 @@ class MemoryStore:
                     "type": "dir" if path.endswith("/") else "file",
                 })
                 seen.add(path)
-                if len(records) >= limit:
+                if isinstance(limit, int) and len(records) >= limit:
                     return records
         return records
 
@@ -383,7 +380,12 @@ def _extract_labeled_tldr(text: str, label: str) -> str:
     return "" if not value or value == "(empty)" else value
 
 
-def _extract_bullets_from_section(text: str, heading: str, *, limit: int) -> List[str]:
+def _extract_bullets_from_section(
+    text: str,
+    heading: str,
+    *,
+    limit: Optional[int],
+) -> List[str]:
     lines = (text or "").splitlines()
     start = -1
     for i, raw in enumerate(lines):
@@ -405,7 +407,7 @@ def _extract_bullets_from_section(text: str, heading: str, *, limit: int) -> Lis
         if not value or value == "(empty)" or value.endswith(":"):
             continue
         out.append(value)
-        if len(out) >= limit:
+        if limit is not None and len(out) >= limit:
             break
     return out
 

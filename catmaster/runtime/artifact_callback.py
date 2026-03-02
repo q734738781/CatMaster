@@ -21,7 +21,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.outputs import LLMResult
 
 from catmaster.runtime.artifact_store import ArtifactStore
-from catmaster.runtime.tool_result_normalizer import normalize_tool_result
+from catmaster.runtime.tool_observation_projection import project_tool_observation
 from catmaster.runtime.trace_store import TraceStore
 from catmaster.ui.events import UIEvent, make_event
 from catmaster.ui.reporters import Reporter
@@ -52,6 +52,12 @@ def _to_dict_obj(value: Any) -> dict[str, Any]:
 def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
+    if hasattr(value, "model_dump"):
+        try:
+            dumped = value.model_dump(mode="json")
+            return _json_safe(dumped)
+        except Exception:
+            pass
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -89,13 +95,8 @@ def _message_to_log_payload(message: Any) -> dict[str, Any]:
     return _json_safe(payload)
 
 
-def _coerce_tool_output(output: Any) -> dict[str, Any]:
-    tool_name = ""
-    if isinstance(output, ToolMessage):
-        tool_name = str(getattr(output, "name", "") or "")
-    elif isinstance(output, dict):
-        tool_name = str(output.get("tool_name") or "")
-    return normalize_tool_result(output, tool_name=tool_name)
+def _coerce_tool_projection(output: Any, *, tool_name: str = "") -> dict[str, Any]:
+    return project_tool_observation(output, tool_name=tool_name or None)
 
 
 def _extract_usage_from_llm_result(response: LLMResult) -> Dict[str, Any]:
@@ -349,18 +350,19 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
         toolcall_key = info.get("toolcall_key", str(run_id))
         tool_name = info.get("tool_name", "")
 
-        tool_output = _coerce_tool_output(output)
-        normalized_status = str(tool_output.get("status") or "")
-        normalized_error = tool_output.get("error")
+        projection = _coerce_tool_projection(output, tool_name=tool_name)
+        normalized_status = str(projection.get("tool_status") or "success")
+        normalized_error = projection.get("error")
 
         self.artifact_store.write_output(toolcall_key, {
-            "toolresult": tool_output,
-            "full_output": tool_output,
+            "raw_output": _json_safe(output),
+            "projection": projection,
             "tool_status": normalized_status,
+            "tool_name": str(projection.get("tool_name") or tool_name),
         })
         self.trace_store.append_toolcall({
             "role": "langgraph",
-            "tool_name": str(tool_output.get("tool_name") or tool_name),
+            "tool_name": str(projection.get("tool_name") or tool_name),
             "status": normalized_status,
             "error": normalized_error,
             "toolcall_id": toolcall_key,
@@ -378,15 +380,21 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
         info = self._pending.pop(str(run_id), {})
         toolcall_key = info.get("toolcall_key", str(run_id))
         tool_name = info.get("tool_name", "")
+        projection = _coerce_tool_projection(
+            {"status": "error", "tool_name": tool_name, "error": str(error)},
+            tool_name=tool_name,
+        )
 
         self.artifact_store.write_output(toolcall_key, {
-            "toolresult": {"status": "failed", "error": str(error)},
-            "tool_status": "failed",
+            "raw_output": {"error": str(error)},
+            "projection": projection,
+            "tool_status": "error",
+            "tool_name": tool_name,
         })
         self.trace_store.append_toolcall({
             "role": "langgraph",
             "tool_name": tool_name,
-            "status": "failed",
+            "status": "error",
             "error": str(error),
             "toolcall_id": toolcall_key,
             "run_id": self.run_id,
@@ -609,12 +617,12 @@ class UIEventHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         info = self._tool_pending.pop(str(run_id), {})
-        parsed = _coerce_tool_output(output)
+        parsed = _coerce_tool_projection(output, tool_name=str(info.get("tool") or ""))
         self._emit(
             "TOOL_CALL_END",
             category="tool",
             tool=str(parsed.get("tool_name") or info.get("tool") or ""),
-            status=str(parsed.get("status") or ""),
+            status=str(parsed.get("tool_status") or ""),
             error=parsed.get("error"),
         )
 
@@ -630,7 +638,7 @@ class UIEventHandler(BaseCallbackHandler):
             "TOOL_CALL_END",
             category="tool",
             tool=str(info.get("tool") or ""),
-            status="failed",
+            status="error",
             error=str(error),
         )
 

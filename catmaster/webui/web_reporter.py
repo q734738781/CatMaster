@@ -19,6 +19,67 @@ class PromptBroker:
         self._cond = threading.Condition(self._lock)
         self._pending: Optional[Dict[str, Any]] = None
         self._responses: Dict[str, str] = {}
+        self._store_dir: Optional[Path] = None
+
+    def set_store_dir(self, path: Path) -> None:
+        store_dir = Path(path).expanduser().resolve()
+        store_dir.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            self._store_dir = store_dir
+
+    def _pending_path(self) -> Optional[Path]:
+        if self._store_dir is None:
+            return None
+        return self._store_dir / "pending_prompt.json"
+
+    def _response_path(self) -> Optional[Path]:
+        if self._store_dir is None:
+            return None
+        return self._store_dir / "pending_response.json"
+
+    def _write_pending_file(self, payload: Dict[str, Any]) -> None:
+        path = self._pending_path()
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
+    def _clear_pending_file(self) -> None:
+        path = self._pending_path()
+        if path is None:
+            return
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            return
+
+    def _clear_response_file(self) -> None:
+        path = self._response_path()
+        if path is None:
+            return
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            return
+
+    def _read_response_file(self, prompt_id: str) -> Optional[str]:
+        path = self._response_path()
+        if path is None or not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        if str(raw.get("prompt_id") or "") != prompt_id:
+            return None
+        return str(raw.get("text") or "")
 
     def request_prompt(self, kind: str, payload: Dict[str, Any]) -> str:
         prompt_id = uuid.uuid4().hex
@@ -29,11 +90,19 @@ class PromptBroker:
                 "payload": payload,
                 "created_at": time.time(),
             }
+            self._write_pending_file(self._pending)
+            self._clear_response_file()
             while prompt_id not in self._responses:
-                self._cond.wait()
+                file_resp = self._read_response_file(prompt_id)
+                if file_resp is not None:
+                    self._responses[prompt_id] = file_resp
+                    break
+                self._cond.wait(timeout=0.5)
             text = self._responses.pop(prompt_id, "")
             if self._pending and self._pending.get("prompt_id") == prompt_id:
                 self._pending = None
+            self._clear_pending_file()
+            self._clear_response_file()
             return text
 
     def submit(self, prompt_id: str, text: str) -> bool:
@@ -44,9 +113,45 @@ class PromptBroker:
             self._cond.notify_all()
             return True
 
+    def submit_persisted(self, prompt_id: str, text: str) -> bool:
+        path = self._pending_path()
+        response_path = self._response_path()
+        if path is None or response_path is None or not path.exists():
+            return False
+        try:
+            pending = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if not isinstance(pending, dict):
+            return False
+        if str(pending.get("prompt_id") or "") != str(prompt_id or ""):
+            return False
+        payload = {
+            "prompt_id": str(prompt_id),
+            "text": str(text or ""),
+            "submitted_at": time.time(),
+        }
+        try:
+            response_path.parent.mkdir(parents=True, exist_ok=True)
+            response_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            with self._cond:
+                self._cond.notify_all()
+            return True
+        except Exception:
+            return False
+
     def get_pending(self) -> Optional[Dict[str, Any]]:
         with self._lock:
             if not self._pending:
+                path = self._pending_path()
+                if path is None or not path.exists():
+                    return None
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    return None
+                if isinstance(payload, dict):
+                    return payload
                 return None
             return dict(self._pending)
 
@@ -73,6 +178,7 @@ class WebReporter(Reporter):
 
     def set_run_dir(self, run_dir: Path) -> None:
         run_dir = Path(run_dir).expanduser().resolve()
+        self._broker.set_store_dir(run_dir / "hitl")
         with self._lock:
             self._run_dir = run_dir
             self._event_log_path = run_dir / "ui_events.jsonl"
@@ -118,23 +224,26 @@ class WebReporter(Reporter):
         return events, new_seq
 
     def prompt_proposal_feedback(self, *, todo: List[str], proposal_description: str) -> str:
-        return self._broker.request_prompt("proposal_review", {
+        payload = {
             "todo": list(todo),
             "proposal_description": proposal_description or "",
-        })
+        }
+        return self._broker.request_prompt("proposal_review", payload)
 
     def prompt_hitl_feedback(self, *, report_text: str, report_path: str) -> str:
-        return self._broker.request_prompt("hitl", {
+        payload = {
             "report_text": report_text or "",
             "report_path": report_path or "",
-        })
+        }
+        return self._broker.request_prompt("hitl", payload)
 
     def prompt_interrupt_feedback(self, *, guidance: str, run_id: str, phase: str) -> str:
-        return self._broker.request_prompt("interrupt_feedback", {
+        payload = {
             "guidance": guidance or "",
             "run_id": run_id or "",
             "phase": phase or "",
-        })
+        }
+        return self._broker.request_prompt("interrupt_feedback", payload)
 
     def show_final_summary(self, summary: str) -> None:
         with self._lock:

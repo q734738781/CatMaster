@@ -1,38 +1,14 @@
 from __future__ import annotations
 
-"""Project-files-scoped file management helpers."""
+"""Deprecated archived file-manager tools; needs new implementation."""
 
-import fnmatch
-import os
-import re
-import shutil
-from collections import deque
-from pathlib import Path
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
 
-
-def _is_hidden(path: Path, base: Path) -> bool:
-    try:
-        rel = path.relative_to(base)
-    except ValueError:
-        rel = path
-    for part in rel.parts:
-        if part in {".", ".."}:
-            continue
-        if part.startswith("."):
-            return True
-    return False
-
-
-def _should_exclude(rel_path: str, exclude_globs: List[str]) -> bool:
-    for pattern in exclude_globs:
-        if fnmatch.fnmatch(rel_path, pattern):
-            return True
-    return False
+def _deprecated_not_implemented(tool_name: str) -> None:
+    raise NotImplementedError(f"{tool_name} is deprecated and needs new implementation.")
 
 
 class WorkspaceListFilesInput(BaseModel):
@@ -45,73 +21,9 @@ class WorkspaceListFilesInput(BaseModel):
     continuation_token: Optional[str] = Field(None, description="Opaque offset token for pagination")
 
 
-def workspace_list_files(payload: dict) -> dict:
-    params = WorkspaceListFilesInput(**payload)
-    root = resolve_workspace_path(params.path, must_exist=True)
-    exclude_globs = list(params.exclude_globs)
-
-    offset = 0
-    if params.continuation_token is not None:
-        try:
-            offset = int(params.continuation_token)
-        except ValueError as exc:
-            raise ValueError(f"Invalid continuation_token: {exc}")
-
-    if root.is_file():
-        rel = workspace_relpath(root)
-        if _should_exclude(rel, exclude_globs):
-            return create_tool_output(
-                "workspace_list_files",
-                True,
-                data={"root": rel, "entries": [], "truncated": False, "next_token": None},
-            )
-        entry = {"path": rel, "is_dir": False}
-        return create_tool_output(
-            "workspace_list_files",
-            True,
-            data={"root": rel, "entries": [entry], "truncated": False, "next_token": None},
-        )
-
-    entries = []
-    seen = 0
-    truncated = False
-    base_depth = len(root.parts)
-
-    for dirpath, dirnames, filenames in os.walk(root):
-        current_depth = len(Path(dirpath).parts) - base_depth
-        if current_depth > params.depth:
-            continue
-        if current_depth >= params.depth:
-            dirnames[:] = []
-        dirnames.sort()
-        filenames.sort()
-        for name in dirnames + filenames:
-            path = Path(dirpath) / name
-            rel = workspace_relpath(path)
-            if _should_exclude(rel, exclude_globs):
-                continue
-            if seen < offset:
-                seen += 1
-                continue
-            entries.append({"path": rel, "is_dir": path.is_dir()})
-            seen += 1
-            if len(entries) >= params.max_entries:
-                truncated = True
-                break
-        if truncated:
-            break
-
-    next_token = str(offset + len(entries)) if truncated else None
-    return create_tool_output(
-        "workspace_list_files",
-        True,
-        data={
-            "root": workspace_relpath(root),
-            "entries": entries,
-            "truncated": truncated,
-            "next_token": next_token,
-        },
-    )
+def workspace_list_files(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceListFilesInput(**payload)
+    _deprecated_not_implemented("workspace_list_files")
 
 
 class WorkspaceReadFileInput(BaseModel):
@@ -121,16 +33,9 @@ class WorkspaceReadFileInput(BaseModel):
     max_bytes: int = Field(1024, ge=1, description="Maximum bytes to read")
 
 
-def workspace_read_file(payload: dict) -> dict:
-    params = WorkspaceReadFileInput(**payload)
-    path = resolve_workspace_path(params.path, must_exist=True)
-    data = path.read_bytes()[: params.max_bytes]
-    rel = workspace_relpath(path)
-    return create_tool_output(
-        "workspace_read_file",
-        True,
-        data={"path": rel, "content": data.decode(errors="replace")},
-    )
+def workspace_read_file(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceReadFileInput(**payload)
+    _deprecated_not_implemented("workspace_read_file")
 
 
 class WorkspaceWriteFileInput(BaseModel):
@@ -140,17 +45,9 @@ class WorkspaceWriteFileInput(BaseModel):
     content: str = Field(..., description="File content to write")
 
 
-def workspace_write_file(payload: dict) -> dict:
-    params = WorkspaceWriteFileInput(**payload)
-    path = resolve_workspace_path(params.path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(params.content, encoding="utf-8")
-    rel = workspace_relpath(path)
-    return create_tool_output(
-        "workspace_write_file",
-        True,
-        data={"path": rel},
-    )
+def workspace_write_file(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceWriteFileInput(**payload)
+    _deprecated_not_implemented("workspace_write_file")
 
 
 class WorkspaceMkdirInput(BaseModel):
@@ -161,20 +58,9 @@ class WorkspaceMkdirInput(BaseModel):
     exist_ok: bool = Field(True, description="Do not error if the directory already exists")
 
 
-def workspace_mkdir(payload: dict) -> dict:
-    params = WorkspaceMkdirInput(**payload)
-    path = resolve_workspace_path(params.path)
-    existed = path.exists()
-    try:
-        path.mkdir(parents=params.parents, exist_ok=params.exist_ok)
-    except FileExistsError:
-        return create_tool_output("workspace_mkdir", False, error=f"Path exists and is not a directory: {path}")
-    rel = workspace_relpath(path)
-    return create_tool_output(
-        "workspace_mkdir",
-        True,
-        data={"path": rel, "existed": existed, "created": not existed},
-    )
+def workspace_mkdir(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceMkdirInput(**payload)
+    _deprecated_not_implemented("workspace_mkdir")
 
 
 class WorkspaceCopyFilesInput(BaseModel):
@@ -186,57 +72,9 @@ class WorkspaceCopyFilesInput(BaseModel):
     recursive: bool = Field(True, description="Allow copying directories if true")
 
 
-def _copy_single(src: Path, dst: Path, *, overwrite: bool, recursive: bool) -> None:
-    if dst.exists():
-        if not overwrite:
-            raise FileExistsError(f"Destination exists: {dst}")
-        if dst.is_dir():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    if src.is_dir():
-        if not recursive:
-            raise IsADirectoryError(f"Source is a directory but recursive is false: {src}")
-        shutil.copytree(src, dst, symlinks=False)
-    else:
-        shutil.copy2(src, dst, follow_symlinks=True)
-
-
-def workspace_copy_files(payload: dict) -> dict:
-    params = WorkspaceCopyFilesInput(**payload)
-    sources = [resolve_workspace_path(p, must_exist=True) for p in params.sources]
-    dest_root = resolve_workspace_path(params.destination)
-
-    results: List[dict] = []
-    if len(sources) > 1:
-        if dest_root.exists() and not dest_root.is_dir():
-            return create_tool_output("workspace_copy_files", False, error="Destination must be a directory when copying multiple sources")
-        if not dest_root.exists():
-            dest_root.mkdir(parents=True, exist_ok=True)
-        for src in sources:
-            target = dest_root / src.name
-            if src.resolve() == target.resolve():
-                return create_tool_output("workspace_copy_files", False, error=f"Source and destination are the same: {src}")
-            _copy_single(src, target, overwrite=params.overwrite, recursive=params.recursive)
-            results.append({"src_rel": workspace_relpath(src), "dst_rel": workspace_relpath(target)})
-    else:
-        src = sources[0]
-        if dest_root.exists() and dest_root.is_dir():
-            target = dest_root / src.name
-        else:
-            target = dest_root
-        if src.resolve() == target.resolve():
-            return create_tool_output("workspace_copy_files", False, error=f"Source and destination are the same: {src}")
-        if not target.parent.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-        _copy_single(src, target, overwrite=params.overwrite, recursive=params.recursive)
-        results.append({"src_rel": workspace_relpath(src), "dst_rel": workspace_relpath(target)})
-
-    return create_tool_output(
-        "workspace_copy_files",
-        True,
-        data={"copied": results, "count": len(results)},
-    )
+def workspace_copy_files(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceCopyFilesInput(**payload)
+    _deprecated_not_implemented("workspace_copy_files")
 
 
 class WorkspaceDeleteInput(BaseModel):
@@ -247,31 +85,9 @@ class WorkspaceDeleteInput(BaseModel):
     missing_ok: bool = Field(False, description="Ignore missing paths instead of failing")
 
 
-def workspace_delete(payload: dict) -> dict:
-    params = WorkspaceDeleteInput(**payload)
-    deleted: List[str] = []
-    skipped: List[str] = []
-
-    for raw in params.paths:
-        path = resolve_workspace_path(raw)
-        if not path.exists():
-            if params.missing_ok:
-                skipped.append(str(Path(raw)))
-                continue
-            return create_tool_output("workspace_delete", False, error=f"Path does not exist: {path}")
-        if path.is_dir():
-            if not params.recursive:
-                return create_tool_output("workspace_delete", False, error=f"Path is a directory (recursive=false): {path}")
-            shutil.rmtree(path)
-        else:
-            path.unlink()
-        deleted.append(workspace_relpath(path))
-
-    return create_tool_output(
-        "workspace_delete",
-        True,
-        data={"deleted": deleted, "skipped": skipped},
-    )
+def workspace_delete(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceDeleteInput(**payload)
+    _deprecated_not_implemented("workspace_delete")
 
 
 class WorkspaceGrepInput(BaseModel):
@@ -286,81 +102,9 @@ class WorkspaceGrepInput(BaseModel):
     max_matches: int = Field(200, ge=1, description="Maximum number of matches to return")
 
 
-def workspace_grep(payload: dict) -> dict:
-    params = WorkspaceGrepInput(**payload)
-    base = resolve_workspace_path(params.path, must_exist=True)
-
-    flags = re.IGNORECASE if params.ignore_case else 0
-    if params.regex:
-        try:
-            pattern_re = re.compile(params.pattern, flags=flags)
-        except re.error as exc:
-            return create_tool_output("workspace_grep", False, error=f"Invalid regex: {exc}")
-    else:
-        pattern_re = None
-        pattern_literal = params.pattern.lower() if params.ignore_case else params.pattern
-
-    matches: List[dict] = []
-    files_scanned = 0
-    files_skipped = 0
-
-    def _iter_files():
-        if base.is_file():
-            yield base
-            return
-        iterator = base.rglob(params.file_glob) if params.file_glob else base.rglob("*")
-        for p in iterator:
-            if p.is_file():
-                yield p
-
-    for file in _iter_files():
-        if not params.include_hidden and _is_hidden(file, base):
-            files_skipped += 1
-            continue
-        files_scanned += 1
-        try:
-            with file.open("r", encoding="utf-8", errors="ignore") as fh:
-                for line_no, line in enumerate(fh, start=1):
-                    hit = False
-                    if pattern_re:
-                        if pattern_re.search(line):
-                            hit = True
-                    else:
-                        hay = line.lower() if params.ignore_case else line
-                        if pattern_literal in hay:
-                            hit = True
-                    if hit:
-                        snippet = line.rstrip("\n")
-                        if len(snippet) > 400:
-                            snippet = snippet[:400] + "..."
-                        matches.append(
-                            {"file": workspace_relpath(file), "line_number": line_no, "line": snippet}
-                        )
-                        if len(matches) >= params.max_matches:
-                            return create_tool_output(
-                                "workspace_grep",
-                                True,
-                                data={
-                                    "matches": matches,
-                                    "truncated": True,
-                                    "files_scanned": files_scanned,
-                                    "files_skipped": files_skipped,
-                                },
-                            )
-        except OSError:
-            files_skipped += 1
-            continue
-
-    return create_tool_output(
-        "workspace_grep",
-        True,
-        data={
-            "matches": matches,
-            "truncated": False,
-            "files_scanned": files_scanned,
-            "files_skipped": files_skipped,
-        },
-    )
+def workspace_grep(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceGrepInput(**payload)
+    _deprecated_not_implemented("workspace_grep")
 
 
 class WorkspaceHeadInput(BaseModel):
@@ -371,39 +115,9 @@ class WorkspaceHeadInput(BaseModel):
     max_bytes: int = Field(20000, ge=1, description="Maximum bytes to return")
 
 
-def workspace_head(payload: dict) -> dict:
-    params = WorkspaceHeadInput(**payload)
-    path = resolve_workspace_path(params.path, must_exist=True)
-    if path.is_dir():
-        return create_tool_output("workspace_head", False, error=f"Path is a directory: {path}")
-
-    lines_out: List[str] = []
-    total_bytes = 0
-    truncated = False
-    has_more = False
-    with path.open("r", encoding="utf-8", errors="ignore") as fh:
-        for line in fh:
-            if len(lines_out) >= params.lines:
-                has_more = True
-                break
-            total_bytes += len(line.encode("utf-8", errors="ignore"))
-            if total_bytes > params.max_bytes:
-                truncated = True
-                break
-            lines_out.append(line)
-
-    rel = workspace_relpath(path)
-    return create_tool_output(
-        "workspace_head",
-        True,
-        data={
-            "path": rel,
-            "lines": len(lines_out),
-            "truncated": truncated,
-            "has_more": has_more or truncated,
-            "content": "".join(lines_out),
-        },
-    )
+def workspace_head(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceHeadInput(**payload)
+    _deprecated_not_implemented("workspace_head")
 
 
 class WorkspaceTailInput(BaseModel):
@@ -414,37 +128,9 @@ class WorkspaceTailInput(BaseModel):
     max_bytes: int = Field(20000, ge=1, description="Maximum bytes to return")
 
 
-def workspace_tail(payload: dict) -> dict:
-    params = WorkspaceTailInput(**payload)
-    path = resolve_workspace_path(params.path, must_exist=True)
-    if path.is_dir():
-        return create_tool_output("workspace_tail", False, error=f"Path is a directory: {path}")
-
-    buf: deque[str] = deque(maxlen=params.lines)
-    total_lines = 0
-    with path.open("r", encoding="utf-8", errors="ignore") as fh:
-        for line in fh:
-            total_lines += 1
-            buf.append(line)
-
-    content = "".join(buf)
-    truncated = False
-    if len(content.encode("utf-8", errors="ignore")) > params.max_bytes:
-        truncated = True
-        content = content.encode("utf-8", errors="ignore")[-params.max_bytes :].decode("utf-8", errors="ignore")
-
-    rel = workspace_relpath(path)
-    return create_tool_output(
-        "workspace_tail",
-        True,
-        data={
-            "path": rel,
-            "lines": len(buf),
-            "truncated": truncated,
-            "has_more": total_lines > params.lines,
-            "content": content,
-        },
-    )
+def workspace_tail(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceTailInput(**payload)
+    _deprecated_not_implemented("workspace_tail")
 
 
 class WorkspaceMoveFilesInput(BaseModel):
@@ -454,21 +140,9 @@ class WorkspaceMoveFilesInput(BaseModel):
     dst: str = Field(..., description="Destination path (files-root-relative). If exists, operation fails.")
 
 
-def workspace_move_files(payload: dict) -> dict:
-    params = WorkspaceMoveFilesInput(**payload)
-    src = resolve_workspace_path(params.src, must_exist=True)
-    dst = resolve_workspace_path(params.dst)
-    if dst.exists():
-        return create_tool_output("workspace_move_files", False, error=f"Destination already exists: {dst}")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    src.rename(dst)
-    src_rel = workspace_relpath(src)
-    dst_rel = workspace_relpath(dst)
-    return create_tool_output(
-        "workspace_move_files",
-        True,
-        data={"src_rel": src_rel, "dst_rel": dst_rel},
-    )
+def workspace_move_files(payload: dict) -> tuple[str, dict]:
+    _ = WorkspaceMoveFilesInput(**payload)
+    _deprecated_not_implemented("workspace_move_files")
 
 
 __all__ = [

@@ -96,6 +96,14 @@ def apply_event(
         changed = True
     elif name in {"PROPOSAL_REVIEW_WAIT_INPUT", "PROPOSAL_REVIEW_SHOW"}:
         state["current_phase"] = "waiting_human"
+        state["status"] = "awaiting_human_feedback"
+        changed = True
+    elif name == "RUN_WAITING_INPUT":
+        state["current_phase"] = "waiting_human"
+        state["status"] = "awaiting_human_feedback"
+        changed = True
+    elif name == "RUN_INPUT_RECEIVED":
+        state["current_phase"] = "executing"
         state["status"] = "running"
         changed = True
     elif name == "TASKS_COMPILED":
@@ -230,7 +238,12 @@ def apply_event(
     elif name == "RUN_END":
         status = str(payload.get("status") or "").strip().lower()
         state["status"] = status or state.get("status", "done")
-        state["current_phase"] = "paused" if status == "interrupted_paused" else "finalizing"
+        if status == "interrupted_paused":
+            state["current_phase"] = "paused"
+        elif status == "awaiting_human_feedback":
+            state["current_phase"] = "waiting_human"
+        else:
+            state["current_phase"] = "finalizing"
         state["active_toolcall"] = None
         changed = True
     elif name == "RUN_PAUSED":

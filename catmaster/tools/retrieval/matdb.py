@@ -12,7 +12,8 @@ from pymatgen.core.structure import Structure
 from mp_api.client import MPRester
 from pydantic import BaseModel, Field
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class MPSearchMaterialsInput(BaseModel):
@@ -122,6 +123,41 @@ _KNOWN_CRITERIA = {
 }
 
 
+def _success(
+    tool_name: str,
+    *,
+    content: str,
+    data: dict[str, Any],
+    warnings: list[str] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    artifact: dict[str, Any] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    return content, artifact
+
+
+def _fail(
+    tool_name: str,
+    *,
+    message: str,
+    data: dict[str, Any] | None = None,
+    error_code: str = "",
+) -> None:
+    details: list[str] = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in ("output_csv_rel", "output_dir_rel", "requested", "downloaded", "count", "returned"):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            details.append(f"{key}={value}")
+    raise CatMasterToolExecutionError(
+        tool_name=tool_name,
+        public_message="\n".join(details),
+        artifact={"tool_name": tool_name, "data": data or {}},
+        error_code=error_code,
+    )
+
+
 def _coerce_range_tuple(value: Any) -> Any:
     if isinstance(value, list) and len(value) == 2:
         return (value[0], value[1])
@@ -175,7 +211,7 @@ def _serialize_csv_value(value: Any) -> Any:
     return json.dumps(value, ensure_ascii=False)
 
 
-def mp_search_materials(payload: Dict[str, object]) -> Dict[str, object]:
+def mp_search_materials(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
     """
     Search Materials Project with flexible criteria and write the result table to CSV.
     """
@@ -183,15 +219,27 @@ def mp_search_materials(payload: Dict[str, object]) -> Dict[str, object]:
     try:
         criteria = _normalize_criteria(params.criteria)
     except Exception as exc:
-        return create_tool_output("mp_search_materials", success=False, error=str(exc))
+        _fail(
+            "mp_search_materials",
+            message=f"Invalid criteria: {exc}",
+            error_code="invalid_criteria",
+        )
     warnings: List[str] = []
 
     if not criteria:
-        return create_tool_output("mp_search_materials", success=False, error="Provide criteria.")
+        _fail(
+            "mp_search_materials",
+            message="Provide criteria.",
+            error_code="missing_criteria",
+        )
 
     field_pairs = _normalize_fields(params.fields)
     if not field_pairs:
-        return create_tool_output("mp_search_materials", success=False, error="fields must not be empty.")
+        _fail(
+            "mp_search_materials",
+            message="fields must not be empty.",
+            error_code="empty_fields",
+        )
     request_fields = sorted({mapped.split(".")[0] for _, mapped in field_pairs})
 
     out_path = resolve_workspace_path(params.output_csv)
@@ -233,7 +281,12 @@ def mp_search_materials(payload: Dict[str, object]) -> Dict[str, object]:
                     if written >= params.limit:
                         break
     except Exception as exc:
-        return create_tool_output("mp_search_materials", success=False, error=str(exc))
+        _fail(
+            "mp_search_materials",
+            message=f"Materials Project search failed: {exc}",
+            data={"criteria": criteria},
+            error_code="search_failed",
+        )
 
     if isinstance(total, int):
         returned = written
@@ -244,23 +297,29 @@ def mp_search_materials(payload: Dict[str, object]) -> Dict[str, object]:
         truncated = written >= params.limit
         count_value = None
 
-    return create_tool_output(
-        "mp_search_materials",
-        success=True,
-        data={
-            "count": count_value,
-            "returned": returned,
-            "truncated": truncated,
-            "criteria": criteria,
-            "fields": [h for h, _ in field_pairs],
-            "output_csv_rel": workspace_relpath(out_path),
-            "preview_rows": preview_rows,
-        },
-        warnings=warnings,
+    data = {
+        "count": count_value,
+        "returned": returned,
+        "truncated": truncated,
+        "criteria": criteria,
+        "fields": [h for h, _ in field_pairs],
+        "output_csv_rel": workspace_relpath(out_path),
+        "preview_rows": preview_rows,
+    }
+    preview_line = ""
+    if preview_rows:
+        preview_line = f"\npreview_row_0={json.dumps(preview_rows[0], ensure_ascii=False)}"
+    content = (
+        "mp_search_materials completed.\n"
+        f"returned={returned} total_count={count_value} truncated={truncated}\n"
+        f"output_csv_rel={data['output_csv_rel']}\n"
+        f"preview_rows={len(preview_rows)}"
+        f"{preview_line}"
     )
+    return _success("mp_search_materials", content=content, data=data, warnings=warnings)
 
 
-def mp_download_structure(payload: Dict[str, object]) -> Dict[str, object]:
+def mp_download_structure(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
     """
     Download one or more structures from Materials Project and write them under the workspace. Downloaded structures are conventional cells.
     Args:
@@ -279,6 +338,7 @@ def mp_download_structure(payload: Dict[str, object]) -> Dict[str, object]:
     ext = {"poscar": "vasp", "cif": "cif", "pymatgen_json": "json"}.get(fmt, fmt)
     results: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
+    warnings: List[str] = []
 
     try:
         with _mpr() as client:
@@ -309,30 +369,72 @@ def mp_download_structure(payload: Dict[str, object]) -> Dict[str, object]:
                     }
                 )
     except Exception as exc:
-        return create_tool_output("mp_download_structure", success=False, error=str(exc))
-
-    if errors:
-        return create_tool_output(
+        _fail(
             "mp_download_structure",
-            success=False,
+            message=f"mp_download_structure failed: {exc}",
+            data={"output_dir_rel": workspace_relpath(out_dir), "format": fmt},
+            error_code="download_failed",
+        )
+
+    if errors and not results:
+        _fail(
+            "mp_download_structure",
+            message="Failed to download structures for all requested mp_ids.",
             data={
                 "format": fmt,
                 "output_dir_rel": workspace_relpath(out_dir),
                 "results": results,
                 "errors": errors,
             },
-            error="One or more downloads failed.",
+            error_code="all_downloads_failed",
         )
 
-    return create_tool_output(
-        "mp_download_structure",
-        success=True,
-        data={
-            "format": fmt,
-            "output_dir_rel": workspace_relpath(out_dir),
-            "results": results,
-        },
+    if errors:
+        warnings.append(f"Partial failure: {len(errors)} of {len(params.mp_ids)} mp_ids failed.")
+
+    data = {
+        "format": fmt,
+        "output_dir_rel": workspace_relpath(out_dir),
+        "results": results,
+        "errors": errors,
+        "requested": len(params.mp_ids),
+        "downloaded": len(results),
+    }
+    downloaded_ids_all = [str(item.get("mp_id") or "") for item in results if isinstance(item, dict)]
+    failed_ids_all = [str(item.get("mp_id") or "") for item in errors if isinstance(item, dict)]
+    downloaded_ids = downloaded_ids_all[:3]
+    failed_ids = failed_ids_all[:3]
+
+    examples_rel = ""
+    if len(downloaded_ids_all) > 3 or len(failed_ids_all) > 3:
+        examples_path = out_dir / "mp_download_structure_examples.json"
+        payload = {
+            "downloaded_ids": downloaded_ids_all,
+            "failed_ids": failed_ids_all,
+            "requested": len(params.mp_ids),
+            "downloaded": len(results),
+            "errors": len(errors),
+        }
+        try:
+            examples_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            examples_rel = workspace_relpath(examples_path)
+            data["examples_json_rel"] = examples_rel
+        except Exception as exc:
+            warnings.append(f"Failed to persist full examples list: {type(exc).__name__}: {exc}")
+
+    content = (
+        "mp_download_structure completed.\n"
+        f"requested={data['requested']} downloaded={data['downloaded']} errors={len(errors)}\n"
+        f"output_dir_rel={data['output_dir_rel']}\n"
+        f"downloaded_examples={downloaded_ids}\n"
+        f"failed_examples={failed_ids}"
     )
+    if examples_rel:
+        content += f"\nexamples_json_rel={examples_rel}"
+    return _success("mp_download_structure", content=content, data=data, warnings=warnings)
 
 
 __all__ = [

@@ -8,7 +8,8 @@ import numpy as np
 from pydantic import BaseModel, Field, field_validator
 from ase.io import read as ase_read, write as ase_write
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 _CELL_TOL = 1e-5
 _ELEMENT_MAP_INCAR_KEYS = {"MAGMOM", "LDAUU", "LDAUJ"}
@@ -167,7 +168,42 @@ def _build_images(
     return images, warnings
 
 
-def make_neb_geometry(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _success(
+    tool_name: str,
+    *,
+    content: str,
+    data: dict[str, Any],
+    warnings: list[str] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    artifact: dict[str, Any] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    return content, artifact
+
+
+def _fail(
+    tool_name: str,
+    *,
+    message: str,
+    data: dict[str, Any] | None = None,
+    error_code: str = "",
+) -> None:
+    details: list[str] = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in ("initial_rel", "final_rel", "output_dir", "output_incar_path", "diff_json_rel"):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            details.append(f"{key}={value}")
+    raise CatMasterToolExecutionError(
+        tool_name=tool_name,
+        public_message="\n".join(details),
+        artifact={"tool_name": tool_name, "data": data or {}},
+        error_code=error_code,
+    )
+
+
+def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params = MakeNebGeometryInput(**payload)
     init_path = resolve_workspace_path(params.initial_path, must_exist=True)
     final_path = resolve_workspace_path(params.final_path, must_exist=True)
@@ -177,24 +213,40 @@ def make_neb_geometry(payload: Dict[str, Any]) -> Dict[str, Any]:
         initial = _read_atoms(init_path)
         final = _read_atoms(final_path)
     except Exception as exc:
-        return create_tool_output("make_neb_geometry", success=False, error=str(exc))
+        _fail(
+            "make_neb_geometry",
+            message=f"Failed to read initial/final structures: {exc}",
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+            },
+            error_code="read_failed",
+        )
     error = _validate_structures(initial, final)
     if error:
-        return create_tool_output("make_neb_geometry", success=False, error=error)
+        _fail(
+            "make_neb_geometry",
+            message=error,
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+            },
+            error_code="invalid_neb_pair",
+        )
     warnings: List[str] = []
 
     if output_root.exists():
         if output_root.is_file():
-            return create_tool_output(
+            _fail(
                 "make_neb_geometry",
-                success=False,
-                error=f"output_dir is a file: {output_root}",
+                message=f"output_dir is a file: {output_root}",
+                error_code="invalid_output_dir",
             )
         if not params.overwrite:
-            return create_tool_output(
+            _fail(
                 "make_neb_geometry",
-                success=False,
-                error=f"output_dir already exists: {output_root}. Set overwrite=true to replace.",
+                message=f"output_dir already exists: {output_root}. Set overwrite=true to replace.",
+                error_code="output_dir_exists",
             )
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -228,7 +280,19 @@ def make_neb_geometry(payload: Dict[str, Any]) -> Dict[str, Any]:
         "num_total_images": params.n_images + 2,
         "image_dirs": image_dirs,
     }
-    return create_tool_output("make_neb_geometry", success=True, data=data, warnings=warnings)
+    first_image = image_dirs[0] if image_dirs else ""
+    last_image = image_dirs[-1] if image_dirs else ""
+    lines = [
+        "make_neb_geometry completed.",
+        f"num_total_images={data['num_total_images']} num_intermediate_images={params.n_images}",
+        f"output_dir={data['output_dir']}",
+    ]
+    if first_image:
+        lines.append(f"first_image_dir={first_image}")
+    if last_image:
+        lines.append(f"last_image_dir={last_image}")
+    content = "\n".join(lines)
+    return _success("make_neb_geometry", content=content, data=data, warnings=warnings)
 
 
 def _strip_incar_comment(line: str) -> str:
@@ -274,21 +338,21 @@ def _format_incar_value(value: Any) -> str:
     return str(value).strip()
 
 
-def make_neb_incar(payload: Dict[str, Any]) -> Dict[str, Any]:
+def make_neb_incar(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params = MakeNebIncarInput(**payload)
     if params.iopt not in {7, 2, 1}:
-        return create_tool_output(
+        _fail(
             "make_neb_incar",
-            success=False,
-            error="iopt must be one of 7, 2, 1.",
+            message="iopt must be one of 7, 2, 1.",
+            error_code="invalid_iopt",
         )
     template_path = resolve_workspace_path(params.template_incar_path, must_exist=True)
     output_dir = resolve_workspace_path(params.output_dir or "neb_inputs")
     if output_dir.exists() and output_dir.is_file():
-        return create_tool_output(
+        _fail(
             "make_neb_incar",
-            success=False,
-            error=f"output_dir is a file: {output_dir}",
+            message=f"output_dir is a file: {output_dir}",
+            error_code="invalid_output_dir",
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = resolve_workspace_path(params.output_incar_path) if params.output_incar_path else output_dir / "INCAR"
@@ -362,7 +426,15 @@ def make_neb_incar(payload: Dict[str, Any]) -> Dict[str, Any]:
         "applied_overrides": applied_overrides,
         "diff_json_rel": workspace_relpath(diff_path) if diff_path.exists() else None,
     }
-    return create_tool_output("make_neb_incar", success=True, data=data)
+    lines = [
+        "make_neb_incar completed.",
+        f"output_incar_path={data['output_incar_path']}",
+        f"applied_overrides={len(applied_overrides)}",
+    ]
+    if data["diff_json_rel"]:
+        lines.append(f"diff_json_rel={data['diff_json_rel']}")
+    content = "\n".join(lines)
+    return _success("make_neb_incar", content=content, data=data)
 
 
 __all__ = [

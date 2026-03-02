@@ -101,4 +101,4 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
     assert task_format.schema.__name__ == "TaskOutput"
     assert task_format.handle_errors is False
     assert isinstance(task_call.get("middleware"), list)
-    assert len(task_call.get("middleware") or []) == 3
+    assert len(task_call.get("middleware") or []) == 2

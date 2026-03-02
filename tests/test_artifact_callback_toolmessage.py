@@ -119,4 +119,4 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
     ]
     assert records
     assert records[0]["tool_name"] == "vasp_relax_prepare"
-    assert records[0]["status"] == "failed"
+    assert records[0]["status"] == "error"

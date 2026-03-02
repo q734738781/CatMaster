@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.execution import vasp_dispatch
 
@@ -48,8 +51,8 @@ def test_vasp_execute_batch_accepts_single_calc_folder(monkeypatch, tmp_path: Pa
             }
         )
 
-    assert result["status"] == "success"
-    outputs = (result.get("data") or {}).get("outputs") or []
+    _, artifact = result
+    outputs = (artifact.get("data") or {}).get("outputs") or []
     assert len(outputs) == 1
     assert outputs[0]["input_dir_rel"].endswith("runs/A")
     assert outputs[0]["output_dir_rel"].endswith("outs/A")
@@ -62,14 +65,13 @@ def test_vasp_execute_batch_rejects_nested_when_root_is_calc_folder(tmp_path: Pa
         _touch_vasp_inputs(root)
         _touch_vasp_inputs(root / "nested" / "B")
 
-        result = vasp_dispatch.vasp_execute_batch(
-            {
-                "input_dir": "runs/A",
-                "output_dir": "outs",
-                "check_interval": 1,
-            }
-        )
+        with pytest.raises(CatMasterToolExecutionError) as excinfo:
+            vasp_dispatch.vasp_execute_batch(
+                {
+                    "input_dir": "runs/A",
+                    "output_dir": "outs",
+                    "check_interval": 1,
+                }
+            )
 
-    assert result["status"] == "failed"
-    assert "Nested calc folders are not allowed" in (result.get("error") or "")
-
+    assert "Nested calc folders are not allowed" in str(excinfo.value)
