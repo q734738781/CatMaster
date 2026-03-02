@@ -9,18 +9,20 @@ LangChain v1 ``create_agent`` and produce typed structured responses.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
 import shutil
+from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Annotated, Dict, List, Optional, TypedDict
+from typing import Any, Annotated, Dict, List, Optional, Sequence, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, ToolMessage
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -49,11 +51,14 @@ from catmaster.runtime.tool_output_adapter import (
     tool_error_to_message,
 )
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
+from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
+from catmaster.runtime.tool_surface import RuntimeToolSurface, build_runtime_tool_surface
 from catmaster.runtime.usage_stats import write_usage_summary
 from catmaster.tools.base import workspace_scope
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
 from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, TaskOutput
+from catmaster.llm.config import MCPConfig
 from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_SYSTEM_PROMPT,
     DIRECTOR_SYSTEM_PROMPT,
@@ -122,22 +127,6 @@ def _snippet(text: Any, limit: int = 140) -> str:
     return cleaned[: max(0, limit - 3)] + "..."
 
 
-def _task_runner_tools(
-    registry: ToolRegistry,
-    *,
-    run_dir: Path | None = None,
-    workspace: Path | None = None,
-) -> list[StructuredTool]:
-    return [
-        tool
-        for tool in registry.as_langchain_tools(
-            run_dir=str(run_dir) if run_dir is not None else None,
-            workspace=str(workspace) if workspace is not None else None,
-        )
-        if tool.name not in _TASK_RUNNER_TOOL_DENYLIST
-    ]
-
-
 def _load_create_agent():
     try:
         from langchain.agents import create_agent as _create_agent
@@ -161,7 +150,7 @@ def _load_tool_strategy():
 def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list[Any]:
     """Enforce per-invocation tool-call cap and map recoverable errors to ToolMessage."""
     try:
-        from langchain.agents.middleware import before_agent, wrap_tool_call
+        from langchain.agents.middleware import AgentMiddleware
     except Exception as exc:
         raise RuntimeError(
             "LangChain middleware is unavailable. Install 'langchain>=1.0'."
@@ -170,19 +159,28 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
     tool_limit = max(1, int(max_tool_calls))
     counter: dict[str, int] = {"used": 0}
 
-    @before_agent
-    def _reset_tool_call_counter(state: dict, runtime: Any) -> dict[str, Any] | None:
-        _ = (state, runtime)
-        counter["used"] = 0
-        return None
+    class _ResetToolCallCounterMiddleware(AgentMiddleware):
+        def before_agent(self, state: dict, runtime: Any) -> dict[str, Any] | None:
+            _ = (state, runtime)
+            counter["used"] = 0
+            return None
 
-    @wrap_tool_call
-    def _enforce_tool_call_budget(request: Any, handler: Any) -> Any:
-        used = int(counter.get("used", 0))
-        tool_call = getattr(request, "tool_call", None) or {}
-        tool_name = str(tool_call.get("name") or "unknown")
-        tool_call_id = str(tool_call.get("id") or "")
-        if used >= tool_limit:
+        async def abefore_agent(self, state: dict, runtime: Any) -> dict[str, Any] | None:
+            _ = (state, runtime)
+            counter["used"] = 0
+            return None
+
+    class _ToolCallBudgetMiddleware(AgentMiddleware):
+        @staticmethod
+        def _request_info(request: Any) -> tuple[int, str, str]:
+            used = int(counter.get("used", 0))
+            tool_call = getattr(request, "tool_call", None) or {}
+            tool_name = str(tool_call.get("name") or "unknown")
+            tool_call_id = str(tool_call.get("id") or "")
+            return used, tool_name, tool_call_id
+
+        @staticmethod
+        def _budget_exceeded_message(*, used: int, tool_name: str, tool_call_id: str) -> ToolMessage:
             exc = ToolCallBudgetExceededError(
                 f"{role} tool-call budget exceeded: executed={used}, limit={tool_limit}, next_tool={tool_name}"
             )
@@ -191,34 +189,85 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
             )
-        try:
-            result = handler(request)
-        except (CatMasterToolExecutionError, ValidationError, ValueError, KeyError) as exc:
-            counter["used"] = used + 1
-            return tool_error_to_message(
-                exc=exc,
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-            )
-        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-            counter["used"] = used + 1
-            raise
-        except Exception as exc:
-            counter["used"] = used + 1
-            return tool_error_to_message(
-                exc=exc,
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-            )
-        counter["used"] = used + 1
-        return result
 
-    return [_reset_tool_call_counter, _enforce_tool_call_budget]
+        @staticmethod
+        def _error_message(*, exc: Exception, tool_name: str, tool_call_id: str) -> ToolMessage:
+            return tool_error_to_message(
+                exc=exc,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+            )
+
+        def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+            used, tool_name, tool_call_id = self._request_info(request)
+            if used >= tool_limit:
+                return self._budget_exceeded_message(
+                    used=used,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
+            try:
+                result = handler(request)
+                if inspect.isawaitable(result):
+                    result = asyncio.run(result)
+            except (CatMasterToolExecutionError, ValidationError, ValueError, KeyError) as exc:
+                counter["used"] = used + 1
+                return self._error_message(
+                    exc=exc,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
+            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+                counter["used"] = used + 1
+                raise
+            except Exception as exc:
+                counter["used"] = used + 1
+                return self._error_message(
+                    exc=exc,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
+            counter["used"] = used + 1
+            return result
+
+        async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
+            used, tool_name, tool_call_id = self._request_info(request)
+            if used >= tool_limit:
+                return self._budget_exceeded_message(
+                    used=used,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
+            try:
+                result = handler(request)
+                if inspect.isawaitable(result):
+                    result = await result
+            except (CatMasterToolExecutionError, ValidationError, ValueError, KeyError) as exc:
+                counter["used"] = used + 1
+                return self._error_message(
+                    exc=exc,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
+            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+                counter["used"] = used + 1
+                raise
+            except Exception as exc:
+                counter["used"] = used + 1
+                return self._error_message(
+                    exc=exc,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
+            counter["used"] = used + 1
+            return result
+
+    return [_ResetToolCallCounterMiddleware(), _ToolCallBudgetMiddleware()]
 
 
 def _build_proposal_agent(
     model: BaseChatModel,
-    tools: list[StructuredTool],
+    tools: Sequence[BaseTool],
     *,
     max_steps: int = 60,
 ) -> Any:
@@ -241,7 +290,7 @@ def _build_proposal_agent(
 
 def _build_director_agent(
     model: BaseChatModel,
-    tools: list[StructuredTool],
+    tools: Sequence[BaseTool],
     *,
     max_steps: int = 60,
 ) -> Any:
@@ -264,7 +313,7 @@ def _build_director_agent(
 
 def _build_task_runner_agent(
     model: BaseChatModel,
-    tools: list[StructuredTool],
+    tools: Sequence[BaseTool],
     memory_store: MemoryStore,
     *,
     max_steps: int = 60,
@@ -295,7 +344,7 @@ def _build_task_runner_agent(
 # Outer graph node wrappers (delegate to nodes.py functions)
 # ---------------------------------------------------------------------------
 
-def _run_proposal_wrapper(
+async def _run_proposal_wrapper(
     state: CatMasterState,
     *,
     agent: Any,
@@ -304,7 +353,7 @@ def _run_proposal_wrapper(
     run_dir: Path,
     max_steps: int,
 ) -> Command:
-    return run_proposal(
+    return await run_proposal(
         state,
         agent=agent,
         memory_store=memory_store,
@@ -314,7 +363,7 @@ def _run_proposal_wrapper(
     )
 
 
-def _run_director_wrapper(
+async def _run_director_wrapper(
     state: CatMasterState,
     *,
     agent: Any,
@@ -322,7 +371,7 @@ def _run_director_wrapper(
     tools_description: str,
     max_steps: int,
 ) -> Command:
-    return run_director(
+    return await run_director(
         state,
         agent=agent,
         memory_store=memory_store,
@@ -331,14 +380,14 @@ def _run_director_wrapper(
     )
 
 
-def _run_task_wrapper(
+async def _run_task_wrapper(
     state: CatMasterState,
     *,
     agent: Any,
     memory_store: MemoryStore,
     max_steps: int,
 ) -> Command:
-    return run_task(
+    return await run_task(
         state,
         agent=agent,
         memory_store=memory_store,
@@ -539,12 +588,13 @@ def build_standard_graph(
     memory_patch_model: BaseChatModel,
     summary_model: BaseChatModel,
     memory_store: MemoryStore,
-    registry: ToolRegistry,
+    proposal_tools: Sequence[BaseTool],
+    director_tools: Sequence[BaseTool],
+    task_tools: Sequence[BaseTool],
     tools_description: str,
     director_tools_description: Optional[str] = None,
     run_id: str = "",
     run_dir: Optional[Path] = None,
-    workspace: Optional[Path] = None,
     patch_repair_attempts: int = 1,
     tool_backend: Optional[ToolBackend] = None,
     max_task_steps: int = 60,
@@ -554,28 +604,21 @@ def build_standard_graph(
 ) -> Any:
     """Build and compile the standard-lane LangGraph."""
     effective_run_dir = run_dir or Path(".")
-    effective_workspace = workspace
     effective_director_tools_description = director_tools_description or tools_description
-    lc_tools = _task_runner_tools(
-        registry,
-        run_dir=effective_run_dir,
-        workspace=effective_workspace,
-    )
-    bash_tools = [t for t in lc_tools if t.name == "bash_exec"]
 
     proposal_agent = _build_proposal_agent(
         proposal_model,
-        bash_tools,
+        list(proposal_tools),
         max_steps=max_plan_steps,
     )
     director_agent = _build_director_agent(
         director_model,
-        bash_tools,
+        list(director_tools),
         max_steps=max_plan_steps,
     )
     task_agent = _build_task_runner_agent(
         task_runner_model,
-        lc_tools,
+        list(task_tools),
         memory_store,
         max_steps=max_task_steps,
     )
@@ -659,10 +702,9 @@ def build_fast_graph(
     memory_patch_model: BaseChatModel,
     summary_model: BaseChatModel,
     memory_store: MemoryStore,
-    registry: ToolRegistry,
+    task_tools: Sequence[BaseTool],
     run_id: str = "",
     run_dir: Optional[Path] = None,
-    workspace: Optional[Path] = None,
     patch_repair_attempts: int = 1,
     tool_backend: Optional[ToolBackend] = None,
     max_task_steps: int = 60,
@@ -671,15 +713,9 @@ def build_fast_graph(
 ) -> Any:
     """Build and compile the fast-lane LangGraph (single task, no director)."""
     effective_run_dir = run_dir or Path(".")
-    effective_workspace = workspace
-    lc_tools = _task_runner_tools(
-        registry,
-        run_dir=effective_run_dir,
-        workspace=effective_workspace,
-    )
     task_agent = _build_task_runner_agent(
         task_runner_model,
-        lc_tools,
+        list(task_tools),
         memory_store,
         max_steps=max_task_steps,
     )
@@ -758,6 +794,7 @@ class GraphRunner:
         reporter: Optional[Reporter] = None,
         tool_backend: Optional[ToolBackend] = None,
         run_control: Optional[RunControl] = None,
+        mcp_config: Optional[MCPConfig] = None,
         max_task_steps: int = 60,
         max_plan_steps: int = 60,
         recursion_limit: int = 300,
@@ -777,6 +814,7 @@ class GraphRunner:
         self.reporter = reporter or NullReporter()
         self.tool_backend = tool_backend
         self.run_control = run_control
+        self.mcp_config = mcp_config or MCPConfig()
         self.max_task_steps = max_task_steps
         self.max_plan_steps = max_plan_steps
         try:
@@ -954,14 +992,14 @@ class GraphRunner:
                 tool_summary,
             )
 
-    def _invoke_graph_once(
+    async def _ainvoke_graph_once(
         self,
         compiled: Any,
         graph_input: Any,
         config: Dict[str, Any],
     ) -> Dict[str, Any]:
         if not (self.stream_debug_console or self.print_state_messages):
-            return compiled.invoke(graph_input, config=config)
+            return await compiled.ainvoke(graph_input, config=config)
 
         logger.info(
             "[graph.stream] enabled stream_mode=updates (stream_debug_console=%s, print_state_messages=%s)",
@@ -969,14 +1007,17 @@ class GraphRunner:
             self.print_state_messages,
         )
         streamed_result: Dict[str, Any] = {}
-        for update in compiled.stream(graph_input, config=config, stream_mode="updates"):
+        async for update in compiled.astream(graph_input, config=config, stream_mode="updates"):
             if isinstance(update, dict):
                 self._log_stream_update(update)
                 if "__interrupt__" in update:
                     streamed_result["__interrupt__"] = update["__interrupt__"]
 
         try:
-            snapshot = compiled.get_state(config)
+            if hasattr(compiled, "aget_state"):
+                snapshot = await compiled.aget_state(config)
+            else:
+                snapshot = compiled.get_state(config)
             values = getattr(snapshot, "values", None)
             if isinstance(values, dict):
                 result = dict(values)
@@ -1175,6 +1216,20 @@ class GraphRunner:
     # Main run
     # ------------------------------------------------------------------
 
+    @asynccontextmanager
+    async def _open_mcp_filesystem_runtime(self):
+        fs_cfg = self.mcp_config.filesystem if self.mcp_config is not None else None
+        if fs_cfg is None or not fs_cfg.enabled:
+            yield None
+            return
+        runtime = MCPFilesystemRuntime(
+            config=fs_cfg,
+            run_context=self.run_context,
+            reporter=self.reporter,
+        )
+        async with runtime as active:
+            yield active
+
     def run(
         self,
         user_request: str,
@@ -1182,8 +1237,21 @@ class GraphRunner:
         lane: str = "standard",
         proposal_review: bool = True,
     ) -> Dict[str, Any]:
-        tools_description = self.registry.get_tool_descriptions_for_llm()
-        director_tools_description = self.registry.get_short_tool_descriptions_for_llm()
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("GraphRunner.run() cannot be called inside a running event loop; use GraphRunner.arun().")
+        return asyncio.run(self.arun(user_request, lane=lane, proposal_review=proposal_review))
+
+    async def arun(
+        self,
+        user_request: str,
+        *,
+        lane: str = "standard",
+        proposal_review: bool = True,
+    ) -> Dict[str, Any]:
         workspace = self.run_context.workspace
         run_dir = self.run_context.run_dir
 
@@ -1198,79 +1266,87 @@ class GraphRunner:
             print_llm_context_messages=self.print_state_messages,
         )
 
-        if lane == "fast":
-            compiled = build_fast_graph(
-                task_runner_model=self.task_runner_model,
-                memory_patch_model=self.memory_patch_model,
-                summary_model=self.summary_model,
-                memory_store=self.memory_store,
-                registry=self.registry,
-                run_id=self.run_context.run_id,
-                run_dir=run_dir,
-                workspace=workspace,
-                patch_repair_attempts=self.patch_repair_attempts,
-                tool_backend=self.tool_backend,
-                max_task_steps=self.max_task_steps,
-                checkpointer=self.checkpointer,
-                run_control=self.run_control,
-            )
-        else:
-            compiled = build_standard_graph(
-                task_runner_model=self.task_runner_model,
-                proposal_model=self.proposal_model,
-                director_model=self.director_model,
-                memory_patch_model=self.memory_patch_model,
-                summary_model=self.summary_model,
-                memory_store=self.memory_store,
-                registry=self.registry,
-                tools_description=tools_description,
-                director_tools_description=director_tools_description,
-                run_id=self.run_context.run_id,
-                run_dir=run_dir,
-                workspace=workspace,
-                patch_repair_attempts=self.patch_repair_attempts,
-                tool_backend=self.tool_backend,
-                max_task_steps=self.max_task_steps,
-                max_plan_steps=self.max_plan_steps,
-                checkpointer=self.checkpointer,
-                run_control=self.run_control,
-            )
-
-        initial_state: CatMasterState = {
-            "user_request": user_request,
-            "lane": lane,
-            "proposal_messages": [],
-            "director_messages": [],
-            "runner_messages": [],
-            "proposal_md": "",
-            "work_packages": [],
-            "proposal_approved": False,
-            "proposal_feedback": "",
-            "proposal_review_enabled": bool(proposal_review),
-            "director_decision": {},
-            "next_action": "",
-            "tasks": [],
-            "observations": [],
-            "current_task_id": "task_01",
-            "current_task_packet": {"goal": user_request},
-            "task_result": {},
-            "status": "running",
-            "summary": "",
-            "contract_violation": {},
-            "hitl_history": [],
-        }
-
-        self._write_task_state(initial_state, lane)
-
-        thread_id = self.run_context.run_id
-        config: Dict[str, Any] = {
-            "callbacks": callbacks,
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": self.recursion_limit,
-        }
-
         try:
-            return self._invoke_loop(compiled, initial_state, config, workspace, lane)
+            async with self._open_mcp_filesystem_runtime() as mcp_fs_runtime:
+                surface: RuntimeToolSurface = await build_runtime_tool_surface(
+                    registry=self.registry,
+                    run_context=self.run_context,
+                    run_dir=run_dir,
+                    mcp_fs_runtime=mcp_fs_runtime,
+                    task_runner_denylist=_TASK_RUNNER_TOOL_DENYLIST,
+                )
+
+                if lane == "fast":
+                    compiled = build_fast_graph(
+                        task_runner_model=self.task_runner_model,
+                        memory_patch_model=self.memory_patch_model,
+                        summary_model=self.summary_model,
+                        memory_store=self.memory_store,
+                        task_tools=surface.task_tools,
+                        run_id=self.run_context.run_id,
+                        run_dir=run_dir,
+                        patch_repair_attempts=self.patch_repair_attempts,
+                        tool_backend=self.tool_backend,
+                        max_task_steps=self.max_task_steps,
+                        checkpointer=self.checkpointer,
+                        run_control=self.run_control,
+                    )
+                else:
+                    compiled = build_standard_graph(
+                        task_runner_model=self.task_runner_model,
+                        proposal_model=self.proposal_model,
+                        director_model=self.director_model,
+                        memory_patch_model=self.memory_patch_model,
+                        summary_model=self.summary_model,
+                        memory_store=self.memory_store,
+                        proposal_tools=surface.proposal_tools,
+                        director_tools=surface.director_tools,
+                        task_tools=surface.task_tools,
+                        tools_description=surface.task_runner_capability_guide_full,
+                        director_tools_description=surface.task_runner_capability_guide_short,
+                        run_id=self.run_context.run_id,
+                        run_dir=run_dir,
+                        patch_repair_attempts=self.patch_repair_attempts,
+                        tool_backend=self.tool_backend,
+                        max_task_steps=self.max_task_steps,
+                        max_plan_steps=self.max_plan_steps,
+                        checkpointer=self.checkpointer,
+                        run_control=self.run_control,
+                    )
+
+                initial_state: CatMasterState = {
+                    "user_request": user_request,
+                    "lane": lane,
+                    "proposal_messages": [],
+                    "director_messages": [],
+                    "runner_messages": [],
+                    "proposal_md": "",
+                    "work_packages": [],
+                    "proposal_approved": False,
+                    "proposal_feedback": "",
+                    "proposal_review_enabled": bool(proposal_review),
+                    "director_decision": {},
+                    "next_action": "",
+                    "tasks": [],
+                    "observations": [],
+                    "current_task_id": "task_01",
+                    "current_task_packet": {"goal": user_request},
+                    "task_result": {},
+                    "status": "running",
+                    "summary": "",
+                    "contract_violation": {},
+                    "hitl_history": [],
+                }
+
+                self._write_task_state(initial_state, lane)
+
+                thread_id = self.run_context.run_id
+                config: Dict[str, Any] = {
+                    "callbacks": callbacks,
+                    "configurable": {"thread_id": thread_id},
+                    "recursion_limit": self.recursion_limit,
+                }
+                return await self._ainvoke_loop(compiled, initial_state, config, workspace, lane)
         finally:
             try:
                 write_usage_summary(self.run_context.run_dir)
@@ -1278,7 +1354,7 @@ class GraphRunner:
                 logger.debug("usage summary write failed: %s", exc)
 
 
-    def _invoke_loop(
+    async def _ainvoke_loop(
         self,
         compiled: Any,
         initial_state: CatMasterState,
@@ -1289,8 +1365,8 @@ class GraphRunner:
         """Run the graph with workspace scope, handling HITL interrupt/resume."""
         user_request = initial_state.get("user_request", "")
 
-        def _do_invoke() -> Dict[str, Any]:
-            result = self._invoke_graph_once(compiled, initial_state, config)
+        async def _do_invoke() -> Dict[str, Any]:
+            result = await self._ainvoke_graph_once(compiled, initial_state, config)
 
             for _ in range(self.MAX_INTERRUPT_ROUNDS):
                 interrupt_payload = self._get_interrupt_value(result)
@@ -1349,7 +1425,7 @@ class GraphRunner:
                     lane,
                 )
 
-                result = self._invoke_graph_once(
+                result = await self._ainvoke_graph_once(
                     compiled,
                     Command(resume=feedback),
                     config,
@@ -1378,8 +1454,8 @@ class GraphRunner:
 
         if workspace is not None:
             with workspace_scope(workspace):
-                return _do_invoke()
-        return _do_invoke()
+                return await _do_invoke()
+        return await _do_invoke()
 
 
 __all__ = [

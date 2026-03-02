@@ -99,6 +99,156 @@ class AgentRuntimeConfig:
 
 
 @dataclass
+class MCPOffloadConfig:
+    output_dir_rel: str = "_tool_outputs/mcp_filesystem"
+    max_paths_inline: int = 20
+    max_lines_inline: int = 80
+    max_chars_inline: int = 12_000
+    max_tree_chars_inline: int = 8_000
+    max_read_multiple_chars_inline: int = 12_000
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MCPOffloadConfig":
+        if not isinstance(data, dict):
+            return cls()
+        output_dir_rel = str(data.get("output_dir_rel", cls.output_dir_rel)).strip() or cls.output_dir_rel
+        return cls(
+            output_dir_rel=output_dir_rel,
+            max_paths_inline=max(1, _to_int(data.get("max_paths_inline")) or cls.max_paths_inline),
+            max_lines_inline=max(1, _to_int(data.get("max_lines_inline")) or cls.max_lines_inline),
+            max_chars_inline=max(512, _to_int(data.get("max_chars_inline")) or cls.max_chars_inline),
+            max_tree_chars_inline=max(512, _to_int(data.get("max_tree_chars_inline")) or cls.max_tree_chars_inline),
+            max_read_multiple_chars_inline=max(
+                512,
+                _to_int(data.get("max_read_multiple_chars_inline")) or cls.max_read_multiple_chars_inline,
+            ),
+        )
+
+
+@dataclass
+class MCPFilesystemConfig:
+    enabled: bool = False
+    transport: Literal["stdio", "http", "streamable_http"] = "stdio"
+    mode: Literal["stateful", "stateless"] = "stateful"
+    server_name: str = "filesystem"
+    command: str = "npx"
+    args_prefix: list[str] = field(default_factory=lambda: ["-y", "@modelcontextprotocol/server-filesystem"])
+    url: Optional[str] = None
+    headers: Dict[str, str] = field(default_factory=dict)
+    model_root_token: str = "."
+    hide_list_allowed_directories: bool = True
+    expose_roles: Dict[str, str] = field(
+        default_factory=lambda: {"proposal": "readonly", "director": "readonly", "task_runner": "full"}
+    )
+    offload: MCPOffloadConfig = field(default_factory=MCPOffloadConfig)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MCPFilesystemConfig":
+        if not isinstance(data, dict):
+            return cls()
+        defaults = cls()
+
+        transport_raw = str(data.get("transport", defaults.transport)).strip().lower()
+        transport: Literal["stdio", "http", "streamable_http"]
+        if transport_raw in {"stdio", "http", "streamable_http"}:
+            transport = transport_raw  # type: ignore[assignment]
+        else:
+            raise ValueError(
+                "mcp.filesystem.transport must be one of: stdio, http, streamable_http"
+            )
+
+        mode_raw = str(data.get("mode", defaults.mode)).strip().lower()
+        mode: Literal["stateful", "stateless"]
+        if mode_raw in {"stateful", "stateless"}:
+            mode = mode_raw  # type: ignore[assignment]
+        else:
+            raise ValueError("mcp.filesystem.mode must be one of: stateful, stateless")
+
+        server_name = str(data.get("server_name", defaults.server_name)).strip() or defaults.server_name
+        command = str(data.get("command", defaults.command)).strip() or defaults.command
+        args_prefix_raw = data.get("args_prefix", defaults.args_prefix)
+        args_prefix = [str(item).strip() for item in list(args_prefix_raw or []) if str(item).strip()]
+        url = _to_str_or_none(data.get("url"))
+        model_root_token = str(data.get("model_root_token", defaults.model_root_token)).strip() or defaults.model_root_token
+
+        headers_raw = data.get("headers")
+        headers: Dict[str, str] = {}
+        if isinstance(headers_raw, dict):
+            for key, value in headers_raw.items():
+                k = str(key).strip()
+                if not k:
+                    continue
+                headers[k] = str(value)
+
+        expose_roles = dict(defaults.expose_roles)
+        expose_roles_raw = data.get("expose_roles")
+        if isinstance(expose_roles_raw, dict):
+            for role, mode_value in expose_roles_raw.items():
+                role_key = str(role).strip()
+                if role_key not in AGENT_ROLES:
+                    continue
+                mode_text = str(mode_value or "").strip().lower()
+                if mode_text not in {"readonly", "full", "none"}:
+                    raise ValueError(
+                        f"mcp.filesystem.expose_roles.{role_key} must be one of: readonly, full, none"
+                    )
+                expose_roles[role_key] = mode_text
+
+        cfg = cls(
+            enabled=_to_bool(
+                data.get("enabled"),
+                default=defaults.enabled,
+                source="mcp.filesystem.enabled",
+            ),
+            transport=transport,
+            mode=mode,
+            server_name=server_name,
+            command=command,
+            args_prefix=args_prefix or list(defaults.args_prefix),
+            url=url,
+            headers=headers,
+            model_root_token=model_root_token,
+            hide_list_allowed_directories=_to_bool(
+                data.get("hide_list_allowed_directories"),
+                default=defaults.hide_list_allowed_directories,
+                source="mcp.filesystem.hide_list_allowed_directories",
+            ),
+            expose_roles=expose_roles,
+            offload=MCPOffloadConfig.from_dict(data.get("offload") if isinstance(data.get("offload"), dict) else {}),
+        )
+        cfg.validate()
+        return cfg
+
+    def validate(self) -> None:
+        if not self.enabled:
+            return
+        if not str(self.server_name).strip():
+            raise ValueError("mcp.filesystem.server_name must be non-empty when enabled=true")
+        if self.transport == "stdio":
+            if not str(self.command).strip():
+                raise ValueError("mcp.filesystem.command must be non-empty for stdio transport")
+            if not self.args_prefix:
+                raise ValueError("mcp.filesystem.args_prefix must be non-empty for stdio transport")
+        else:
+            if not str(self.url or "").strip():
+                raise ValueError("mcp.filesystem.url must be provided for http/streamable_http transport")
+
+
+@dataclass
+class MCPConfig:
+    filesystem: MCPFilesystemConfig = field(default_factory=MCPFilesystemConfig)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MCPConfig":
+        if not isinstance(data, dict):
+            return cls()
+        fs_raw = data.get("filesystem")
+        return cls(
+            filesystem=MCPFilesystemConfig.from_dict(fs_raw if isinstance(fs_raw, dict) else {}),
+        )
+
+
+@dataclass
 class LLMConfig:
     provider: Provider = "openai"
     model: str = "gpt-5.2"
@@ -217,6 +367,7 @@ class LLMProfile:
     agents: Dict[str, str] = field(default_factory=dict)
     agent_policies: AgentPoliciesConfig = field(default_factory=AgentPoliciesConfig)
     agent_runtime: AgentRuntimeConfig = field(default_factory=AgentRuntimeConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
 
     def label_for_role(self, role: str) -> str:
         label = self.agents.get(role)
@@ -297,6 +448,7 @@ class LLMProfile:
                 print_state_messages=False,
                 print_http_raw_post=print_http_raw_post,
             ),
+            mcp=MCPConfig(),
         )
 
     @staticmethod
@@ -320,6 +472,7 @@ class LLMProfile:
                 agents_raw = raw.get("agents")
                 agent_policies_raw = raw.get("agent_policies")
                 agent_runtime_raw = raw.get("agent_runtime")
+                mcp_raw = raw.get("mcp")
                 if not isinstance(models_raw, dict):
                     raise ValueError(f"LLM config requires top-level 'models' mapping: {config_path}")
                 if not models_raw:
@@ -369,6 +522,7 @@ class LLMProfile:
                     agents=agents,
                     agent_policies=AgentPoliciesConfig.from_dict(agent_policies_raw if isinstance(agent_policies_raw, dict) else {}),
                     agent_runtime=agent_runtime_cfg,
+                    mcp=MCPConfig.from_dict(mcp_raw if isinstance(mcp_raw, dict) else {}),
                 )
         return LLMProfile.from_env()
 
@@ -469,6 +623,9 @@ __all__ = [
     "ProposalPolicyConfig",
     "AgentPoliciesConfig",
     "AgentRuntimeConfig",
+    "MCPOffloadConfig",
+    "MCPFilesystemConfig",
+    "MCPConfig",
     "Provider",
     "AgentRole",
     "AGENT_ROLES",

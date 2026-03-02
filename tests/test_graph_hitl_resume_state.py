@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -32,20 +33,22 @@ def test_invoke_loop_marks_running_before_resume_after_hitl() -> None:
 
     invoke_calls = {"idx": 0}
 
-    def _fake_invoke(_compiled, _graph_input, _config):
+    async def _fake_invoke(_compiled, _graph_input, _config):
         idx = invoke_calls["idx"]
         invoke_calls["idx"] = idx + 1
         return outputs[idx]
 
-    runner._invoke_graph_once = _fake_invoke
+    runner._ainvoke_graph_once = _fake_invoke
 
-    result = GraphRunner._invoke_loop(
-        runner,
-        compiled=object(),
-        initial_state={"user_request": "u"},
-        config={},
-        workspace=None,
-        lane="standard",
+    result = asyncio.run(
+        GraphRunner._ainvoke_loop(
+            runner,
+            compiled=object(),
+            initial_state={"user_request": "u"},
+            config={},
+            workspace=None,
+            lane="standard",
+        )
     )
 
     assert result["status"] == "done"

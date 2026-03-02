@@ -29,6 +29,7 @@ aider-chat
 langchain
 langchain-core
 langchain-openai
+langchain-mcp-adapters
 langchain-community
 langgraph
 

@@ -15,7 +15,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ToolPolicy": ("catmaster.runtime.tool_policy", "ToolPolicy"),
     "ToolBackend": ("catmaster.runtime.tool_backend", "ToolBackend"),
     "LocalToolBackend": ("catmaster.runtime.local_tool_backend", "LocalToolBackend"),
-    "MCPToolBackend": ("catmaster.runtime.mcp_tool_backend", "MCPToolBackend"),
+    "MCPFilesystemRuntime": ("catmaster.runtime.mcp_filesystem", "MCPFilesystemRuntime"),
+    "RuntimeToolSurface": ("catmaster.runtime.tool_surface", "RuntimeToolSurface"),
+    "build_runtime_tool_surface": ("catmaster.runtime.tool_surface", "build_runtime_tool_surface"),
     "RunControl": ("catmaster.runtime.run_control", "RunControl"),
     "ArtifactPersistenceHandler": ("catmaster.runtime.artifact_callback", "ArtifactPersistenceHandler"),
     "LLMTracingHandler": ("catmaster.runtime.artifact_callback", "LLMTracingHandler"),
@@ -41,4 +43,3 @@ def __getattr__(name: str):
     module_name, attr_name = target
     module = import_module(module_name)
     return getattr(module, attr_name)
-

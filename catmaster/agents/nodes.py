@@ -111,6 +111,8 @@ def _build_director_context(
         state.get("tasks", []),
         director_observations,
     )
+    latest_task_outcome = _director_latest_task_outcome(state, observations)
+    task_outcomes_history = _director_task_outcomes_history(observations)
 
     return DIRECTOR_CONTEXT_TEMPLATE.format(
         user_request=state["user_request"],
@@ -119,6 +121,8 @@ def _build_director_context(
             state.get("work_packages", []), ensure_ascii=False,
         ),
         memory_index_excerpt=memory_store.read_index(),
+        latest_task_outcome_json=json.dumps(latest_task_outcome, ensure_ascii=False, default=str),
+        task_outcomes_history_json=json.dumps(task_outcomes_history, ensure_ascii=False, default=str),
         already_done_json=json.dumps(director_observations, ensure_ascii=False),
         task_status_board_json=json.dumps(task_status_board, ensure_ascii=False),
         tools=tools_description,
@@ -303,30 +307,39 @@ def _supports_remaining_steps_error(exc: Exception) -> bool:
     return any(marker in text for marker in markers)
 
 
-def _invoke_agent_with_step_budget(
+async def _invoke_agent_with_step_budget(
     *,
     agent: Any,
     messages: list[AnyMessage],
     max_steps: int,
     role: str,
 ) -> dict[str, Any]:
+    async def _invoke(payload: dict[str, Any]) -> dict[str, Any]:
+        ainvoke = getattr(agent, "ainvoke", None)
+        if callable(ainvoke):
+            return await ainvoke(payload)
+        invoke = getattr(agent, "invoke", None)
+        if callable(invoke):
+            return invoke(payload)
+        raise TypeError(f"{type(agent).__name__} exposes neither invoke nor ainvoke")
+
     payload = {
         "messages": list(messages or []),
         "remaining_steps": max(1, int(max_steps)),
     }
     try:
-        return agent.invoke(payload)
+        return await _invoke(payload)
     except Exception as exc:
         if not _supports_remaining_steps_error(exc):
             raise
         logger.info(
-            "[%s] agent.invoke rejected remaining_steps; retrying with messages-only payload",
+            "[%s] agent invoke rejected remaining_steps; retrying with messages-only payload",
             role,
         )
-        return agent.invoke({"messages": list(messages or [])})
+        return await _invoke({"messages": list(messages or [])})
 
 
-def run_proposal(
+async def run_proposal(
     state: Dict[str, Any],
     *,
     agent: Any,
@@ -340,7 +353,7 @@ def run_proposal(
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
-        result = _invoke_agent_with_step_budget(
+        result = await _invoke_agent_with_step_budget(
             agent=agent,
             messages=input_messages,
             max_steps=max_steps,
@@ -452,7 +465,7 @@ def run_proposal(
     )
 
 
-def run_director(
+async def run_director(
     state: Dict[str, Any],
     *,
     agent: Any,
@@ -465,7 +478,7 @@ def run_director(
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
-        result = _invoke_agent_with_step_budget(
+        result = await _invoke_agent_with_step_budget(
             agent=agent,
             messages=input_messages,
             max_steps=max_steps,
@@ -573,7 +586,7 @@ def run_director(
     return Command(goto="finalize_memory_patch", update=update)
 
 
-def run_task(
+async def run_task(
     state: Dict[str, Any],
     *,
     agent: Any,
@@ -585,7 +598,7 @@ def run_task(
     ctx_msg = HumanMessage(content=ctx_text)
 
     try:
-        result = _invoke_agent_with_step_budget(
+        result = await _invoke_agent_with_step_budget(
             agent=agent,
             messages=[ctx_msg],
             max_steps=max_steps,
@@ -754,76 +767,85 @@ def memory_patch_node(
     patch_repair_attempts: int = 1,
     tool_backend: Any = None,
 ) -> Dict[str, Any]:
-    """Apply memory patches after a task completes."""
+    """Record task event/observation and do mid-run reconcile only for failures."""
     task_result = state.get("task_result") or {}
     task_id = state.get("current_task_id", "")
 
     structured_result = task_result.get("structured_result") or {}
     outcome = task_result.get("task_outcome", "failure")
+    outcome_norm = str(outcome or "").strip().lower()
+    should_reconcile = outcome_norm in {"failure", "needs_intervention", "blocked"}
 
     memory_store.ensure_exists()
-    patch_status = "skipped"
+    patch_status = "deferred"
     last_error = ""
     refresh_needed = False
-    max_attempts = max(1, patch_repair_attempts + 1)
-    if tool_backend is None:
-        logger.info("[memory_patch_node] skip patch: tool_backend unavailable")
-        refresh_needed = True
-    else:
-        memory_index_text = memory_store.read_index()
-        topic_texts = _read_memory_topics(memory_store)
-        previous_edit_text = ""
-        patch_status = "failed"
-
-        for attempt in range(1, max_attempts + 1):
-            if attempt == 1:
-                prompt = build_memory_patch_prompt()
-                msgs = prompt.format_messages(
-                    run_id=run_id,
-                    task_id=task_id,
-                    task_goal=str(state.get("current_task_packet", {}).get("goal", "")),
-                    outcome=outcome,
-                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
-                    memory_index_text=memory_index_text,
-                    **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
-                )
-            else:
-                prompt = build_memory_patch_repair_prompt()
-                msgs = prompt.format_messages(
-                    previous_edit_text=previous_edit_text,
-                    apply_error=last_error or "(none)",
-                    apply_error_context_json="{}",
-                    run_id=run_id,
-                    task_id=task_id,
-                    task_goal=str(state.get("current_task_packet", {}).get("goal", "")),
-                    outcome=outcome,
-                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
-                    memory_index_text=memory_index_text,
-                    **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
-                )
-
-            try:
-                resp = model.invoke(msgs)
-                patch_raw = llm_text(resp).strip()
-                edit_text = _normalize_patch_text(patch_raw)
-                previous_edit_text = edit_text
-                tool_out = tool_backend.call(
-                    "memory_apply_aider_edits",
-                    json.dumps({"edits_text": edit_text, "allowed_paths": ["MEMORY/"], "emit_diff": True}, ensure_ascii=False),
-                    toolcall_key=f"{task_id}_memory_patch_a{attempt}",
-                )
-                status = str(getattr(tool_out, "status", "") or "").strip().lower()
-                if status == "success":
-                    patch_status = "success"
-                    last_error = ""
-                    break
-                last_error = content_to_text(getattr(tool_out, "content", "")) or "patch apply failed"
-            except Exception as exc:
-                last_error = str(exc)
-                logger.warning("[memory_patch_node] attempt %d failed: %s", attempt, exc)
-
-        if patch_status != "success":
+    if should_reconcile:
+        max_attempts = max(1, patch_repair_attempts + 1)
+        patch_status = "skipped"
+        if tool_backend is None:
+            logger.info("[memory_patch_node] skip reconcile: tool_backend unavailable")
             refresh_needed = True
+        else:
+            memory_index_text = memory_store.read_index()
+            topic_texts = _read_memory_topics(memory_store)
+            previous_edit_text = ""
+            patch_status = "failed"
+
+            for attempt in range(1, max_attempts + 1):
+                if attempt == 1:
+                    prompt = build_memory_patch_prompt()
+                    msgs = prompt.format_messages(
+                        run_id=run_id,
+                        task_id=task_id,
+                        task_goal=str(state.get("current_task_packet", {}).get("goal", "")),
+                        outcome=outcome,
+                        structured_result_json=json.dumps(structured_result, ensure_ascii=False),
+                        memory_index_text=memory_index_text,
+                        **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
+                    )
+                else:
+                    prompt = build_memory_patch_repair_prompt()
+                    msgs = prompt.format_messages(
+                        previous_edit_text=previous_edit_text,
+                        apply_error=last_error or "(none)",
+                        apply_error_context_json="{}",
+                        run_id=run_id,
+                        task_id=task_id,
+                        task_goal=str(state.get("current_task_packet", {}).get("goal", "")),
+                        outcome=outcome,
+                        structured_result_json=json.dumps(structured_result, ensure_ascii=False),
+                        memory_index_text=memory_index_text,
+                        **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
+                    )
+
+                try:
+                    resp = model.invoke(msgs)
+                    patch_raw = llm_text(resp).strip()
+                    edit_text = _normalize_patch_text(patch_raw)
+                    previous_edit_text = edit_text
+                    tool_out = tool_backend.call(
+                        "memory_apply_aider_edits",
+                        json.dumps({"edits_text": edit_text, "allowed_paths": ["MEMORY/"], "emit_diff": True}, ensure_ascii=False),
+                        toolcall_key=f"{task_id}_memory_patch_a{attempt}",
+                    )
+                    status = str(getattr(tool_out, "status", "") or "").strip().lower()
+                    if status == "success":
+                        patch_status = "success"
+                        last_error = ""
+                        break
+                    last_error = content_to_text(getattr(tool_out, "content", "")) or "patch apply failed"
+                except Exception as exc:
+                    last_error = str(exc)
+                    logger.warning("[memory_patch_node] attempt %d failed: %s", attempt, exc)
+
+            if patch_status != "success":
+                refresh_needed = True
+    else:
+        logger.info(
+            "[memory_patch_node] defer reconcile for outcome=%s (event/observation only)",
+            outcome_norm or "unknown",
+        )
 
     if refresh_needed:
         _refresh_memory_index(memory_store)
@@ -833,6 +855,7 @@ def memory_patch_node(
         "task_id": task_id,
         "outcome": outcome,
         "summary": str(structured_result.get("summary") or "").strip(),
+        "memory_reconcile_requested": should_reconcile,
         "memory_patch_status": patch_status,
         "memory_patch_error": last_error,
     })
@@ -1287,6 +1310,91 @@ def _director_observations_view(
     if max_items is not None and len(sanitized) > max_items:
         return sanitized[-max_items:]
     return sanitized
+
+
+def _director_latest_task_outcome(
+    state: dict[str, Any],
+    observations: list[dict],
+) -> dict[str, Any]:
+    task_result = state.get("task_result")
+    latest_obs = observations[-1] if observations and isinstance(observations[-1], dict) else {}
+    current_task_id = str(state.get("current_task_id") or "").strip()
+
+    row: dict[str, Any] = {}
+    task_id = current_task_id or str(latest_obs.get("task_id") or "").strip()
+    if task_id:
+        row["task_id"] = task_id
+
+    if isinstance(task_result, dict):
+        outcome = str(task_result.get("task_outcome") or "").strip()
+        if outcome:
+            row["outcome"] = outcome
+        summary = str(task_result.get("task_summary") or "").strip()
+        if summary:
+            row["summary"] = summary
+
+        key_artifacts = task_result.get("key_artifacts")
+        if isinstance(key_artifacts, list):
+            row["key_artifacts"] = key_artifacts
+
+        structured = task_result.get("structured_result")
+        if isinstance(structured, dict):
+            latest_structured: dict[str, Any] = {}
+            for key in (
+                "summary",
+                "facts",
+                "files",
+                "constraints",
+                "open_questions",
+                "decisions",
+                "next_steps",
+                "artifacts",
+            ):
+                if key in structured:
+                    latest_structured[key] = structured.get(key)
+            if latest_structured:
+                row["structured_result"] = latest_structured
+
+    if not row and isinstance(latest_obs, dict):
+        for key in (
+            "task_id",
+            "outcome",
+            "summary",
+            "key_artifacts",
+            "open_questions",
+            "facts",
+            "decisions",
+            "next_steps",
+        ):
+            if key in latest_obs:
+                row[key] = latest_obs.get(key)
+
+    return row
+
+
+def _director_task_outcomes_history(
+    observations: list[dict],
+) -> list[dict[str, Any]]:
+    history: list[dict[str, Any]] = []
+    for obs in observations or []:
+        if not isinstance(obs, dict):
+            continue
+        row: dict[str, Any] = {}
+        for key in (
+            "task_id",
+            "outcome",
+            "summary",
+            "key_artifacts",
+            "open_questions",
+            "facts",
+            "decisions",
+            "next_steps",
+        ):
+            if key in obs:
+                row[key] = obs.get(key)
+        if row:
+            history.append(row)
+    return history
 
 
 def _director_task_status_board(

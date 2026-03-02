@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,10 @@ class _FakeAgent:
     def invoke(self, payload):
         return self._result
 
+    async def ainvoke(self, payload):
+        _ = payload
+        return self._result
+
 
 def _memory_store(tmp_path: Path) -> MemoryStore:
     store = MemoryStore.create_default(workspace=tmp_path)
@@ -30,12 +35,14 @@ def test_run_proposal_missing_structured_response_marks_failure(tmp_path: Path) 
     store = _memory_store(tmp_path)
     agent = _FakeAgent({"messages": [AIMessage(content="plain final text")]})
 
-    out = run_proposal(
-        {"user_request": "draft plan"},
-        agent=agent,
-        memory_store=store,
-        tools_description="bash_exec",
-        run_dir=tmp_path,
+    out = asyncio.run(
+        run_proposal(
+            {"user_request": "draft plan"},
+            agent=agent,
+            memory_store=store,
+            tools_description="bash_exec",
+            run_dir=tmp_path,
+        )
     )
 
     assert out.goto == "summarize"
@@ -47,16 +54,18 @@ def test_run_proposal_missing_structured_response_marks_failure(tmp_path: Path) 
 def test_run_director_missing_structured_response_marks_failure(tmp_path: Path) -> None:
     store = _memory_store(tmp_path)
     agent = _FakeAgent({"messages": [AIMessage(content="no structured response emitted")]})
-    command = run_director(
-        {
-            "user_request": "run",
-            "proposal_md": "x",
-            "work_packages": ["a"],
-            "observations": [],
-        },
-        agent=agent,
-        memory_store=store,
-        tools_description="bash_exec",
+    command = asyncio.run(
+        run_director(
+            {
+                "user_request": "run",
+                "proposal_md": "x",
+                "work_packages": ["a"],
+                "observations": [],
+            },
+            agent=agent,
+            memory_store=store,
+            tools_description="bash_exec",
+        )
     )
 
     assert command.goto == "finalize_memory_patch"
@@ -69,10 +78,12 @@ def test_run_task_missing_structured_response_marks_failure(tmp_path: Path) -> N
     store = _memory_store(tmp_path)
     agent = _FakeAgent({"messages": [AIMessage(content="no structured response")]})
 
-    out = run_task(
-        {"user_request": "run task", "current_task_packet": {"goal": "run task"}},
-        agent=agent,
-        memory_store=store,
+    out = asyncio.run(
+        run_task(
+            {"user_request": "run task", "current_task_packet": {"goal": "run task"}},
+            agent=agent,
+            memory_store=store,
+        )
     )
 
     assert out.goto == "finalize_memory_patch"

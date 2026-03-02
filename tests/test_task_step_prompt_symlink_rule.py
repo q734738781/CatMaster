@@ -11,6 +11,10 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     assert "Task detail defines the task invariants and done checks." in system_content
     assert "minimal non-destructive procedure that satisfies those invariants." in system_content
     assert "Do not rerun the same preparation tool with identical parameters" in system_content
+    assert "Bundle independent filesystem operations in the same turn whenever possible" in system_content
+    assert "do not issue concurrent write calls" in system_content
+    assert "prefer a single focused bash_exec over many single-path filesystem tool calls" in system_content
+    assert "Prefer read_multiple_files when you need several small text files at once." in system_content
     assert "Tool schemas are authoritative" in system_content
     assert "do not edit `MEMORY/**` directly" in system_content
     assert "Do NOT put function tool names into bash_exec commands" in system_content

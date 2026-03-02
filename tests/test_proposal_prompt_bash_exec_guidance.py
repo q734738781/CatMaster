@@ -13,7 +13,11 @@ from catmaster.agents.orchestrator_prompts import (
 def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     system_content = PROPOSAL_SYSTEM_PROMPT
     assert "Allowed helper tools in this stage" in system_content
-    assert "- `bash_exec`" in system_content
+    assert "Filesystem read/discovery tools" in system_content
+    assert "`bash_exec`" in system_content
+    assert "`read_file`" not in system_content
+    assert "`list_directory_with_sizes`" not in system_content
+    assert "`get_file_info`" not in system_content
     assert "avoid script persistence" in system_content
     assert "Assume runtime environment is correctly configured per project README." in system_content
     assert "Do NOT raise runtime/tooling environment prerequisites" in system_content
@@ -21,6 +25,7 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert 'include an "Items needing human decision" section near the top.' in system_content
     assert "Include key parameters/defaults near the top with short rationale and confidence notes." in system_content
     assert "include key computational / geometric parameters" in system_content
+    assert "Treat `.` as the project files root" in system_content
     assert "ProposalOutput" not in system_content
 
 

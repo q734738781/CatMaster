@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from catmaster.runtime.memory_store import MemoryStore
-from catmaster.tools.base import workspace_root
 
 
 @dataclass(frozen=True)
@@ -28,28 +27,27 @@ class ContextPackBuilder:
             max_lines=policy.memory_head_lines,
             max_chars=policy.max_memory_chars,
         )
-        files_root = workspace_root(self.memory.workspace)
-
         if role == "task_runner" and not policy.inject_goal_for_worker:
             memory_excerpt = _remove_goal_pointer(memory_excerpt)
 
         return {
             "task_goal": task_goal,
             "role": role,
-            "workspace_root": str(files_root),
+            "workspace_root": ".",
             "memory_index_excerpt": memory_excerpt,
-            "workspace_policy": _workspace_policy_summary(role, files_root=str(files_root)),
+            "workspace_policy": _workspace_policy_summary(role),
         }
 
 
-def _workspace_policy_summary(role: str, *, files_root: str) -> str:
+def _workspace_policy_summary(role: str) -> str:
     return (
         "Project files policy:\n"
-        f"- Current files root: {files_root}\n"
-        "- Tool path params are resolved relative to this files root.\n"
-        "- Metadata is internal; do not read or write metadata paths from tasks.\n"
-        "- Use progressive disclosure: locate with rg, then read small excerpts with sed/head/tail.\n"
-        "- Do not cat large files into context. Persist large outputs and cite paths.\n"
+        '- Treat "." as the project files root.\n'
+        '- All path parameters and returned paths are relative to ".".\n'
+        "- Never use absolute paths or metadata paths.\n"
+        "- Use search_files / list_directory / directory_tree to discover files.\n"
+        "- Use read_text_file with head/tail for progressive disclosure.\n"
+        "- Use bash_exec for shell commands, content grep, parser invocation, and external binaries.\n"
         f"- Role: {role}"
     )
 

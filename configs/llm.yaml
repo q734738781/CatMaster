@@ -102,12 +102,36 @@ agents:
 agent_runtime:
   recursion_limit: 1000
   max_tool_calls: 60
-  print_state_messages: true
+  print_state_messages: false
   print_http_raw_post: true
 
 agent_policies:
   proposal:
     browse_tools_enabled: true
+
+mcp:
+  filesystem:
+    enabled: true
+    transport: stdio
+    mode: stateful
+    server_name: filesystem
+    command: npx
+    args_prefix:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+    model_root_token: "."
+    hide_list_allowed_directories: true
+    expose_roles:
+      proposal: readonly
+      director: readonly
+      task_runner: full
+    offload:
+      output_dir_rel: "_tool_outputs/mcp_filesystem"
+      max_paths_inline: 20
+      max_lines_inline: 80
+      max_chars_inline: 12000
+      max_tree_chars_inline: 8000
+      max_read_multiple_chars_inline: 12000
 
 # ---------------------------------------------------------------------------
 # Quick provider-specific examples (copy into a model block if needed)

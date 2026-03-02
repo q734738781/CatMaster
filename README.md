@@ -50,6 +50,30 @@ conda create -n catmaster python=3.11
 pip install -r requirements/pc.txt
 ```
 
+### Node.js (for MCP filesystem tools)
+
+CatMaster can integrate MCP filesystem tools (`@modelcontextprotocol/server-filesystem`) via `npx`, so Node.js is required.
+
+Install with Homebrew:
+```bash
+brew install node
+```
+
+If Homebrew prints a PATH hint for Node, append Node's bin to `~/.bashrc` (example):
+```bash
+echo 'export PATH="$(brew --prefix node)/bin:$PATH"' >> ~/.bashrc
+# if you installed a versioned formula, use that name instead, e.g.:
+# echo 'export PATH="$(brew --prefix node@22)/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Verify installation:
+```bash
+node -v
+npm -v
+npx -v
+```
+
 ### WebUI
 
 Run the web workbench (recommended):
