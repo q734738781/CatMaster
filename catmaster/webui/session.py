@@ -49,6 +49,7 @@ class WebSession:
         self.selected_run_dir: Optional[Path] = None
         self.last_event_seq: int = 0
         self.current_prompt_id: str = ""
+        self._last_submitted_prompt_ts: float = 0.0
         self.event_lines: List[str] = []
         self.live_state_by_run: Dict[str, Dict[str, Any]] = {}
 
@@ -325,6 +326,7 @@ class WebSession:
                 result = runner.run(
                     prompt,
                     lane=effective_lane,
+                    proposal_review=proposal_review,
                 )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
@@ -431,6 +433,9 @@ class WebSession:
             run_dir = self.get_selected_run_dir()
             if run_dir is not None:
                 ok = self._submit_prompt_via_file(run_dir, prompt_id=prompt_id, text=text)
+        if ok:
+            with self._lock:
+                self._last_submitted_prompt_ts = time.time()
         return "Submitted." if ok else "Prompt not found."
 
     def request_interrupt_current_run(self, *, note: str = "") -> str:
@@ -468,6 +473,8 @@ class WebSession:
         return {"running": running, "run_status": status, "interrupt": snap}
 
     def get_prompt(self) -> Optional[Dict[str, Any]]:
+        if self._in_submit_grace_period():
+            return None
         broker = self.broker
         if broker:
             pending = broker.get_pending()
@@ -477,6 +484,15 @@ class WebSession:
         if run_dir is not None:
             return self._load_prompt_from_run_dir(run_dir)
         return None
+
+    _SUBMIT_GRACE_SEC = 15
+
+    def _in_submit_grace_period(self) -> bool:
+        with self._lock:
+            ts = self._last_submitted_prompt_ts
+        if ts <= 0:
+            return False
+        return time.time() - ts < self._SUBMIT_GRACE_SEC
 
     def get_events(self) -> Tuple[List[Dict[str, Any]], int]:
         reporter = self.reporter

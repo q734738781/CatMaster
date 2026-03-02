@@ -24,6 +24,7 @@ from langgraph.types import Command
 from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_CONTEXT_TEMPLATE,
     PROPOSAL_REVISION_CONTEXT_TEMPLATE,
+    PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX,
     DIRECTOR_CONTEXT_TEMPLATE,
     TASK_CONTEXT_TEMPLATE,
     build_memory_patch_prompt,
@@ -67,6 +68,8 @@ def _build_proposal_context(
         logger.warning("[_build_proposal_context] tools_description is EMPTY")
 
     feedback = state.get("proposal_feedback", "")
+    review_enabled = bool(state.get("proposal_review_enabled", True))
+
     if feedback and state.get("proposal_md"):
         ctx = PROPOSAL_REVISION_CONTEXT_TEMPLATE.format(
             user_request=user_request,
@@ -79,6 +82,8 @@ def _build_proposal_context(
             tools=tools_description,
             feedback=feedback,
         )
+        if not review_enabled:
+            ctx = f"{ctx}\n\n{PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX}"
         logger.info("[_build_proposal_context] revision context total_len=%d", len(ctx))
         return ctx
 
@@ -88,6 +93,8 @@ def _build_proposal_context(
         artifacts_index=artifacts_index,
         tools=tools_description,
     )
+    if not review_enabled:
+        ctx = f"{ctx}\n\n{PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX}"
     logger.info("[_build_proposal_context] fresh context total_len=%d", len(ctx))
     return ctx
 

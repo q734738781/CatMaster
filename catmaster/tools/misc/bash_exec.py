@@ -170,7 +170,15 @@ def _fail(
 
 
 def _render_success_content(data: dict[str, Any]) -> str:
-    lines: list[str] = ["bash_exec completed."]
+    lines: list[str] = []
+    stdout_text = str(data.get("stdout") or "")
+    stderr_text = str(data.get("stderr") or "")
+
+    if stdout_text:
+        lines.append(f"stdout:\n{stdout_text}")
+    if stderr_text:
+        lines.append(f"stderr:\n{stderr_text}")
+
     details: list[str] = []
     for key in ("exit_code", "timed_out", "cancelled", "cwd", "timeout_s"):
         value = data.get(key)
@@ -180,13 +188,9 @@ def _render_success_content(data: dict[str, Any]) -> str:
     if details:
         lines.append(" ".join(details))
 
-    for label in ("stdout", "stderr"):
-        text = str(data.get(label) or "")
-        if text:
-            lines.append(f"{label}_chars={len(text)}")
-            lines.append(f"{label}:\n{text}")
-
-    return "\n".join(line for line in lines if line)
+    if not lines:
+        return "exit_code=0"
+    return "\n".join(lines)
 
 
 def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:

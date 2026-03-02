@@ -145,37 +145,37 @@ SHARED_CSS = """\
   min-height: 100vh;
 }
 
-/* ---- navigation bar: dark slate, clean and professional ---- */
+/* ---- navigation bar: medium indigo gradient, white text ---- */
 .cm-nav {
   display:flex; align-items:center; justify-content:space-between;
   padding:10px 24px;
-  background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e293b 100%);
+  background: linear-gradient(135deg, #4338ca 0%, #4f46e5 45%, #6366f1 100%);
   border-radius: 0 0 14px 14px;
-  box-shadow: 0 4px 20px rgba(30,27,75,.22), 0 1px 3px rgba(0,0,0,.1);
+  box-shadow: 0 4px 20px rgba(79,70,229,.25), 0 1px 3px rgba(0,0,0,.08);
   margin-bottom: 12px;
 }
 .cm-nav-brand {
   display:inline-flex; align-items:center; gap:10px;
 }
 .cm-nav-title {
-  font-size:1.3rem; font-weight:800; color:#e0e7ff;
-  letter-spacing:-0.02em; text-shadow:0 1px 4px rgba(0,0,0,.2);
+  font-size:1.3rem; font-weight:800; color:#fff;
+  letter-spacing:-0.02em; text-shadow:0 1px 3px rgba(0,0,0,.12);
 }
 .cm-nav-links { display:flex; gap:4px; }
 .cm-nav-link {
   text-decoration:none; font-size:0.88rem; font-weight:600;
-  color:rgba(224,231,255,.6); padding:5px 14px; border-radius:8px;
+  color:rgba(255,255,255,.72); padding:5px 14px; border-radius:8px;
   transition: all .18s ease;
 }
-.cm-nav-link:hover { color:#e0e7ff; background:rgba(255,255,255,.08); }
+.cm-nav-link:hover { color:#fff; background:rgba(255,255,255,.12); }
 .cm-nav-link.active {
-  color:#fff; background:rgba(129,140,248,.2);
-  box-shadow: inset 0 -2px 0 0 #818cf8;
+  color:#fff; background:rgba(255,255,255,.18);
+  box-shadow: inset 0 -2px 0 0 #c7d2fe;
 }
 .cm-nav-chip {
-  font-size:0.76rem; color:rgba(224,231,255,.8);
-  background:rgba(255,255,255,.1); padding:3px 12px;
-  border-radius:999px; border:1px solid rgba(255,255,255,.08);
+  font-size:0.76rem; color:#fff;
+  background:rgba(255,255,255,.15); padding:3px 12px;
+  border-radius:999px; border:1px solid rgba(255,255,255,.2);
 }
 
 /* ---- hero banner: subtle indigo tint ---- */
@@ -270,7 +270,7 @@ def build_workspace_controls(
     default_workspace: str,
     ctx_state: gr.State,
 ) -> WorkspaceComponents:
-    with gr.Sidebar(label="Project Space", open=False) as sidebar:
+    with gr.Sidebar(label="Project Space", open=True) as sidebar:
         gr.Markdown("### Project Space")
         root_box = gr.Textbox(label="Root", value=default_workspace)
         refresh_btn = gr.Button("Refresh")
@@ -372,25 +372,25 @@ def build_hitl_group(
             prompt_status = gr.Markdown("")
             prompt_id_box = gr.Textbox(visible=False)
 
-    def _submit(pid: str, text: str, ctx: str) -> Tuple[str, str]:
+    def _submit(pid: str, text: str, ctx: str) -> Tuple[str, str, Any]:
         session = registry.get_session(ctx)
         status = session.submit_prompt(pid, text)
-        return status, ""
+        return status, "", gr.update(visible=False)
 
-    def _approve(pid: str, ctx: str) -> Tuple[str, str]:
+    def _approve(pid: str, ctx: str) -> Tuple[str, str, Any]:
         session = registry.get_session(ctx)
         status = session.submit_prompt(pid, "yes")
-        return status, ""
+        return status, "", gr.update(visible=False)
 
     submit_btn.click(
         _submit,
         inputs=[prompt_id_box, prompt_input, ctx_state],
-        outputs=[prompt_status, prompt_input],
+        outputs=[prompt_status, prompt_input, group],
     )
     approve_btn.click(
         _approve,
         inputs=[prompt_id_box, ctx_state],
-        outputs=[prompt_status, prompt_input],
+        outputs=[prompt_status, prompt_input, group],
     )
 
     return HITLComponents(

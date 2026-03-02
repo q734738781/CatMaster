@@ -87,6 +87,7 @@ class CatMasterState(TypedDict, total=False):
     work_packages: list[str]
     proposal_approved: bool
     proposal_feedback: str
+    proposal_review_enabled: bool
 
     # Director
     director_decision: dict
@@ -474,6 +475,9 @@ def _proposal_review_node(state: CatMasterState) -> Command:
     If proposal_approved is already True (e.g. auto-approve or resume
     after approval), this is a no-op pass-through.
     """
+    if not bool(state.get("proposal_review_enabled", True)):
+        return Command(goto="plan_commit", update={"proposal_approved": True, "proposal_feedback": ""})
+
     if state.get("proposal_approved"):
         return Command(goto="plan_commit", update={})
 
@@ -1097,6 +1101,7 @@ class GraphRunner:
             "schema_version": 2,
             "lane": lane,
             "user_request": state.get("user_request", ""),
+            "proposal_review_enabled": bool(state.get("proposal_review_enabled", True)),
             "tasks": state.get("tasks", []),
             "observations": state.get("observations", []),
             "status": state.get("status", "running"),
@@ -1175,6 +1180,7 @@ class GraphRunner:
         user_request: str,
         *,
         lane: str = "standard",
+        proposal_review: bool = True,
     ) -> Dict[str, Any]:
         tools_description = self.registry.get_tool_descriptions_for_llm()
         director_tools_description = self.registry.get_short_tool_descriptions_for_llm()
@@ -1240,6 +1246,7 @@ class GraphRunner:
             "work_packages": [],
             "proposal_approved": False,
             "proposal_feedback": "",
+            "proposal_review_enabled": bool(proposal_review),
             "director_decision": {},
             "next_action": "",
             "tasks": [],
@@ -1331,6 +1338,15 @@ class GraphRunner:
                         "interrupt_type": interrupt_type,
                         "feedback_len": len(str(feedback or "")),
                     },
+                )
+                # Clear stale HITL snapshot state before resume so WebUI does not
+                # reconstruct the same prompt after approval/submission.
+                self._write_task_state(
+                    {
+                        **result,
+                        "status": "running",
+                    },
+                    lane,
                 )
 
                 result = self._invoke_graph_once(

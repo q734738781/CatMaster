@@ -82,6 +82,8 @@ Decision semantics:
 
 Rules:
 - Avoid repeating completed work; consult AlreadyDone + memory index.
+- If the latest completed task already produced the user-requested final deliverables and there are no unresolved open questions, do not run additional verification passes; return `StopAndSynthesize` immediately.
+- Do not reread the same evidence file more than once unless the previous read failed or a different missing field still requires that file.
 - Never ask the worker to read metadata/internal run paths.
 - Never ask the worker to edit `MEMORY/**` or call `memory_apply_aider_edits`.
 - Preserve key parameters from proposal/default tables as suggested defaults and ask worker to follow them when feasible; allow bounded adjustment when needed to satisfy scientific invariants and done criteria.
@@ -195,6 +197,13 @@ Revise the proposal so it clearly reflects:
 - Key defaults/parameters and rationale.
 - Execution strategy grounded in available tools.
 - Ordered high-level work_packages.
+"""
+
+PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX = """\
+=== AUTO-COMMIT MODE (NO HUMAN PROPOSAL REVIEW) ===
+- This proposal will be committed directly to execution; there is no manual proposal approval pass.
+- Provide a first-pass executable and self-consistent proposal/work_packages set; avoid placeholders and ambiguous wording.
+- If a blocking item exists, include a concrete default and fallback path so execution can continue with minimal extra review.
 """
 
 DIRECTOR_CONTEXT_TEMPLATE = """\
@@ -462,6 +471,7 @@ __all__ = [
     "TASK_RUNNER_SYSTEM_PROMPT",
     "PROPOSAL_CONTEXT_TEMPLATE",
     "PROPOSAL_REVISION_CONTEXT_TEMPLATE",
+    "PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX",
     "DIRECTOR_CONTEXT_TEMPLATE",
     "TASK_CONTEXT_TEMPLATE",
     "build_memory_patch_prompt",
