@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from pymatgen.core import Structure
 from pymatgen.core.surface import SlabGenerator
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath, create_tool_output
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class SlabBuildInput(BaseModel):
@@ -135,6 +136,49 @@ def _slab_id_from(rel_path: Path) -> str:
     return "__".join(rel_path.with_suffix("").parts)
 
 
+def _success(
+    tool_name: str,
+    *,
+    content: str,
+    data: dict[str, object],
+    warnings: list[str] | None = None,
+) -> tuple[str, dict[str, object]]:
+    artifact: dict[str, object] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    return content, artifact
+
+
+def _failure(
+    tool_name: str,
+    *,
+    message: str,
+    data: dict[str, object] | None = None,
+    error_code: str = "",
+) -> None:
+    details: list[str] = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in (
+            "bulk_dir_rel",
+            "bulk_structure_rel",
+            "structure_dir_rel",
+            "structure_ref_rel",
+            "output_root_rel",
+            "output_dir_rel",
+            "batch_json_rel",
+        ):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            details.append(f"{key}={value}")
+    raise CatMasterToolExecutionError(
+        tool_name=tool_name,
+        public_message="\n".join(details),
+        artifact={"tool_name": tool_name, "data": data or {}},
+        error_code=error_code,
+    )
+
+
 def _build_slab_single(
     bulk_path: Path,
     output_root: Path,
@@ -193,17 +237,17 @@ def _build_slab_single(
     }
 
 
-def build_slab(payload: Dict[str, object]) -> Dict[str, object]:
+def build_slab(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
     """
     Build slabs for all terminations of a given Miller index. Each termination is written
     as a separate POSCAR under output_root. Supercell expansion is applied to every termination.
     """
     params = SlabBuildInput(**payload)
     if (params.bulk_structure is None) == (params.bulk_dir is None):
-        return create_tool_output(
+        _failure(
             "build_slab",
-            success=False,
-            error="Provide exactly one of bulk_structure or bulk_dir.",
+            message="Provide exactly one of bulk_structure or bulk_dir.",
+            error_code="invalid_input_mode",
         )
     miller = tuple(int(x) for x in params.miller_index)
     slab_thickness = float(params.slab_thickness)
@@ -214,28 +258,34 @@ def build_slab(payload: Dict[str, object]) -> Dict[str, object]:
     lll_reduce = bool(params.lll_reduce)
 
     if len(miller) != 3:
-        return create_tool_output("build_slab", success=False, error="miller_index must have 3 integers")
+        _failure(
+            "build_slab",
+            message="miller_index must have 3 integers",
+            error_code="invalid_miller_index",
+        )
 
     if params.bulk_dir is not None:
         if params.output_root is None:
-            return create_tool_output(
+            _failure(
                 "build_slab",
-                success=False,
-                error="output_root is required when bulk_dir is provided.",
+                message="output_root is required when bulk_dir is provided.",
+                error_code="missing_output_root",
             )
         bulk_root = resolve_workspace_path(params.bulk_dir, must_exist=True)
         if not bulk_root.is_dir():
-            return create_tool_output(
+            _failure(
                 "build_slab",
-                success=False,
-                error=f"bulk_dir is not a directory: {bulk_root}",
+                message=f"bulk_dir is not a directory: {bulk_root}",
+                data={"bulk_dir_rel": workspace_relpath(bulk_root)},
+                error_code="invalid_bulk_dir",
             )
         structures = _collect_structure_files(bulk_root)
         if not structures:
-            return create_tool_output(
+            _failure(
                 "build_slab",
-                success=False,
-                error="No bulk structure files found in bulk_dir.",
+                message="No bulk structure files found in bulk_dir.",
+                data={"bulk_dir_rel": workspace_relpath(bulk_root)},
+                error_code="no_bulk_structures",
             )
         output_root = resolve_workspace_path(params.output_root)
         _ensure_dir(output_root)
@@ -284,7 +334,16 @@ def build_slab(payload: Dict[str, object]) -> Dict[str, object]:
             "results": results,
             "errors": errors,
         }
-        return create_tool_output("build_slab", success=True, data=data)
+        first_output = results[0]["output_dir_rel"] if results else ""
+        lines = [
+            "build_slab completed.",
+            f"structures_built={len(results)} structures_found={len(structures)} errors={len(errors)}",
+            f"output_root_rel={data['output_root_rel']}",
+        ]
+        if first_output:
+            lines.append(f"first_output_dir={first_output}")
+        content = "\n".join(lines)
+        return _success("build_slab", content=content, data=data)
 
     bulk_path = resolve_workspace_path(params.bulk_structure, must_exist=True)
     output_root = resolve_workspace_path(params.output_root or "slabs")
@@ -301,7 +360,12 @@ def build_slab(payload: Dict[str, object]) -> Dict[str, object]:
             lll_reduce=lll_reduce,
         )
     except Exception as exc:
-        return create_tool_output("build_slab", success=False, error=str(exc))
+        _failure(
+            "build_slab",
+            message=f"build_slab failed: {exc}",
+            data={"bulk_structure_rel": workspace_relpath(bulk_path)},
+            error_code="build_slab_failed",
+        )
 
     data = {
         "miller_index": list(miller),
@@ -314,7 +378,15 @@ def build_slab(payload: Dict[str, object]) -> Dict[str, object]:
         "lll_reduce": lll_reduce,
         "terminations": result["terminations"],
     }
-    return create_tool_output("build_slab", success=True, data=data)
+    lines = [
+        "build_slab completed.",
+        f"total_terminations={result['total_terminations']} miller_index={list(miller)}",
+        f"output_root_rel={workspace_relpath(output_root)}",
+    ]
+    if result["terminations"]:
+        lines.append(f"first_termination_rel={result['terminations'][0]['slab_structure_rel']}")
+    content = "\n".join(lines)
+    return _success("build_slab", content=content, data=data)
 
 def _bin_z_layers(z: np.ndarray, layer_tol: float) -> np.ndarray:
     """
@@ -421,13 +493,13 @@ def _fix_atoms_by_layers_single(
     }
 
 
-def fix_atoms_by_layers(payload: Dict[str, object]) -> Dict[str, object]:
+def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
     params = FixAtomsByLayersInput(**payload)
     if (params.structure_ref is None) == (params.structure_dir is None):
-        return create_tool_output(
+        _failure(
             "fix_atoms_by_layers",
-            success=False,
-            error="Provide exactly one of structure_ref or structure_dir.",
+            message="Provide exactly one of structure_ref or structure_dir.",
+            error_code="invalid_input_mode",
         )
 
     freeze_layers = int(params.freeze_layers)
@@ -436,26 +508,28 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> Dict[str, object]:
 
     if params.structure_dir is not None:
         if params.output_dir is None:
-            return create_tool_output(
+            _failure(
                 "fix_atoms_by_layers",
-                success=False,
-                error="output_dir is required when structure_dir is provided.",
+                message="output_dir is required when structure_dir is provided.",
+                error_code="missing_output_dir",
             )
         structure_root = resolve_workspace_path(params.structure_dir, must_exist=True)
         if not structure_root.is_dir():
-            return create_tool_output(
+            _failure(
                 "fix_atoms_by_layers",
-                success=False,
-                error=f"structure_dir is not a directory: {structure_root}",
+                message=f"structure_dir is not a directory: {structure_root}",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="invalid_structure_dir",
             )
         output_root = resolve_workspace_path(params.output_dir)
         _ensure_dir(output_root)
         structures = _collect_structure_files(structure_root)
         if not structures:
-            return create_tool_output(
+            _failure(
                 "fix_atoms_by_layers",
-                success=False,
-                error="No structure files found in structure_dir.",
+                message="No structure files found in structure_dir.",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="no_structures",
             )
 
         results = []
@@ -504,13 +578,24 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> Dict[str, object]:
             "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
             "errors_count": len(errors),
         }
-        return create_tool_output("fix_atoms_by_layers", success=True, data=data)
+        first_output = results[0]["output_rel"] if results else ""
+        lines = [
+            "fix_atoms_by_layers completed.",
+            f"structures_processed={len(results)} structures_found={len(structures)} errors_count={len(errors)}",
+            f"output_dir_rel={data['output_dir_rel']}",
+        ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
+        if first_output:
+            lines.append(f"first_output_rel={first_output}")
+        content = "\n".join(lines)
+        return _success("fix_atoms_by_layers", content=content, data=data)
 
     if params.output_path is None:
-        return create_tool_output(
+        _failure(
             "fix_atoms_by_layers",
-            success=False,
-            error="output_path is required when structure_ref is provided.",
+            message="output_path is required when structure_ref is provided.",
+            error_code="missing_output_path",
         )
     structure_ref = resolve_workspace_path(params.structure_ref, must_exist=True)
     output_path = resolve_workspace_path(params.output_path)
@@ -523,8 +608,18 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> Dict[str, object]:
             layer_tol=layer_tol,
         )
     except Exception as exc:
-        return create_tool_output("fix_atoms_by_layers", success=False, error=str(exc))
-    return create_tool_output("fix_atoms_by_layers", success=True, data=data)
+        _failure(
+            "fix_atoms_by_layers",
+            message=f"fix_atoms_by_layers failed: {exc}",
+            data={"structure_ref_rel": workspace_relpath(structure_ref)},
+            error_code="fix_by_layers_failed",
+        )
+    content = (
+        "fix_atoms_by_layers completed.\n"
+        f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']}"
+    )
+    return _success("fix_atoms_by_layers", content=content, data=data)
 
 
 def _fix_atoms_by_height_single(
@@ -557,53 +652,55 @@ def _fix_atoms_by_height_single(
     }
 
 
-def fix_atoms_by_height(payload: Dict[str, object]) -> Dict[str, object]:
+def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
     params = FixAtomsByHeightInput(**payload)
     if (params.structure_ref is None) == (params.structure_dir is None):
-        return create_tool_output(
+        _failure(
             "fix_atoms_by_height",
-            success=False,
-            error="Provide exactly one of structure_ref or structure_dir.",
+            message="Provide exactly one of structure_ref or structure_dir.",
+            error_code="invalid_input_mode",
         )
     if not params.z_ranges:
-        return create_tool_output(
+        _failure(
             "fix_atoms_by_height",
-            success=False,
-            error="z_ranges must not be empty.",
+            message="z_ranges must not be empty.",
+            error_code="empty_z_ranges",
         )
     z_ranges = [(float(item.z_min), float(item.z_max)) for item in params.z_ranges]
     centralize = bool(params.centralize)
 
     for zmin, zmax in z_ranges:
         if zmin >= zmax:
-            return create_tool_output(
+            _failure(
                 "fix_atoms_by_height",
-                success=False,
-                error="Each z_range must satisfy z_min < z_max",
+                message="Each z_range must satisfy z_min < z_max",
+                error_code="invalid_z_range",
             )
 
     if params.structure_dir is not None:
         if params.output_dir is None:
-            return create_tool_output(
+            _failure(
                 "fix_atoms_by_height",
-                success=False,
-                error="output_dir is required when structure_dir is provided.",
+                message="output_dir is required when structure_dir is provided.",
+                error_code="missing_output_dir",
             )
         structure_root = resolve_workspace_path(params.structure_dir, must_exist=True)
         if not structure_root.is_dir():
-            return create_tool_output(
+            _failure(
                 "fix_atoms_by_height",
-                success=False,
-                error=f"structure_dir is not a directory: {structure_root}",
+                message=f"structure_dir is not a directory: {structure_root}",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="invalid_structure_dir",
             )
         output_root = resolve_workspace_path(params.output_dir)
         _ensure_dir(output_root)
         structures = _collect_structure_files(structure_root)
         if not structures:
-            return create_tool_output(
+            _failure(
                 "fix_atoms_by_height",
-                success=False,
-                error="No structure files found in structure_dir.",
+                message="No structure files found in structure_dir.",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="no_structures",
             )
 
         results = []
@@ -650,13 +747,24 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> Dict[str, object]:
             "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
             "errors_count": len(errors),
         }
-        return create_tool_output("fix_atoms_by_height", success=True, data=data)
+        first_output = results[0]["output_rel"] if results else ""
+        lines = [
+            "fix_atoms_by_height completed.",
+            f"structures_processed={len(results)} structures_found={len(structures)} errors_count={len(errors)}",
+            f"output_dir_rel={data['output_dir_rel']}",
+        ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
+        if first_output:
+            lines.append(f"first_output_rel={first_output}")
+        content = "\n".join(lines)
+        return _success("fix_atoms_by_height", content=content, data=data)
 
     if params.output_path is None:
-        return create_tool_output(
+        _failure(
             "fix_atoms_by_height",
-            success=False,
-            error="output_path is required when structure_ref is provided.",
+            message="output_path is required when structure_ref is provided.",
+            error_code="missing_output_path",
         )
     structure_ref = resolve_workspace_path(params.structure_ref, must_exist=True)
     output_path = resolve_workspace_path(params.output_path)
@@ -668,8 +776,18 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> Dict[str, object]:
             centralize=centralize,
         )
     except Exception as exc:
-        return create_tool_output("fix_atoms_by_height", success=False, error=str(exc))
-    return create_tool_output("fix_atoms_by_height", success=True, data=data)
+        _failure(
+            "fix_atoms_by_height",
+            message=f"fix_atoms_by_height failed: {exc}",
+            data={"structure_ref_rel": workspace_relpath(structure_ref)},
+            error_code="fix_by_height_failed",
+        )
+    content = (
+        "fix_atoms_by_height completed.\n"
+        f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']}"
+    )
+    return _success("fix_atoms_by_height", content=content, data=data)
 
 
 __all__ = [

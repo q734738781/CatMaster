@@ -12,8 +12,8 @@ from catmaster.tools.base import workspace_root
 
 @dataclass(frozen=True)
 class ContextPackPolicy:
-    memory_head_lines: int = 200
-    max_memory_chars: int = 12000
+    memory_head_lines: Optional[int] = None
+    max_memory_chars: Optional[int] = None
     max_artifacts: int = 50
     inject_goal_for_worker: bool = False
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import threading
 import time
@@ -48,6 +49,7 @@ class WebSession:
         self.selected_run_dir: Optional[Path] = None
         self.last_event_seq: int = 0
         self.current_prompt_id: str = ""
+        self._last_submitted_prompt_ts: float = 0.0
         self.event_lines: List[str] = []
         self.live_state_by_run: Dict[str, Dict[str, Any]] = {}
 
@@ -258,41 +260,73 @@ class WebSession:
             run_dir: Optional[Path] = None
             run_error = ""
             try:
-                from catmaster.agents.orchestrator import Orchestrator
                 from catmaster.llm.config import LLMProfile
+                from catmaster.llm.factory import build_chat_model
+                from catmaster.agents.graph import GraphRunner
+                from catmaster.runtime.run_context import RunContext
+                from catmaster.runtime.memory_store import MemoryStore
+                from catmaster.runtime.local_tool_backend import LocalToolBackend
+                from catmaster.runtime.tool_executor import ToolExecutor
+                from catmaster.runtime.artifact_store import ArtifactStore
+                from catmaster.runtime.trace_store import TraceStore
+                from catmaster.tools.registry import get_tool_registry
 
                 llm_profile = LLMProfile.from_env_or_file(llm_config)
-                orch = Orchestrator(
-                    llm_profile=llm_profile,
-                    reporter=self.reporter,
-                    log_llm_console=False,
-                    workspace=str(ws),
-                    resume=is_resume,
-                    resume_dir=resume_dir,
-                    run_control=self.run_control,
+                run_ctx = RunContext.create(
+                    workspace=ws,
+                    run_dir=Path(resume_dir) if resume_dir else None,
+                    model_name=llm_profile.main.model,
                 )
                 if self.run_control is not None:
-                    self.run_control.run_id = orch.run_context.run_id
-                run_dir = orch.run_context.run_dir
+                    self.run_control.run_id = run_ctx.run_id
+                run_dir = run_ctx.run_dir
                 if self.reporter:
                     self.reporter.set_run_dir(run_dir)
                 self._write_active_runs(effective_lane, run_dir, workspace=ws)
+
+                memory_store = MemoryStore.create_default(workspace=ws)
+                memory_store.ensure_exists()
+                registry = get_tool_registry()
+                tool_backend = LocalToolBackend(
+                    registry=registry,
+                    tool_executor=ToolExecutor(registry),
+                    artifact_store=ArtifactStore(run_ctx.run_dir),
+                    trace_store=TraceStore(run_ctx.run_dir),
+                    role="langgraph",
+                    workspace=ws,
+                )
+
+                runner = GraphRunner(
+                    task_runner_model=build_chat_model(llm_profile.config_for_role("task_runner")),
+                    proposal_model=build_chat_model(llm_profile.config_for_role("proposal")),
+                    director_model=build_chat_model(llm_profile.config_for_role("director")),
+                    memory_patch_model=build_chat_model(llm_profile.config_for_role("memory_patch")),
+                    summary_model=build_chat_model(llm_profile.config_for_role("summary")),
+                    registry=registry,
+                    memory_store=memory_store,
+                    run_context=run_ctx,
+                    reporter=self.reporter,
+                    tool_backend=tool_backend,
+                    run_control=self.run_control,
+                    max_task_steps=llm_profile.agent_runtime.max_tool_calls,
+                    max_plan_steps=llm_profile.agent_runtime.max_tool_calls,
+                    recursion_limit=llm_profile.agent_runtime.recursion_limit,
+                    stream_debug_console=os.environ.get("CATMASTER_STREAM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"},
+                    print_state_messages=llm_profile.agent_runtime.print_state_messages,
+                )
                 with self._lock:
                     self.run_status = "running"
                     self.run_info = {
-                        "run_id": orch.run_context.run_id,
+                        "run_id": run_ctx.run_id,
                         "run_dir": str(run_dir),
-                        "model_name": orch.run_context.model_name,
+                        "model_name": run_ctx.model_name,
                     }
                     self.selected_run_dir = run_dir
                     self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
-                result = orch.run(
+                result = runner.run(
                     prompt,
-                    log_llm=log_llm,
-                    proposal_review=proposal_review,
                     lane=effective_lane,
-                    full_auto_major=full_auto_major,
-                    resume_feedback=resume_feedback,
+                    proposal_review=proposal_review,
                 )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
@@ -317,7 +351,6 @@ class WebSession:
             finally:
                 if self.reporter:
                     self.reporter.close()
-                # Generate UI summary only when a run is finalized.
                 if run_dir and run_dir.exists():
                     summarize_run(run_dir, run_error=run_error or None)
 
@@ -389,11 +422,20 @@ class WebSession:
 
     def submit_prompt(self, prompt_id: str, text: str) -> str:
         broker = self.broker
-        if not broker:
-            return "No active prompt broker."
         if not prompt_id:
             return "No active prompt."
-        ok = broker.submit(prompt_id, text)
+        ok = False
+        if broker:
+            ok = broker.submit(prompt_id, text)
+            if not ok:
+                ok = broker.submit_persisted(prompt_id, text)
+        else:
+            run_dir = self.get_selected_run_dir()
+            if run_dir is not None:
+                ok = self._submit_prompt_via_file(run_dir, prompt_id=prompt_id, text=text)
+        if ok:
+            with self._lock:
+                self._last_submitted_prompt_ts = time.time()
         return "Submitted." if ok else "Prompt not found."
 
     def request_interrupt_current_run(self, *, note: str = "") -> str:
@@ -431,10 +473,26 @@ class WebSession:
         return {"running": running, "run_status": status, "interrupt": snap}
 
     def get_prompt(self) -> Optional[Dict[str, Any]]:
-        broker = self.broker
-        if not broker:
+        if self._in_submit_grace_period():
             return None
-        return broker.get_pending()
+        broker = self.broker
+        if broker:
+            pending = broker.get_pending()
+            if isinstance(pending, dict):
+                return pending
+        run_dir = self.get_selected_run_dir()
+        if run_dir is not None:
+            return self._load_prompt_from_run_dir(run_dir)
+        return None
+
+    _SUBMIT_GRACE_SEC = 15
+
+    def _in_submit_grace_period(self) -> bool:
+        with self._lock:
+            ts = self._last_submitted_prompt_ts
+        if ts <= 0:
+            return False
+        return time.time() - ts < self._SUBMIT_GRACE_SEC
 
     def get_events(self) -> Tuple[List[Dict[str, Any]], int]:
         reporter = self.reporter
@@ -449,6 +507,8 @@ class WebSession:
             status = self.run_status
             error = self.run_error
             info = self.run_info
+            selected_run = self.selected_run_dir
+        status = self._display_status(status, selected_run)
         if info:
             parts = [f"run_id={info.get('run_id','')}", f"model={info.get('model_name','')}"]
             return f"{status} | {' '.join(parts)}{(' | ' + error) if error else ''}"
@@ -648,6 +708,10 @@ class WebSession:
             max_recent_events=80,
             max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
         )
+        terminal_status = self._terminal_status_from_task_state(run_dir)
+        if terminal_status:
+            self._apply_terminal_status(state, terminal_status)
+        effective_live_llm = bool(live_llm_enabled) and not bool(terminal_status)
         if events and changed and should_refresh_live_summary(
             state,
             events,
@@ -656,7 +720,7 @@ class WebSession:
         ):
             state["live_summary"] = summarize_live_state(
                 state,
-                enabled=bool(live_llm_enabled),
+                enabled=effective_live_llm,
                 max_events=LIVE_SUMMARY_MAX_EVENTS,
                 max_params_chars=LIVE_SUMMARY_MAX_PARAMS_CHARS,
                 max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
@@ -671,7 +735,7 @@ class WebSession:
                 max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
                 timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
             )
-        if (not live_llm_enabled) and isinstance(state.get("live_summary"), dict):
+        if (not effective_live_llm) and isinstance(state.get("live_summary"), dict):
             if str(state["live_summary"].get("source") or "") == "llm":
                 state["live_summary"] = summarize_live_state(
                     state,
@@ -699,6 +763,9 @@ class WebSession:
             max_recent_events=80,
             max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
         )
+        terminal_status = self._terminal_status_from_task_state(run_dir)
+        if terminal_status:
+            self._apply_terminal_status(state, terminal_status)
         key = self._run_key(run_dir)
         with self._lock:
             cached = self.live_state_by_run.get(key)
@@ -714,6 +781,37 @@ class WebSession:
                 timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
             )
         return self._public_live_state(state)
+
+    @staticmethod
+    def _terminal_status_from_task_state(run_dir: Optional[Path]) -> str:
+        if run_dir is None:
+            return ""
+        path = run_dir / "task_state.json"
+        if not path.exists():
+            return ""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        status = str(payload.get("status") or "").strip().lower()
+        if status in {"done", "failure", "needs_intervention", "interrupted_paused", "awaiting_human_feedback"}:
+            return status
+        return ""
+
+    @staticmethod
+    def _apply_terminal_status(state: Dict[str, Any], status: str) -> None:
+        state["status"] = status
+        state["active_toolcall"] = None
+        if status == "interrupted_paused":
+            phase = str(state.get("current_phase") or "")
+            state["current_phase"] = phase if phase.startswith("paused") else "paused"
+            return
+        if status == "awaiting_human_feedback":
+            state["current_phase"] = "waiting_human"
+            return
+        state["current_phase"] = "finalizing"
 
     def list_run_cards(self) -> List[Dict[str, Any]]:
         ws = self._workspace_path()
@@ -858,3 +956,178 @@ class WebSession:
         with self._lock:
             ws = self.workspace
         return ws.resolve() if isinstance(ws, Path) else None
+
+    def _display_status(self, base_status: str, selected_run: Optional[Path]) -> str:
+        status = str(base_status or "").strip() or "unknown"
+        if status not in {"running", "starting", "paused"}:
+            return status
+        pending = self.get_prompt()
+        if isinstance(pending, dict):
+            return "awaiting_human_feedback"
+        run_status = self._load_task_state_status(selected_run)
+        if run_status:
+            return run_status
+        return status
+
+    @staticmethod
+    def _load_task_state_status(run_dir: Optional[Path]) -> str:
+        if run_dir is None:
+            return ""
+        path = run_dir / "task_state.json"
+        if not path.exists():
+            return ""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        status = str(payload.get("status") or "").strip().lower()
+        if status in {
+            "awaiting_human_feedback",
+            "running",
+            "starting",
+            "done",
+            "failure",
+            "needs_intervention",
+            "interrupted_paused",
+        }:
+            return status
+        return ""
+
+    def _load_prompt_from_run_dir(self, run_dir: Path) -> Optional[Dict[str, Any]]:
+        hitl_prompt = run_dir / "hitl" / "pending_prompt.json"
+        if hitl_prompt.exists():
+            try:
+                payload = json.loads(hitl_prompt.read_text(encoding="utf-8"))
+            except Exception:
+                payload = None
+            if isinstance(payload, dict):
+                prompt_id = str(payload.get("prompt_id") or "")
+                prompt_mtime = 0.0
+                try:
+                    prompt_mtime = float(hitl_prompt.stat().st_mtime)
+                except Exception:
+                    prompt_mtime = 0.0
+                # If feedback was already submitted for this prompt and persisted,
+                # do not keep showing the stale pending prompt.
+                if self._has_submitted_feedback(
+                    run_dir,
+                    prompt_id=prompt_id,
+                    newer_than=prompt_mtime,
+                ):
+                    return None
+                return payload
+
+        state_path = run_dir / "task_state.json"
+        if not state_path.exists():
+            return None
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(state, dict):
+            return None
+        status = str(state.get("status") or "").strip().lower()
+        if status != "awaiting_human_feedback":
+            return None
+        state_mtime = 0.0
+        try:
+            state_mtime = float(state_path.stat().st_mtime)
+        except Exception:
+            state_mtime = 0.0
+        # Snapshot fallback should not re-open a prompt after feedback was submitted.
+        if self._has_submitted_feedback(run_dir, prompt_id="", newer_than=state_mtime):
+            return None
+        interrupt_payload = state.get("last_interrupt")
+        if not isinstance(interrupt_payload, dict):
+            return None
+
+        interrupt_type = str(interrupt_payload.get("type") or "")
+        prompt_kind = "interrupt_feedback"
+        payload: Dict[str, Any]
+        if interrupt_type == "proposal_review":
+            prompt_kind = "proposal_review"
+            payload = {
+                "todo": list(interrupt_payload.get("work_packages") or []),
+                "proposal_description": str(interrupt_payload.get("proposal_md") or ""),
+            }
+        elif interrupt_type == "task_intervention":
+            prompt_kind = "hitl"
+            payload = {
+                "report_text": str(interrupt_payload.get("task_summary") or ""),
+                "report_path": str(interrupt_payload.get("task_id") or ""),
+            }
+        else:
+            payload = {
+                "guidance": str(interrupt_payload.get("message") or "Provide feedback."),
+                "run_id": str(self.run_info.get("run_id") or run_dir.name),
+                "phase": interrupt_type,
+            }
+
+        prompt_id = str(interrupt_payload.get("prompt_id") or f"snapshot::{run_dir.name}::{interrupt_type or 'interrupt'}")
+        return {
+            "prompt_id": prompt_id,
+            "kind": prompt_kind,
+            "payload": payload,
+            "created_at": time.time(),
+            "source": "task_state_snapshot",
+        }
+
+    @staticmethod
+    def _submit_prompt_via_file(run_dir: Path, *, prompt_id: str, text: str) -> bool:
+        pending_path = run_dir / "hitl" / "pending_prompt.json"
+        response_path = run_dir / "hitl" / "pending_response.json"
+        if not pending_path.exists():
+            return False
+        try:
+            pending = json.loads(pending_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if not isinstance(pending, dict):
+            return False
+        if str(pending.get("prompt_id") or "") != str(prompt_id or ""):
+            return False
+        payload = {
+            "prompt_id": str(prompt_id),
+            "text": str(text or ""),
+            "submitted_at": time.time(),
+        }
+        try:
+            response_path.parent.mkdir(parents=True, exist_ok=True)
+            response_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            try:
+                # Clear stale UI prompt immediately; graph-side broker still consumes
+                # pending_response.json for resume.
+                pending_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _has_submitted_feedback(
+        run_dir: Path,
+        *,
+        prompt_id: str,
+        newer_than: float,
+    ) -> bool:
+        response_path = run_dir / "hitl" / "pending_response.json"
+        if not response_path.exists():
+            return False
+        try:
+            raw = json.loads(response_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if not isinstance(raw, dict):
+            return False
+        resp_prompt_id = str(raw.get("prompt_id") or "")
+        if prompt_id and resp_prompt_id != prompt_id:
+            return False
+        submitted_at = raw.get("submitted_at")
+        if not isinstance(submitted_at, (int, float)):
+            return bool((not prompt_id) or (resp_prompt_id == prompt_id))
+        if newer_than > 0 and float(submitted_at) + 1e-6 < float(newer_than):
+            return False
+        return True

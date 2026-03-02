@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+"""Retrieval tool entrypoints and deprecated stubs."""
+
 from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 
 class LitSearchInput(BaseModel):
     """Args schema for lit_search."""
+
     query: str = Field(..., description="Search query text.")
     site: Optional[str] = Field(None, description="Optional site restriction, e.g. scholar.google.com")
     max_results: int = Field(10, ge=1, le=50, description="Max number of results to return.")
@@ -22,21 +26,13 @@ def lit_search(
     headless: bool = True,
     timeout: int = 20,
 ) -> List[Dict[str, Any]]:
-    """
-    Search literature and return a list of evidence anchors (title/authors/url/snippet/...).
-
-    Pydantic Args Schema: LitSearchInput
-    Returns: List[dict]
-    """
-    from .lit_browser import LiteratureBrowser
-
-    with LiteratureBrowser(chromedriver_path=chromedriver_path, headless=headless, timeout=timeout) as lb:
-        results = lb.search(query=query, site=site, max_results=max_results)
-        return [r.__dict__ if hasattr(r, "__dict__") else dict(r) for r in results]
+    _ = (query, site, max_results, chromedriver_path, headless, timeout)
+    raise NotImplementedError("lit_search is deprecated and needs new implementation.")
 
 
 class LitCaptureInput(BaseModel):
     """Args schema for lit_capture."""
+
     target_url: str = Field(..., description="URL to capture.")
     wait_seconds: int = Field(5, ge=0, le=60, description="Wait time after page load before capture (seconds).")
     chromedriver_path: Optional[str] = Field(None, description="Path to ChromeDriver (if not using Selenium Manager).")
@@ -51,21 +47,13 @@ def lit_capture(
     headless: bool = True,
     timeout: int = 20,
 ) -> Dict[str, Any]:
-    """
-    Capture a literature page and extract readable content and metadata as an evidence anchor.
-
-    Pydantic Args Schema: LitCaptureInput
-    Returns: dict
-    """
-    from .lit_browser import LiteratureBrowser
-
-    with LiteratureBrowser(chromedriver_path=chromedriver_path, headless=headless, timeout=timeout) as lb:
-        anchor = lb.capture_page(target_url=target_url, wait_seconds=wait_seconds)
-        return anchor.__dict__ if hasattr(anchor, "__dict__") else dict(anchor)
+    _ = (target_url, wait_seconds, chromedriver_path, headless, timeout)
+    raise NotImplementedError("lit_capture is deprecated and needs new implementation.")
 
 
 class MatdbQueryInput(BaseModel):
     """Args schema for matdb_query."""
+
     criteria: Dict[str, Any] = Field(..., description="Search criteria. Supports keys: material_ids|formula|chemsys|elements.")
     properties: Optional[List[str]] = Field(None, description="Requested fields from materials DB.")
     structures_dir: str = Field("structures", description="Directory to write downloaded structures (CIF).")
@@ -78,12 +66,15 @@ def matdb_query(
     structures_dir: str = "structures",
     api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Query Materials Project and optionally download best-hit structures.
+    _ = (criteria, properties, structures_dir, api_key)
+    raise NotImplementedError("matdb_query is deprecated and needs new implementation.")
 
-    Pydantic Args Schema: MatdbQueryInput
-    Returns: dict with keys {count,hits_path,structures,provider,api_version}
-    """
-    from .matdb import query
 
-    return query(criteria=criteria, properties=properties, structures_dir=structures_dir, api_key=api_key)
+__all__ = [
+    "LitSearchInput",
+    "lit_search",
+    "LitCaptureInput",
+    "lit_capture",
+    "MatdbQueryInput",
+    "matdb_query",
+]

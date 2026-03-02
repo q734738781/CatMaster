@@ -94,5 +94,5 @@ def test_stepper_preserves_bash_exec_streams_for_next_turn(tmp_path) -> None:
     data = output_payload.get("data") or {}
     assert data.get("stdout") == "x" * 6000
     assert data.get("stderr") == "y" * 4000
-    assert data.get("stdout_path") == ".logs/bash_exec/fake.stdout.txt"
-    assert data.get("stderr_path") == ".logs/bash_exec/fake.stderr.txt"
+    assert "stdout_path" not in data
+    assert "stderr_path" not in data

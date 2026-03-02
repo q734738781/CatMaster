@@ -7,9 +7,12 @@ from typing import Any, Dict, Optional
 import os
 import shlex
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     STATUS_FILE_NAME,
+    STDOUT_FILE_NAME,
+    STDERR_FILE_NAME,
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
@@ -142,12 +145,60 @@ def _resolve_mace_head(head_value: Any) -> Optional[str]:
     return head or None
 
 
-def mace_relax(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _success(
+    tool_name: str,
+    *,
+    content: str,
+    data: dict[str, Any],
+    warnings: list[str] | None = None,
+    execution_time: float | None = None,
+) -> tuple[str, dict[str, Any]]:
+    artifact: dict[str, Any] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    if execution_time is not None:
+        artifact["execution_time"] = execution_time
+    return content, artifact
+
+
+def _fail(
+    tool_name: str,
+    *,
+    message: str,
+    data: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
+    error_code: str = "",
+) -> None:
+    details: list[str] = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in (
+            "input_root_rel",
+            "output_root_rel",
+            "batch_state_rel",
+            "status_file_rel",
+            "stdout_file_rel",
+            "stderr_file_rel",
+            "batch_summary_rel",
+            "work_base",
+        ):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            details.append(f"{key}={value}")
+    raise CatMasterToolExecutionError(
+        tool_name=tool_name,
+        public_message="\n".join(details),
+        artifact={"tool_name": tool_name, "data": data or {}, "warnings": warnings or []},
+        error_code=error_code,
+    )
+
+
+def mace_relax(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     _ = MaceRelaxInput(**payload)
-    return create_tool_output(
-        tool_name="mace_relax",
-        success=False,
-        error="Single-file MACE relaxation is deprecated. Use mace_relax_batch with input_root/output_root.",
+    _fail(
+        "mace_relax",
+        message="Single-file MACE relaxation is deprecated. Use mace_relax_batch with input_root/output_root.",
+        error_code="deprecated_single_mode",
     )
 
 def _is_structure_file(path: Path) -> bool:
@@ -225,18 +276,20 @@ def _collect_mace_outputs(stage_root: Path, stage_output: Path, output_root: Pat
     except Exception as exc:
         warnings.append(f"collect output failed: {type(exc).__name__}: {exc}")
 
-    status_src = stage_root / STATUS_FILE_NAME
-    status_dst = output_root / STATUS_FILE_NAME
-    try:
-        if status_src.is_file():
-            status_dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(status_src, status_dst)
-    except Exception as exc:
-        warnings.append(f"collect status failed: {type(exc).__name__}: {exc}")
-    if status_dst.is_file():
-        out["status_file_rel"] = workspace_relpath(status_dst)
-    else:
-        out["status_file_rel"] = None
+    for src_name, field_name in (
+        (STATUS_FILE_NAME, "status_file_rel"),
+        (STDOUT_FILE_NAME, "stdout_file_rel"),
+        (STDERR_FILE_NAME, "stderr_file_rel"),
+    ):
+        src = stage_root / src_name
+        dst = output_root / src_name
+        try:
+            if src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+        except Exception as exc:
+            warnings.append(f"collect {src_name} failed: {type(exc).__name__}: {exc}")
+        out[field_name] = workspace_relpath(dst) if dst.is_file() else None
 
     out["batch_summary_rel"] = (
         workspace_relpath(output_root / "batch_summary.json")
@@ -246,7 +299,7 @@ def _collect_mace_outputs(stage_root: Path, stage_output: Path, output_root: Pat
     return out, warnings
 
 
-def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
+def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params = MaceRelaxBatchInput(**payload)
     reg = TaskRegistry()
     cfg = reg.get("mace_relax_dir")
@@ -264,37 +317,37 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
-        return create_tool_output(
+        _fail(
             "mace_relax_batch",
-            success=False,
-            error=f"input_dir is not a directory: {input_root}",
+            message=f"input_dir is not a directory: {input_root}",
+            error_code="invalid_input_dir",
         )
     if params.output_root is None:
-        return create_tool_output(
+        _fail(
             "mace_relax_batch",
-            success=False,
-            error="output_root is required for directory batch relaxations.",
+            message="output_root is required for directory batch relaxations.",
+            error_code="missing_output_root",
         )
     output_root = resolve_workspace_path(params.output_root)
     if output_root.exists() and not output_root.is_dir():
-        return create_tool_output(
+        _fail(
             "mace_relax_batch",
-            success=False,
-            error=f"output_root is not a directory: {output_root}",
+            message=f"output_root is not a directory: {output_root}",
+            error_code="invalid_output_root",
         )
     if _is_within(output_root, input_root):
-        return create_tool_output(
+        _fail(
             "mace_relax_batch",
-            success=False,
-            error="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+            message="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+            error_code="output_inside_input",
         )
     output_root.mkdir(parents=True, exist_ok=True)
     structures = _collect_structure_files(input_root, exclude_root=None)
     if not structures:
-        return create_tool_output(
+        _fail(
             "mace_relax_batch",
-            success=False,
-            error="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+            message="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+            error_code="no_structures",
         )
 
     work_base = make_work_base("mace_batch")
@@ -374,10 +427,9 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
                 collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
 
     if dispatch_error is not None:
-        return create_tool_output(
-            tool_name="mace_relax_batch",
-            success=False,
-            error=f"DPDispatcher submission failed: {dispatch_error}",
+        _fail(
+            "mace_relax_batch",
+            message=f"DPDispatcher submission failed: {dispatch_error}",
             warnings=collect_warnings,
             data={
                 "work_base": work_base,
@@ -386,31 +438,51 @@ def mace_relax_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "batch_state_rel": workspace_relpath(state_path),
                 **collect_info,
             },
+            error_code="dispatch_failed",
         )
 
-    return create_tool_output(
-        tool_name="mace_relax_batch",
-        success=True,
+    data = {
+        "task_states": result.task_states if result else [],
+        "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        "work_base": result.work_base if result else work_base,
+        "input_root_rel": workspace_relpath(input_root),
+        "output_root_rel": workspace_relpath(output_root),
+        "batch_state_rel": workspace_relpath(state_path),
+        "structures_found": len(structures),
+        "model": model,
+        "head": head,
+        "dispersion": dispersion,
+        "relax_lattice": relax_lattice,
+        **collect_info,
+    }
+    lines = [
+        "mace_relax_batch completed.",
+        f"structures_found={len(structures)} task_states={len(data['task_states'])}",
+        f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
+    ]
+    status_file_rel = str(data.get("status_file_rel") or "")
+    stdout_file_rel = str(data.get("stdout_file_rel") or "")
+    stderr_file_rel = str(data.get("stderr_file_rel") or "")
+    if status_file_rel:
+        lines.append(f"status_file_rel={status_file_rel}")
+    if stdout_file_rel:
+        lines.append(f"stdout_file_rel={stdout_file_rel}")
+    if stderr_file_rel:
+        lines.append(f"stderr_file_rel={stderr_file_rel}")
+    batch_summary_rel = str(data.get("batch_summary_rel") or "")
+    if batch_summary_rel:
+        lines.append(f"batch_summary_rel={batch_summary_rel}")
+    content = "\n".join(lines)
+    return _success(
+        "mace_relax_batch",
+        content=content,
         warnings=collect_warnings,
-        data={
-            "task_states": result.task_states if result else [],
-            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
-            "work_base": result.work_base if result else work_base,
-            "input_root_rel": workspace_relpath(input_root),
-            "output_root_rel": workspace_relpath(output_root),
-            "batch_state_rel": workspace_relpath(state_path),
-            "structures_found": len(structures),
-            "model": model,
-            "head": head,
-            "dispersion": dispersion,
-            "relax_lattice": relax_lattice,
-            **collect_info,
-        },
+        data=data,
         execution_time=result.duration_s if result else None,
     )
 
 
-def mace_sp_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
+def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params = MaceSPBatchInput(**payload)
     reg = TaskRegistry()
     cfg = reg.get("mace_sp_dir")
@@ -427,31 +499,31 @@ def mace_sp_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
-        return create_tool_output(
+        _fail(
             "mace_sp_batch",
-            success=False,
-            error=f"input_dir is not a directory: {input_root}",
+            message=f"input_dir is not a directory: {input_root}",
+            error_code="invalid_input_dir",
         )
     output_root = resolve_workspace_path(params.output_root)
     if output_root.exists() and not output_root.is_dir():
-        return create_tool_output(
+        _fail(
             "mace_sp_batch",
-            success=False,
-            error=f"output_root is not a directory: {output_root}",
+            message=f"output_root is not a directory: {output_root}",
+            error_code="invalid_output_root",
         )
     if _is_within(output_root, input_root):
-        return create_tool_output(
+        _fail(
             "mace_sp_batch",
-            success=False,
-            error="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+            message="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+            error_code="output_inside_input",
         )
     output_root.mkdir(parents=True, exist_ok=True)
     structures = _collect_structure_files(input_root, exclude_root=None)
     if not structures:
-        return create_tool_output(
+        _fail(
             "mace_sp_batch",
-            success=False,
-            error="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+            message="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+            error_code="no_structures",
         )
 
     work_base = make_work_base("mace_sp_batch")
@@ -525,10 +597,9 @@ def mace_sp_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
                 collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
 
     if dispatch_error is not None:
-        return create_tool_output(
-            tool_name="mace_sp_batch",
-            success=False,
-            error=f"DPDispatcher submission failed: {dispatch_error}",
+        _fail(
+            "mace_sp_batch",
+            message=f"DPDispatcher submission failed: {dispatch_error}",
             warnings=collect_warnings,
             data={
                 "work_base": work_base,
@@ -537,25 +608,45 @@ def mace_sp_batch(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "batch_state_rel": workspace_relpath(state_path),
                 **collect_info,
             },
+            error_code="dispatch_failed",
         )
 
-    return create_tool_output(
-        tool_name="mace_sp_batch",
-        success=True,
+    data = {
+        "task_states": result.task_states if result else [],
+        "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        "work_base": result.work_base if result else work_base,
+        "input_root_rel": workspace_relpath(input_root),
+        "output_root_rel": workspace_relpath(output_root),
+        "batch_state_rel": workspace_relpath(state_path),
+        "structures_found": len(structures),
+        "model": model,
+        "head": head,
+        "dispersion": dispersion,
+        **collect_info,
+    }
+    lines = [
+        "mace_sp_batch completed.",
+        f"structures_found={len(structures)} task_states={len(data['task_states'])}",
+        f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
+    ]
+    status_file_rel = str(data.get("status_file_rel") or "")
+    stdout_file_rel = str(data.get("stdout_file_rel") or "")
+    stderr_file_rel = str(data.get("stderr_file_rel") or "")
+    if status_file_rel:
+        lines.append(f"status_file_rel={status_file_rel}")
+    if stdout_file_rel:
+        lines.append(f"stdout_file_rel={stdout_file_rel}")
+    if stderr_file_rel:
+        lines.append(f"stderr_file_rel={stderr_file_rel}")
+    batch_summary_rel = str(data.get("batch_summary_rel") or "")
+    if batch_summary_rel:
+        lines.append(f"batch_summary_rel={batch_summary_rel}")
+    content = "\n".join(lines)
+    return _success(
+        "mace_sp_batch",
+        content=content,
         warnings=collect_warnings,
-        data={
-            "task_states": result.task_states if result else [],
-            "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
-            "work_base": result.work_base if result else work_base,
-            "input_root_rel": workspace_relpath(input_root),
-            "output_root_rel": workspace_relpath(output_root),
-            "batch_state_rel": workspace_relpath(state_path),
-            "structures_found": len(structures),
-            "model": model,
-            "head": head,
-            "dispersion": dispersion,
-            **collect_info,
-        },
+        data=data,
         execution_time=result.duration_s if result else None,
     )
 

@@ -1,0 +1,5 @@
+offload:
+  inline_data_enabled: true
+  preview_chars: 3000
+  offload_chars: 600
+  offload_dir_rel: "_tool_outputs"

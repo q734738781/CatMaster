@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("langchain_core")
 
-from catmaster.agents.orchestrator import Orchestrator
+from catmaster.agents.nodes import _director_observations_view
 
 
 def test_director_observations_view_drops_metadata_paths() -> None:
@@ -32,7 +32,7 @@ def test_director_observations_view_drops_metadata_paths() -> None:
         }
     ]
 
-    sanitized = Orchestrator._director_observations_view(raw)
+    sanitized = _director_observations_view(raw)
     assert len(sanitized) == 1
     row = sanitized[0]
     assert row["task_id"] == "task_01"

@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-"""
-Lightweight tools that let the LLM persist notes into the observations stream.
-"""
+"""Deprecated memory-note tool stubs. Needs new implementation."""
 
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output
+from pydantic import BaseModel, Field
 
 
 class MemoryNoteInput(BaseModel):
@@ -17,18 +14,9 @@ class MemoryNoteInput(BaseModel):
     tags: Optional[List[str]] = Field(None, description="Optional tags for filtering later.")
 
 
-def write_note(payload: Dict[str, object]) -> Dict[str, object]:
-    """
-    Store a textual note so the agent can recall decisions or extracted values.
-
-    Returns a standardized tool output; the orchestrator will add it to observations.
-    """
-    params = MemoryNoteInput(**payload)
-    return create_tool_output(
-        tool_name="write_note",
-        success=True,
-        data={"note": params.note, "tags": params.tags or []},
-    )
+def write_note(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    _ = MemoryNoteInput(**payload)
+    raise NotImplementedError("write_note is deprecated and needs new implementation.")
 
 
 __all__ = ["write_note", "MemoryNoteInput"]

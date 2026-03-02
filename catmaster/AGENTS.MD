@@ -70,22 +70,7 @@ This document defines coding conventions intended for code-generation agents (e.
 
 ### Tools must return standardized outputs
 
-Tools should return the structure produced by `catmaster.tools.base.create_tool_output`:
-
-- `status`: `"success"` or `"failed"`
-- `tool_name`: tool identifier
-- `data`: dict payload
-- `warnings`: list of strings
-- `error`: error message if failed
-- `execution_time`: optional float (seconds)
-
-Do not return raw objects, custom dict shapes, or non-dict values.
-
-### Exceptions inside tools
-
-- Prefer returning `create_tool_output(..., success=False, error=...)` for expected validation or runtime failures.
-- If a tool raises an exception, the task runner will wrap it into a failed tool result, but this should be reserved for truly unexpected errors.
-
+Tools should return the structure accepted by langchain's internal tool schema.
 ### Determinism
 
 - Tools must be deterministic given identical inputs (unless randomness is explicitly required and logged).
@@ -124,9 +109,12 @@ Backward compatibility guidance:
 
 ### 5.2 Tool function signature and output
 
-- Tool function signature: `def tool_name(payload: dict) -> dict:`
+- Tool function signature: `def tool_name(payload: dict) -> tuple[Any, dict]:`
 - First line should validate: `params = InputModel(**payload)`
-- Return `create_tool_output(...)` in all normal cases.
+- Required return is LangChain-native `(content, artifact)` tuple.
+- For business failures, raise `CatMasterToolExecutionError` with a model-visible `public_message`.
+- Do not introduce new output helper protocols for tool returns.
+- Do not return arbitrary dict/list/string and rely on runtime guessing; non-native returns are treated as errors.
 
 ### 5.3 Registering tools
 
@@ -141,6 +129,10 @@ When adding a tool:
 3. Register in `catmaster/tools/registry.py`:
    - import function + InputModel
    - call `register_tool("tool_name", tool_func, InputModel)`
+
+Migration scope policy:
+- Only tools registered/exposed to agent tool surface must follow the strict output contract immediately.
+- For unregistered/internal tools, defer migration until they are prepared for registry exposure.
 
 ### 5.4 Large outputs: write files, return paths
 
@@ -213,6 +205,12 @@ When adding new run phases or behaviors, emit events via the Reporter to preserv
 - Avoid committing large generated artifacts; tools should write them to the workspace at runtime, not to the repository.
 - Keep changes minimal and localized; do not refactor unrelated modules in the same change.
 
+### Test execution in conda (critical)
+
+- When running tests in the project conda environment, use:
+  - `conda run -n catmaster python -m pytest ...`
+- Do **not** use `conda run -n catmaster pytest ...` directly. In this repository it can pick the wrong interpreter and cause false `importorskip` results (tests appear skipped even when dependencies exist in the env).
+
 ---
 
 ## 10) Quick reference: tool skeleton
@@ -224,11 +222,12 @@ Remote tool rule (DPDispatcher/GPU):
 ```python
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
+
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class ExampleToolInput(BaseModel):
@@ -236,19 +235,28 @@ class ExampleToolInput(BaseModel):
     output_dir: str = Field("outputs/example", description="Output path (workspace relative).")
 
 
-def example_tool(payload: Dict[str, Any]) -> Dict[str, Any]:
+def example_tool(payload: Dict[str, Any]):
     params = ExampleToolInput(**payload)
     in_path = resolve_workspace_path(params.path, must_exist=True)
     out_dir = resolve_workspace_path(params.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Comments for logics here
     out_file = out_dir / "result.json"
     out_file.write_text("{}", encoding="utf-8")
 
-    return create_tool_output(
-        tool_name="example_tool",
-        success=True,
-        data={"result_json_rel": workspace_relpath(out_file)},
+    if not out_file.exists():
+        raise CatMasterToolExecutionError(
+            tool_name="example_tool",
+            public_message="result file was not created",
+            artifact={"data": {"output_dir_rel": workspace_relpath(out_dir)}},
+        )
+
+    return (
+        "example_tool completed.\n"
+        f"output_dir_rel={workspace_relpath(out_dir)}",
+        {
+            "tool_name": "example_tool",
+            "data": {"output_dir_rel": workspace_relpath(out_dir)},
+        },
     )
 ```

@@ -5,17 +5,54 @@ Prepare MPRelax-style VASP input sets via StructWriter.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 from ase.io import read as ase_read
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pymatgen.core import Structure
 from pymatgen.io.ase import AseAtomsAdaptor
 
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from .vasp_inputs import StructWriter
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 SUPPORTED_EXTS = {".vasp", ".cif"}
+_ELEMENT_MAP_INCAR_KEYS = {"MAGMOM", "LDAUU", "LDAUJ"}
+
+
+def _element_map_error_message(key: str) -> str:
+    return (
+        f"{key} must be an element-map in this tool due to pymatgen constraints, "
+        'e.g. {"Fe": 2.2} or {"O": 1}.'
+    )
+
+
+def _coerce_element_map_value(key: str, raw_val: Any | None) -> Any | None:
+    if raw_val is None:
+        return None
+    if not isinstance(raw_val, dict):
+        raise ValueError(_element_map_error_message(key))
+    normalized: Dict[str, Any] = {}
+    for sym_raw, value in raw_val.items():
+        symbol = str(sym_raw).strip()
+        if not symbol:
+            raise ValueError(_element_map_error_message(key))
+        normalized[symbol] = value
+    return normalized
+
+
+def _normalize_user_incar_settings(
+    value: Dict,
+) -> Dict:
+    normalized: Dict[str, Any] = {}
+    for raw_key, raw_val in value.items():
+        key = str(raw_key).strip().upper()
+        if not key:
+            raise ValueError("INCAR key must be a non-empty string.")
+        if key in _ELEMENT_MAP_INCAR_KEYS:
+            raw_val = _coerce_element_map_value(key, raw_val)
+        normalized[key] = raw_val
+    return normalized
 
 
 class VaspRelaxPrepareInput(BaseModel):
@@ -51,9 +88,7 @@ class VaspRelaxPrepareInput(BaseModel):
         "bulk",
         description=(
             "Calculation type: 'gas'|'bulk'|'slab'. "
-            "This provides preset INCAR overrides for different calculation types. gas is suitable for small molecules; slab is suitable for surface slab models; "
-            "bulk is suitable for bulk relaxations. Use relax_cell=true for bulk cell+lattice relaxation (ISIF=3), "
-            "or keep relax_cell=false for ion-position-only relaxation (ISIF=2)."
+            "This provides preset INCAR overrides for different calculation types. gas is suitable for small molecules; slab is suitable for surface slab models; bulk is suitable for bulk relaxations."
         ),
     )
     relax_cell: bool = Field(
@@ -77,14 +112,25 @@ class VaspRelaxPrepareInput(BaseModel):
             "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to the atomic center of mass of cell in fractional coordinates."
         ),
     )
-    user_incar_settings: Optional[Dict[str, Any]] = Field(
-        None,
+    user_incar_settings: Dict = Field(
+        default_factory=dict,
         description=(
-            "User INCAR overrides (pymatgen Incar semantics) on top of MPRelaxSet (calc_type presets will always win if conflict with params specified here). "
-            "Specify MAGMOM, LDAUU, etc. if user specially needed, format as {\"element\": value}, not a per-atom list. "
-            "You can also specify other params, to adapt specific calculation requirements."
+            "User INCAR overrides as a json object as per pymatgen's user_incar_settings format, e.g. "
+            '{"MAGMOM":{"O":1},"ALGO":"Fast"}. '
+            "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
+            "Use null only as a value inside the override object to remove a specific INCAR key, e.g. "
+            "`{\"LREAL\": null}`. "
+            "calc_type/task-required presets still take precedence on key conflict."
         ),
     )
+
+    @field_validator("user_incar_settings")
+    @classmethod
+    def _validate_user_incar_settings(
+        cls,
+        value: Dict,
+    ) -> Dict:
+        return _normalize_user_incar_settings(value)
 
     @model_validator(mode="after")
     def _validate_relax_cell_conflict(self) -> "VaspRelaxPrepareInput":
@@ -94,7 +140,7 @@ class VaspRelaxPrepareInput(BaseModel):
 
 
 class VaspSPPrepareInput(BaseModel):
-    """Prepare MPRelaxSet-based VASP single-point inputs for structures under a file or directory."""
+    """Prepare MPRelaxSet-based VASP single-point inputs for structures under a file or directory. Parameters are the same as VaspRelaxPrepareInput, but with single_point relaxation enabled (NSW=0, IBRION=-1)."""
 
     input_path: str = Field(
         ...,
@@ -122,14 +168,28 @@ class VaspSPPrepareInput(BaseModel):
     enable_dipole: bool = Field(
         False,
         description=(
-            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to "
-            "the atomic center of mass in fractional coordinates."
+            "Enable dipole correction helper. When true, default IDIPOL=3 and set DIPOL to the atomic center of mass in fractional coordinates."
         ),
     )
-    user_incar_settings: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Additional INCAR overrides.",
+    user_incar_settings: Dict = Field(
+        default_factory=dict,
+        description=(
+            "User INCAR overrides as a json object as per pymatgen's user_incar_settings format, e.g. "
+            '{"MAGMOM":{"O":1},"ALGO":"Fast"}. '
+            "In this tool, due to pymatgen constraints, MAGMOM/LDAUU/LDAUJ must be provided as symbol:value maps. "
+            "Use null only as a value inside the override object to remove a specific INCAR key, e.g. "
+            "`{\"LORBIT\": null}`. "
+            "calc_type/task-required presets still take precedence on key conflict."
+        ),
     )
+
+    @field_validator("user_incar_settings")
+    @classmethod
+    def _validate_user_incar_settings(
+        cls,
+        value: Dict,
+    ) -> Dict:
+        return _normalize_user_incar_settings(value)
 
 
 def _load_structure(path: Path) -> Structure:
@@ -162,7 +222,7 @@ def _prepare_structures(
     compute_dos: bool,
     enable_dipole: bool,
     single_point: bool,
-) -> Dict[str, object]:
+) -> tuple[str, dict[str, Any]]:
 
     output_root.mkdir(parents=True, exist_ok=True)
     writer = StructWriter()
@@ -206,44 +266,67 @@ def _prepare_structures(
         except Exception as exc:
             errors.append({"source": workspace_relpath(struct_path), "error": str(exc)})
             if not batch_mode:
-                return create_tool_output(
+                raise CatMasterToolExecutionError(
                     tool_name=tool_name,
-                    success=False,
-                    error=str(exc),
-                    data={
-                        "calc_type": calc_type,
-                        "relax_cell": relax_cell,
-                        "single_point": single_point,
-                        "compute_dos": compute_dos,
-                        "enable_dipole": enable_dipole,
-                        "k_product": k_product,
-                        "structures_processed": 0,
-                        "errors": errors,
+                    public_message=(
+                        f"{tool_name} failed for {workspace_relpath(struct_path)}: {exc}\n"
+                        f"input_path_rel={workspace_relpath(input_path)}\n"
+                        f"output_root_rel={workspace_relpath(output_root)}"
+                    ),
+                    artifact={
+                        "tool_name": tool_name,
+                        "data": {
+                            "input_path_rel": workspace_relpath(input_path),
+                            "output_root_rel": workspace_relpath(output_root),
+                            "calc_type": calc_type,
+                            "relax_cell": relax_cell,
+                            "single_point": single_point,
+                            "compute_dos": compute_dos,
+                            "enable_dipole": enable_dipole,
+                            "k_product": k_product,
+                            "structures_processed": 0,
+                            "errors": errors,
+                        },
                     },
+                    error_code="prepare_failed",
                 )
         if not batch_mode:
             break
-    
-    # Return standardized output
-    return create_tool_output(
-        tool_name=tool_name,
-        success=True,
-        data={
-            "calc_type": calc_type,
-            "relax_cell": relax_cell,
-            "single_point": single_point,
-            "compute_dos": compute_dos,
-            "enable_dipole": enable_dipole,
-            "k_product": k_product,
-            "structures_processed": len(emitted),
-            "prepared_directories_rel": [str(e["output_dir_rel"]) for e in emitted],
-            "errors_count": len(errors),
-            "errors": errors,
-        }
-    )
+
+    first_prepared = emitted[0]["output_dir_rel"] if emitted else ""
+    first_error = errors[0] if errors else {}
+    data = {
+        "input_path_rel": workspace_relpath(input_path),
+        "output_root_rel": workspace_relpath(output_root),
+        "calc_type": calc_type,
+        "relax_cell": relax_cell,
+        "single_point": single_point,
+        "compute_dos": compute_dos,
+        "enable_dipole": enable_dipole,
+        "k_product": k_product,
+        "structures_processed": len(emitted),
+        "prepared_directories_rel": [str(e["output_dir_rel"]) for e in emitted],
+        "errors_count": len(errors),
+        "errors": errors,
+    }
+    lines = [
+        f"{tool_name} completed.",
+        f"structures_processed={len(emitted)} errors_count={len(errors)} calc_type={calc_type}",
+        f"output_root_rel={data['output_root_rel']}",
+    ]
+    if first_prepared:
+        lines.append(f"first_prepared_dir={first_prepared}")
+    first_error_source = str(first_error.get("source") or "")
+    if first_error_source:
+        lines.append(f"first_error_source={first_error_source}")
+    content = "\n".join(lines)
+    return content, {
+        "tool_name": tool_name,
+        "data": data,
+    }
 
 
-def vasp_relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
+def vasp_relax_prepare(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
     params = VaspRelaxPrepareInput(**payload)
     return _prepare_structures(
         tool_name="vasp_relax_prepare",
@@ -252,7 +335,7 @@ def vasp_relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
         calc_type=params.calc_type,
         relax_cell=bool(params.relax_cell),
         k_product=int(params.k_product),
-        user_incar_settings=params.user_incar_settings or {},
+        user_incar_settings=dict(params.user_incar_settings),
         use_d3=bool(params.use_d3),
         use_dft_plus_u=bool(params.use_dft_plus_u),
         compute_dos=bool(params.compute_dos),
@@ -261,7 +344,7 @@ def vasp_relax_prepare(payload: Dict[str, object]) -> Dict[str, object]:
     )
 
 
-def vasp_sp_prepare(payload: Dict[str, object]) -> Dict[str, object]:
+def vasp_sp_prepare(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
     params = VaspSPPrepareInput(**payload)
     return _prepare_structures(
         tool_name="vasp_sp_prepare",
@@ -270,7 +353,7 @@ def vasp_sp_prepare(payload: Dict[str, object]) -> Dict[str, object]:
         calc_type=params.calc_type,
         relax_cell=False,
         k_product=int(params.k_product),
-        user_incar_settings=params.user_incar_settings or {},
+        user_incar_settings=dict(params.user_incar_settings),
         use_d3=bool(params.use_d3),
         use_dft_plus_u=bool(params.use_dft_plus_u),
         compute_dos=bool(params.compute_dos),
@@ -279,4 +362,9 @@ def vasp_sp_prepare(payload: Dict[str, object]) -> Dict[str, object]:
     )
 
 
-__all__ = ["VaspRelaxPrepareInput", "VaspSPPrepareInput", "vasp_relax_prepare", "vasp_sp_prepare"]
+__all__ = [
+    "VaspRelaxPrepareInput",
+    "VaspSPPrepareInput",
+    "vasp_relax_prepare",
+    "vasp_sp_prepare",
+]

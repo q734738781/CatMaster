@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from catmaster.agents.response_schemas import DirectorOutput, TaskPacket
+
+
+def test_perform_next_task_requires_task_packet() -> None:
+    with pytest.raises(ValidationError, match="requires its matching payload"):
+        DirectorOutput(
+            state="PerformNextTask",
+            rationale="Dispatch next task.",
+            perform_next_task=None,
+            minor_revise_proposal=None,
+            major_revise_proposal=None,
+            stop_and_synthesize=None,
+        )
+
+
+def test_perform_next_task_accepts_task_packet() -> None:
+    payload = DirectorOutput(
+        state="PerformNextTask",
+        rationale="Dispatch next task.",
+        perform_next_task={
+            "task_packet": {
+                "goal": "Run adsorption references",
+                "task_detail": "Enable D3 and keep slab setup fixed.",
+                "expected_outputs": ["results/adsorption/reference_energies.json"],
+                "suggested_tools": ["bash_exec"],
+                "reference_hint": ["MEMORY/topics/FACTS.md", "rg keywords: adsorption D3"],
+            },
+        },
+        minor_revise_proposal=None,
+        major_revise_proposal=None,
+        stop_and_synthesize=None,
+    )
+    assert payload.perform_next_task is not None
+    assert payload.perform_next_task.task_packet.task_detail == "Enable D3 and keep slab setup fixed."
+
+
+def test_task_packet_model_instance_roundtrip() -> None:
+    packet = TaskPacket(
+        goal="Run task",
+        task_detail="Use explicit settings.",
+        expected_outputs=["reports/out.json"],
+        suggested_tools=["bash_exec"],
+        reference_hint=["MEMORY/topics/FACTS.md"],
+    )
+    payload = DirectorOutput(
+        state="PerformNextTask",
+        rationale="Proceed",
+        perform_next_task={"task_packet": packet},
+        minor_revise_proposal=None,
+        major_revise_proposal=None,
+        stop_and_synthesize=None,
+    )
+    assert payload.perform_next_task is not None
+    assert payload.perform_next_task.task_packet.goal == "Run task"
+
+
+def test_task_packet_reference_hint_requires_list() -> None:
+    with pytest.raises(ValidationError):
+        TaskPacket(
+            goal="Run task",
+            task_detail="Use explicit settings.",
+            expected_outputs=["reports/out.json"],
+            suggested_tools=["bash_exec"],
+            reference_hint="MEMORY/topics/FACTS.md",
+        )
+
+
+def test_director_output_requires_all_top_level_fields() -> None:
+    with pytest.raises(ValidationError):
+        DirectorOutput(
+            state="StopAndSynthesize",
+            rationale="done",
+        )
+
+
+def test_perform_next_task_rejects_redundant_deliverables_field() -> None:
+    with pytest.raises(ValidationError):
+        DirectorOutput(
+            state="PerformNextTask",
+            rationale="Dispatch next task.",
+            perform_next_task={
+                "task_packet": {
+                    "goal": "Run adsorption references",
+                    "task_detail": "Enable D3 and keep slab setup fixed.",
+                    "expected_outputs": ["results/adsorption/reference_energies.json"],
+                    "suggested_tools": ["bash_exec"],
+                    "reference_hint": ["MEMORY/topics/FACTS.md"],
+                },
+                "deliverables": ["results/adsorption/reference_energies.json"],
+            },
+            minor_revise_proposal=None,
+            major_revise_proposal=None,
+            stop_and_synthesize=None,
+        )
+
+
+def test_non_selected_payload_must_be_null() -> None:
+    with pytest.raises(ValidationError, match="payload must be null when state=PerformNextTask"):
+        DirectorOutput(
+            state="PerformNextTask",
+            rationale="Dispatch next task.",
+            perform_next_task={
+                "task_packet": {
+                    "goal": "Run adsorption references",
+                    "task_detail": "Enable D3 and keep slab setup fixed.",
+                    "expected_outputs": ["results/adsorption/reference_energies.json"],
+                    "suggested_tools": ["bash_exec"],
+                    "reference_hint": ["MEMORY/topics/FACTS.md"],
+                },
+            },
+            minor_revise_proposal=None,
+            major_revise_proposal=None,
+            stop_and_synthesize={"stop_reason": None},
+        )

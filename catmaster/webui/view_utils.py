@@ -5,6 +5,8 @@ from datetime import datetime
 from html import escape
 from typing import Any, Callable, Dict, List, Optional
 
+from .components import status_color
+
 
 def truncate(value: Any, max_len: int = 140) -> str:
     text = "" if value is None else str(value)
@@ -56,6 +58,12 @@ def summarize_event(event: Dict[str, Any]) -> str:
     if name == "RUN_PAUSED":
         phase = payload.get("phase", "")
         return f"paused phase={phase}".strip()
+    if name == "RUN_WAITING_INPUT":
+        interrupt_type = payload.get("interrupt_type", "")
+        return f"waiting_input type={interrupt_type}".strip()
+    if name == "RUN_INPUT_RECEIVED":
+        interrupt_type = payload.get("interrupt_type", "")
+        return f"input_received type={interrupt_type}".strip()
     if name == "TASK_SUMMARY":
         outcome = payload.get("outcome", "")
         summary = payload.get("summary_snippet", "")
@@ -79,6 +87,103 @@ def format_event_line(event: Dict[str, Any]) -> str:
         stamp = "--:--:--"
     summary = summarize_event(event)
     return f"{stamp} {event.get('name','')} {summary}".rstrip()
+
+
+# ---------------------------------------------------------------------------
+# Event category for styling
+# ---------------------------------------------------------------------------
+
+_EVENT_CATEGORY: Dict[str, str] = {
+    "TOOL_CALL_START": "tool",
+    "TOOL_CALL_END": "tool",
+    "TOOL_CALL_INTERRUPTED": "tool",
+    "TOOL_VALIDATE_FAILED": "tool",
+    "TASK_START": "task",
+    "TASK_END": "task",
+    "TASK_SUMMARY": "task",
+    "TASK_DECISION": "task",
+    "TASK_JOURNAL_APPEND": "task",
+    "RUN_INIT_DONE": "run",
+    "RUN_END": "run",
+    "RUN_PAUSED": "run",
+    "RUN_WAITING_INPUT": "run",
+    "RUN_INPUT_RECEIVED": "run",
+    "INTERRUPT_REQUESTED": "interrupt",
+    "INTERRUPT_ACKED": "interrupt",
+    "FINAL_SUMMARY_DONE": "run",
+    "FINAL_SUMMARY_START": "run",
+    "PROPOSAL_START": "run",
+    "PROPOSAL_REVIEW_WAIT_INPUT": "run",
+    "PROPOSAL_REVIEW_SHOW": "run",
+}
+
+_CAT_COLORS = {
+    "tool": "#0ea5e9",
+    "task": "#8b5cf6",
+    "run": "#6b7280",
+    "interrupt": "#f59e0b",
+}
+
+_CAT_ICONS = {
+    "tool": "\u2699",
+    "task": "\u25B6",
+    "run": "\u25CF",
+    "interrupt": "\u26A0",
+}
+
+
+def format_event_html(event: Dict[str, Any]) -> str:
+    ts = event.get("ts")
+    if ts:
+        try:
+            stamp = datetime.fromtimestamp(float(ts)).strftime("%H:%M:%S")
+        except Exception:
+            stamp = "--:--:--"
+    else:
+        stamp = "--:--:--"
+    name = str(event.get("name", ""))
+    summary = escape(summarize_event(event))
+    cat = _EVENT_CATEGORY.get(name, "run")
+    cat_color = _CAT_COLORS.get(cat, "#475569")
+    icon = _CAT_ICONS.get(cat, "\u25CF")
+    return (
+        f'<div style="display:flex;gap:8px;align-items:stretch;padding:0;font-size:0.82rem;'
+        f'position:relative;">'
+        # timeline connector
+        f'<div style="width:2px;background:{cat_color}30;flex-shrink:0;'
+        f'margin:0 4px;border-radius:1px;"></div>'
+        # content row
+        f'<div style="display:flex;gap:8px;align-items:baseline;padding:4px 4px;flex:1;'
+        f'border-radius:6px;transition:background .12s;cursor:default;" '
+        f'onmouseenter="this.style.background=\'{cat_color}08\'" '
+        f'onmouseleave="this.style.background=\'transparent\'">'
+        f'<span style="color:#9ca3af;font-family:monospace;min-width:56px;font-size:0.78rem;">'
+        f'{stamp}</span>'
+        f'<span style="color:{cat_color};font-size:0.82rem;width:14px;text-align:center;'
+        f'flex-shrink:0;">{icon}</span>'
+        f'<code style="background:{cat_color}12;color:{cat_color};padding:1px 7px;'
+        f'border-radius:5px;font-size:0.76rem;white-space:nowrap;font-weight:600;">'
+        f'{escape(name)}</code>'
+        f'<span style="color:var(--body-text-color,#1e293b);font-size:0.8rem;">{summary}</span>'
+        f"</div></div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Run cards HTML (with left accent bar, hover, status icons)
+# ---------------------------------------------------------------------------
+
+_CARD_STATUS_ICONS: Dict[str, str] = {
+    "running": "\u25B6",
+    "starting": "\u25B6",
+    "done": "\u2714",
+    "error": "\u2716",
+    "failure": "\u2716",
+    "paused": "\u23F8",
+    "interrupted_paused": "\u23F8",
+    "awaiting_human_feedback": "\u270B",
+    "needs_intervention": "\u26A0",
+}
 
 
 def render_run_cards_html(
@@ -107,43 +212,153 @@ def render_run_cards_html(
         filtered.append(card)
 
     if not filtered:
-        return '<div class="cm-empty">No runs matched current filter.</div>'
+        return (
+            '<div style="color:#9ca3af;font-size:0.9rem;'
+            'border:1px dashed #d1d5db;border-radius:14px;padding:20px;text-align:center;">'
+            "No runs matched current filter.</div>"
+        )
 
-    out: List[str] = ['<div class="cm-card-list">']
+    out: List[str] = ['<div style="display:flex;flex-direction:column;gap:10px;">']
     for card in filtered:
         run_name = str(card.get("run_name") or "")
         headline = escape(str(card.get("headline") or run_name))
         summary = escape(str(card.get("summary") or ""))
-        status = escape(str(card.get("status") or "unknown"))
+        status_str = str(card.get("status") or "unknown")
+        status_escaped = escape(status_str)
         model_name = escape(str(card.get("model_name") or ""))
         source = escape(str(card.get("source") or "rule"))
-        is_active = " cm-active" if run_name and run_name == selected_run else ""
+        is_active = run_name and run_name == selected_run
         next_actions = card.get("next_actions") if isinstance(card.get("next_actions"), list) else []
+
+        badge_color = status_color(status_str)
+        icon = _CARD_STATUS_ICONS.get(status_str, "\u25CF")
+        active_ring = (
+            f"box-shadow:0 0 0 2px {badge_color}40, 0 4px 20px rgba(0,0,0,.06);"
+            if is_active
+            else "box-shadow:0 2px 12px rgba(0,0,0,.04);"
+        )
 
         link_open = ""
         link_close = ""
         if run_link_builder is not None and run_name:
             href = escape(run_link_builder(run_name), quote=True)
-            link_open = f'<a class="cm-card-link" href="{href}">'
+            link_open = f'<a style="text-decoration:none;color:inherit;display:block;" href="{href}">'
             link_close = "</a>"
 
         out.append(link_open)
-        out.append(f'<article class="cm-card{is_active}">')
-        out.append(f'<div class="cm-card-head"><code>{escape(run_name)}</code><span class="cm-badge">{status}</span></div>')
-        out.append(f"<h4>{headline}</h4>")
-        out.append(f"<p>{summary}</p>")
+        out.append(
+            f'<article style="display:flex;border-radius:14px;overflow:hidden;'
+            f"background:rgba(255,255,255,.92);backdrop-filter:blur(8px);"
+            f"border:1px solid #e5e7eb;"
+            f'transition:transform .15s ease,box-shadow .15s ease;{active_ring}" '
+            f'onmouseenter="this.style.transform=\'translateY(-2px)\';'
+            f"this.style.boxShadow='0 8px 24px rgba(0,0,0,.08)'\" "
+            f'onmouseleave="this.style.transform=\'none\';'
+            f"this.style.boxShadow='{active_ring.split(';')[0]}';\">"
+        )
+        # left accent bar
+        out.append(
+            f'<div style="width:4px;flex-shrink:0;background:{badge_color};'
+            f'border-radius:4px 0 0 4px;"></div>'
+        )
+        # card body
+        out.append('<div style="flex:1;padding:12px 14px;">')
+        # header row
+        out.append(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'margin-bottom:6px;">'
+            f'<code style="font-size:0.8rem;color:#6b7280;background:#f3f4f6;'
+            f'padding:1px 8px;border-radius:6px;">{escape(run_name)}</code>'
+            f'<span style="display:inline-flex;align-items:center;gap:4px;'
+            f"border:1px solid {badge_color}40;color:{badge_color};"
+            f'border-radius:999px;padding:2px 10px;font-size:0.75rem;font-weight:600;">'
+            f'{icon} {status_escaped}</span>'
+            f"</div>"
+        )
+        out.append(
+            f'<div style="font-size:0.93rem;font-weight:600;color:#111827;'
+            f'margin-bottom:4px;">{headline}</div>'
+        )
+        if summary:
+            out.append(
+                f'<div style="font-size:0.83rem;color:#6b7280;margin-bottom:6px;'
+                f'line-height:1.4;">{summary}</div>'
+            )
         if next_actions:
-            out.append('<ul class="cm-actions">')
+            out.append(
+                '<div style="margin:6px 0;padding-left:14px;">'
+            )
             for action in next_actions[:3]:
-                out.append(f"<li>{escape(str(action))}</li>")
-            out.append("</ul>")
+                out.append(
+                    f'<div style="font-size:0.8rem;color:#4b5563;padding:1px 0;">'
+                    f'\u2022 {escape(str(action))}</div>'
+                )
+            out.append("</div>")
         meta_bits = [bit for bit in [model_name, f"source:{source}"] if bit]
-        out.append(f'<div class="cm-meta">{" | ".join(meta_bits)}</div>')
+        out.append(
+            f'<div style="font-size:0.73rem;color:#9ca3af;margin-top:4px;">'
+            f'{"  \u00B7  ".join(meta_bits)}</div>'
+        )
+        out.append("</div>")  # card body
         out.append("</article>")
         out.append(link_close)
     out.append("</div>")
     return "".join(out)
 
+
+# ---------------------------------------------------------------------------
+# Progress bar HTML
+# ---------------------------------------------------------------------------
+
+def render_progress_bar_html(
+    completed: int,
+    pending: int,
+    failed: int,
+    needs_intervention: int,
+    total: int,
+) -> str:
+    if total <= 0:
+        return (
+            '<div style="height:8px;border-radius:4px;background:#e5e7eb;'
+            'margin:6px 0;"></div>'
+        )
+    segments: List[str] = []
+
+    def _seg(count: int, color: str) -> None:
+        if count > 0:
+            pct = max(1, round(count / total * 100))
+            segments.append(
+                f'<div style="width:{pct}%;height:100%;background:{color};'
+                f'transition:width .3s ease;" '
+                f'title="{count}/{total}"></div>'
+            )
+
+    _seg(completed, "#10b981")
+    _seg(failed, "#ef4444")
+    _seg(needs_intervention, "#f97316")
+    _seg(pending, "#d1d5db")
+
+    bar = "".join(segments)
+    labels = (
+        f'<div style="display:flex;gap:12px;font-size:0.75rem;color:#6b7280;margin-top:3px;flex-wrap:wrap;">'
+        f'<span>\u25CF <span style="color:#10b981">{completed}</span> done</span>'
+        f'<span>\u25CF <span style="color:#d1d5db">{pending}</span> pending</span>'
+        f'<span>\u25CF <span style="color:#ef4444">{failed}</span> failed</span>'
+        f'<span>\u25CF <span style="color:#f97316">{needs_intervention}</span> needs attn</span>'
+        f"<span>/ {total} total</span>"
+        f"</div>"
+    )
+    return (
+        f'<div style="margin:8px 0;">'
+        f'<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;'
+        f'background:#e5e7eb;gap:1px;">{bar}</div>'
+        f"{labels}</div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Live tracker (markdown + inline HTML progress)
+# ---------------------------------------------------------------------------
 
 def render_live_tracker_markdown(state: Dict[str, Any]) -> str:
     if not isinstance(state, dict) or not state:
@@ -165,17 +380,18 @@ def render_live_tracker_markdown(state: Dict[str, Any]) -> str:
     task_id = str(state.get("current_task_id") or "")
     task_goal = str(state.get("current_task_goal") or "")
     phase = str(state.get("current_phase") or "")
-    status = str(state.get("status") or "unknown")
+    status_str = str(state.get("status") or "unknown")
 
     lines: List[str] = ["### Live Tracker"]
     if headline:
         lines.append(f"**{headline}**")
-    lines.append(f"Status: `{status}` | Phase: `{phase or 'n/a'}`")
-    lines.append(
-        "Progress: "
-        f"`{completed}` completed / `{pending}` pending / `{failed}` failed / "
-        f"`{needs_intervention}` needs_intervention / total `{total}`"
+    lines.append(f"Status: `{status_str}` | Phase: `{phase or 'n/a'}`")
+
+    progress_html = render_progress_bar_html(
+        completed, pending, failed, needs_intervention, total,
     )
+    lines.append(progress_html)
+
     if live_summary:
         lines.append("")
         lines.append(live_summary)
@@ -252,8 +468,10 @@ def _render_json_block(value: Any, *, max_chars: int) -> str:
 
 
 __all__ = [
+    "format_event_html",
     "format_event_line",
     "render_live_tracker_markdown",
+    "render_progress_bar_html",
     "render_run_cards_html",
     "summarize_event",
     "truncate",

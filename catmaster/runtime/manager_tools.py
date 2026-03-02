@@ -11,7 +11,7 @@ from catmaster.runtime.memory_store import MemoryStore
 
 
 def memory_read_index(
-    max_lines: Optional[int] = 200,
+    max_lines: Optional[int] = None,
     max_chars: Optional[int] = None,
     *,
     workspace: Optional[str | Path] = None,

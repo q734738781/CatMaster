@@ -6,7 +6,10 @@ from pydantic import ValidationError
 pytest.importorskip("pymatgen")
 
 from catmaster.tools.geometry_inputs.vasp_inputs import StructWriter
-from catmaster.tools.geometry_inputs.vasp_prepare import VaspRelaxPrepareInput, VaspSPPrepareInput
+from catmaster.tools.geometry_inputs.vasp_prepare import (
+    VaspRelaxPrepareInput,
+    VaspSPPrepareInput,
+)
 
 
 def test_vasp_relax_prepare_input_rejects_legacy_lattice_calc_type() -> None:
@@ -16,6 +19,80 @@ def test_vasp_relax_prepare_input_rejects_legacy_lattice_calc_type() -> None:
             output_root="tests/test_output/relax_prepare",
             calc_type="lattice",
         )
+
+
+def test_vasp_relax_prepare_input_accepts_user_incar_settings_dict() -> None:
+    params = VaspRelaxPrepareInput(
+        input_path="tests/assets/Fe.cif",
+        output_root="tests/test_output/relax_prepare",
+        calc_type="bulk",
+        user_incar_settings={"magmom": {"Fe": 2.2}, "NUPDOWN": 2},
+    )
+    assert params.user_incar_settings["MAGMOM"] == {"Fe": 2.2}
+    assert params.user_incar_settings["NUPDOWN"] == 2
+
+
+def test_user_incar_settings_rejects_magmom_list_with_clear_message() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="MAGMOM must be an element-map in this tool due to pymatgen constraints",
+    ):
+        VaspRelaxPrepareInput(
+            input_path="tests/assets/Fe.cif",
+            output_root="tests/test_output/relax_prepare",
+            calc_type="bulk",
+            user_incar_settings={"MAGMOM": [1, 1]},
+        )
+
+
+def test_user_incar_settings_rejects_symbol_value_list_form() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="MAGMOM must be an element-map in this tool due to pymatgen constraints",
+    ):
+        VaspRelaxPrepareInput(
+            input_path="tests/assets/Fe.cif",
+            output_root="tests/test_output/relax_prepare",
+            calc_type="bulk",
+            user_incar_settings={"MAGMOM": [{"symbol": "Fe", "value": 2.2}]},
+        )
+
+
+def test_user_incar_settings_rejects_ldauu_pair_list_form() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="LDAUU must be an element-map in this tool due to pymatgen constraints",
+    ):
+        VaspRelaxPrepareInput(
+            input_path="tests/assets/Fe.cif",
+            output_root="tests/test_output/relax_prepare",
+            calc_type="bulk",
+            user_incar_settings={"LDAUU": [["Fe", 4.0]]},
+        )
+
+
+def test_vasp_relax_prepare_input_rejects_legacy_kv_list_user_incar_settings() -> None:
+    with pytest.raises(ValidationError):
+        VaspRelaxPrepareInput(
+            input_path="tests/assets/Fe.cif",
+            output_root="tests/test_output/relax_prepare",
+            calc_type="bulk",
+            user_incar_settings=[{"key": "MAGMOM", "value": {"Fe": 2.2}}],
+        )
+
+
+def test_user_incar_settings_normalizes_keys_and_preserves_none() -> None:
+    params = VaspRelaxPrepareInput(
+        input_path="tests/assets/Fe.cif",
+        output_root="tests/test_output/relax_prepare",
+        calc_type="bulk",
+        user_incar_settings={
+            "isym": 0,
+            "ISYM": None,
+            "MAGMOM": {"O": 1},
+        },
+    )
+    assert params.user_incar_settings == {"ISYM": None, "MAGMOM": {"O": 1}}
 
 
 @pytest.mark.parametrize("calc_type", ["gas", "slab"])

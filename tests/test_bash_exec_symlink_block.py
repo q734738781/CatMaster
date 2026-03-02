@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from catmaster.tools.base import workspace_root, workspace_scope
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import system_root, workspace_root, workspace_scope
 from catmaster.tools.misc.bash_exec import bash_exec
 
 
@@ -17,18 +18,17 @@ from catmaster.tools.misc.bash_exec import bash_exec
 )
 def test_bash_exec_blocks_symlink_usage(tmp_path, script: str, expected_flag: str) -> None:
     with workspace_scope(tmp_path):
-        out = bash_exec(
-            {
-                "script": script,
-                "cwd": ".",
-                "strict": True,
-                "no_network": False,
-                "timeout_s": 5.0,
-            }
-        )
-    assert out["status"] == "failed"
-    assert "Symbolic link operations are disabled" in (out.get("error") or "")
-    assert expected_flag in str(out.get("data", {}).get("blocked_reason", ""))
+        with pytest.raises(CatMasterToolExecutionError) as excinfo:
+            bash_exec(
+                {
+                    "script": script,
+                    "cwd": ".",
+                    "no_network": False,
+                    "timeout_s": 5.0,
+                }
+            )
+    assert "Symbolic link operations are disabled" in str(excinfo.value)
+    assert expected_flag in str(excinfo.value.artifact.get("data", {}).get("blocked_reason", ""))
 
 
 def test_bash_exec_allows_regular_copy(tmp_path) -> None:
@@ -39,13 +39,12 @@ def test_bash_exec_allows_regular_copy(tmp_path) -> None:
             {
                 "script": "cp a.txt b.txt && cat b.txt",
                 "cwd": ".",
-                "strict": True,
                 "no_network": False,
                 "timeout_s": 5.0,
             }
         )
-    assert out["status"] == "success"
-    assert "ok" in str(out.get("data", {}).get("stdout", ""))
+    _, artifact = out
+    assert "ok" in str(artifact.get("data", {}).get("stdout", ""))
     assert (files_root / "b.txt").exists()
 
 
@@ -57,17 +56,16 @@ def test_bash_exec_does_not_block_cp_long_options_without_symlink(tmp_path) -> N
             {
                 "script": "cp --preserve=mode a.txt c.txt && cat c.txt",
                 "cwd": ".",
-                "strict": True,
                 "no_network": False,
                 "timeout_s": 5.0,
             }
         )
-    assert out["status"] == "success"
-    assert "ok" in str(out.get("data", {}).get("stdout", ""))
+    _, artifact = out
+    assert "ok" in str(artifact.get("data", {}).get("stdout", ""))
     assert (files_root / "c.txt").exists()
 
 
-def test_bash_exec_persists_full_stream_logs_and_returns_tails(tmp_path) -> None:
+def test_bash_exec_persists_full_stream_logs_without_pre_truncation(tmp_path) -> None:
     with workspace_scope(tmp_path):
         out = bash_exec(
             {
@@ -79,24 +77,25 @@ def test_bash_exec_persists_full_stream_logs_and_returns_tails(tmp_path) -> None
                     "PY\n"
                 ),
                 "cwd": ".",
-                "strict": True,
                 "no_network": False,
                 "timeout_s": 5.0,
             }
         )
-        files_root = workspace_root(tmp_path)
+        audit_dir = system_root(tmp_path) / "audit" / "bash_exec"
 
-    assert out["status"] == "success"
-    data = out.get("data", {})
-    stdout_path = str(data.get("stdout_path") or "")
-    stderr_path = str(data.get("stderr_path") or "")
-    assert stdout_path
-    assert stderr_path
-    stdout_file = files_root / stdout_path
-    stderr_file = files_root / stderr_path
-    assert stdout_file.exists()
-    assert stderr_file.exists()
+    _, artifact = out
+    data = artifact.get("data", {})
+    assert "stdout_path" not in data
+    assert "stderr_path" not in data
+    stdout_logs = sorted(audit_dir.glob("*.stdout.txt"))
+    stderr_logs = sorted(audit_dir.glob("*.stderr.txt"))
+    assert stdout_logs
+    assert stderr_logs
+    stdout_file = stdout_logs[-1]
+    stderr_file = stderr_logs[-1]
     assert len(stdout_file.read_text(encoding="utf-8")) >= 12000
     assert len(stderr_file.read_text(encoding="utf-8")) >= 9000
-    assert len(str(data.get("stdout_tail") or "")) <= 3000
-    assert len(str(data.get("stderr_tail") or "")) <= 3000
+    assert str(data.get("stdout") or "").startswith("A")
+    assert str(data.get("stderr") or "").startswith("B")
+    assert len(str(data.get("stdout") or "")) >= 12000
+    assert len(str(data.get("stderr") or "")) >= 9000

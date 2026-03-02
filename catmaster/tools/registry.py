@@ -3,8 +3,15 @@ Tool registry that maps tool names to their functions and Pydantic input models.
 """
 from __future__ import annotations
 
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, Optional
+from uuid import uuid4
 from pydantic import BaseModel
+from langchain_core.tools import StructuredTool
+from langchain.tools import ToolRuntime
+
+from catmaster.runtime.tool_output_adapter import adapt_tool_return
+from catmaster.runtime.tool_runtime import toolcall_context
+from catmaster.tools.base import workspace_root, workspace_scope
 
 
 class ToolRegistry:
@@ -63,8 +70,7 @@ class ToolRegistry:
             MPDownloadStructureInput,
         )
 
-        # Memory/notes
-        from catmaster.tools.misc import memory
+        # Memory patch
         from catmaster.tools.misc.memory_patch_apply import (
             memory_apply_aider_edits,
             MemoryApplyAiderEditsInput,
@@ -89,7 +95,6 @@ class ToolRegistry:
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)
-        self.register_tool("write_note", memory.write_note, memory.MemoryNoteInput)
         self.register_tool("memory_apply_aider_edits", memory_apply_aider_edits, MemoryApplyAiderEditsInput)
     
     def register_tool(
@@ -181,6 +186,89 @@ class ToolRegistry:
             descriptions.append(f"{name} : {doc}")
 
         return "\n\n".join(descriptions)
+
+    def as_langchain_tools(
+        self,
+        *,
+        allowlist: Optional[list[str]] = None,
+        run_dir: Optional[str] = None,
+        workspace: Optional[str] = None,
+    ) -> list[StructuredTool]:
+        """Convert registered tools to LangChain StructuredTool instances.
+
+        CatMaster tools accept ``payload: dict`` and must return:
+        - ``(content, artifact)`` (native), or
+        - ``ToolMessage`` (advanced)
+        The wrapper maps LangChain keyword arguments (unpacked from the
+        Pydantic args_schema) back into the ``payload`` dict the tool expects
+        and post-processes tool returns to ``(content, artifact)``.
+        """
+        tools: list[StructuredTool] = []
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        for name in names:
+            info = self.tools.get(name)
+            if not info:
+                continue
+            tools.append(_make_langchain_tool(
+                name=name,
+                func=info["function"],
+                input_model=info["input_model"],
+                run_dir=run_dir,
+                workspace=workspace,
+            ))
+        return tools
+
+
+def _make_langchain_tool(
+    name: str,
+    func: Callable,
+    input_model: type[BaseModel],
+    run_dir: Optional[str] = None,
+    workspace: Optional[str] = None,
+) -> StructuredTool:
+    """Wrap a CatMaster ``func(payload)`` tool as a LangChain StructuredTool."""
+
+    resolved_workspace = workspace
+    resolved_run_dir = (run_dir or "").strip()
+
+    def _wrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+        toolcall_key = str(getattr(runtime, "tool_call_id", "") or "").strip()
+        if not toolcall_key:
+            toolcall_key = f"{name}_{uuid4().hex[:8]}"
+
+        runtime_run_dir = resolved_run_dir
+        runtime_context = getattr(runtime, "context", None)
+        if not runtime_run_dir and isinstance(runtime_context, dict):
+            runtime_run_dir = str(runtime_context.get("run_dir") or "").strip()
+
+        with toolcall_context(toolcall_key, run_dir=runtime_run_dir):
+            if resolved_workspace:
+                with workspace_scope(resolved_workspace):
+                    result = func(kwargs)
+                    files_root = workspace_root(resolved_workspace)
+            else:
+                result = func(kwargs)
+                files_root = workspace_root()
+
+        return adapt_tool_return(
+            tool_name=name,
+            raw_result=result,
+            tool_args=kwargs,
+            workspace_files_root=files_root,
+        )
+
+    _wrapper.__name__ = name
+    description = (input_model.__doc__ or f"Input for {name}").strip()
+    args_schema = sanitize_json_schema(input_model.model_json_schema())
+
+    return StructuredTool.from_function(
+        func=_wrapper,
+        name=name,
+        description=description,
+        args_schema=args_schema,
+        infer_schema=False,
+        response_format="content_and_artifact",
+    )
 
 
 def sanitize_json_schema(schema: dict) -> dict:

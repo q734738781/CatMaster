@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from langchain_core.messages import ToolMessage
+
 from catmaster.runtime.tool_backend import ToolBackend
 
 
@@ -14,7 +16,7 @@ class MCPToolBackend(ToolBackend):
         *,
         toolcall_key: str,
         call_id: str | None = None,
-    ) -> dict:
+    ) -> ToolMessage:
         raise NotImplementedError("MCPToolBackend is a placeholder. Implement MCP connectivity in PR4+.")
 
     def cancel_active_call(self, toolcall_key: str) -> bool:

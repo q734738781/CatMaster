@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from catmaster.agents.llm_utils import llm_text
 from catmaster.llm.config import LLMProfile
-from catmaster.llm.factory import build_llm_bundle
+from catmaster.llm.factory import build_chat_model
 
 from .live_state import compact_live_state_for_llm
 
@@ -157,8 +157,7 @@ def _get_live_summary_llm() -> Any:
         _LIVE_SUMMARY_INIT_ATTEMPTED = True
         try:
             profile = LLMProfile.from_env_or_file()
-            bundle = build_llm_bundle(profile)
-            _LIVE_SUMMARY_LLM = bundle.summary_llm
+            _LIVE_SUMMARY_LLM = build_chat_model(profile.config_for_role("summary"))
         except Exception:
             _LIVE_SUMMARY_LLM = None
         return _LIVE_SUMMARY_LLM

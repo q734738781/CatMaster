@@ -8,7 +8,8 @@ from typing import Dict, List, Tuple
 
 from pydantic import BaseModel, Field
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path
 
 
 class MemoryApplyAiderEditsInput(BaseModel):
@@ -69,21 +70,32 @@ def _fail(
     error_detail: str | None = None,
     failed_path: str = "",
     failed_block_index: int = 0,
-) -> Dict[str, object]:
-    return create_tool_output(
-        "memory_apply_aider_edits",
-        success=False,
-        error=message,
-        data={
-            "error_code": str(error_code or "").strip(),
-            "error_detail": str(error_detail or message).strip(),
-            "failed_path": str(failed_path or "").strip(),
-            "failed_block_index": int(failed_block_index or 0),
+) -> None:
+    details = [
+        str(message).strip(),
+        f"error_code={str(error_code or '').strip()}",
+    ]
+    if failed_path:
+        details.append(f"failed_path={failed_path}")
+    if failed_block_index:
+        details.append(f"failed_block_index={int(failed_block_index)}")
+    raise CatMasterToolExecutionError(
+        tool_name="memory_apply_aider_edits",
+        public_message="\n".join(details),
+        artifact={
+            "tool_name": "memory_apply_aider_edits",
+            "data": {
+                "error_code": str(error_code or "").strip(),
+                "error_detail": str(error_detail or message).strip(),
+                "failed_path": str(failed_path or "").strip(),
+                "failed_block_index": int(failed_block_index or 0),
+            },
         },
+        error_code=str(error_code or "").strip(),
     )
 
 
-def memory_apply_aider_edits(payload: Dict[str, object]) -> Dict[str, object]:
+def memory_apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
     params = MemoryApplyAiderEditsInput(**payload)
     edits_text = str(params.edits_text or "").strip()
     if not edits_text:
@@ -249,17 +261,21 @@ def memory_apply_aider_edits(payload: Dict[str, object]) -> Dict[str, object]:
             if chunk:
                 diff_chunks.append(chunk)
 
-    return create_tool_output(
-        "memory_apply_aider_edits",
-        success=True,
-        data={
-            "applied_files": applied_files,
-            "created_files": created_files,
-            "diff_text": "".join(diff_chunks),
-            "edit_format": "aider_search_replace",
-            "edit_block_count": len(parsed_blocks),
-        },
+    data = {
+        "applied_files": applied_files,
+        "created_files": created_files,
+        "diff_text": "".join(diff_chunks),
+        "edit_format": "aider_search_replace",
+        "edit_block_count": len(parsed_blocks),
+    }
+    first_applied = applied_files[0] if applied_files else ""
+    content = (
+        "memory_apply_aider_edits completed.\n"
+        f"edit_block_count={len(parsed_blocks)} applied_files={len(applied_files)} created_files={len(created_files)}\n"
+        f"first_applied_file={first_applied}\n"
+        f"diff_generated={'true' if bool(diff_chunks) else 'false'}"
     )
+    return content, {"tool_name": "memory_apply_aider_edits", "data": data}
 
 
 __all__ = ["memory_apply_aider_edits", "MemoryApplyAiderEditsInput"]

@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 from ase import Atoms
 from ase.io import write, read
 
-from catmaster.tools.base import create_tool_output, resolve_workspace_path, workspace_relpath
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class MoleculeFromSmilesInput(BaseModel):
@@ -59,7 +60,7 @@ def _mol_to_ase(mol) -> Atoms:
     return atoms
 
 
-def create_molecule_from_smiles(payload: Dict[str, Any]) -> Dict[str, Any]:
+def create_molecule_from_smiles(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """
     Create a molecule from SMILES, generate 3D coords, and write XYZ + (optional) POSCAR with padded box.
 
@@ -70,10 +71,14 @@ def create_molecule_from_smiles(payload: Dict[str, Any]) -> Dict[str, Any]:
         mol = _build_conformer(params.smiles)
         atoms = _mol_to_ase(mol)
     except Exception as exc:
-        return create_tool_output(
+        raise CatMasterToolExecutionError(
             tool_name="create_molecule_from_smiles",
-            success=False,
-            error=str(exc),
+            public_message=f"Failed to build molecule from SMILES: {exc}",
+            artifact={
+                "tool_name": "create_molecule_from_smiles",
+                "data": {"smiles": str(payload.get("smiles") or "")},
+            },
+            error_code="molecule_build_failed",
         )
 
     # Derive name/formula
@@ -112,18 +117,23 @@ def create_molecule_from_smiles(payload: Dict[str, Any]) -> Dict[str, Any]:
         poscar_path = prefix_path.with_suffix(".vasp")
         write(poscar_path, atoms_shifted, format="vasp")
 
-    return create_tool_output(
-        tool_name="create_molecule_from_smiles",
-        success=True,
-        data={
-            "smiles": params.smiles,
-            "formula": formula,
-            "natoms": len(atoms),
-            "xyz_file_rel": workspace_relpath(xyz_path) if xyz_path else None,
-            "poscar_file_rel": workspace_relpath(poscar_path) if poscar_path else None,
-            "box_size": box,
-        },
+    data = {
+        "smiles": params.smiles,
+        "formula": formula,
+        "natoms": len(atoms),
+        "xyz_file_rel": workspace_relpath(xyz_path) if xyz_path else None,
+        "poscar_file_rel": workspace_relpath(poscar_path) if poscar_path else None,
+        "box_size": box,
+    }
+    content = (
+        "create_molecule_from_smiles completed.\n"
+        f"formula={formula} natoms={len(atoms)}\n"
+        f"xyz_file_rel={data['xyz_file_rel']} poscar_file_rel={data['poscar_file_rel']}"
     )
+    return content, {
+        "tool_name": "create_molecule_from_smiles",
+        "data": data,
+    }
 
 
 __all__ = ["MoleculeFromSmilesInput", "create_molecule_from_smiles"]

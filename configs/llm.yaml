@@ -1,22 +1,6 @@
 # LLM configuration for CatMaster.
 # Secrets (API keys) should come from environment variables.
-
-tool_calling_profiles:
-  openrouter_chat_completions:
-    driver: openai_chat_completions
-    parallel_tool_calls: false
-    supports_builtin_tools: false # Chat completions driver does not support builtin tools
-    strict_json_schema: false
-    request_options: {}
-    extra_body: {}
-
-  openai_responses:
-    driver: openai_responses
-    parallel_tool_calls: true
-    supports_builtin_tools: true
-    strict_json_schema: false
-    request_options: {}
-    extra_body: {}
+# For a full provider-by-provider template, see `configs/llm.template.yaml`.
 
 models:
   "openai/gpt-5.2:online-high":
@@ -24,11 +8,12 @@ models:
     model: openai/gpt-5.2:online
 
     # Sampling / reasoning
-    temperature: 0
+    temperature: 1.0
     top_p: null
     max_tokens: null
     max_output_tokens: null
-    reasoning_effort: high
+    reasoning:
+      effort: high
 
     # OpenAI-compatible endpoint config
     api_key_env: OPENROUTER_API_KEY
@@ -38,25 +23,23 @@ models:
     # Optional OpenRouter headers
     default_headers: {}
 
-    # Tool-calling driver selection
-    tool_calling:
-      profile: openrouter_chat_completions
-      request_options: {}
-      # OpenRouter-compatible extra payload for chat completions.
-      # Place provider/model-special fields here.
-      extra_body:
-        prompt_cache_retention: 24h
-  
-  "openai/gpt-5.2:online-medium":
+    # Provider-bound options
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+
+  "openai/gpt-5.3-codex:online-high":
     provider: openrouter
-    model: openai/gpt-5.2:online
+    model: openai/gpt-5.3-codex:online
 
     # Sampling / reasoning
-    temperature: 0
+    temperature: 1.0
     top_p: null
     max_tokens: null
     max_output_tokens: null
-    reasoning_effort: medium
+    reasoning:
+      effort: high
 
     # OpenAI-compatible endpoint config
     api_key_env: OPENROUTER_API_KEY
@@ -66,33 +49,89 @@ models:
     # Optional OpenRouter headers
     default_headers: {}
 
-    # Tool-calling driver selection
-    tool_calling:
-      profile: openrouter_chat_completions
-      request_options: {}
-      # OpenRouter-compatible extra payload for chat completions.
-      # Place provider/model-special fields here.
-      extra_body:
-        prompt_cache_retention: 24h
+    # Provider-bound options
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
 
+  "openai/gpt-5.3-codex:online-medium":
+    provider: openrouter
+    model: openai/gpt-5.3-codex:online
+
+    # Sampling / reasoning
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: medium
+
+    # OpenAI-compatible endpoint config
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    # Optional OpenRouter headers
+    default_headers: {}
+
+    # Provider-bound options
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+    
   "openai/gpt-5-nano":
     provider: openrouter
     model: openai/gpt-5-nano
-    temperature: 0
+    temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
-    tool_calling:
-      profile: openrouter_chat_completions
-      request_options: {}
-      extra_body: {}
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
 
 agents:
   proposal: "openai/gpt-5.2:online-high"
   director: "openai/gpt-5.2:online-high"
-  task_runner: "openai/gpt-5.2:online-medium"
-  memory_patch: "openai/gpt-5.2:online-high"
+  task_runner: "openai/gpt-5.3-codex:online-medium"
+  memory_patch: "openai/gpt-5.3-codex:online-high"
   summary: "openai/gpt-5-nano"
+
+agent_runtime:
+  recursion_limit: 1000
+  max_tool_calls: 60
+  print_state_messages: true
+  print_http_raw_post: true
 
 agent_policies:
   proposal:
     browse_tools_enabled: true
+
+# ---------------------------------------------------------------------------
+# Quick provider-specific examples (copy into a model block if needed)
+#
+# OpenRouter:
+# provider_options:
+#   openrouter:
+#     extra_body:
+#       provider:
+#         order: [openai]
+#       prompt_cache_retention: 24h
+#
+# OpenAI:
+# provider_options:
+#   openai:
+#     request_options:
+#       timeout: 120
+#       max_retries: 3
+#       default_headers:
+#         x-trace-id: run-123
+#       default_query:
+#         api-version: "2025-01-01"
+#
+# Reasoning (official style):
+# reasoning:
+#   effort: high
+# ---------------------------------------------------------------------------

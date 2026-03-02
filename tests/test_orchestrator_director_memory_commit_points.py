@@ -151,7 +151,7 @@ def test_run_standard_failure_auto_replan_returns_to_director(tmp_path: Path) ->
             "summary": "Tool-call limit reached (60); auto replan requested.",
             "observation_path": "observations/obs_task_01.md",
             "key_artifacts": [{
-                "path": ".logs/toolcall_context/run_01_task_01_max_steps.json",
+                "path": "audit/toolcall_context/run_01_task_01_max_steps.json",
                 "description": "max_steps context",
                 "kind": "log",
             }],
