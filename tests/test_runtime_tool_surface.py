@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -29,7 +28,7 @@ class _Registry:
             _Tool("list_directory_with_sizes"),
             _Tool("get_file_info"),
             _Tool("create_molecule_from_smiles"),
-            _Tool("memory_apply_aider_edits"),
+            _Tool("apply_aider_edits"),
         ]
 
     def get_tool_info(self, name: str):
@@ -70,14 +69,12 @@ def test_build_runtime_tool_surface_role_split(tmp_path) -> None:
         workspace=tmp_path,
         model_name="dummy-model",
     )
-    surface = asyncio.run(
-        build_runtime_tool_surface(
-            registry=_Registry(),
-            run_context=run_ctx,
-            run_dir=run_ctx.run_dir,
-            mcp_fs_runtime=_MCPRuntime(),
-            task_runner_denylist={"memory_apply_aider_edits"},
-        )
+    surface = build_runtime_tool_surface(
+        registry=_Registry(),
+        run_context=run_ctx,
+        run_dir=run_ctx.run_dir,
+        mcp_fs_runtime=_MCPRuntime(),
+        task_runner_denylist=set(),
     )
 
     proposal_names = [tool.name for tool in surface.proposal_tools]
@@ -90,8 +87,9 @@ def test_build_runtime_tool_surface_role_split(tmp_path) -> None:
     assert "read_file" not in proposal_names
     assert "list_directory_with_sizes" not in proposal_names
     assert "get_file_info" not in proposal_names
+    assert "apply_aider_edits" in proposal_names
 
-    assert "memory_apply_aider_edits" not in task_names
+    assert "apply_aider_edits" in task_names
     assert "create_molecule_from_smiles" in task_names
     assert "write_file" in task_names
     assert "read_file" not in task_names

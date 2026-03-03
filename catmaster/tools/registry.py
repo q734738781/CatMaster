@@ -3,7 +3,8 @@ Tool registry that maps tool names to their functions and Pydantic input models.
 """
 from __future__ import annotations
 
-from typing import Dict, Any, Callable, Optional
+from pathlib import Path
+from typing import Awaitable, Dict, Any, Callable, Optional
 from uuid import uuid4
 from pydantic import BaseModel
 from langchain_core.tools import StructuredTool
@@ -72,8 +73,8 @@ class ToolRegistry:
 
         # Memory patch
         from catmaster.tools.misc.memory_patch_apply import (
-            memory_apply_aider_edits,
-            MemoryApplyAiderEditsInput,
+            apply_aider_edits,
+            ApplyAiderEditsInput,
         )
         
         # Register each tool with its Pydantic schema
@@ -95,17 +96,22 @@ class ToolRegistry:
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)
-        self.register_tool("memory_apply_aider_edits", memory_apply_aider_edits, MemoryApplyAiderEditsInput)
+        self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
     
     def register_tool(
         self, 
         name: str, 
-        func: Callable,
+        func: Callable | None,
         input_model: type[BaseModel],
+        *,
+        coroutine: Callable[..., Awaitable[Any]] | None = None,
     ):
-        """Register a tool with its function and input model."""
+        """Register a tool with sync/async callables and its input model."""
+        if func is None and coroutine is None:
+            raise ValueError(f"Tool {name!r} must provide at least one callable.")
         self.tools[name] = {
             "function": func,
+            "coroutine": coroutine,
             "input_model": input_model,
             "parameters": input_model.model_json_schema()
         }
@@ -141,8 +147,10 @@ class ToolRegistry:
     def get_tool_function(self, name: str) -> Callable:
         """Get tool function by name."""
         tool_info = self.tools.get(name)
-        if tool_info:
+        if tool_info and tool_info.get("function") is not None:
             return tool_info["function"]
+        if tool_info and tool_info.get("coroutine") is not None:
+            raise ValueError(f"Tool {name} is async-only and has no sync function.")
         raise ValueError(f"Unknown tool: {name}")
     
     def list_tools(self) -> Dict[str, Dict[str, Any]]:
@@ -212,6 +220,7 @@ class ToolRegistry:
             tools.append(_make_langchain_tool(
                 name=name,
                 func=info["function"],
+                coroutine=info.get("coroutine"),
                 input_model=info["input_model"],
                 run_dir=run_dir,
                 workspace=workspace,
@@ -221,17 +230,20 @@ class ToolRegistry:
 
 def _make_langchain_tool(
     name: str,
-    func: Callable,
+    func: Callable | None,
     input_model: type[BaseModel],
+    coroutine: Callable[..., Awaitable[Any]] | None = None,
     run_dir: Optional[str] = None,
     workspace: Optional[str] = None,
 ) -> StructuredTool:
-    """Wrap a CatMaster ``func(payload)`` tool as a LangChain StructuredTool."""
+    """Wrap CatMaster ``func/coroutine(payload)`` as a LangChain StructuredTool."""
+    if func is None and coroutine is None:
+        raise ValueError(f"Tool {name!r} requires func or coroutine.")
 
     resolved_workspace = workspace
     resolved_run_dir = (run_dir or "").strip()
 
-    def _wrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+    def _runtime_scope(runtime: ToolRuntime | None) -> tuple[str, str]:
         toolcall_key = str(getattr(runtime, "tool_call_id", "") or "").strip()
         if not toolcall_key:
             toolcall_key = f"{name}_{uuid4().hex[:8]}"
@@ -240,29 +252,61 @@ def _make_langchain_tool(
         runtime_context = getattr(runtime, "context", None)
         if not runtime_run_dir and isinstance(runtime_context, dict):
             runtime_run_dir = str(runtime_context.get("run_dir") or "").strip()
+        return toolcall_key, runtime_run_dir
+
+    def _workspace_files_root() -> Path:
+        if resolved_workspace:
+            return workspace_root(resolved_workspace)
+        return workspace_root()
+
+    def _wrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+        if func is None:
+            raise NotImplementedError(f"Tool {name} does not support sync invocation.")
+        toolcall_key, runtime_run_dir = _runtime_scope(runtime)
 
         with toolcall_context(toolcall_key, run_dir=runtime_run_dir):
             if resolved_workspace:
                 with workspace_scope(resolved_workspace):
                     result = func(kwargs)
-                    files_root = workspace_root(resolved_workspace)
             else:
                 result = func(kwargs)
-                files_root = workspace_root()
 
         return adapt_tool_return(
             tool_name=name,
             raw_result=result,
             tool_args=kwargs,
-            workspace_files_root=files_root,
+            workspace_files_root=_workspace_files_root(),
         )
 
-    _wrapper.__name__ = name
+    async def _awrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+        if coroutine is None:
+            raise NotImplementedError(f"Tool {name} does not support async invocation.")
+        toolcall_key, runtime_run_dir = _runtime_scope(runtime)
+
+        with toolcall_context(toolcall_key, run_dir=runtime_run_dir):
+            if resolved_workspace:
+                with workspace_scope(resolved_workspace):
+                    result = await coroutine(kwargs)
+            else:
+                result = await coroutine(kwargs)
+
+        return adapt_tool_return(
+            tool_name=name,
+            raw_result=result,
+            tool_args=kwargs,
+            workspace_files_root=_workspace_files_root(),
+        )
+
+    if func is not None:
+        _wrapper.__name__ = name
+    if coroutine is not None:
+        _awrapper.__name__ = f"{name}_async"
     description = (input_model.__doc__ or f"Input for {name}").strip()
     args_schema = sanitize_json_schema(input_model.model_json_schema())
 
     return StructuredTool.from_function(
-        func=_wrapper,
+        func=_wrapper if func is not None else None,
+        coroutine=_awrapper if coroutine is not None else None,
         name=name,
         description=description,
         args_schema=args_schema,

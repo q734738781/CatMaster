@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import inspect
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -109,6 +110,13 @@ class LocalToolBackend(ToolBackend):
                             raw_output = func(payload)
                     else:
                         raw_output = func(payload)
+                if inspect.isawaitable(raw_output):
+                    if inspect.iscoroutine(raw_output):
+                        raw_output.close()
+                    raise RuntimeError(
+                        f"Tool {name} returned an awaitable, but LocalToolBackend is sync-only. "
+                        "Use GraphRunner.arun()/agent ainvoke path or provide a sync tool function."
+                    )
                 content, artifact = adapt_tool_return(
                     tool_name=name,
                     raw_result=raw_output,

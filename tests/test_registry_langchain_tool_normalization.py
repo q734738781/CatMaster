@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -120,3 +121,37 @@ def test_wrapper_sets_toolcall_context_from_runtime(tmp_path) -> None:
     assert out[0]
     assert observed["toolcall_key"] == "call_ctx_001"
     assert observed["run_dir"] == str(run_dir)
+
+
+def test_async_only_wrapper_uses_coroutine_and_runtime_context(tmp_path) -> None:
+    observed: dict[str, str] = {}
+    run_dir = tmp_path / "metadata" / "runs" / "run_01"
+
+    async def _tool(payload: dict) -> tuple[str, dict]:
+        observed["toolcall_key"] = current_toolcall_key()
+        observed["run_dir"] = current_run_dir()
+        return (
+            payload.get("text", ""),
+            {
+                "tool_name": "dummy_tool_async",
+                "data": {"summary": payload.get("text", "")},
+            },
+        )
+
+    tool = _make_langchain_tool(
+        "dummy_tool_async",
+        None,
+        _DummyInput,
+        coroutine=_tool,
+        run_dir=str(run_dir),
+        workspace=str(tmp_path),
+    )
+
+    runtime = SimpleNamespace(tool_call_id="call_async_001", context={})
+    out = asyncio.run(tool.coroutine(text="hello", runtime=runtime))
+
+    assert out[0]
+    assert observed["toolcall_key"] == "call_async_001"
+    assert observed["run_dir"] == str(run_dir)
+    with pytest.raises(NotImplementedError):
+        tool.invoke({"text": "x"})

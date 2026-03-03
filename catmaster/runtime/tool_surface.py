@@ -97,7 +97,7 @@ def _build_capability_guides(
     return full, short
 
 
-async def build_runtime_tool_surface(
+def build_runtime_tool_surface(
     *,
     registry: ToolRegistry,
     run_context: RunContext,
@@ -114,6 +114,7 @@ async def build_runtime_tool_surface(
 
     local_by_name = {str(getattr(tool, "name", "") or ""): tool for tool in local_tools}
     bash_tool = local_by_name.get("bash_exec")
+    aider_tool = local_by_name.get("apply_aider_edits")
 
     local_task_tools = [tool for tool in local_tools if str(getattr(tool, "name", "") or "") not in denylist]
 
@@ -139,10 +140,14 @@ async def build_runtime_tool_surface(
         ]
 
     proposal_tools = _dedupe_tools(
-        ([bash_tool] if bash_tool is not None else []) + proposal_mcp
+        ([bash_tool] if bash_tool is not None else [])
+        + ([aider_tool] if aider_tool is not None else [])
+        + proposal_mcp
     )
     director_tools = _dedupe_tools(
-        ([bash_tool] if bash_tool is not None else []) + director_mcp
+        ([bash_tool] if bash_tool is not None else [])
+        + ([aider_tool] if aider_tool is not None else [])
+        + director_mcp
     )
     task_tools = _dedupe_tools(local_task_tools + task_mcp)
 

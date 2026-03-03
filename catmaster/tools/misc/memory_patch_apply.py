@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Apply memory edits in Aider SEARCH/REPLACE format."""
+"""Apply workspace edits in Aider SEARCH/REPLACE format."""
 
 import difflib
 from pathlib import Path
@@ -12,13 +12,27 @@ from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path
 
 
-class MemoryApplyAiderEditsInput(BaseModel):
-    """Apply Aider SEARCH/REPLACE edit blocks to memory files."""
+class ApplyAiderEditsInput(BaseModel):
+    """Apply Aider SEARCH/REPLACE edit blocks to workspace files."""
 
-    edits_text: str = Field(..., description="Aider edit blocks text.")
+    edits_text: str = Field(
+        ...,
+        description=(
+            "Aider SEARCH/REPLACE edit blocks text. Format per block:\n"
+            "<relative/path/to/file>\n"
+            "<<<<<<< SEARCH\n"
+            "... exact existing text ...\n"
+            "=======\n"
+            "... replacement text ...\n"
+            ">>>>>>> REPLACE"
+        ),
+    )
     allowed_paths: List[str] = Field(
-        default_factory=lambda: ["MEMORY/"],
-        description="Allowed project-files-relative path prefixes.",
+        default_factory=list,
+        description=(
+            "Optional project-files-relative path prefixes. "
+            "Use [] to allow edits anywhere under workspace root."
+        ),
     )
     emit_diff: bool = Field(True, description="Whether to return unified diff text for audit.")
 
@@ -43,7 +57,7 @@ def _normalize_rel_path(raw_path: str, allowed_prefixes: Tuple[str, ...]) -> str
     if pure.is_absolute() or ".." in pure.parts:
         raise ValueError(f"forbidden path: {path}")
     normalized = str(pure).replace("\\", "/")
-    if not any(normalized.startswith(prefix) for prefix in allowed_prefixes):
+    if allowed_prefixes and not any(normalized.startswith(prefix) for prefix in allowed_prefixes):
         raise ValueError(f"forbidden path: {normalized}")
     return normalized
 
@@ -71,6 +85,7 @@ def _fail(
     failed_path: str = "",
     failed_block_index: int = 0,
 ) -> None:
+    failed_files = [failed_path] if failed_path else []
     details = [
         str(message).strip(),
         f"error_code={str(error_code or '').strip()}",
@@ -80,14 +95,15 @@ def _fail(
     if failed_block_index:
         details.append(f"failed_block_index={int(failed_block_index)}")
     raise CatMasterToolExecutionError(
-        tool_name="memory_apply_aider_edits",
+        tool_name="apply_aider_edits",
         public_message="\n".join(details),
         artifact={
-            "tool_name": "memory_apply_aider_edits",
+            "tool_name": "apply_aider_edits",
             "data": {
                 "error_code": str(error_code or "").strip(),
                 "error_detail": str(error_detail or message).strip(),
                 "failed_path": str(failed_path or "").strip(),
+                "failed_files": failed_files,
                 "failed_block_index": int(failed_block_index or 0),
             },
         },
@@ -95,8 +111,8 @@ def _fail(
     )
 
 
-def memory_apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
-    params = MemoryApplyAiderEditsInput(**payload)
+def apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    params = ApplyAiderEditsInput(**payload)
     edits_text = str(params.edits_text or "").strip()
     if not edits_text:
         return _fail(
@@ -117,11 +133,6 @@ def memory_apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str,
         )
 
     allowed_prefixes = _normalize_allowed_prefixes(params.allowed_paths)
-    if not allowed_prefixes:
-        return _fail(
-            message="allowed_paths is empty",
-            error_code="invalid_config",
-        )
 
     try:
         parsed_blocks = list(find_original_update_blocks(edits_text, DEFAULT_FENCE, None))
@@ -192,7 +203,7 @@ def memory_apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str,
         current_text = staged_content[rel_path]
         try:
             updated_text = do_replace(
-                rel_path,
+                str(abs_path),
                 current_text,
                 str(before_text or ""),
                 str(after_text or ""),
@@ -264,18 +275,28 @@ def memory_apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str,
     data = {
         "applied_files": applied_files,
         "created_files": created_files,
+        "failed_files": [],
         "diff_text": "".join(diff_chunks),
         "edit_format": "aider_search_replace",
         "edit_block_count": len(parsed_blocks),
     }
-    first_applied = applied_files[0] if applied_files else ""
+    applied_files_text = ", ".join(applied_files) if applied_files else "(none)"
     content = (
-        "memory_apply_aider_edits completed.\n"
+        "apply_aider_edits completed.\n"
         f"edit_block_count={len(parsed_blocks)} applied_files={len(applied_files)} created_files={len(created_files)}\n"
-        f"first_applied_file={first_applied}\n"
-        f"diff_generated={'true' if bool(diff_chunks) else 'false'}"
+        f"applied_files={applied_files_text}\n"
+        "failed_files=(none)"
     )
-    return content, {"tool_name": "memory_apply_aider_edits", "data": data}
+    return content, {"tool_name": "apply_aider_edits", "data": data}
 
 
-__all__ = ["memory_apply_aider_edits", "MemoryApplyAiderEditsInput"]
+def memory_apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """Backward-compatible alias. Prefer apply_aider_edits."""
+    return apply_aider_edits(payload)
+
+
+__all__ = [
+    "apply_aider_edits",
+    "ApplyAiderEditsInput",
+    "memory_apply_aider_edits",
+]

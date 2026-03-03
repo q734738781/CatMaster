@@ -102,3 +102,34 @@ def test_local_tool_backend_passes_workspace_files_root(monkeypatch, tmp_path) -
 
     assert output.status == "success"
     assert captured["workspace_files_root"] == workspace_root(workspace)
+
+
+def test_local_tool_backend_returns_error_for_async_tool_callable(tmp_path) -> None:
+    async def _async_tool(payload: dict) -> tuple[str, dict]:
+        return (
+            "async_tool completed.",
+            {"tool_name": "async_tool", "data": {"text": payload.get("text")}},
+        )
+
+    registry = ToolRegistry(register_all_tools=False)
+    registry.register_tool("async_tool", _async_tool, DummyInput)
+
+    tool_executor = ToolExecutor(registry)
+    artifact_store = ArtifactStore(tmp_path)
+    trace_store = TraceStore(tmp_path)
+    backend = LocalToolBackend(
+        registry=registry,
+        tool_executor=tool_executor,
+        artifact_store=artifact_store,
+        trace_store=trace_store,
+    )
+
+    output = backend.call(
+        "async_tool",
+        json.dumps({"text": "hello"}),
+        toolcall_key="call-async-1",
+        call_id="call-async-1",
+    )
+
+    assert output.status == "error"
+    assert "sync-only" in str(output.content)

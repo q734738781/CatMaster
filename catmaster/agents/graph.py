@@ -2,9 +2,9 @@
 LangGraph-based orchestration graph for CatMaster.
 
 Replaces the monolithic Orchestrator class with a composable StateGraph
-that routes between proposal, director, task runner, memory patcher,
-and summarizer nodes. Proposal / director / task runner are built with
-LangChain v1 ``create_agent`` and produce typed structured responses.
+that routes between proposal, director, task runner, and finalize nodes.
+Proposal / director / task runner are built with LangChain v1
+``create_agent`` and produce typed structured responses.
 """
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from typing import Any, Annotated, Dict, List, Optional, Sequence, TypedDict
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from pydantic import ValidationError
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -34,9 +33,6 @@ from catmaster.agents.nodes import (
     run_proposal,
     run_director,
     run_task,
-    memory_patch_node,
-    finalize_memory_patch_node,
-    plan_commit_node,
     summarize_node,
 )
 from catmaster.runtime.memory_store import MemoryStore
@@ -47,7 +43,6 @@ from catmaster.runtime.artifact_callback import build_callbacks
 from catmaster.runtime.tool_backend import ToolBackend
 from catmaster.runtime.run_control import RunControl
 from catmaster.runtime.tool_output_adapter import (
-    CatMasterToolExecutionError,
     tool_error_to_message,
 )
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
@@ -67,7 +62,7 @@ from catmaster.agents.orchestrator_prompts import (
 
 logger = logging.getLogger(__name__)
 
-_TASK_RUNNER_TOOL_DENYLIST = {"memory_apply_aider_edits"}
+_TASK_RUNNER_TOOL_DENYLIST: set[str] = set()
 
 
 class ToolCallBudgetExceededError(RuntimeError):
@@ -209,26 +204,23 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
             try:
                 result = handler(request)
                 if inspect.isawaitable(result):
-                    result = asyncio.run(result)
-            except (CatMasterToolExecutionError, ValidationError, ValueError, KeyError) as exc:
-                counter["used"] = used + 1
-                return self._error_message(
-                    exc=exc,
-                    tool_name=tool_name,
-                    tool_call_id=tool_call_id,
-                )
+                    if inspect.iscoroutine(result):
+                        result.close()
+                    raise RuntimeError(
+                        "Synchronous tool middleware cannot execute awaitable handlers. "
+                        "Invoke the agent asynchronously (ainvoke/arun)."
+                    )
+                return result
             except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-                counter["used"] = used + 1
                 raise
             except Exception as exc:
-                counter["used"] = used + 1
                 return self._error_message(
                     exc=exc,
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
                 )
-            counter["used"] = used + 1
-            return result
+            finally:
+                counter["used"] = used + 1
 
         async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
             used, tool_name, tool_call_id = self._request_info(request)
@@ -242,25 +234,17 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
                 result = handler(request)
                 if inspect.isawaitable(result):
                     result = await result
-            except (CatMasterToolExecutionError, ValidationError, ValueError, KeyError) as exc:
-                counter["used"] = used + 1
-                return self._error_message(
-                    exc=exc,
-                    tool_name=tool_name,
-                    tool_call_id=tool_call_id,
-                )
+                return result
             except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-                counter["used"] = used + 1
                 raise
             except Exception as exc:
-                counter["used"] = used + 1
                 return self._error_message(
                     exc=exc,
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
                 )
-            counter["used"] = used + 1
-            return result
+            finally:
+                counter["used"] = used + 1
 
     return [_ResetToolCallCounterMiddleware(), _ToolCallBudgetMiddleware()]
 
@@ -386,94 +370,38 @@ async def _run_task_wrapper(
     agent: Any,
     memory_store: MemoryStore,
     max_steps: int,
+    continue_goto: str,
+    intervention_goto: str,
+    run_dir: Path,
 ) -> Command:
-    return await run_task(
+    command = await run_task(
         state,
         agent=agent,
         memory_store=memory_store,
         max_steps=max_steps,
+        continue_goto=continue_goto,
+        intervention_goto=intervention_goto,
     )
-
-
-def _memory_patch_node_wrapper(
-    state: CatMasterState,
-    *,
-    model: BaseChatModel,
-    memory_store: MemoryStore,
-    run_id: str,
-    patch_repair_attempts: int,
-    tool_backend: Optional[ToolBackend],
-    run_dir: Path,
-) -> Command:
-    result = memory_patch_node(
-        state,
-        model=model,
-        memory_store=memory_store,
-        run_id=run_id,
-        patch_repair_attempts=patch_repair_attempts,
-        tool_backend=tool_backend,
-    )
-    task_result = result.get("task_result") or {}
-    _write_observation_file(
-        run_dir=run_dir,
-        task_id=state.get("current_task_id", ""),
-        outcome=task_result.get("task_outcome", ""),
-        summary=task_result.get("task_summary", ""),
-        key_artifacts=task_result.get("key_artifacts", []),
-    )
-    lane = str(state.get("lane") or "").strip().lower()
-    if lane == "fast":
-        return Command(goto="finalize_memory_patch", update=result)
-    if str(task_result.get("task_outcome") or "") == "needs_intervention":
-        return Command(goto="needs_intervention", update=result)
-    return Command(goto="run_director", update=result)
-
-
-def _finalize_memory_patch_node_wrapper(
-    state: CatMasterState,
-    *,
-    model: BaseChatModel,
-    memory_store: MemoryStore,
-    run_id: str,
-    patch_repair_attempts: int,
-    tool_backend: Optional[ToolBackend],
-) -> Command:
-    result = finalize_memory_patch_node(
-        state,
-        model=model,
-        memory_store=memory_store,
-        run_id=run_id,
-        patch_repair_attempts=patch_repair_attempts,
-        tool_backend=tool_backend,
-    )
-    return Command(goto="summarize", update=result)
+    update = command.update or {}
+    task_result = update.get("task_result") or {}
+    if task_result:
+        _write_observation_file(
+            run_dir=run_dir,
+            task_id=str(state.get("current_task_id", "") or ""),
+            outcome=str(task_result.get("task_outcome", "") or ""),
+            summary=str(task_result.get("task_summary", "") or ""),
+            key_artifacts=list(task_result.get("key_artifacts") or []),
+        )
+    return command
 
 
 def _summarize_node_wrapper(
     state: CatMasterState,
     *,
-    model: BaseChatModel,
     memory_store: MemoryStore,
 ) -> Dict[str, Any]:
-    return summarize_node(state, model=model, memory_store=memory_store)
-
-
-def _plan_commit_node_wrapper(
-    state: CatMasterState,
-    *,
-    model: BaseChatModel,
-    memory_store: MemoryStore,
-    run_id: str,
-    tool_backend: Optional[ToolBackend],
-) -> Command:
-    result = plan_commit_node(
-        state,
-        model=model,
-        memory_store=memory_store,
-        run_id=run_id,
-        tool_backend=tool_backend,
-    )
-    return Command(goto="run_director", update=result)
+    # Finalization is now a no-extra-LLM pass-through node.
+    return summarize_node(state, memory_store=memory_store)
 
 
 def _write_observation_file(
@@ -525,10 +453,10 @@ def _proposal_review_node(state: CatMasterState) -> Command:
     after approval), this is a no-op pass-through.
     """
     if not bool(state.get("proposal_review_enabled", True)):
-        return Command(goto="plan_commit", update={"proposal_approved": True, "proposal_feedback": ""})
+        return Command(goto="run_director", update={"proposal_approved": True, "proposal_feedback": ""})
 
     if state.get("proposal_approved"):
-        return Command(goto="plan_commit", update={})
+        return Command(goto="run_director", update={})
 
     proposal_md = state.get("proposal_md", "")
     work_packages = state.get("work_packages", [])
@@ -548,7 +476,7 @@ def _proposal_review_node(state: CatMasterState) -> Command:
 
     feedback_text = str(feedback or "").strip()
     if feedback_text.lower() in ("approved", "approve", "ok", "yes", "y", "lgtm"):
-        return Command(goto="plan_commit", update={"proposal_approved": True, "proposal_feedback": ""})
+        return Command(goto="run_director", update={"proposal_approved": True, "proposal_feedback": ""})
 
     return Command(
         goto="run_proposal",
@@ -586,7 +514,6 @@ def build_standard_graph(
     proposal_model: BaseChatModel,
     director_model: BaseChatModel,
     memory_patch_model: BaseChatModel,
-    summary_model: BaseChatModel,
     memory_store: MemoryStore,
     proposal_tools: Sequence[BaseTool],
     director_tools: Sequence[BaseTool],
@@ -636,14 +563,6 @@ def build_standard_graph(
 
     graph.add_node("proposal_review", _proposal_review_node)
 
-    graph.add_node("plan_commit", partial(
-        _plan_commit_node_wrapper,
-        model=memory_patch_model,
-        memory_store=memory_store,
-        run_id=run_id,
-        tool_backend=tool_backend,
-    ))
-
     graph.add_node("run_director", partial(
         _run_director_wrapper,
         agent=director_agent,
@@ -657,30 +576,13 @@ def build_standard_graph(
         agent=task_agent,
         memory_store=memory_store,
         max_steps=max_task_steps,
-    ))
-
-    graph.add_node("memory_patch", partial(
-        _memory_patch_node_wrapper,
-        model=memory_patch_model,
-        memory_store=memory_store,
-        run_id=run_id,
-        patch_repair_attempts=patch_repair_attempts,
-        tool_backend=tool_backend,
+        continue_goto="run_director",
+        intervention_goto="needs_intervention",
         run_dir=effective_run_dir,
-    ))
-
-    graph.add_node("finalize_memory_patch", partial(
-        _finalize_memory_patch_node_wrapper,
-        model=memory_patch_model,
-        memory_store=memory_store,
-        run_id=run_id,
-        patch_repair_attempts=patch_repair_attempts,
-        tool_backend=tool_backend,
     ))
 
     graph.add_node("summarize", partial(
         _summarize_node_wrapper,
-        model=summary_model,
         memory_store=memory_store,
     ))
 
@@ -700,7 +602,6 @@ def build_fast_graph(
     *,
     task_runner_model: BaseChatModel,
     memory_patch_model: BaseChatModel,
-    summary_model: BaseChatModel,
     memory_store: MemoryStore,
     task_tools: Sequence[BaseTool],
     run_id: str = "",
@@ -727,30 +628,13 @@ def build_fast_graph(
         agent=task_agent,
         memory_store=memory_store,
         max_steps=max_task_steps,
-    ))
-
-    graph.add_node("memory_patch", partial(
-        _memory_patch_node_wrapper,
-        model=memory_patch_model,
-        memory_store=memory_store,
-        run_id=run_id,
-        patch_repair_attempts=patch_repair_attempts,
-        tool_backend=tool_backend,
+        continue_goto="summarize",
+        intervention_goto="summarize",
         run_dir=effective_run_dir,
-    ))
-
-    graph.add_node("finalize_memory_patch", partial(
-        _finalize_memory_patch_node_wrapper,
-        model=memory_patch_model,
-        memory_store=memory_store,
-        run_id=run_id,
-        patch_repair_attempts=patch_repair_attempts,
-        tool_backend=tool_backend,
     ))
 
     graph.add_node("summarize", partial(
         _summarize_node_wrapper,
-        model=summary_model,
         memory_store=memory_store,
     ))
 
@@ -787,7 +671,6 @@ class GraphRunner:
         proposal_model: Optional[BaseChatModel] = None,
         director_model: Optional[BaseChatModel] = None,
         memory_patch_model: BaseChatModel,
-        summary_model: BaseChatModel,
         registry: Optional[ToolRegistry] = None,
         memory_store: MemoryStore,
         run_context: RunContext,
@@ -807,7 +690,6 @@ class GraphRunner:
         self.proposal_model = proposal_model or task_runner_model
         self.director_model = director_model or task_runner_model
         self.memory_patch_model = memory_patch_model
-        self.summary_model = summary_model
         self.registry = registry or get_tool_registry()
         self.memory_store = memory_store
         self.run_context = run_context
@@ -1268,7 +1150,7 @@ class GraphRunner:
 
         try:
             async with self._open_mcp_filesystem_runtime() as mcp_fs_runtime:
-                surface: RuntimeToolSurface = await build_runtime_tool_surface(
+                surface: RuntimeToolSurface = build_runtime_tool_surface(
                     registry=self.registry,
                     run_context=self.run_context,
                     run_dir=run_dir,
@@ -1280,7 +1162,6 @@ class GraphRunner:
                     compiled = build_fast_graph(
                         task_runner_model=self.task_runner_model,
                         memory_patch_model=self.memory_patch_model,
-                        summary_model=self.summary_model,
                         memory_store=self.memory_store,
                         task_tools=surface.task_tools,
                         run_id=self.run_context.run_id,
@@ -1297,7 +1178,6 @@ class GraphRunner:
                         proposal_model=self.proposal_model,
                         director_model=self.director_model,
                         memory_patch_model=self.memory_patch_model,
-                        summary_model=self.summary_model,
                         memory_store=self.memory_store,
                         proposal_tools=surface.proposal_tools,
                         director_tools=surface.director_tools,

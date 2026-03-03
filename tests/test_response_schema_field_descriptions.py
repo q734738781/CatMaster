@@ -99,10 +99,10 @@ def test_revise_and_stop_payload_descriptions_capture_compactness() -> None:
     stop_props = stop_schema.get("properties", {})
     change_log_desc = str(revise_props.get("change_log", {}).get("description", ""))
     questions_desc = str(revise_props.get("questions_for_human", {}).get("description", ""))
-    stop_reason_desc = str(stop_props.get("stop_reason", {}).get("description", ""))
+    final_answer_desc = str(stop_props.get("final_answer_md", {}).get("description", ""))
     assert "Short change summary" in change_log_desc
     assert "Short question strings" in questions_desc
-    assert "Short stop reason" in stop_reason_desc
+    assert "Concise final user-facing answer markdown" in final_answer_desc
 
 
 def _assert_provider_schema_shape(schema: dict) -> None:

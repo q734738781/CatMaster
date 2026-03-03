@@ -59,11 +59,9 @@ Install with Homebrew:
 brew install node
 ```
 
-If Homebrew prints a PATH hint for Node, append Node's bin to `~/.bashrc` (example):
+If Homebrew prints a PATH hint for Node, append the suggested Node bin line to `~/.bashrc` (for example):
 ```bash
-echo 'export PATH="$(brew --prefix node)/bin:$PATH"' >> ~/.bashrc
-# if you installed a versioned formula, use that name instead, e.g.:
-# echo 'export PATH="$(brew --prefix node@22)/bin:$PATH"' >> ~/.bashrc
+echo 'export PATH="/home/linuxbrew/.linuxbrew/opt/node@24/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 

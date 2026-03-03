@@ -68,7 +68,7 @@ def test_run_director_missing_structured_response_marks_failure(tmp_path: Path) 
         )
     )
 
-    assert command.goto == "finalize_memory_patch"
+    assert command.goto == "summarize"
     assert command.update.get("status") == "failure"
     assert command.update.get("contract_violation", {}).get("role") == "director"
     assert command.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
@@ -86,8 +86,7 @@ def test_run_task_missing_structured_response_marks_failure(tmp_path: Path) -> N
         )
     )
 
-    assert out.goto == "finalize_memory_patch"
-    assert out.update.get("status") == "failure"
+    assert out.goto == "run_director"
     assert out.update.get("contract_violation", {}).get("role") == "task_runner"
     assert out.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
     assert out.update.get("task_result", {}).get("task_outcome") == "failure"

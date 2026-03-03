@@ -9,7 +9,7 @@ text for the ``HumanMessage`` injected each time the parent graph
 re-enters an agent node.
 
 Legacy ``build_*_prompt()`` factories are kept for nodes that still
-use ``ChatPromptTemplate`` (memory patcher, summarizer).
+use ``ChatPromptTemplate`` (memory patcher).
 """
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ Context:
 Allowed helper tools in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
 - `bash_exec` (focused grep/env checks/parser invocation only)
+- `apply_aider_edits` (precise SEARCH/REPLACE edits when plan-level updates are necessary)
 
 Proposal requirements:
 - Produce a COMPLETE but compact proposal in markdown plus ordered work_packages (high-level milestones, not tool-by-tool steps).
@@ -46,7 +47,9 @@ Behavior rules:
 - Do NOT raise runtime/tooling environment prerequisites (API keys, executable availability, licensed binary/POTCAR setup, scheduler config) as human questions or BLOCKING items.
 - Tool schemas are authoritative. Do not restate full tool parameter catalogs in proposal text; include only non-default or scientifically critical parameters.
 - If critical workspace facts are missing, you may inspect with helper tools.
-- Helper tools are read-only in this stage; avoid script persistence and destructive actions.
+- Treat memory index as historical reference from prior decisions and scientific-invariant updates; it may lag current execution.
+- Only modify files (especially `MEMORY/**`) when proposal updates change scientific invariants, acceptance criteria, or plan-level defaults.
+- When modifications are required, prefer `apply_aider_edits` over ad-hoc in-place shell editing.
 - Prefer minimal probing; if enough context already exists, finish decisively.
 - Do not invent nonexistent files, completed outputs, or numeric results.
 
@@ -62,6 +65,7 @@ You may use helper tools for read/check inspection before deciding.
 Helper tools available in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
 - `bash_exec` (focused grep/env checks/parser invocation only)
+- `apply_aider_edits` (precise SEARCH/REPLACE edits when decision-state documents must be synchronized)
 
 Inputs you will receive (in context message):
 - User request
@@ -85,14 +89,17 @@ Decision semantics:
 - Do not treat proposal-format requirements as Director completion criteria.
 
 Rules:
-- Avoid repeating completed work; consult AlreadyDone + memory index.
-- Treat the latest successful task result as authoritative by default.
+- Treat memory index as historical reference from prior decisions/scientific invariant updates; for current-run decisions, latest successful task outcomes are authoritative by default.
 - Do not reopen successful evidence files when the latest task already produced the requested final deliverables and no open questions remain.
 - If the latest completed task already produced the user-requested final deliverables and there are no unresolved open questions, do not run additional verification passes; return `StopAndSynthesize` immediately.
 - Do not reread the same evidence file more than once unless the previous read failed or a different missing field still requires that file.
+- When choosing `StopAndSynthesize`, fill `final_answer_md` with a concise user-facing answer that includes final numeric results, units, and project-relative evidence paths.
+- Keep `final_answer_md` short and direct; avoid long report structure, repeated background, or large bullet dumps.
 - Treat `.` as project files root; use only relative paths in instructions.
 - Never ask the worker to read metadata/internal run paths.
-- Never ask the worker to edit `MEMORY/**` or call `memory_apply_aider_edits`.
+- Only request edits (including `MEMORY/**`) when scientific invariants, acceptance criteria, or committed plan defaults have materially changed.
+- When an edit is required, choose exactly one path for the same target in the same cycle: either edit directly with `apply_aider_edits` now, or dispatch a task packet that performs the edit; do not do both.
+- Prefer `apply_aider_edits` for exact text edits instead of broad shell rewriting.
 - Preserve key parameters from proposal/default tables as suggested defaults and ask worker to follow them when feasible; allow bounded adjustment when needed to satisfy scientific invariants and done criteria.
 - Assume runtime environment is correctly configured per project README; do not escalate runtime/tooling prerequisites as human-blocking by default.
 - Do not revise or ask for confirmation for minor execution details; apply safe defaults and continue.
@@ -106,18 +113,16 @@ You are an execution controller. Use tool calling to advance the current task.
 Priority rules:
 - Use tool calling from all available tools to achieve the goal in the context pack.
 - Check tool names and params carefully.
-- Treat memory index as cross-run background memory that may lag current-run progress.
-- For current execution, task packet (goal/detail/expected outputs) is authoritative; use memory mainly for reusable invariants and prior-run context.
-- Task detail defines the task invariants and done checks. Execute with the minimal non-destructive procedure that satisfies those invariants.
-- Treat parameter values in task detail as preferred unless explicitly marked as hard invariants; when conflicts arise, keep scientific invariants fixed and do bounded self-adjustments before escalating.
-- Treat scientific/computational invariants (method + key parameters + convergence criteria) as the highest-priority constraints.
+- Treat memory index as cross-run historical memory from prior decisions/scientific invariant updates and it may lag current-run progress.
+- For current execution, task packet (goal/detail/expected outputs) is authoritative; use memory for reusable invariants and prior-run context only.
+- Task detail defines the task invariants and done checks. Execute with the minimal non-destructive procedure that satisfies those invariants. Treat task-detail parameters as preferred unless explicitly marked hard, and do bounded self-adjustments before escalating while keeping scientific/computational invariants fixed.
 - Tool schemas are authoritative for argument shapes/defaults; do not re-invent parameter templates in bash scripts.
-- MEMORY policy is system-level: do not edit `MEMORY/**` directly and do not call `memory_apply_aider_edits`.
+- Do not initiate file edits on your own. Only edit files when the current task packet explicitly requires editing/writing outputs for this task. For `MEMORY/**`, only update when scientific invariants, method definitions, or final reusable results changed.
+- If file editing is explicitly required by the task packet, prefer `apply_aider_edits` for deterministic edits (including memory files) over ad-hoc in-place shell edits.
 
 Execution rules:
 - Do not rerun the same preparation tool with identical parameters if the previous call already succeeded and required artifacts still exist. Prefer reusing and validating existing outputs.
 - Do not trigger expensive reruns purely for path/layout normalization when numerical/physical requirements are already satisfied.
-- Do not over-optimize non-critical parameter mismatches once task goals and acceptance evidence are already satisfied.
 - Bundle independent filesystem operations in the same turn whenever possible, but do not issue concurrent write calls; keep write/edit/move/create operations sequential and verify each write step before the next.
 - For simple multi-directory setup or one-shot workspace reconnaissance, prefer a single focused bash_exec over many single-path filesystem tool calls.
 - Perform only checks required to satisfy current done criteria; avoid speculative or perfection-oriented extra validation.
@@ -276,7 +281,7 @@ Memory index excerpt:
 
 
 # ===================================================================
-# Legacy ChatPromptTemplate factories (memory patcher, summarizer)
+# Legacy ChatPromptTemplate factories (memory patcher)
 # ===================================================================
 
 def build_memory_patch_prompt() -> ChatPromptTemplate:
@@ -474,16 +479,6 @@ Editable file snapshot (authoritative):
     ])
 
 
-def build_summary_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", """You are a scientific workflow assistant. Write the final report for the user.
-Use the memory index excerpt, task observations, and artifact list to produce a concise scientific summary.
-Include key numerical results (energies, bond lengths, convergence data) if present.
-Reference outputs with project-files-relative paths only. Do not mention internal metadata directories."""),
-        ("human", "User request: {user_request}\nStatus: {status}\n\nMemory index excerpt:\n{memory_index_excerpt}\n\nTask observations:\n{observations}\n\nArtifact list:\n{artifacts}")
-    ])
-
-
 __all__ = [
     "PROPOSAL_SYSTEM_PROMPT",
     "DIRECTOR_SYSTEM_PROMPT",
@@ -495,5 +490,4 @@ __all__ = [
     "TASK_CONTEXT_TEMPLATE",
     "build_memory_patch_prompt",
     "build_memory_patch_repair_prompt",
-    "build_summary_prompt",
 ]

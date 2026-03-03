@@ -182,7 +182,7 @@ When adding new run phases or behaviors, emit events via the Reporter to preserv
 
 - Do not write ad-hoc long-form memory blobs into prompts or metadata files.
 - Use `files/MEMORY/MEMORY.md` as the short index (autoload excerpt), and put details in `files/MEMORY/topics/*.md`.
-- Persist per-task memory updates via Aider SEARCH/REPLACE edit flow (`MEMORY/**` + optional `notes/**`) and apply with `memory_apply_aider_edits`.
+- Use `apply_aider_edits` for deterministic SEARCH/REPLACE updates when memory or other project files must be synchronized.
 - `MemoryStore.merge_task_result(...)` is compatibility-only (event logging), not the canonical MEMORY updater.
 - Keep immutable audit trails in `metadata/memory/events.jsonl`.
 - Paths recorded in memory files must be project-files-relative paths (no `metadata/...`).

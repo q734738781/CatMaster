@@ -301,7 +301,6 @@ class WebSession:
                     proposal_model=build_chat_model(llm_profile.config_for_role("proposal")),
                     director_model=build_chat_model(llm_profile.config_for_role("director")),
                     memory_patch_model=build_chat_model(llm_profile.config_for_role("memory_patch")),
-                    summary_model=build_chat_model(llm_profile.config_for_role("summary")),
                     registry=registry,
                     memory_store=memory_store,
                     run_context=run_ctx,

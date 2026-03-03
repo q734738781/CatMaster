@@ -170,9 +170,12 @@ class ReviseProposalPayload(BaseModel):
 class StopAndSynthesizePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    stop_reason: str | None = Field(
+    final_answer_md: str = Field(
         ...,
-        description="Short stop reason. Use null only when no additional stop reason is needed.",
+        description=(
+            "Concise final user-facing answer markdown. Include final requested values with units and "
+            "project-relative evidence paths; avoid long narrative report sections."
+        ),
     )
 
 

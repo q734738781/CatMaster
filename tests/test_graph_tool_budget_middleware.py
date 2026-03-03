@@ -69,3 +69,17 @@ def test_budget_supports_async_handler_for_mcp_tools() -> None:
 
     out = _invoke_budget_middleware(budget_mw, request, _async_ok)
     assert out == "ok-async"
+
+
+def test_sync_wrap_returns_error_when_handler_is_awaitable() -> None:
+    reset_mw, budget_mw = _make_tool_call_budget_middleware(role="task_runner", max_tool_calls=2)
+    reset_mw.before_agent({}, None)
+    request = SimpleNamespace(tool_call={"name": "read_text_file", "id": "call-sync-async-1"})
+
+    async def _async_ok(_request):
+        return "ok-async"
+
+    out = budget_mw.wrap_tool_call(request, _async_ok)
+    assert isinstance(out, ToolMessage)
+    assert out.status == "error"
+    assert "ainvoke/arun" in str(out.content)

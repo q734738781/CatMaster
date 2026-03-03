@@ -15,10 +15,12 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert "Allowed helper tools in this stage" in system_content
     assert "Filesystem read/discovery tools" in system_content
     assert "`bash_exec`" in system_content
+    assert "`apply_aider_edits`" in system_content
     assert "`read_file`" not in system_content
     assert "`list_directory_with_sizes`" not in system_content
     assert "`get_file_info`" not in system_content
-    assert "avoid script persistence" in system_content
+    assert "Only modify files (especially `MEMORY/**`)" in system_content
+    assert "Treat memory index as historical reference" in system_content
     assert "Assume runtime environment is correctly configured per project README." in system_content
     assert "Do NOT raise runtime/tooling environment prerequisites" in system_content
     assert "Do not invent nonexistent files, completed outputs, or numeric results." in system_content

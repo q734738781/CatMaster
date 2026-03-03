@@ -115,5 +115,5 @@ def test_non_selected_payload_must_be_null() -> None:
             },
             minor_revise_proposal=None,
             major_revise_proposal=None,
-            stop_and_synthesize={"stop_reason": None},
+            stop_and_synthesize={"final_answer_md": "done"},
         )

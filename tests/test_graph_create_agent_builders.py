@@ -34,14 +34,8 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
         captured.append(dict(kwargs))
         return {"ok": True}
 
-    def fake_before_model(fn):
-        return fn
-
-    def fake_before_agent(fn):
-        return fn
-
-    def fake_wrap_tool_call(fn):
-        return fn
+    class _FakeAgentMiddleware:
+        pass
 
     class _FakeToolStrategy:
         def __init__(self, schema, handle_errors=False):
@@ -58,9 +52,7 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
         sys.modules,
         "langchain.agents.middleware",
         types.SimpleNamespace(
-            before_model=fake_before_model,
-            before_agent=fake_before_agent,
-            wrap_tool_call=fake_wrap_tool_call,
+            AgentMiddleware=_FakeAgentMiddleware,
         ),
     )
 
