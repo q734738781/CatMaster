@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
@@ -99,3 +101,23 @@ def test_bash_exec_persists_full_stream_logs_without_pre_truncation(tmp_path) ->
     assert str(data.get("stderr") or "").startswith("B")
     assert len(str(data.get("stdout") or "")) >= 12000
     assert len(str(data.get("stderr") or "")) >= 9000
+
+
+def test_bash_exec_python3_uses_current_interpreter(tmp_path) -> None:
+    with workspace_scope(tmp_path):
+        content, artifact = bash_exec(
+            {
+                "script": (
+                    "python3 - <<'PY'\n"
+                    "import sys\n"
+                    "print(sys.executable)\n"
+                    "PY\n"
+                ),
+                "cwd": ".",
+                "no_network": False,
+                "timeout_s": 5.0,
+            }
+        )
+    _ = content
+    stdout = str((artifact or {}).get("data", {}).get("stdout") or "").strip()
+    assert stdout == sys.executable

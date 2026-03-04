@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import os
 import re
+import shlex
+import sys
 import time
 import subprocess
 import threading
@@ -193,6 +195,16 @@ def _render_success_content(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _inject_python_shim(script: str) -> str:
+    """Force `python`/`python3` calls to use the current process interpreter."""
+    py = shlex.quote(sys.executable)
+    shim = (
+        f"python() {{ {py} \"$@\"; }}\n"
+        f"python3() {{ {py} \"$@\"; }}\n"
+    )
+    return shim + script
+
+
 def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params = BashExecInput(**payload)
     t0 = time.perf_counter()
@@ -204,7 +216,7 @@ def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("LC_ALL", "C")
 
-    script = params.script
+    script = _inject_python_shim(params.script)
     blocked_reason = _detect_forbidden_symlink_usage(script)
     if blocked_reason:
         _fail(
