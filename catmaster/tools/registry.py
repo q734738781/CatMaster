@@ -76,6 +76,10 @@ class ToolRegistry:
             apply_aider_edits,
             ApplyAiderEditsInput,
         )
+        from catmaster.tools.misc.memory import (
+            write_note,
+            MemoryNoteInput,
+        )
         
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
@@ -97,6 +101,7 @@ class ToolRegistry:
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
+        self.register_tool("write_note", write_note, MemoryNoteInput)
     
     def register_tool(
         self, 

@@ -24,6 +24,7 @@ class _Registry:
         _ = (run_dir, workspace)
         return [
             _Tool("bash_exec"),
+            _Tool("write_note"),
             _Tool("read_file"),
             _Tool("list_directory_with_sizes"),
             _Tool("get_file_info"),
@@ -88,10 +89,12 @@ def test_build_runtime_tool_surface_role_split(tmp_path) -> None:
     assert "list_directory_with_sizes" not in proposal_names
     assert "get_file_info" not in proposal_names
     assert "apply_aider_edits" in proposal_names
+    assert "write_note" in proposal_names
 
     assert "apply_aider_edits" in task_names
     assert "create_molecule_from_smiles" in task_names
     assert "write_file" in task_names
+    assert "write_note" not in task_names
     assert "read_file" not in task_names
     assert "list_directory_with_sizes" not in task_names
     assert "get_file_info" not in task_names

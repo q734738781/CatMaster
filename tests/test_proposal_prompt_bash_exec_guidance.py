@@ -16,6 +16,7 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert "Filesystem read/discovery tools" in system_content
     assert "`bash_exec`" in system_content
     assert "`apply_aider_edits`" in system_content
+    assert "`write_note`" in system_content
     assert "`read_file`" not in system_content
     assert "`list_directory_with_sizes`" not in system_content
     assert "`get_file_info`" not in system_content

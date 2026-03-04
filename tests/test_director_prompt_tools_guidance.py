@@ -14,6 +14,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "Filesystem read/discovery tools" in system_content
     assert "`bash_exec`" in system_content
     assert "`apply_aider_edits`" in system_content
+    assert "`write_note`" in system_content
     assert "`read_file`" not in system_content
     assert "`list_directory_with_sizes`" not in system_content
     assert "`get_file_info`" not in system_content
@@ -38,7 +39,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "`expected_outputs`:" not in system_content
     assert "`reference_hint`:" not in system_content
     assert "task_packet.suggested_tools" not in system_content
-    assert "Latest completed task outcome (authoritative-by-default evidence):" in human_content
-    assert "Recent task outcomes history (oldest -> newest):" in human_content
+    assert "Latest completed task outcome (authoritative-by-default evidence):" not in human_content
+    assert "Recent task outcomes history (oldest -> newest, MarkdownKV records):" in human_content
     assert "AlreadyDone" in human_content
     assert "Available tools for task runner:" in human_content

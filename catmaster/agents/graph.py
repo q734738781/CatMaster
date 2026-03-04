@@ -32,6 +32,7 @@ from langgraph.types import Command, interrupt
 from catmaster.agents.nodes import (
     run_proposal,
     run_director,
+    run_fast_director,
     run_task,
     summarize_node,
 )
@@ -52,11 +53,12 @@ from catmaster.runtime.usage_stats import write_usage_summary
 from catmaster.tools.base import workspace_scope
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
-from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, TaskOutput
+from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, FastDirectorOutput, TaskOutput
 from catmaster.llm.config import MCPConfig
 from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_SYSTEM_PROMPT,
     DIRECTOR_SYSTEM_PROMPT,
+    FAST_DIRECTOR_SYSTEM_PROMPT,
     TASK_RUNNER_SYSTEM_PROMPT,
 )
 
@@ -295,6 +297,29 @@ def _build_director_agent(
     )
 
 
+def _build_fast_director_agent(
+    model: BaseChatModel,
+    tools: Sequence[BaseTool],
+    *,
+    max_steps: int = 60,
+) -> Any:
+    role_tools = list(tools)
+    logger.info(
+        "[build_fast_director_agent] response_format=%s, tools=%s",
+        True,
+        [t.name for t in role_tools],
+    )
+    create_agent = _load_create_agent()
+    ToolStrategy = _load_tool_strategy()
+    return create_agent(
+        model=model,
+        tools=role_tools,
+        system_prompt=FAST_DIRECTOR_SYSTEM_PROMPT,
+        response_format=ToolStrategy(FastDirectorOutput, handle_errors=False),
+        middleware=_make_tool_call_budget_middleware(role="fast_director", max_tool_calls=max_steps),
+    )
+
+
 def _build_task_runner_agent(
     model: BaseChatModel,
     tools: Sequence[BaseTool],
@@ -356,6 +381,23 @@ async def _run_director_wrapper(
     max_steps: int,
 ) -> Command:
     return await run_director(
+        state,
+        agent=agent,
+        memory_store=memory_store,
+        tools_description=tools_description,
+        max_steps=max_steps,
+    )
+
+
+async def _run_fast_director_wrapper(
+    state: CatMasterState,
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    tools_description: str,
+    max_steps: int,
+) -> Command:
+    return await run_fast_director(
         state,
         agent=agent,
         memory_store=memory_store,
@@ -601,19 +643,28 @@ def build_standard_graph(
 def build_fast_graph(
     *,
     task_runner_model: BaseChatModel,
+    director_model: BaseChatModel,
     memory_patch_model: BaseChatModel,
     memory_store: MemoryStore,
+    director_tools: Sequence[BaseTool],
     task_tools: Sequence[BaseTool],
+    director_tools_description: str,
     run_id: str = "",
     run_dir: Optional[Path] = None,
     patch_repair_attempts: int = 1,
     tool_backend: Optional[ToolBackend] = None,
     max_task_steps: int = 60,
+    max_plan_steps: int = 60,
     checkpointer: Optional[BaseCheckpointSaver] = None,
     run_control: Optional[RunControl] = None,
 ) -> Any:
-    """Build and compile the fast-lane LangGraph (single task, no director)."""
+    """Build and compile the fast-lane LangGraph (proposal-free director loop)."""
     effective_run_dir = run_dir or Path(".")
+    fast_director_agent = _build_fast_director_agent(
+        director_model,
+        list(director_tools),
+        max_steps=max_plan_steps,
+    )
     task_agent = _build_task_runner_agent(
         task_runner_model,
         list(task_tools),
@@ -623,13 +674,21 @@ def build_fast_graph(
 
     graph = StateGraph(CatMasterState)
 
+    graph.add_node("run_fast_director", partial(
+        _run_fast_director_wrapper,
+        agent=fast_director_agent,
+        memory_store=memory_store,
+        tools_description=director_tools_description,
+        max_steps=max_plan_steps,
+    ))
+
     graph.add_node("run_task", partial(
         _run_task_wrapper,
         agent=task_agent,
         memory_store=memory_store,
         max_steps=max_task_steps,
-        continue_goto="summarize",
-        intervention_goto="summarize",
+        continue_goto="run_fast_director",
+        intervention_goto="run_fast_director",
         run_dir=effective_run_dir,
     ))
 
@@ -638,7 +697,7 @@ def build_fast_graph(
         memory_store=memory_store,
     ))
 
-    graph.set_entry_point("run_task")
+    graph.set_entry_point("run_fast_director")
     graph.add_edge("summarize", END)
 
     compile_kwargs: dict[str, Any] = {}
@@ -1159,16 +1218,25 @@ class GraphRunner:
                 )
 
                 if lane == "fast":
+                    fast_director_tools = [
+                        tool
+                        for tool in surface.director_tools
+                        if str(getattr(tool, "name", "") or "") != "apply_aider_edits"
+                    ]
                     compiled = build_fast_graph(
                         task_runner_model=self.task_runner_model,
+                        director_model=self.director_model,
                         memory_patch_model=self.memory_patch_model,
                         memory_store=self.memory_store,
+                        director_tools=fast_director_tools,
                         task_tools=surface.task_tools,
+                        director_tools_description=surface.task_runner_capability_guide_short,
                         run_id=self.run_context.run_id,
                         run_dir=run_dir,
                         patch_repair_attempts=self.patch_repair_attempts,
                         tool_backend=self.tool_backend,
                         max_task_steps=self.max_task_steps,
+                        max_plan_steps=self.max_plan_steps,
                         checkpointer=self.checkpointer,
                         run_control=self.run_control,
                     )

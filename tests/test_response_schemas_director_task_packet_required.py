@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from catmaster.agents.response_schemas import DirectorOutput, TaskPacket
+from catmaster.agents.response_schemas import DirectorOutput, FastDirectorOutput, TaskPacket
 
 
 def test_perform_next_task_requires_task_packet() -> None:
@@ -115,5 +115,43 @@ def test_non_selected_payload_must_be_null() -> None:
             },
             minor_revise_proposal=None,
             major_revise_proposal=None,
+            stop_and_synthesize={"final_answer_md": "done"},
+        )
+
+
+def test_fast_director_perform_next_task_requires_payload() -> None:
+    with pytest.raises(ValidationError, match="requires its matching payload"):
+        FastDirectorOutput(
+            state="PerformNextTask",
+            rationale="Dispatch next task.",
+            perform_next_task=None,
+            stop_and_synthesize=None,
+        )
+
+
+def test_fast_director_stop_and_synthesize_requires_payload() -> None:
+    with pytest.raises(ValidationError, match="requires its matching payload"):
+        FastDirectorOutput(
+            state="StopAndSynthesize",
+            rationale="Complete.",
+            perform_next_task=None,
+            stop_and_synthesize=None,
+        )
+
+
+def test_fast_director_non_selected_payload_must_be_null() -> None:
+    with pytest.raises(ValidationError, match="payload must be null when state=PerformNextTask"):
+        FastDirectorOutput(
+            state="PerformNextTask",
+            rationale="Dispatch next task.",
+            perform_next_task={
+                "task_packet": {
+                    "goal": "Run adsorption references",
+                    "task_detail": "Enable D3 and keep slab setup fixed.",
+                    "expected_outputs": ["results/adsorption/reference_energies.json"],
+                    "suggested_tools": ["bash_exec"],
+                    "reference_hint": ["MEMORY/topics/FACTS.md"],
+                },
+            },
             stop_and_synthesize={"final_answer_md": "done"},
         )

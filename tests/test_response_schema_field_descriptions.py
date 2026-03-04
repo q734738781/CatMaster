@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from catmaster.agents.response_schemas import (
     DirectorOutput,
+    FastDirectorOutput,
     PerformNextTaskPayload,
     ProposalOutput,
     ReviseProposalPayload,
@@ -137,6 +138,7 @@ def test_structured_output_models_are_provider_compatible_shape() -> None:
         ReviseProposalPayload,
         StopAndSynthesizePayload,
         DirectorOutput,
+        FastDirectorOutput,
         TaskOutput,
     ):
         schema = cls.model_json_schema()

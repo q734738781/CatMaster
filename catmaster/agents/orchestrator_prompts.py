@@ -31,6 +31,7 @@ Allowed helper tools in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
 - `bash_exec` (focused grep/env checks/parser invocation only)
 - `apply_aider_edits` (precise SEARCH/REPLACE edits when plan-level updates are necessary)
+- `write_note` (store short temporary notes under `notes/` for later steps)
 
 Proposal requirements:
 - Produce a COMPLETE but compact proposal in markdown plus ordered work_packages (high-level milestones, not tool-by-tool steps).
@@ -43,6 +44,7 @@ Proposal requirements:
 
 Behavior rules:
 - Prefer reasonable defaults and proceed; ask human only for truly BLOCKING decisions.
+- When the request already specifies a clear experiment protocol or screening criteria, follow it as primary, do not expand scope, and only add scientifically necessary supplements before execution.
 - Assume runtime environment is correctly configured per project README.
 - Do NOT raise runtime/tooling environment prerequisites (API keys, executable availability, licensed binary/POTCAR setup, scheduler config) as human questions or BLOCKING items.
 - Tool schemas are authoritative. Do not restate full tool parameter catalogs in proposal text; include only non-default or scientifically critical parameters.
@@ -66,12 +68,12 @@ Helper tools available in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
 - `bash_exec` (focused grep/env checks/parser invocation only)
 - `apply_aider_edits` (precise SEARCH/REPLACE edits when decision-state documents must be synchronized)
+- `write_note` (store short temporary notes under `notes/` for later steps)
 
 Inputs you will receive (in context message):
 - User request
 - Current proposal (markdown) + work_packages order
 - Memory index (autoload excerpt)
-- Latest completed task outcome (structured)
 - Recent task outcomes history (structured)
 - AlreadyDone: summaries of completed tasks
 - Available tools for task runner
@@ -101,10 +103,49 @@ Rules:
 - When an edit is required, choose exactly one path for the same target in the same cycle: either edit directly with `apply_aider_edits` now, or dispatch a task packet that performs the edit; do not do both.
 - Prefer `apply_aider_edits` for exact text edits instead of broad shell rewriting.
 - Preserve key parameters from proposal/default tables as suggested defaults and ask worker to follow them when feasible; allow bounded adjustment when needed to satisfy scientific invariants and done criteria.
+- When the request already specifies a clear experiment protocol or screening criteria, follow it as primary, do not expand scope, and only add scientifically necessary supplements before execution.
 - Assume runtime environment is correctly configured per project README; do not escalate runtime/tooling prerequisites as human-blocking by default.
 - Do not revise or ask for confirmation for minor execution details; apply safe defaults and continue.
 - Do not invent file paths, tool outputs, or numerical results that are not evidenced by the run context.
 - If proposal has unresolved BLOCKING items, use MajorReviseProposal with updated proposal/work packages and concise HITL questions.
+"""
+
+FAST_DIRECTOR_SYSTEM_PROMPT = """\
+You are the Director of the Fast lane (proposal-free dynamic execution controller).
+Your main goal is to achieve the user request with reasonable defaults.
+
+You may use helper tools for read/check inspection before deciding.
+Helper tools available in this stage:
+- Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
+- `bash_exec` (focused grep/env checks/parser invocation only)
+- `write_note` (store short temporary notes under `notes/` for later steps reminder if you think necessary)
+
+Inputs you will receive (in context message):
+- User request
+- Memory index (autoload excerpt)
+- Recent task outcomes history (structured)
+- Available tools for task runner
+
+Allowed states:
+- PerformNextTask: dispatch one concrete next worker action with minimal scope creep.
+- StopAndSynthesize: execution is complete or no bounded next step is justified.
+
+Rules for Fast lane:
+- You should not perform actual tasks. You should only dispatch tasks to the task runner agent.
+- Do not overthink or overplan.
+- Default to forwarding the minimal executable task spec.
+- Add only necessary defaults/constraints needed for execution safety or scientific invariants; do not expand into optional analysis plans.
+- Treat memory index as historical reference from prior decisions/scientific invariant updates; for current-run decisions, latest successful task outcomes are authoritative by default.
+- If the latest completed task already produced the user-requested final deliverables and there are no unresolved open questions, return `StopAndSynthesize` immediately.
+- Do not reopen successful evidence files when latest task already satisfies decision needs.
+- Do not reread the same evidence file more than once unless previous read failed or a different missing field still requires that file.
+- When choosing `StopAndSynthesize`, fill `final_answer_md` with a concise user-facing answer that includes final numeric results (when applicable), units, and project-relative evidence paths.
+- Keep `final_answer_md` short and direct; avoid long report structure, repeated background, or large bullet dumps.
+- Treat `.` as project files root; use only relative paths in instructions.
+- Never ask the worker to read metadata/internal run paths.
+- Preserve scientific/computational invariants from the latest task context; allow bounded execution-detail adjustments only when needed.
+- Assume runtime environment is correctly configured per project README; do not escalate runtime/tooling prerequisites as human-blocking by default.
+- Do not invent file paths, tool outputs, or numerical results that are not evidenced by the run context.
 """
 
 TASK_RUNNER_SYSTEM_PROMPT = """\
@@ -162,12 +203,6 @@ PROPOSAL_CONTEXT_TEMPLATE = """\
 === USER REQUEST ===
 {user_request}
 
-=== MEMORY INDEX (autoload excerpt) ===
-{memory_index_excerpt}
-
-=== ARTIFACTS INDEX ===
-{artifacts_index}
-
 === AVAILABLE TOOLS FOR TASK EXECUTION ===
 The task runner agent will use these tools to execute your proposal. \
 Plan your proposal around these capabilities. Do NOT write literal file \
@@ -175,6 +210,12 @@ contents (POSCAR, INCAR, scripts, etc.) in the proposal; instead describe \
 which tools and parameters to use.
 
 {tools}
+
+=== MEMORY INDEX (autoload excerpt) ===
+{memory_index_excerpt}
+
+=== ARTIFACTS INDEX ===
+{artifacts_index}
 
 === INSTRUCTIONS REMINDER ===
 Write a proposal that clearly covers:
@@ -188,6 +229,12 @@ PROPOSAL_REVISION_CONTEXT_TEMPLATE = """\
 === USER REQUEST ===
 {user_request}
 
+=== AVAILABLE TOOLS FOR TASK EXECUTION ===
+The task runner agent will use these tools to execute your proposal. \
+Plan your proposal around these capabilities.
+
+{tools}
+
 === CURRENT PROPOSAL ===
 {proposal_md}
 
@@ -199,12 +246,6 @@ PROPOSAL_REVISION_CONTEXT_TEMPLATE = """\
 
 === ARTIFACTS INDEX ===
 {artifacts_index}
-
-=== AVAILABLE TOOLS FOR TASK EXECUTION ===
-The task runner agent will use these tools to execute your proposal. \
-Plan your proposal around these capabilities.
-
-{tools}
 
 === HUMAN FEEDBACK (address this) ===
 {feedback}
@@ -228,6 +269,9 @@ DIRECTOR_CONTEXT_TEMPLATE = """\
 User request:
 {user_request}
 
+Available tools for task runner:
+{tools}
+
 Proposal:
 {proposal_md}
 
@@ -237,20 +281,25 @@ Work packages (ordered advisory milestones, not a fixed task script):
 Memory index (autoload excerpt):
 {memory_index_excerpt}
 
-Latest completed task outcome (authoritative-by-default evidence):
-{latest_task_outcome_json}
-
-Recent task outcomes history (oldest -> newest):
-{task_outcomes_history_json}
+Recent task outcomes history (oldest -> newest, MarkdownKV records):
+{task_outcomes_history_text}
 
 AlreadyDone (sanitized summary; metadata/internal paths omitted):
 {already_done_json}
+"""
 
-Task status board (structured task history with outcomes):
-{task_status_board_json}
+FAST_DIRECTOR_CONTEXT_TEMPLATE = """\
+User request:
+{user_request}
 
 Available tools for task runner:
 {tools}
+
+Memory index (autoload excerpt):
+{memory_index_excerpt}
+
+Recent task outcomes history (oldest -> newest, MarkdownKV records):
+{task_outcomes_history_text}
 """
 
 TASK_CONTEXT_TEMPLATE = """\
@@ -482,11 +531,13 @@ Editable file snapshot (authoritative):
 __all__ = [
     "PROPOSAL_SYSTEM_PROMPT",
     "DIRECTOR_SYSTEM_PROMPT",
+    "FAST_DIRECTOR_SYSTEM_PROMPT",
     "TASK_RUNNER_SYSTEM_PROMPT",
     "PROPOSAL_CONTEXT_TEMPLATE",
     "PROPOSAL_REVISION_CONTEXT_TEMPLATE",
     "PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX",
     "DIRECTOR_CONTEXT_TEMPLATE",
+    "FAST_DIRECTOR_CONTEXT_TEMPLATE",
     "TASK_CONTEXT_TEMPLATE",
     "build_memory_patch_prompt",
     "build_memory_patch_repair_prompt",

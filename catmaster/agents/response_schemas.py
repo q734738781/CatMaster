@@ -233,6 +233,51 @@ class DirectorOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Fast-director response
+# ---------------------------------------------------------------------------
+
+class FastDirectorOutput(BaseModel):
+    """Structured output from the fast-lane director agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal[
+        "PerformNextTask",
+        "StopAndSynthesize",
+    ] = Field(..., description="Decision state for the next action in fast lane.")
+    rationale: str = Field(
+        ...,
+        description=(
+            "Very brief decision rationale (usually 1-2 sentences): explain decision cause/tradeoff only; "
+            "do not repeat long context or tool logs."
+        ),
+    )
+
+    perform_next_task: PerformNextTaskPayload | None = Field(
+        ...,
+        description="Payload for PerformNextTask branch (must be non-null only when state=PerformNextTask).",
+    )
+    stop_and_synthesize: StopAndSynthesizePayload | None = Field(
+        ...,
+        description="Payload for StopAndSynthesize branch (must be non-null only when state=StopAndSynthesize).",
+    )
+
+    @model_validator(mode="after")
+    def _validate_state_payload(self) -> "FastDirectorOutput":
+        payloads = {
+            "PerformNextTask": self.perform_next_task,
+            "StopAndSynthesize": self.stop_and_synthesize,
+        }
+        active_payload = payloads.get(self.state)
+        if active_payload is None:
+            raise ValueError(f"{self.state} requires its matching payload")
+        for branch, payload in payloads.items():
+            if branch != self.state and payload is not None:
+                raise ValueError(f"{branch} payload must be null when state={self.state}")
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Task runner agent response
 # ---------------------------------------------------------------------------
 
@@ -320,5 +365,6 @@ __all__ = [
     "ReviseProposalPayload",
     "StopAndSynthesizePayload",
     "DirectorOutput",
+    "FastDirectorOutput",
     "TaskOutput",
 ]

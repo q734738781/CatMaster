@@ -26,6 +26,7 @@ from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_REVISION_CONTEXT_TEMPLATE,
     PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX,
     DIRECTOR_CONTEXT_TEMPLATE,
+    FAST_DIRECTOR_CONTEXT_TEMPLATE,
     TASK_CONTEXT_TEMPLATE,
     build_memory_patch_prompt,
     build_memory_patch_repair_prompt,
@@ -33,6 +34,7 @@ from catmaster.agents.orchestrator_prompts import (
 from catmaster.agents.response_schemas import (
     ProposalOutput,
     DirectorOutput,
+    FastDirectorOutput,
     TaskOutput,
 )
 from catmaster.agents.llm_utils import llm_text
@@ -106,12 +108,10 @@ def _build_director_context(
     """Build the HumanMessage text for the director agent."""
     observations = state.get("observations", [])
     director_observations = _director_observations_view(observations)
-    task_status_board = _director_task_status_board(
+    task_outcomes_history = _director_task_outcomes_history(
         state.get("tasks", []),
         director_observations,
     )
-    latest_task_outcome = _director_latest_task_outcome(state, observations)
-    task_outcomes_history = _director_task_outcomes_history(observations)
 
     return DIRECTOR_CONTEXT_TEMPLATE.format(
         user_request=state["user_request"],
@@ -120,10 +120,28 @@ def _build_director_context(
             state.get("work_packages", []), ensure_ascii=False,
         ),
         memory_index_excerpt=memory_store.read_index(),
-        latest_task_outcome_json=json.dumps(latest_task_outcome, ensure_ascii=False, default=str),
-        task_outcomes_history_json=json.dumps(task_outcomes_history, ensure_ascii=False, default=str),
+        task_outcomes_history_text=_render_task_outcomes_history_lines(task_outcomes_history),
         already_done_json=json.dumps(director_observations, ensure_ascii=False),
-        task_status_board_json=json.dumps(task_status_board, ensure_ascii=False),
+        tools=tools_description,
+    )
+
+
+def _build_fast_director_context(
+    state: Dict[str, Any],
+    memory_store: MemoryStore,
+    tools_description: str,
+) -> str:
+    """Build the HumanMessage text for the fast-lane director agent."""
+    observations = state.get("observations", [])
+    task_outcomes_history = _director_task_outcomes_history(
+        state.get("tasks", []),
+        observations,
+    )
+
+    return FAST_DIRECTOR_CONTEXT_TEMPLATE.format(
+        user_request=state["user_request"],
+        memory_index_excerpt=memory_store.read_index(),
+        task_outcomes_history_text=_render_task_outcomes_history_lines(task_outcomes_history),
         tools=tools_description,
     )
 
@@ -261,11 +279,11 @@ def _structured_contract_violation_summary(role: str, violation: dict[str, Any])
 def _require_structured_response(
     result: dict[str, Any],
     *,
-    schema_cls: type[ProposalOutput] | type[DirectorOutput] | type[TaskOutput],
+    schema_cls: type[ProposalOutput] | type[DirectorOutput] | type[FastDirectorOutput] | type[TaskOutput],
     role: str,
     messages: list[AnyMessage],
     max_steps: int,
-) -> tuple[ProposalOutput | DirectorOutput | TaskOutput | None, dict[str, Any] | None]:
+) -> tuple[ProposalOutput | DirectorOutput | FastDirectorOutput | TaskOutput | None, dict[str, Any] | None]:
     raw = result.get("structured_response")
     if raw is None:
         violation = _structured_contract_violation(
@@ -582,6 +600,112 @@ async def run_director(
         return Command(goto="run_director", update=update)
 
     # StopAndSynthesize
+    stop_payload = resp.stop_and_synthesize
+    final_answer_md = ""
+    if stop_payload is not None:
+        final_answer_md = str(stop_payload.final_answer_md or "").strip()
+    if final_answer_md:
+        update["summary"] = final_answer_md
+    return Command(goto="summarize", update=update)
+
+
+async def run_fast_director(
+    state: Dict[str, Any],
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    tools_description: str,
+    max_steps: int = 30,
+) -> Command:
+    """Invoke the fast-lane director agent and route via Command."""
+    ctx_text = _build_fast_director_context(state, memory_store, tools_description)
+    ctx_msg = HumanMessage(content=ctx_text)
+    input_messages: list[AnyMessage] = [ctx_msg]
+    try:
+        result = await _invoke_agent_with_step_budget(
+            agent=agent,
+            messages=input_messages,
+            max_steps=max_steps,
+            role="fast_director",
+        )
+    except Exception as exc:
+        logger.exception("fast director agent invoke failed: %s", exc)
+        violation = _structured_contract_violation(
+            role="fast_director",
+            reason="invoke_exception",
+            messages=input_messages,
+            max_steps=max_steps,
+            error=str(exc),
+            schema_name=FastDirectorOutput.__name__,
+        )
+        summary = f"fast director agent invoke failed before structured response: {exc}"
+        return Command(
+            goto="summarize",
+            update={
+                "director_messages": input_messages,
+                "director_decision": {},
+                "next_action": "ContractViolation",
+                "status": "failure",
+                "summary": summary,
+                "contract_violation": violation,
+            },
+        )
+
+    msgs = list(result.get("messages", []) or [])
+    parsed, violation = _require_structured_response(
+        result,
+        schema_cls=FastDirectorOutput,
+        role="fast_director",
+        messages=msgs,
+        max_steps=max_steps,
+    )
+    if not isinstance(parsed, FastDirectorOutput):
+        if _is_need_more_steps(msgs):
+            logger.warning("[run_fast_director] hit remaining_steps limit (max_steps=%d)", max_steps)
+        logger.warning("fast director agent returned missing/invalid structured response")
+        violation_payload = violation or _structured_contract_violation(
+            role="fast_director",
+            reason="missing_structured_response",
+            messages=msgs,
+            max_steps=max_steps,
+            schema_name=FastDirectorOutput.__name__,
+        )
+        return Command(
+            goto="summarize",
+            update={
+                "director_messages": _cap_messages(msgs),
+                "director_decision": {},
+                "next_action": "ContractViolation",
+                "status": "failure",
+                "summary": _structured_contract_violation_summary("fast_director", violation_payload),
+                "contract_violation": violation_payload,
+            },
+        )
+
+    resp = parsed
+    update: Dict[str, Any] = {
+        "director_messages": _cap_messages(msgs),
+        "director_decision": resp.model_dump(),
+        "next_action": resp.state,
+        "contract_violation": {},
+    }
+
+    if resp.state == "PerformNextTask":
+        branch = resp.perform_next_task
+        task_packet = branch.task_packet if branch is not None else None
+        task_id = f"task_{_next_task_index(state.get('tasks', [])):02d}"
+        update["current_task_id"] = task_id
+        update["current_task_packet"] = task_packet.model_dump() if task_packet else {}
+        new_task = {
+            "task_id": task_id,
+            "goal": task_packet.goal if task_packet else "",
+            "task_packet": task_packet.model_dump() if task_packet else {},
+            "status": "pending",
+        }
+        update["tasks"] = list(state.get("tasks") or []) + [new_task]
+        update["runner_messages"] = []
+        return Command(goto="run_task", update=update)
+
     stop_payload = resp.stop_and_synthesize
     final_answer_md = ""
     if stop_payload is not None:
@@ -1422,97 +1546,10 @@ def _director_observations_view(
     return sanitized
 
 
-def _director_latest_task_outcome(
-    state: dict[str, Any],
-    observations: list[dict],
-) -> dict[str, Any]:
-    task_result = state.get("task_result")
-    latest_obs = observations[-1] if observations and isinstance(observations[-1], dict) else {}
-    current_task_id = str(state.get("current_task_id") or "").strip()
-
-    row: dict[str, Any] = {}
-    task_id = current_task_id or str(latest_obs.get("task_id") or "").strip()
-    if task_id:
-        row["task_id"] = task_id
-
-    if isinstance(task_result, dict):
-        outcome = str(task_result.get("task_outcome") or "").strip()
-        if outcome:
-            row["outcome"] = outcome
-        summary = str(task_result.get("task_summary") or "").strip()
-        if summary:
-            row["summary"] = summary
-
-        key_artifacts = task_result.get("key_artifacts")
-        if isinstance(key_artifacts, list):
-            row["key_artifacts"] = key_artifacts
-
-        structured = task_result.get("structured_result")
-        if isinstance(structured, dict):
-            latest_structured: dict[str, Any] = {}
-            for key in (
-                "summary",
-                "facts",
-                "files",
-                "constraints",
-                "open_questions",
-                "decisions",
-                "next_steps",
-                "artifacts",
-            ):
-                if key in structured:
-                    latest_structured[key] = structured.get(key)
-            if latest_structured:
-                row["structured_result"] = latest_structured
-
-    if not row and isinstance(latest_obs, dict):
-        for key in (
-            "task_id",
-            "outcome",
-            "summary",
-            "key_artifacts",
-            "open_questions",
-            "facts",
-            "decisions",
-            "next_steps",
-        ):
-            if key in latest_obs:
-                row[key] = latest_obs.get(key)
-
-    return row
-
-
 def _director_task_outcomes_history(
-    observations: list[dict],
-) -> list[dict[str, Any]]:
-    history: list[dict[str, Any]] = []
-    for obs in observations or []:
-        if not isinstance(obs, dict):
-            continue
-        row: dict[str, Any] = {}
-        for key in (
-            "task_id",
-            "outcome",
-            "summary",
-            "key_artifacts",
-            "open_questions",
-            "facts",
-            "decisions",
-            "next_steps",
-        ):
-            if key in obs:
-                row[key] = obs.get(key)
-        if row:
-            history.append(row)
-    return history
-
-
-def _director_task_status_board(
     tasks: list[dict],
     observations: list[dict],
-    *,
-    max_items: int | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     obs_map: dict[str, dict] = {}
     for row in observations or []:
         if isinstance(row, dict):
@@ -1520,13 +1557,16 @@ def _director_task_status_board(
             if tid:
                 obs_map[tid] = row
 
-    board: list[dict] = []
+    history: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+
     for item in tasks or []:
         if not isinstance(item, dict):
             continue
         tid = str(item.get("task_id") or "").strip()
         if not tid:
             continue
+        seen_task_ids.add(tid)
         row: dict[str, Any] = {
             "task_id": tid,
             "status": _trim_text(str(item.get("status") or "").strip(), limit=32),
@@ -1557,11 +1597,94 @@ def _director_task_status_board(
                         compact_steps.append(hint)
                 if compact_steps:
                     row["next_steps"] = compact_steps
-        board.append(row)
+        history.append(row)
 
-    if max_items is not None and len(board) > max_items:
-        return board[-max_items:]
-    return board
+    for obs in observations or []:
+        if not isinstance(obs, dict):
+            continue
+        tid = str(obs.get("task_id") or "").strip()
+        if not tid or tid in seen_task_ids:
+            continue
+        row: dict[str, Any] = {"task_id": tid}
+        for key in (
+            "outcome",
+            "summary",
+            "key_artifacts",
+            "open_questions",
+            "facts",
+            "decisions",
+            "next_steps",
+        ):
+            if key in obs:
+                row[key] = obs.get(key)
+        artifacts = obs.get("key_artifacts")
+        if isinstance(artifacts, list):
+            row["artifact_count"] = len(artifacts)
+        decisions = obs.get("decisions")
+        if isinstance(decisions, list):
+            row["decision_count"] = len(decisions)
+        history.append(row)
+
+    return history
+
+
+def _render_task_outcomes_history_lines(history: list[dict[str, Any]]) -> str:
+    if not history:
+        return "(none)"
+
+    def _fmt_list(value: Any, *, limit: int = 3) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        items = []
+        for item in value:
+            text = _trim_text(" ".join(str(item).split()), limit=120)
+            if text:
+                items.append(text)
+            if len(items) >= limit:
+                break
+        return items
+
+    lines: list[str] = []
+    record_idx = 0
+    for row in history:
+        if not isinstance(row, dict):
+            continue
+        fields: list[str] = []
+        for key in ("task_id", "status", "outcome", "goal", "summary"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = _trim_text(" ".join(str(value).split()), limit=220 if key == "summary" else 140)
+            if text:
+                fields.append(f"{key}: {text}")
+
+        for key in ("artifact_count", "decision_count"):
+            if key in row:
+                fields.append(f"{key}: {row.get(key)}")
+
+        list_fields = ("next_steps", "open_questions", "facts", "decisions")
+        for field_key in list_fields:
+            items = _fmt_list(row.get(field_key))
+            if not items:
+                continue
+            fields.append(f"{field_key}:")
+            for item in items:
+                fields.append(f"  - {item}")
+
+        if not fields:
+            continue
+
+        record_idx += 1
+        lines.append(f"## Record {record_idx}")
+        lines.append("")
+        lines.append("```md")
+        lines.extend(fields)
+        lines.append("```")
+        lines.append("")
+
+    if not lines:
+        return "(none)"
+    return "\n".join(lines).rstrip()
 
 
 def _cap_messages(messages: list[AnyMessage], *, max_messages: int | None = None) -> list[AnyMessage]:
@@ -1618,6 +1741,7 @@ def _normalize_patch_text(raw: str) -> str:
 __all__ = [
     "run_proposal",
     "run_director",
+    "run_fast_director",
     "run_task",
     "memory_patch_node",
     "finalize_memory_patch_node",

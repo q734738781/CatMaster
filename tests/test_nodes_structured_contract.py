@@ -9,7 +9,7 @@ pytest.importorskip("langchain_core")
 
 from langchain_core.messages import AIMessage
 
-from catmaster.agents.nodes import run_director, run_proposal, run_task
+from catmaster.agents.nodes import run_director, run_fast_director, run_proposal, run_task
 from catmaster.runtime.memory_store import MemoryStore
 
 
@@ -71,6 +71,28 @@ def test_run_director_missing_structured_response_marks_failure(tmp_path: Path) 
     assert command.goto == "summarize"
     assert command.update.get("status") == "failure"
     assert command.update.get("contract_violation", {}).get("role") == "director"
+    assert command.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
+
+
+def test_run_fast_director_missing_structured_response_marks_failure(tmp_path: Path) -> None:
+    store = _memory_store(tmp_path)
+    agent = _FakeAgent({"messages": [AIMessage(content="no structured response emitted")]})
+    command = asyncio.run(
+        run_fast_director(
+            {
+                "user_request": "run",
+                "observations": [],
+                "tasks": [],
+            },
+            agent=agent,
+            memory_store=store,
+            tools_description="bash_exec",
+        )
+    )
+
+    assert command.goto == "summarize"
+    assert command.update.get("status") == "failure"
+    assert command.update.get("contract_violation", {}).get("role") == "fast_director"
     assert command.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
 
 

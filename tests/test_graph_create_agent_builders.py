@@ -61,16 +61,19 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
 
     graph._build_proposal_agent(model, [bash])
     graph._build_director_agent(model, [bash])
+    graph._build_fast_director_agent(model, [bash])
     graph._build_task_runner_agent(model, [bash], _memory_store(tmp_path))
 
-    assert len(captured) == 3
+    assert len(captured) == 4
 
     proposal_call = captured[0]
     director_call = captured[1]
-    task_call = captured[2]
+    fast_director_call = captured[2]
+    task_call = captured[3]
 
     proposal_format = proposal_call.get("response_format")
     director_format = director_call.get("response_format")
+    fast_director_format = fast_director_call.get("response_format")
     task_format = task_call.get("response_format")
 
     assert proposal_call.get("system_prompt") == graph.PROPOSAL_SYSTEM_PROMPT
@@ -87,6 +90,13 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
     assert director_format.handle_errors is False
     assert isinstance(director_call.get("middleware"), list)
     assert len(director_call.get("middleware") or []) == 2
+
+    assert fast_director_call.get("system_prompt") == graph.FAST_DIRECTOR_SYSTEM_PROMPT
+    assert isinstance(fast_director_format, _FakeToolStrategy)
+    assert fast_director_format.schema.__name__ == "FastDirectorOutput"
+    assert fast_director_format.handle_errors is False
+    assert isinstance(fast_director_call.get("middleware"), list)
+    assert len(fast_director_call.get("middleware") or []) == 2
 
     assert task_call.get("system_prompt") == graph.TASK_RUNNER_SYSTEM_PROMPT
     assert isinstance(task_format, _FakeToolStrategy)
