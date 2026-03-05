@@ -12,11 +12,20 @@ except Exception:  # pragma: no cover
     yaml = None
 
 Provider = Literal["openai", "openrouter", "deepseek", "gemini", "oai_compatible", "langchain"]
-AgentRole = Literal["proposal", "director", "task_runner", "memory_patch", "summary"]
+AgentRole = Literal["proposal", "director", "task_runner", "memory_patch", "summary", "history_reader"]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
 _logger = logging.getLogger(__name__)
-AGENT_ROLES: tuple[AgentRole, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
+REQUIRED_AGENT_ROLES: tuple[str, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
+OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {"history_reader": "summary"}
+AGENT_ROLES: tuple[AgentRole, ...] = (
+    "proposal",
+    "director",
+    "task_runner",
+    "memory_patch",
+    "summary",
+    "history_reader",
+)
 
 
 @dataclass
@@ -138,7 +147,12 @@ class MCPFilesystemConfig:
     model_root_token: str = "."
     hide_list_allowed_directories: bool = True
     expose_roles: Dict[str, str] = field(
-        default_factory=lambda: {"proposal": "readonly", "director": "readonly", "task_runner": "full"}
+        default_factory=lambda: {
+            "proposal": "readonly",
+            "director": "readonly",
+            "task_runner": "full",
+            "memory_patch": "readonly",
+        }
     )
     offload: MCPOffloadConfig = field(default_factory=MCPOffloadConfig)
 
@@ -372,6 +386,10 @@ class LLMProfile:
     def label_for_role(self, role: str) -> str:
         label = self.agents.get(role)
         if not label:
+            fallback_role = OPTIONAL_AGENT_ROLE_FALLBACKS.get(role)
+            if fallback_role:
+                label = self.agents.get(fallback_role)
+        if not label:
             raise ValueError(f"Missing model label binding for role: {role}")
         if label not in self.models:
             raise ValueError(f"Role {role} references unknown model label: {label}")
@@ -387,6 +405,10 @@ class LLMProfile:
     @property
     def summary(self) -> LLMConfig:
         return self.config_for_role("summary")
+
+    @property
+    def history_reader(self) -> LLMConfig:
+        return self.config_for_role("history_reader")
 
     @staticmethod
     def from_env() -> "LLMProfile":
@@ -484,7 +506,7 @@ class LLMProfile:
                 if unknown_roles:
                     joined = ", ".join(unknown_roles)
                     raise ValueError(f"Unknown role(s) in llm config agents: {joined}")
-                missing_roles = [role for role in AGENT_ROLES if role not in agents_raw]
+                missing_roles = [role for role in REQUIRED_AGENT_ROLES if role not in agents_raw]
                 if missing_roles:
                     joined = ", ".join(missing_roles)
                     raise ValueError(f"Missing required role binding(s) in llm config agents: {joined}")
@@ -502,10 +524,22 @@ class LLMProfile:
                     models[label] = cfg
 
                 agents: Dict[str, str] = {}
-                for role in AGENT_ROLES:
+                for role in REQUIRED_AGENT_ROLES:
                     bound = str(agents_raw.get(role, "")).strip()
                     if not bound:
                         raise ValueError(f"Role {role!r} must bind to a non-empty model label")
+                    if bound not in models:
+                        raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
+                    agents[role] = bound
+                for role, fallback_role in OPTIONAL_AGENT_ROLE_FALLBACKS.items():
+                    bound = str(agents_raw.get(role, "")).strip()
+                    if not bound:
+                        bound = str(agents.get(fallback_role, "")).strip()
+                    if not bound:
+                        raise ValueError(
+                            f"Role {role!r} must bind to a non-empty model label "
+                            f"(or fallback role {fallback_role!r} must be configured)"
+                        )
                     if bound not in models:
                         raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
                     agents[role] = bound

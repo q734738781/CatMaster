@@ -27,11 +27,17 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "Default priority: PerformNextTask > MinorReviseProposal > MajorReviseProposal." in system_content
     assert "StopAndSynthesize" in system_content
     assert "Do not treat proposal-format requirements" in system_content
+    assert "planning-only (no execution artifact requested)" in system_content
     assert "latest successful task outcomes are authoritative by default" in system_content
     assert "Do not reopen successful evidence files" in system_content
+    assert "fill `update_memory`, otherwise return `[]`" in system_content
+    assert "update_memory` MUST be `[]` unless `state=StopAndSynthesize`" in system_content
     assert "Do not invent file paths, tool outputs, or numerical results" in system_content
     assert "unresolved BLOCKING" in system_content
     assert "Treat `.` as project files root" in system_content
+    assert "reference absolute project-files-root path" in system_content
+    assert "use relative paths in arguments by default" in system_content
+    assert "`bash_exec` command text is exempt" in system_content
     assert "DirectorOutput" not in system_content
     assert "expected_outputs default shape" not in system_content
     assert "`goal`:" not in system_content

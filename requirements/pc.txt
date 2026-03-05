@@ -32,6 +32,8 @@ langchain-openai
 langchain-mcp-adapters
 langchain-community
 langgraph
+httpx
+faiss-cpu
 
 # Utilities
 python-dotenv

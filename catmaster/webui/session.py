@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import importlib
 import json
 import os
 import shutil
+import sys
 import threading
 import time
 from pathlib import Path
@@ -259,8 +262,48 @@ class WebSession:
         def _run() -> None:
             run_dir: Optional[Path] = None
             run_error = ""
+            skip_summarize = False
             try:
-                from catmaster.llm.config import LLMProfile
+                llm_cfg_mod = sys.modules.get("catmaster.llm.config")
+                if llm_cfg_mod is None:
+                    llm_cfg_mod = importlib.import_module("catmaster.llm.config")
+                LLMProfile = getattr(llm_cfg_mod, "LLMProfile")
+                llm_profile = LLMProfile.from_env_or_file(llm_config)
+                if not hasattr(llm_profile, "config_for_role") or not hasattr(llm_profile, "main"):
+                    from catmaster.agents.orchestrator import Orchestrator
+
+                    orch = Orchestrator(
+                        workspace=ws,
+                        resume=bool(resume_dir),
+                        resume_dir=resume_dir,
+                        proposal_review=proposal_review,
+                        log_llm=log_llm,
+                        full_auto_major=full_auto_major,
+                    )
+                    run_ctx = getattr(orch, "run_context", None)
+                    run_dir = Path(str(getattr(run_ctx, "run_dir", "") or "")).resolve() if run_ctx else None
+                    if run_dir is not None and run_dir.exists():
+                        if self.run_control is not None:
+                            self.run_control.run_id = str(getattr(run_ctx, "run_id", "") or "")
+                        with self._lock:
+                            self.run_status = "running"
+                            self.run_info = {
+                                "run_id": str(getattr(run_ctx, "run_id", "") or ""),
+                                "run_dir": str(run_dir),
+                                "model_name": str(getattr(run_ctx, "model_name", "") or ""),
+                            }
+                            self.selected_run_dir = run_dir
+                            self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
+                    result = orch.run(
+                        prompt,
+                        lane=effective_lane,
+                        resume_feedback=resume_feedback,
+                    )
+                    with self._lock:
+                        run_status = str((result or {}).get("status") or "done")
+                        self.run_status = "done" if run_status in {"done", "failure", "needs_intervention"} else run_status
+                    skip_summarize = True
+                    return
                 from catmaster.llm.factory import build_chat_model
                 from catmaster.agents.graph import GraphRunner
                 from catmaster.runtime.run_context import RunContext
@@ -270,12 +313,20 @@ class WebSession:
                 from catmaster.runtime.artifact_store import ArtifactStore
                 from catmaster.runtime.trace_store import TraceStore
                 from catmaster.tools.registry import get_tool_registry
+                from catmaster.runtime.run_ledger.store import RunLedgerStore
+                from catmaster.runtime.run_ledger.openrouter_embeddings import OpenRouterEmbeddings
+                from catmaster.runtime.run_ledger.vector_index import VectorIndex
+                from catmaster.runtime.run_ledger.hybrid_search import HybridRunLedgerSearcher
+                from catmaster.runtime.run_ledger.history_reader import HistoryReader
 
-                llm_profile = LLMProfile.from_env_or_file(llm_config)
+                project_id = self._project_id_for_workspace(ws)
                 run_ctx = RunContext.create(
                     workspace=ws,
                     run_dir=Path(resume_dir) if resume_dir else None,
+                    project_id=project_id,
                     model_name=llm_profile.main.model,
+                    provider=llm_profile.main.provider,
+                    base_url=llm_profile.main.base_url,
                 )
                 if self.run_control is not None:
                     self.run_control.run_id = run_ctx.run_id
@@ -295,6 +346,20 @@ class WebSession:
                     role="langgraph",
                     workspace=ws,
                 )
+                run_ledger_store = RunLedgerStore.create_default(workspace=ws)
+                embeddings = OpenRouterEmbeddings(system_root=system_root(workspace=ws))
+                vector_index = VectorIndex.create_default(workspace=ws)
+                hybrid_searcher = HybridRunLedgerSearcher(
+                    run_ledger_store=run_ledger_store,
+                    vector_index=vector_index,
+                    embeddings=embeddings,
+                )
+                history_reader = HistoryReader(
+                    searcher=hybrid_searcher,
+                    run_ledger_store=run_ledger_store,
+                    system_root=system_root(workspace=ws),
+                    rerank_model=build_chat_model(llm_profile.config_for_role("history_reader")),
+                )
 
                 runner = GraphRunner(
                     task_runner_model=build_chat_model(llm_profile.config_for_role("task_runner")),
@@ -313,6 +378,8 @@ class WebSession:
                     recursion_limit=llm_profile.agent_runtime.recursion_limit,
                     stream_debug_console=os.environ.get("CATMASTER_STREAM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"},
                     print_state_messages=llm_profile.agent_runtime.print_state_messages,
+                    run_ledger_store=run_ledger_store,
+                    history_reader=history_reader,
                 )
                 with self._lock:
                     self.run_status = "running"
@@ -351,7 +418,7 @@ class WebSession:
             finally:
                 if self.reporter:
                     self.reporter.close()
-                if run_dir and run_dir.exists():
+                if (not skip_summarize) and run_dir and run_dir.exists():
                     summarize_run(run_dir, run_error=run_error or None)
 
         self.run_thread = threading.Thread(target=_run, daemon=True)
@@ -932,6 +999,12 @@ class WebSession:
             return str(run_dir.expanduser().resolve())
         except Exception:
             return str(run_dir)
+
+    @staticmethod
+    def _project_id_for_workspace(workspace: Path) -> str:
+        resolved = Path(workspace).expanduser().resolve()
+        digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:12]
+        return f"project_ws_{digest}"
 
     @staticmethod
     def _update_active_tool_elapsed(state: Dict[str, Any]) -> None:

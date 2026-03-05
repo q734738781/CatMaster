@@ -79,6 +79,8 @@ agents:
   task_runner: "openrouter-main"
   memory_patch: "openrouter-main"
   summary: "openrouter-main"
+  # Optional: if omitted, it falls back to `summary`.
+  history_reader: "openrouter-main"
 
 agent_runtime:
   recursion_limit: 300

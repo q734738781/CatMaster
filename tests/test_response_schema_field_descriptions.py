@@ -3,6 +3,8 @@ from __future__ import annotations
 from catmaster.agents.response_schemas import (
     DirectorOutput,
     FastDirectorOutput,
+    MemoryPatchOutput,
+    MemoryUpdate,
     PerformNextTaskPayload,
     ProposalOutput,
     ReviseProposalPayload,
@@ -50,6 +52,25 @@ def test_director_rationale_description_is_local_not_structural() -> None:
     desc = str(schema.get("properties", {}).get("rationale", {}).get("description", ""))
     assert "Very brief decision rationale" in desc
     assert "do not repeat long context" in desc
+
+
+def test_director_update_memory_description_is_semantic() -> None:
+    schema = DirectorOutput.model_json_schema()
+    desc = str(schema.get("properties", {}).get("update_memory", {}).get("description", ""))
+    assert "Memory updates to persist at run end" in desc
+    assert "Use []" in desc
+
+
+def test_memory_update_field_descriptions_enforce_topic_semantics() -> None:
+    schema = MemoryUpdate.model_json_schema()
+    props = schema.get("properties", {})
+    topic_desc = str(props.get("topic", {}).get("description", ""))
+    content_desc = str(props.get("content", {}).get("description", ""))
+    assert "FACTS=verified scientific facts/results only" in topic_desc
+    assert "FILES=artifact path index and file roles" in topic_desc
+    assert "for FACTS write only verifiable facts/results" in content_desc
+    assert "for FILES write only project-relative artifact paths and their roles" in content_desc
+    assert "Do not mix file-index notes into FACTS" in content_desc
 
 
 def test_proposal_output_descriptions_capture_status_placeholders() -> None:
@@ -133,6 +154,7 @@ def test_structured_output_models_are_provider_compatible_shape() -> None:
         TaskFileRecord,
         TaskDecisionRecord,
         TaskPacket,
+        MemoryUpdate,
         ProposalOutput,
         PerformNextTaskPayload,
         ReviseProposalPayload,
@@ -140,6 +162,7 @@ def test_structured_output_models_are_provider_compatible_shape() -> None:
         DirectorOutput,
         FastDirectorOutput,
         TaskOutput,
+        MemoryPatchOutput,
     ):
         schema = cls.model_json_schema()
         _assert_provider_schema_shape(schema)

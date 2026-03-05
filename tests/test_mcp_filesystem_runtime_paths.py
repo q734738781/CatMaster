@@ -39,12 +39,23 @@ def test_rewrite_request_args_converts_relative_to_abs(tmp_path) -> None:
     assert str(resolved).startswith(str(runtime.files_root))
 
 
-def test_rewrite_request_args_rejects_absolute(tmp_path) -> None:
+def test_rewrite_request_args_allows_absolute_inside_workspace(tmp_path) -> None:
     runtime = _runtime(tmp_path)
+    abs_path = runtime.files_root / "CALCS" / "a" / "OUTCAR"
+    args = runtime._rewrite_request_args(
+        tool_name="read_text_file",
+        args={"path": str(abs_path)},
+    )
+    assert args["path"] == str(abs_path.resolve())
+
+
+def test_rewrite_request_args_rejects_absolute_outside_workspace(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    outside = (runtime.files_root.parent / "outside.txt").resolve()
     with pytest.raises(CatMasterToolExecutionError):
         runtime._rewrite_request_args(
             tool_name="read_text_file",
-            args={"path": "/tmp/absolute.txt"},
+            args={"path": str(outside)},
         )
 
 
@@ -67,6 +78,14 @@ def test_relativize_value_rewrites_files_root_paths(tmp_path) -> None:
     rel = runtime._relativize_value(payload)
     assert rel["path"] == "CALCS/a/OUTCAR"
     assert rel["paths"][0] == "CALCS/a"
+
+
+def test_render_capability_guide_contains_abs_reference_hint(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    guide = runtime.render_capability_guide(mode="full")
+    assert "reference absolute files root (orientation only)" in guide
+    assert "prefer relative paths in filesystem tool arguments" in guide
+    assert "if absolute paths are used, they must stay under project files root" in guide
 
 
 class _FakeCallToolResult:

@@ -118,6 +118,10 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def _paths_overlap(a: Path, b: Path) -> bool:
+    return _is_within(a, b) or _is_within(b, a)
+
+
 def _collect_vasp_input_dirs(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
     input_dirs: list[Path] = []
     skip_prefixes = ("vasp_batch_", "mace_batch_")
@@ -269,6 +273,35 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             message="No VASP calc folders found (expected directories containing both POTCAR and INCAR).",
             error_code="no_calc_dirs",
         )
+
+    overlap_examples: list[str] = []
+    overlap_pairs: list[dict[str, str]] = []
+    for inp in input_dirs:
+        rel_path = Path(inp.name) if single_folder_mode else inp.relative_to(input_root)
+        target_output_dir = output_root / rel_path
+        if not _paths_overlap(target_output_dir, inp):
+            continue
+        in_rel = workspace_relpath(inp)
+        out_rel = workspace_relpath(target_output_dir)
+        overlap_pairs.append({"input_dir_rel": in_rel, "output_dir_rel": out_rel})
+        if len(overlap_examples) < 3:
+            overlap_examples.append(f"{in_rel} -> {out_rel}")
+    if overlap_pairs:
+        examples = "; ".join(overlap_examples)
+        _fail(
+            "vasp_execute_batch",
+            message=(
+                "output_dir mapping overlaps input calc directories (in-place collect conflict). "
+                f"Examples: {examples}. Choose a separate output_dir."
+            ),
+            data={
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "overlaps": overlap_pairs,
+            },
+            error_code="output_overlaps_input",
+        )
+
     work_base = make_work_base("vasp_batch")
     local_root = output_root
 

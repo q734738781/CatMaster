@@ -15,6 +15,7 @@ def test_perform_next_task_requires_task_packet() -> None:
             minor_revise_proposal=None,
             major_revise_proposal=None,
             stop_and_synthesize=None,
+            update_memory=[],
         )
 
 
@@ -34,6 +35,7 @@ def test_perform_next_task_accepts_task_packet() -> None:
         minor_revise_proposal=None,
         major_revise_proposal=None,
         stop_and_synthesize=None,
+        update_memory=[],
     )
     assert payload.perform_next_task is not None
     assert payload.perform_next_task.task_packet.task_detail == "Enable D3 and keep slab setup fixed."
@@ -54,6 +56,7 @@ def test_task_packet_model_instance_roundtrip() -> None:
         minor_revise_proposal=None,
         major_revise_proposal=None,
         stop_and_synthesize=None,
+        update_memory=[],
     )
     assert payload.perform_next_task is not None
     assert payload.perform_next_task.task_packet.goal == "Run task"
@@ -75,6 +78,7 @@ def test_director_output_requires_all_top_level_fields() -> None:
         DirectorOutput(
             state="StopAndSynthesize",
             rationale="done",
+            update_memory=[],
         )
 
 
@@ -96,6 +100,7 @@ def test_perform_next_task_rejects_redundant_deliverables_field() -> None:
             minor_revise_proposal=None,
             major_revise_proposal=None,
             stop_and_synthesize=None,
+            update_memory=[],
         )
 
 
@@ -116,6 +121,7 @@ def test_non_selected_payload_must_be_null() -> None:
             minor_revise_proposal=None,
             major_revise_proposal=None,
             stop_and_synthesize={"final_answer_md": "done"},
+            update_memory=[],
         )
 
 
@@ -126,6 +132,7 @@ def test_fast_director_perform_next_task_requires_payload() -> None:
             rationale="Dispatch next task.",
             perform_next_task=None,
             stop_and_synthesize=None,
+            update_memory=[],
         )
 
 
@@ -136,6 +143,7 @@ def test_fast_director_stop_and_synthesize_requires_payload() -> None:
             rationale="Complete.",
             perform_next_task=None,
             stop_and_synthesize=None,
+            update_memory=[],
         )
 
 
@@ -154,4 +162,37 @@ def test_fast_director_non_selected_payload_must_be_null() -> None:
                 },
             },
             stop_and_synthesize={"final_answer_md": "done"},
+            update_memory=[],
         )
+
+
+def test_update_memory_requires_stop_state() -> None:
+    with pytest.raises(ValidationError, match="update_memory must be \\[\\] unless state=StopAndSynthesize"):
+        DirectorOutput(
+            state="PerformNextTask",
+            rationale="Dispatch next task.",
+            perform_next_task={
+                "task_packet": {
+                    "goal": "Run adsorption references",
+                    "task_detail": "Enable D3 and keep slab setup fixed.",
+                    "expected_outputs": ["results/adsorption/reference_energies.json"],
+                    "suggested_tools": ["bash_exec"],
+                    "reference_hint": ["MEMORY/topics/FACTS.md"],
+                },
+            },
+            minor_revise_proposal=None,
+            major_revise_proposal=None,
+            stop_and_synthesize=None,
+            update_memory=[{"topic": "MEMORY/topics/FACTS.md", "content": "Keep final D3 adsorption value."}],
+        )
+
+
+def test_stop_state_allows_update_memory() -> None:
+    payload = FastDirectorOutput(
+        state="StopAndSynthesize",
+        rationale="Complete.",
+        perform_next_task=None,
+        stop_and_synthesize={"final_answer_md": "done"},
+        update_memory=[{"topic": "MEMORY/topics/FILES.md", "content": "Record final summary artifact path."}],
+    )
+    assert len(payload.update_memory) == 1

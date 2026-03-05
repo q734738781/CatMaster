@@ -1,123 +1,112 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("langchain_core.prompts")
+pytest.importorskip("langchain_core")
 
-from catmaster.agents.nodes import memory_patch_node
+from langchain_core.messages import AIMessage
+
+from catmaster.agents.nodes import run_memory_patch
 from catmaster.runtime.memory_store import MemoryStore
 
 
-class _FailIfInvokedModel:
-    def invoke(self, _messages):
-        raise AssertionError("model.invoke should not be called for success outcome")
-
-
-class _Model:
-    def __init__(self, text: str) -> None:
-        self.text = text
+class _FakeAgent:
+    def __init__(self, result: dict):
+        self._result = result
         self.calls = 0
 
-    def invoke(self, _messages):
+    async def ainvoke(self, payload):
+        _ = payload
         self.calls += 1
-        return SimpleNamespace(text=self.text)
+        return self._result
 
 
-class _Backend:
-    def __init__(self, *, status: str = "success", content: str = "") -> None:
-        self.status = status
-        self.content = content
-        self.calls: list[tuple[str, str, str]] = []
-
-    def call(self, name: str, arguments_json: str, *, toolcall_key: str):
-        self.calls.append((name, arguments_json, toolcall_key))
-        return SimpleNamespace(status=self.status, content=self.content)
-
-
-def _store(tmp_path: Path) -> MemoryStore:
+def _memory_store(tmp_path: Path) -> MemoryStore:
     store = MemoryStore.create_default(workspace=tmp_path)
     store.ensure_exists()
     return store
 
 
-def _state(*, outcome: str) -> dict:
-    return {
-        "current_task_id": "task_01",
-        "current_task_packet": {"goal": "task goal"},
-        "task_result": {
-            "task_outcome": outcome,
-            "task_summary": f"{outcome} summary",
-            "key_artifacts": [{"path": "results/out.json", "description": "result", "kind": "report"}],
-            "structured_result": {
-                "summary": f"{outcome} summary",
-                "facts": [],
-                "files": [],
-                "constraints": [],
-                "open_questions": [],
-                "decisions": [],
-                "next_steps": [],
-                "artifacts": [],
-            },
-        },
-        "tasks": [{"task_id": "task_01", "status": "running"}],
-        "observations": [],
-    }
+def test_run_memory_patch_no_updates_short_circuit(tmp_path: Path) -> None:
+    store = _memory_store(tmp_path)
+    agent = _FakeAgent({"messages": []})
 
-
-def test_memory_patch_node_defers_reconcile_for_success(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    backend = _Backend()
-    result = memory_patch_node(
-        _state(outcome="success"),
-        model=_FailIfInvokedModel(),
-        memory_store=store,
-        run_id="run_01",
-        patch_repair_attempts=1,
-        tool_backend=backend,
-    )
-
-    assert backend.calls == []
-    events = store.read_events_tail(limit=1)
-    assert events
-    assert events[-1]["task_id"] == "task_01"
-    assert events[-1]["memory_reconcile_requested"] is False
-    assert events[-1]["memory_patch_status"] == "deferred"
-    assert result["tasks"][0]["status"] == "success"
-    assert result["observations"] and result["observations"][-1]["task_id"] == "task_01"
-
-
-def test_memory_patch_node_reconciles_for_failure(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    model = _Model(
-        "\n".join(
-            [
-                "MEMORY/MEMORY.md",
-                "<<<<<<< SEARCH",
-                "- Current focus: (empty)",
-                "=======",
-                "- Current focus: failure context",
-                ">>>>>>> REPLACE",
-            ]
+    command = asyncio.run(
+        run_memory_patch(
+            {"pending_memory_updates": []},
+            agent=agent,
+            memory_store=store,
+            run_id="run_01",
         )
     )
-    backend = _Backend(status="success")
-    result = memory_patch_node(
-        _state(outcome="failure"),
-        model=model,
-        memory_store=store,
-        run_id="run_01",
-        patch_repair_attempts=1,
-        tool_backend=backend,
+
+    assert command.goto == "summarize"
+    assert agent.calls == 0
+    result = command.update.get("memory_patch_result", {})
+    assert result.get("status") == "done"
+    assert result.get("applied_topics") == []
+
+
+def test_run_memory_patch_records_event_and_clears_pending(tmp_path: Path) -> None:
+    store = _memory_store(tmp_path)
+    agent = _FakeAgent(
+        {
+            "messages": [AIMessage(content="ok")],
+            "structured_response": {
+                "status": "done",
+                "summary": "Memory updates applied.",
+                "applied_topics": ["MEMORY/topics/FACTS.md"],
+                "error": "",
+                "needs_human": False,
+            },
+        }
     )
 
-    assert model.calls == 1
-    assert len(backend.calls) == 1
-    assert backend.calls[0][0] == "memory_apply_aider_edits"
+    command = asyncio.run(
+        run_memory_patch(
+            {
+                "pending_memory_updates": [
+                    {"topic": "MEMORY/topics/FACTS.md", "content": "Store final O-O distance."}
+                ]
+            },
+            agent=agent,
+            memory_store=store,
+            run_id="run_01",
+        )
+    )
+
+    assert command.goto == "summarize"
+    assert agent.calls == 1
+    assert command.update.get("pending_memory_updates") == []
+    result = command.update.get("memory_patch_result", {})
+    assert result.get("status") == "done"
     events = store.read_events_tail(limit=1)
     assert events
-    assert events[-1]["memory_reconcile_requested"] is True
-    assert events[-1]["memory_patch_status"] == "success"
-    assert result["tasks"][0]["status"] == "failure"
+    assert events[-1].get("task_id") == "final_memory_update"
+    assert events[-1].get("memory_patch_status") == "done"
+
+
+def test_run_memory_patch_missing_structured_response_is_non_blocking(tmp_path: Path) -> None:
+    store = _memory_store(tmp_path)
+    agent = _FakeAgent({"messages": [AIMessage(content="plain text")]})
+
+    command = asyncio.run(
+        run_memory_patch(
+            {
+                "pending_memory_updates": [
+                    {"topic": "MEMORY/topics/FILES.md", "content": "Add final summary path."}
+                ]
+            },
+            agent=agent,
+            memory_store=store,
+            run_id="run_01",
+        )
+    )
+
+    assert command.goto == "summarize"
+    result = command.update.get("memory_patch_result", {})
+    assert result.get("status") == "blocked"
+    assert command.update.get("contract_violation", {}).get("role") == "memory_patch"

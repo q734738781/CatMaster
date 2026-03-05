@@ -22,7 +22,18 @@ def test_fast_director_prompt_has_no_proposal_lifecycle() -> None:
     assert "MinorReviseProposal" not in system_content
     assert "MajorReviseProposal" not in system_content
     assert "Treat `.` as project files root" in system_content
+    assert "reference absolute project-files-root path" in system_content
+    assert "use relative paths in arguments by default" in system_content
+    assert "`bash_exec` command text is exempt" in system_content
     assert "Do not invent file paths, tool outputs, or numerical results" in system_content
+    assert "fill `update_memory`, otherwise return `[]`" in system_content
+    assert "planning-only / explanation-only" in system_content
+    assert "Intent routing rules (execution-priority):" in system_content
+    assert "Read-only workspace QA" in system_content
+    assert "General knowledge/comparison QA" in system_content
+    assert "If uncertain whether execution is required, prefer `PerformNextTask`." in system_content
+    assert "If `state=PerformNextTask`" in system_content
+    assert "update_memory` must be `[]`" in system_content
     assert "`write_note`" in system_content
     assert "`apply_aider_edits`" not in system_content
 

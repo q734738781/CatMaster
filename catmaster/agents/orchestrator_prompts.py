@@ -8,13 +8,8 @@ Dynamic context-building helpers (``build_*_context``) produce the
 text for the ``HumanMessage`` injected each time the parent graph
 re-enters an agent node.
 
-Legacy ``build_*_prompt()`` factories are kept for nodes that still
-use ``ChatPromptTemplate`` (memory patcher).
 """
 from __future__ import annotations
-
-from langchain_core.prompts import ChatPromptTemplate
-
 
 # ===================================================================
 # Static system prompts for ReAct agents
@@ -56,7 +51,11 @@ Behavior rules:
 - Do not invent nonexistent files, completed outputs, or numeric results.
 
 Rules:
-- Treat `.` as the project files root and use relative paths only.
+- Treat `.` as the project files root.
+- You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
+- For filesystem function tools, use relative paths in arguments by default.
+- Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
+- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
 - Do not mention internal metadata directories.
 """
 
@@ -89,6 +88,7 @@ Decision semantics:
 - Do not choose MajorReviseProposal when safe defaults/local edits can keep route valid.
 - If worker reports remote job failures, default to MajorReviseProposal and rerun only failed subset.
 - Do not treat proposal-format requirements as Director completion criteria.
+- If the user request is planning-only (no execution artifact requested), prefer `StopAndSynthesize` with a direct concise answer.
 
 Rules:
 - Treat memory index as historical reference from prior decisions/scientific invariant updates; for current-run decisions, latest successful task outcomes are authoritative by default.
@@ -108,6 +108,12 @@ Rules:
 - Do not revise or ask for confirmation for minor execution details; apply safe defaults and continue.
 - Do not invent file paths, tool outputs, or numerical results that are not evidenced by the run context.
 - If proposal has unresolved BLOCKING items, use MajorReviseProposal with updated proposal/work packages and concise HITL questions.
+- Before finishing, quickly check whether durable scientific invariants/reusable conclusions/constraints changed; if yes, fill `update_memory`, otherwise return `[]`.
+- Structured-output hard constraint: `update_memory` MUST be `[]` unless `state=StopAndSynthesize`.
+- You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
+- For filesystem function tools, use relative paths in arguments by default.
+- Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
+- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
 """
 
 FAST_DIRECTOR_SYSTEM_PROMPT = """\
@@ -129,11 +135,11 @@ Inputs you will receive (in context message):
 Allowed states:
 - PerformNextTask: dispatch one concrete next worker action with minimal scope creep.
 - StopAndSynthesize: execution is complete or no bounded next step is justified.
+- If the request is planning-only / explanation-only and does not require new execution artifacts, choose `StopAndSynthesize` directly.
 
 Rules for Fast lane:
 - You should not perform actual tasks. You should only dispatch tasks to the task runner agent.
-- Do not overthink or overplan.
-- Default to forwarding the minimal executable task spec.
+- Do not overthink or overplan. Default to forwarding the minimal executable task spec.
 - Add only necessary defaults/constraints needed for execution safety or scientific invariants; do not expand into optional analysis plans.
 - Treat memory index as historical reference from prior decisions/scientific invariant updates; for current-run decisions, latest successful task outcomes are authoritative by default.
 - If the latest completed task already produced the user-requested final deliverables and there are no unresolved open questions, return `StopAndSynthesize` immediately.
@@ -146,6 +152,19 @@ Rules for Fast lane:
 - Preserve scientific/computational invariants from the latest task context; allow bounded execution-detail adjustments only when needed.
 - Assume runtime environment is correctly configured per project README; do not escalate runtime/tooling prerequisites as human-blocking by default.
 - Do not invent file paths, tool outputs, or numerical results that are not evidenced by the run context.
+- Intent routing rules (execution-priority):
+  - Read-only workspace QA (ask what exists in folders/files, no new artifact requested) -> usually `StopAndSynthesize` after minimal read-only checks.
+  - General knowledge/comparison QA (no workspace action and no new artifact requested) -> `StopAndSynthesize`.
+  - Any request to do/run/calculate/prepare experiments, create/modify files, or produce new deliverables -> `PerformNextTask`.
+- If uncertain whether execution is required, prefer `PerformNextTask`.
+- Before finishing, quickly check whether durable scientific invariants/reusable conclusions/constraints changed; if yes, fill `update_memory`, otherwise return `[]`.
+- Structured-output hard constraints:
+  - If `state=PerformNextTask`: `perform_next_task` must be non-null, `stop_and_synthesize` must be null, and `update_memory` must be `[]`.
+  - If `state=StopAndSynthesize`: `perform_next_task` must be null, `stop_and_synthesize` must be non-null, and `update_memory` may be non-empty.
+- You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
+- For filesystem function tools, use relative paths in arguments by default.
+- Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
+- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
 """
 
 TASK_RUNNER_SYSTEM_PROMPT = """\
@@ -191,7 +210,29 @@ Termination and handoff:
 - Keep handoff evidence-based and concise; avoid redundant repetition across fields.
 - Function tools must be invoked via tool calls. Do NOT put function tool names into bash_exec commands.
 - Keep stdout concise; if persistent command logs are needed, use pipeline logging to project files (e.g., `cmd 2>&1 | tee reports/<task_desc>/run.log`) and print short summaries.
-- Always provide file or directory paths as relative paths; they will be resolved relative to the project files root.
+- You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
+- For filesystem function tools, provide relative path arguments by default.
+- Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
+- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
+"""
+
+MEMORY_PATCHER_SYSTEM_PROMPT = """\
+You are the Memory Patcher agent.
+
+Goal:
+- Apply pending memory updates into `MEMORY/**` files and finish.
+
+Available tools:
+- Filesystem read/discovery tools: `search_files`, `list_directory`, `read_text_file`, `read_multiple_files`
+- `apply_aider_edits` for deterministic SEARCH/REPLACE updates
+
+Rules:
+- Only modify files under `MEMORY/**`.
+- Read current target file text before editing.
+- Use `apply_aider_edits` with Aider SEARCH/REPLACE blocks.
+- If an edit apply fails, re-read the target file and retry with corrected blocks.
+- Double-check each pending update against topic semantics before patching: FACTS keeps verified facts/results only; FILES keeps artifact path/index entries only; do not cross-mix.
+- Keep patch summary concise and evidence-based; do not fabricate updated content.
 """
 
 
@@ -322,223 +363,42 @@ Reference hint:
 Workspace policy:
 {workspace_policy}
 
+Workspace absolute root (reference only, do not pass directly to filesystem tools):
+{workspace_root_abs_ref}
+
 Memory index excerpt:
 {memory_index_excerpt}
 
 </context_pack>
 """
 
+MEMORY_PATCH_CONTEXT_TEMPLATE = """\
+Pending memory updates (topic + content):
+{pending_memory_updates_json}
 
-# ===================================================================
-# Legacy ChatPromptTemplate factories (memory patcher)
-# ===================================================================
+Editable file snapshots (authoritative current text):
+{editable_file_snapshots}
 
-def build_memory_patch_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", """
-You are a memory patch editor for a materials computation agent.
-
-Output contract:
-- Output ONLY Aider SEARCH/REPLACE edit blocks.
-- Do NOT output explanations.
-- Do NOT use markdown code fences.
-
-Required edit format:
+Aider SEARCH/REPLACE format reminder:
 <relative/path/to/file>
 <<<<<<< SEARCH
 ... exact existing text ...
 =======
 ... replacement text ...
 >>>>>>> REPLACE
-
-Scope:
-- Allowed paths to modify: MEMORY/** only.
-- Never modify any other path.
-
-Memory rules:
-- Memory is a scientific interface, not an execution transcript.
-- Prefer reusable invariants:
-  1) System invariants (reference states, structure IDs, naming, units/definitions)
-  2) Method/protocol invariants (comparability-critical settings/definitions)
-  3) Result invariants (final reusable values with units/conditions/evidence path)
-- Do NOT copy raw logs/tool traces into MEMORY.
-- Do NOT add empty placeholder blocks (for constraints/questions/etc.).
-- Keep section schema stable so downstream parsers still work (e.g., Top Constraints / Active Open Questions headings).
-- Treat `MEMORY/MEMORY.md` as a latest-state snapshot; finalizer (`task_id == "finalize_memory"`) must write run-final state.
-- In `FACTS.md`, keep reusable scientific facts/method constraints/key conclusions with evidence; move path/layout tactics to `RUNBOOK.md`, and avoid pure path-layout Decision Log entries unless scientific interpretation changes.
-
-Topic schema contract:
-- `MEMORY/topics/GOAL.md`:
-  - Keep objective, definition of success, non-goals, and scope boundary.
-  - Do not put run-by-run logs or tool traces here.
-- `MEMORY/topics/FACTS.md`:
-  - For key results, include condition/method, units, and evidence path.
-- `MEMORY/topics/FILES.md`:
-  - Keep reusable file/artifact index records.
-  - Prefer normalized records: `- PATH: <rel_path> | kind=<kind> | desc=<desc> | source=<task_id>`.
-- `MEMORY/topics/CONSTRAINTS.md`:
-  - Keep hard constraints and soft preferences, with short source context when possible.
-- `MEMORY/topics/QUESTIONS.md`:
-  - Keep unresolved blockers in Active and move resolved items to Resolved with closure evidence.
-- `MEMORY/topics/RUNBOOK.md`:
-  - Keep stable reusable operating checklist and common recovery playbook.
-- `MEMORY/MEMORY.md`:
-  - Keep pointer-first index and concise state only.
-  - Do not duplicate detailed facts/path inventories from topic files.
-
-Additional caution:
-- Text matching rules:
-  - Treat only text inside `<editable_file path="...">...</editable_file>` as existing file content.
-  - If adding new content, anchor under an existing heading from the editable file text.
-- File-role routing:
-  - Keep `MEMORY/MEMORY.md` concise and pointer-first (current state + short summaries + pointers).
-  - Put reusable facts/decisions into `MEMORY/topics/FACTS.md`.
-  - Put artifact/path index entries into `MEMORY/topics/FILES.md` (prefer `- PATH:` records).
-  - Keep constraints/questions/runbook updates in their corresponding topic files.
-- Write-routing from task structured result:
-  - `facts` and `decisions` -> `MEMORY/topics/FACTS.md`
-  - `files` and `artifacts` -> `MEMORY/topics/FILES.md`
-  - `constraints` -> `MEMORY/topics/CONSTRAINTS.md`
-  - `open_questions` -> `MEMORY/topics/QUESTIONS.md`
-  - goal/success-boundary changes -> `MEMORY/topics/GOAL.md`
-  - reusable procedure/checklist updates -> `MEMORY/topics/RUNBOOK.md`
-- Minimality gate:
-  - Update only when content adds durable scientific value (system/method/result invariants, reusable decisions, stable constraints).
-  - Do NOT materialize every structured_result field by default.
-  - Skip low-value procedural chatter, repeated confirmations, or transient execution narration.
-  - `open_questions` should contain unresolved blockers only; drop speculative/self-referential questions.
-- Merge-first policy for `MEMORY/topics/FILES.md`:
-  - Do NOT append blindly. Canonicalize and merge before writing.
-  - Treat `PATH` as the merge key (workspace-relative, normalized form).
-  - If a `PATH` entry already exists, update that record (kind/desc/source) instead of adding a duplicate line.
-  - Keep at most 1 canonical record per `PATH`.
-  - Keep `source` concise and deduplicated (prefer latest run/task context; avoid long source history).
-  - Exclude routine internal audit logs (`metadata/**`, `audit/**`, `.logs/**`) unless they are uniquely required evidence.
-  - Include scripts only when they are primary/reusable scripts referenced by summary/facts.
-  - Exclude intermediate scratch files and one-off patch helpers unless they are required for scientific reproducibility.
-  - Prefer scientific reusable artifacts over run-noise.
-- Conflict precedence:
-  - If `MEMORY/MEMORY.md` conflicts with `FACTS.md` or `FILES.md`, topic files are authoritative.
-  - Keep single-source updates; avoid duplicating the same fact/path across multiple files.
-- Quality checks before output:
-  - Ensure detailed facts and path inventories are not dumped into `MEMORY/MEMORY.md`.
-  - Ensure key claims include evidence path pointers.
-  - Ensure `FILES.md` path records follow the `- PATH:` style where applicable.
-  - Ensure `FILES.md` has no duplicate `PATH` records after merge.
-  - Ensure `QUESTIONS.md` reflects Active vs Resolved transitions when answers are available.
-"""),
-        ("human", """
-Run id: {run_id}
-Task id: {task_id}
-Task goal (short): {task_goal}
-Outcome: {outcome}
-
-Task structured result (JSON):
-{structured_result_json}
-
-Editable file snapshot (authoritative):
-<editable_file path="MEMORY/MEMORY.md">
-{memory_index_text}
-</editable_file>
-<editable_file path="MEMORY/topics/GOAL.md">
-{topic_goal_text}
-</editable_file>
-<editable_file path="MEMORY/topics/FACTS.md">
-{topic_facts_text}
-</editable_file>
-<editable_file path="MEMORY/topics/FILES.md">
-{topic_files_text}
-</editable_file>
-<editable_file path="MEMORY/topics/CONSTRAINTS.md">
-{topic_constraints_text}
-</editable_file>
-<editable_file path="MEMORY/topics/QUESTIONS.md">
-{topic_questions_text}
-</editable_file>
-<editable_file path="MEMORY/topics/RUNBOOK.md">
-{topic_runbook_text}
-</editable_file>
-"""),
-    ])
-
-
-def build_memory_patch_repair_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", """
-You are repairing invalid Aider memory edits.
-
-Output ONLY corrected Aider SEARCH/REPLACE edit blocks:
-- no explanations
-- no markdown code fences
-- allowed paths: MEMORY/** only
-- preserve section schema used by memory parsers
-- Text matching rules:
-  - Treat only text inside `<editable_file path="...">...</editable_file>` as existing file content.
-  - If `apply_error_context_json.error_code == "replace_no_match"`, fix SEARCH text to exact file text (or anchor to an existing heading).
-  - Prefer minimal edits: keep already-valid blocks unchanged and only repair failing block/path when possible.
-- Keep the same topic schema contract and write-routing rules as the primary memory patch prompt.
-- File-role routing:
-  - Keep `MEMORY/MEMORY.md` concise and pointer-first.
-  - Route facts to `MEMORY/topics/FACTS.md` and artifact/path index records to `MEMORY/topics/FILES.md`.
-- Keep MEMORY temporal semantics: ordinary task patches capture latest task state, and finalizer writes run-final state.
-- Keep `FACTS.md` scientific/reusable (facts, method constraints, conclusions with evidence); route path/layout tactics to `RUNBOOK.md`.
-- In repair mode, preserve merge-first behavior for `FILES.md` and remove duplicate `PATH` records if introduced.
-"""),
-        ("human", """
-Previous edits:
-{previous_edit_text}
-
-Apply error:
-{apply_error}
-
-Apply error context (JSON, reference only):
-{apply_error_context_json}
-
-Run id: {run_id}
-Task id: {task_id}
-Task goal (short): {task_goal}
-Outcome: {outcome}
-
-Task structured result (JSON):
-{structured_result_json}
-
-Editable file snapshot (authoritative):
-<editable_file path="MEMORY/MEMORY.md">
-{memory_index_text}
-</editable_file>
-<editable_file path="MEMORY/topics/GOAL.md">
-{topic_goal_text}
-</editable_file>
-<editable_file path="MEMORY/topics/FACTS.md">
-{topic_facts_text}
-</editable_file>
-<editable_file path="MEMORY/topics/FILES.md">
-{topic_files_text}
-</editable_file>
-<editable_file path="MEMORY/topics/CONSTRAINTS.md">
-{topic_constraints_text}
-</editable_file>
-<editable_file path="MEMORY/topics/QUESTIONS.md">
-{topic_questions_text}
-</editable_file>
-<editable_file path="MEMORY/topics/RUNBOOK.md">
-{topic_runbook_text}
-</editable_file>
-"""),
-    ])
-
+"""
 
 __all__ = [
     "PROPOSAL_SYSTEM_PROMPT",
     "DIRECTOR_SYSTEM_PROMPT",
     "FAST_DIRECTOR_SYSTEM_PROMPT",
     "TASK_RUNNER_SYSTEM_PROMPT",
+    "MEMORY_PATCHER_SYSTEM_PROMPT",
     "PROPOSAL_CONTEXT_TEMPLATE",
     "PROPOSAL_REVISION_CONTEXT_TEMPLATE",
     "PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX",
     "DIRECTOR_CONTEXT_TEMPLATE",
     "FAST_DIRECTOR_CONTEXT_TEMPLATE",
     "TASK_CONTEXT_TEMPLATE",
-    "build_memory_patch_prompt",
-    "build_memory_patch_repair_prompt",
+    "MEMORY_PATCH_CONTEXT_TEMPLATE",
 ]

@@ -91,13 +91,23 @@ models:
       openrouter:
         extra_body:
           prompt_cache_retention: 24h
+  
+  "google/gemini-3-flash-preview":
+    provider: openrouter
+    model: google/gemini-3-flash-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: minimal
 
 agents:
   proposal: "openai/gpt-5.2:online-high"
   director: "openai/gpt-5.2:online-high"
   task_runner: "openai/gpt-5.3-codex:online-medium"
-  memory_patch: "openai/gpt-5.3-codex:online-high"
-  summary: "openai/gpt-5-nano"
+  memory_patch: "openai/gpt-5.3-codex:online-medium"
+  summary: "google/gemini-3-flash-preview"
+  history_reader: "google/gemini-3-flash-preview"
 
 agent_runtime:
   recursion_limit: 1000

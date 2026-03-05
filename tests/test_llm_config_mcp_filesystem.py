@@ -30,6 +30,7 @@ def test_mcp_filesystem_config_from_dict_enabled_stdio() -> None:
     assert cfg.server_name == "filesystem"
     assert cfg.args_prefix[:2] == ["-y", "@modelcontextprotocol/server-filesystem"]
     assert cfg.expose_roles["task_runner"] == "full"
+    assert cfg.expose_roles["memory_patch"] == "readonly"
 
 
 def test_mcp_filesystem_config_invalid_expose_role_mode() -> None:

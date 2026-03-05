@@ -29,6 +29,9 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert "Include key parameters/defaults near the top with short rationale and confidence notes." in system_content
     assert "include key computational / geometric parameters" in system_content
     assert "Treat `.` as the project files root" in system_content
+    assert "reference absolute project-files-root path" in system_content
+    assert "use relative paths in arguments by default" in system_content
+    assert "`bash_exec` command text is exempt" in system_content
     assert "ProposalOutput" not in system_content
 
 

@@ -86,11 +86,43 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert task_cfg.print_http_raw_post is True
     assert profile.summary.model == "openai/gpt-5-nano"
     assert profile.summary.print_http_raw_post is True
+    assert profile.history_reader.model == "openai/gpt-5-nano"
+    assert profile.history_reader.print_http_raw_post is True
     assert profile.agent_policies.proposal.browse_tools_enabled is False
     assert profile.agent_runtime.recursion_limit == 512
     assert profile.agent_runtime.max_tool_calls == 72
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
+
+
+def test_llm_profile_history_reader_can_use_dedicated_model(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5-nano'",
+                "  history_reader: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.summary.model == "openai/gpt-5-nano"
+    assert profile.history_reader.model == "openai/gpt-5.2:online"
 
 
 def test_llm_profile_agent_runtime_legacy_keys_are_rejected(tmp_path: Path) -> None:

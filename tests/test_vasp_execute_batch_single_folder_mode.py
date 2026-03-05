@@ -75,3 +75,33 @@ def test_vasp_execute_batch_rejects_nested_when_root_is_calc_folder(tmp_path: Pa
             )
 
     assert "Nested calc folders are not allowed" in str(excinfo.value)
+
+
+def test_vasp_execute_batch_rejects_output_overlap_before_dispatch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        calc_dir = files_root / "runs" / "A"
+        _touch_vasp_inputs(calc_dir)
+
+        called = {"dispatch": 0}
+
+        monkeypatch.setattr(vasp_dispatch, "_resolve_machine_for_resources", lambda _: "dummy_machine")
+        monkeypatch.setattr(
+            vasp_dispatch,
+            "dispatch_submission",
+            lambda req: called.__setitem__("dispatch", called["dispatch"] + 1),  # should never be called
+        )
+
+        with pytest.raises(CatMasterToolExecutionError) as excinfo:
+            vasp_dispatch.vasp_execute_batch(
+                {
+                    "input_dir": "runs/A",
+                    "output_dir": "runs",
+                    "check_interval": 1,
+                }
+            )
+
+    assert "output_dir mapping overlaps input calc directories" in str(excinfo.value)
+    assert called["dispatch"] == 0

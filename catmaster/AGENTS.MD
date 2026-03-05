@@ -260,3 +260,29 @@ def example_tool(payload: Dict[str, Any]):
         },
     )
 ```
+
+---
+
+## 11) MCP adoption rules (for upcoming tool development)
+
+Prioritize MCP-ization for cross-cutting capabilities with clear standard interfaces:
+
+- filesystem
+- browser / web search
+- external services
+- scheduler / remote execution
+- database / retrieval
+
+Do **not** prioritize MCP-ization yet for local domain tools:
+
+- adsorption
+- slab
+- NEB
+- thermo
+- MACE
+
+Rationale:
+
+- These local domain tools are deeply coupled to the current Python/ASE/pymatgen/workspace contract.
+- Forcing full MCP migration now would introduce high engineering cost.
+- Standardization payoff is much higher first for filesystem / web / browser classes than for tightly coupled local scientific workflows.

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from catmaster.runtime.memory_store import MemoryStore
+from catmaster.tools.base import workspace_root
 
 
 @dataclass(frozen=True)
@@ -29,22 +30,26 @@ class ContextPackBuilder:
         )
         if role == "task_runner" and not policy.inject_goal_for_worker:
             memory_excerpt = _remove_goal_pointer(memory_excerpt)
+        files_root_abs = str(workspace_root(self.memory.workspace).resolve())
 
         return {
             "task_goal": task_goal,
             "role": role,
             "workspace_root": ".",
+            "workspace_root_abs_ref": files_root_abs,
             "memory_index_excerpt": memory_excerpt,
-            "workspace_policy": _workspace_policy_summary(role),
+            "workspace_policy": _workspace_policy_summary(role, files_root_abs=files_root_abs),
         }
 
 
-def _workspace_policy_summary(role: str) -> str:
+def _workspace_policy_summary(role: str, *, files_root_abs: str) -> str:
     return (
         "Project files policy:\n"
         '- Treat "." as the project files root.\n'
-        '- All path parameters and returned paths are relative to ".".\n'
-        "- Never use absolute paths or metadata paths.\n"
+        f"- Reference absolute files root (orientation only): {files_root_abs}\n"
+        '- Use relative paths for filesystem function-tool arguments; keep returned paths relative to ".".\n'
+        "- Absolute paths are fallback-only references; if used for filesystem tools, they must be under project files root.\n"
+        "- Never use metadata paths in filesystem function-tool arguments.\n"
         "- Use search_files / list_directory / directory_tree to discover files.\n"
         "- Use read_text_file with head/tail for progressive disclosure.\n"
         "- Use bash_exec for shell commands, content grep, parser invocation, and external binaries.\n"

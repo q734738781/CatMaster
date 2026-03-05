@@ -112,3 +112,40 @@ def test_run_task_missing_structured_response_marks_failure(tmp_path: Path) -> N
     assert out.update.get("contract_violation", {}).get("role") == "task_runner"
     assert out.update.get("contract_violation", {}).get("reason") == "missing_structured_response"
     assert out.update.get("task_result", {}).get("task_outcome") == "failure"
+
+
+def test_run_director_stop_routes_to_memory_patch_when_updates_present(tmp_path: Path) -> None:
+    store = _memory_store(tmp_path)
+    agent = _FakeAgent(
+        {
+            "messages": [AIMessage(content="done")],
+            "structured_response": {
+                "state": "StopAndSynthesize",
+                "rationale": "final outputs are complete",
+                "perform_next_task": None,
+                "minor_revise_proposal": None,
+                "major_revise_proposal": None,
+                "stop_and_synthesize": {"final_answer_md": "Final answer."},
+                "update_memory": [
+                    {"topic": "MEMORY/topics/FACTS.md", "content": "Record final reusable result."}
+                ],
+            },
+        }
+    )
+    command = asyncio.run(
+        run_director(
+            {
+                "user_request": "run",
+                "proposal_md": "x",
+                "work_packages": ["a"],
+                "observations": [],
+                "tasks": [],
+            },
+            agent=agent,
+            memory_store=store,
+            tools_description="bash_exec",
+        )
+    )
+
+    assert command.goto == "run_memory_patch"
+    assert command.update.get("pending_memory_updates")

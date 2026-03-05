@@ -9,20 +9,21 @@ Proposal / director / task runner are built with LangChain v1
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import json
 import logging
 import re
 import shutil
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Any, Annotated, Dict, List, Optional, Sequence, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, ToolMessage
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -33,6 +34,7 @@ from catmaster.agents.nodes import (
     run_proposal,
     run_director,
     run_fast_director,
+    run_memory_patch,
     run_task,
     summarize_node,
 )
@@ -50,21 +52,92 @@ from catmaster.tools.registry import ToolRegistry, get_tool_registry
 from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
 from catmaster.runtime.tool_surface import RuntimeToolSurface, build_runtime_tool_surface
 from catmaster.runtime.usage_stats import write_usage_summary
-from catmaster.tools.base import workspace_scope
+from catmaster.runtime.run_ledger.blob_builder import build_run_search_blob
+from catmaster.runtime.run_ledger.models import RunLedgerEntry
+from catmaster.runtime.run_ledger.store import RunLedgerStore
+from catmaster.runtime.run_ledger.history_reader import HistoryReader
+from catmaster.tools.base import workspace_scope, system_root
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
-from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, FastDirectorOutput, TaskOutput
+from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, FastDirectorOutput, TaskOutput, MemoryPatchOutput
 from catmaster.llm.config import MCPConfig
 from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_SYSTEM_PROMPT,
     DIRECTOR_SYSTEM_PROMPT,
     FAST_DIRECTOR_SYSTEM_PROMPT,
     TASK_RUNNER_SYSTEM_PROMPT,
+    MEMORY_PATCHER_SYSTEM_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
 
 _TASK_RUNNER_TOOL_DENYLIST: set[str] = set()
+_MEMORY_PATCH_READONLY_TOOL_ALLOWLIST: set[str] = {
+    "search_files",
+    "list_directory",
+    "read_text_file",
+    "read_multiple_files",
+}
+
+
+def _dedupe_tools_by_name(tools: Sequence[BaseTool]) -> list[BaseTool]:
+    out: list[BaseTool] = []
+    seen: set[str] = set()
+    for tool in tools:
+        name = str(getattr(tool, "name", "") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(tool)
+    return out
+
+
+def _make_memory_scoped_apply_tool(tool: BaseTool) -> BaseTool:
+    """Force memory patch apply tool writes to MEMORY/** only."""
+    if str(getattr(tool, "name", "") or "") != "apply_aider_edits":
+        return tool
+
+    func = getattr(tool, "func", None)
+    coroutine = getattr(tool, "coroutine", None)
+    if func is None and coroutine is None:
+        return tool
+
+    raw_schema = getattr(tool, "args_schema", None)
+    args_schema = copy.deepcopy(raw_schema) if isinstance(raw_schema, dict) else {}
+    properties = args_schema.get("properties")
+    if isinstance(properties, dict):
+        properties.pop("allowed_paths", None)
+    required = args_schema.get("required")
+    if isinstance(required, list):
+        args_schema["required"] = [item for item in required if item != "allowed_paths"]
+    if isinstance(args_schema, dict):
+        args_schema.setdefault("additionalProperties", False)
+
+    description = str(getattr(tool, "description", "") or "").strip()
+    if description:
+        description = f"{description}\nEdits are strictly limited to MEMORY/**."
+    else:
+        description = "Apply Aider SEARCH/REPLACE edit blocks. Edits are strictly limited to MEMORY/**."
+
+    def _wrapper(runtime: Any | None = None, **kwargs: Any):
+        forced_kwargs = dict(kwargs)
+        forced_kwargs["allowed_paths"] = ["MEMORY/"]
+        return func(runtime=runtime, **forced_kwargs)
+
+    async def _awrapper(runtime: Any | None = None, **kwargs: Any):
+        forced_kwargs = dict(kwargs)
+        forced_kwargs["allowed_paths"] = ["MEMORY/"]
+        return await coroutine(runtime=runtime, **forced_kwargs)
+
+    return StructuredTool.from_function(
+        func=_wrapper if func is not None else None,
+        coroutine=_awrapper if coroutine is not None else None,
+        name="apply_aider_edits",
+        description=description,
+        args_schema=args_schema,
+        infer_schema=False,
+        response_format="content_and_artifact",
+    )
 
 
 class ToolCallBudgetExceededError(RuntimeError):
@@ -78,6 +151,8 @@ class ToolCallBudgetExceededError(RuntimeError):
 class CatMasterState(TypedDict, total=False):
     user_request: str
     lane: str
+    historical_runs_context_text: str
+    historical_runs_citations: list[dict]
 
     # Per-agent message histories
     proposal_messages: Annotated[list[AnyMessage], add_messages]
@@ -94,6 +169,8 @@ class CatMasterState(TypedDict, total=False):
     # Director
     director_decision: dict
     next_action: str
+    pending_memory_updates: list[dict]
+    memory_patch_result: dict
 
     # Task tracking
     tasks: list[dict]
@@ -349,6 +426,29 @@ def _build_task_runner_agent(
     )
 
 
+def _build_memory_patcher_agent(
+    model: BaseChatModel,
+    tools: Sequence[BaseTool],
+    *,
+    max_steps: int = 30,
+) -> Any:
+    role_tools = list(tools)
+    logger.info(
+        "[build_memory_patcher_agent] response_format=%s, tools=%s",
+        True,
+        [t.name for t in role_tools],
+    )
+    create_agent = _load_create_agent()
+    ToolStrategy = _load_tool_strategy()
+    return create_agent(
+        model=model,
+        tools=role_tools,
+        system_prompt=MEMORY_PATCHER_SYSTEM_PROMPT,
+        response_format=ToolStrategy(MemoryPatchOutput, handle_errors=False),
+        middleware=_make_tool_call_budget_middleware(role="memory_patch", max_tool_calls=max_steps),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Outer graph node wrappers (delegate to nodes.py functions)
 # ---------------------------------------------------------------------------
@@ -435,6 +535,25 @@ async def _run_task_wrapper(
             key_artifacts=list(task_result.get("key_artifacts") or []),
         )
     return command
+
+
+async def _run_memory_patch_wrapper(
+    state: CatMasterState,
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    run_id: str,
+    max_steps: int,
+    continue_goto: str,
+) -> Command:
+    return await run_memory_patch(
+        state,
+        agent=agent,
+        memory_store=memory_store,
+        run_id=run_id,
+        max_steps=max_steps,
+        continue_goto=continue_goto,
+    )
 
 
 def _summarize_node_wrapper(
@@ -560,6 +679,7 @@ def build_standard_graph(
     proposal_tools: Sequence[BaseTool],
     director_tools: Sequence[BaseTool],
     task_tools: Sequence[BaseTool],
+    memory_tools: Sequence[BaseTool],
     tools_description: str,
     director_tools_description: Optional[str] = None,
     run_id: str = "",
@@ -590,6 +710,11 @@ def build_standard_graph(
         list(task_tools),
         memory_store,
         max_steps=max_task_steps,
+    )
+    memory_patch_agent = _build_memory_patcher_agent(
+        memory_patch_model,
+        list(memory_tools),
+        max_steps=max_plan_steps,
     )
 
     graph = StateGraph(CatMasterState)
@@ -623,6 +748,15 @@ def build_standard_graph(
         run_dir=effective_run_dir,
     ))
 
+    graph.add_node("run_memory_patch", partial(
+        _run_memory_patch_wrapper,
+        agent=memory_patch_agent,
+        memory_store=memory_store,
+        run_id=run_id,
+        max_steps=max_plan_steps,
+        continue_goto="summarize",
+    ))
+
     graph.add_node("summarize", partial(
         _summarize_node_wrapper,
         memory_store=memory_store,
@@ -648,6 +782,7 @@ def build_fast_graph(
     memory_store: MemoryStore,
     director_tools: Sequence[BaseTool],
     task_tools: Sequence[BaseTool],
+    memory_tools: Sequence[BaseTool],
     director_tools_description: str,
     run_id: str = "",
     run_dir: Optional[Path] = None,
@@ -671,6 +806,11 @@ def build_fast_graph(
         memory_store,
         max_steps=max_task_steps,
     )
+    memory_patch_agent = _build_memory_patcher_agent(
+        memory_patch_model,
+        list(memory_tools),
+        max_steps=max_plan_steps,
+    )
 
     graph = StateGraph(CatMasterState)
 
@@ -690,6 +830,15 @@ def build_fast_graph(
         continue_goto="run_fast_director",
         intervention_goto="run_fast_director",
         run_dir=effective_run_dir,
+    ))
+
+    graph.add_node("run_memory_patch", partial(
+        _run_memory_patch_wrapper,
+        agent=memory_patch_agent,
+        memory_store=memory_store,
+        run_id=run_id,
+        max_steps=max_plan_steps,
+        continue_goto="summarize",
     ))
 
     graph.add_node("summarize", partial(
@@ -744,6 +893,8 @@ class GraphRunner:
         stream_debug_console: bool = False,
         print_state_messages: bool = False,
         checkpointer: Optional[BaseCheckpointSaver] = None,
+        run_ledger_store: Optional[RunLedgerStore] = None,
+        history_reader: Optional[HistoryReader] = None,
     ) -> None:
         self.task_runner_model = task_runner_model
         self.proposal_model = proposal_model or task_runner_model
@@ -767,6 +918,8 @@ class GraphRunner:
         self.stream_debug_console = bool(stream_debug_console)
         self.print_state_messages = bool(print_state_messages)
         self.checkpointer = checkpointer or MemorySaver()
+        self.run_ledger_store = run_ledger_store
+        self.history_reader = history_reader
 
         self.memory_store.ensure_exists()
         self.artifact_store = ArtifactStore(run_context.run_dir)
@@ -1089,6 +1242,9 @@ class GraphRunner:
             "status": state.get("status", "running"),
             "hitl_history": state.get("hitl_history", []),
         }
+        memory_patch_result = state.get("memory_patch_result")
+        if isinstance(memory_patch_result, dict) and memory_patch_result:
+            body["memory_patch_result"] = memory_patch_result
         contract_violation = state.get("contract_violation")
         if isinstance(contract_violation, dict) and contract_violation:
             body["contract_violation"] = contract_violation
@@ -1097,6 +1253,12 @@ class GraphRunner:
                 "proposal_path": "proposal.md",
                 "work_packages": state.get("work_packages", []),
             }
+        historical_runs_context = str(state.get("historical_runs_context_text") or "").strip()
+        if historical_runs_context:
+            body["historical_runs_context_text"] = historical_runs_context
+        historical_runs_citations = state.get("historical_runs_citations")
+        if isinstance(historical_runs_citations, list) and historical_runs_citations:
+            body["historical_runs_citations"] = historical_runs_citations
         last_interrupt = state.get("last_interrupt")
         if isinstance(last_interrupt, dict) and last_interrupt:
             body["last_interrupt"] = last_interrupt
@@ -1152,6 +1314,128 @@ class GraphRunner:
             "final_report": str(final_report),
             "memory_report": str(memory_dst),
         }
+
+    def _relpath_to_system_root(self, path: Path) -> str:
+        sys_root = system_root(workspace=self.run_context.workspace).resolve()
+        try:
+            return str(path.resolve().relative_to(sys_root)).replace("\\", "/")
+        except Exception:
+            return str(path.resolve())
+
+    @staticmethod
+    def _task_goals_for_export(state: Dict[str, Any], fallback_goals: List[str]) -> List[str]:
+        tasks = state.get("tasks")
+        if isinstance(tasks, list):
+            out: List[str] = []
+            for item in tasks:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("goal", "task_detail", "title", "task"):
+                    value = " ".join(str(item.get(key) or "").split()).strip()
+                    if value:
+                        out.append(value)
+                        break
+                if len(out) >= 10:
+                    break
+            if out:
+                return out
+        return list(fallback_goals[:10])
+
+    @staticmethod
+    def _top_observations_for_export(state: Dict[str, Any], *, limit: int = 10) -> List[str]:
+        observations = state.get("observations")
+        if not isinstance(observations, list):
+            return []
+        out: List[str] = []
+        for item in observations:
+            if isinstance(item, dict):
+                text = (
+                    str(item.get("summary") or item.get("observation") or item.get("value") or "")
+                    .replace("\n", " ")
+                    .strip()
+                )
+            else:
+                text = str(item).replace("\n", " ").strip()
+            if not text:
+                continue
+            out.append(text)
+            if len(out) >= limit:
+                break
+        return out
+
+    def _publish_run_export(
+        self,
+        *,
+        state: Dict[str, Any],
+        user_request: str,
+        final_answer: str,
+        lane: str,
+        status: str,
+        report_paths: Dict[str, str],
+    ) -> Dict[str, str]:
+        run_reports = self.run_context.run_dir / "reports"
+        run_reports.mkdir(parents=True, exist_ok=True)
+        export_path = run_reports / "RUN_EXPORT.json"
+
+        blob = build_run_search_blob(self.run_context.run_dir)
+        task_goals = self._task_goals_for_export(state, blob.task_goals)
+        top_observations = self._top_observations_for_export(state)
+        payload: Dict[str, Any] = {
+            "request": user_request,
+            "answer_summary": final_answer,
+            "lane": lane,
+            "status": status,
+            "task_goals": task_goals,
+            "top_observations": top_observations,
+            "tool_names": blob.tool_names,
+            "artifact_paths": blob.artifact_paths,
+            "final_report_path": self._relpath_to_system_root(Path(report_paths.get("final_report", ""))),
+            "run_dir": self._relpath_to_system_root(self.run_context.run_dir),
+            "run_id": self.run_context.run_id,
+            "project_id": self.run_context.project_id,
+        }
+        export_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {
+            "run_export": str(export_path),
+            "run_export_relpath": self._relpath_to_system_root(export_path),
+        }
+
+    async def _upsert_run_ledger(
+        self,
+        *,
+        lane: str,
+        status: str,
+        user_request: str,
+        final_answer: str,
+        report_paths: Dict[str, str],
+        export_paths: Dict[str, str],
+    ) -> None:
+        if self.run_ledger_store is None:
+            return
+        blob = build_run_search_blob(self.run_context.run_dir)
+        final_report_relpath = self._relpath_to_system_root(Path(report_paths.get("final_report", "")))
+        run_export_relpath = str(export_paths.get("run_export_relpath") or "").strip()
+        entry = RunLedgerEntry(
+            project_id=self.run_context.project_id,
+            run_id=self.run_context.run_id,
+            lane=lane,
+            status=status,
+            request=user_request,
+            answer_summary=final_answer,
+            search_blob_text=blob.search_blob_text,
+            final_report_relpath=final_report_relpath,
+            run_export_relpath=run_export_relpath,
+            ts_start=self.run_context.start_time,
+            ts_end=datetime.now(timezone.utc).isoformat(),
+            model_name=self.run_context.model_name,
+            provider=str(self.run_context.provider or ""),
+        )
+        self.run_ledger_store.upsert_entry(entry)
+        if self.history_reader is not None:
+            try:
+                await self.history_reader.aindex_entry(entry)
+            except Exception as exc:
+                logger.warning("run ledger dense index update failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Main run
@@ -1216,6 +1500,27 @@ class GraphRunner:
                     mcp_fs_runtime=mcp_fs_runtime,
                     task_runner_denylist=_TASK_RUNNER_TOOL_DENYLIST,
                 )
+                local_pool = _dedupe_tools_by_name(
+                    list(surface.proposal_tools) + list(surface.director_tools) + list(surface.task_tools)
+                )
+                apply_tool = next(
+                    (tool for tool in local_pool if str(getattr(tool, "name", "") or "") == "apply_aider_edits"),
+                    None,
+                )
+                if apply_tool is not None:
+                    apply_tool = _make_memory_scoped_apply_tool(apply_tool)
+                memory_read_tools: list[BaseTool] = []
+                if mcp_fs_runtime is not None:
+                    memory_read_tools = [
+                        tool
+                        for tool in mcp_fs_runtime.role_filtered_tools(role="memory_patch")
+                        if str(getattr(tool, "name", "") or "") in _MEMORY_PATCH_READONLY_TOOL_ALLOWLIST
+                    ]
+                memory_tools = _dedupe_tools_by_name(
+                    memory_read_tools + ([apply_tool] if apply_tool is not None else [])
+                )
+                if apply_tool is None:
+                    logger.warning("apply_aider_edits is unavailable for memory patcher; updates may fail.")
 
                 if lane == "fast":
                     fast_director_tools = [
@@ -1230,6 +1535,7 @@ class GraphRunner:
                         memory_store=self.memory_store,
                         director_tools=fast_director_tools,
                         task_tools=surface.task_tools,
+                        memory_tools=memory_tools,
                         director_tools_description=surface.task_runner_capability_guide_short,
                         run_id=self.run_context.run_id,
                         run_dir=run_dir,
@@ -1250,6 +1556,7 @@ class GraphRunner:
                         proposal_tools=surface.proposal_tools,
                         director_tools=surface.director_tools,
                         task_tools=surface.task_tools,
+                        memory_tools=memory_tools,
                         tools_description=surface.task_runner_capability_guide_full,
                         director_tools_description=surface.task_runner_capability_guide_short,
                         run_id=self.run_context.run_id,
@@ -1262,9 +1569,26 @@ class GraphRunner:
                         run_control=self.run_control,
                     )
 
+                historical_runs_context_text = ""
+                historical_runs_citations: list[dict[str, Any]] = []
+                if self.history_reader is not None:
+                    try:
+                        history_pack = await self.history_reader.aload_context(
+                            query=user_request,
+                            project_id=self.run_context.project_id,
+                            lane=lane,
+                        )
+                        historical_runs_context_text = str(history_pack.context_text or "").strip()
+                        raw_citations = history_pack.citations if isinstance(history_pack.citations, list) else []
+                        historical_runs_citations = [c for c in raw_citations if isinstance(c, dict)]
+                    except Exception as exc:
+                        logger.warning("historical runs prefetch failed: %s", exc)
+
                 initial_state: CatMasterState = {
                     "user_request": user_request,
                     "lane": lane,
+                    "historical_runs_context_text": historical_runs_context_text,
+                    "historical_runs_citations": historical_runs_citations,
                     "proposal_messages": [],
                     "director_messages": [],
                     "runner_messages": [],
@@ -1280,6 +1604,8 @@ class GraphRunner:
                     "current_task_id": "task_01",
                     "current_task_packet": {"goal": user_request},
                     "task_result": {},
+                    "pending_memory_updates": [],
+                    "memory_patch_result": {},
                     "status": "running",
                     "summary": "",
                     "contract_violation": {},
@@ -1388,7 +1714,26 @@ class GraphRunner:
             self._write_task_state({**result, "status": status}, lane)
 
             if status in ("done", "failure"):
-                self._publish_report(user_request, summary)
+                try:
+                    report_paths = self._publish_report(user_request, summary)
+                    export_paths = self._publish_run_export(
+                        state=result,
+                        user_request=user_request,
+                        final_answer=summary,
+                        lane=lane,
+                        status=status,
+                        report_paths=report_paths,
+                    )
+                    await self._upsert_run_ledger(
+                        lane=lane,
+                        status=status,
+                        user_request=user_request,
+                        final_answer=summary,
+                        report_paths=report_paths,
+                        export_paths=export_paths,
+                    )
+                except Exception as exc:
+                    logger.warning("finalization side-effects failed: %s", exc)
 
             self._emit("RUN_END", payload={"status": status, "summary_snippet": _snippet(summary, 320)})
 

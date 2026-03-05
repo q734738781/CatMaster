@@ -188,7 +188,10 @@ class MCPFilesystemRuntime:
         lines.extend(
             [
                 f"- all paths are relative to project files root `{self.model_root_token}`",
-                "- absolute paths and metadata paths are forbidden in tool arguments",
+                f"- reference absolute files root (orientation only): `{self._files_root_posix}`",
+                "- prefer relative paths in filesystem tool arguments; absolute paths are fallback-only",
+                "- if absolute paths are used, they must stay under project files root",
+                "- metadata paths are forbidden in filesystem tool arguments",
             ]
         )
         return "\n".join(lines)
@@ -228,18 +231,25 @@ class MCPFilesystemRuntime:
                 message=f"{tool_name}: empty path is not allowed.",
                 args=args,
             )
-        if path_text.startswith("~") or _WINDOWS_DRIVE_PREFIX.match(path_text):
+        if path_text.startswith("~"):
             raise self._path_error(
                 tool_name=tool_name,
-                message=f"{tool_name}: use project-relative paths only, got {path_text!r}.",
+                message=(
+                    f"{tool_name}: home-relative paths are not supported ({path_text!r}). "
+                    "Use project-relative paths, or absolute paths under project files root."
+                ),
                 args=args,
             )
-        if Path(path_text).is_absolute():
+        if _WINDOWS_DRIVE_PREFIX.match(path_text):
             raise self._path_error(
                 tool_name=tool_name,
-                message=f"{tool_name}: absolute paths are not allowed ({path_text!r}).",
+                message=(
+                    f"{tool_name}: unsupported drive-style path {path_text!r}. "
+                    "Use project-relative paths, or absolute paths under project files root."
+                ),
                 args=args,
             )
+        is_absolute = Path(path_text).is_absolute()
         try:
             resolved = resolve_scoped_path(
                 path_text,
@@ -248,6 +258,15 @@ class MCPFilesystemRuntime:
                 must_exist=False,
             )
         except Exception as exc:
+            if is_absolute:
+                raise self._path_error(
+                    tool_name=tool_name,
+                    message=(
+                        f"{tool_name}: absolute path must stay under project files root "
+                        f"{self.model_root_token} (ref: {self._files_root_posix}), got {path_text!r}."
+                    ),
+                    args=args,
+                ) from exc
             raise self._path_error(
                 tool_name=tool_name,
                 message=f"{tool_name}: invalid path {path_text!r}: {exc}",
