@@ -14,6 +14,8 @@ pandas
 # Atomistic modeling / materials
 ase
 pymatgen
+ovito
+matplotlib
 
 # YAML parsing (PyYAML) and round-trip editing (ruamel.yaml)
 pyyaml

@@ -20,6 +20,7 @@ AgentRole = Literal[
     "summary",
     "history_reader",
     "tool_selector",
+    "image_analyzer",
 ]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
@@ -28,6 +29,7 @@ REQUIRED_AGENT_ROLES: tuple[str, ...] = ("proposal", "director", "task_runner", 
 OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
     "history_reader": "summary",
     "tool_selector": "task_runner",
+    "image_analyzer": "task_runner",
 }
 AGENT_ROLES: tuple[AgentRole, ...] = (
     "proposal",
@@ -37,6 +39,7 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "summary",
     "history_reader",
     "tool_selector",
+    "image_analyzer",
 )
 
 
@@ -425,6 +428,10 @@ class LLMProfile:
     @property
     def tool_selector(self) -> LLMConfig:
         return self.config_for_role("tool_selector")
+
+    @property
+    def image_analyzer(self) -> LLMConfig:
+        return self.config_for_role("image_analyzer")
 
     @staticmethod
     def from_env() -> "LLMProfile":

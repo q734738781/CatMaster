@@ -180,6 +180,61 @@ def test_llm_profile_tool_selector_can_use_dedicated_model(tmp_path: Path) -> No
     assert profile.tool_selector.model == "openai/gpt-5-nano"
 
 
+def test_llm_profile_image_analyzer_fallbacks_to_task_runner(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5-nano'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.image_analyzer.model == "openai/gpt-5-nano"
+
+
+def test_llm_profile_image_analyzer_can_use_dedicated_model(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  image_analyzer: 'openai/gpt-5-nano'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.image_analyzer.model == "openai/gpt-5-nano"
+
+
 def test_llm_profile_agent_runtime_legacy_keys_are_rejected(tmp_path: Path) -> None:
     cfg = tmp_path / "llm.yaml"
     cfg.write_text(

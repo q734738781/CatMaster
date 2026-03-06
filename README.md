@@ -50,6 +50,28 @@ conda create -n catmaster python=3.11
 pip install -r requirements/pc.txt
 ```
 
+### OVITO for multimodal structure rendering
+
+CatMaster Phase 3 multimodal rendering uses OVITO as the preferred backend for `render_structure_views`.
+`ovito` is already included in `requirements/pc.txt`.
+
+On Ubuntu, if importing OVITO fails with:
+
+```text
+ImportError: libOpenGL.so.0: cannot open shared object file
+```
+
+install the missing system OpenGL runtime:
+
+```bash
+sudo apt update
+sudo apt install -y libopengl0
+```
+
+Notes:
+- CatMaster suppresses OVITO's known `pip-in-conda` warning inside the render tool, so this warning should not leak into runtime logs or model-visible context.
+- If OVITO is unavailable at runtime, `render_structure_views` falls back to an `ASE/Matplotlib` renderer, so the tool remains usable but loses the intended OVITO backend.
+
 ### Node.js (for MCP filesystem tools)
 
 CatMaster can integrate MCP filesystem tools (`@modelcontextprotocol/server-filesystem`) via `npx`, so Node.js is required.

@@ -124,9 +124,12 @@ models:
       effort: minimal
 
 agents:
+  # Main Track Agents
   proposal: "openai/gpt-5.4:online-high"
   director: "openai/gpt-5.4:online-high"
   task_runner: "openai/gpt-5.4:online-medium"
+  # Tool Agent Models
+  image_analyzer: "openai/gpt-5.4:online-medium"
   memory_patch: "openai/gpt-5.4:online-medium"
   tool_selector: "openai/gpt-5.4:online-minimal"
   summary: "google/gemini-3-flash-preview"

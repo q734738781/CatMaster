@@ -59,6 +59,12 @@ class ToolRegistry:
         # Execution tools  
         from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, vasp_execute_batch
         from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, VaspExecuteBatchInput
+        from catmaster.tools.analysis import (
+            analyze_images,
+            render_structure_views,
+            AnalyzeImagesInput,
+            RenderStructureViewsInput,
+        )
 
         # File management tools
         from catmaster.tools.misc.bash_exec import bash_exec, BashExecInput
@@ -99,6 +105,8 @@ class ToolRegistry:
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
+        self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
+        self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
         self.register_tool("write_note", write_note, MemoryNoteInput)
