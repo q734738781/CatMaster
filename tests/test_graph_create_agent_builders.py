@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from pathlib import Path
@@ -10,6 +11,7 @@ pytest.importorskip("langchain_core")
 
 from catmaster.agents import graph
 from catmaster.runtime.memory_store import MemoryStore
+from catmaster.runtime.run_context import RunContext
 
 
 class _DummyTool:
@@ -114,3 +116,101 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
     assert memory_format.handle_errors is False
     assert isinstance(memory_call.get("middleware"), list)
     assert len(memory_call.get("middleware") or []) == 2
+
+
+def test_graph_runner_uses_fallback_skill_guides_when_skills_runtime_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_build_runtime_tool_surface(**kwargs):
+        _ = kwargs
+        return graph.RuntimeToolSurface(
+            proposal_tools=[],
+            director_tools=[],
+            task_tools=[],
+            task_runner_capability_guide_full="full guide",
+            task_runner_capability_guide_short="short guide",
+        )
+
+    def fake_build_standard_graph(**kwargs):
+        captured["proposal"] = kwargs["proposal_execution_context_guide"]
+        captured["director"] = kwargs["director_execution_context_guide"]
+        return object()
+
+    async def fake_ainvoke_loop(self, compiled, initial_state, config, workspace, lane="standard"):
+        _ = (self, compiled, initial_state, config, workspace, lane)
+        return {"tasks": [], "observations": [], "summary": "", "final_answer": "", "status": "done"}
+
+    monkeypatch.setattr(graph, "build_runtime_tool_surface", fake_build_runtime_tool_surface)
+    monkeypatch.setattr(graph, "build_standard_graph", fake_build_standard_graph)
+    monkeypatch.setattr(graph.GraphRunner, "_ainvoke_loop", fake_ainvoke_loop)
+    monkeypatch.setattr(graph.GraphRunner, "_initialize_memory_goal", lambda self, user_request: None)
+
+    run_context = RunContext.create(
+        workspace=tmp_path,
+        model_name="test-model",
+    )
+    runner = graph.GraphRunner(
+        task_runner_model=_DummyModel(),
+        proposal_model=_DummyModel(),
+        director_model=_DummyModel(),
+        memory_patch_model=_DummyModel(),
+        memory_store=_memory_store(tmp_path),
+        run_context=run_context,
+        skills_runtime=None,
+    )
+
+    asyncio.run(runner.arun("test request", lane="standard", proposal_review=False))
+
+    assert captured["proposal"] == graph.render_proposal_skill_guide([])
+    assert captured["director"] == graph.render_director_skill_guide([])
+
+
+def test_graph_runner_uses_fallback_fast_skill_guide_when_skills_runtime_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_build_runtime_tool_surface(**kwargs):
+        _ = kwargs
+        return graph.RuntimeToolSurface(
+            proposal_tools=[],
+            director_tools=[],
+            task_tools=[],
+            task_runner_capability_guide_full="full guide",
+            task_runner_capability_guide_short="short guide",
+        )
+
+    def fake_build_fast_graph(**kwargs):
+        captured["fast"] = kwargs["fast_director_execution_context_guide"]
+        return object()
+
+    async def fake_ainvoke_loop(self, compiled, initial_state, config, workspace, lane="standard"):
+        _ = (self, compiled, initial_state, config, workspace, lane)
+        return {"tasks": [], "observations": [], "summary": "", "final_answer": "", "status": "done"}
+
+    monkeypatch.setattr(graph, "build_runtime_tool_surface", fake_build_runtime_tool_surface)
+    monkeypatch.setattr(graph, "build_fast_graph", fake_build_fast_graph)
+    monkeypatch.setattr(graph.GraphRunner, "_ainvoke_loop", fake_ainvoke_loop)
+    monkeypatch.setattr(graph.GraphRunner, "_initialize_memory_goal", lambda self, user_request: None)
+
+    run_context = RunContext.create(
+        workspace=tmp_path,
+        model_name="test-model",
+    )
+    runner = graph.GraphRunner(
+        task_runner_model=_DummyModel(),
+        proposal_model=_DummyModel(),
+        director_model=_DummyModel(),
+        memory_patch_model=_DummyModel(),
+        memory_store=_memory_store(tmp_path),
+        run_context=run_context,
+        skills_runtime=None,
+    )
+
+    asyncio.run(runner.arun("test request", lane="fast", proposal_review=False))
+
+    assert captured["fast"] == graph.render_fast_director_skill_guide([])

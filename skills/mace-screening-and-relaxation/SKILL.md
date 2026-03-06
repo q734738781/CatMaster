@@ -36,6 +36,13 @@ Use this skill to run cheap MACE screening on a structure batch before spending 
 - Returned metadata includes `batch_state_rel`, collected stdout/stderr/status files, and any `batch_summary_rel`.
 - On dispatch failure, the tool still tries to collect partial outputs; inspect those before deciding to rerun.
 
+## Method-critical defaults
+- For adsorption-energy screening on slabs, do not silently inherit the tool default for `dispersion`; choose it explicitly.
+- Keep the dispersion setting consistent across clean slab, gas-phase reference, and adsorbed structures when the comparison depends on relative adsorption energies.
+- Unless the user explicitly asks for a no-dispersion baseline, prefer enabling dispersion when surface-adsorbate interactions or ranking sensitivity may depend on it.
+- Always report whether dispersion was enabled.
+- If a screening stage is intended only as a cheap geometry triage rather than an energy-ranking stage, say so explicitly.
+
 ## Output Contract
 Return:
 - chosen MACE stage (`relax` or `sp`)

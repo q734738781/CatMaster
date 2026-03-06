@@ -62,7 +62,7 @@ def test_run_proposal_retries_without_remaining_steps_when_rejected(tmp_path: Pa
             {"user_request": "draft plan"},
             agent=_FallbackFakeAgent(),
             memory_store=store,
-            tools_description="bash_exec",
+            execution_context_guide="bash_exec",
             run_dir=tmp_path,
             max_steps=3,
         )
@@ -80,7 +80,7 @@ def test_run_proposal_supports_async_only_agent_with_remaining_steps_fallback(tm
             {"user_request": "draft plan"},
             agent=_AsyncOnlyFallbackFakeAgent(),
             memory_store=store,
-            tools_description="bash_exec",
+            execution_context_guide="bash_exec",
             run_dir=tmp_path,
             max_steps=3,
         )

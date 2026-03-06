@@ -39,6 +39,7 @@ Proposal requirements:
 Behavior rules:
 - Prefer reasonable defaults and proceed; ask human only for truly BLOCKING decisions.
 - When the request already specifies a clear experiment protocol or screening criteria, follow it as primary, do not expand scope, and only add scientifically necessary supplements before execution.
+- Plan primarily around skills, scientific stages, evidence contracts, and task packets; do not overfit plans to raw tool-by-tool micro-details unless execution constraints make that necessary.
 - Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
 - Assume runtime environment is correctly configured per project README.
 - Do NOT raise runtime/tooling environment prerequisites (API keys, executable availability, licensed binary/POTCAR setup, scheduler config) as human questions or BLOCKING items.
@@ -104,10 +105,12 @@ Rules:
 - Prefer `apply_aider_edits` for exact text edits instead of broad shell rewriting.
 - Preserve key parameters from proposal/default tables as suggested defaults and ask worker to follow them when feasible; allow bounded adjustment when needed to satisfy scientific invariants and done criteria.
 - When the request already specifies a clear experiment protocol or screening criteria, follow it as primary, do not expand scope, and only add scientifically necessary supplements before execution.
+- Plan primarily around skills, scientific stages, evidence contracts, and task packets; do not overfit plans to raw tool-by-tool micro-details unless execution constraints make that necessary.
 - Assume runtime environment is correctly configured per project README; do not escalate runtime/tooling prerequisites as human-blocking by default.
 - Do not revise or ask for confirmation for minor execution details; apply safe defaults and continue.
 - Do not invent file paths, tool outputs, or numerical results that are not evidenced by the run context.
 - If proposal has unresolved BLOCKING items, use MajorReviseProposal with updated proposal/work packages and concise HITL questions.
+- When the task depends on quantitative comparability, encode method-critical settings explicitly in `task_detail` instead of assuming the worker will infer or inherit them from tool defaults.
 - Before finishing, quickly check whether durable scientific invariants/reusable conclusions/constraints changed; if yes, fill `update_memory`, otherwise return `[]`.
 - Structured-output hard constraint: `update_memory` MUST be `[]` unless `state=StopAndSynthesize`.
 - Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
@@ -180,6 +183,8 @@ Priority rules:
 - Task detail defines the task invariants and done checks. Execute with the minimal non-destructive procedure that satisfies those invariants. Treat task-detail parameters as preferred unless explicitly marked hard, and do bounded self-adjustments before escalating while keeping scientific/computational invariants fixed.
 - Tool schemas are authoritative for argument shapes/defaults; do not re-invent parameter templates in bash scripts.
 - Skills may be available for workflow guidance and parameter conventions. Use skills for SOP and decision guidance; tool schemas remain authoritative for arguments and file outputs.
+- For quantitative computations, do not silently rely on tool defaults for method-critical toggles (for example dispersion, spin, +U, dipole corrections, reference-state conventions, or relaxation mode). If such settings matter for comparability, ranking, or scientific validity, set them explicitly and keep them consistent across clean references, gas-phase references, adsorbed systems, and downstream refinement stages.
+- When a relevant skill is available, use it to determine method-critical defaults and evidence standards, then reflect those choices explicitly in tool arguments and outputs.
 - Do not initiate file edits on your own. Only edit files when the current task packet explicitly requires editing/writing outputs for this task. For `MEMORY/**`, only update when scientific invariants, method definitions, or final reusable results changed.
 - If file editing is explicitly required by the task packet, prefer `apply_aider_edits` for deterministic edits (including memory files) over ad-hoc in-place shell edits.
 - When a registered domain tool covers the required capability, prefer the domain tool over re-implementing the same capability with ad-hoc Python or shell. Use ad-hoc code only for glue logic, parsing, summarization, or capabilities not covered by existing tools or skill assets.
@@ -248,13 +253,11 @@ PROPOSAL_CONTEXT_TEMPLATE = """\
 === USER REQUEST ===
 {user_request}
 
-=== AVAILABLE TOOLS FOR TASK EXECUTION ===
-The task runner agent will use these tools to execute your proposal. \
-Plan your proposal around these capabilities. Do NOT write literal file \
-contents (POSCAR, INCAR, scripts, etc.) in the proposal; instead describe \
-which tools and parameters to use.
+=== AVAILABLE EXECUTION CAPABILITIES AND RELEVANT SKILLS ===
+The task runner has additional concrete tools available at execution time, but planning at this stage should focus on the relevant skills, stage-level execution capabilities, and evidence requirements rather than raw tool-by-tool micro-details. \
+Do NOT write literal file contents (POSCAR, INCAR, scripts, etc.) in the proposal.
 
-{tools}
+{execution_context_guide}
 
 === MEMORY INDEX (autoload excerpt) ===
 {memory_index_excerpt}
@@ -266,7 +269,7 @@ which tools and parameters to use.
 Write a proposal that clearly covers:
 - Any human decisions that block execution.
 - Key defaults/parameters and why they are chosen.
-- Execution strategy grounded in available tools.
+- Execution strategy grounded in relevant skills and execution capabilities.
 - Ordered high-level work_packages (not tool-by-tool scripts).
 """
 
@@ -274,11 +277,10 @@ PROPOSAL_REVISION_CONTEXT_TEMPLATE = """\
 === USER REQUEST ===
 {user_request}
 
-=== AVAILABLE TOOLS FOR TASK EXECUTION ===
-The task runner agent will use these tools to execute your proposal. \
-Plan your proposal around these capabilities.
+=== AVAILABLE EXECUTION CAPABILITIES AND RELEVANT SKILLS ===
+The task runner has additional concrete tools available at execution time, but planning at this stage should focus on the relevant skills, stage-level execution capabilities, and evidence requirements rather than raw tool-by-tool micro-details.
 
-{tools}
+{execution_context_guide}
 
 === CURRENT PROPOSAL ===
 {proposal_md}
@@ -299,7 +301,7 @@ Plan your proposal around these capabilities.
 Revise the proposal so it clearly reflects:
 - Human decisions (blocking first, if any).
 - Key defaults/parameters and rationale.
-- Execution strategy grounded in available tools.
+- Execution strategy grounded in relevant skills and execution capabilities.
 - Ordered high-level work_packages.
 """
 
@@ -314,8 +316,8 @@ DIRECTOR_CONTEXT_TEMPLATE = """\
 User request:
 {user_request}
 
-Available tools for task runner:
-{tools}
+Relevant execution skills and task-runner capabilities:
+{execution_context_guide}
 
 Proposal:
 {proposal_md}
@@ -337,8 +339,8 @@ FAST_DIRECTOR_CONTEXT_TEMPLATE = """\
 User request:
 {user_request}
 
-Available tools for task runner:
-{tools}
+Relevant execution skills and task-runner capabilities:
+{execution_context_guide}
 
 Memory index (autoload excerpt):
 {memory_index_excerpt}

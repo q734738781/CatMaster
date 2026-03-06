@@ -38,6 +38,10 @@ Use this skill to generate NEB image directories, prepare NEB-specific INCAR set
 - Treat the NEB image tree as a prepared VASP input set.
 - Report image count, INCAR patch path, and execution status together; launch status alone is not enough.
 
+## Method-critical defaults
+- Keep endpoint preparation, image generation, and execution settings scientifically consistent across the whole pathway calculation.
+- Do not treat launch success as pathway validity; evidence must include image count, INCAR patch, and outcome diagnostics.
+
 ## Output Contract
 Return:
 - NEB image root

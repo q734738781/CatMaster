@@ -24,6 +24,7 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert "Treat memory index as historical reference" in system_content
     assert "Assume runtime environment is correctly configured per project README." in system_content
     assert "Do NOT raise runtime/tooling environment prerequisites" in system_content
+    assert "Plan primarily around skills, scientific stages, evidence contracts, and task packets" in system_content
     assert "Skills may be available for domain SOP and parameter conventions." in system_content
     assert "Do not invent nonexistent files, completed outputs, or numeric results." in system_content
     assert "Keep the body short" in system_content
@@ -40,7 +41,12 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
 
 def test_proposal_feedback_context_template_has_feedback_field() -> None:
     assert "INSTRUCTIONS REMINDER" in PROPOSAL_CONTEXT_TEMPLATE
+    assert "AVAILABLE EXECUTION CAPABILITIES AND RELEVANT SKILLS" in PROPOSAL_CONTEXT_TEMPLATE
+    assert "{execution_context_guide}" in PROPOSAL_CONTEXT_TEMPLATE
+    assert "AVAILABLE TOOLS FOR TASK EXECUTION" not in PROPOSAL_CONTEXT_TEMPLATE
     assert "EXACT section order" not in PROPOSAL_CONTEXT_TEMPLATE
     assert "HUMAN FEEDBACK" in PROPOSAL_REVISION_CONTEXT_TEMPLATE
     assert "{feedback}" in PROPOSAL_REVISION_CONTEXT_TEMPLATE
+    assert "AVAILABLE EXECUTION CAPABILITIES AND RELEVANT SKILLS" in PROPOSAL_REVISION_CONTEXT_TEMPLATE
+    assert "{execution_context_guide}" in PROPOSAL_REVISION_CONTEXT_TEMPLATE
     assert "EXACT section order" not in PROPOSAL_REVISION_CONTEXT_TEMPLATE

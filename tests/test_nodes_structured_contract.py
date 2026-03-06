@@ -40,7 +40,7 @@ def test_run_proposal_missing_structured_response_marks_failure(tmp_path: Path) 
             {"user_request": "draft plan"},
             agent=agent,
             memory_store=store,
-            tools_description="bash_exec",
+            execution_context_guide="bash_exec",
             run_dir=tmp_path,
         )
     )
@@ -64,7 +64,7 @@ def test_run_director_missing_structured_response_marks_failure(tmp_path: Path) 
             },
             agent=agent,
             memory_store=store,
-            tools_description="bash_exec",
+            execution_context_guide="bash_exec",
         )
     )
 
@@ -86,7 +86,7 @@ def test_run_fast_director_missing_structured_response_marks_failure(tmp_path: P
             },
             agent=agent,
             memory_store=store,
-            tools_description="bash_exec",
+            execution_context_guide="bash_exec",
         )
     )
 
@@ -143,7 +143,7 @@ def test_run_director_stop_routes_to_memory_patch_when_updates_present(tmp_path:
             },
             agent=agent,
             memory_store=store,
-            tools_description="bash_exec",
+            execution_context_guide="bash_exec",
         )
     )
 

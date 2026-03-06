@@ -46,6 +46,12 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - Directory input preserves relative layout and appends `<stem>/` per structure.
 - Do not mix unrelated relax and SP campaigns in the same ambiguous tree.
 
+## Method-critical defaults
+- Do not silently rely on defaults for `use_d3`, `use_dft_plus_u`, `enable_dipole`, spin treatment, or reference-state-sensitive INCAR toggles when they affect comparison.
+- Keep clean slab, gas-phase reference, adsorbed structures, and downstream static calculations scientifically comparable.
+- For slab adsorption studies, do not set `relax_cell=true` unless the task explicitly requires a variable-cell study and the system is not in slab mode.
+- Always report any non-default toggles that materially affect interpretation.
+
 ## Output Contract
 Return:
 - `output_root_rel`

@@ -34,6 +34,11 @@ Use this skill to convert raw electronic-structure results into comparable therm
 - Produce a table with values, units, and the exact convention used.
 - Keep the supporting artifact paths with the summary so the ranking is auditable.
 
+## Method-critical defaults
+- Do not mix raw electronic energies, adsorption energies, and free-energy values without labeling the convention explicitly.
+- Keep reference states and correction conventions fixed within one comparison table.
+- Report the exact convention used and any assumptions that could change the ranking.
+
 ## Output Contract
 Return:
 - final table or summary path

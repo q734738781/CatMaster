@@ -15,6 +15,7 @@ Each skill must live at `skills/<skill-name>/SKILL.md` and must satisfy all of t
   - `## Quick Start`
   - `## Suggested tools`
   - `## Workflow`
+  - `## Method-critical defaults`
   - `## Output Contract`
   - `## References`
 
@@ -47,6 +48,7 @@ Do:
 - Read the relevant tool source before editing the skill.
 - Capture hard constraints, output files, batch summaries, and common failure modes.
 - Mention exact returned keys or artifacts when they are important handoff contracts.
+- Write a `## Method-critical defaults` section whenever the workflow contains settings that affect comparability, ranking, interpretation, or scientific validity.
 - Keep paths project-relative.
 - Keep `Quick Start` to 3-5 lines.
 - Keep `Workflow` to 3-5 subsections with concrete decisions.
@@ -65,6 +67,7 @@ A good skill should answer these questions quickly:
 
 - Which tool should be used first?
 - What invariants must stay fixed across the workflow?
+- Which method-critical settings must be explicit rather than silently inherited from tool defaults?
 - What files or metadata produced by the tool must be preserved?
 - What common misuse would cause a bad run or misleading result?
 - What must be returned at handoff time?
@@ -75,8 +78,28 @@ A good skill should answer these questions quickly:
 - `Quick Start`: the shortest correct execution path.
 - `Suggested tools`: only the tools that should genuinely be surfaced for selection.
 - `Workflow`: the real SOP, including non-obvious defaults and traps.
+- `Method-critical defaults`: the settings that must be chosen and reported explicitly when they affect comparability, ranking, or interpretation.
 - `Output Contract`: the minimum handoff evidence expected from a good run.
 - `References`: only extra detail or downstream handoff guidance.
+
+## Skill philosophy
+
+### Skills carry SOP, tools carry capability interfaces
+
+Runtime skills should carry:
+- task-specific SOP
+- parameter conventions
+- evidence standards
+- common pitfalls
+- method-critical defaults
+
+Tools should remain capability interfaces, not embedded SOP containers.
+
+### Method-critical settings must be explicit
+
+For quantitative scientific workflows, do not silently rely on tool defaults for method-critical settings when they affect comparability, ranking, or interpretation.
+
+Such settings should be made explicit in task packets and/or skill-guided execution, and must remain consistent across reference and target calculations when required by the scientific question.
 
 ## Maintenance
 

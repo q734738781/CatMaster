@@ -286,3 +286,20 @@ Rationale:
 - These local domain tools are deeply coupled to the current Python/ASE/pymatgen/workspace contract.
 - Forcing full MCP migration now would introduce high engineering cost.
 - Standardization payoff is much higher first for filesystem / web / browser classes than for tightly coupled local scientific workflows.
+
+---
+
+## 12) Scientific tool design philosophy
+
+### Computational primitives over monolithic workflows
+
+Prefer computational primitives over monolithic workflow tools.
+
+New scientific tools should represent one scientifically coherent transformation with explicit inputs, outputs, and method-critical toggles.
+
+Do not hide major scientific assumptions inside large bundle tools when the same workflow can be composed from existing primitives plus task-specific skills.
+
+Large tools are acceptable mainly for:
+- infrastructure-heavy execution/collection steps
+- strictly deterministic boilerplate reduction
+- dispatch/collection/report collation where scientific branching is minimal

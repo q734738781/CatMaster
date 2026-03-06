@@ -56,7 +56,13 @@ from catmaster.runtime.run_ledger.blob_builder import build_run_search_blob
 from catmaster.runtime.run_ledger.models import RunLedgerEntry
 from catmaster.runtime.run_ledger.store import RunLedgerStore
 from catmaster.runtime.run_ledger.history_reader import HistoryReader
-from catmaster.runtime.skills import CatMasterSkillsMiddleware, CatMasterSkillsRuntime
+from catmaster.runtime.skills import (
+    CatMasterSkillsMiddleware,
+    CatMasterSkillsRuntime,
+    render_director_skill_guide,
+    render_fast_director_skill_guide,
+    render_proposal_skill_guide,
+)
 from catmaster.tools.base import workspace_scope, system_root
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
@@ -345,10 +351,6 @@ _SKILL_FILESYSTEM_ALWAYS_INCLUDE = [
     "search_files",
     "list_directory",
     "directory_tree",
-    "create_directory",
-    "write_file",
-    "edit_file",
-    "move_file",
 ]
 
 
@@ -541,7 +543,7 @@ async def _run_proposal_wrapper(
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     run_dir: Path,
     max_steps: int,
 ) -> Command:
@@ -549,7 +551,7 @@ async def _run_proposal_wrapper(
         state,
         agent=agent,
         memory_store=memory_store,
-        tools_description=tools_description,
+        execution_context_guide=execution_context_guide,
         run_dir=run_dir,
         max_steps=max_steps,
     )
@@ -560,14 +562,14 @@ async def _run_director_wrapper(
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     max_steps: int,
 ) -> Command:
     return await run_director(
         state,
         agent=agent,
         memory_store=memory_store,
-        tools_description=tools_description,
+        execution_context_guide=execution_context_guide,
         max_steps=max_steps,
     )
 
@@ -577,14 +579,14 @@ async def _run_fast_director_wrapper(
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     max_steps: int,
 ) -> Command:
     return await run_fast_director(
         state,
         agent=agent,
         memory_store=memory_store,
-        tools_description=tools_description,
+        execution_context_guide=execution_context_guide,
         max_steps=max_steps,
     )
 
@@ -763,8 +765,8 @@ def build_standard_graph(
     director_tools: Sequence[BaseTool],
     task_tools: Sequence[BaseTool],
     memory_tools: Sequence[BaseTool],
-    tools_description: str,
-    director_tools_description: Optional[str] = None,
+    proposal_execution_context_guide: str,
+    director_execution_context_guide: Optional[str] = None,
     run_id: str = "",
     run_dir: Optional[Path] = None,
     patch_repair_attempts: int = 1,
@@ -779,7 +781,9 @@ def build_standard_graph(
 ) -> Any:
     """Build and compile the standard-lane LangGraph."""
     effective_run_dir = run_dir or Path(".")
-    effective_director_tools_description = director_tools_description or tools_description
+    effective_director_execution_context_guide = (
+        director_execution_context_guide or proposal_execution_context_guide
+    )
 
     proposal_middleware = _build_role_middleware(
         role="proposal",
@@ -846,7 +850,7 @@ def build_standard_graph(
         _run_proposal_wrapper,
         agent=proposal_agent,
         memory_store=memory_store,
-        tools_description=tools_description,
+        execution_context_guide=proposal_execution_context_guide,
         run_dir=effective_run_dir,
         max_steps=max_plan_steps,
     ))
@@ -857,7 +861,7 @@ def build_standard_graph(
         _run_director_wrapper,
         agent=director_agent,
         memory_store=memory_store,
-        tools_description=effective_director_tools_description,
+        execution_context_guide=effective_director_execution_context_guide,
         max_steps=max_plan_steps,
     ))
 
@@ -906,7 +910,7 @@ def build_fast_graph(
     director_tools: Sequence[BaseTool],
     task_tools: Sequence[BaseTool],
     memory_tools: Sequence[BaseTool],
-    director_tools_description: str,
+    fast_director_execution_context_guide: str,
     run_id: str = "",
     run_dir: Optional[Path] = None,
     patch_repair_attempts: int = 1,
@@ -972,7 +976,7 @@ def build_fast_graph(
         _run_fast_director_wrapper,
         agent=fast_director_agent,
         memory_store=memory_store,
-        tools_description=director_tools_description,
+        execution_context_guide=fast_director_execution_context_guide,
         max_steps=max_plan_steps,
     ))
 
@@ -1680,6 +1684,22 @@ class GraphRunner:
                 if apply_tool is None:
                     logger.warning("apply_aider_edits is unavailable for memory patcher; updates may fail.")
 
+                if self.skills_runtime is not None:
+                    self.skills_runtime.refresh_catalog()
+                    proposal_execution_context_guide = render_proposal_skill_guide(
+                        self.skills_runtime.visible_skills("proposal")
+                    )
+                    director_execution_context_guide = render_director_skill_guide(
+                        self.skills_runtime.visible_skills("director")
+                    )
+                    fast_director_execution_context_guide = render_fast_director_skill_guide(
+                        self.skills_runtime.visible_skills("fast_director")
+                    )
+                else:
+                    proposal_execution_context_guide = render_proposal_skill_guide([])
+                    director_execution_context_guide = render_director_skill_guide([])
+                    fast_director_execution_context_guide = render_fast_director_skill_guide([])
+
                 if lane == "fast":
                     fast_director_tools = [
                         tool
@@ -1694,7 +1714,7 @@ class GraphRunner:
                         director_tools=fast_director_tools,
                         task_tools=surface.task_tools,
                         memory_tools=memory_tools,
-                        director_tools_description=surface.task_runner_capability_guide_short,
+                        fast_director_execution_context_guide=fast_director_execution_context_guide,
                         run_id=self.run_context.run_id,
                         run_dir=run_dir,
                         patch_repair_attempts=self.patch_repair_attempts,
@@ -1718,8 +1738,8 @@ class GraphRunner:
                         director_tools=surface.director_tools,
                         task_tools=surface.task_tools,
                         memory_tools=memory_tools,
-                        tools_description=surface.task_runner_capability_guide_full,
-                        director_tools_description=surface.task_runner_capability_guide_short,
+                        proposal_execution_context_guide=proposal_execution_context_guide,
+                        director_execution_context_guide=director_execution_context_guide,
                         run_id=self.run_context.run_id,
                         run_dir=run_dir,
                         patch_repair_attempts=self.patch_repair_attempts,

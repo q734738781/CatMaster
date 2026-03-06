@@ -41,4 +41,6 @@ def test_fast_director_prompt_has_no_proposal_lifecycle() -> None:
     assert "Latest completed task outcome (authoritative-by-default evidence):" not in human_content
     assert "Recent task outcomes history (oldest -> newest, MarkdownKV records):" in human_content
     assert "Task status board (structured task history with outcomes):" not in human_content
-    assert "Available tools for task runner:" in human_content
+    assert "Relevant execution skills and task-runner capabilities:" in human_content
+    assert "{execution_context_guide}" in human_content
+    assert "Available tools for task runner:" not in human_content

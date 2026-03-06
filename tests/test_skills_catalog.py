@@ -149,6 +149,21 @@ def test_starter_skills_use_standard_sections_and_consistent_suggested_tools() -
         )
 
 
+def test_method_critical_defaults_sections_exist_for_targeted_skills() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    targeted = [
+        "mace-screening-and-relaxation",
+        "vasp-input-preparation",
+        "thermo-free-energy-and-reporting",
+        "transition-state-neb",
+        "adsorption-site-screening",
+    ]
+    for name in targeted:
+        path = repo_root / "skills" / name / "SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        assert "## Method-critical defaults" in text, f"{path} missing method-critical defaults section"
+
+
 def test_skill_catalog_falls_back_to_suggested_tools_section(tmp_path: Path) -> None:
     _write_skill(
         root=tmp_path,

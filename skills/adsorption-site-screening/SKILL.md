@@ -39,6 +39,10 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 - `max_structures` is a real cap; if the site count exceeds it, the batch is truncated.
 - The batch output writes `batch_structures.json` plus `ads_indices.json` under `output_dir`.
 
+## Method-critical defaults
+- If the screening is intended for quantitative ranking, preserve metadata and reference-state traceability needed for downstream consistent energy evaluation.
+- Do not generate candidate structures without carrying forward the adsorbate indices and site provenance required for later interpretation.
+
 ## Output Contract
 Return:
 - site source (`sites_json_rel` or explicit label)

@@ -24,6 +24,8 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "choose exactly one path for the same target in the same cycle" in system_content
     assert "Assume runtime environment is correctly configured per project README" in system_content
     assert "Do not revise or ask for confirmation for minor execution details" in system_content
+    assert "Plan primarily around skills, scientific stages, evidence contracts, and task packets" in system_content
+    assert "encode method-critical settings explicitly in `task_detail`" in system_content
     assert "Skills may be available for domain SOP and parameter conventions." in system_content
     assert "Default priority: PerformNextTask > MinorReviseProposal > MajorReviseProposal." in system_content
     assert "StopAndSynthesize" in system_content
@@ -49,4 +51,6 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "Latest completed task outcome (authoritative-by-default evidence):" not in human_content
     assert "Recent task outcomes history (oldest -> newest, MarkdownKV records):" in human_content
     assert "AlreadyDone" in human_content
-    assert "Available tools for task runner:" in human_content
+    assert "Relevant execution skills and task-runner capabilities:" in human_content
+    assert "{execution_context_guide}" in human_content
+    assert "Available tools for task runner:" not in human_content

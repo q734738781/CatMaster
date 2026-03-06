@@ -61,7 +61,7 @@ def _historical_runs_context_section(state: Dict[str, Any]) -> str:
 def _build_proposal_context(
     state: Dict[str, Any],
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
 ) -> str:
     """Build the HumanMessage text for the proposal agent."""
     user_request = state["user_request"]
@@ -71,11 +71,11 @@ def _build_proposal_context(
     )
     logger.info(
         "[_build_proposal_context] user_request_len=%d, memory_index_len=%d, "
-        "artifacts_index_len=%d, tools_description_len=%d",
-        len(user_request), len(memory_index), len(artifacts_index), len(tools_description),
+        "artifacts_index_len=%d, execution_context_guide_len=%d",
+        len(user_request), len(memory_index), len(artifacts_index), len(execution_context_guide),
     )
-    if not tools_description:
-        logger.warning("[_build_proposal_context] tools_description is EMPTY")
+    if not execution_context_guide:
+        logger.warning("[_build_proposal_context] execution_context_guide is EMPTY")
 
     feedback = state.get("proposal_feedback", "")
     review_enabled = bool(state.get("proposal_review_enabled", True))
@@ -89,7 +89,7 @@ def _build_proposal_context(
             ),
             memory_index_excerpt=memory_index,
             artifacts_index=artifacts_index,
-            tools=tools_description,
+            execution_context_guide=execution_context_guide,
             feedback=feedback,
         )
         ctx = f"{ctx}\n\n{_historical_runs_context_section(state)}"
@@ -102,7 +102,7 @@ def _build_proposal_context(
         user_request=user_request,
         memory_index_excerpt=memory_index,
         artifacts_index=artifacts_index,
-        tools=tools_description,
+        execution_context_guide=execution_context_guide,
     )
     ctx = f"{ctx}\n\n{_historical_runs_context_section(state)}"
     if not review_enabled:
@@ -114,7 +114,7 @@ def _build_proposal_context(
 def _build_director_context(
     state: Dict[str, Any],
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
 ) -> str:
     """Build the HumanMessage text for the director agent."""
     observations = state.get("observations", [])
@@ -133,7 +133,7 @@ def _build_director_context(
         memory_index_excerpt=memory_store.read_index(),
         task_outcomes_history_text=_render_task_outcomes_history_lines(task_outcomes_history),
         already_done_json=json.dumps(director_observations, ensure_ascii=False),
-        tools=tools_description,
+        execution_context_guide=execution_context_guide,
     )
     return f"{ctx}\n\n{_historical_runs_context_section(state)}"
 
@@ -141,7 +141,7 @@ def _build_director_context(
 def _build_fast_director_context(
     state: Dict[str, Any],
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
 ) -> str:
     """Build the HumanMessage text for the fast-lane director agent."""
     observations = state.get("observations", [])
@@ -154,7 +154,7 @@ def _build_fast_director_context(
         user_request=state["user_request"],
         memory_index_excerpt=memory_store.read_index(),
         task_outcomes_history_text=_render_task_outcomes_history_lines(task_outcomes_history),
-        tools=tools_description,
+        execution_context_guide=execution_context_guide,
     )
     return f"{ctx}\n\n{_historical_runs_context_section(state)}"
 
@@ -375,12 +375,12 @@ async def run_proposal(
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     run_dir: Path,
     max_steps: int = 30,
 ) -> Command:
     """Invoke the proposal ReAct agent and map results to parent state."""
-    ctx_text = _build_proposal_context(state, memory_store, tools_description)
+    ctx_text = _build_proposal_context(state, memory_store, execution_context_guide)
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
@@ -501,11 +501,11 @@ async def run_director(
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     max_steps: int = 30,
 ) -> Command:
     """Invoke the director ReAct agent and route via Command."""
-    ctx_text = _build_director_context(state, memory_store, tools_description)
+    ctx_text = _build_director_context(state, memory_store, execution_context_guide)
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
@@ -633,11 +633,11 @@ async def run_fast_director(
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     max_steps: int = 30,
 ) -> Command:
     """Invoke the fast-lane director agent and route via Command."""
-    ctx_text = _build_fast_director_context(state, memory_store, tools_description)
+    ctx_text = _build_fast_director_context(state, memory_store, execution_context_guide)
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
