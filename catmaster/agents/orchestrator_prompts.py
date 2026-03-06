@@ -40,6 +40,7 @@ Proposal requirements:
 Behavior rules:
 - Prefer reasonable defaults and proceed; ask human only for truly BLOCKING decisions.
 - When the request already specifies a clear experiment protocol or screening criteria, follow it as primary, do not expand scope, and only add scientifically necessary supplements before execution.
+- Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
 - Assume runtime environment is correctly configured per project README.
 - Do NOT raise runtime/tooling environment prerequisites (API keys, executable availability, licensed binary/POTCAR setup, scheduler config) as human questions or BLOCKING items.
 - Tool schemas are authoritative. Do not restate full tool parameter catalogs in proposal text; include only non-default or scientifically critical parameters.
@@ -110,6 +111,7 @@ Rules:
 - If proposal has unresolved BLOCKING items, use MajorReviseProposal with updated proposal/work packages and concise HITL questions.
 - Before finishing, quickly check whether durable scientific invariants/reusable conclusions/constraints changed; if yes, fill `update_memory`, otherwise return `[]`.
 - Structured-output hard constraint: `update_memory` MUST be `[]` unless `state=StopAndSynthesize`.
+- Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, use relative paths in arguments by default.
 - Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
@@ -161,6 +163,7 @@ Rules for Fast lane:
 - Structured-output hard constraints:
   - If `state=PerformNextTask`: `perform_next_task` must be non-null, `stop_and_synthesize` must be null, and `update_memory` must be `[]`.
   - If `state=StopAndSynthesize`: `perform_next_task` must be null, `stop_and_synthesize` must be non-null, and `update_memory` may be non-empty.
+- Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, use relative paths in arguments by default.
 - Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
@@ -177,8 +180,10 @@ Priority rules:
 - For current execution, task packet (goal/detail/expected outputs) is authoritative; use memory for reusable invariants and prior-run context only.
 - Task detail defines the task invariants and done checks. Execute with the minimal non-destructive procedure that satisfies those invariants. Treat task-detail parameters as preferred unless explicitly marked hard, and do bounded self-adjustments before escalating while keeping scientific/computational invariants fixed.
 - Tool schemas are authoritative for argument shapes/defaults; do not re-invent parameter templates in bash scripts.
+- Skills may be available for workflow guidance and parameter conventions. Use skills for SOP and decision guidance; tool schemas remain authoritative for arguments and file outputs.
 - Do not initiate file edits on your own. Only edit files when the current task packet explicitly requires editing/writing outputs for this task. For `MEMORY/**`, only update when scientific invariants, method definitions, or final reusable results changed.
 - If file editing is explicitly required by the task packet, prefer `apply_aider_edits` for deterministic edits (including memory files) over ad-hoc in-place shell edits.
+- When a registered domain tool covers the required capability, prefer the domain tool over re-implementing the same capability with ad-hoc Python or shell. Use ad-hoc code only for glue logic, parsing, summarization, or capabilities not covered by existing tools or skill assets.
 
 Execution rules:
 - Do not rerun the same preparation tool with identical parameters if the previous call already succeeded and required artifacts still exist. Prefer reusing and validating existing outputs.

@@ -84,8 +84,44 @@ def test_render_capability_guide_contains_abs_reference_hint(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     guide = runtime.render_capability_guide(mode="full")
     assert "reference absolute files root (orientation only)" in guide
+    if runtime.skills_root is not None:
+        assert "skills are mounted read-only under `@skills`" in guide
+    else:
+        assert "skills mount `@skills` is unavailable in this invocation" in guide
     assert "prefer relative paths in filesystem tool arguments" in guide
     assert "if absolute paths are used, they must stay under project files root" in guide
+
+
+def test_render_capability_guide_reports_missing_skills_mount(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.skills_root = None
+    guide = runtime.render_capability_guide(mode="full")
+    assert "skills mount `@skills` is unavailable in this invocation" in guide
+    assert "skills are mounted read-only under `@skills`" not in guide
+
+
+def test_rewrite_request_args_supports_skills_token_for_read(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    if runtime.skills_root is None:
+        pytest.skip("skills root unavailable in test environment")
+    args = runtime._rewrite_request_args(
+        tool_name="read_text_file",
+        args={"path": "@skills/slab-construction-and-surface-modeling/SKILL.md"},
+    )
+    resolved = Path(str(args["path"]))
+    assert resolved.is_absolute()
+    assert str(resolved).startswith(str(runtime.skills_root))
+
+
+def test_rewrite_request_args_rejects_write_under_skills_mount(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    if runtime.skills_root is None:
+        pytest.skip("skills root unavailable in test environment")
+    with pytest.raises(CatMasterToolExecutionError):
+        runtime._rewrite_request_args(
+            tool_name="write_file",
+            args={"path": "@skills/slab-construction-and-surface-modeling/SKILL.md"},
+        )
 
 
 class _FakeCallToolResult:
@@ -122,7 +158,10 @@ def test_rewrite_call_tool_result_hides_list_allowed_directories(tmp_path) -> No
         structuredContent={"allowed_directories": [runtime.files_root.as_posix()]},
     )
     rewritten = runtime._rewrite_call_tool_result(request=req, result=result)
-    assert rewritten.structuredContent == {"allowed_directories": ["."]}
+    expected_allowed = ["."]
+    if runtime.skills_root is not None:
+        expected_allowed.append("@skills")
+    assert rewritten.structuredContent == {"allowed_directories": expected_allowed}
     assert isinstance(rewritten.content, list)
     assert rewritten.content
     first = rewritten.content[0]
@@ -130,4 +169,4 @@ def test_rewrite_call_tool_result_hides_list_allowed_directories(tmp_path) -> No
         text = str(first.get("text", ""))
     else:
         text = str(getattr(first, "text", ""))
-    assert "Allowed project files root: ." == text
+    assert text == f"Allowed roots: {', '.join(expected_allowed)}"

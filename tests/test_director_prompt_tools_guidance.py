@@ -24,6 +24,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "choose exactly one path for the same target in the same cycle" in system_content
     assert "Assume runtime environment is correctly configured per project README" in system_content
     assert "Do not revise or ask for confirmation for minor execution details" in system_content
+    assert "Skills may be available for domain SOP and parameter conventions." in system_content
     assert "Default priority: PerformNextTask > MinorReviseProposal > MajorReviseProposal." in system_content
     assert "StopAndSynthesize" in system_content
     assert "Do not treat proposal-format requirements" in system_content

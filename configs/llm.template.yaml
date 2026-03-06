@@ -77,6 +77,8 @@ agents:
   proposal: "openrouter-main"
   director: "openrouter-main"
   task_runner: "openrouter-main"
+  # Optional: if omitted, it falls back to `task_runner`.
+  tool_selector: "openrouter-main"
   memory_patch: "openrouter-main"
   summary: "openrouter-main"
   # Optional: if omitted, it falls back to `summary`.

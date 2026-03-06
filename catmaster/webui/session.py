@@ -318,6 +318,7 @@ class WebSession:
                 from catmaster.runtime.run_ledger.vector_index import VectorIndex
                 from catmaster.runtime.run_ledger.hybrid_search import HybridRunLedgerSearcher
                 from catmaster.runtime.run_ledger.history_reader import HistoryReader
+                from catmaster.runtime.skills import SkillCatalog, CatMasterSkillsRuntime
 
                 project_id = self._project_id_for_workspace(ws)
                 run_ctx = RunContext.create(
@@ -360,6 +361,11 @@ class WebSession:
                     system_root=system_root(workspace=ws),
                     rerank_model=build_chat_model(llm_profile.config_for_role("history_reader")),
                 )
+                repo_root = Path(__file__).resolve().parents[2]
+                skills_runtime = CatMasterSkillsRuntime(
+                    catalog=SkillCatalog.create_default(repo_root=repo_root)
+                )
+                tool_selector_model = build_chat_model(llm_profile.config_for_role("tool_selector"))
 
                 runner = GraphRunner(
                     task_runner_model=build_chat_model(llm_profile.config_for_role("task_runner")),
@@ -380,6 +386,8 @@ class WebSession:
                     print_state_messages=llm_profile.agent_runtime.print_state_messages,
                     run_ledger_store=run_ledger_store,
                     history_reader=history_reader,
+                    skills_runtime=skills_runtime,
+                    tool_selector_model=tool_selector_model,
                 )
                 with self._lock:
                     self.run_status = "running"

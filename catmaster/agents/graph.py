@@ -56,6 +56,7 @@ from catmaster.runtime.run_ledger.blob_builder import build_run_search_blob
 from catmaster.runtime.run_ledger.models import RunLedgerEntry
 from catmaster.runtime.run_ledger.store import RunLedgerStore
 from catmaster.runtime.run_ledger.history_reader import HistoryReader
+from catmaster.runtime.skills import CatMasterSkillsMiddleware, CatMasterSkillsRuntime
 from catmaster.tools.base import workspace_scope, system_root
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
@@ -221,6 +222,16 @@ def _load_tool_strategy():
     return _ToolStrategy
 
 
+def _load_llm_tool_selector_middleware():
+    try:
+        from langchain.agents.middleware import LLMToolSelectorMiddleware as _LLMToolSelectorMiddleware
+    except Exception as exc:
+        raise RuntimeError(
+            "LLMToolSelectorMiddleware is unavailable. Install 'langchain>=1.0'."
+        ) from exc
+    return _LLMToolSelectorMiddleware
+
+
 def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list[Any]:
     """Enforce per-invocation tool-call cap and map recoverable errors to ToolMessage."""
     try:
@@ -328,11 +339,59 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
     return [_ResetToolCallCounterMiddleware(), _ToolCallBudgetMiddleware()]
 
 
+_SKILL_FILESYSTEM_ALWAYS_INCLUDE = [
+    "read_text_file",
+    "read_multiple_files",
+    "search_files",
+    "list_directory",
+    "directory_tree",
+]
+
+
+def _build_role_middleware(
+    *,
+    role: str,
+    max_tool_calls: int,
+    skills_runtime: CatMasterSkillsRuntime | None,
+    skills_mount_available: bool,
+    selector_model: BaseChatModel | None,
+    enable_selector: bool,
+) -> list[Any]:
+    middleware: list[Any] = []
+    if role != "memory_patch" and skills_runtime is not None:
+        middleware.append(
+            CatMasterSkillsMiddleware(
+                role=role,
+                skills_runtime=skills_runtime,
+                skills_mount_available=skills_mount_available,
+            )
+        )
+
+    if enable_selector:
+        LLMToolSelectorMiddleware = _load_llm_tool_selector_middleware()
+        middleware.append(
+            LLMToolSelectorMiddleware(
+                model=selector_model,
+                max_tools=20,
+                always_include=list(_SKILL_FILESYSTEM_ALWAYS_INCLUDE),
+            )
+        )
+
+    middleware.extend(
+        _make_tool_call_budget_middleware(
+            role=role,
+            max_tool_calls=max_tool_calls,
+        )
+    )
+    return middleware
+
+
 def _build_proposal_agent(
     model: BaseChatModel,
     tools: Sequence[BaseTool],
     *,
     max_steps: int = 60,
+    middleware: Sequence[Any] | None = None,
 ) -> Any:
     role_tools = list(tools)
     logger.info(
@@ -342,12 +401,16 @@ def _build_proposal_agent(
     )
     create_agent = _load_create_agent()
     ToolStrategy = _load_tool_strategy()
+    middleware_chain = list(middleware) if middleware is not None else _make_tool_call_budget_middleware(
+        role="proposal",
+        max_tool_calls=max_steps,
+    )
     return create_agent(
         model=model,
         tools=role_tools,
         system_prompt=PROPOSAL_SYSTEM_PROMPT,
         response_format=ToolStrategy(ProposalOutput, handle_errors=False),
-        middleware=_make_tool_call_budget_middleware(role="proposal", max_tool_calls=max_steps),
+        middleware=middleware_chain,
     )
 
 
@@ -356,6 +419,7 @@ def _build_director_agent(
     tools: Sequence[BaseTool],
     *,
     max_steps: int = 60,
+    middleware: Sequence[Any] | None = None,
 ) -> Any:
     role_tools = list(tools)
     logger.info(
@@ -365,12 +429,16 @@ def _build_director_agent(
     )
     create_agent = _load_create_agent()
     ToolStrategy = _load_tool_strategy()
+    middleware_chain = list(middleware) if middleware is not None else _make_tool_call_budget_middleware(
+        role="director",
+        max_tool_calls=max_steps,
+    )
     return create_agent(
         model=model,
         tools=role_tools,
         system_prompt=DIRECTOR_SYSTEM_PROMPT,
         response_format=ToolStrategy(DirectorOutput, handle_errors=False),
-        middleware=_make_tool_call_budget_middleware(role="director", max_tool_calls=max_steps),
+        middleware=middleware_chain,
     )
 
 
@@ -379,6 +447,7 @@ def _build_fast_director_agent(
     tools: Sequence[BaseTool],
     *,
     max_steps: int = 60,
+    middleware: Sequence[Any] | None = None,
 ) -> Any:
     role_tools = list(tools)
     logger.info(
@@ -388,12 +457,16 @@ def _build_fast_director_agent(
     )
     create_agent = _load_create_agent()
     ToolStrategy = _load_tool_strategy()
+    middleware_chain = list(middleware) if middleware is not None else _make_tool_call_budget_middleware(
+        role="fast_director",
+        max_tool_calls=max_steps,
+    )
     return create_agent(
         model=model,
         tools=role_tools,
         system_prompt=FAST_DIRECTOR_SYSTEM_PROMPT,
         response_format=ToolStrategy(FastDirectorOutput, handle_errors=False),
-        middleware=_make_tool_call_budget_middleware(role="fast_director", max_tool_calls=max_steps),
+        middleware=middleware_chain,
     )
 
 
@@ -403,6 +476,7 @@ def _build_task_runner_agent(
     memory_store: MemoryStore,
     *,
     max_steps: int = 60,
+    middleware: Sequence[Any] | None = None,
 ) -> Any:
     role_tools = list(tools)
     logger.info(
@@ -413,7 +487,7 @@ def _build_task_runner_agent(
     create_agent = _load_create_agent()
     ToolStrategy = _load_tool_strategy()
     _ = memory_store
-    middleware = _make_tool_call_budget_middleware(
+    middleware_chain = list(middleware) if middleware is not None else _make_tool_call_budget_middleware(
         role="task_runner",
         max_tool_calls=max_steps,
     )
@@ -422,7 +496,7 @@ def _build_task_runner_agent(
         tools=role_tools,
         system_prompt=TASK_RUNNER_SYSTEM_PROMPT,
         response_format=ToolStrategy(TaskOutput, handle_errors=False),
-        middleware=middleware,
+        middleware=middleware_chain,
     )
 
 
@@ -431,6 +505,7 @@ def _build_memory_patcher_agent(
     tools: Sequence[BaseTool],
     *,
     max_steps: int = 30,
+    middleware: Sequence[Any] | None = None,
 ) -> Any:
     role_tools = list(tools)
     logger.info(
@@ -440,12 +515,16 @@ def _build_memory_patcher_agent(
     )
     create_agent = _load_create_agent()
     ToolStrategy = _load_tool_strategy()
+    middleware_chain = list(middleware) if middleware is not None else _make_tool_call_budget_middleware(
+        role="memory_patch",
+        max_tool_calls=max_steps,
+    )
     return create_agent(
         model=model,
         tools=role_tools,
         system_prompt=MEMORY_PATCHER_SYSTEM_PROMPT,
         response_format=ToolStrategy(MemoryPatchOutput, handle_errors=False),
-        middleware=_make_tool_call_budget_middleware(role="memory_patch", max_tool_calls=max_steps),
+        middleware=middleware_chain,
     )
 
 
@@ -690,31 +769,71 @@ def build_standard_graph(
     max_plan_steps: int = 60,
     checkpointer: Optional[BaseCheckpointSaver] = None,
     run_control: Optional[RunControl] = None,
+    skills_runtime: Optional[CatMasterSkillsRuntime] = None,
+    skills_mount_available: bool = False,
+    tool_selector_model: Optional[BaseChatModel] = None,
 ) -> Any:
     """Build and compile the standard-lane LangGraph."""
     effective_run_dir = run_dir or Path(".")
     effective_director_tools_description = director_tools_description or tools_description
 
+    proposal_middleware = _build_role_middleware(
+        role="proposal",
+        max_tool_calls=max_plan_steps,
+        skills_runtime=skills_runtime,
+        skills_mount_available=skills_mount_available,
+        selector_model=None,
+        enable_selector=False,
+    )
+    director_middleware = _build_role_middleware(
+        role="director",
+        max_tool_calls=max_plan_steps,
+        skills_runtime=skills_runtime,
+        skills_mount_available=skills_mount_available,
+        selector_model=None,
+        enable_selector=False,
+    )
+    task_middleware = _build_role_middleware(
+        role="task_runner",
+        max_tool_calls=max_task_steps,
+        skills_runtime=skills_runtime,
+        skills_mount_available=skills_mount_available,
+        selector_model=tool_selector_model,
+        enable_selector=True,
+    )
+    memory_middleware = _build_role_middleware(
+        role="memory_patch",
+        max_tool_calls=max_plan_steps,
+        skills_runtime=None,
+        skills_mount_available=False,
+        selector_model=None,
+        enable_selector=False,
+    )
+
     proposal_agent = _build_proposal_agent(
         proposal_model,
         list(proposal_tools),
         max_steps=max_plan_steps,
+        middleware=proposal_middleware,
     )
     director_agent = _build_director_agent(
         director_model,
         list(director_tools),
         max_steps=max_plan_steps,
+        middleware=director_middleware,
     )
     task_agent = _build_task_runner_agent(
         task_runner_model,
         list(task_tools),
         memory_store,
         max_steps=max_task_steps,
+        middleware=task_middleware,
     )
     memory_patch_agent = _build_memory_patcher_agent(
         memory_patch_model,
         list(memory_tools),
         max_steps=max_plan_steps,
+        middleware=memory_middleware,
     )
 
     graph = StateGraph(CatMasterState)
@@ -792,24 +911,55 @@ def build_fast_graph(
     max_plan_steps: int = 60,
     checkpointer: Optional[BaseCheckpointSaver] = None,
     run_control: Optional[RunControl] = None,
+    skills_runtime: Optional[CatMasterSkillsRuntime] = None,
+    skills_mount_available: bool = False,
+    tool_selector_model: Optional[BaseChatModel] = None,
 ) -> Any:
     """Build and compile the fast-lane LangGraph (proposal-free director loop)."""
     effective_run_dir = run_dir or Path(".")
+    fast_director_middleware = _build_role_middleware(
+        role="fast_director",
+        max_tool_calls=max_plan_steps,
+        skills_runtime=skills_runtime,
+        skills_mount_available=skills_mount_available,
+        selector_model=None,
+        enable_selector=False,
+    )
+    task_middleware = _build_role_middleware(
+        role="task_runner",
+        max_tool_calls=max_task_steps,
+        skills_runtime=skills_runtime,
+        skills_mount_available=skills_mount_available,
+        selector_model=tool_selector_model,
+        enable_selector=True,
+    )
+    memory_middleware = _build_role_middleware(
+        role="memory_patch",
+        max_tool_calls=max_plan_steps,
+        skills_runtime=None,
+        skills_mount_available=False,
+        selector_model=None,
+        enable_selector=False,
+    )
+
     fast_director_agent = _build_fast_director_agent(
         director_model,
         list(director_tools),
         max_steps=max_plan_steps,
+        middleware=fast_director_middleware,
     )
     task_agent = _build_task_runner_agent(
         task_runner_model,
         list(task_tools),
         memory_store,
         max_steps=max_task_steps,
+        middleware=task_middleware,
     )
     memory_patch_agent = _build_memory_patcher_agent(
         memory_patch_model,
         list(memory_tools),
         max_steps=max_plan_steps,
+        middleware=memory_middleware,
     )
 
     graph = StateGraph(CatMasterState)
@@ -895,6 +1045,8 @@ class GraphRunner:
         checkpointer: Optional[BaseCheckpointSaver] = None,
         run_ledger_store: Optional[RunLedgerStore] = None,
         history_reader: Optional[HistoryReader] = None,
+        skills_runtime: Optional[CatMasterSkillsRuntime] = None,
+        tool_selector_model: Optional[BaseChatModel] = None,
     ) -> None:
         self.task_runner_model = task_runner_model
         self.proposal_model = proposal_model or task_runner_model
@@ -920,6 +1072,8 @@ class GraphRunner:
         self.checkpointer = checkpointer or MemorySaver()
         self.run_ledger_store = run_ledger_store
         self.history_reader = history_reader
+        self.skills_runtime = skills_runtime
+        self.tool_selector_model = tool_selector_model
 
         self.memory_store.ensure_exists()
         self.artifact_store = ArtifactStore(run_context.run_dir)
@@ -1545,6 +1699,9 @@ class GraphRunner:
                         max_plan_steps=self.max_plan_steps,
                         checkpointer=self.checkpointer,
                         run_control=self.run_control,
+                        skills_runtime=self.skills_runtime,
+                        skills_mount_available=mcp_fs_runtime is not None and mcp_fs_runtime.skills_root is not None,
+                        tool_selector_model=self.tool_selector_model,
                     )
                 else:
                     compiled = build_standard_graph(
@@ -1567,6 +1724,9 @@ class GraphRunner:
                         max_plan_steps=self.max_plan_steps,
                         checkpointer=self.checkpointer,
                         run_control=self.run_control,
+                        skills_runtime=self.skills_runtime,
+                        skills_mount_available=mcp_fs_runtime is not None and mcp_fs_runtime.skills_root is not None,
+                        tool_selector_model=self.tool_selector_model,
                     )
 
                 historical_runs_context_text = ""

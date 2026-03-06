@@ -32,6 +32,7 @@ def test_fast_director_prompt_has_no_proposal_lifecycle() -> None:
     assert "Read-only workspace QA" in system_content
     assert "General knowledge/comparison QA" in system_content
     assert "If uncertain whether execution is required, prefer `PerformNextTask`." in system_content
+    assert "Skills may be available for domain SOP and parameter conventions." in system_content
     assert "If `state=PerformNextTask`" in system_content
     assert "update_memory` must be `[]`" in system_content
     assert "`write_note`" in system_content

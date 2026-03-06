@@ -12,12 +12,23 @@ except Exception:  # pragma: no cover
     yaml = None
 
 Provider = Literal["openai", "openrouter", "deepseek", "gemini", "oai_compatible", "langchain"]
-AgentRole = Literal["proposal", "director", "task_runner", "memory_patch", "summary", "history_reader"]
+AgentRole = Literal[
+    "proposal",
+    "director",
+    "task_runner",
+    "memory_patch",
+    "summary",
+    "history_reader",
+    "tool_selector",
+]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
 _logger = logging.getLogger(__name__)
 REQUIRED_AGENT_ROLES: tuple[str, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
-OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {"history_reader": "summary"}
+OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
+    "history_reader": "summary",
+    "tool_selector": "task_runner",
+}
 AGENT_ROLES: tuple[AgentRole, ...] = (
     "proposal",
     "director",
@@ -25,6 +36,7 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "memory_patch",
     "summary",
     "history_reader",
+    "tool_selector",
 )
 
 
@@ -409,6 +421,10 @@ class LLMProfile:
     @property
     def history_reader(self) -> LLMConfig:
         return self.config_for_role("history_reader")
+
+    @property
+    def tool_selector(self) -> LLMConfig:
+        return self.config_for_role("tool_selector")
 
     @staticmethod
     def from_env() -> "LLMProfile":
