@@ -224,10 +224,10 @@ def _load_tool_strategy():
 
 def _load_llm_tool_selector_middleware():
     try:
-        from langchain.agents.middleware import LLMToolSelectorMiddleware as _LLMToolSelectorMiddleware
+        from catmaster.runtime.safe_tool_selector import SafeLLMToolSelectorMiddleware as _LLMToolSelectorMiddleware
     except Exception as exc:
         raise RuntimeError(
-            "LLMToolSelectorMiddleware is unavailable. Install 'langchain>=1.0'."
+            "SafeLLMToolSelectorMiddleware is unavailable. Verify the CatMaster runtime install."
         ) from exc
     return _LLMToolSelectorMiddleware
 
@@ -345,6 +345,10 @@ _SKILL_FILESYSTEM_ALWAYS_INCLUDE = [
     "search_files",
     "list_directory",
     "directory_tree",
+    "create_directory",
+    "write_file",
+    "edit_file",
+    "move_file",
 ]
 
 

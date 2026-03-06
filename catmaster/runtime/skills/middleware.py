@@ -94,7 +94,7 @@ class CatMasterSkillsMiddleware(AgentMiddleware):
             skills=self._visible_skills,
             skills_mount_available=self.skills_mount_available,
         )
-        current_system = getattr(request, "system_prompt", None)
+        current_system = getattr(request, "system_message", None)
         merged = self._append_addendum_message(current_system=current_system, addendum=addendum)
         return request.override(system_message=merged)
 

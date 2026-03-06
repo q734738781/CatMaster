@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from catmaster.tools.base import ensure_project_space_layout, system_root, workspace_root
 from catmaster.runtime import RunControl
+from catmaster.runtime.usage_stats import summarize_usage_from_event_trace
 from catmaster.ui import make_event
 
 from . import io
@@ -723,6 +724,14 @@ class WebSession:
         if ws is None or not run_dir:
             return ""
         return io.tail_jsonl(run_dir / trace_name, project_space=ws, max_lines=MAX_TRACE_LINES)
+
+    def read_usage_summary(self, run_dir: Optional[Path]) -> Dict[str, Any]:
+        if not run_dir:
+            return {}
+        try:
+            return summarize_usage_from_event_trace(run_dir)
+        except Exception:
+            return {}
 
     def read_ui_events_from_file(self, run_dir: Optional[Path]) -> str:
         ws = self._workspace_path()

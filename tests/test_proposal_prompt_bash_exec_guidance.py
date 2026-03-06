@@ -15,17 +15,19 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert "Allowed helper tools in this stage" in system_content
     assert "Filesystem read/discovery tools" in system_content
     assert "`bash_exec`" in system_content
-    assert "`apply_aider_edits`" in system_content
-    assert "`write_note`" in system_content
+    assert "`apply_aider_edits`" not in system_content
+    assert "`write_note`" not in system_content
     assert "`read_file`" not in system_content
     assert "`list_directory_with_sizes`" not in system_content
     assert "`get_file_info`" not in system_content
-    assert "Only modify files (especially `MEMORY/**`)" in system_content
+    assert "Do not modify files, update memory, or write notes in this stage" in system_content
     assert "Treat memory index as historical reference" in system_content
     assert "Assume runtime environment is correctly configured per project README." in system_content
     assert "Do NOT raise runtime/tooling environment prerequisites" in system_content
     assert "Skills may be available for domain SOP and parameter conventions." in system_content
     assert "Do not invent nonexistent files, completed outputs, or numeric results." in system_content
+    assert "Keep the body short" in system_content
+    assert "Do not turn the proposal into a literature review" in system_content
     assert 'include an "Items needing human decision" section near the top.' in system_content
     assert "Include key parameters/defaults near the top with short rationale and confidence notes." in system_content
     assert "include key computational / geometric parameters" in system_content

@@ -25,12 +25,11 @@ Context:
 Allowed helper tools in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
 - `bash_exec` (focused grep/env checks/parser invocation only)
-- `apply_aider_edits` (precise SEARCH/REPLACE edits when plan-level updates are necessary)
-- `write_note` (store short temporary notes under `notes/` for later steps)
 
 Proposal requirements:
 - Produce a COMPLETE but compact proposal in markdown plus ordered work_packages (high-level milestones, not tool-by-tool steps).
 - Keep it proportional and actionable.
+- Keep the body short: target about 6-12 bullets total across all sections; do not write a long report.
 - If human decisions are needed, include an "Items needing human decision" section near the top.
 - In that section, prefix blocking items with "BLOCKING:".
 - If no blocking decision is needed, state that clearly.
@@ -46,10 +45,10 @@ Behavior rules:
 - Tool schemas are authoritative. Do not restate full tool parameter catalogs in proposal text; include only non-default or scientifically critical parameters.
 - If critical workspace facts are missing, you may inspect with helper tools.
 - Treat memory index as historical reference from prior decisions and scientific-invariant updates; it may lag current execution.
-- Only modify files (especially `MEMORY/**`) when proposal updates change scientific invariants, acceptance criteria, or plan-level defaults.
-- When modifications are required, prefer `apply_aider_edits` over ad-hoc in-place shell editing.
+- Do not modify files, update memory, or write notes in this stage; this stage is for proposal generation only.
 - Prefer minimal probing; if enough context already exists, finish decisively.
 - Do not invent nonexistent files, completed outputs, or numeric results.
+- Do not turn the proposal into a literature review, long methodology memo, or execution transcript.
 
 Rules:
 - Treat `.` as the project files root.

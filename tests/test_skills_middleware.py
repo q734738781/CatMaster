@@ -27,12 +27,14 @@ class _DummySkillsRuntime:
 
 class _DummyRequest:
     def __init__(self, system_prompt) -> None:
-        self.system_prompt = system_prompt
-        self.system_message = None
+        if isinstance(system_prompt, SystemMessage):
+            self.system_message = system_prompt
+        else:
+            self.system_message = SystemMessage(content=str(system_prompt))
 
     def override(self, **overrides):
         system_message = overrides.get("system_message")
-        next_request = _DummyRequest(system_message or self.system_prompt)
+        next_request = _DummyRequest(system_message or self.system_message)
         next_request.system_message = system_message
         return next_request
 

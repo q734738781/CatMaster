@@ -84,12 +84,16 @@ def test_build_runtime_tool_surface_role_split(tmp_path) -> None:
 
     assert "bash_exec" in proposal_names
     assert "search_files" in proposal_names
-    assert proposal_names == director_names
     assert "read_file" not in proposal_names
     assert "list_directory_with_sizes" not in proposal_names
     assert "get_file_info" not in proposal_names
-    assert "apply_aider_edits" in proposal_names
-    assert "write_note" in proposal_names
+    assert "apply_aider_edits" not in proposal_names
+    assert "write_note" not in proposal_names
+
+    assert "bash_exec" in director_names
+    assert "search_files" in director_names
+    assert "apply_aider_edits" in director_names
+    assert "write_note" in director_names
 
     assert "apply_aider_edits" in task_names
     assert "create_molecule_from_smiles" in task_names

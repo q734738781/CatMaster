@@ -324,7 +324,7 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
 
         raw_params: Any
         if inputs is not None:
-            raw_params = inputs
+            raw_params = _json_safe(inputs)
         else:
             try:
                 raw_params = json.loads(input_str)

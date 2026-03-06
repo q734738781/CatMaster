@@ -16,7 +16,12 @@ from .components import (
 )
 from .constants import EVENT_POLL_INTERVAL, LIVE_SUMMARY_ENABLED_DEFAULT, MAX_EVENT_FEED
 from .session_registry import SessionRegistry
-from .view_utils import format_event_html, render_live_tracker_markdown, render_run_cards_html
+from .view_utils import (
+    format_event_html,
+    render_cost_card_markdown,
+    render_live_tracker_markdown,
+    render_run_cards_html,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +154,7 @@ def build_monitor_page(
         "runs_dropdown",
         "cards_html",
         "event_feed",
+        "cost_md",
         "summary_md",
         "final_report",
         "report_source_md",
@@ -174,6 +180,7 @@ def build_monitor_page(
                 "runs_dropdown": gr.update(),
                 "cards_html": "",
                 "event_feed": "",
+                "cost_md": "",
                 "summary_md": "",
                 "final_report": "",
                 "report_source_md": "",
@@ -224,6 +231,7 @@ def build_monitor_page(
         run_info = session.run_status_text()
         run_select_status = f"Selected run: {selected}" if selected else "No run selected."
         ps_name = registry.project_space_name_for_session(session)
+        usage_summary = session.read_usage_summary(run_dir)
 
         cards = session.list_run_cards()
         cards_html = render_run_cards_html(
@@ -255,6 +263,7 @@ def build_monitor_page(
             "runs_dropdown": gr.update(choices=runs, value=selected or None),
             "cards_html": cards_html,
             "event_feed": f'<div class="cm-event-feed">{event_feed}</div>',
+            "cost_md": render_cost_card_markdown(usage_summary),
             "summary_md": summary_md,
             "final_report": final_report,
             "report_source_md": report_source_md,
@@ -416,6 +425,7 @@ def build_monitor_page(
                             gr.Markdown("#### Event Timeline")
                             event_feed = gr.HTML("", elem_classes=["cm-event-feed"])
                         with gr.Column(scale=1):
+                            cost_md = gr.Markdown(elem_classes=["cm-scroll-md"])
                             gr.Markdown("#### Live Tracker")
                             run_summary_md = gr.Markdown(
                                 elem_classes=["cm-scroll-md"],
@@ -478,6 +488,7 @@ def build_monitor_page(
             runs_dropdown,
             cards_html,
             event_feed,
+            cost_md,
             run_summary_md,
             final_report_md,
             report_source_md,

@@ -143,8 +143,6 @@ def build_runtime_tool_surface(
 
     proposal_tools = _dedupe_tools(
         ([bash_tool] if bash_tool is not None else [])
-        + ([aider_tool] if aider_tool is not None else [])
-        + ([note_tool] if note_tool is not None else [])
         + proposal_mcp
     )
     director_tools = _dedupe_tools(

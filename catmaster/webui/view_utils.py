@@ -457,6 +457,70 @@ def render_live_tracker_markdown(state: Dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def render_cost_card_markdown(summary: Dict[str, Any]) -> str:
+    if not isinstance(summary, dict) or not summary:
+        return "### Cost\nNot available yet."
+
+    total_cost = _to_float(summary.get("cost_usd"))
+    if total_cost is None:
+        return "### Cost\nNot available yet."
+
+    exact_cost = _to_float(summary.get("exact_cost_usd")) or 0.0
+    estimated_cost = _to_float(summary.get("estimated_cost_usd")) or 0.0
+    cost_source = str(summary.get("cost_source") or "unavailable")
+    calls = int(summary.get("calls") or 0)
+    prompt_tokens = int(summary.get("input_tokens") or 0)
+    cache_read_tokens = int(summary.get("input_cached_tokens") or 0)
+    cache_write_tokens = int(summary.get("input_cache_write_tokens") or 0)
+    completion_tokens = int(summary.get("output_tokens") or 0)
+    reasoning_tokens = int(summary.get("reasoning_tokens") or 0)
+    missing_cost_calls = int(summary.get("missing_cost_calls") or 0)
+    breakdown = summary.get("breakdown_usd") if isinstance(summary.get("breakdown_usd"), dict) else {}
+    by_role = summary.get("by_role") if isinstance(summary.get("by_role"), list) else []
+
+    lines: List[str] = ["### Cost", f"**Total**: `${total_cost:.4f}`"]
+    lines.append(f"Source: `{cost_source}` | Calls: `{calls}`")
+    if cost_source != "exact" and exact_cost > 0:
+        lines.append(f"Exact observed: `${exact_cost:.4f}`")
+    if cost_source != "exact" and estimated_cost > 0:
+        lines.append(f"Estimated supplement: `${estimated_cost:.4f}`")
+    if missing_cost_calls:
+        lines.append(f"Calls without cost basis: `{missing_cost_calls}`")
+
+    lines.extend(
+        [
+            "",
+            "#### Tokens",
+            f"- prompt total: `{prompt_tokens}`",
+            f"- cache read: `{cache_read_tokens}`",
+            f"- cache write: `{cache_write_tokens}`",
+            f"- completion total: `{completion_tokens}`",
+            f"- reasoning: `{reasoning_tokens}`",
+        ]
+    )
+
+    breakdown_lines = []
+    for key in ("prompt_uncached", "cache_read", "cache_write", "completion", "internal_reasoning"):
+        value = _to_float(breakdown.get(key))
+        if value is None or value <= 0:
+            continue
+        breakdown_lines.append(f"- {key.replace('_', ' ')}: `${value:.4f}`")
+    if breakdown_lines:
+        lines.extend(["", "#### Estimated Breakdown", *breakdown_lines])
+
+    if by_role:
+        top_roles = sorted(by_role, key=lambda item: float(item.get("cost_usd") or 0.0), reverse=True)[:3]
+        role_lines = []
+        for item in top_roles:
+            name = str(item.get("name") or "(unknown)")
+            cost = _to_float(item.get("cost_usd")) or 0.0
+            role_lines.append(f"- `{name}`: `${cost:.4f}`")
+        if role_lines:
+            lines.extend(["", "#### Top Roles", *role_lines])
+
+    return "\n".join(lines).strip()
+
+
 def _render_json_block(value: Any, *, max_chars: int) -> str:
     try:
         text = json.dumps(value, ensure_ascii=False, indent=2)
@@ -467,7 +531,21 @@ def _render_json_block(value: Any, *, max_chars: int) -> str:
     return "```json\n" + text + "\n```"
 
 
+def _to_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return None
+
+
 __all__ = [
+    "render_cost_card_markdown",
     "format_event_html",
     "format_event_line",
     "render_live_tracker_markdown",

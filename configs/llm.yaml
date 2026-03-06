@@ -80,6 +80,28 @@ models:
       openrouter:
         extra_body:
           prompt_cache_retention: 24h
+
+  "openai/gpt-5.4:online-minimal":
+    provider: openrouter
+    model: openai/gpt-5.4:online
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: minimal
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
     
   "openai/gpt-5-nano":
     provider: openrouter
@@ -106,7 +128,7 @@ agents:
   director: "openai/gpt-5.4:online-high"
   task_runner: "openai/gpt-5.4:online-medium"
   memory_patch: "openai/gpt-5.4:online-medium"
-  tool_selector: "google/gemini-3-flash-preview"
+  tool_selector: "openai/gpt-5.4:online-minimal"
   summary: "google/gemini-3-flash-preview"
   history_reader: "google/gemini-3-flash-preview"
 
