@@ -235,6 +235,118 @@ def test_llm_profile_image_analyzer_can_use_dedicated_model(tmp_path: Path) -> N
     assert profile.image_analyzer.model == "openai/gpt-5-nano"
 
 
+def test_llm_profile_literature_web_search_fallbacks_to_literature_synthesizer(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  literature_synthesizer: 'openai/gpt-5-nano'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.literature_web_search.model == "openai/gpt-5-nano"
+
+
+def test_llm_profile_literature_web_search_can_use_dedicated_model(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  literature_web_search: 'openai/gpt-5-nano'",
+                "  literature_synthesizer: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.literature_web_search.model == "openai/gpt-5-nano"
+
+
+def test_llm_profile_literature_synthesizer_fallbacks_to_director(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5-nano'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.literature_synthesizer.model == "openai/gpt-5-nano"
+
+
+def test_llm_profile_literature_deep_research_fallbacks_to_synthesizer(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  literature_synthesizer: 'openai/gpt-5-nano'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.literature_deep_research.model == "openai/gpt-5-nano"
+
+
 def test_llm_profile_agent_runtime_legacy_keys_are_rejected(tmp_path: Path) -> None:
     cfg = tmp_path / "llm.yaml"
     cfg.write_text(

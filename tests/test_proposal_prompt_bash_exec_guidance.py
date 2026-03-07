@@ -29,6 +29,7 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert "Do not invent nonexistent files, completed outputs, or numeric results." in system_content
     assert "Keep the body short" in system_content
     assert "Do not turn the proposal into a literature review" in system_content
+    assert "Use literature grounding only when the user explicitly asks for papers/prior work/supporting evidence" in system_content
     assert 'include an "Items needing human decision" section near the top.' in system_content
     assert "Include key parameters/defaults near the top with short rationale and confidence notes." in system_content
     assert "include key computational / geometric parameters" in system_content

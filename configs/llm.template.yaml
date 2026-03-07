@@ -36,6 +36,30 @@ models:
           # OpenRouter prompt cache policy example
           prompt_cache_retention: 24h
 
+  # Optional OpenRouter example for deeper research synthesis
+  "openrouter-main-xhigh":
+    provider: openrouter
+    model: openai/gpt-5.4:online
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    reasoning:
+      effort: xhigh
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+
   # -------------------------------------------------------------------------
   # OpenAI example
   # -------------------------------------------------------------------------
@@ -79,6 +103,15 @@ agents:
   task_runner: "openrouter-main"
   # Optional: if omitted, it falls back to `task_runner`.
   image_analyzer: "openrouter-main"
+  # Optional: if omitted, it falls back to `literature_synthesizer`.
+  # Recommended: keep this as the only online literature role.
+  literature_web_search: "openrouter-main"
+  # Optional: if omitted, it falls back to `director`.
+  # Recommended: keep this non-online so public-web access is routed via `literature_web_search`.
+  literature_synthesizer: "openrouter-main"
+  # Optional: if omitted, it falls back to `literature_synthesizer`.
+  # Recommended: keep this non-online unless you explicitly want provider-managed web search here too.
+  literature_deep_research: "openrouter-main-xhigh"
   # Optional: if omitted, it falls back to `task_runner`.
   tool_selector: "openrouter-main"
   memory_patch: "openrouter-main"
@@ -95,6 +128,54 @@ agent_runtime:
 agent_policies:
   proposal:
     browse_tools_enabled: true
+
+literature:
+  auto_default_depth: quick
+  role_auto_max:
+    proposal: standard
+    director: focused
+    fast_director: focused
+    task_runner: none
+  public_web_on_search_failure: true
+  summary_key_paper_count: 5
+  semantic_scholar_retry_429_attempts: 3
+  semantic_scholar_retry_429_wait_seconds: 15.0
+  budgets:
+    none:
+      agent_step_budget: 1
+      search_limit: 0
+      recommendation_limit: 0
+      recommendation_seed_count: 0
+      public_web_limit: 0
+      use_public_web: false
+    quick:
+      agent_step_budget: 4
+      search_limit: 6
+      recommendation_limit: 0
+      recommendation_seed_count: 0
+      public_web_limit: 5
+      use_public_web: false
+    standard:
+      agent_step_budget: 6
+      search_limit: 10
+      recommendation_limit: 4
+      recommendation_seed_count: 3
+      public_web_limit: 3
+      use_public_web: true
+    focused:
+      agent_step_budget: 8
+      search_limit: 12
+      recommendation_limit: 6
+      recommendation_seed_count: 3
+      public_web_limit: 5
+      use_public_web: true
+    deep_report:
+      agent_step_budget: 16
+      search_limit: 14
+      recommendation_limit: 6
+      recommendation_seed_count: 3
+      public_web_limit: 5
+      use_public_web: true
 
 mcp:
   filesystem:

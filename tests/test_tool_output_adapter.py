@@ -140,6 +140,33 @@ def test_adapt_tool_return_offload_preserves_observability_metadata(tmp_path) ->
     assert payload.get("tool_name") == "dummy_tool"
 
 
+def test_adapt_tool_return_can_suppress_content_offload_ref(tmp_path) -> None:
+    config = ToolOutputConfig(offload_chars=1)
+    raw_result = (
+        "literature summary with inline refs",
+        {
+            "tool_name": "run_literature_research",
+            "suppress_content_offload_ref": True,
+            "data": {
+                "summary": "x" * 600,
+                "key_papers": [{"title": "Paper A", "year": 2020}],
+            },
+        },
+    )
+
+    content, artifact = adapt_tool_return(
+        tool_name="run_literature_research",
+        raw_result=raw_result,
+        workspace_files_root=tmp_path,
+        output_config=config,
+    )
+
+    assert str(content) == "literature summary with inline refs"
+    refs = artifact.get("offload_refs") or []
+    assert len(refs) == 1
+    assert (tmp_path / refs[0]).exists()
+
+
 @pytest.mark.parametrize(
     "raw_result",
     [

@@ -27,13 +27,21 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "Plan primarily around skills, scientific stages, evidence contracts, and task packets" in system_content
     assert "encode method-critical settings explicitly in `task_detail`" in system_content
     assert "Skills may be available for domain SOP and parameter conventions." in system_content
+    assert "Use literature grounding only when the user explicitly asks for papers/prior work/supporting evidence" in system_content
     assert "Default priority: PerformNextTask > MinorReviseProposal > MajorReviseProposal." in system_content
     assert "StopAndSynthesize" in system_content
     assert "Do not treat proposal-format requirements" in system_content
     assert "planning-only (no execution artifact requested)" in system_content
+    assert "literature-only (papers, prior work, supporting evidence, benchmark context)" in system_content
+    assert "prefer direct literature grounding plus `StopAndSynthesize` for small bounded cases" in system_content
+    assert "dispatch a focused literature task packet instead of forcing direct synthesis" in system_content
+    assert 'DirectorOutput(state="StopAndSynthesize", ...)' in system_content
     assert "latest successful task outcomes are authoritative by default" in system_content
     assert "Do not reopen successful evidence files" in system_content
     assert "fill `update_memory`, otherwise return `[]`" in system_content
+    assert "research-grounded" in system_content
+    assert "short reference shortlist" in system_content
+    assert "must not replace citations" in system_content
     assert "update_memory` MUST be `[]` unless `state=StopAndSynthesize`" in system_content
     assert "Do not invent file paths, tool outputs, or numerical results" in system_content
     assert "unresolved BLOCKING" in system_content
@@ -41,7 +49,6 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "reference absolute project-files-root path" in system_content
     assert "use relative paths in arguments by default" in system_content
     assert "`bash_exec` command text is exempt" in system_content
-    assert "DirectorOutput" not in system_content
     assert "expected_outputs default shape" not in system_content
     assert "`goal`:" not in system_content
     assert "`task_detail`:" not in system_content

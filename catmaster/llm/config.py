@@ -21,6 +21,9 @@ AgentRole = Literal[
     "history_reader",
     "tool_selector",
     "image_analyzer",
+    "literature_web_search",
+    "literature_synthesizer",
+    "literature_deep_research",
 ]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
@@ -30,6 +33,9 @@ OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
     "history_reader": "summary",
     "tool_selector": "task_runner",
     "image_analyzer": "task_runner",
+    "literature_synthesizer": "director",
+    "literature_web_search": "literature_synthesizer",
+    "literature_deep_research": "literature_synthesizer",
 }
 AGENT_ROLES: tuple[AgentRole, ...] = (
     "proposal",
@@ -40,6 +46,9 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "history_reader",
     "tool_selector",
     "image_analyzer",
+    "literature_web_search",
+    "literature_synthesizer",
+    "literature_deep_research",
 )
 
 
@@ -120,6 +129,189 @@ class AgentRuntimeConfig:
                 source="agent_runtime.print_http_raw_post",
             ),
         )
+
+
+_LITERATURE_ALLOWED_DEPTHS: tuple[str, ...] = ("none", "quick", "standard", "focused", "deep_report")
+
+
+@dataclass
+class LiteratureDepthBudgetConfig:
+    agent_step_budget: int = 4
+    search_limit: int = 6
+    recommendation_limit: int = 0
+    recommendation_seed_count: int = 0
+    public_web_limit: int = 0
+    use_public_web: bool = False
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        *,
+        defaults: "LiteratureDepthBudgetConfig | None" = None,
+    ) -> "LiteratureDepthBudgetConfig":
+        base = defaults or cls()
+        if not isinstance(data, dict):
+            return cls(
+                agent_step_budget=base.agent_step_budget,
+                search_limit=base.search_limit,
+                recommendation_limit=base.recommendation_limit,
+                recommendation_seed_count=base.recommendation_seed_count,
+                public_web_limit=base.public_web_limit,
+                use_public_web=base.use_public_web,
+            )
+        return cls(
+            agent_step_budget=max(1, _to_int(data.get("agent_step_budget")) or base.agent_step_budget),
+            search_limit=max(0, _to_int(data.get("search_limit")) or base.search_limit),
+            recommendation_limit=max(0, _to_int(data.get("recommendation_limit")) or base.recommendation_limit),
+            recommendation_seed_count=max(
+                0,
+                _to_int(data.get("recommendation_seed_count")) or base.recommendation_seed_count,
+            ),
+            public_web_limit=max(0, _to_int(data.get("public_web_limit")) or base.public_web_limit),
+            use_public_web=_to_bool(
+                data.get("use_public_web"),
+                default=base.use_public_web,
+                source="literature.budgets.*.use_public_web",
+            ),
+        )
+
+
+@dataclass
+class LiteratureRuntimeConfig:
+    auto_default_depth: str = "quick"
+    role_auto_max: Dict[str, str] = field(
+        default_factory=lambda: {
+            "proposal": "standard",
+            "director": "focused",
+            "fast_director": "focused",
+            "task_runner": "none",
+        }
+    )
+    public_web_on_search_failure: bool = True
+    summary_key_paper_count: int = 5
+    semantic_scholar_retry_429_attempts: int = 3
+    semantic_scholar_retry_429_wait_seconds: float = 15.0
+    budgets: Dict[str, LiteratureDepthBudgetConfig] = field(
+        default_factory=lambda: {
+            "none": LiteratureDepthBudgetConfig(
+                agent_step_budget=1,
+                search_limit=0,
+                recommendation_limit=0,
+                recommendation_seed_count=0,
+                public_web_limit=0,
+                use_public_web=False,
+            ),
+            "quick": LiteratureDepthBudgetConfig(
+                agent_step_budget=4,
+                search_limit=6,
+                recommendation_limit=0,
+                recommendation_seed_count=0,
+                public_web_limit=5,
+                use_public_web=False,
+            ),
+            "standard": LiteratureDepthBudgetConfig(
+                agent_step_budget=6,
+                search_limit=10,
+                recommendation_limit=4,
+                recommendation_seed_count=3,
+                public_web_limit=3,
+                use_public_web=True,
+            ),
+            "focused": LiteratureDepthBudgetConfig(
+                agent_step_budget=8,
+                search_limit=12,
+                recommendation_limit=6,
+                recommendation_seed_count=3,
+                public_web_limit=5,
+                use_public_web=True,
+            ),
+            "deep_report": LiteratureDepthBudgetConfig(
+                agent_step_budget=16,
+                search_limit=14,
+                recommendation_limit=6,
+                recommendation_seed_count=3,
+                public_web_limit=5,
+                use_public_web=True,
+            ),
+        }
+    )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LiteratureRuntimeConfig":
+        defaults = cls()
+        if not isinstance(data, dict):
+            return defaults
+
+        auto_default_depth = str(data.get("auto_default_depth", defaults.auto_default_depth)).strip().lower()
+        if auto_default_depth not in _LITERATURE_ALLOWED_DEPTHS:
+            raise ValueError(
+                "literature.auto_default_depth must be one of: "
+                + ", ".join(_LITERATURE_ALLOWED_DEPTHS)
+            )
+
+        role_auto_max = dict(defaults.role_auto_max)
+        role_auto_max_raw = data.get("role_auto_max")
+        if isinstance(role_auto_max_raw, dict):
+            for role, depth in role_auto_max_raw.items():
+                role_text = str(role or "").strip()
+                depth_text = str(depth or "").strip().lower()
+                if not role_text:
+                    continue
+                if depth_text not in _LITERATURE_ALLOWED_DEPTHS:
+                    raise ValueError(
+                        f"literature.role_auto_max.{role_text} must be one of: "
+                        + ", ".join(_LITERATURE_ALLOWED_DEPTHS)
+                    )
+                role_auto_max[role_text] = depth_text
+
+        budgets = {
+            depth: LiteratureDepthBudgetConfig.from_dict({}, defaults=budget)
+            for depth, budget in defaults.budgets.items()
+        }
+        budgets_raw = data.get("budgets")
+        if isinstance(budgets_raw, dict):
+            for depth, budget_raw in budgets_raw.items():
+                depth_text = str(depth or "").strip().lower()
+                if depth_text not in budgets:
+                    raise ValueError(
+                        f"literature.budgets.{depth_text} must be one of: "
+                        + ", ".join(_LITERATURE_ALLOWED_DEPTHS)
+                    )
+                budgets[depth_text] = LiteratureDepthBudgetConfig.from_dict(
+                    budget_raw if isinstance(budget_raw, dict) else {},
+                    defaults=budgets[depth_text],
+                )
+
+        return cls(
+            auto_default_depth=auto_default_depth,
+            role_auto_max=role_auto_max,
+            public_web_on_search_failure=_to_bool(
+                data.get("public_web_on_search_failure"),
+                default=defaults.public_web_on_search_failure,
+                source="literature.public_web_on_search_failure",
+            ),
+            summary_key_paper_count=max(
+                1,
+                _to_int(data.get("summary_key_paper_count")) or defaults.summary_key_paper_count,
+            ),
+            semantic_scholar_retry_429_attempts=max(
+                0,
+                _to_int(data.get("semantic_scholar_retry_429_attempts"))
+                if _to_int(data.get("semantic_scholar_retry_429_attempts")) is not None
+                else defaults.semantic_scholar_retry_429_attempts,
+            ),
+            semantic_scholar_retry_429_wait_seconds=max(
+                0.0,
+                _to_float(data.get("semantic_scholar_retry_429_wait_seconds"))
+                if _to_float(data.get("semantic_scholar_retry_429_wait_seconds")) is not None
+                else defaults.semantic_scholar_retry_429_wait_seconds,
+            ),
+            budgets=budgets,
+        )
+
+    def budget_for_depth(self, depth: str) -> LiteratureDepthBudgetConfig:
+        return self.budgets.get(str(depth or "").strip().lower(), self.budgets[self.auto_default_depth])
 
 
 @dataclass
@@ -396,6 +588,7 @@ class LLMProfile:
     agents: Dict[str, str] = field(default_factory=dict)
     agent_policies: AgentPoliciesConfig = field(default_factory=AgentPoliciesConfig)
     agent_runtime: AgentRuntimeConfig = field(default_factory=AgentRuntimeConfig)
+    literature: LiteratureRuntimeConfig = field(default_factory=LiteratureRuntimeConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
 
     def label_for_role(self, role: str) -> str:
@@ -432,6 +625,18 @@ class LLMProfile:
     @property
     def image_analyzer(self) -> LLMConfig:
         return self.config_for_role("image_analyzer")
+
+    @property
+    def literature_web_search(self) -> LLMConfig:
+        return self.config_for_role("literature_web_search")
+
+    @property
+    def literature_synthesizer(self) -> LLMConfig:
+        return self.config_for_role("literature_synthesizer")
+
+    @property
+    def literature_deep_research(self) -> LLMConfig:
+        return self.config_for_role("literature_deep_research")
 
     @staticmethod
     def from_env() -> "LLMProfile":
@@ -493,6 +698,7 @@ class LLMProfile:
                 print_state_messages=False,
                 print_http_raw_post=print_http_raw_post,
             ),
+            literature=LiteratureRuntimeConfig(),
             mcp=MCPConfig(),
         )
 
@@ -517,6 +723,7 @@ class LLMProfile:
                 agents_raw = raw.get("agents")
                 agent_policies_raw = raw.get("agent_policies")
                 agent_runtime_raw = raw.get("agent_runtime")
+                literature_raw = raw.get("literature")
                 mcp_raw = raw.get("mcp")
                 if not isinstance(models_raw, dict):
                     raise ValueError(f"LLM config requires top-level 'models' mapping: {config_path}")
@@ -579,6 +786,9 @@ class LLMProfile:
                     agents=agents,
                     agent_policies=AgentPoliciesConfig.from_dict(agent_policies_raw if isinstance(agent_policies_raw, dict) else {}),
                     agent_runtime=agent_runtime_cfg,
+                    literature=LiteratureRuntimeConfig.from_dict(
+                        literature_raw if isinstance(literature_raw, dict) else {}
+                    ),
                     mcp=MCPConfig.from_dict(mcp_raw if isinstance(mcp_raw, dict) else {}),
                 )
         return LLMProfile.from_env()
@@ -680,6 +890,8 @@ __all__ = [
     "ProposalPolicyConfig",
     "AgentPoliciesConfig",
     "AgentRuntimeConfig",
+    "LiteratureDepthBudgetConfig",
+    "LiteratureRuntimeConfig",
     "MCPOffloadConfig",
     "MCPFilesystemConfig",
     "MCPConfig",

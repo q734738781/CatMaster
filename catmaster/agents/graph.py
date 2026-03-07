@@ -1703,7 +1703,7 @@ class GraphRunner:
                 if lane == "fast":
                     fast_director_tools = [
                         tool
-                        for tool in surface.director_tools
+                        for tool in surface.fast_director_tools
                         if str(getattr(tool, "name", "") or "") != "apply_aider_edits"
                     ]
                     compiled = build_fast_graph(

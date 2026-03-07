@@ -3,6 +3,8 @@ from __future__ import annotations
 ROLE_SKILL_NAMES: dict[str, list[str]] = {
     "proposal": [
         "computational-heterogeneous-catalysis",
+        "literature-grounding",
+        "catalysis-prior-art-and-benchmarking",
         "materials-discovery-and-bulk-selection",
         "slab-construction-and-surface-modeling",
         "adsorption-site-screening",
@@ -12,6 +14,8 @@ ROLE_SKILL_NAMES: dict[str, list[str]] = {
     ],
     "director": [
         "computational-heterogeneous-catalysis",
+        "literature-grounding",
+        "catalysis-prior-art-and-benchmarking",
         "materials-discovery-and-bulk-selection",
         "slab-construction-and-surface-modeling",
         "adsorbate-and-intermediate-generation",
@@ -25,6 +29,8 @@ ROLE_SKILL_NAMES: dict[str, list[str]] = {
     ],
     "fast_director": [
         "computational-heterogeneous-catalysis",
+        "literature-grounding",
+        "catalysis-prior-art-and-benchmarking",
         "materials-discovery-and-bulk-selection",
         "slab-construction-and-surface-modeling",
         "adsorbate-and-intermediate-generation",

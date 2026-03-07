@@ -2,11 +2,13 @@ from __future__ import annotations
 
 """Runtime tool-surface composition for proposal/director/task_runner roles."""
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
 from langchain_core.tools import BaseTool
+from langchain_core.tools import StructuredTool
 
 from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
 from catmaster.runtime.run_context import RunContext
@@ -19,11 +21,16 @@ _GLOBAL_TOOL_DROP = {
     "write_note",
 }
 
+_PLANNING_LOCAL_TOOL_ALLOWLIST = {
+    "run_literature_research",
+}
+
 
 @dataclass
 class RuntimeToolSurface:
     proposal_tools: list[BaseTool]
     director_tools: list[BaseTool]
+    fast_director_tools: list[BaseTool]
     task_tools: list[BaseTool]
     task_runner_capability_guide_full: str
     task_runner_capability_guide_short: str
@@ -48,6 +55,49 @@ def _tool_doc(registry: ToolRegistry, name: str) -> str:
     if not doc:
         return "Local domain tool."
     return " ".join(doc.split())
+
+
+def _make_role_scoped_literature_tool(tool: BaseTool, *, role: str) -> BaseTool:
+    if str(getattr(tool, "name", "") or "") != "run_literature_research":
+        return tool
+
+    func = getattr(tool, "func", None)
+    coroutine = getattr(tool, "coroutine", None)
+    if func is None and coroutine is None:
+        return tool
+
+    raw_schema = getattr(tool, "args_schema", None)
+    args_schema = copy.deepcopy(raw_schema) if isinstance(raw_schema, dict) else {}
+    properties = args_schema.get("properties")
+    if isinstance(properties, dict):
+        properties.pop("role", None)
+    required = args_schema.get("required")
+    if isinstance(required, list):
+        args_schema["required"] = [item for item in required if item != "role"]
+    if isinstance(args_schema, dict):
+        args_schema.setdefault("additionalProperties", False)
+
+    description = str(getattr(tool, "description", "") or "").strip()
+
+    def _wrapper(runtime: object | None = None, **kwargs):
+        forced_kwargs = dict(kwargs)
+        forced_kwargs["role"] = role
+        return func(runtime=runtime, **forced_kwargs)
+
+    async def _awrapper(runtime: object | None = None, **kwargs):
+        forced_kwargs = dict(kwargs)
+        forced_kwargs["role"] = role
+        return await coroutine(runtime=runtime, **forced_kwargs)
+
+    return StructuredTool.from_function(
+        func=_wrapper if func is not None else None,
+        coroutine=_awrapper if coroutine is not None else None,
+        name="run_literature_research",
+        description=description,
+        args_schema=args_schema,
+        infer_schema=False,
+        response_format="content_and_artifact",
+    )
 
 
 def _build_capability_guides(
@@ -117,8 +167,26 @@ def build_runtime_tool_surface(
     bash_tool = local_by_name.get("bash_exec")
     aider_tool = local_by_name.get("apply_aider_edits")
     note_tool = local_by_name.get("write_note")
+    planning_local_tools = [
+        tool
+        for tool in local_tools
+        if str(getattr(tool, "name", "") or "") in _PLANNING_LOCAL_TOOL_ALLOWLIST
+    ]
+    proposal_local_tools = [_make_role_scoped_literature_tool(tool, role="proposal") for tool in planning_local_tools]
+    director_local_tools = [_make_role_scoped_literature_tool(tool, role="director") for tool in planning_local_tools]
+    fast_director_local_tools = [
+        _make_role_scoped_literature_tool(tool, role="fast_director") for tool in planning_local_tools
+    ]
 
-    local_task_tools = [tool for tool in local_tools if str(getattr(tool, "name", "") or "") not in denylist]
+    local_task_tools = [
+        (
+            _make_role_scoped_literature_tool(tool, role="task_runner")
+            if str(getattr(tool, "name", "") or "") in _PLANNING_LOCAL_TOOL_ALLOWLIST
+            else tool
+        )
+        for tool in local_tools
+        if str(getattr(tool, "name", "") or "") not in denylist
+    ]
 
     if mcp_fs_runtime is None:
         proposal_mcp: list[BaseTool] = []
@@ -143,12 +211,19 @@ def build_runtime_tool_surface(
 
     proposal_tools = _dedupe_tools(
         ([bash_tool] if bash_tool is not None else [])
+        + proposal_local_tools
         + proposal_mcp
     )
     director_tools = _dedupe_tools(
         ([bash_tool] if bash_tool is not None else [])
         + ([aider_tool] if aider_tool is not None else [])
         + ([note_tool] if note_tool is not None else [])
+        + director_local_tools
+        + director_mcp
+    )
+    fast_director_tools = _dedupe_tools(
+        ([bash_tool] if bash_tool is not None else [])
+        + fast_director_local_tools
         + director_mcp
     )
     task_tools = _dedupe_tools(local_task_tools + task_mcp)
@@ -162,6 +237,7 @@ def build_runtime_tool_surface(
     return RuntimeToolSurface(
         proposal_tools=proposal_tools,
         director_tools=director_tools,
+        fast_director_tools=fast_director_tools,
         task_tools=task_tools,
         task_runner_capability_guide_full=guide_full,
         task_runner_capability_guide_short=guide_short,

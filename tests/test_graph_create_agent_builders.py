@@ -129,6 +129,7 @@ def test_graph_runner_uses_fallback_skill_guides_when_skills_runtime_missing(
         return graph.RuntimeToolSurface(
             proposal_tools=[],
             director_tools=[],
+            fast_director_tools=[],
             task_tools=[],
             task_runner_capability_guide_full="full guide",
             task_runner_capability_guide_short="short guide",
@@ -179,6 +180,7 @@ def test_graph_runner_uses_fallback_fast_skill_guide_when_skills_runtime_missing
         return graph.RuntimeToolSurface(
             proposal_tools=[],
             director_tools=[],
+            fast_director_tools=[],
             task_tools=[],
             task_runner_capability_guide_full="full guide",
             task_runner_capability_guide_short="short guide",
