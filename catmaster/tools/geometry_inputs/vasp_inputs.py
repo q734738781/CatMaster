@@ -21,7 +21,7 @@ class StructWriter:
         output_dir: Path,
         calc_type: str = "bulk",
         relax_cell: bool = False,
-        k_product: int = 30,
+        k_product: int = 35,
         use_d3: bool = True,
         user_incar_overrides: Optional[Dict[str, Any]] = None,  
         use_dft_plus_u: bool = False,

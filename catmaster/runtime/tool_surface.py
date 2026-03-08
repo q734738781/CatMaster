@@ -155,6 +155,7 @@ def build_runtime_tool_surface(
     run_dir: Path,
     mcp_fs_runtime: MCPFilesystemRuntime | None,
     task_runner_denylist: set[str] | None = None,
+    include_literature_tool: bool = True,
 ) -> RuntimeToolSurface:
     denylist = set(task_runner_denylist or set())
     denylist.update(_GLOBAL_TOOL_DROP)
@@ -170,7 +171,8 @@ def build_runtime_tool_surface(
     planning_local_tools = [
         tool
         for tool in local_tools
-        if str(getattr(tool, "name", "") or "") in _PLANNING_LOCAL_TOOL_ALLOWLIST
+        if include_literature_tool
+        and str(getattr(tool, "name", "") or "") in _PLANNING_LOCAL_TOOL_ALLOWLIST
     ]
     proposal_local_tools = [_make_role_scoped_literature_tool(tool, role="proposal") for tool in planning_local_tools]
     director_local_tools = [_make_role_scoped_literature_tool(tool, role="director") for tool in planning_local_tools]
@@ -181,11 +183,16 @@ def build_runtime_tool_surface(
     local_task_tools = [
         (
             _make_role_scoped_literature_tool(tool, role="task_runner")
-            if str(getattr(tool, "name", "") or "") in _PLANNING_LOCAL_TOOL_ALLOWLIST
+            if include_literature_tool
+            and str(getattr(tool, "name", "") or "") in _PLANNING_LOCAL_TOOL_ALLOWLIST
             else tool
         )
         for tool in local_tools
         if str(getattr(tool, "name", "") or "") not in denylist
+        and (
+            include_literature_tool
+            or str(getattr(tool, "name", "") or "") not in _PLANNING_LOCAL_TOOL_ALLOWLIST
+        )
     ]
 
     if mcp_fs_runtime is None:

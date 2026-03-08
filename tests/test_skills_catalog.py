@@ -74,14 +74,15 @@ def test_skill_catalog_parses_frontmatter_and_role_visibility(tmp_path: Path) ->
     assert [item.name for item in metas] == ["skill-alpha"]
     meta = metas[0]
     assert meta.file_path == "skills/skill-alpha/SKILL.md"
+    assert meta.mount_token == "@skills"
     assert meta.suggested_tools == ["tool_a", "tool_b"]
 
     runtime = CatMasterSkillsRuntime(
         catalog=catalog,
         role_skill_names={"proposal": ["skill-alpha"]},
     )
-    assert [item.name for item in runtime.visible_skills("proposal")] == ["skill-alpha"]
-    assert runtime.visible_skills("task_runner") == []
+    assert [item.name for item in runtime.visible_skills("proposal", "standard")] == ["skill-alpha"]
+    assert runtime.visible_skills("task_runner", "standard") == []
 
 
 def test_default_catalog_discovers_starter_skills() -> None:
@@ -94,6 +95,18 @@ def test_default_catalog_discovers_starter_skills() -> None:
     assert "slab-construction-and-surface-modeling" in names
     assert "adsorption-site-screening" in names
     assert "vasp-input-preparation" in names
+
+
+def test_default_catalog_discovers_writing_skills() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    catalog = SkillCatalog.create_default(repo_root=repo_root)
+    metas = {item.name: item for item in catalog.refresh()}
+    assert "scientific-section-synthesis" in metas
+    assert metas["scientific-section-synthesis"].mount_token == "@writing_skills"
+    assert metas["scientific-section-synthesis"].lanes == ["writing"]
+    assert "section_writer" in metas["scientific-section-synthesis"].roles
+    assert "achemso-latex-manuscript" in metas
+    assert "write_director" in metas["achemso-latex-manuscript"].roles
 
 
 def _body_suggested_tools(text: str) -> list[str]:

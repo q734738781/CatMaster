@@ -19,7 +19,8 @@ class _DummySkillsRuntime:
         self.refresh_calls += 1
         return list(self._skills)
 
-    def visible_skills(self, role: str):
+    def visible_skills(self, role: str, lane: str | None = None):
+        _ = lane
         if role == "task_runner":
             return list(self._skills)
         return []
@@ -50,14 +51,17 @@ def test_skills_middleware_refreshes_and_appends_addendum(tmp_path) -> None:
         file_path="skills/demo-skill/SKILL.md",
         abs_skill_dir=tmp_path / "skills" / "demo-skill",
         abs_skill_md=tmp_path / "skills" / "demo-skill" / "SKILL.md",
+        source_root_name="skills",
+        mount_token="@skills",
         compatibility="local",
         suggested_tools=["demo_tool"],
     )
     runtime = _DummySkillsRuntime([skill])
     middleware = CatMasterSkillsMiddleware(
         role="task_runner",
+        lane="standard",
         skills_runtime=runtime,
-        skills_mount_available=True,
+        mounted_skill_tokens=["@skills"],
     )
 
     middleware.before_agent({}, None)
@@ -81,14 +85,17 @@ def test_skills_middleware_marks_unavailable_mount_when_absent(tmp_path) -> None
         file_path="skills/demo-skill/SKILL.md",
         abs_skill_dir=tmp_path / "skills" / "demo-skill",
         abs_skill_md=tmp_path / "skills" / "demo-skill" / "SKILL.md",
+        source_root_name="skills",
+        mount_token="@skills",
         compatibility="local",
         suggested_tools=["demo_tool"],
     )
     runtime = _DummySkillsRuntime([skill])
     middleware = CatMasterSkillsMiddleware(
         role="task_runner",
+        lane="standard",
         skills_runtime=runtime,
-        skills_mount_available=False,
+        mounted_skill_tokens=[],
     )
 
     middleware.before_agent({}, None)
@@ -105,14 +112,17 @@ def test_skills_middleware_preserves_existing_system_message_blocks(tmp_path) ->
         file_path="skills/demo-skill/SKILL.md",
         abs_skill_dir=tmp_path / "skills" / "demo-skill",
         abs_skill_md=tmp_path / "skills" / "demo-skill" / "SKILL.md",
+        source_root_name="skills",
+        mount_token="@skills",
         compatibility="local",
         suggested_tools=["demo_tool"],
     )
     runtime = _DummySkillsRuntime([skill])
     middleware = CatMasterSkillsMiddleware(
         role="task_runner",
+        lane="standard",
         skills_runtime=runtime,
-        skills_mount_available=True,
+        mounted_skill_tokens=["@skills"],
     )
     middleware.before_agent({}, None)
 
@@ -138,9 +148,10 @@ def test_build_role_middleware_task_runner_order(monkeypatch) -> None:
 
     chain = graph._build_role_middleware(
         role="task_runner",
+        lane="standard",
         max_tool_calls=7,
         skills_runtime=runtime,
-        skills_mount_available=True,
+        mounted_skill_tokens=["@skills"],
         selector_model=_DummyModel(),
         enable_selector=True,
     )
@@ -152,9 +163,10 @@ def test_build_role_middleware_task_runner_order(monkeypatch) -> None:
 
     memory_chain = graph._build_role_middleware(
         role="memory_patch",
+        lane="standard",
         max_tool_calls=7,
         skills_runtime=runtime,
-        skills_mount_available=False,
+        mounted_skill_tokens=[],
         selector_model=None,
         enable_selector=False,
     )

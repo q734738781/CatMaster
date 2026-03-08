@@ -35,6 +35,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 ### 3. Respect built-in defaults
 - The tool already owns the main preset, including pseudopotential family, `ENCUT`, `EDIFF`, smearing defaults, and relax-vs-SP mode settings.
 - `compute_dos`, `use_d3`, `use_dft_plus_u`, and `enable_dipole` are the toggles worth surfacing when they matter.
+- Project house default for `k_product` is `35` for production slab work unless the task explicitly provides a convergence-backed value.
 
 ### 4. Override carefully
 - `user_incar_settings` is for targeted overrides, not replacing the preset.
@@ -50,6 +51,9 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - Do not silently rely on defaults for `use_d3`, `use_dft_plus_u`, `enable_dipole`, spin treatment, or reference-state-sensitive INCAR toggles when they affect comparison.
 - Keep clean slab, gas-phase reference, adsorbed structures, and downstream static calculations scientifically comparable.
 - For slab adsorption studies, do not set `relax_cell=true` unless the task explicitly requires a variable-cell study and the system is not in slab mode.
+- For slab work, use `k*a ~= 35 Å` as the initial project default unless convergence evidence justifies something else.
+- Do not force bulk references to obey the slab default. Bulk `k_product` should be chosen from the bulk convergence requirement, not copied mechanically from slab policy.
+- For DOS / projected-DOS / finer electronic-structure jobs, it is acceptable to increase `k_product` to around `50` when the extra sampling is part of the stated objective.
 - Always report any non-default toggles that materially affect interpretation.
 
 ## Output Contract

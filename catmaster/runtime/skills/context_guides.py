@@ -69,8 +69,56 @@ def render_fast_director_skill_guide(skills: list[SkillMeta]) -> str:
     )
 
 
+def render_research_lead_skill_guide(skills: list[SkillMeta]) -> str:
+    return _render_skill_lines(
+        skills,
+        header=(
+            "Research-lane planning can rely on the following role-visible skills. "
+            "Use them as campaign-level scientific guidance rather than tool encyclopedias."
+        ),
+        include_suggested_tools=False,
+    )
+
+
+def render_write_director_skill_guide(skills: list[SkillMeta]) -> str:
+    return _render_skill_lines(
+        skills,
+        header=(
+            "Writing-plan decisions can rely on the following role-visible skills. "
+            "Use them to shape section scope, figure intent, citation discipline, and manuscript structure."
+        ),
+        include_suggested_tools=False,
+    )
+
+
+def render_section_writer_skill_guide(skills: list[SkillMeta]) -> str:
+    return _render_skill_lines(
+        skills,
+        header=(
+            "Section drafting can rely on the following role-visible skills. "
+            "Treat suggested tools as soft hints; keep claims grounded in retrieved evidence, artifacts, and figure outputs."
+        ),
+        include_suggested_tools=True,
+    )
+
+
+def render_write_reviewer_skill_guide(skills: list[SkillMeta]) -> str:
+    return _render_skill_lines(
+        skills,
+        header=(
+            "Writing review can rely on the following role-visible skills. "
+            "Focus on unsupported claims, citation gaps, structure, and evidence discipline."
+        ),
+        include_suggested_tools=False,
+    )
+
+
 __all__ = [
     "render_proposal_skill_guide",
     "render_director_skill_guide",
     "render_fast_director_skill_guide",
+    "render_research_lead_skill_guide",
+    "render_write_director_skill_guide",
+    "render_section_writer_skill_guide",
+    "render_write_reviewer_skill_guide",
 ]

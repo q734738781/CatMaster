@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Callable
 
 from langchain.agents.middleware import AgentMiddleware
@@ -15,13 +16,15 @@ class CatMasterSkillsMiddleware(AgentMiddleware):
         self,
         *,
         role: str,
+        lane: str | None,
         skills_runtime: CatMasterSkillsRuntime,
-        skills_mount_available: bool,
+        mounted_skill_tokens: Sequence[str] | None,
     ) -> None:
         super().__init__()
         self.role = str(role or "").strip()
+        self.lane = str(lane or "").strip()
         self.skills_runtime = skills_runtime
-        self.skills_mount_available = bool(skills_mount_available)
+        self.mounted_skill_tokens = {str(item).strip() for item in list(mounted_skill_tokens or []) if str(item).strip()}
         self._visible_skills: list[SkillMeta] = []
         self.tools = []
 
@@ -30,7 +33,7 @@ class CatMasterSkillsMiddleware(AgentMiddleware):
 
     def _refresh_visible_skills(self) -> None:
         self.skills_runtime.refresh_catalog()
-        self._visible_skills = self.skills_runtime.visible_skills(self.role)
+        self._visible_skills = self.skills_runtime.visible_skills(self.role, self.lane)
 
     def before_agent(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         _ = (state, runtime)
@@ -92,7 +95,7 @@ class CatMasterSkillsMiddleware(AgentMiddleware):
         addendum = render_skills_addendum(
             role=self.role,
             skills=self._visible_skills,
-            skills_mount_available=self.skills_mount_available,
+            mounted_skill_tokens=self.mounted_skill_tokens,
         )
         current_system = getattr(request, "system_message", None)
         merged = self._append_addendum_message(current_system=current_system, addendum=addendum)

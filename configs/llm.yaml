@@ -195,11 +195,40 @@ models:
     reasoning:
       effort: minimal
 
+  "google/gemini-3.1-pro-preview":
+    provider: openrouter
+    model: google/gemini-3.1-pro-preview
+    temperature: 0.2
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: medium
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+
+  "google/nanobanana_2":
+    provider: openrouter
+    model: google/gemini-3.1-flash-image-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+
 agents:
   # Main Track Agents
   proposal: "openai/gpt-5.4:online-high"
   director: "openai/gpt-5.4:online-high"
   task_runner: "openai/gpt-5.4:online-medium"
+  research_lead: "openai/gpt-5.4:online-high"
+  write_director: "openai/gpt-5.4:online-high"
+  section_writer: "openai/gpt-5.4:online-medium"
+  write_reviewer: "openai/gpt-5.4:online-medium"
+  academic_polisher: "google/gemini-3.1-pro-preview"
   # Tool Agent Models
   image_analyzer: "openai/gpt-5.4:online-medium"
   literature_web_search: "openai/gpt-5-mini:online"
@@ -209,6 +238,14 @@ agents:
   tool_selector: "openai/gpt-5.4:online-minimal"
   summary: "google/gemini-3-flash-preview"
   history_reader: "google/gemini-3-flash-preview"
+
+image_generation:
+  model_label: "google/nanobanana_2"
+  image_config:
+    aspect_ratio: "4:3"
+
+writing:
+  author_name: "CatMaster"
 
 agent_runtime:
   recursion_limit: 9999
@@ -227,6 +264,10 @@ literature:
     director: focused
     fast_director: focused
     task_runner: none
+    research_lead: deep_report
+    write_director: none
+    section_writer: standard
+    write_reviewer: none
   public_web_on_search_failure: true
   summary_key_paper_count: 5
   semantic_scholar_retry_429_attempts: 3

@@ -15,7 +15,6 @@ class ContextPackPolicy:
     memory_head_lines: Optional[int] = None
     max_memory_chars: Optional[int] = None
     max_artifacts: int = 50
-    inject_goal_for_worker: bool = False
 
 
 class ContextPackBuilder:
@@ -28,8 +27,6 @@ class ContextPackBuilder:
             max_lines=policy.memory_head_lines,
             max_chars=policy.max_memory_chars,
         )
-        if role == "task_runner" and not policy.inject_goal_for_worker:
-            memory_excerpt = _remove_goal_pointer(memory_excerpt)
         files_root_abs = str(workspace_root(self.memory.workspace).resolve())
 
         return {
@@ -55,15 +52,5 @@ def _workspace_policy_summary(role: str, *, files_root_abs: str) -> str:
         "- Use bash_exec for shell commands, content grep, parser invocation, and external binaries.\n"
         f"- Role: {role}"
     )
-
-
-def _remove_goal_pointer(text: str) -> str:
-    lines = []
-    for raw in text.splitlines():
-        if raw.strip().lower().startswith("- goal / principles:"):
-            continue
-        lines.append(raw)
-    return "\n".join(lines)
-
 
 __all__ = ["ContextPackBuilder", "ContextPackPolicy"]

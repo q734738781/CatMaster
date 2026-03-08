@@ -270,7 +270,7 @@ class HistoryReader:
         chunks.sort(key=lambda item: item.score, reverse=True)
         return chunks[: self.max_candidate_chunks]
 
-    async def aload_context(
+    async def aload_candidate_chunks(
         self,
         *,
         query: str,
@@ -278,7 +278,7 @@ class HistoryReader:
         limit: int = 12,
         lane: Optional[str] = None,
         status: Optional[str] = None,
-    ) -> HistoricalRunsContextPack:
+    ) -> List[RunEvidenceChunk]:
         hits = await self.searcher.asearch(
             query=query,
             project_id=project_id,
@@ -289,13 +289,7 @@ class HistoryReader:
             status=status,
         )
         if not hits:
-            return HistoricalRunsContextPack(
-                query=query,
-                selected_runs=[],
-                context_text="(none)",
-                citations=[],
-                confidence=0.0,
-            )
+            return []
 
         selected_hits: List[RunSearchHit] = []
         seen: set[str] = set()
@@ -307,9 +301,76 @@ class HistoryReader:
             selected_hits.append(hit)
             if len(selected_hits) >= self.max_candidate_runs:
                 break
-        run_ids = [hit.run_id for hit in selected_hits]
-        entries = self.run_ledger_store.get_entries(run_ids)
+        entries = self.run_ledger_store.get_entries([hit.run_id for hit in selected_hits])
         if not entries:
+            return []
+
+        candidates = self._build_candidates(entries, query)
+        if candidates:
+            return candidates
+
+        fallback: List[RunEvidenceChunk] = []
+        for entry in entries:
+            summary = _normalize_text(entry.answer_summary or entry.request)
+            if not summary:
+                continue
+            fallback.append(
+                RunEvidenceChunk(
+                    run_id=entry.run_id,
+                    path=entry.final_report_relpath or entry.run_export_relpath or "",
+                    section="summary",
+                    line_range=[0, 0],
+                    text=summary,
+                    score=_overlap_score(query, summary),
+                )
+            )
+        fallback.sort(key=lambda item: item.score, reverse=True)
+        return fallback[: self.max_candidate_chunks]
+
+    async def aselect_relevant_chunks(
+        self,
+        *,
+        query: str,
+        chunks: List[RunEvidenceChunk],
+        max_pick: Optional[int] = None,
+    ) -> tuple[List[RunEvidenceChunk], float]:
+        if not chunks:
+            return [], 0.0
+        rescored = [replace(chunk, score=_overlap_score(query, chunk.text)) for chunk in chunks]
+        rescored.sort(key=lambda item: item.score, reverse=True)
+        limit = max(1, int(max_pick or self.max_selected_chunks))
+        chosen_idx, model_conf = await self._model_select_indices(
+            query=query,
+            chunks=rescored[: self.max_candidate_chunks],
+            max_pick=limit,
+        )
+        if chosen_idx:
+            selected = [rescored[i] for i in chosen_idx[:limit] if 0 <= i < len(rescored)]
+            return selected, float(max(0.35, model_conf))
+        selected = rescored[:limit]
+        confidence = min(0.8, max(0.25, sum(item.score for item in selected) / max(1, len(selected))))
+        return selected, float(max(0.0, min(1.0, confidence)))
+
+    def citations_from_chunks(self, chunks: List[RunEvidenceChunk]) -> List[Dict[str, Any]]:
+        return self._citations(chunks)
+
+    async def aload_context(
+        self,
+        *,
+        query: str,
+        project_id: str,
+        limit: int = 12,
+        lane: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> HistoricalRunsContextPack:
+        candidates = await self.aload_candidate_chunks(
+            query=query,
+            project_id=project_id,
+            limit=limit,
+            lane=lane,
+            status=status,
+        )
+        if not candidates:
             return HistoricalRunsContextPack(
                 query=query,
                 selected_runs=[],
@@ -317,39 +378,10 @@ class HistoryReader:
                 citations=[],
                 confidence=0.0,
             )
-
-        candidates = self._build_candidates(entries, query)
-        if not candidates:
-            lines = [
-                "Relevant historical runs (auto-retrieved):",
-                *[f"- [{e.run_id}] {_normalize_text(e.answer_summary)[:280]}" for e in entries],
-            ]
-            return HistoricalRunsContextPack(
-                query=query,
-                selected_runs=[e.run_id for e in entries],
-                context_text="\n".join(lines),
-                citations=[
-                    {"run_id": e.run_id, "path": e.final_report_relpath, "section": "summary", "line_range": [0, 0]}
-                    for e in entries
-                ],
-                confidence=0.25,
-            )
-
-        chosen_idx, model_conf = await self._model_select_indices(
-            query=query,
-            chunks=candidates,
-            max_pick=self.max_selected_chunks,
-        )
-        selected: List[RunEvidenceChunk]
-        if chosen_idx:
-            selected = [candidates[i] for i in chosen_idx[: self.max_selected_chunks]]
-            confidence = max(0.35, model_conf)
-        else:
-            selected = candidates[: self.max_selected_chunks]
-            confidence = min(0.8, max(0.25, sum(item.score for item in selected) / max(1, len(selected))))
+        selected, confidence = await self.aselect_relevant_chunks(query=query, chunks=candidates)
 
         context_text = self._context_text_from_chunks(selected)
-        citations = self._citations(selected)
+        citations = self.citations_from_chunks(selected)
         selected_runs = []
         seen_runs: set[str] = set()
         for ch in selected:

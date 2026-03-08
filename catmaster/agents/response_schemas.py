@@ -186,7 +186,6 @@ class MemoryUpdate(BaseModel):
 
     topic: Literal[
         "MEMORY/MEMORY.md",
-        "MEMORY/topics/GOAL.md",
         "MEMORY/topics/FACTS.md",
         "MEMORY/topics/FILES.md",
         "MEMORY/topics/CONSTRAINTS.md",
@@ -196,7 +195,6 @@ class MemoryUpdate(BaseModel):
         ...,
         description=(
             "Target memory file to update. Topic semantics: "
-            "GOAL=objective/scope/success criteria; "
             "FACTS=verified scientific facts/results only; "
             "FILES=artifact path index and file roles; "
             "CONSTRAINTS=hard limits/policies; "

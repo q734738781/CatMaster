@@ -16,6 +16,11 @@ AgentRole = Literal[
     "proposal",
     "director",
     "task_runner",
+    "research_lead",
+    "write_director",
+    "section_writer",
+    "write_reviewer",
+    "academic_polisher",
     "memory_patch",
     "summary",
     "history_reader",
@@ -30,6 +35,11 @@ _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
 _logger = logging.getLogger(__name__)
 REQUIRED_AGENT_ROLES: tuple[str, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
 OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
+    "research_lead": "director",
+    "write_director": "research_lead",
+    "section_writer": "task_runner",
+    "write_reviewer": "summary",
+    "academic_polisher": "summary",
     "history_reader": "summary",
     "tool_selector": "task_runner",
     "image_analyzer": "task_runner",
@@ -41,6 +51,11 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "proposal",
     "director",
     "task_runner",
+    "research_lead",
+    "write_director",
+    "section_writer",
+    "write_reviewer",
+    "academic_polisher",
     "memory_patch",
     "summary",
     "history_reader",
@@ -186,6 +201,10 @@ class LiteratureRuntimeConfig:
             "director": "focused",
             "fast_director": "focused",
             "task_runner": "none",
+            "research_lead": "deep_report",
+            "section_writer": "standard",
+            "write_director": "none",
+            "write_reviewer": "none",
         }
     )
     public_web_on_search_failure: bool = True
@@ -470,6 +489,35 @@ class MCPConfig:
 
 
 @dataclass
+class ImageGenerationConfig:
+    model_label: str | None = None
+    image_config: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ImageGenerationConfig":
+        if not isinstance(data, dict):
+            return cls()
+        model_label = _to_str_or_none(data.get("model_label"))
+        image_config = data.get("image_config")
+        return cls(
+            model_label=model_label,
+            image_config=dict(image_config) if isinstance(image_config, dict) else {},
+        )
+
+
+@dataclass
+class WritingRuntimeConfig:
+    author_name: str = "CatMaster"
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WritingRuntimeConfig":
+        if not isinstance(data, dict):
+            return cls()
+        author_name = str(data.get("author_name", cls.author_name)).strip() or cls.author_name
+        return cls(author_name=author_name)
+
+
+@dataclass
 class LLMConfig:
     provider: Provider = "openai"
     model: str = "gpt-5.2"
@@ -590,6 +638,8 @@ class LLMProfile:
     agent_runtime: AgentRuntimeConfig = field(default_factory=AgentRuntimeConfig)
     literature: LiteratureRuntimeConfig = field(default_factory=LiteratureRuntimeConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    image_generation: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
+    writing: WritingRuntimeConfig = field(default_factory=WritingRuntimeConfig)
 
     def label_for_role(self, role: str) -> str:
         label = self.agents.get(role)
@@ -625,6 +675,14 @@ class LLMProfile:
     @property
     def image_analyzer(self) -> LLMConfig:
         return self.config_for_role("image_analyzer")
+
+    def config_for_image_generation(self) -> LLMConfig:
+        label = str(self.image_generation.model_label or "").strip()
+        if not label:
+            return self.image_analyzer
+        if label not in self.models:
+            raise ValueError(f"image_generation.model_label references unknown model label: {label!r}")
+        return self.models[label]
 
     @property
     def literature_web_search(self) -> LLMConfig:
@@ -700,6 +758,8 @@ class LLMProfile:
             ),
             literature=LiteratureRuntimeConfig(),
             mcp=MCPConfig(),
+            image_generation=ImageGenerationConfig(),
+            writing=WritingRuntimeConfig(),
         )
 
     @staticmethod
@@ -725,6 +785,8 @@ class LLMProfile:
                 agent_runtime_raw = raw.get("agent_runtime")
                 literature_raw = raw.get("literature")
                 mcp_raw = raw.get("mcp")
+                image_generation_raw = raw.get("image_generation")
+                writing_raw = raw.get("writing")
                 if not isinstance(models_raw, dict):
                     raise ValueError(f"LLM config requires top-level 'models' mapping: {config_path}")
                 if not models_raw:
@@ -774,6 +836,16 @@ class LLMProfile:
                         raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
                     agents[role] = bound
 
+                image_generation_cfg = ImageGenerationConfig.from_dict(
+                    image_generation_raw if isinstance(image_generation_raw, dict) else {}
+                )
+                image_generation_label = str(image_generation_cfg.model_label or "").strip()
+                if image_generation_label and image_generation_label not in models:
+                    raise ValueError(
+                        "image_generation.model_label references unknown model label: "
+                        f"{image_generation_label!r}"
+                    )
+
                 agent_runtime_cfg = AgentRuntimeConfig.from_dict(
                     agent_runtime_raw if isinstance(agent_runtime_raw, dict) else {}
                 )
@@ -790,6 +862,8 @@ class LLMProfile:
                         literature_raw if isinstance(literature_raw, dict) else {}
                     ),
                     mcp=MCPConfig.from_dict(mcp_raw if isinstance(mcp_raw, dict) else {}),
+                    image_generation=image_generation_cfg,
+                    writing=WritingRuntimeConfig.from_dict(writing_raw if isinstance(writing_raw, dict) else {}),
                 )
         return LLMProfile.from_env()
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -13,7 +14,7 @@ from uuid import uuid4
 from catmaster.llm.config import MCPFilesystemConfig
 from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_scoped_path, workspace_root
+from catmaster.tools.base import resolve_scoped_path, system_root, workspace_root
 
 _READONLY_TOOL_NAMES = {
     "read_text_file",
@@ -38,7 +39,7 @@ _OFFLOAD_CANDIDATE_TOOLS = {
 _PATH_ARG_KEYS = {"path", "source", "destination"}
 _PATH_LIST_ARG_KEYS = {"paths"}
 _WINDOWS_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:[\\/]")
-_SKILLS_ROOT_TOKEN = "@skills"
+_DEFAULT_SKILL_MOUNT_NAMES = ("skills", "writing_skills")
 
 
 def _json_safe(value: Any) -> Any:
@@ -75,8 +76,12 @@ class MCPFilesystemRuntime:
     def __post_init__(self) -> None:
         self.files_root = workspace_root(self.run_context.workspace).resolve()
         repo_root = Path(__file__).resolve().parents[2]
-        candidate_skills_root = (repo_root / "skills").resolve()
-        self.skills_root: Path | None = candidate_skills_root if candidate_skills_root.is_dir() else None
+        self.skill_mounts: dict[str, Path] = {}
+        for root_name in _DEFAULT_SKILL_MOUNT_NAMES:
+            candidate = (repo_root / root_name).resolve()
+            if candidate.is_dir():
+                self.skill_mounts[f"@{root_name}"] = candidate
+        self.skills_root: Path | None = self.skill_mounts.get("@skills")
         self.server_name = str(self.config.server_name or "filesystem").strip() or "filesystem"
         self.model_root_token = str(self.config.model_root_token or ".").strip() or "."
 
@@ -89,8 +94,14 @@ class MCPFilesystemRuntime:
         self._text_content_cls: Any = None
         self._files_root_abs = str(self.files_root)
         self._files_root_posix = self.files_root.as_posix()
-        self._skills_root_abs = str(self.skills_root) if self.skills_root is not None else ""
-        self._skills_root_posix = self.skills_root.as_posix() if self.skills_root is not None else ""
+        self._skill_mount_abs = {
+            token: str(path)
+            for token, path in self.skill_mounts.items()
+        }
+        self._skill_mount_posix = {
+            token: path.as_posix()
+            for token, path in self.skill_mounts.items()
+        }
 
     async def __aenter__(self) -> "MCPFilesystemRuntime":
         self.config.validate()
@@ -200,10 +211,11 @@ class MCPFilesystemRuntime:
                 "- metadata paths are forbidden in filesystem tool arguments",
             ]
         )
-        if self.skills_root is not None:
-            lines.insert(len(lines) - 3, f"- skills are mounted read-only under `{_SKILLS_ROOT_TOKEN}`")
+        if self.skill_mounts:
+            mounts = ", ".join(f"`{token}`" for token in sorted(self.skill_mounts))
+            lines.insert(len(lines) - 3, f"- skills are mounted read-only under {mounts}")
         else:
-            lines.insert(len(lines) - 3, f"- skills mount `{_SKILLS_ROOT_TOKEN}` is unavailable in this invocation")
+            lines.insert(len(lines) - 3, "- skills mounts are unavailable in this invocation")
         return "\n".join(lines)
 
     def _build_connection(self) -> dict[str, Any]:
@@ -211,15 +223,16 @@ class MCPFilesystemRuntime:
         if transport == "stdio":
             args = [str(item) for item in self.config.args_prefix]
             args.append(str(self.files_root))
-            if self.skills_root is not None:
+            for root in self.skill_mounts.values():
                 try:
-                    self.skills_root.relative_to(self.files_root)
+                    root.relative_to(self.files_root)
                 except Exception:
-                    args.append(str(self.skills_root))
+                    args.append(str(root))
             return {
                 "transport": "stdio",
                 "command": str(self.config.command),
                 "args": args,
+                "env": self._stdio_env(),
             }
         payload: dict[str, Any] = {
             "transport": transport if transport != "streamable-http" else "streamable_http",
@@ -228,6 +241,14 @@ class MCPFilesystemRuntime:
         if self.config.headers:
             payload["headers"] = dict(self.config.headers)
         return payload
+
+    def _stdio_env(self) -> dict[str, str]:
+        env = {str(k): str(v) for k, v in os.environ.items()}
+        npm_cache = (system_root(self.run_context.workspace) / "_npm_cache" / self.server_name).resolve()
+        npm_cache.mkdir(parents=True, exist_ok=True)
+        env["NPM_CONFIG_CACHE"] = str(npm_cache)
+        env["npm_config_cache"] = str(npm_cache)
+        return env
 
     def _path_error(self, *, tool_name: str, message: str, args: Mapping[str, Any]) -> CatMasterToolExecutionError:
         return CatMasterToolExecutionError(
@@ -241,24 +262,32 @@ class MCPFilesystemRuntime:
     def _is_write_tool(self, tool_name: str) -> bool:
         return str(tool_name or "").strip() in _WRITE_TOOL_NAMES
 
-    def _resolve_skills_token_path(
+    def _resolve_skill_token_path(
         self,
         path_text: str,
         *,
         tool_name: str,
         args: Mapping[str, Any],
     ) -> str:
-        if self.skills_root is None:
+        mount_token = next((token for token in self.skill_mounts if path_text == token or path_text.startswith(token + "/")), None)
+        if mount_token is None:
             raise self._path_error(
                 tool_name=tool_name,
-                message=f"{tool_name}: skills mount is unavailable (missing {_SKILLS_ROOT_TOKEN} root).",
+                message=f"{tool_name}: invalid skill-mount path {path_text!r}.",
                 args=args,
             )
-        suffix = path_text[len(_SKILLS_ROOT_TOKEN) :]
+        root = self.skill_mounts.get(mount_token)
+        if root is None:
+            raise self._path_error(
+                tool_name=tool_name,
+                message=f"{tool_name}: skills mount is unavailable (missing {mount_token} root).",
+                args=args,
+            )
+        suffix = path_text[len(mount_token) :]
         relative = suffix.lstrip("/\\")
-        target = (self.skills_root / relative).resolve()
+        target = (root / relative).resolve()
         try:
-            target.relative_to(self.skills_root)
+            target.relative_to(root)
         except Exception as exc:
             raise self._path_error(
                 tool_name=tool_name,
@@ -269,21 +298,22 @@ class MCPFilesystemRuntime:
             raise self._path_error(
                 tool_name=tool_name,
                 message=(
-                    f"{tool_name}: {_SKILLS_ROOT_TOKEN} is read-only; "
+                    f"{tool_name}: {mount_token} is read-only; "
                     "write/edit/move/create operations are not allowed under skill mount."
                 ),
                 args=args,
             )
         return str(target)
 
-    def _absolute_in_skills_root(self, path_text: str) -> bool:
-        if self.skills_root is None:
-            return False
-        try:
-            Path(path_text).resolve().relative_to(self.skills_root)
-            return True
-        except Exception:
-            return False
+    def _absolute_skill_mount_token(self, path_text: str) -> str | None:
+        resolved = Path(path_text).resolve()
+        for token, root in self.skill_mounts.items():
+            try:
+                resolved.relative_to(root)
+                return token
+            except Exception:
+                continue
+        return None
 
     def _resolve_model_relpath_to_abs(self, value: str, *, tool_name: str, args: Mapping[str, Any]) -> str:
         path_text = str(value or "").strip()
@@ -293,8 +323,8 @@ class MCPFilesystemRuntime:
                 message=f"{tool_name}: empty path is not allowed.",
                 args=args,
             )
-        if path_text == _SKILLS_ROOT_TOKEN or path_text.startswith(_SKILLS_ROOT_TOKEN + "/"):
-            return self._resolve_skills_token_path(path_text, tool_name=tool_name, args=args)
+        if any(path_text == token or path_text.startswith(token + "/") for token in self.skill_mounts):
+            return self._resolve_skill_token_path(path_text, tool_name=tool_name, args=args)
         if path_text.startswith("~"):
             raise self._path_error(
                 tool_name=tool_name,
@@ -314,12 +344,13 @@ class MCPFilesystemRuntime:
                 args=args,
             )
         is_absolute = Path(path_text).is_absolute()
-        if is_absolute and self._absolute_in_skills_root(path_text):
+        skill_mount_token = self._absolute_skill_mount_token(path_text) if is_absolute else None
+        if is_absolute and skill_mount_token is not None:
             if self._is_write_tool(tool_name):
                 raise self._path_error(
                     tool_name=tool_name,
                     message=(
-                        f"{tool_name}: {_SKILLS_ROOT_TOKEN} is read-only; "
+                        f"{tool_name}: {skill_mount_token} is read-only; "
                         "write/edit/move/create operations are not allowed under skill mount."
                     ),
                     args=args,
@@ -370,20 +401,20 @@ class MCPFilesystemRuntime:
         raw = str(text or "").strip()
         if not raw:
             return None
-        if raw == _SKILLS_ROOT_TOKEN or raw.startswith(_SKILLS_ROOT_TOKEN + "/"):
+        if any(raw == token or raw.startswith(token + "/") for token in self.skill_mounts):
             return raw
         if _WINDOWS_DRIVE_PREFIX.match(raw):
             return None
         p = Path(raw)
         if not p.is_absolute():
             return None
-        if self.skills_root is not None:
+        for token, root in self.skill_mounts.items():
             try:
-                rel_skill = p.resolve(strict=False).relative_to(self.skills_root)
+                rel_skill = p.resolve(strict=False).relative_to(root)
                 rel_skill_text = rel_skill.as_posix()
-                return _SKILLS_ROOT_TOKEN if rel_skill_text in {"", "."} else f"{_SKILLS_ROOT_TOKEN}/{rel_skill_text}"
+                return token if rel_skill_text in {"", "."} else f"{token}/{rel_skill_text}"
             except Exception:
-                pass
+                continue
         try:
             rel = p.resolve(strict=False).relative_to(self.files_root)
         except Exception:
@@ -401,12 +432,13 @@ class MCPFilesystemRuntime:
             return exact
 
         updated = str(text)
-        for root_variant in (self._skills_root_abs, self._skills_root_posix):
-            if not root_variant:
-                continue
-            updated = updated.replace(root_variant + "/", _SKILLS_ROOT_TOKEN + "/")
-            updated = updated.replace(root_variant + "\\", _SKILLS_ROOT_TOKEN + "/")
-            updated = updated.replace(root_variant, _SKILLS_ROOT_TOKEN)
+        for token in self.skill_mounts:
+            for root_variant in (self._skill_mount_abs.get(token, ""), self._skill_mount_posix.get(token, "")):
+                if not root_variant:
+                    continue
+                updated = updated.replace(root_variant + "/", token + "/")
+                updated = updated.replace(root_variant + "\\", token + "/")
+                updated = updated.replace(root_variant, token)
         for root_variant in (self._files_root_abs, self._files_root_posix):
             if not root_variant:
                 continue
@@ -574,8 +606,7 @@ class MCPFilesystemRuntime:
 
         if tool_name == "list_allowed_directories" and self.config.hide_list_allowed_directories:
             allowed = [self.model_root_token]
-            if self.skills_root is not None:
-                allowed.append(_SKILLS_ROOT_TOKEN)
+            allowed.extend(sorted(self.skill_mounts))
             rewritten_content = [self._make_text_block(f"Allowed roots: {', '.join(allowed)}")]
             rewritten_structured = {"allowed_directories": allowed}
 

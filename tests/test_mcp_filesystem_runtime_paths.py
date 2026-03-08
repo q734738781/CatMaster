@@ -84,20 +84,32 @@ def test_render_capability_guide_contains_abs_reference_hint(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     guide = runtime.render_capability_guide(mode="full")
     assert "reference absolute files root (orientation only)" in guide
-    if runtime.skills_root is not None:
+    if runtime.skill_mounts:
         assert "skills are mounted read-only under `@skills`" in guide
     else:
-        assert "skills mount `@skills` is unavailable in this invocation" in guide
+        assert "skills mounts are unavailable in this invocation" in guide
     assert "prefer relative paths in filesystem tool arguments" in guide
     assert "if absolute paths are used, they must stay under project files root" in guide
 
 
 def test_render_capability_guide_reports_missing_skills_mount(tmp_path) -> None:
     runtime = _runtime(tmp_path)
+    runtime.skill_mounts = {}
     runtime.skills_root = None
     guide = runtime.render_capability_guide(mode="full")
-    assert "skills mount `@skills` is unavailable in this invocation" in guide
+    assert "skills mounts are unavailable in this invocation" in guide
     assert "skills are mounted read-only under `@skills`" not in guide
+
+
+def test_build_connection_injects_local_npm_cache_for_stdio(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    connection = runtime._build_connection()
+    assert connection["transport"] == "stdio"
+    env = connection.get("env") or {}
+    cache = str(env.get("NPM_CONFIG_CACHE") or "")
+    assert cache
+    assert cache.startswith(str((tmp_path / "metadata").resolve()))
+    assert env.get("npm_config_cache") == cache
 
 
 def test_rewrite_request_args_supports_skills_token_for_read(tmp_path) -> None:
@@ -159,8 +171,7 @@ def test_rewrite_call_tool_result_hides_list_allowed_directories(tmp_path) -> No
     )
     rewritten = runtime._rewrite_call_tool_result(request=req, result=result)
     expected_allowed = ["."]
-    if runtime.skills_root is not None:
-        expected_allowed.append("@skills")
+    expected_allowed.extend(sorted(runtime.skill_mounts))
     assert rewritten.structuredContent == {"allowed_directories": expected_allowed}
     assert isinstance(rewritten.content, list)
     assert rewritten.content

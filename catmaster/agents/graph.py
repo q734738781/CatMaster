@@ -13,9 +13,9 @@ import copy
 import inspect
 import json
 import logging
-import re
 import shutil
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
@@ -149,6 +149,14 @@ def _make_memory_scoped_apply_tool(tool: BaseTool) -> BaseTool:
 
 class ToolCallBudgetExceededError(RuntimeError):
     """Raised when an agent exceeds its per-invocation tool-call budget."""
+
+
+@dataclass(frozen=True)
+class GraphRunPolicy:
+    allow_memory_patch: bool = True
+    allow_human_intervention: bool = True
+    enable_literature_tool: bool = True
+    enable_history_prefetch: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -357,9 +365,10 @@ _SKILL_FILESYSTEM_ALWAYS_INCLUDE = [
 def _build_role_middleware(
     *,
     role: str,
+    lane: str | None,
     max_tool_calls: int,
     skills_runtime: CatMasterSkillsRuntime | None,
-    skills_mount_available: bool,
+    mounted_skill_tokens: Sequence[str] | None,
     selector_model: BaseChatModel | None,
     enable_selector: bool,
 ) -> list[Any]:
@@ -368,8 +377,9 @@ def _build_role_middleware(
         middleware.append(
             CatMasterSkillsMiddleware(
                 role=role,
+                lane=lane,
                 skills_runtime=skills_runtime,
-                skills_mount_available=skills_mount_available,
+                mounted_skill_tokens=mounted_skill_tokens,
             )
         )
 
@@ -564,6 +574,7 @@ async def _run_director_wrapper(
     memory_store: MemoryStore,
     execution_context_guide: str,
     max_steps: int,
+    allow_memory_patch: bool,
 ) -> Command:
     return await run_director(
         state,
@@ -571,6 +582,7 @@ async def _run_director_wrapper(
         memory_store=memory_store,
         execution_context_guide=execution_context_guide,
         max_steps=max_steps,
+        allow_memory_patch=allow_memory_patch,
     )
 
 
@@ -581,6 +593,7 @@ async def _run_fast_director_wrapper(
     memory_store: MemoryStore,
     execution_context_guide: str,
     max_steps: int,
+    allow_memory_patch: bool,
 ) -> Command:
     return await run_fast_director(
         state,
@@ -588,6 +601,7 @@ async def _run_fast_director_wrapper(
         memory_store=memory_store,
         execution_context_guide=execution_context_guide,
         max_steps=max_steps,
+        allow_memory_patch=allow_memory_patch,
     )
 
 
@@ -721,12 +735,30 @@ def _proposal_review_node(state: CatMasterState) -> Command:
     })
 
     feedback_text = str(feedback or "").strip()
+    existing = list(state.get("hitl_history") or [])
+    existing.append({
+        "interrupt_type": "proposal_review",
+        "feedback": feedback_text,
+        "approved": feedback_text.lower() in ("approved", "approve", "ok", "yes", "y", "lgtm"),
+        "work_packages": list(work_packages or []),
+    })
     if feedback_text.lower() in ("approved", "approve", "ok", "yes", "y", "lgtm"):
-        return Command(goto="run_director", update={"proposal_approved": True, "proposal_feedback": ""})
+        return Command(
+            goto="run_director",
+            update={
+                "proposal_approved": True,
+                "proposal_feedback": "",
+                "hitl_history": existing,
+            },
+        )
 
     return Command(
         goto="run_proposal",
-        update={"proposal_approved": False, "proposal_feedback": feedback_text},
+        update={
+            "proposal_approved": False,
+            "proposal_feedback": feedback_text,
+            "hitl_history": existing,
+        },
     )
 
 
@@ -776,8 +808,10 @@ def build_standard_graph(
     checkpointer: Optional[BaseCheckpointSaver] = None,
     run_control: Optional[RunControl] = None,
     skills_runtime: Optional[CatMasterSkillsRuntime] = None,
-    skills_mount_available: bool = False,
+    mounted_skill_tokens: Sequence[str] | None = None,
     tool_selector_model: Optional[BaseChatModel] = None,
+    allow_human_intervention: bool = True,
+    allow_memory_patch: bool = True,
 ) -> Any:
     """Build and compile the standard-lane LangGraph."""
     effective_run_dir = run_dir or Path(".")
@@ -787,33 +821,37 @@ def build_standard_graph(
 
     proposal_middleware = _build_role_middleware(
         role="proposal",
+        lane="standard",
         max_tool_calls=max_plan_steps,
         skills_runtime=skills_runtime,
-        skills_mount_available=skills_mount_available,
+        mounted_skill_tokens=mounted_skill_tokens,
         selector_model=None,
         enable_selector=False,
     )
     director_middleware = _build_role_middleware(
         role="director",
+        lane="standard",
         max_tool_calls=max_plan_steps,
         skills_runtime=skills_runtime,
-        skills_mount_available=skills_mount_available,
+        mounted_skill_tokens=mounted_skill_tokens,
         selector_model=None,
         enable_selector=False,
     )
     task_middleware = _build_role_middleware(
         role="task_runner",
+        lane="standard",
         max_tool_calls=max_task_steps,
         skills_runtime=skills_runtime,
-        skills_mount_available=skills_mount_available,
+        mounted_skill_tokens=mounted_skill_tokens,
         selector_model=tool_selector_model,
         enable_selector=True,
     )
     memory_middleware = _build_role_middleware(
         role="memory_patch",
+        lane="standard",
         max_tool_calls=max_plan_steps,
         skills_runtime=None,
-        skills_mount_available=False,
+        mounted_skill_tokens=(),
         selector_model=None,
         enable_selector=False,
     )
@@ -863,6 +901,7 @@ def build_standard_graph(
         memory_store=memory_store,
         execution_context_guide=effective_director_execution_context_guide,
         max_steps=max_plan_steps,
+        allow_memory_patch=allow_memory_patch,
     ))
 
     graph.add_node("run_task", partial(
@@ -871,7 +910,7 @@ def build_standard_graph(
         memory_store=memory_store,
         max_steps=max_task_steps,
         continue_goto="run_director",
-        intervention_goto="needs_intervention",
+        intervention_goto="needs_intervention" if allow_human_intervention else "run_director",
         run_dir=effective_run_dir,
     ))
 
@@ -920,32 +959,36 @@ def build_fast_graph(
     checkpointer: Optional[BaseCheckpointSaver] = None,
     run_control: Optional[RunControl] = None,
     skills_runtime: Optional[CatMasterSkillsRuntime] = None,
-    skills_mount_available: bool = False,
+    mounted_skill_tokens: Sequence[str] | None = None,
     tool_selector_model: Optional[BaseChatModel] = None,
+    allow_memory_patch: bool = True,
 ) -> Any:
     """Build and compile the fast-lane LangGraph (proposal-free director loop)."""
     effective_run_dir = run_dir or Path(".")
     fast_director_middleware = _build_role_middleware(
         role="fast_director",
+        lane="fast",
         max_tool_calls=max_plan_steps,
         skills_runtime=skills_runtime,
-        skills_mount_available=skills_mount_available,
+        mounted_skill_tokens=mounted_skill_tokens,
         selector_model=None,
         enable_selector=False,
     )
     task_middleware = _build_role_middleware(
         role="task_runner",
+        lane="fast",
         max_tool_calls=max_task_steps,
         skills_runtime=skills_runtime,
-        skills_mount_available=skills_mount_available,
+        mounted_skill_tokens=mounted_skill_tokens,
         selector_model=tool_selector_model,
         enable_selector=True,
     )
     memory_middleware = _build_role_middleware(
         role="memory_patch",
+        lane="fast",
         max_tool_calls=max_plan_steps,
         skills_runtime=None,
-        skills_mount_available=False,
+        mounted_skill_tokens=(),
         selector_model=None,
         enable_selector=False,
     )
@@ -978,6 +1021,7 @@ def build_fast_graph(
         memory_store=memory_store,
         execution_context_guide=fast_director_execution_context_guide,
         max_steps=max_plan_steps,
+        allow_memory_patch=allow_memory_patch,
     ))
 
     graph.add_node("run_task", partial(
@@ -1055,6 +1099,7 @@ class GraphRunner:
         history_reader: Optional[HistoryReader] = None,
         skills_runtime: Optional[CatMasterSkillsRuntime] = None,
         tool_selector_model: Optional[BaseChatModel] = None,
+        run_policy: GraphRunPolicy | None = None,
     ) -> None:
         self.task_runner_model = task_runner_model
         self.proposal_model = proposal_model or task_runner_model
@@ -1082,6 +1127,7 @@ class GraphRunner:
         self.history_reader = history_reader
         self.skills_runtime = skills_runtime
         self.tool_selector_model = tool_selector_model
+        self.run_policy = run_policy or GraphRunPolicy()
 
         self.memory_store.ensure_exists()
         self.artifact_store = ArtifactStore(run_context.run_dir)
@@ -1324,72 +1370,8 @@ class GraphRunner:
     # ------------------------------------------------------------------
 
     def _initialize_memory_goal(self, user_request: str) -> None:
-        """Write the user objective into MEMORY/topics/GOAL.md.
-
-        Mirrors old Orchestrator._initialize_memory_goal.
-        """
-        goal = " ".join((user_request or "").split()).strip()
-        if not goal:
-            return
-        self.memory_store.ensure_exists()
-        goal_path = self.memory_store.topics_dir / "GOAL.md"
-        original = goal_path.read_text(encoding="utf-8") if goal_path.exists() else ""
-        updated = original
-
-        primary_match = re.search(r"(?m)^- Primary objective:\s*(.*)$", updated)
-        current_primary = (primary_match.group(1) if primary_match else "").strip()
-        primary_changed = current_primary != goal
-
-        if primary_match:
-            updated = re.sub(
-                r"(?m)^- Primary objective:.*$",
-                f"- Primary objective: {goal}",
-                updated,
-                count=1,
-            )
-        else:
-            line = f"- Primary objective: {goal}\n"
-            marker = "## TL;DR\n"
-            if marker in updated:
-                updated = updated.replace(marker, marker + line, 1)
-            else:
-                updated = updated.rstrip()
-                if updated:
-                    updated += "\n\n"
-                updated += "## TL;DR\n" + line
-            primary_changed = True
-
-        lines = updated.splitlines()
-        compacted: List[str] = []
-        seen_change_log = False
-        for raw in lines:
-            if raw.strip() == "## Change log":
-                if seen_change_log:
-                    continue
-                seen_change_log = True
-            compacted.append(raw)
-        updated = "\n".join(compacted)
-
-        if primary_changed:
-            ts = datetime.utcnow().strftime("%Y-%m-%d")
-            entry = f"- [{ts}] {goal}"
-            if "## Change log" not in updated:
-                updated = updated.rstrip()
-                if updated:
-                    updated += "\n\n"
-                updated += "## Change log\n"
-            if entry not in updated:
-                updated = updated.rstrip() + "\n" + entry + "\n"
-
-        normalized = updated.rstrip() + "\n"
-        if normalized != (original.rstrip() + "\n"):
-            goal_path.write_text(normalized, encoding="utf-8")
-            refresh_fn = getattr(self.memory_store, "refresh_index_from_topics", None)
-            if callable(refresh_fn):
-                try:
-                    refresh_fn()
-                except Exception:
-                    pass
+        """Deprecated no-op kept for compatibility with older tests/patches."""
+        _ = user_request
 
     def _write_task_state(self, state: Dict[str, Any], lane: str) -> None:
         """Persist task_state.json for resume and WebUI inspection."""
@@ -1642,8 +1624,6 @@ class GraphRunner:
         workspace = self.run_context.workspace
         run_dir = self.run_context.run_dir
 
-        self._initialize_memory_goal(user_request)
-
         callbacks = build_callbacks(
             artifact_store=self.artifact_store,
             trace_store=self.trace_store,
@@ -1661,6 +1641,7 @@ class GraphRunner:
                     run_dir=run_dir,
                     mcp_fs_runtime=mcp_fs_runtime,
                     task_runner_denylist=_TASK_RUNNER_TOOL_DENYLIST,
+                    include_literature_tool=self.run_policy.enable_literature_tool,
                 )
                 local_pool = _dedupe_tools_by_name(
                     list(surface.proposal_tools) + list(surface.director_tools) + list(surface.task_tools)
@@ -1699,6 +1680,7 @@ class GraphRunner:
                     proposal_execution_context_guide = render_proposal_skill_guide([])
                     director_execution_context_guide = render_director_skill_guide([])
                     fast_director_execution_context_guide = render_fast_director_skill_guide([])
+                mounted_skill_tokens = tuple(mcp_fs_runtime.skill_mounts.keys()) if mcp_fs_runtime is not None else ()
 
                 if lane == "fast":
                     fast_director_tools = [
@@ -1724,8 +1706,9 @@ class GraphRunner:
                         checkpointer=self.checkpointer,
                         run_control=self.run_control,
                         skills_runtime=self.skills_runtime,
-                        skills_mount_available=mcp_fs_runtime is not None and mcp_fs_runtime.skills_root is not None,
+                        mounted_skill_tokens=mounted_skill_tokens,
                         tool_selector_model=self.tool_selector_model,
+                        allow_memory_patch=self.run_policy.allow_memory_patch,
                     )
                 else:
                     compiled = build_standard_graph(
@@ -1749,13 +1732,15 @@ class GraphRunner:
                         checkpointer=self.checkpointer,
                         run_control=self.run_control,
                         skills_runtime=self.skills_runtime,
-                        skills_mount_available=mcp_fs_runtime is not None and mcp_fs_runtime.skills_root is not None,
+                        mounted_skill_tokens=mounted_skill_tokens,
                         tool_selector_model=self.tool_selector_model,
+                        allow_human_intervention=self.run_policy.allow_human_intervention,
+                        allow_memory_patch=self.run_policy.allow_memory_patch,
                     )
 
                 historical_runs_context_text = ""
                 historical_runs_citations: list[dict[str, Any]] = []
-                if self.history_reader is not None:
+                if self.history_reader is not None and self.run_policy.enable_history_prefetch:
                     try:
                         history_pack = await self.history_reader.aload_context(
                             query=user_request,
@@ -1831,6 +1816,15 @@ class GraphRunner:
                 if interrupt_payload is None:
                     break
 
+                if not self.run_policy.allow_human_intervention:
+                    interrupt_type = str(interrupt_payload.get("type") or "unknown")
+                    result = {
+                        **result,
+                        "status": "failure",
+                        "summary": f"Run aborted because human intervention is disabled but interrupt '{interrupt_type}' was raised.",
+                    }
+                    break
+
                 if self.run_control and self.run_control.is_interrupt_requested():
                     self.run_control.ack_interrupt(phase="hitl_paused")
                     self._write_task_state(
@@ -1894,6 +1888,8 @@ class GraphRunner:
 
             status = result.get("status", "done")
             summary = result.get("summary", "")
+            report_paths: dict[str, str] = {}
+            export_paths: dict[str, str] = {}
 
             self._write_task_state({**result, "status": status}, lane)
 
@@ -1921,12 +1917,23 @@ class GraphRunner:
 
             self._emit("RUN_END", payload={"status": status, "summary_snippet": _snippet(summary, 320)})
 
+            final_report_path = ""
+            run_export_path = ""
+            if status in ("done", "failure"):
+                final_report_path = report_paths.get("final_report", "")
+                run_export_path = export_paths.get("run_export", "")
+
             return {
                 "tasks": result.get("tasks", []),
                 "observations": result.get("observations", []),
                 "summary": summary,
                 "final_answer": summary,
                 "status": status,
+                "pending_memory_updates": result.get("pending_memory_updates", []),
+                "run_id": self.run_context.run_id,
+                "run_dir": str(self.run_context.run_dir),
+                "final_report_path": final_report_path,
+                "run_export_path": run_export_path,
             }
 
         if workspace is not None:
@@ -1937,6 +1944,7 @@ class GraphRunner:
 
 __all__ = [
     "CatMasterState",
+    "GraphRunPolicy",
     "build_standard_graph",
     "build_fast_graph",
     "GraphRunner",

@@ -17,6 +17,9 @@ except Exception:  # pragma: no cover
 
 _FRONTMATTER_DELIMITER = "---"
 _SUGGESTED_TOOLS_KEY = "catmaster-suggested-tools"
+_ROLES_KEY = "catmaster-roles"
+_LANES_KEY = "catmaster-lanes"
+_TAGS_KEY = "catmaster-tags"
 
 
 def _read_frontmatter_block(path: Path) -> str:
@@ -76,6 +79,25 @@ def _split_suggested_tools(raw: Any) -> list[str]:
         return []
     if isinstance(raw, str):
         parts = [item.strip() for item in raw.split() if item.strip()]
+    elif isinstance(raw, (list, tuple)):
+        parts = [str(item).strip() for item in raw if str(item).strip()]
+    else:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in parts:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _split_string_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        parts = [item.strip() for item in raw.replace(",", " ").split() if item.strip()]
     elif isinstance(raw, (list, tuple)):
         parts = [str(item).strip() for item in raw if str(item).strip()]
     else:
@@ -171,8 +193,9 @@ class SkillCatalog:
     @classmethod
     def create_default(cls, *, repo_root: Path | None = None) -> "SkillCatalog":
         resolved_repo_root = (repo_root or Path.cwd()).expanduser().resolve()
+        roots = [resolved_repo_root / "skills", resolved_repo_root / "writing_skills"]
         return cls(
-            source_roots=[resolved_repo_root / "skills"],
+            source_roots=roots,
             repo_root=resolved_repo_root,
         )
 
@@ -202,12 +225,24 @@ class SkillCatalog:
                     metadata = frontmatter.get("metadata")
                     metadata_dict = metadata if isinstance(metadata, dict) else {}
                     suggested_tools = _split_suggested_tools(metadata_dict.get(_SUGGESTED_TOOLS_KEY))
+                    roles = _split_string_list(metadata_dict.get(_ROLES_KEY))
+                    lanes = _split_string_list(metadata_dict.get(_LANES_KEY))
+                    tags = _split_string_list(metadata_dict.get(_TAGS_KEY))
                     if not suggested_tools:
                         suggested_tools = _parse_suggested_tools_body_section(skill_md)
                     compatibility_raw = frontmatter.get("compatibility")
                     compatibility = str(compatibility_raw).strip() if compatibility_raw is not None else None
                     if compatibility == "":
                         compatibility = None
+                    source_root_name = source_root.name
+                    mount_token = f"@{source_root_name}"
+                    if source_root_name == "writing_skills":
+                        if not lanes:
+                            lanes = ["writing"]
+                        if not roles:
+                            roles = ["write_director", "section_writer", "write_reviewer"]
+                        if not tags:
+                            tags = ["writing"]
                     meta = SkillMeta(
                         name=name,
                         description=description,
@@ -218,8 +253,13 @@ class SkillCatalog:
                         ),
                         abs_skill_dir=skill_dir.resolve(),
                         abs_skill_md=skill_md.resolve(),
+                        source_root_name=source_root_name,
+                        mount_token=mount_token,
                         compatibility=compatibility,
                         suggested_tools=suggested_tools,
+                        roles=roles,
+                        lanes=lanes,
+                        tags=tags,
                     )
                     entries.append(
                         SkillCatalogEntry(
@@ -273,15 +313,27 @@ class CatMasterSkillsRuntime:
     def refresh_catalog(self) -> list[SkillMeta]:
         return self.catalog.refresh()
 
-    def visible_skills(self, role: str) -> list[SkillMeta]:
+    def visible_skills(self, role: str, lane: str | None = None) -> list[SkillMeta]:
         all_skills = self.catalog.list_skills()
         if not all_skills:
             return []
-        allowed_names = self.role_skill_names.get(str(role or "").strip())
-        if not allowed_names:
-            return []
-        by_name = {item.name: item for item in all_skills}
-        return [by_name[name] for name in allowed_names if name in by_name]
+        role_text = str(role or "").strip()
+        lane_text = str(lane or "").strip()
+        visible: list[SkillMeta] = []
+        legacy_names = set(self.role_skill_names.get(role_text) or [])
+        for skill in all_skills:
+            if skill.roles or skill.lanes:
+                if skill.roles and role_text not in skill.roles:
+                    continue
+                if skill.lanes and lane_text and lane_text not in skill.lanes:
+                    continue
+                if skill.lanes and not lane_text and "all" not in skill.lanes:
+                    continue
+                visible.append(skill)
+                continue
+            if skill.name in legacy_names:
+                visible.append(skill)
+        return visible
 
 
 __all__ = ["SkillCatalog", "CatMasterSkillsRuntime"]

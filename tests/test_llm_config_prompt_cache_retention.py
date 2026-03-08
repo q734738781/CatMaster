@@ -71,6 +71,8 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
                 "  max_tool_calls: 72",
                 "  print_state_messages: true",
                 "  print_http_raw_post: true",
+                "writing:",
+                "  author_name: 'CatMaster'",
             ]
         ),
         encoding="utf-8",
@@ -93,6 +95,7 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert profile.agent_runtime.max_tool_calls == 72
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
+    assert profile.writing.author_name == "CatMaster"
 
 
 def test_llm_profile_history_reader_can_use_dedicated_model(tmp_path: Path) -> None:
@@ -233,6 +236,67 @@ def test_llm_profile_image_analyzer_can_use_dedicated_model(tmp_path: Path) -> N
 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.image_analyzer.model == "openai/gpt-5-nano"
+
+
+def test_llm_profile_image_generation_can_use_dedicated_model_and_yaml_image_config(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'google/gemini-2.5-flash-image-preview':",
+                "    provider: openrouter",
+                "    model: google/gemini-2.5-flash-image-preview",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+                "image_generation:",
+                "  model_label: 'google/gemini-2.5-flash-image-preview'",
+                "  image_config:",
+                "    aspect_ratio: '4:3'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.config_for_image_generation().model == "google/gemini-2.5-flash-image-preview"
+    assert profile.image_generation.image_config == {"aspect_ratio": "4:3"}
+
+
+def test_llm_profile_image_generation_falls_back_to_image_analyzer_when_omitted(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2:online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2:online",
+                "  'openai/gpt-5-nano':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2:online'",
+                "  director: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2:online'",
+                "  image_analyzer: 'openai/gpt-5-nano'",
+                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  summary: 'openai/gpt-5.2:online'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+    assert profile.config_for_image_generation().model == "openai/gpt-5-nano"
+    assert profile.image_generation.image_config == {}
 
 
 def test_llm_profile_literature_web_search_fallbacks_to_literature_synthesizer(tmp_path: Path) -> None:

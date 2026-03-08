@@ -36,6 +36,7 @@ Use this skill to keep a heterogeneous-catalysis study coherent from catalyst se
 - Use one naming scheme for catalysts, facets, adsorbates, and run folders.
 - Keep structure provenance and path evidence project-relative.
 - Reuse the same clean-slab and gas references inside one comparison campaign.
+- Keep one explicit k-point-density policy for the whole comparison campaign; for slab production runs, the project house default is `k*a ~= 35 Å` unless a convergence-backed reason says otherwise.
 
 ### 4. Report like a campaign, not isolated jobs
 - Summarize what was compared, with which assumptions, and why the final ranking is credible.

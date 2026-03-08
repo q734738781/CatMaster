@@ -12,8 +12,13 @@ class SkillMeta:
     file_path: str
     abs_skill_dir: Path
     abs_skill_md: Path
+    source_root_name: str = "skills"
+    mount_token: str = "@skills"
     compatibility: str | None = None
     suggested_tools: list[str] = field(default_factory=list)
+    roles: list[str] = field(default_factory=list)
+    lanes: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass

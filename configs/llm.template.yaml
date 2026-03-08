@@ -60,6 +60,26 @@ models:
         extra_body:
           prompt_cache_retention: 24h
 
+  "openrouter-image-preview":
+    provider: openrouter
+    model: google/gemini-2.5-flash-image-preview
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+
   # -------------------------------------------------------------------------
   # OpenAI example
   # -------------------------------------------------------------------------
@@ -101,6 +121,11 @@ agents:
   proposal: "openrouter-main"
   director: "openrouter-main"
   task_runner: "openrouter-main"
+  research_lead: "openrouter-main-xhigh"
+  write_director: "openrouter-main-xhigh"
+  section_writer: "openrouter-main"
+  write_reviewer: "openrouter-main"
+  academic_polisher: "openrouter-main-xhigh"
   # Optional: if omitted, it falls back to `task_runner`.
   image_analyzer: "openrouter-main"
   # Optional: if omitted, it falls back to `literature_synthesizer`.
@@ -119,6 +144,15 @@ agents:
   # Optional: if omitted, it falls back to `summary`.
   history_reader: "openrouter-main"
 
+image_generation:
+  # Optional: if omitted, the image-generation tool falls back to `image_analyzer`.
+  model_label: "openrouter-image-preview"
+  image_config:
+    aspect_ratio: "4:3"
+
+writing:
+  author_name: "CatMaster"
+
 agent_runtime:
   recursion_limit: 300
   max_tool_calls: 60
@@ -136,6 +170,10 @@ literature:
     director: focused
     fast_director: focused
     task_runner: none
+    research_lead: deep_report
+    write_director: none
+    section_writer: standard
+    write_reviewer: none
   public_web_on_search_failure: true
   summary_key_paper_count: 5
   semantic_scholar_retry_429_attempts: 3

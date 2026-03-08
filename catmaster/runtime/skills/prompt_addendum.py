@@ -3,21 +3,21 @@ from __future__ import annotations
 from .models import SkillMeta
 
 
-def _render_skill_line(skill: SkillMeta, *, skills_mount_available: bool) -> list[str]:
+def _render_skill_line(skill: SkillMeta, *, mounted_skill_tokens: set[str]) -> list[str]:
     suggested = ", ".join(f"`{name}`" for name in skill.suggested_tools) if skill.suggested_tools else "(none specified)"
     lines = [
         f"- `{skill.name}`:",
         f"  {skill.description}",
         f"  Suggested tools: {suggested}",
     ]
-    if skills_mount_available:
-        lines.append(f"  File: `@skills/{skill.name}/SKILL.md`")
+    if skill.mount_token in mounted_skill_tokens:
+        lines.append(f"  File: `{skill.mount_token}/{skill.name}/SKILL.md`")
     else:
         lines.append("  File: (skills mount unavailable in this invocation)")
     return lines
 
 
-def render_skills_addendum(*, role: str, skills: list[SkillMeta], skills_mount_available: bool) -> str:
+def render_skills_addendum(*, role: str, skills: list[SkillMeta], mounted_skill_tokens: set[str]) -> str:
     _ = role
     lines: list[str] = [
         "## Skills",
@@ -31,7 +31,7 @@ def render_skills_addendum(*, role: str, skills: list[SkillMeta], skills_mount_a
 
     if skills:
         for skill in skills:
-            lines.extend(_render_skill_line(skill, skills_mount_available=skills_mount_available))
+            lines.extend(_render_skill_line(skill, mounted_skill_tokens=mounted_skill_tokens))
     else:
         lines.append("- (no role-visible skills found)")
 
@@ -39,18 +39,20 @@ def render_skills_addendum(*, role: str, skills: list[SkillMeta], skills_mount_a
         "### Discovery",
         "- The list above is the skills available for this role in this invocation.",
     ]
-    if skills_mount_available:
-        discovery_lines.append("- Skills are mounted read-only at `@skills/`.")
+    if mounted_skill_tokens:
+        rendered_roots = ", ".join(f"`{token}/`" for token in sorted(mounted_skill_tokens))
+        discovery_lines.append(f"- Skills are mounted read-only at {rendered_roots}.")
     else:
-        discovery_lines.append("- Skills are not mounted in this invocation, so `@skills/` paths are unavailable.")
+        discovery_lines.append("- Skills are not mounted in this invocation, so skill-mount paths are unavailable.")
 
     progressive_lines = [
         "### Progressive Disclosure Workflow",
     ]
-    if skills_mount_available:
+    if mounted_skill_tokens:
+        example_token = sorted(mounted_skill_tokens)[0]
         progressive_lines.extend(
             [
-                "1. After deciding to use a skill, read `@skills/<skill-name>/SKILL.md` with standard filesystem read tools.",
+                f"1. After deciding to use a skill, read `{example_token}/<skill-name>/SKILL.md` with standard filesystem read tools.",
                 "2. Resolve relative references against that skill directory first.",
                 "3. Load only needed assets under that skill directory (for example `references/` or `scripts/`).",
                 "4. Prefer running or patching referenced scripts over retyping large blocks.",
@@ -61,7 +63,7 @@ def render_skills_addendum(*, role: str, skills: list[SkillMeta], skills_mount_a
         progressive_lines.extend(
             [
                 "1. If a skill file cannot be read because the skills mount is unavailable, rely on the summary above and continue with the best fallback.",
-                "2. Do not claim to have opened `@skills/...` when the mount is unavailable.",
+                "2. Do not claim to have opened skill-mount paths when the mount is unavailable.",
             ]
         )
 

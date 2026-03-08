@@ -35,7 +35,7 @@ from .web_reporter import PromptBroker, WebReporter
 
 RUN_MODE_NEW = "new_run"
 RUN_MODE_RESUME_SELECTED = "resume_selected_run"
-SUPPORTED_LANES = {"fast", "standard"}
+SUPPORTED_LANES = {"fast", "standard", "research", "writing"}
 
 
 class WebSession:
@@ -218,6 +218,17 @@ class WebSession:
         log_llm: bool,
         full_auto_major: bool,
         llm_config: Optional[str] = None,
+        seed_hypotheses: str = "",
+        exploration_policy: str = "anchored",
+        writing_mode: str = "none",
+        target_section: str = "",
+        source_campaign_id: str = "",
+        title_hint: str = "",
+        max_cycles: int = 6,
+        max_literature_queries: int = 4,
+        max_fast_runs: int = 3,
+        max_standard_runs: int = 2,
+        allow_deep_report: bool = False,
     ) -> str:
         mode = str(run_mode or RUN_MODE_NEW).strip()
         if mode not in {RUN_MODE_NEW, RUN_MODE_RESUME_SELECTED}:
@@ -259,7 +270,6 @@ class WebSession:
             self.run_control = RunControl()
             if resume_target is not None:
                 self.selected_run_dir = resume_target
-
         def _run() -> None:
             run_dir: Optional[Path] = None
             run_error = ""
@@ -305,49 +315,23 @@ class WebSession:
                         self.run_status = "done" if run_status in {"done", "failure", "needs_intervention"} else run_status
                     skip_summarize = True
                     return
+                from catmaster.agents.research_runner import ResearchRunner
+                from catmaster.agents.writing_runner import WritingRunner
+                from catmaster.agents.runner_factory import build_graph_runner
+                from catmaster.agents.research_schemas import ResearchRequest
+                from catmaster.agents.writing_schemas import WritingRequest
                 from catmaster.llm.factory import build_chat_model
-                from catmaster.agents.graph import GraphRunner
                 from catmaster.runtime.run_context import RunContext
                 from catmaster.runtime.memory_store import MemoryStore
-                from catmaster.runtime.local_tool_backend import LocalToolBackend
-                from catmaster.runtime.tool_executor import ToolExecutor
-                from catmaster.runtime.artifact_store import ArtifactStore
-                from catmaster.runtime.trace_store import TraceStore
-                from catmaster.tools.registry import get_tool_registry
                 from catmaster.runtime.run_ledger.store import RunLedgerStore
                 from catmaster.runtime.run_ledger.openrouter_embeddings import OpenRouterEmbeddings
                 from catmaster.runtime.run_ledger.vector_index import VectorIndex
                 from catmaster.runtime.run_ledger.hybrid_search import HybridRunLedgerSearcher
                 from catmaster.runtime.run_ledger.history_reader import HistoryReader
                 from catmaster.runtime.skills import SkillCatalog, CatMasterSkillsRuntime
+                from catmaster.tools.base import system_root
 
                 project_id = self._project_id_for_workspace(ws)
-                run_ctx = RunContext.create(
-                    workspace=ws,
-                    run_dir=Path(resume_dir) if resume_dir else None,
-                    project_id=project_id,
-                    model_name=llm_profile.main.model,
-                    provider=llm_profile.main.provider,
-                    base_url=llm_profile.main.base_url,
-                )
-                if self.run_control is not None:
-                    self.run_control.run_id = run_ctx.run_id
-                run_dir = run_ctx.run_dir
-                if self.reporter:
-                    self.reporter.set_run_dir(run_dir)
-                self._write_active_runs(effective_lane, run_dir, workspace=ws)
-
-                memory_store = MemoryStore.create_default(workspace=ws)
-                memory_store.ensure_exists()
-                registry = get_tool_registry()
-                tool_backend = LocalToolBackend(
-                    registry=registry,
-                    tool_executor=ToolExecutor(registry),
-                    artifact_store=ArtifactStore(run_ctx.run_dir),
-                    trace_store=TraceStore(run_ctx.run_dir),
-                    role="langgraph",
-                    workspace=ws,
-                )
                 run_ledger_store = RunLedgerStore.create_default(workspace=ws)
                 embeddings = OpenRouterEmbeddings(system_root=system_root(workspace=ws))
                 vector_index = VectorIndex.create_default(workspace=ws)
@@ -366,30 +350,69 @@ class WebSession:
                 skills_runtime = CatMasterSkillsRuntime(
                     catalog=SkillCatalog.create_default(repo_root=repo_root)
                 )
-                tool_selector_model = build_chat_model(llm_profile.config_for_role("tool_selector"))
+                stream_debug_console = os.environ.get("CATMASTER_STREAM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 
-                runner = GraphRunner(
-                    task_runner_model=build_chat_model(llm_profile.config_for_role("task_runner")),
-                    proposal_model=build_chat_model(llm_profile.config_for_role("proposal")),
-                    director_model=build_chat_model(llm_profile.config_for_role("director")),
-                    memory_patch_model=build_chat_model(llm_profile.config_for_role("memory_patch")),
-                    registry=registry,
-                    memory_store=memory_store,
-                    run_context=run_ctx,
-                    reporter=self.reporter,
-                    tool_backend=tool_backend,
-                    run_control=self.run_control,
-                    mcp_config=llm_profile.mcp,
-                    max_task_steps=llm_profile.agent_runtime.max_tool_calls,
-                    max_plan_steps=llm_profile.agent_runtime.max_tool_calls,
-                    recursion_limit=llm_profile.agent_runtime.recursion_limit,
-                    stream_debug_console=os.environ.get("CATMASTER_STREAM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"},
-                    print_state_messages=llm_profile.agent_runtime.print_state_messages,
-                    run_ledger_store=run_ledger_store,
-                    history_reader=history_reader,
-                    skills_runtime=skills_runtime,
-                    tool_selector_model=tool_selector_model,
-                )
+                if effective_lane == "research":
+                    if is_resume and resume_target is not None:
+                        run_ctx = RunContext.load(resume_target)
+                        if self.run_control is not None:
+                            self.run_control.run_id = run_ctx.run_id
+                    else:
+                        run_ctx = RunContext.create(
+                            workspace=ws,
+                            project_id=project_id,
+                            model_name=llm_profile.config_for_role("research_lead").model,
+                            provider=llm_profile.config_for_role("research_lead").provider,
+                            base_url=llm_profile.config_for_role("research_lead").base_url,
+                        )
+                    run_dir = run_ctx.run_dir
+                    memory_store = MemoryStore.create_default(workspace=ws)
+                    memory_store.ensure_exists()
+                    runner = ResearchRunner(
+                        llm_profile=llm_profile,
+                        run_context=run_ctx,
+                        memory_store=memory_store,
+                        reporter=self.reporter,
+                        run_ledger_store=run_ledger_store,
+                        history_reader=history_reader,
+                        skills_runtime=skills_runtime,
+                    )
+                elif effective_lane == "writing":
+                    if is_resume and resume_target is not None:
+                        run_ctx = RunContext.load(resume_target)
+                        if self.run_control is not None:
+                            self.run_control.run_id = run_ctx.run_id
+                    else:
+                        run_ctx = RunContext.create(
+                            workspace=ws,
+                            project_id=project_id,
+                            model_name=llm_profile.config_for_role("write_director").model,
+                            provider=llm_profile.config_for_role("write_director").provider,
+                            base_url=llm_profile.config_for_role("write_director").base_url,
+                        )
+                    run_dir = run_ctx.run_dir
+                    runner = WritingRunner(
+                        llm_profile=llm_profile,
+                        run_context=run_ctx,
+                        reporter=self.reporter,
+                        run_ledger_store=run_ledger_store,
+                        history_reader=history_reader,
+                        skills_runtime=skills_runtime,
+                    )
+                else:
+                    built = build_graph_runner(
+                        workspace=ws,
+                        llm_profile=llm_profile,
+                        reporter=self.reporter,
+                        run_control=self.run_control,
+                        project_id=project_id,
+                        run_dir=Path(resume_dir) if resume_dir else None,
+                        bind_run_control_id=True,
+                        stream_debug_console=stream_debug_console,
+                    )
+                    runner = built.runner
+                    run_ctx = built.run_context
+                    run_dir = run_ctx.run_dir
                 with self._lock:
                     self.run_status = "running"
                     self.run_info = {
@@ -399,11 +422,41 @@ class WebSession:
                     }
                     self.selected_run_dir = run_dir
                     self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
-                result = runner.run(
-                    prompt,
-                    lane=effective_lane,
-                    proposal_review=proposal_review,
-                )
+                if self.reporter:
+                    self.reporter.set_run_dir(run_dir)
+                self._write_active_runs(effective_lane, run_dir, workspace=ws)
+                if effective_lane == "research":
+                    if is_resume:
+                        result = runner.resume(resume_feedback=resume_feedback)
+                    else:
+                        research_request = ResearchRequest(
+                            question=prompt,
+                            seed_hypotheses=[line.strip() for line in str(seed_hypotheses or "").splitlines() if line.strip()],
+                            exploration_policy=str(exploration_policy or "anchored").strip() or "anchored",
+                            writing_mode=str(writing_mode or "none").strip() or "none",
+                            target_section=(str(target_section or "").strip() or None),
+                            max_cycles=int(max_cycles),
+                            max_literature_queries=int(max_literature_queries),
+                            max_fast_runs=int(max_fast_runs),
+                            max_standard_runs=int(max_standard_runs),
+                            allow_deep_report=bool(allow_deep_report),
+                        )
+                        result = runner.run(research_request)
+                elif effective_lane == "writing":
+                    if is_resume:
+                        result = runner.resume()
+                    else:
+                        writing_request = WritingRequest(
+                            request=prompt,
+                            source_campaign_id=(str(source_campaign_id or "").strip() or None),
+                        )
+                        result = runner.run(writing_request)
+                else:
+                    result = runner.run(
+                        prompt,
+                        lane=effective_lane,
+                        proposal_review=proposal_review,
+                    )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
                     if run_status == "interrupted_paused":

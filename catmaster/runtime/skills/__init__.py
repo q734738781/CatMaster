@@ -3,6 +3,10 @@ from .context_guides import (
     render_director_skill_guide,
     render_fast_director_skill_guide,
     render_proposal_skill_guide,
+    render_research_lead_skill_guide,
+    render_section_writer_skill_guide,
+    render_write_director_skill_guide,
+    render_write_reviewer_skill_guide,
 )
 from .middleware import CatMasterSkillsMiddleware
 from .models import SkillCatalogEntry, SkillMeta
@@ -20,5 +24,9 @@ __all__ = [
     "render_proposal_skill_guide",
     "render_director_skill_guide",
     "render_fast_director_skill_guide",
+    "render_research_lead_skill_guide",
+    "render_write_director_skill_guide",
+    "render_section_writer_skill_guide",
+    "render_write_reviewer_skill_guide",
     "CatMasterSkillsMiddleware",
 ]

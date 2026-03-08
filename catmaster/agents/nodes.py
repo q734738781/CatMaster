@@ -176,7 +176,6 @@ def _build_task_context(
         policy=ContextPackPolicy(
             memory_head_lines=None,
             max_memory_chars=None,
-            inject_goal_for_worker=False,
         ),
     )
 
@@ -503,6 +502,7 @@ async def run_director(
     memory_store: MemoryStore,
     execution_context_guide: str,
     max_steps: int = 30,
+    allow_memory_patch: bool = True,
 ) -> Command:
     """Invoke the director ReAct agent and route via Command."""
     ctx_text = _build_director_context(state, memory_store, execution_context_guide)
@@ -623,7 +623,7 @@ async def run_director(
     update["pending_memory_updates"] = updates
     if final_answer_md:
         update["summary"] = final_answer_md
-    if updates:
+    if updates and allow_memory_patch:
         return Command(goto="run_memory_patch", update=update)
     return Command(goto="summarize", update=update)
 
@@ -635,6 +635,7 @@ async def run_fast_director(
     memory_store: MemoryStore,
     execution_context_guide: str,
     max_steps: int = 30,
+    allow_memory_patch: bool = True,
 ) -> Command:
     """Invoke the fast-lane director agent and route via Command."""
     ctx_text = _build_fast_director_context(state, memory_store, execution_context_guide)
@@ -734,7 +735,7 @@ async def run_fast_director(
     update["pending_memory_updates"] = updates
     if final_answer_md:
         update["summary"] = final_answer_md
-    if updates:
+    if updates and allow_memory_patch:
         return Command(goto="run_memory_patch", update=update)
     return Command(goto="summarize", update=update)
 
@@ -1016,7 +1017,6 @@ def _task_state_update_from_result(
 
 _MEMORY_TOPICS_ALLOWED: tuple[str, ...] = (
     "MEMORY/MEMORY.md",
-    "MEMORY/topics/GOAL.md",
     "MEMORY/topics/FACTS.md",
     "MEMORY/topics/FILES.md",
     "MEMORY/topics/CONSTRAINTS.md",
