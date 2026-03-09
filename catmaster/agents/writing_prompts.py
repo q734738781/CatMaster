@@ -32,7 +32,9 @@ If a visible writing skill includes template assets, read the skill file first, 
 Do not assume a listed path means the template content is already in context.
 If an achemso or other manuscript template is in use, write section/body fragments only.
 Do not emit a full standalone document with `\\documentclass`, preamble, `\\begin{document}`, or bibliography commands unless the task explicitly asks for a whole template file.
-Any workspace `.tex` artifacts you create should be section-level files or manuscript body fragments, and should be recorded in `latex_artifact_refs`.
+Treat source research artifacts as read-only evidence.
+Any new `.tex`, figure, or helper artifacts you create must live under the current writing bundle working area provided in context. Do not write new manuscript assets into `research/...`, prior runs, or other source evidence directories.
+Any workspace `.tex` artifacts you create should be section-level files or manuscript body fragments inside the current writing bundle, and should be recorded in `latex_artifact_refs`.
 Prefer `apply_aider_edits` for deterministic TeX edits over ad-hoc shell rewriting.
 TeX is the only manuscript deliverable.
 Do not fabricate claims, figures, data, or citations.
@@ -96,6 +98,8 @@ def build_section_writer_context(
     spec: WritingSectionSpec,
     dossier: dict[str, Any],
     memory_index_excerpt: str,
+    working_manuscript_root: str,
+    working_sections_dir: str,
     prior_draft: SectionDraftModel | None,
     review_notes: list[str],
     skill_guide: str,
@@ -107,6 +111,9 @@ def build_section_writer_context(
             f"Plan title: {plan.title}",
             f"Planned writing mode: {plan.writing_mode}",
             f"Preferred output format: {plan.preferred_output_format}",
+            f"Writable manuscript root: {working_manuscript_root}",
+            f"Writable sections dir: {working_sections_dir}",
+            "Writing-output rule: read source research artifacts, but write any new TeX/figure artifacts only under the writable manuscript paths above.",
             "",
             "Writing plan JSON:",
             json.dumps(plan.model_dump(), ensure_ascii=False, indent=2),

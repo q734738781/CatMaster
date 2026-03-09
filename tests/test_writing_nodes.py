@@ -180,7 +180,9 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
     latex_text = latex_manuscript.read_text(encoding="utf-8")
     assert "\\documentclass[journal=jacsat,manuscript=article]{achemso}" in latex_text
     assert "\\author{CatMaster}" in latex_text
+    assert "\\title{CO adsorption on Fe(110)}" in latex_text
     assert "\\bibliography{references}" in latex_text
+    assert "\\begin{abstract}" not in latex_text
     assert "% polished" in latex_text
     updated_source_board = source_store.load_board()
     assert updated_source_board is not None
@@ -213,6 +215,8 @@ def test_section_writer_context_carries_plan_level_tex_signal() -> None:
         spec=spec,
         dossier={"question": "What controls CO adsorption on Fe(110)?"},
         memory_index_excerpt="# MEMORY (AUTOLOADED INDEX)\n\n## Top Constraints\n1. Keep claims evidence-backed.",
+        working_manuscript_root="writing/write_001/manuscript",
+        working_sections_dir="writing/write_001/manuscript/sections",
         prior_draft=None,
         review_notes=[],
         skill_guide="template-aware skill available",
@@ -221,6 +225,8 @@ def test_section_writer_context_carries_plan_level_tex_signal() -> None:
     assert '"preferred_output_format": "tex"' in context
     assert "Project memory index:" in context
     assert "Keep claims evidence-backed." in context
+    assert "Writable manuscript root: writing/write_001/manuscript" in context
+    assert "Writable sections dir: writing/write_001/manuscript/sections" in context
 
 
 @pytest.mark.anyio
@@ -353,8 +359,13 @@ async def test_assemble_manuscript_always_writes_master_tex_and_copies_figures(
     assert copied_section.exists()
     text = latex_manuscript.read_text(encoding="utf-8")
     assert "\\documentclass[journal=jacsat,manuscript=article]{achemso}" in text
+    assert "\\title{TeX assembly}" in text
     assert "\\input{sections/rd1_results_and_discussion.tex}" in text
-    assert "\\section{Results and Discussion}" in copied_section.read_text(encoding="utf-8")
+    assert "\\begin{abstract}" not in text
+    copied_section_text = copied_section.read_text(encoding="utf-8")
+    assert "\\section{Results and Discussion}" in copied_section_text
+    assert "\\includegraphics{FIG-demo.png}" in copied_section_text
+    assert "research/camp_tex/manuscript/FIG-demo.png" not in copied_section_text
     assert "% polished" in text
     bundle = store.load_bundle()
     assert bundle is not None

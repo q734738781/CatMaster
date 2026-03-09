@@ -22,7 +22,7 @@ def test_writing_store_round_trip(tmp_path: Path) -> None:
             "source_campaign_id": "camp_001",
         }
     )
-    assert req_path == "writing_runs/write_001/writing_request.json"
+    assert req_path == "writing/write_001/state/writing_request.json"
 
     board = WritingBoard(
         run_id="write_001",
@@ -31,7 +31,7 @@ def test_writing_store_round_trip(tmp_path: Path) -> None:
         title="CO adsorption on Fe(110)",
     )
     board_path = store.save_board(board)
-    assert board_path == "writing_runs/write_001/board.json"
+    assert board_path == "writing/write_001/state/board.json"
     assert store.load_board() is not None
 
     plan = WritingPlanModel(
@@ -46,7 +46,7 @@ def test_writing_store_round_trip(tmp_path: Path) -> None:
             )
         ],
     )
-    assert store.persist_plan(plan) == "writing_runs/write_001/writing_plan.json"
+    assert store.persist_plan(plan) == "writing/write_001/state/writing_plan.json"
     assert store.load_plan() is not None
 
     draft = SectionDraftModel(
@@ -55,11 +55,11 @@ def test_writing_store_round_trip(tmp_path: Path) -> None:
         status="drafted",
         section_tex="\\section{Results and Discussion}\nBridge adsorption remained preferred.",
     )
-    assert store.persist_section_draft(draft) == "writing_runs/write_001/sections/sec_results.json"
+    assert store.persist_section_draft(draft) == "writing/write_001/state/sections/sec_results.json"
     assert len(store.load_section_drafts()) == 1
 
     review = SectionReviewModel(section_id="sec_results", status="approved")
-    assert store.persist_section_review(review) == "writing_runs/write_001/reviews/sec_results.json"
+    assert store.persist_section_review(review) == "writing/write_001/state/reviews/sec_results.json"
     assert len(store.load_section_reviews()) == 1
 
     manuscript_path = store.write_manuscript("MANUSCRIPT.tex", "\\section{Test}\n")
@@ -72,5 +72,5 @@ def test_writing_store_round_trip(tmp_path: Path) -> None:
         final_manuscript_path=manuscript_path,
         final_latex_path="writing/write_001/manuscript/MANUSCRIPT.tex",
     )
-    assert store.persist_bundle(bundle) == "writing_runs/write_001/manuscript_bundle.json"
+    assert store.persist_bundle(bundle) == "writing/write_001/state/manuscript_bundle.json"
     assert store.load_bundle() is not None
