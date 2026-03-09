@@ -29,12 +29,14 @@ from catmaster.tools.analysis.polish_academic_prose import polish_academic_prose
 from .writing_prompts import (
     SECTION_WRITER_SYSTEM_PROMPT,
     WRITE_DIRECTOR_SYSTEM_PROMPT,
+    WRITE_FINALIZER_SYSTEM_PROMPT,
     WRITE_REVIEWER_SYSTEM_PROMPT,
     build_section_writer_context,
+    build_write_finalizer_context,
     build_write_director_context,
     build_write_reviewer_context,
 )
-from .writing_schemas import SectionDraftOutput, SectionReviewOutput, WritingPlanOutput, WritingRequest
+from .writing_schemas import SectionDraftOutput, SectionReviewOutput, WritingFinalizeOutput, WritingPlanOutput, WritingRequest
 
 
 def _load_memory_index_excerpt(*, writing_store) -> str:
@@ -81,8 +83,17 @@ def _coerce_draft(raw: Any) -> SectionDraftModel:
     if isinstance(raw, SectionDraftModel):
         return raw
     if hasattr(raw, "model_dump"):
-        return SectionDraftModel.model_validate(raw.model_dump())
-    return SectionDraftModel.model_validate(raw)
+        draft = SectionDraftModel.model_validate(raw.model_dump())
+    else:
+        draft = SectionDraftModel.model_validate(raw)
+    planned = [str(item).strip() for item in draft.planned_figure_ids if str(item).strip()]
+    realized = [str(item).strip() for item in draft.realized_figure_refs if str(item).strip()]
+    legacy = [str(item).strip() for item in draft.figure_refs if str(item).strip()]
+    if not planned and legacy:
+        planned = [item for item in legacy if "/" not in item and "." not in Path(item).name]
+    if not realized and legacy:
+        realized = [item for item in legacy if "/" in item or "." in Path(item).name]
+    return draft.model_copy(update={"planned_figure_ids": planned, "realized_figure_refs": realized})
 
 
 async def init_writing_node(state: dict[str, Any], *, writing_store, source_store) -> Command:
@@ -170,8 +181,9 @@ async def write_section_node(state: dict[str, Any], *, writing_store, source_sto
         spec=spec,
         dossier=dossier_json,
         memory_index_excerpt=memory_index_excerpt,
-        working_manuscript_root=_files_rel(writing_store=writing_store, path=writing_store.files_root / "manuscript"),
-        working_sections_dir=_files_rel(writing_store=writing_store, path=writing_store.files_root / "manuscript" / "sections"),
+        working_manuscript_root=_files_rel(writing_store=writing_store, path=writing_store.files_root),
+        working_sections_dir=_files_rel(writing_store=writing_store, path=writing_store.manuscript_sections_dir),
+        working_figures_dir=_files_rel(writing_store=writing_store, path=writing_store.manuscript_figures_dir),
         prior_draft=prior_draft,
         review_notes=review_notes,
         skill_guide=skill_guide,
@@ -191,6 +203,8 @@ async def write_section_node(state: dict[str, Any], *, writing_store, source_sto
         draft = SectionDraftOutput.model_validate(raw)
     if draft.section_id != spec.section_id:
         draft = draft.model_copy(update={"section_id": spec.section_id, "heading": spec.heading})
+    if not list(draft.planned_figure_ids):
+        draft = draft.model_copy(update={"planned_figure_ids": list(spec.required_figures)})
     writing_store.persist_section_draft(draft)
     board = board.model_copy(update={"current_section_index": next_index, "status": "reviewing"})
     writing_store.save_board(board)
@@ -245,7 +259,7 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
     return Command(goto="write_section", update={"board": board, "plan": plan, "latest_review": review})
 
 
-async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, source_store, writing_config) -> dict[str, Any]:
+async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, source_store, writing_config) -> Command:
     request = WritingRequest.model_validate(state["request"])
     board = WritingBoard.model_validate(state["board"])
     plan = state.get("plan") or writing_store.load_plan()
@@ -271,13 +285,18 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
                     _materialize_section_tex(
                         writing_store=writing_store,
                         spec=spec,
+                        draft=draft,
                         section_tex=section_tex,
                     )
                 )
             bibliography.extend(draft.citations)
-            for ref in draft.figure_refs:
+            for ref in draft.realized_figure_refs:
                 copied_ref = _materialize_figure_ref(writing_store=writing_store, ref=ref)
-                record: dict[str, Any] = {"section_id": draft.section_id, "ref": ref}
+                record: dict[str, Any] = {
+                    "section_id": draft.section_id,
+                    "realized_ref": ref,
+                    "planned_figure_ids": list(draft.planned_figure_ids),
+                }
                 if copied_ref is not None:
                     record["copied_ref"] = copied_ref
                 figure_manifest.append(record)
@@ -316,25 +335,8 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
         final_latex_path=latex_path,
     )
     bundle_path = writing_store.persist_bundle(bundle)
-    board = board.model_copy(update={"status": "done", "latest_manuscript_ref": preferred_path, "latest_bundle_ref": bundle_path})
+    board = board.model_copy(update={"status": "finalizing", "latest_manuscript_ref": preferred_path, "latest_bundle_ref": bundle_path})
     writing_store.save_board(board)
-    try:
-        source_board = source_store.load_board() if source_store is not None else None
-        if source_board is not None:
-            source_board.latest_writer_ref = preferred_path
-            source_board.action_refs = list(source_board.action_refs) + [
-                ResearchActionRef(
-                    action_id=f"writer_{len(source_board.action_refs) + 1:03d}",
-                    kind="writer",
-                    status="done",
-                    summary=plan.title,
-                    ref_path=preferred_path,
-                    run_id=None,
-                )
-            ]
-            source_store.save_board(source_board)
-    except Exception:
-        pass
     summary = "\n".join(
         [
             f"Writing source campaign: {request.source_campaign_id or '(none)'}",
@@ -345,12 +347,92 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
             f"Bundle: {bundle_path}",
         ]
     ).strip()
-    return {
-        "board": board,
-        "status": "done",
-        "summary": summary,
-        "final_answer": summary,
-}
+    return Command(
+        goto="finalize_writing",
+        update={
+            "board": board,
+            "status": "finalizing",
+            "summary": summary,
+            "final_answer": summary,
+            "bundle": bundle,
+        },
+    )
+
+
+async def finalize_writing_node(
+    state: dict[str, Any],
+    *,
+    writing_store,
+    source_store,
+    write_finalizer_agent,
+    skills_runtime: CatMasterSkillsRuntime | None,
+) -> Command:
+    request = WritingRequest.model_validate(state["request"])
+    board = WritingBoard.model_validate(state["board"])
+    plan = state.get("plan") or writing_store.load_plan()
+    plan = _coerce_plan(plan)
+    bundle = state.get("bundle") or writing_store.load_bundle()
+    if bundle is None:
+        raise ValueError("missing manuscript bundle for finalization")
+    bundle_json = bundle.model_dump() if hasattr(bundle, "model_dump") else bundle
+    skill_guide = render_write_director_skill_guide(
+        skills_runtime.visible_skills("write_director", "writing") if skills_runtime is not None else []
+    )
+    context = build_write_finalizer_context(
+        request=request.model_dump(),
+        plan=plan,
+        bundle=bundle_json,
+        skill_guide=skill_guide,
+    )
+    result = await _invoke_agent_with_step_budget(
+        agent=write_finalizer_agent,
+        messages=[SystemMessage(content=WRITE_FINALIZER_SYSTEM_PROMPT), HumanMessage(content=context)],
+        max_steps=12,
+        role="write_director",
+    )
+    raw = result.get("structured_response")
+    if isinstance(raw, WritingFinalizeOutput):
+        finalized = raw
+    elif hasattr(raw, "model_dump"):
+        finalized = WritingFinalizeOutput.model_validate(raw.model_dump())
+    else:
+        finalized = WritingFinalizeOutput.model_validate(raw)
+    final_path = str(finalized.final_latex_path or getattr(bundle, "final_latex_path", None) or bundle.final_manuscript_path).strip()
+    board = board.model_copy(update={"status": "done", "latest_manuscript_ref": final_path or board.latest_manuscript_ref})
+    writing_store.save_board(board)
+    try:
+        source_board = source_store.load_board() if source_store is not None else None
+        if source_board is not None:
+            source_board.latest_writer_ref = final_path or source_board.latest_writer_ref
+            source_board.action_refs = list(source_board.action_refs) + [
+                ResearchActionRef(
+                    action_id=f"writer_{len(source_board.action_refs) + 1:03d}",
+                    kind="writer",
+                    status="done",
+                    summary=plan.title,
+                    ref_path=final_path or bundle.final_manuscript_path,
+                    run_id=None,
+                )
+            ]
+            source_store.save_board(source_board)
+    except Exception:
+        pass
+    summary = "\n".join(
+        [
+            str(state.get("summary") or "").strip(),
+            str(finalized.summary or "").strip(),
+            *[f"- {item}" for item in finalized.compile_notes if str(item).strip()],
+        ]
+    ).strip()
+    return Command(
+        goto="summarize_writing",
+        update={
+            "board": board,
+            "status": "done",
+            "summary": summary,
+            "final_answer": summary,
+        },
+    )
 def _resolve_section_tex(*, writing_store, draft) -> str | None:
     explicit = _read_first_explicit_latex_artifact(
         writing_store=writing_store,
@@ -362,12 +444,16 @@ def _resolve_section_tex(*, writing_store, draft) -> str | None:
     return inline or None
 
 
-def _materialize_section_tex(*, writing_store, spec, section_tex: str) -> str:
-    manuscript_sections_dir = writing_store.files_root / "manuscript" / "sections"
+def _materialize_section_tex(*, writing_store, spec, draft, section_tex: str) -> str:
+    manuscript_sections_dir = writing_store.manuscript_sections_dir
     manuscript_sections_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{_slug(spec.section_id, fallback='section')}_{_slug(spec.heading, fallback='body')}.tex"
     path = manuscript_sections_dir / filename
-    rewritten = _rewrite_section_graphics(writing_store=writing_store, section_tex=str(section_tex or "").strip())
+    rewritten = _rewrite_section_graphics(
+        writing_store=writing_store,
+        section_tex=str(section_tex or "").strip(),
+        realized_figure_refs=[str(item) for item in getattr(draft, "realized_figure_refs", []) if str(item).strip()],
+    )
     path.write_text(rewritten + "\n", encoding="utf-8")
     return f"sections/{filename}"
 
@@ -388,7 +474,7 @@ def _materialize_outline_sections(*, writing_store, plan) -> list[str]:
 
 def _write_achemso_manuscript(*, writing_store, plan, section_inputs: list[str], author_name: str) -> str:
     bib_template_path = _achemso_asset_path("achemso-demo.bib")
-    manuscript_dir = writing_store.files_root / "manuscript"
+    manuscript_dir = writing_store.files_root
     manuscript_dir.mkdir(parents=True, exist_ok=True)
     bibliography_path = manuscript_dir / "references.bib"
     shutil.copy2(bib_template_path, bibliography_path)
@@ -450,14 +536,18 @@ def _read_first_explicit_latex_artifact(*, writing_store, refs: list[str]) -> st
     return None
 
 
-def _rewrite_section_graphics(*, writing_store, section_tex: str) -> str:
-    manuscript_dir = writing_store.files_root / "manuscript"
+def _rewrite_section_graphics(*, writing_store, section_tex: str, realized_figure_refs: list[str]) -> str:
+    manuscript_dir = writing_store.files_root
     manuscript_dir.mkdir(parents=True, exist_ok=True)
 
     def _replace(match: re.Match[str]) -> str:
         options = match.group(1) or ""
         raw_ref = str(match.group(2) or "").strip()
-        copied_name = _copy_workspace_graphic_for_manuscript(writing_store=writing_store, ref=raw_ref)
+        copied_name = _copy_workspace_graphic_for_manuscript(
+            writing_store=writing_store,
+            ref=raw_ref,
+            fallback_refs=realized_figure_refs,
+        )
         target_ref = copied_name or raw_ref
         if options:
             return f"\\includegraphics[{options}]{{{target_ref}}}"
@@ -466,23 +556,40 @@ def _rewrite_section_graphics(*, writing_store, section_tex: str) -> str:
     return re.sub(r"\\includegraphics(?:\[([^\]]*)\])?\{([^}]+)\}", _replace, section_tex)
 
 
-def _copy_workspace_graphic_for_manuscript(*, writing_store, ref: str) -> str | None:
+def _copy_workspace_graphic_for_manuscript(*, writing_store, ref: str, fallback_refs: list[str] | None = None) -> str | None:
     cleaned = str(ref or "").strip()
     if not cleaned:
         return None
     source = Path(cleaned)
     if not source.is_absolute():
-        source = writing_store.workspace / "files" / cleaned
+        candidates = [
+            writing_store.workspace / "files" / cleaned,
+            writing_store.files_root / cleaned,
+        ]
+        if cleaned.startswith("manuscript/"):
+            candidates.append(writing_store.workspace / "files" / cleaned)
+        else:
+            candidates.append(writing_store.workspace / "files" / "manuscript" / cleaned)
+        source = next((path for path in candidates if path.exists()), None)
+        if source is None and fallback_refs:
+            raw_name = Path(cleaned).name
+            for fallback in fallback_refs:
+                candidate = writing_store.workspace / "files" / str(fallback).strip()
+                if candidate.exists() and candidate.is_file() and candidate.name == raw_name:
+                    source = candidate
+                    break
+        if source is None:
+            source = candidates[0]
     if not source.exists() or not source.is_file():
         return None
     suffix = source.suffix.lower()
     if suffix not in {".png", ".jpg", ".jpeg", ".pdf", ".eps"}:
         return None
-    dest = writing_store.files_root / "manuscript" / source.name
+    dest = writing_store.manuscript_figures_dir / source.name
     dest.parent.mkdir(parents=True, exist_ok=True)
     if source.resolve() != dest.resolve():
         shutil.copy2(source, dest)
-    return source.name
+    return f"figures/{source.name}"
 
 
 def _materialize_figure_ref(*, writing_store, ref: str) -> str | None:
@@ -492,7 +599,8 @@ def _materialize_figure_ref(*, writing_store, ref: str) -> str | None:
     copied_name = _copy_workspace_graphic_for_manuscript(writing_store=writing_store, ref=cleaned)
     if copied_name is None:
         return None
-    dest = writing_store.files_root / "manuscript" / copied_name
+    dest_name = Path(copied_name).name
+    dest = writing_store.manuscript_figures_dir / dest_name
     return str(dest.resolve().relative_to((writing_store.workspace / "files").resolve())).replace("\\", "/")
 
 
@@ -504,6 +612,7 @@ def summarize_writing_node(state: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "assemble_manuscript_node",
+    "finalize_writing_node",
     "init_writing_node",
     "plan_writing_node",
     "review_section_node",

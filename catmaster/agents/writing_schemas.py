@@ -26,7 +26,16 @@ class SectionReviewOutput(SectionReviewModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class WritingFinalizeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(...)
+    compile_notes: list[str] = Field(default_factory=list)
+    final_latex_path: str | None = Field(None)
+
+
 __all__ = [
+    "WritingFinalizeOutput",
     "SectionDraftOutput",
     "SectionReviewOutput",
     "WritingPlanOutput",

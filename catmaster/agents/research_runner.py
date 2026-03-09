@@ -31,6 +31,14 @@ from .writing_schemas import WritingRequest
 logger = logging.getLogger(__name__)
 
 
+RESEARCH_TO_WRITER_HOUSE_PROMPT = """Write a manuscript for current results presented workspace in TeX, using only the existing workspace evidence, and available research artifacts.
+Do not perform new expensive computations.
+Do not write this as an experiment log, execution trace, or lab report.
+Write it as a compact journal-style scientific sections with Abstract, Introduction, Results and Discussion and Methods.
+Prefer ACS-like manuscript tone when appropriate.
+You can generate lightweight schematic figures and using existing data to create new result figures to enhance the manuscript."""
+
+
 class ResearchRunner:
     def __init__(
         self,
@@ -206,9 +214,8 @@ class ResearchRunner:
             skills_runtime=self.skills_runtime,
         )
         writing_prompt_lines = [
-            "Write from the current research campaign evidence already available in the workspace, memory, prior runs, and persisted research packs.",
-            "Do not launch new expensive computations.",
-            f"Primary writing request: {request_model.question}",
+            RESEARCH_TO_WRITER_HOUSE_PROMPT,
+            f"Research question: {request_model.question}",
         ]
         if request_model.writing_mode != "none":
             writing_prompt_lines.append(f"Preferred writing mode: {request_model.writing_mode}.")

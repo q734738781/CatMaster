@@ -6,6 +6,7 @@ import pytest
 
 from catmaster.agents.writing_nodes import (
     assemble_manuscript_node,
+    finalize_writing_node,
     init_writing_node,
     plan_writing_node,
     review_section_node,
@@ -123,6 +124,8 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
                 "status": "drafted",
                 "section_tex": "\\section{Results and Discussion}\nBridge adsorption remained preferred in the bounded calculations.",
                 "citations": ["Fe(110) study (2024)"],
+                "planned_figure_ids": [],
+                "realized_figure_refs": [],
             }
         ),
         skills_runtime=None,
@@ -164,7 +167,7 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
     )
     assert advance_cmd.goto == "assemble_manuscript"
 
-    result = await assemble_manuscript_node(
+    assemble_cmd = await assemble_manuscript_node(
         {
             "request": request.model_dump(),
             "board": advance_cmd.update["board"],
@@ -174,8 +177,28 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
         source_store=source_store,
         writing_config=WritingRuntimeConfig(author_name="CatMaster"),
     )
-    assert result["status"] == "done"
-    latex_manuscript = tmp_path / "files" / "writing" / "write_001" / "manuscript" / "MANUSCRIPT.tex"
+    assert assemble_cmd.goto == "finalize_writing"
+    finalize_cmd = await finalize_writing_node(
+        {
+            "request": request.model_dump(),
+            "board": assemble_cmd.update["board"],
+            "plan": advance_cmd.update["plan"],
+            "bundle": assemble_cmd.update["bundle"],
+            "summary": assemble_cmd.update["summary"],
+        },
+        writing_store=store,
+        source_store=source_store,
+        write_finalizer_agent=_DummyAgent(
+            {
+                "summary": "Compile/fix pass completed.",
+                "compile_notes": ["compiled in static-check mode"],
+                "final_latex_path": "manuscript/MANUSCRIPT.tex",
+            }
+        ),
+        skills_runtime=None,
+    )
+    assert finalize_cmd.goto == "summarize_writing"
+    latex_manuscript = tmp_path / "files" / "manuscript" / "MANUSCRIPT.tex"
     assert latex_manuscript.exists()
     latex_text = latex_manuscript.read_text(encoding="utf-8")
     assert "\\documentclass[journal=jacsat,manuscript=article]{achemso}" in latex_text
@@ -186,7 +209,7 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
     assert "% polished" in latex_text
     updated_source_board = source_store.load_board()
     assert updated_source_board is not None
-    assert updated_source_board.latest_writer_ref == "writing/write_001/manuscript/MANUSCRIPT.tex"
+    assert updated_source_board.latest_writer_ref == "manuscript/MANUSCRIPT.tex"
     assert updated_source_board.action_refs[-1].kind == "writer"
 
 
@@ -196,6 +219,7 @@ def test_section_writer_context_carries_plan_level_tex_signal() -> None:
         writing_mode="section_draft",
         target_audience="internal",
         preferred_output_format="tex",
+        figure_requests=[],
         section_specs=[
             WritingSectionSpec(
                 section_id="results_discussion",
@@ -215,18 +239,39 @@ def test_section_writer_context_carries_plan_level_tex_signal() -> None:
         spec=spec,
         dossier={"question": "What controls CO adsorption on Fe(110)?"},
         memory_index_excerpt="# MEMORY (AUTOLOADED INDEX)\n\n## Top Constraints\n1. Keep claims evidence-backed.",
-        working_manuscript_root="writing/write_001/manuscript",
-        working_sections_dir="writing/write_001/manuscript/sections",
+        working_manuscript_root="manuscript",
+        working_sections_dir="manuscript/sections",
+        working_figures_dir="manuscript/figures",
         prior_draft=None,
         review_notes=[],
         skill_guide="template-aware skill available",
     )
     assert "Preferred output format: tex" in context
+    assert "Plan overview JSON:" in context
     assert '"preferred_output_format": "tex"' in context
     assert "Project memory index:" in context
     assert "Keep claims evidence-backed." in context
-    assert "Writable manuscript root: writing/write_001/manuscript" in context
-    assert "Writable sections dir: writing/write_001/manuscript/sections" in context
+    assert "Current manuscript output root: manuscript" in context
+    assert "Current manuscript sections output dir: manuscript/sections" in context
+    assert "Current manuscript figures output dir: manuscript/figures" in context
+    assert "Relevant figure requests JSON:" in context
+    assert "Writing plan JSON:" not in context
+
+
+def test_coerce_draft_splits_legacy_figure_refs() -> None:
+    from catmaster.agents.writing_nodes import _coerce_draft
+
+    draft = _coerce_draft(
+        {
+            "section_id": "intro",
+            "heading": "Introduction",
+            "status": "drafted",
+            "section_tex": "\\section{Introduction}\n",
+            "figure_refs": ["fig_workflow_and_models", "manuscript/figures/fig_workflow_and_models.png"],
+        }
+    )
+    assert draft.planned_figure_ids == ["fig_workflow_and_models"]
+    assert draft.realized_figure_refs == ["manuscript/figures/fig_workflow_and_models.png"]
 
 
 @pytest.mark.anyio
@@ -324,7 +369,8 @@ async def test_assemble_manuscript_always_writes_master_tex_and_copies_figures(
             heading="Results and Discussion",
             status="drafted",
             latex_artifact_refs=["research/camp_tex/manuscript/RD-1.tex"],
-            figure_refs=["research/camp_tex/manuscript/FIG-demo.png"],
+            planned_figure_ids=["fig_demo"],
+            realized_figure_refs=["research/camp_tex/manuscript/FIG-demo.png"],
         )
     )
     store.persist_section_review(
@@ -337,7 +383,7 @@ async def test_assemble_manuscript_always_writes_master_tex_and_copies_figures(
         )
     )
 
-    result = await assemble_manuscript_node(
+    assemble_cmd = await assemble_manuscript_node(
         {
             "request": request.model_dump(),
             "board": board_model,
@@ -347,12 +393,31 @@ async def test_assemble_manuscript_always_writes_master_tex_and_copies_figures(
         source_store=source_store,
         writing_config=WritingRuntimeConfig(author_name="CatMaster"),
     )
-
-    assert result["status"] == "done"
-    latex_manuscript = tmp_path / "files" / "writing" / "write_tex" / "manuscript" / "MANUSCRIPT.tex"
-    copied_figure = tmp_path / "files" / "writing" / "write_tex" / "manuscript" / "FIG-demo.png"
-    copied_bib = tmp_path / "files" / "writing" / "write_tex" / "manuscript" / "references.bib"
-    copied_section = tmp_path / "files" / "writing" / "write_tex" / "manuscript" / "sections" / "rd1_results_and_discussion.tex"
+    assert assemble_cmd.goto == "finalize_writing"
+    finalize_cmd = await finalize_writing_node(
+        {
+            "request": request.model_dump(),
+            "board": assemble_cmd.update["board"],
+            "plan": plan,
+            "bundle": assemble_cmd.update["bundle"],
+            "summary": assemble_cmd.update["summary"],
+        },
+        writing_store=store,
+        source_store=source_store,
+        write_finalizer_agent=_DummyAgent(
+            {
+                "summary": "Compile/fix pass completed.",
+                "compile_notes": ["rewrote relative graphics refs"],
+                "final_latex_path": "manuscript/MANUSCRIPT.tex",
+            }
+        ),
+        skills_runtime=None,
+    )
+    assert finalize_cmd.goto == "summarize_writing"
+    latex_manuscript = tmp_path / "files" / "manuscript" / "MANUSCRIPT.tex"
+    copied_figure = tmp_path / "files" / "manuscript" / "figures" / "FIG-demo.png"
+    copied_bib = tmp_path / "files" / "manuscript" / "references.bib"
+    copied_section = tmp_path / "files" / "manuscript" / "sections" / "rd1_results_and_discussion.tex"
     assert latex_manuscript.exists()
     assert copied_figure.exists()
     assert copied_bib.exists()
@@ -364,11 +429,12 @@ async def test_assemble_manuscript_always_writes_master_tex_and_copies_figures(
     assert "\\begin{abstract}" not in text
     copied_section_text = copied_section.read_text(encoding="utf-8")
     assert "\\section{Results and Discussion}" in copied_section_text
-    assert "\\includegraphics{FIG-demo.png}" in copied_section_text
+    assert "\\includegraphics{figures/FIG-demo.png}" in copied_section_text
     assert "research/camp_tex/manuscript/FIG-demo.png" not in copied_section_text
     assert "% polished" in text
     bundle = store.load_bundle()
     assert bundle is not None
-    assert bundle.final_latex_path == "writing/write_tex/manuscript/MANUSCRIPT.tex"
-    assert bundle.final_manuscript_path == "writing/write_tex/manuscript/MANUSCRIPT.tex"
-    assert any(item.get("copied_ref") == "writing/write_tex/manuscript/FIG-demo.png" for item in bundle.figure_manifest)
+    assert bundle.final_latex_path == "manuscript/MANUSCRIPT.tex"
+    assert bundle.final_manuscript_path == "manuscript/MANUSCRIPT.tex"
+    assert any(item.get("copied_ref") == "manuscript/figures/FIG-demo.png" for item in bundle.figure_manifest)
+    assert any(item.get("planned_figure_ids") == ["fig_demo"] for item in bundle.figure_manifest)

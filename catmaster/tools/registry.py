@@ -60,10 +60,12 @@ class ToolRegistry:
         from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, vasp_execute_batch
         from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, VaspExecuteBatchInput
         from catmaster.tools.analysis import (
+            agentic_compile_tex,
             analyze_images,
             generate_schematic_figure,
             polish_academic_prose,
             render_structure_views,
+            AgenticCompileTexInput,
             AnalyzeImagesInput,
             GenerateSchematicFigureInput,
             PolishAcademicProseInput,
@@ -116,6 +118,7 @@ class ToolRegistry:
         self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
         self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
         self.register_tool("generate_schematic_figure", generate_schematic_figure, GenerateSchematicFigureInput)
+        self.register_tool("agentic_compile_tex", agentic_compile_tex, AgenticCompileTexInput)
         self.register_tool("polish_academic_prose", polish_academic_prose, PolishAcademicProseInput)
         self.register_tool("run_literature_research", run_literature_research, RunLiteratureResearchInput)
         self.register_tool("bash_exec", bash_exec, BashExecInput)

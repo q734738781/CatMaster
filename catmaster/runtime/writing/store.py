@@ -14,7 +14,8 @@ class WritingStore:
         ensure_project_space_layout(workspace, create=True)
         self.workspace = Path(workspace).expanduser().resolve()
         self.run_id = str(run_id).strip()
-        self.files_root = workspace_root(self.workspace) / "writing" / self.run_id
+        self.files_root = workspace_root(self.workspace) / "manuscript"
+        self.archive_root = workspace_root(self.workspace) / "manuscript_archive"
         self.state_root = self.files_root / "state"
 
     @property
@@ -25,21 +26,36 @@ class WritingStore:
     def reviews_dir(self) -> Path:
         return self.state_root / "reviews"
 
+    @property
+    def manuscript_sections_dir(self) -> Path:
+        return self.files_root / "sections"
+
+    @property
+    def manuscript_figures_dir(self) -> Path:
+        return self.files_root / "figures"
+
     def ensure_exists(self) -> None:
         for path in (
             self.state_root,
             self.sections_dir,
             self.reviews_dir,
             self.files_root,
-            self.files_root / "manuscript",
+            self.manuscript_sections_dir,
+            self.manuscript_figures_dir,
+            self.archive_root,
         ):
             path.mkdir(parents=True, exist_ok=True)
-        for legacy in (self.files_root / "figures", self.files_root / "latex"):
-            if legacy.exists():
-                try:
-                    legacy.rmdir()
-                except OSError:
-                    pass
+
+    def prepare_new_run(self) -> None:
+        if self.files_root.exists():
+            has_content = any(self.files_root.iterdir())
+            if has_content:
+                self.archive_root.mkdir(parents=True, exist_ok=True)
+                archive_dir = self.archive_root / self.run_id
+                if archive_dir.exists():
+                    raise FileExistsError(f"writing archive target already exists: {archive_dir}")
+                self.files_root.rename(archive_dir)
+        self.ensure_exists()
 
     def write_request(self, payload: dict[str, Any]) -> str:
         self.ensure_exists()
@@ -108,7 +124,7 @@ class WritingStore:
 
     def write_manuscript(self, filename: str, content_md: str) -> str:
         self.ensure_exists()
-        path = self.files_root / "manuscript" / filename
+        path = self.files_root / filename
         path.write_text(str(content_md or ""), encoding="utf-8")
         return self._files_rel(path)
 

@@ -31,6 +31,8 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 
 ### 2. Place one structure intentionally
 - `place_adsorbate` accepts explicit labels like `ontop_0`; `site=auto` prefers the first available `ontop`, then `bridge`, then `hollow`.
+- XYZ/internal molecular geometry is preserved during placement; the tool does not automatically reorient the molecule.
+- The placement point is the adsorption-site coordinate returned by ASF at the requested `distance`; the molecule is translated so the center of mass of its lowest-z atom layer lands on that site coordinate.
 - The tool preserves slab selective dynamics and marks newly added adsorbate atoms as movable.
 - Returned metadata includes `ads_indices_added`, merged `ads_indices`, `metadata_rel`, and `ads_indices_json_rel`.
 

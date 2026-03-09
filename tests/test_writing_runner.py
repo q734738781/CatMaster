@@ -21,6 +21,7 @@ class _Registry:
         return [
             _Tool("bash_exec"),
             _Tool("apply_aider_edits"),
+            _Tool("agentic_compile_tex"),
             _Tool("polish_academic_prose"),
             _Tool("run_literature_research"),
         ]
@@ -89,6 +90,7 @@ async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
     assert result["status"] == "done"
     assert "bash_exec" in captured["write_director"]
     assert "mcp_director" in captured["write_director"]
+    assert "agentic_compile_tex" in captured["write_director"]
     assert "polish_academic_prose" in captured["write_director"]
     assert "apply_aider_edits" not in captured["write_director"]
     assert "polish_academic_prose" not in captured["section_writer"]

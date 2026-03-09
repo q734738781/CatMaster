@@ -7,6 +7,7 @@ from langgraph.graph import END, StateGraph
 
 from .writing_nodes import (
     assemble_manuscript_node,
+    finalize_writing_node,
     init_writing_node,
     plan_writing_node,
     review_section_node,
@@ -24,6 +25,7 @@ class WritingState(TypedDict, total=False):
     latest_review: Any
     section_drafts: list[Any]
     section_reviews: list[Any]
+    bundle: Any
     resume_mode: bool
     resume_goto: str
     status: str
@@ -35,6 +37,7 @@ def build_writing_graph(
     *,
     writing_store,
     write_director_agent,
+    write_finalizer_agent,
     section_writer_agent,
     write_reviewer_model,
     source_store,
@@ -79,6 +82,16 @@ def build_writing_graph(
             writing_store=writing_store,
             source_store=source_store,
             writing_config=writing_config,
+        ),
+    )
+    graph.add_node(
+        "finalize_writing",
+        partial(
+            finalize_writing_node,
+            writing_store=writing_store,
+            source_store=source_store,
+            write_finalizer_agent=write_finalizer_agent,
+            skills_runtime=skills_runtime,
         ),
     )
     graph.add_node("summarize_writing", summarize_writing_node)

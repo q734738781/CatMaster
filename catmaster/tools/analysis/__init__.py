@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from catmaster.tools.analysis.agentic_compile_tex import AgenticCompileTexInput, agentic_compile_tex
 from catmaster.tools.analysis.analyze_images import AnalyzeImagesInput, analyze_images
 from catmaster.tools.analysis.generate_schematic_figure import (
     GenerateSchematicFigureInput,
@@ -12,6 +13,8 @@ from catmaster.tools.analysis.polish_academic_prose import (
 from catmaster.tools.analysis.render_structure_views import RenderStructureViewsInput, render_structure_views
 
 __all__ = [
+    "AgenticCompileTexInput",
+    "agentic_compile_tex",
     "AnalyzeImagesInput",
     "analyze_images",
     "GenerateSchematicFigureInput",

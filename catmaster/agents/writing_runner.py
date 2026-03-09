@@ -34,8 +34,9 @@ from .writing_graph import build_writing_graph
 from .writing_prompts import (
     SECTION_WRITER_SYSTEM_PROMPT,
     WRITE_DIRECTOR_SYSTEM_PROMPT,
+    WRITE_FINALIZER_SYSTEM_PROMPT,
 )
-from .writing_schemas import SectionDraftOutput, WritingPlanOutput, WritingRequest
+from .writing_schemas import SectionDraftOutput, WritingFinalizeOutput, WritingPlanOutput, WritingRequest
 
 
 def _build_agent(*, model, tools, system_prompt: str, schema: type, role: str, skills_runtime, mounted_skill_tokens) -> Any:
@@ -77,7 +78,6 @@ class WritingRunner:
         self.history_reader = history_reader
         self.skills_runtime = skills_runtime
         self.store = WritingStore(workspace=run_context.workspace, run_id=run_context.run_id)
-        self.store.ensure_exists()
 
     def run(self, request: WritingRequest | dict[str, Any]) -> dict[str, Any]:
         try:
@@ -99,6 +99,7 @@ class WritingRunner:
 
     async def arun(self, request: WritingRequest | dict[str, Any]) -> dict[str, Any]:
         request_model = request if isinstance(request, WritingRequest) else WritingRequest.model_validate(request)
+        self.store.prepare_new_run()
         self._write_task_state(
             {
                 "schema_version": 1,
@@ -122,7 +123,15 @@ class WritingRunner:
         board = self.store.load_board()
         if request is None or board is None:
             raise ValueError("Writing resume failed: missing persisted request or board.")
-        resume_goto = "summarize_writing" if board.status == "done" else ("assemble_manuscript" if board.status == "reviewing" else "write_section" if board.status == "drafting" else "plan_writing")
+        resume_goto = (
+            "summarize_writing"
+            if board.status == "done"
+            else (
+                "finalize_writing"
+                if board.status == "finalizing"
+                else ("assemble_manuscript" if board.status == "reviewing" else "write_section" if board.status == "drafting" else "plan_writing")
+            )
+        )
         state = {
             "request": request,
             "board": board,
@@ -148,6 +157,7 @@ class WritingRunner:
                 "render_structure_views",
                 "analyze_images",
                 "generate_schematic_figure",
+                "agentic_compile_tex",
                 "polish_academic_prose",
                 "run_literature_research",
             ],
@@ -165,6 +175,7 @@ class WritingRunner:
             mounted_skill_tokens = tuple(mcp_fs_runtime.skill_mounts.keys()) if mcp_fs_runtime is not None else ()
             local_by_name = {str(getattr(tool, "name", "") or ""): tool for tool in local_tools}
             bash_tool = local_by_name.get("bash_exec")
+            compile_tool = local_by_name.get("agentic_compile_tex")
             polish_tool = local_by_name.get("polish_academic_prose")
             section_tools = [
                 _make_role_scoped_literature_tool(tool, role="section_writer")
@@ -181,6 +192,7 @@ class WritingRunner:
             )
             director_tools = [
                 *([bash_tool] if bash_tool is not None else []),
+                *([compile_tool] if compile_tool is not None else []),
                 *([polish_tool] if polish_tool is not None else []),
                 make_read_research_pack_tool(deps),
                 make_review_research_context_tool(deps),
@@ -198,6 +210,15 @@ class WritingRunner:
                 skills_runtime=self.skills_runtime,
                 mounted_skill_tokens=mounted_skill_tokens,
             )
+            write_finalizer_agent = _build_agent(
+                model=build_chat_model(self.llm_profile.config_for_role("write_director")),
+                tools=_dedupe_tools(director_tools),
+                system_prompt=WRITE_FINALIZER_SYSTEM_PROMPT,
+                schema=WritingFinalizeOutput,
+                role="write_director",
+                skills_runtime=self.skills_runtime,
+                mounted_skill_tokens=mounted_skill_tokens,
+            )
             section_writer_agent = _build_agent(
                 model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
                 tools=_dedupe_tools(section_tools),
@@ -210,6 +231,7 @@ class WritingRunner:
             graph = build_writing_graph(
                 writing_store=self.store,
                 write_director_agent=write_director_agent,
+                write_finalizer_agent=write_finalizer_agent,
                 section_writer_agent=section_writer_agent,
                 write_reviewer_model=build_chat_model(self.llm_profile.config_for_role("write_reviewer")),
                 source_store=source_store,
