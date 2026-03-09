@@ -18,7 +18,6 @@ _TOPIC_DIR = "topics"
 _EVENT_REL = Path("memory") / "events.jsonl"
 
 _DEFAULT_TOPICS: dict[str, str] = {
-    "GOAL.md": """# GOAL\n\n## TL;DR\n- Primary objective:\n- Definition of success:\n- Non-goals:\n\n## Objectives\n- (empty)\n\n## Success Criteria\n- (empty)\n\n## Non-goals\n- (empty)\n""",
     "FACTS.md": """# FACTS\n\n## TL;DR\n- Canonical definitions: (empty)\n- Verified facts: (empty)\n- Tentative hypotheses: (empty)\n\n## Canonical Definitions\n- (empty)\n\n## Verified Facts\n- (empty)\n\n## Tentative\n- (empty)\n\n## Decision Log\n- (empty)\n""",
     "FILES.md": """# FILES\n\n## TL;DR\n- Entry points: (empty)\n- Primary artifacts: (empty)\n\n## Index\n- (empty)\n""",
     "CONSTRAINTS.md": """# CONSTRAINTS\n\n## TL;DR\n- Hard constraints:\n  - (empty)\n\n## Hard Constraints\n- (empty)\n\n## Soft Preferences\n- (empty)\n""",
@@ -26,7 +25,7 @@ _DEFAULT_TOPICS: dict[str, str] = {
     "RUNBOOK.md": """# RUNBOOK\n\n## TL;DR\n- Standard operating procedure pointer file.\n\n## Checklist\n1. Confirm goal and success criteria from task packet.\n2. Read MEMORY.md first, then locate details via rg/sed.\n3. Persist large outputs to files and cite paths.\n4. Finish by returning one structured TaskOutput response.\n""",
 }
 
-_DEFAULT_INDEX = """# MEMORY (AUTOLOADED INDEX)\n\n## What this is\n- Autoloaded memory index for this project.\n- Keep this file concise and pointer-first.\n- Put details in MEMORY/topics/*.md.\n\n## Latest State\n- Current focus: (empty)\n- Current milestone: (empty)\n- Latest run artifact: (empty)\n- Next action: (empty)\n\n## Top Constraints\n1. (empty)\n\n## Active Open Questions\n1. (empty)\n\n## Pointers\n- Goal / principles: MEMORY/topics/GOAL.md\n- Facts / decisions: MEMORY/topics/FACTS.md\n- Files / artifacts: MEMORY/topics/FILES.md\n- Constraints: MEMORY/topics/CONSTRAINTS.md\n- Open questions: MEMORY/topics/QUESTIONS.md\n- Runbook: MEMORY/topics/RUNBOOK.md\n\n## Keyword Map\n- GOAL: objective, success criteria, scope, non-goals\n- FACTS: definition, verified, result, decision\n- FILES: path, artifact, dataset, output, script\n- CONSTRAINTS: must, cannot, policy, budget\n- QUESTIONS: unknown, blocked, clarify, decide\n- RUNBOOK: steps, checklist, verify\n"""
+_DEFAULT_INDEX = """# MEMORY (AUTOLOADED INDEX)\n\n## What this is\n- Autoloaded memory index for this project.\n- Keep this file concise and pointer-first.\n- Put details in MEMORY/topics/*.md.\n\n## Latest State\n- Latest run artifact: (empty)\n- Next action: (empty)\n\n## Top Constraints\n1. (empty)\n\n## Active Open Questions\n1. (empty)\n\n## Pointers\n- Facts / decisions: MEMORY/topics/FACTS.md\n- Files / artifacts: MEMORY/topics/FILES.md\n- Constraints: MEMORY/topics/CONSTRAINTS.md\n- Open questions: MEMORY/topics/QUESTIONS.md\n- Runbook: MEMORY/topics/RUNBOOK.md\n\n## Keyword Map\n- FACTS: definition, verified, result, decision\n- FILES: path, artifact, dataset, output, script\n- CONSTRAINTS: must, cannot, policy, budget\n- QUESTIONS: unknown, blocked, clarify, decide\n- RUNBOOK: steps, checklist, verify\n"""
 
 
 @dataclass(frozen=True)
@@ -83,13 +82,10 @@ class MemoryStore:
             except Exception:
                 topics[name] = ""
 
-        goal_text = topics.get("GOAL.md", "")
         files_text = topics.get("FILES.md", "")
         constraints_text = topics.get("CONSTRAINTS.md", "")
         questions_text = topics.get("QUESTIONS.md", "")
 
-        current_focus = _extract_labeled_tldr(goal_text, "Primary objective") or "(empty)"
-        current_milestone = _extract_labeled_tldr(goal_text, "Definition of success") or "(empty)"
         latest_run_artifacts = _extract_bullets_from_section(files_text, "## Index", limit=None)
         latest_run_artifact = " | ".join(latest_run_artifacts) if latest_run_artifacts else "(empty)"
         next_actions = _extract_bullets_from_section(questions_text, "## Active", limit=None)
@@ -109,8 +105,6 @@ class MemoryStore:
             "- Put details in MEMORY/topics/*.md.",
             "",
             "## Latest State",
-            f"- Current focus: {current_focus}",
-            f"- Current milestone: {current_milestone}",
             f"- Latest run artifact: {latest_run_artifact}",
             f"- Next action: {next_action}",
             "",
@@ -135,7 +129,6 @@ class MemoryStore:
         lines.extend([
             "",
             "## Pointers",
-            "- Goal / principles: MEMORY/topics/GOAL.md",
             "- Facts / decisions: MEMORY/topics/FACTS.md",
             "- Files / artifacts: MEMORY/topics/FILES.md",
             "- Constraints: MEMORY/topics/CONSTRAINTS.md",
@@ -143,7 +136,6 @@ class MemoryStore:
             "- Runbook: MEMORY/topics/RUNBOOK.md",
             "",
             "## Keyword Map",
-            "- GOAL: objective, success criteria, scope, non-goals",
             "- FACTS: definition, verified, result, decision",
             "- FILES: path, artifact, dataset, output, script",
             "- CONSTRAINTS: must, cannot, policy, budget",

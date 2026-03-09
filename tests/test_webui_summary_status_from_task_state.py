@@ -38,3 +38,31 @@ def test_summarize_run_uses_task_state_when_run_end_event_missing(tmp_path: Path
     summary = summarize_run(run_dir)
 
     assert summary.get("status") == "failure"
+
+
+def test_summarize_run_uses_nonterminal_task_state_for_writing_runs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_w"
+    _init_run_dir(run_dir)
+    (run_dir / "task_state.json").write_text(
+        json.dumps({"status": "drafting", "lane": "writing"}),
+        encoding="utf-8",
+    )
+
+    summary = summarize_run(run_dir)
+
+    assert summary.get("status") == "drafting"
+
+
+def test_snapshot_summary_uses_nonterminal_task_state_when_cache_says_unknown(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_z"
+    _init_run_dir(run_dir)
+    (run_dir / "task_state.json").write_text(json.dumps({"status": "running", "lane": "standard"}), encoding="utf-8")
+    (run_dir / "ui_summary.json").write_text(
+        json.dumps({"status": "unknown", "headline": "run_z | unknown | m"}),
+        encoding="utf-8",
+    )
+
+    summary = snapshot_summary(run_dir)
+
+    assert summary.get("status") == "running"
+    assert "running" in str(summary.get("headline") or "")

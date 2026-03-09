@@ -12,11 +12,62 @@ except Exception:  # pragma: no cover
     yaml = None
 
 Provider = Literal["openai", "openrouter", "deepseek", "gemini", "oai_compatible", "langchain"]
-AgentRole = Literal["proposal", "director", "task_runner", "memory_patch", "summary"]
+AgentRole = Literal[
+    "proposal",
+    "director",
+    "task_runner",
+    "research_lead",
+    "write_director",
+    "section_writer",
+    "write_reviewer",
+    "academic_polisher",
+    "tex_compile_fixer",
+    "memory_patch",
+    "summary",
+    "history_reader",
+    "tool_selector",
+    "image_analyzer",
+    "literature_web_search",
+    "literature_synthesizer",
+    "literature_deep_research",
+]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
 _logger = logging.getLogger(__name__)
-AGENT_ROLES: tuple[AgentRole, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
+REQUIRED_AGENT_ROLES: tuple[str, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
+OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
+    "research_lead": "director",
+    "write_director": "research_lead",
+    "section_writer": "task_runner",
+    "write_reviewer": "summary",
+    "academic_polisher": "summary",
+    "tex_compile_fixer": "academic_polisher",
+    "history_reader": "summary",
+    "tool_selector": "task_runner",
+    "image_analyzer": "task_runner",
+    "literature_synthesizer": "director",
+    "literature_web_search": "literature_synthesizer",
+    "literature_deep_research": "literature_synthesizer",
+}
+AGENT_ROLES: tuple[AgentRole, ...] = (
+    "proposal",
+    "director",
+    "task_runner",
+    "research_lead",
+    "write_director",
+    "section_writer",
+    "write_reviewer",
+    "academic_polisher",
+    "tex_compile_fixer",
+    "memory_patch",
+    "summary",
+    "history_reader",
+    "tool_selector",
+    "image_analyzer",
+    "literature_web_search",
+    "literature_synthesizer",
+    "literature_deep_research",
+)
 
 
 @dataclass
@@ -96,6 +147,377 @@ class AgentRuntimeConfig:
                 source="agent_runtime.print_http_raw_post",
             ),
         )
+
+
+_LITERATURE_ALLOWED_DEPTHS: tuple[str, ...] = ("none", "quick", "standard", "focused", "deep_report")
+
+
+@dataclass
+class LiteratureDepthBudgetConfig:
+    agent_step_budget: int = 4
+    search_limit: int = 6
+    recommendation_limit: int = 0
+    recommendation_seed_count: int = 0
+    public_web_limit: int = 0
+    use_public_web: bool = False
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        *,
+        defaults: "LiteratureDepthBudgetConfig | None" = None,
+    ) -> "LiteratureDepthBudgetConfig":
+        base = defaults or cls()
+        if not isinstance(data, dict):
+            return cls(
+                agent_step_budget=base.agent_step_budget,
+                search_limit=base.search_limit,
+                recommendation_limit=base.recommendation_limit,
+                recommendation_seed_count=base.recommendation_seed_count,
+                public_web_limit=base.public_web_limit,
+                use_public_web=base.use_public_web,
+            )
+        return cls(
+            agent_step_budget=max(1, _to_int(data.get("agent_step_budget")) or base.agent_step_budget),
+            search_limit=max(0, _to_int(data.get("search_limit")) or base.search_limit),
+            recommendation_limit=max(0, _to_int(data.get("recommendation_limit")) or base.recommendation_limit),
+            recommendation_seed_count=max(
+                0,
+                _to_int(data.get("recommendation_seed_count")) or base.recommendation_seed_count,
+            ),
+            public_web_limit=max(0, _to_int(data.get("public_web_limit")) or base.public_web_limit),
+            use_public_web=_to_bool(
+                data.get("use_public_web"),
+                default=base.use_public_web,
+                source="literature.budgets.*.use_public_web",
+            ),
+        )
+
+
+@dataclass
+class LiteratureRuntimeConfig:
+    auto_default_depth: str = "quick"
+    role_auto_max: Dict[str, str] = field(
+        default_factory=lambda: {
+            "proposal": "standard",
+            "director": "focused",
+            "fast_director": "focused",
+            "task_runner": "none",
+            "research_lead": "deep_report",
+            "section_writer": "standard",
+            "write_director": "none",
+            "write_reviewer": "none",
+        }
+    )
+    public_web_on_search_failure: bool = True
+    summary_key_paper_count: int = 5
+    semantic_scholar_retry_429_attempts: int = 3
+    semantic_scholar_retry_429_wait_seconds: float = 15.0
+    budgets: Dict[str, LiteratureDepthBudgetConfig] = field(
+        default_factory=lambda: {
+            "none": LiteratureDepthBudgetConfig(
+                agent_step_budget=1,
+                search_limit=0,
+                recommendation_limit=0,
+                recommendation_seed_count=0,
+                public_web_limit=0,
+                use_public_web=False,
+            ),
+            "quick": LiteratureDepthBudgetConfig(
+                agent_step_budget=4,
+                search_limit=6,
+                recommendation_limit=0,
+                recommendation_seed_count=0,
+                public_web_limit=5,
+                use_public_web=False,
+            ),
+            "standard": LiteratureDepthBudgetConfig(
+                agent_step_budget=6,
+                search_limit=10,
+                recommendation_limit=4,
+                recommendation_seed_count=3,
+                public_web_limit=3,
+                use_public_web=True,
+            ),
+            "focused": LiteratureDepthBudgetConfig(
+                agent_step_budget=8,
+                search_limit=12,
+                recommendation_limit=6,
+                recommendation_seed_count=3,
+                public_web_limit=5,
+                use_public_web=True,
+            ),
+            "deep_report": LiteratureDepthBudgetConfig(
+                agent_step_budget=16,
+                search_limit=14,
+                recommendation_limit=6,
+                recommendation_seed_count=3,
+                public_web_limit=5,
+                use_public_web=True,
+            ),
+        }
+    )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LiteratureRuntimeConfig":
+        defaults = cls()
+        if not isinstance(data, dict):
+            return defaults
+
+        auto_default_depth = str(data.get("auto_default_depth", defaults.auto_default_depth)).strip().lower()
+        if auto_default_depth not in _LITERATURE_ALLOWED_DEPTHS:
+            raise ValueError(
+                "literature.auto_default_depth must be one of: "
+                + ", ".join(_LITERATURE_ALLOWED_DEPTHS)
+            )
+
+        role_auto_max = dict(defaults.role_auto_max)
+        role_auto_max_raw = data.get("role_auto_max")
+        if isinstance(role_auto_max_raw, dict):
+            for role, depth in role_auto_max_raw.items():
+                role_text = str(role or "").strip()
+                depth_text = str(depth or "").strip().lower()
+                if not role_text:
+                    continue
+                if depth_text not in _LITERATURE_ALLOWED_DEPTHS:
+                    raise ValueError(
+                        f"literature.role_auto_max.{role_text} must be one of: "
+                        + ", ".join(_LITERATURE_ALLOWED_DEPTHS)
+                    )
+                role_auto_max[role_text] = depth_text
+
+        budgets = {
+            depth: LiteratureDepthBudgetConfig.from_dict({}, defaults=budget)
+            for depth, budget in defaults.budgets.items()
+        }
+        budgets_raw = data.get("budgets")
+        if isinstance(budgets_raw, dict):
+            for depth, budget_raw in budgets_raw.items():
+                depth_text = str(depth or "").strip().lower()
+                if depth_text not in budgets:
+                    raise ValueError(
+                        f"literature.budgets.{depth_text} must be one of: "
+                        + ", ".join(_LITERATURE_ALLOWED_DEPTHS)
+                    )
+                budgets[depth_text] = LiteratureDepthBudgetConfig.from_dict(
+                    budget_raw if isinstance(budget_raw, dict) else {},
+                    defaults=budgets[depth_text],
+                )
+
+        return cls(
+            auto_default_depth=auto_default_depth,
+            role_auto_max=role_auto_max,
+            public_web_on_search_failure=_to_bool(
+                data.get("public_web_on_search_failure"),
+                default=defaults.public_web_on_search_failure,
+                source="literature.public_web_on_search_failure",
+            ),
+            summary_key_paper_count=max(
+                1,
+                _to_int(data.get("summary_key_paper_count")) or defaults.summary_key_paper_count,
+            ),
+            semantic_scholar_retry_429_attempts=max(
+                0,
+                _to_int(data.get("semantic_scholar_retry_429_attempts"))
+                if _to_int(data.get("semantic_scholar_retry_429_attempts")) is not None
+                else defaults.semantic_scholar_retry_429_attempts,
+            ),
+            semantic_scholar_retry_429_wait_seconds=max(
+                0.0,
+                _to_float(data.get("semantic_scholar_retry_429_wait_seconds"))
+                if _to_float(data.get("semantic_scholar_retry_429_wait_seconds")) is not None
+                else defaults.semantic_scholar_retry_429_wait_seconds,
+            ),
+            budgets=budgets,
+        )
+
+    def budget_for_depth(self, depth: str) -> LiteratureDepthBudgetConfig:
+        return self.budgets.get(str(depth or "").strip().lower(), self.budgets[self.auto_default_depth])
+
+
+@dataclass
+class MCPOffloadConfig:
+    output_dir_rel: str = "_tool_outputs/mcp_filesystem"
+    max_paths_inline: int = 20
+    max_lines_inline: int = 80
+    max_chars_inline: int = 12_000
+    max_tree_chars_inline: int = 8_000
+    max_read_multiple_chars_inline: int = 12_000
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MCPOffloadConfig":
+        if not isinstance(data, dict):
+            return cls()
+        output_dir_rel = str(data.get("output_dir_rel", cls.output_dir_rel)).strip() or cls.output_dir_rel
+        return cls(
+            output_dir_rel=output_dir_rel,
+            max_paths_inline=max(1, _to_int(data.get("max_paths_inline")) or cls.max_paths_inline),
+            max_lines_inline=max(1, _to_int(data.get("max_lines_inline")) or cls.max_lines_inline),
+            max_chars_inline=max(512, _to_int(data.get("max_chars_inline")) or cls.max_chars_inline),
+            max_tree_chars_inline=max(512, _to_int(data.get("max_tree_chars_inline")) or cls.max_tree_chars_inline),
+            max_read_multiple_chars_inline=max(
+                512,
+                _to_int(data.get("max_read_multiple_chars_inline")) or cls.max_read_multiple_chars_inline,
+            ),
+        )
+
+
+@dataclass
+class MCPFilesystemConfig:
+    enabled: bool = False
+    transport: Literal["stdio", "http", "streamable_http"] = "stdio"
+    mode: Literal["stateful", "stateless"] = "stateful"
+    server_name: str = "filesystem"
+    command: str = "npx"
+    args_prefix: list[str] = field(default_factory=lambda: ["-y", "@modelcontextprotocol/server-filesystem"])
+    url: Optional[str] = None
+    headers: Dict[str, str] = field(default_factory=dict)
+    model_root_token: str = "."
+    hide_list_allowed_directories: bool = True
+    expose_roles: Dict[str, str] = field(
+        default_factory=lambda: {
+            "proposal": "readonly",
+            "director": "readonly",
+            "task_runner": "full",
+            "memory_patch": "readonly",
+        }
+    )
+    offload: MCPOffloadConfig = field(default_factory=MCPOffloadConfig)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MCPFilesystemConfig":
+        if not isinstance(data, dict):
+            return cls()
+        defaults = cls()
+
+        transport_raw = str(data.get("transport", defaults.transport)).strip().lower()
+        transport: Literal["stdio", "http", "streamable_http"]
+        if transport_raw in {"stdio", "http", "streamable_http"}:
+            transport = transport_raw  # type: ignore[assignment]
+        else:
+            raise ValueError(
+                "mcp.filesystem.transport must be one of: stdio, http, streamable_http"
+            )
+
+        mode_raw = str(data.get("mode", defaults.mode)).strip().lower()
+        mode: Literal["stateful", "stateless"]
+        if mode_raw in {"stateful", "stateless"}:
+            mode = mode_raw  # type: ignore[assignment]
+        else:
+            raise ValueError("mcp.filesystem.mode must be one of: stateful, stateless")
+
+        server_name = str(data.get("server_name", defaults.server_name)).strip() or defaults.server_name
+        command = str(data.get("command", defaults.command)).strip() or defaults.command
+        args_prefix_raw = data.get("args_prefix", defaults.args_prefix)
+        args_prefix = [str(item).strip() for item in list(args_prefix_raw or []) if str(item).strip()]
+        url = _to_str_or_none(data.get("url"))
+        model_root_token = str(data.get("model_root_token", defaults.model_root_token)).strip() or defaults.model_root_token
+
+        headers_raw = data.get("headers")
+        headers: Dict[str, str] = {}
+        if isinstance(headers_raw, dict):
+            for key, value in headers_raw.items():
+                k = str(key).strip()
+                if not k:
+                    continue
+                headers[k] = str(value)
+
+        expose_roles = dict(defaults.expose_roles)
+        expose_roles_raw = data.get("expose_roles")
+        if isinstance(expose_roles_raw, dict):
+            for role, mode_value in expose_roles_raw.items():
+                role_key = str(role).strip()
+                if role_key not in AGENT_ROLES:
+                    continue
+                mode_text = str(mode_value or "").strip().lower()
+                if mode_text not in {"readonly", "full", "none"}:
+                    raise ValueError(
+                        f"mcp.filesystem.expose_roles.{role_key} must be one of: readonly, full, none"
+                    )
+                expose_roles[role_key] = mode_text
+
+        cfg = cls(
+            enabled=_to_bool(
+                data.get("enabled"),
+                default=defaults.enabled,
+                source="mcp.filesystem.enabled",
+            ),
+            transport=transport,
+            mode=mode,
+            server_name=server_name,
+            command=command,
+            args_prefix=args_prefix or list(defaults.args_prefix),
+            url=url,
+            headers=headers,
+            model_root_token=model_root_token,
+            hide_list_allowed_directories=_to_bool(
+                data.get("hide_list_allowed_directories"),
+                default=defaults.hide_list_allowed_directories,
+                source="mcp.filesystem.hide_list_allowed_directories",
+            ),
+            expose_roles=expose_roles,
+            offload=MCPOffloadConfig.from_dict(data.get("offload") if isinstance(data.get("offload"), dict) else {}),
+        )
+        cfg.validate()
+        return cfg
+
+    def validate(self) -> None:
+        if not self.enabled:
+            return
+        if not str(self.server_name).strip():
+            raise ValueError("mcp.filesystem.server_name must be non-empty when enabled=true")
+        if self.transport == "stdio":
+            if not str(self.command).strip():
+                raise ValueError("mcp.filesystem.command must be non-empty for stdio transport")
+            if not self.args_prefix:
+                raise ValueError("mcp.filesystem.args_prefix must be non-empty for stdio transport")
+        else:
+            if not str(self.url or "").strip():
+                raise ValueError("mcp.filesystem.url must be provided for http/streamable_http transport")
+
+
+@dataclass
+class MCPConfig:
+    filesystem: MCPFilesystemConfig = field(default_factory=MCPFilesystemConfig)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MCPConfig":
+        if not isinstance(data, dict):
+            return cls()
+        fs_raw = data.get("filesystem")
+        return cls(
+            filesystem=MCPFilesystemConfig.from_dict(fs_raw if isinstance(fs_raw, dict) else {}),
+        )
+
+
+@dataclass
+class ImageGenerationConfig:
+    model_label: str | None = None
+    image_config: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ImageGenerationConfig":
+        if not isinstance(data, dict):
+            return cls()
+        model_label = _to_str_or_none(data.get("model_label"))
+        image_config = data.get("image_config")
+        return cls(
+            model_label=model_label,
+            image_config=dict(image_config) if isinstance(image_config, dict) else {},
+        )
+
+
+@dataclass
+class WritingRuntimeConfig:
+    author_name: str = "CatMaster"
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WritingRuntimeConfig":
+        if not isinstance(data, dict):
+            return cls()
+        author_name = str(data.get("author_name", cls.author_name)).strip() or cls.author_name
+        return cls(author_name=author_name)
 
 
 @dataclass
@@ -217,9 +639,17 @@ class LLMProfile:
     agents: Dict[str, str] = field(default_factory=dict)
     agent_policies: AgentPoliciesConfig = field(default_factory=AgentPoliciesConfig)
     agent_runtime: AgentRuntimeConfig = field(default_factory=AgentRuntimeConfig)
+    literature: LiteratureRuntimeConfig = field(default_factory=LiteratureRuntimeConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
+    image_generation: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
+    writing: WritingRuntimeConfig = field(default_factory=WritingRuntimeConfig)
 
     def label_for_role(self, role: str) -> str:
         label = self.agents.get(role)
+        if not label:
+            fallback_role = OPTIONAL_AGENT_ROLE_FALLBACKS.get(role)
+            if fallback_role:
+                label = self.agents.get(fallback_role)
         if not label:
             raise ValueError(f"Missing model label binding for role: {role}")
         if label not in self.models:
@@ -236,6 +666,38 @@ class LLMProfile:
     @property
     def summary(self) -> LLMConfig:
         return self.config_for_role("summary")
+
+    @property
+    def history_reader(self) -> LLMConfig:
+        return self.config_for_role("history_reader")
+
+    @property
+    def tool_selector(self) -> LLMConfig:
+        return self.config_for_role("tool_selector")
+
+    @property
+    def image_analyzer(self) -> LLMConfig:
+        return self.config_for_role("image_analyzer")
+
+    def config_for_image_generation(self) -> LLMConfig:
+        label = str(self.image_generation.model_label or "").strip()
+        if not label:
+            return self.image_analyzer
+        if label not in self.models:
+            raise ValueError(f"image_generation.model_label references unknown model label: {label!r}")
+        return self.models[label]
+
+    @property
+    def literature_web_search(self) -> LLMConfig:
+        return self.config_for_role("literature_web_search")
+
+    @property
+    def literature_synthesizer(self) -> LLMConfig:
+        return self.config_for_role("literature_synthesizer")
+
+    @property
+    def literature_deep_research(self) -> LLMConfig:
+        return self.config_for_role("literature_deep_research")
 
     @staticmethod
     def from_env() -> "LLMProfile":
@@ -297,6 +759,10 @@ class LLMProfile:
                 print_state_messages=False,
                 print_http_raw_post=print_http_raw_post,
             ),
+            literature=LiteratureRuntimeConfig(),
+            mcp=MCPConfig(),
+            image_generation=ImageGenerationConfig(),
+            writing=WritingRuntimeConfig(),
         )
 
     @staticmethod
@@ -320,6 +786,10 @@ class LLMProfile:
                 agents_raw = raw.get("agents")
                 agent_policies_raw = raw.get("agent_policies")
                 agent_runtime_raw = raw.get("agent_runtime")
+                literature_raw = raw.get("literature")
+                mcp_raw = raw.get("mcp")
+                image_generation_raw = raw.get("image_generation")
+                writing_raw = raw.get("writing")
                 if not isinstance(models_raw, dict):
                     raise ValueError(f"LLM config requires top-level 'models' mapping: {config_path}")
                 if not models_raw:
@@ -331,7 +801,7 @@ class LLMProfile:
                 if unknown_roles:
                     joined = ", ".join(unknown_roles)
                     raise ValueError(f"Unknown role(s) in llm config agents: {joined}")
-                missing_roles = [role for role in AGENT_ROLES if role not in agents_raw]
+                missing_roles = [role for role in REQUIRED_AGENT_ROLES if role not in agents_raw]
                 if missing_roles:
                     joined = ", ".join(missing_roles)
                     raise ValueError(f"Missing required role binding(s) in llm config agents: {joined}")
@@ -349,13 +819,35 @@ class LLMProfile:
                     models[label] = cfg
 
                 agents: Dict[str, str] = {}
-                for role in AGENT_ROLES:
+                for role in REQUIRED_AGENT_ROLES:
                     bound = str(agents_raw.get(role, "")).strip()
                     if not bound:
                         raise ValueError(f"Role {role!r} must bind to a non-empty model label")
                     if bound not in models:
                         raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
                     agents[role] = bound
+                for role, fallback_role in OPTIONAL_AGENT_ROLE_FALLBACKS.items():
+                    bound = str(agents_raw.get(role, "")).strip()
+                    if not bound:
+                        bound = str(agents.get(fallback_role, "")).strip()
+                    if not bound:
+                        raise ValueError(
+                            f"Role {role!r} must bind to a non-empty model label "
+                            f"(or fallback role {fallback_role!r} must be configured)"
+                        )
+                    if bound not in models:
+                        raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
+                    agents[role] = bound
+
+                image_generation_cfg = ImageGenerationConfig.from_dict(
+                    image_generation_raw if isinstance(image_generation_raw, dict) else {}
+                )
+                image_generation_label = str(image_generation_cfg.model_label or "").strip()
+                if image_generation_label and image_generation_label not in models:
+                    raise ValueError(
+                        "image_generation.model_label references unknown model label: "
+                        f"{image_generation_label!r}"
+                    )
 
                 agent_runtime_cfg = AgentRuntimeConfig.from_dict(
                     agent_runtime_raw if isinstance(agent_runtime_raw, dict) else {}
@@ -369,6 +861,12 @@ class LLMProfile:
                     agents=agents,
                     agent_policies=AgentPoliciesConfig.from_dict(agent_policies_raw if isinstance(agent_policies_raw, dict) else {}),
                     agent_runtime=agent_runtime_cfg,
+                    literature=LiteratureRuntimeConfig.from_dict(
+                        literature_raw if isinstance(literature_raw, dict) else {}
+                    ),
+                    mcp=MCPConfig.from_dict(mcp_raw if isinstance(mcp_raw, dict) else {}),
+                    image_generation=image_generation_cfg,
+                    writing=WritingRuntimeConfig.from_dict(writing_raw if isinstance(writing_raw, dict) else {}),
                 )
         return LLMProfile.from_env()
 
@@ -469,6 +967,11 @@ __all__ = [
     "ProposalPolicyConfig",
     "AgentPoliciesConfig",
     "AgentRuntimeConfig",
+    "LiteratureDepthBudgetConfig",
+    "LiteratureRuntimeConfig",
+    "MCPOffloadConfig",
+    "MCPFilesystemConfig",
+    "MCPConfig",
     "Provider",
     "AgentRole",
     "AGENT_ROLES",

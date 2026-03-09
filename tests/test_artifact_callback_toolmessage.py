@@ -120,3 +120,27 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
     assert records
     assert records[0]["tool_name"] == "vasp_relax_prepare"
     assert records[0]["status"] == "error"
+
+
+def test_artifact_persistence_tool_start_json_safes_non_serializable_inputs(tmp_path) -> None:
+    store = ArtifactStore(tmp_path)
+    trace = TraceStore(tmp_path)
+    handler = ArtifactPersistenceHandler(store, trace, run_id="run_x")
+
+    class _RuntimeLike:
+        def __repr__(self) -> str:
+            return "<ToolRuntime stub>"
+
+    rid = uuid.uuid4()
+    handler.on_tool_start(
+        serialized={"name": "read_text_file"},
+        input_str="{}",
+        run_id=rid,
+        inputs={"path": "x.txt", "runtime": _RuntimeLike()},
+    )
+
+    input_files = list((tmp_path / "toolcalls").glob("*/input.json"))
+    assert input_files
+    payload = json.loads(input_files[0].read_text(encoding="utf-8"))
+    assert payload["raw_params"]["path"] == "x.txt"
+    assert payload["raw_params"]["runtime"] == "<ToolRuntime stub>"

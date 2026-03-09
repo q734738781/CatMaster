@@ -8,8 +8,8 @@ def test_default_memory_index_uses_files_root_relative_pointers(tmp_path) -> Non
     store.ensure_exists()
     text = store.read_index()
     assert "Put details in MEMORY/topics/*.md." in text
-    assert "Goal / principles: MEMORY/topics/GOAL.md" in text
     assert "Files / artifacts: MEMORY/topics/FILES.md" in text
+    assert "Goal / principles:" not in text
     assert "files/MEMORY/topics/" not in text
 
 
@@ -34,6 +34,6 @@ def test_rebuilt_memory_index_uses_files_root_relative_pointers(tmp_path) -> Non
     )
     text = store.read_index()
     assert "Put details in MEMORY/topics/*.md." in text
-    assert "Goal / principles: MEMORY/topics/GOAL.md" in text
     assert "Files / artifacts: MEMORY/topics/FILES.md" in text
+    assert "Goal / principles:" not in text
     assert "files/MEMORY/topics/" not in text

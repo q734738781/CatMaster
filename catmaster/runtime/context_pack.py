@@ -15,7 +15,6 @@ class ContextPackPolicy:
     memory_head_lines: Optional[int] = None
     max_memory_chars: Optional[int] = None
     max_artifacts: int = 50
-    inject_goal_for_worker: bool = False
 
 
 class ContextPackBuilder:
@@ -28,39 +27,30 @@ class ContextPackBuilder:
             max_lines=policy.memory_head_lines,
             max_chars=policy.max_memory_chars,
         )
-        files_root = workspace_root(self.memory.workspace)
-
-        if role == "task_runner" and not policy.inject_goal_for_worker:
-            memory_excerpt = _remove_goal_pointer(memory_excerpt)
+        files_root_abs = str(workspace_root(self.memory.workspace).resolve())
 
         return {
             "task_goal": task_goal,
             "role": role,
-            "workspace_root": str(files_root),
+            "workspace_root": ".",
+            "workspace_root_abs_ref": files_root_abs,
             "memory_index_excerpt": memory_excerpt,
-            "workspace_policy": _workspace_policy_summary(role, files_root=str(files_root)),
+            "workspace_policy": _workspace_policy_summary(role, files_root_abs=files_root_abs),
         }
 
 
-def _workspace_policy_summary(role: str, *, files_root: str) -> str:
+def _workspace_policy_summary(role: str, *, files_root_abs: str) -> str:
     return (
         "Project files policy:\n"
-        f"- Current files root: {files_root}\n"
-        "- Tool path params are resolved relative to this files root.\n"
-        "- Metadata is internal; do not read or write metadata paths from tasks.\n"
-        "- Use progressive disclosure: locate with rg, then read small excerpts with sed/head/tail.\n"
-        "- Do not cat large files into context. Persist large outputs and cite paths.\n"
+        '- Treat "." as the project files root.\n'
+        f"- Reference absolute files root (orientation only): {files_root_abs}\n"
+        '- Use relative paths for filesystem function-tool arguments; keep returned paths relative to ".".\n'
+        "- Absolute paths are fallback-only references; if used for filesystem tools, they must be under project files root.\n"
+        "- Never use metadata paths in filesystem function-tool arguments.\n"
+        "- Use search_files / list_directory / directory_tree to discover files.\n"
+        "- Use read_text_file with head/tail for progressive disclosure.\n"
+        "- Use bash_exec for shell commands, content grep, parser invocation, and external binaries.\n"
         f"- Role: {role}"
     )
-
-
-def _remove_goal_pointer(text: str) -> str:
-    lines = []
-    for raw in text.splitlines():
-        if raw.strip().lower().startswith("- goal / principles:"):
-            continue
-        lines.append(raw)
-    return "\n".join(lines)
-
 
 __all__ = ["ContextPackBuilder", "ContextPackPolicy"]

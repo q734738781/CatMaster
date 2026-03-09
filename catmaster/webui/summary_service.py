@@ -70,15 +70,15 @@ def summarize_run(run_dir: Path, *, run_error: Optional[str] = None) -> Dict[str
 def snapshot_summary(run_dir: Path) -> Dict[str, Any]:
     cached = load_run_summary(run_dir)
     if cached:
-        terminal_status = _terminal_status_from_task_state(run_dir)
-        if terminal_status and str(cached.get("status") or "").strip().lower() != terminal_status:
+        task_state_status = _status_from_task_state(run_dir)
+        if task_state_status and str(cached.get("status") or "").strip().lower() != task_state_status:
             updated = dict(cached)
-            updated["status"] = terminal_status
+            updated["status"] = task_state_status
             headline = str(updated.get("headline") or "").strip()
             if headline:
                 parts = [part.strip() for part in headline.split("|")]
                 if len(parts) >= 2:
-                    parts[1] = terminal_status
+                    parts[1] = task_state_status
                     updated["headline"] = " | ".join(parts)
             updated["generated_at"] = _utcnow()
             try:
@@ -209,7 +209,7 @@ def _infer_status(events: List[Dict[str, Any]], *, run_error: Optional[str], run
             if status:
                 return status
         return "done"
-    status = _terminal_status_from_task_state(run_dir)
+    status = _status_from_task_state(run_dir)
     if status:
         return status
     if events:
@@ -218,13 +218,18 @@ def _infer_status(events: List[Dict[str, Any]], *, run_error: Optional[str], run
 
 
 def _terminal_status_from_task_state(run_dir: Path) -> str:
+    status = _status_from_task_state(run_dir)
+    if status in {"done", "failure", "error", "needs_intervention", "interrupted_paused", "awaiting_human_feedback"}:
+        return status
+    return ""
+
+
+def _status_from_task_state(run_dir: Path) -> str:
     task_state = _load_json(run_dir / "task_state.json")
     if not isinstance(task_state, dict):
         return ""
     status = str(task_state.get("status") or "").strip().lower()
-    if status in {"done", "failure", "needs_intervention", "interrupted_paused", "awaiting_human_feedback"}:
-        return status
-    return ""
+    return status
 
 
 def _read_events(path: Path) -> List[Dict[str, Any]]:

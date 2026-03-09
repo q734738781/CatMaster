@@ -130,3 +130,34 @@ def test_generate_batch_adsorption_structures_writes_ads_indices_metadata(tmp_pa
         idx_obj = json.loads(ads_indices_json.read_text(encoding="utf-8"))
         assert idx_obj["schema"] == "catmaster.ads_indices.v1"
         assert len(idx_obj["entries"]) == len(rows)
+
+
+def test_place_adsorbate_preserves_input_orientation_without_reorient(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        slab_path, _ = _copy_assets(tmp_path)
+        files_root = tmp_path / "files"
+        ads_path = files_root / "H2_sideways.xyz"
+        ads_path.write_text(
+            "2\nH2 sideways\nH -0.5 0.0 0.0\nH 0.5 0.0 0.0\n",
+            encoding="utf-8",
+        )
+
+        _, artifact = place_adsorbate(
+            {
+                "slab_file": slab_path.name,
+                "adsorbate_file": ads_path.name,
+                "site": "ontop_0",
+                "distance": 2.0,
+                "output_poscar": "out/h2_sideways.vasp",
+            }
+        )
+        data = artifact["data"]
+        placed = Structure.from_file(str(files_root / data["output_poscar_rel"]))
+        ads_indices = data["ads_indices_added"]
+        coords = placed.cart_coords[ads_indices]
+        delta = coords[1] - coords[0]
+        assert pytest.approx(abs(float(delta[0])), rel=0.0, abs=1e-6) == 1.0
+        assert pytest.approx(float(delta[1]), rel=0.0, abs=1e-6) == 0.0
+        assert pytest.approx(float(delta[2]), rel=0.0, abs=1e-6) == 0.0
+        assert data["geom"]["placement_reference"] == "center_of_mass_of_lowest_z_atoms"
+        assert data["geom"]["reoriented"] is False

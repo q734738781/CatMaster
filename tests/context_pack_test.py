@@ -20,12 +20,14 @@ def main() -> None:
         assert "memory_index_excerpt" in pack
         assert "workspace_policy" in pack
         assert "workspace_root" in pack
+        assert "workspace_root_abs_ref" in pack
+        assert str(root / "files") == str(pack.get("workspace_root_abs_ref"))
         assert "constraints" not in pack
         assert "artifact_slice" not in pack
         assert "whiteboard_excerpt" not in pack
 
 
-def test_context_pack_task_runner_removes_goal_pointer(tmp_path) -> None:
+def test_context_pack_task_runner_preserves_non_goal_memory_excerpt(tmp_path) -> None:
     store = MemoryStore.create_default(workspace=tmp_path)
     store.ensure_exists()
     store.index_path.write_text(
@@ -34,7 +36,6 @@ def test_context_pack_task_runner_removes_goal_pointer(tmp_path) -> None:
                 "# MEMORY (AUTOLOADED INDEX)",
                 "",
                 "## Pointers",
-                "- Goal / principles: MEMORY/topics/GOAL.md",
                 "- Facts / decisions: MEMORY/topics/FACTS.md",
                 "",
                 "## Active Open Questions (max 5)",
@@ -48,8 +49,9 @@ def test_context_pack_task_runner_removes_goal_pointer(tmp_path) -> None:
     builder = ContextPackBuilder(store)
     pack = builder.build("demo goal", role="task_runner", policy=ContextPackPolicy())
     memory_excerpt = str(pack.get("memory_index_excerpt") or "")
-    assert "Goal / principles: MEMORY/topics/GOAL.md" not in memory_excerpt
     assert "Facts / decisions: MEMORY/topics/FACTS.md" in memory_excerpt
+    workspace_policy = str(pack.get("workspace_policy") or "")
+    assert "Reference absolute files root (orientation only):" in workspace_policy
 
 
 if __name__ == "__main__":

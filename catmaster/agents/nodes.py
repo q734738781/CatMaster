@@ -5,7 +5,7 @@ Contains:
   - Context builders (_build_*_context) for each agent
   - Wrapper nodes (run_proposal, run_director, run_task) that invoke
     ``create_agent`` subgraphs and map results back to parent state
-  - Downstream nodes (memory_patch_node, plan_commit_node, summarize_node)
+  - Downstream summary node + legacy memory patch helpers
   - Helper utilities for task result normalization
 """
 from __future__ import annotations
@@ -26,21 +26,20 @@ from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_REVISION_CONTEXT_TEMPLATE,
     PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX,
     DIRECTOR_CONTEXT_TEMPLATE,
+    FAST_DIRECTOR_CONTEXT_TEMPLATE,
     TASK_CONTEXT_TEMPLATE,
-    build_memory_patch_prompt,
-    build_memory_patch_repair_prompt,
-    build_summary_prompt,
+    MEMORY_PATCH_CONTEXT_TEMPLATE,
 )
 from catmaster.agents.response_schemas import (
     ProposalOutput,
     DirectorOutput,
+    FastDirectorOutput,
+    MemoryPatchOutput,
     TaskOutput,
 )
 from catmaster.agents.llm_utils import llm_text
 from catmaster.runtime.memory_store import MemoryStore
 from catmaster.runtime.context_pack import ContextPackBuilder, ContextPackPolicy
-from catmaster.runtime.tool_output_adapter import content_to_text
-
 logger = logging.getLogger(__name__)
 
 
@@ -48,10 +47,21 @@ logger = logging.getLogger(__name__)
 # Context builders
 # ---------------------------------------------------------------------------
 
+
+def _historical_runs_context_section(state: Dict[str, Any]) -> str:
+    text = str(state.get("historical_runs_context_text") or "").strip()
+    if not text:
+        text = "(none)"
+    return (
+        "=== Relevant historical runs (auto-retrieved) ===\n"
+        f"{text}"
+    )
+
+
 def _build_proposal_context(
     state: Dict[str, Any],
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
 ) -> str:
     """Build the HumanMessage text for the proposal agent."""
     user_request = state["user_request"]
@@ -61,11 +71,11 @@ def _build_proposal_context(
     )
     logger.info(
         "[_build_proposal_context] user_request_len=%d, memory_index_len=%d, "
-        "artifacts_index_len=%d, tools_description_len=%d",
-        len(user_request), len(memory_index), len(artifacts_index), len(tools_description),
+        "artifacts_index_len=%d, execution_context_guide_len=%d",
+        len(user_request), len(memory_index), len(artifacts_index), len(execution_context_guide),
     )
-    if not tools_description:
-        logger.warning("[_build_proposal_context] tools_description is EMPTY")
+    if not execution_context_guide:
+        logger.warning("[_build_proposal_context] execution_context_guide is EMPTY")
 
     feedback = state.get("proposal_feedback", "")
     review_enabled = bool(state.get("proposal_review_enabled", True))
@@ -79,9 +89,10 @@ def _build_proposal_context(
             ),
             memory_index_excerpt=memory_index,
             artifacts_index=artifacts_index,
-            tools=tools_description,
+            execution_context_guide=execution_context_guide,
             feedback=feedback,
         )
+        ctx = f"{ctx}\n\n{_historical_runs_context_section(state)}"
         if not review_enabled:
             ctx = f"{ctx}\n\n{PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX}"
         logger.info("[_build_proposal_context] revision context total_len=%d", len(ctx))
@@ -91,8 +102,9 @@ def _build_proposal_context(
         user_request=user_request,
         memory_index_excerpt=memory_index,
         artifacts_index=artifacts_index,
-        tools=tools_description,
+        execution_context_guide=execution_context_guide,
     )
+    ctx = f"{ctx}\n\n{_historical_runs_context_section(state)}"
     if not review_enabled:
         ctx = f"{ctx}\n\n{PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX}"
     logger.info("[_build_proposal_context] fresh context total_len=%d", len(ctx))
@@ -102,27 +114,49 @@ def _build_proposal_context(
 def _build_director_context(
     state: Dict[str, Any],
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
 ) -> str:
     """Build the HumanMessage text for the director agent."""
     observations = state.get("observations", [])
     director_observations = _director_observations_view(observations)
-    task_status_board = _director_task_status_board(
+    task_outcomes_history = _director_task_outcomes_history(
         state.get("tasks", []),
         director_observations,
     )
 
-    return DIRECTOR_CONTEXT_TEMPLATE.format(
+    ctx = DIRECTOR_CONTEXT_TEMPLATE.format(
         user_request=state["user_request"],
         proposal_md=state.get("proposal_md", ""),
         work_packages_json=json.dumps(
             state.get("work_packages", []), ensure_ascii=False,
         ),
         memory_index_excerpt=memory_store.read_index(),
+        task_outcomes_history_text=_render_task_outcomes_history_lines(task_outcomes_history),
         already_done_json=json.dumps(director_observations, ensure_ascii=False),
-        task_status_board_json=json.dumps(task_status_board, ensure_ascii=False),
-        tools=tools_description,
+        execution_context_guide=execution_context_guide,
     )
+    return f"{ctx}\n\n{_historical_runs_context_section(state)}"
+
+
+def _build_fast_director_context(
+    state: Dict[str, Any],
+    memory_store: MemoryStore,
+    execution_context_guide: str,
+) -> str:
+    """Build the HumanMessage text for the fast-lane director agent."""
+    observations = state.get("observations", [])
+    task_outcomes_history = _director_task_outcomes_history(
+        state.get("tasks", []),
+        observations,
+    )
+
+    ctx = FAST_DIRECTOR_CONTEXT_TEMPLATE.format(
+        user_request=state["user_request"],
+        memory_index_excerpt=memory_store.read_index(),
+        task_outcomes_history_text=_render_task_outcomes_history_lines(task_outcomes_history),
+        execution_context_guide=execution_context_guide,
+    )
+    return f"{ctx}\n\n{_historical_runs_context_section(state)}"
 
 
 def _build_task_context(
@@ -142,7 +176,6 @@ def _build_task_context(
         policy=ContextPackPolicy(
             memory_head_lines=None,
             max_memory_chars=None,
-            inject_goal_for_worker=False,
         ),
     )
 
@@ -182,6 +215,7 @@ def _build_task_context(
         suggested_tools=_csv_items(suggested_tools),
         reference_hint=_bullet_lines(reference_hint),
         workspace_policy=context_pack.get("workspace_policy", ""),
+        workspace_root_abs_ref=context_pack.get("workspace_root_abs_ref", ""),
         memory_index_excerpt=context_pack.get("memory_index_excerpt", ""),
     )
 
@@ -258,11 +292,11 @@ def _structured_contract_violation_summary(role: str, violation: dict[str, Any])
 def _require_structured_response(
     result: dict[str, Any],
     *,
-    schema_cls: type[ProposalOutput] | type[DirectorOutput] | type[TaskOutput],
+    schema_cls: type[ProposalOutput] | type[DirectorOutput] | type[FastDirectorOutput] | type[TaskOutput] | type[MemoryPatchOutput],
     role: str,
     messages: list[AnyMessage],
     max_steps: int,
-) -> tuple[ProposalOutput | DirectorOutput | TaskOutput | None, dict[str, Any] | None]:
+) -> tuple[ProposalOutput | DirectorOutput | FastDirectorOutput | TaskOutput | MemoryPatchOutput | None, dict[str, Any] | None]:
     raw = result.get("structured_response")
     if raw is None:
         violation = _structured_contract_violation(
@@ -303,44 +337,53 @@ def _supports_remaining_steps_error(exc: Exception) -> bool:
     return any(marker in text for marker in markers)
 
 
-def _invoke_agent_with_step_budget(
+async def _invoke_agent_with_step_budget(
     *,
     agent: Any,
     messages: list[AnyMessage],
     max_steps: int,
     role: str,
 ) -> dict[str, Any]:
+    async def _invoke(payload: dict[str, Any]) -> dict[str, Any]:
+        ainvoke = getattr(agent, "ainvoke", None)
+        if callable(ainvoke):
+            return await ainvoke(payload)
+        invoke = getattr(agent, "invoke", None)
+        if callable(invoke):
+            return invoke(payload)
+        raise TypeError(f"{type(agent).__name__} exposes neither invoke nor ainvoke")
+
     payload = {
         "messages": list(messages or []),
         "remaining_steps": max(1, int(max_steps)),
     }
     try:
-        return agent.invoke(payload)
+        return await _invoke(payload)
     except Exception as exc:
         if not _supports_remaining_steps_error(exc):
             raise
         logger.info(
-            "[%s] agent.invoke rejected remaining_steps; retrying with messages-only payload",
+            "[%s] agent invoke rejected remaining_steps; retrying with messages-only payload",
             role,
         )
-        return agent.invoke({"messages": list(messages or [])})
+        return await _invoke({"messages": list(messages or [])})
 
 
-def run_proposal(
+async def run_proposal(
     state: Dict[str, Any],
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     run_dir: Path,
     max_steps: int = 30,
 ) -> Command:
     """Invoke the proposal ReAct agent and map results to parent state."""
-    ctx_text = _build_proposal_context(state, memory_store, tools_description)
+    ctx_text = _build_proposal_context(state, memory_store, execution_context_guide)
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
-        result = _invoke_agent_with_step_budget(
+        result = await _invoke_agent_with_step_budget(
             agent=agent,
             messages=input_messages,
             max_steps=max_steps,
@@ -452,20 +495,21 @@ def run_proposal(
     )
 
 
-def run_director(
+async def run_director(
     state: Dict[str, Any],
     *,
     agent: Any,
     memory_store: MemoryStore,
-    tools_description: str,
+    execution_context_guide: str,
     max_steps: int = 30,
+    allow_memory_patch: bool = True,
 ) -> Command:
     """Invoke the director ReAct agent and route via Command."""
-    ctx_text = _build_director_context(state, memory_store, tools_description)
+    ctx_text = _build_director_context(state, memory_store, execution_context_guide)
     ctx_msg = HumanMessage(content=ctx_text)
     input_messages: list[AnyMessage] = [ctx_msg]
     try:
-        result = _invoke_agent_with_step_budget(
+        result = await _invoke_agent_with_step_budget(
             agent=agent,
             messages=input_messages,
             max_steps=max_steps,
@@ -483,7 +527,7 @@ def run_director(
         )
         summary = f"director agent invoke failed before structured response: {exc}"
         return Command(
-            goto="finalize_memory_patch",
+            goto="summarize",
             update={
                 "director_messages": input_messages,
                 "director_decision": {},
@@ -514,7 +558,7 @@ def run_director(
             schema_name=DirectorOutput.__name__,
         )
         return Command(
-            goto="finalize_memory_patch",
+            goto="summarize",
             update={
                 "director_messages": _cap_messages(msgs),
                 "director_decision": {},
@@ -530,6 +574,7 @@ def run_director(
         "director_messages": _cap_messages(msgs),
         "director_decision": resp.model_dump(),
         "next_action": resp.state,
+        "pending_memory_updates": [],
         "contract_violation": {},
     }
 
@@ -570,22 +615,146 @@ def run_director(
         return Command(goto="run_director", update=update)
 
     # StopAndSynthesize
-    return Command(goto="finalize_memory_patch", update=update)
+    stop_payload = resp.stop_and_synthesize
+    final_answer_md = ""
+    if stop_payload is not None:
+        final_answer_md = str(stop_payload.final_answer_md or "").strip()
+    updates = [item.model_dump() for item in list(resp.update_memory or [])]
+    update["pending_memory_updates"] = updates
+    if final_answer_md:
+        update["summary"] = final_answer_md
+    if updates and allow_memory_patch:
+        return Command(goto="run_memory_patch", update=update)
+    return Command(goto="summarize", update=update)
 
 
-def run_task(
+async def run_fast_director(
+    state: Dict[str, Any],
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    execution_context_guide: str,
+    max_steps: int = 30,
+    allow_memory_patch: bool = True,
+) -> Command:
+    """Invoke the fast-lane director agent and route via Command."""
+    ctx_text = _build_fast_director_context(state, memory_store, execution_context_guide)
+    ctx_msg = HumanMessage(content=ctx_text)
+    input_messages: list[AnyMessage] = [ctx_msg]
+    try:
+        result = await _invoke_agent_with_step_budget(
+            agent=agent,
+            messages=input_messages,
+            max_steps=max_steps,
+            role="fast_director",
+        )
+    except Exception as exc:
+        logger.exception("fast director agent invoke failed: %s", exc)
+        violation = _structured_contract_violation(
+            role="fast_director",
+            reason="invoke_exception",
+            messages=input_messages,
+            max_steps=max_steps,
+            error=str(exc),
+            schema_name=FastDirectorOutput.__name__,
+        )
+        summary = f"fast director agent invoke failed before structured response: {exc}"
+        return Command(
+            goto="summarize",
+            update={
+                "director_messages": input_messages,
+                "director_decision": {},
+                "next_action": "ContractViolation",
+                "status": "failure",
+                "summary": summary,
+                "contract_violation": violation,
+            },
+        )
+
+    msgs = list(result.get("messages", []) or [])
+    parsed, violation = _require_structured_response(
+        result,
+        schema_cls=FastDirectorOutput,
+        role="fast_director",
+        messages=msgs,
+        max_steps=max_steps,
+    )
+    if not isinstance(parsed, FastDirectorOutput):
+        if _is_need_more_steps(msgs):
+            logger.warning("[run_fast_director] hit remaining_steps limit (max_steps=%d)", max_steps)
+        logger.warning("fast director agent returned missing/invalid structured response")
+        violation_payload = violation or _structured_contract_violation(
+            role="fast_director",
+            reason="missing_structured_response",
+            messages=msgs,
+            max_steps=max_steps,
+            schema_name=FastDirectorOutput.__name__,
+        )
+        return Command(
+            goto="summarize",
+            update={
+                "director_messages": _cap_messages(msgs),
+                "director_decision": {},
+                "next_action": "ContractViolation",
+                "status": "failure",
+                "summary": _structured_contract_violation_summary("fast_director", violation_payload),
+                "contract_violation": violation_payload,
+            },
+        )
+
+    resp = parsed
+    update: Dict[str, Any] = {
+        "director_messages": _cap_messages(msgs),
+        "director_decision": resp.model_dump(),
+        "next_action": resp.state,
+        "pending_memory_updates": [],
+        "contract_violation": {},
+    }
+
+    if resp.state == "PerformNextTask":
+        branch = resp.perform_next_task
+        task_packet = branch.task_packet if branch is not None else None
+        task_id = f"task_{_next_task_index(state.get('tasks', [])):02d}"
+        update["current_task_id"] = task_id
+        update["current_task_packet"] = task_packet.model_dump() if task_packet else {}
+        new_task = {
+            "task_id": task_id,
+            "goal": task_packet.goal if task_packet else "",
+            "task_packet": task_packet.model_dump() if task_packet else {},
+            "status": "pending",
+        }
+        update["tasks"] = list(state.get("tasks") or []) + [new_task]
+        update["runner_messages"] = []
+        return Command(goto="run_task", update=update)
+
+    stop_payload = resp.stop_and_synthesize
+    final_answer_md = ""
+    if stop_payload is not None:
+        final_answer_md = str(stop_payload.final_answer_md or "").strip()
+    updates = [item.model_dump() for item in list(resp.update_memory or [])]
+    update["pending_memory_updates"] = updates
+    if final_answer_md:
+        update["summary"] = final_answer_md
+    if updates and allow_memory_patch:
+        return Command(goto="run_memory_patch", update=update)
+    return Command(goto="summarize", update=update)
+
+
+async def run_task(
     state: Dict[str, Any],
     *,
     agent: Any,
     memory_store: MemoryStore,
     max_steps: int = 40,
+    continue_goto: str = "run_director",
+    intervention_goto: str = "needs_intervention",
 ) -> Command:
     """Invoke the task runner ReAct agent and map results to parent state."""
     ctx_text = _build_task_context(state, memory_store)
     ctx_msg = HumanMessage(content=ctx_text)
 
     try:
-        result = _invoke_agent_with_step_budget(
+        result = await _invoke_agent_with_step_budget(
             agent=agent,
             messages=[ctx_msg],
             max_steps=max_steps,
@@ -602,29 +771,37 @@ def run_task(
             schema_name=TaskOutput.__name__,
         )
         summary = f"task runner invoke failed before structured response: {exc}"
-        return Command(
-            goto="finalize_memory_patch",
-            update={
-                "runner_messages": [ctx_msg],
-                "task_result": {
-                    "task_outcome": "failure",
-                    "task_summary": summary,
-                    "key_artifacts": [],
-                    "structured_result": {
-                        "summary": summary,
-                        "facts": [],
-                        "files": [],
-                        "constraints": [],
-                        "open_questions": [],
-                        "decisions": [],
-                        "next_steps": [],
-                        "artifacts": [],
-                    },
-                },
-                "status": "failure",
+        task_result = {
+            "task_outcome": "failure",
+            "task_summary": summary,
+            "key_artifacts": [],
+            "structured_result": {
                 "summary": summary,
-                "contract_violation": violation,
+                "facts": [],
+                "files": [],
+                "constraints": [],
+                "open_questions": [],
+                "decisions": [],
+                "next_steps": [],
+                "artifacts": [],
             },
+        }
+        task_state_update = _task_state_update_from_result(
+            state=state,
+            task_result=task_result,
+        )
+        target = continue_goto
+        update_payload: Dict[str, Any] = {
+            "runner_messages": [ctx_msg],
+            **task_state_update,
+            "summary": summary,
+            "contract_violation": violation,
+        }
+        if target == "summarize":
+            update_payload["status"] = "failure"
+        return Command(
+            goto=target,
+            update=update_payload,
         )
 
     msgs = list(result.get("messages", []) or [])
@@ -662,32 +839,53 @@ def run_task(
                 "artifacts": [],
             },
         }
+        task_state_update = _task_state_update_from_result(
+            state=state,
+            task_result=task_result,
+        )
+        target = continue_goto
+        update_payload: Dict[str, Any] = {
+            "runner_messages": _cap_messages(msgs),
+            **task_state_update,
+            "summary": summary,
+            "contract_violation": violation
+            or _structured_contract_violation(
+                role="task_runner",
+                reason="missing_structured_response",
+                messages=msgs,
+                max_steps=max_steps,
+                schema_name=TaskOutput.__name__,
+            ),
+        }
+        if target == "summarize":
+            update_payload["status"] = "failure"
         return Command(
-            goto="finalize_memory_patch",
-            update={
-                "runner_messages": _cap_messages(msgs),
-                "task_result": task_result,
-                "status": "failure",
-                "summary": summary,
-                "contract_violation": violation
-                or _structured_contract_violation(
-                    role="task_runner",
-                    reason="missing_structured_response",
-                    messages=msgs,
-                    max_steps=max_steps,
-                    schema_name=TaskOutput.__name__,
-                ),
-            },
+            goto=target,
+            update=update_payload,
         )
 
     task_result = _normalize_task_output(parsed)
+    task_state_update = _task_state_update_from_result(
+        state=state,
+        task_result=task_result,
+    )
+    outcome = str(task_result.get("task_outcome") or "").strip().lower()
+    target = intervention_goto if outcome == "needs_intervention" else continue_goto
+    update_payload: Dict[str, Any] = {
+        "runner_messages": _cap_messages(msgs),
+        **task_state_update,
+        "contract_violation": {},
+    }
+    if target == "summarize":
+        if outcome == "success":
+            update_payload["status"] = "done"
+        elif outcome == "needs_intervention":
+            update_payload["status"] = "needs_intervention"
+        else:
+            update_payload["status"] = "failure"
     return Command(
-        goto="memory_patch",
-        update={
-            "runner_messages": _cap_messages(msgs),
-            "task_result": task_result,
-            "contract_violation": {},
-        },
+        goto=target,
+        update=update_payload,
     )
 
 
@@ -741,101 +939,15 @@ def _normalize_task_output(resp: TaskOutput) -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Memory patch node
-# ---------------------------------------------------------------------------
-
-def memory_patch_node(
-    state: Dict[str, Any],
+def _task_state_update_from_result(
     *,
-    model: BaseChatModel,
-    memory_store: MemoryStore,
-    run_id: str = "",
-    patch_repair_attempts: int = 1,
-    tool_backend: Any = None,
+    state: Dict[str, Any],
+    task_result: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Apply memory patches after a task completes."""
-    task_result = state.get("task_result") or {}
-    task_id = state.get("current_task_id", "")
-
+    """Update observations/tasks directly from task result without auto memory patching."""
+    task_id = str(state.get("current_task_id") or "").strip()
     structured_result = task_result.get("structured_result") or {}
-    outcome = task_result.get("task_outcome", "failure")
-
-    memory_store.ensure_exists()
-    patch_status = "skipped"
-    last_error = ""
-    refresh_needed = False
-    max_attempts = max(1, patch_repair_attempts + 1)
-    if tool_backend is None:
-        logger.info("[memory_patch_node] skip patch: tool_backend unavailable")
-        refresh_needed = True
-    else:
-        memory_index_text = memory_store.read_index()
-        topic_texts = _read_memory_topics(memory_store)
-        previous_edit_text = ""
-        patch_status = "failed"
-
-        for attempt in range(1, max_attempts + 1):
-            if attempt == 1:
-                prompt = build_memory_patch_prompt()
-                msgs = prompt.format_messages(
-                    run_id=run_id,
-                    task_id=task_id,
-                    task_goal=str(state.get("current_task_packet", {}).get("goal", "")),
-                    outcome=outcome,
-                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
-                    memory_index_text=memory_index_text,
-                    **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
-                )
-            else:
-                prompt = build_memory_patch_repair_prompt()
-                msgs = prompt.format_messages(
-                    previous_edit_text=previous_edit_text,
-                    apply_error=last_error or "(none)",
-                    apply_error_context_json="{}",
-                    run_id=run_id,
-                    task_id=task_id,
-                    task_goal=str(state.get("current_task_packet", {}).get("goal", "")),
-                    outcome=outcome,
-                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
-                    memory_index_text=memory_index_text,
-                    **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
-                )
-
-            try:
-                resp = model.invoke(msgs)
-                patch_raw = llm_text(resp).strip()
-                edit_text = _normalize_patch_text(patch_raw)
-                previous_edit_text = edit_text
-                tool_out = tool_backend.call(
-                    "memory_apply_aider_edits",
-                    json.dumps({"edits_text": edit_text, "allowed_paths": ["MEMORY/"], "emit_diff": True}, ensure_ascii=False),
-                    toolcall_key=f"{task_id}_memory_patch_a{attempt}",
-                )
-                status = str(getattr(tool_out, "status", "") or "").strip().lower()
-                if status == "success":
-                    patch_status = "success"
-                    last_error = ""
-                    break
-                last_error = content_to_text(getattr(tool_out, "content", "")) or "patch apply failed"
-            except Exception as exc:
-                last_error = str(exc)
-                logger.warning("[memory_patch_node] attempt %d failed: %s", attempt, exc)
-
-        if patch_status != "success":
-            refresh_needed = True
-
-    if refresh_needed:
-        _refresh_memory_index(memory_store)
-    memory_store.append_event({
-        "ts": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
-        "run_id": run_id,
-        "task_id": task_id,
-        "outcome": outcome,
-        "summary": str(structured_result.get("summary") or "").strip(),
-        "memory_patch_status": patch_status,
-        "memory_patch_error": last_error,
-    })
+    outcome = str(task_result.get("task_outcome") or "").strip() or "failure"
 
     observation = {
         "task_id": task_id,
@@ -846,6 +958,16 @@ def memory_patch_node(
     failure_kind = str(task_result.get("failure_kind") or "").strip()
     if failure_kind:
         observation["failure_kind"] = failure_kind
+
+    def _compact_text_list(items: Any, *, limit: int) -> list[str]:
+        if not isinstance(items, list):
+            return []
+        out: list[str] = []
+        for item in items:
+            text = _trim_text(" ".join(str(item).split()), limit=limit)
+            if text:
+                out.append(text)
+        return out
 
     decision_items = structured_result.get("decisions")
     if isinstance(decision_items, list):
@@ -862,46 +984,25 @@ def memory_patch_node(
         if compact_decisions:
             observation["decisions"] = compact_decisions
 
-    next_steps = structured_result.get("next_steps")
-    if isinstance(next_steps, list):
-        compact_next = [
-            _trim_text(" ".join(str(step).split()), limit=140)
-            for step in next_steps
-            if str(step).strip()
-        ]
-        compact_next = [step for step in compact_next if step]
-        if compact_next:
-            observation["next_steps"] = compact_next
+    next_steps = _compact_text_list(structured_result.get("next_steps"), limit=140)
+    if next_steps:
+        observation["next_steps"] = next_steps
 
-    open_questions = structured_result.get("open_questions")
-    if isinstance(open_questions, list):
-        compact_questions = [
-            _trim_text(" ".join(str(question).split()), limit=140)
-            for question in open_questions
-            if str(question).strip()
-        ]
-        compact_questions = [question for question in compact_questions if question]
-        if compact_questions:
-            observation["open_questions"] = compact_questions
+    open_questions = _compact_text_list(structured_result.get("open_questions"), limit=140)
+    if open_questions:
+        observation["open_questions"] = open_questions
 
-    facts = structured_result.get("facts")
-    if isinstance(facts, list):
-        compact_facts = [
-            _trim_text(" ".join(str(fact).split()), limit=180)
-            for fact in facts
-            if str(fact).strip()
-        ]
-        compact_facts = [fact for fact in compact_facts if fact]
-        if compact_facts:
-            observation["facts"] = compact_facts
+    facts = _compact_text_list(structured_result.get("facts"), limit=180)
+    if facts:
+        observation["facts"] = facts
 
     existing_observations = list(state.get("observations") or [])
     existing_observations.append(observation)
 
     existing_tasks = list(state.get("tasks") or [])
-    for t in existing_tasks:
-        if t.get("task_id") == task_id:
-            t["status"] = outcome
+    for task in existing_tasks:
+        if str(task.get("task_id") or "") == task_id:
+            task["status"] = outcome
 
     return {
         "observations": existing_observations,
@@ -910,178 +1011,240 @@ def memory_patch_node(
     }
 
 
-def finalize_memory_patch_node(
-    state: Dict[str, Any],
-    *,
-    model: BaseChatModel,
-    memory_store: MemoryStore,
-    run_id: str = "",
-    patch_repair_attempts: int = 1,
-    tool_backend: Any = None,
-) -> Dict[str, Any]:
-    """Apply one final memory reconciliation patch before summarize."""
-    memory_store.ensure_exists()
-    final_status = str(state.get("status") or "done").strip().lower()
-    if final_status not in {"done", "failure", "needs_intervention"}:
-        final_status = "done"
+# ---------------------------------------------------------------------------
+# Memory patch node (hot-path, stop-stage only)
+# ---------------------------------------------------------------------------
 
-    observations = list(state.get("observations") or [])
-    tasks = list(state.get("tasks") or [])
-    task_result = state.get("task_result") or {}
-    structured_source = task_result.get("structured_result")
-    if not isinstance(structured_source, dict):
-        structured_source = {}
+_MEMORY_TOPICS_ALLOWED: tuple[str, ...] = (
+    "MEMORY/MEMORY.md",
+    "MEMORY/topics/FACTS.md",
+    "MEMORY/topics/FILES.md",
+    "MEMORY/topics/CONSTRAINTS.md",
+    "MEMORY/topics/QUESTIONS.md",
+    "MEMORY/topics/RUNBOOK.md",
+)
 
-    summary_candidates = [
-        state.get("summary"),
-        task_result.get("task_summary") if isinstance(task_result, dict) else None,
-    ]
-    if observations and isinstance(observations[-1], dict):
-        summary_candidates.append(observations[-1].get("summary"))
-    summary_text = ""
-    for item in summary_candidates:
-        text = str(item or "").strip()
-        if text:
-            summary_text = text
-            break
-    if not summary_text:
-        summary_text = f"Run finalized with status: {final_status}."
 
-    artifact_rows: list[dict[str, Any]] = []
-    seen_paths: set[str] = set()
-    for obs in observations:
-        if not isinstance(obs, dict):
+def _normalize_pending_memory_updates(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
             continue
-        task_id = str(obs.get("task_id") or "")
-        for art in obs.get("key_artifacts") or []:
-            if not isinstance(art, dict):
-                continue
-            path = str(art.get("path") or "").strip()
-            if not path or path in seen_paths:
-                continue
-            seen_paths.add(path)
-            row = {
-                "path": path,
-                "description": str(art.get("description") or "").strip(),
-                "source": task_id,
-            }
-            artifact_rows.append(row)
+        topic = str(item.get("topic") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if topic not in _MEMORY_TOPICS_ALLOWED:
+            continue
+        if not content:
+            continue
+        out.append({"topic": topic, "content": content})
+    return out
 
-    facts = structured_source.get("facts")
-    facts_payload = facts if isinstance(facts, list) else []
 
-    files_payload: list[Any] = []
-    src_files = structured_source.get("files")
-    if isinstance(src_files, list):
-        files_payload = list(src_files)
-    if not files_payload:
-        files_payload = [row.get("path") for row in artifact_rows if row.get("path")]
+def _memory_topic_path(memory_store: MemoryStore, topic: str) -> Path:
+    rel = str(topic or "").strip()
+    if rel == "MEMORY/MEMORY.md":
+        return memory_store.index_path
+    if rel.startswith("MEMORY/topics/"):
+        return memory_store.memory_dir / rel.replace("MEMORY/", "", 1)
+    raise ValueError(f"unsupported memory topic: {rel}")
 
-    constraints = structured_source.get("constraints")
-    constraints_payload = constraints if isinstance(constraints, list) else []
 
-    open_questions = structured_source.get("open_questions")
-    open_questions_payload = open_questions if isinstance(open_questions, list) else []
-    if final_status == "done":
-        open_questions_payload = []
+def _render_editable_file_snapshots(memory_store: MemoryStore, topics: list[str]) -> str:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for topic in topics:
+        normalized = str(topic or "").strip()
+        if normalized in _MEMORY_TOPICS_ALLOWED and normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
 
-    decisions = structured_source.get("decisions")
-    decisions_payload = decisions if isinstance(decisions, list) else []
+    blocks: list[str] = []
+    for topic in ordered:
+        path = _memory_topic_path(memory_store, topic)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            text = ""
+        blocks.append(f'<editable_file path="{topic}">')
+        blocks.append(text)
+        blocks.append("</editable_file>")
+    return "\n".join(blocks).strip() or "(none)"
 
-    next_steps = structured_source.get("next_steps")
-    next_steps_payload = next_steps if isinstance(next_steps, list) else []
-    if final_status == "done" and not next_steps_payload:
-        next_steps_payload = ["None (goal scope complete)."]
 
-    structured_result = {
-        "summary": summary_text,
-        "facts": facts_payload,
-        "files": files_payload,
-        "constraints": constraints_payload,
-        "open_questions": open_questions_payload,
-        "decisions": decisions_payload,
-        "next_steps": next_steps_payload,
-        "artifacts": artifact_rows,
-        "final_status": final_status,
-        "task_count": len(tasks),
-        "completed_task_count": sum(1 for task in tasks if str(task.get("status") or "") == "success"),
-    }
-
-    patch_status = "skipped"
-    last_error = ""
-    refresh_needed = False
-    max_attempts = max(1, patch_repair_attempts + 1)
-    if tool_backend is None:
-        logger.info("[finalize_memory_patch_node] skip patch: tool_backend unavailable")
-        refresh_needed = True
-    else:
-        memory_index_text = memory_store.read_index()
-        topic_texts = _read_memory_topics(memory_store)
-        previous_edit_text = ""
-        patch_status = "failed"
-
-        for attempt in range(1, max_attempts + 1):
-            if attempt == 1:
-                prompt = build_memory_patch_prompt()
-                msgs = prompt.format_messages(
-                    run_id=run_id,
-                    task_id="finalize_memory",
-                    task_goal="Reconcile memory to latest run state before summary",
-                    outcome=final_status,
-                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
-                    memory_index_text=memory_index_text,
-                    **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
-                )
-            else:
-                prompt = build_memory_patch_repair_prompt()
-                msgs = prompt.format_messages(
-                    previous_edit_text=previous_edit_text,
-                    apply_error=last_error or "(none)",
-                    apply_error_context_json="{}",
-                    run_id=run_id,
-                    task_id="finalize_memory",
-                    task_goal="Reconcile memory to latest run state before summary",
-                    outcome=final_status,
-                    structured_result_json=json.dumps(structured_result, ensure_ascii=False),
-                    memory_index_text=memory_index_text,
-                    **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
-                )
-
-            try:
-                resp = model.invoke(msgs)
-                patch_raw = llm_text(resp).strip()
-                edit_text = _normalize_patch_text(patch_raw)
-                previous_edit_text = edit_text
-                tool_out = tool_backend.call(
-                    "memory_apply_aider_edits",
-                    json.dumps({"edits_text": edit_text, "allowed_paths": ["MEMORY/"], "emit_diff": True}, ensure_ascii=False),
-                    toolcall_key=f"finalize_memory_patch_a{attempt}",
-                )
-                status = str(getattr(tool_out, "status", "") or "").strip().lower()
-                if status == "success":
-                    patch_status = "success"
-                    last_error = ""
-                    break
-                last_error = content_to_text(getattr(tool_out, "content", "")) or "patch apply failed"
-            except Exception as exc:
-                last_error = str(exc)
-                logger.warning("[finalize_memory_patch_node] attempt %d failed: %s", attempt, exc)
-
-        if patch_status != "success":
-            refresh_needed = True
-
-    if refresh_needed:
-        _refresh_memory_index(memory_store)
+def _append_memory_patch_event(
+    *,
+    memory_store: MemoryStore,
+    run_id: str,
+    patch_status: str,
+    summary: str,
+    error: str,
+    requested_topics: list[str],
+    applied_topics: list[str],
+) -> None:
     memory_store.append_event({
         "ts": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
         "run_id": run_id,
-        "task_id": "finalize_memory",
-        "outcome": final_status,
-        "summary": summary_text,
+        "task_id": "final_memory_update",
+        "outcome": patch_status,
+        "summary": summary,
         "memory_patch_status": patch_status,
-        "memory_patch_error": last_error,
+        "memory_patch_error": error,
+        "requested_topics": requested_topics,
+        "applied_topics": applied_topics,
     })
-    return {}
+
+
+async def run_memory_patch(
+    state: Dict[str, Any],
+    *,
+    agent: Any,
+    memory_store: MemoryStore,
+    run_id: str = "",
+    max_steps: int = 20,
+    continue_goto: str = "summarize",
+) -> Command:
+    """Apply director-emitted memory updates at stop stage."""
+    memory_store.ensure_exists()
+    updates = _normalize_pending_memory_updates(state.get("pending_memory_updates"))
+    requested_topics = [row["topic"] for row in updates]
+
+    if not updates:
+        result = {
+            "status": "done",
+            "summary": "No memory updates requested.",
+            "applied_topics": [],
+            "error": "",
+            "needs_human": False,
+        }
+        return Command(
+            goto=continue_goto,
+            update={
+                "pending_memory_updates": [],
+                "memory_patch_result": result,
+            },
+        )
+
+    ctx_text = MEMORY_PATCH_CONTEXT_TEMPLATE.format(
+        pending_memory_updates_json=json.dumps(updates, ensure_ascii=False, indent=2),
+        editable_file_snapshots=_render_editable_file_snapshots(memory_store, requested_topics),
+    )
+    ctx_msg = HumanMessage(content=ctx_text)
+    input_messages: list[AnyMessage] = [ctx_msg]
+
+    try:
+        result = await _invoke_agent_with_step_budget(
+            agent=agent,
+            messages=input_messages,
+            max_steps=max_steps,
+            role="memory_patch",
+        )
+    except Exception as exc:
+        logger.exception("memory patch agent invoke failed: %s", exc)
+        summary = f"memory patch agent invoke failed before structured response: {exc}"
+        violation = _structured_contract_violation(
+            role="memory_patch",
+            reason="invoke_exception",
+            messages=input_messages,
+            max_steps=max_steps,
+            error=str(exc),
+            schema_name=MemoryPatchOutput.__name__,
+        )
+        patch_result = {
+            "status": "blocked",
+            "summary": summary,
+            "applied_topics": [],
+            "error": summary,
+            "needs_human": False,
+        }
+        _append_memory_patch_event(
+            memory_store=memory_store,
+            run_id=run_id,
+            patch_status="blocked",
+            summary=summary,
+            error=summary,
+            requested_topics=requested_topics,
+            applied_topics=[],
+        )
+        return Command(
+            goto=continue_goto,
+            update={
+                "pending_memory_updates": [],
+                "memory_patch_result": patch_result,
+                "contract_violation": violation,
+            },
+        )
+
+    msgs = list(result.get("messages", []) or [])
+    parsed, violation = _require_structured_response(
+        result,
+        schema_cls=MemoryPatchOutput,
+        role="memory_patch",
+        messages=msgs,
+        max_steps=max_steps,
+    )
+    if not isinstance(parsed, MemoryPatchOutput):
+        violation_payload = violation or _structured_contract_violation(
+            role="memory_patch",
+            reason="missing_structured_response",
+            messages=msgs,
+            max_steps=max_steps,
+            schema_name=MemoryPatchOutput.__name__,
+        )
+        summary = _structured_contract_violation_summary("memory_patch", violation_payload)
+        patch_result = {
+            "status": "blocked",
+            "summary": summary,
+            "applied_topics": [],
+            "error": summary,
+            "needs_human": False,
+        }
+        _append_memory_patch_event(
+            memory_store=memory_store,
+            run_id=run_id,
+            patch_status="blocked",
+            summary=summary,
+            error=summary,
+            requested_topics=requested_topics,
+            applied_topics=[],
+        )
+        return Command(
+            goto=continue_goto,
+            update={
+                "pending_memory_updates": [],
+                "memory_patch_result": patch_result,
+                "contract_violation": violation_payload,
+            },
+        )
+
+    payload = parsed.model_dump()
+    applied_topics = [
+        topic for topic in (parsed.applied_topics or []) if str(topic or "").strip() in _MEMORY_TOPICS_ALLOWED
+    ]
+    if parsed.status == "done" and not applied_topics:
+        applied_topics = requested_topics
+        payload["applied_topics"] = list(applied_topics)
+    if parsed.status == "done" and "MEMORY/MEMORY.md" not in set(applied_topics):
+        _refresh_memory_index(memory_store)
+
+    _append_memory_patch_event(
+        memory_store=memory_store,
+        run_id=run_id,
+        patch_status=parsed.status,
+        summary=str(parsed.summary or "").strip(),
+        error=str(parsed.error or "").strip(),
+        requested_topics=requested_topics,
+        applied_topics=applied_topics,
+    )
+    return Command(
+        goto=continue_goto,
+        update={
+            "pending_memory_updates": [],
+            "memory_patch_result": payload,
+            "contract_violation": {},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1091,118 +1254,30 @@ def finalize_memory_patch_node(
 def summarize_node(
     state: Dict[str, Any],
     *,
-    model: BaseChatModel,
     memory_store: MemoryStore,
 ) -> Dict[str, Any]:
-    """Generate the final project summary."""
-    user_request = state["user_request"]
-    observations = state.get("observations", [])
-    memory_index = memory_store.read_index()
-    artifacts = memory_store.artifact_index()
+    """Finalize output without an extra summarizer LLM pass."""
+    _ = memory_store
+    summary = str(state.get("summary") or "").strip()
 
-    prompt = build_summary_prompt()
-    messages = prompt.format_messages(
-        user_request=user_request,
-        status=state.get("status", "done"),
-        memory_index_excerpt=memory_index,
-        observations=json.dumps(observations, ensure_ascii=False, default=str),
-        artifacts=json.dumps(artifacts, ensure_ascii=False, default=str),
-    )
-    resp = model.invoke(messages)
-    summary = llm_text(resp).strip()
+    if not summary:
+        director_decision = state.get("director_decision") or {}
+        if isinstance(director_decision, dict):
+            stop_payload = director_decision.get("stop_and_synthesize") or {}
+            if isinstance(stop_payload, dict):
+                summary = str(stop_payload.get("final_answer_md") or "").strip()
+
+    if not summary:
+        observations = list(state.get("observations") or [])
+        if observations and isinstance(observations[-1], dict):
+            summary = str(observations[-1].get("summary") or "").strip()
+
+    if not summary:
+        summary = "No final answer was produced."
+
     incoming_status = str(state.get("status") or "done")
     final_status = incoming_status if incoming_status in {"failure", "needs_intervention"} else "done"
     return {"summary": summary, "status": final_status}
-
-
-# ---------------------------------------------------------------------------
-# Plan commit node
-# ---------------------------------------------------------------------------
-
-def plan_commit_node(
-    state: Dict[str, Any],
-    *,
-    model: BaseChatModel,
-    memory_store: MemoryStore,
-    run_id: str = "",
-    tool_backend: Any = None,
-) -> Dict[str, Any]:
-    """Commit the approved plan to memory via LLM-generated patch."""
-    proposal_md = state.get("proposal_md", "")
-    work_packages = state.get("work_packages", [])
-    if not proposal_md:
-        return {}
-
-    _snippet = lambda text: " ".join(str(text or "").split())
-
-    structured_result = {
-        "summary": "Plan committed for execution.",
-        "facts": [
-            f"Run focus: {_snippet(proposal_md)}",
-            f"Work package count: {len(work_packages)}",
-            "Work packages: " + " | ".join(work_packages),
-        ],
-        "files": [],
-        "constraints": [],
-        "open_questions": [],
-        "decisions": [{"decision": "Plan committed", "rationale": "Approved for execution"}],
-        "next_steps": list(work_packages),
-        "artifacts": [],
-    }
-
-    memory_store.ensure_exists()
-    event = {
-        "ts": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
-        "run_id": run_id,
-        "task_id": "plan_commit",
-        "outcome": "success",
-        "summary": "Plan committed for execution.",
-    }
-    memory_store.append_event(event)
-
-    refresh_needed = False
-    if tool_backend is None:
-        logger.info("[plan_commit_node] skip memory patch: tool_backend unavailable")
-        refresh_needed = True
-    else:
-        memory_index_text = memory_store.read_index()
-        topic_texts = _read_memory_topics(memory_store)
-
-        prompt = build_memory_patch_prompt()
-        msgs = prompt.format_messages(
-            run_id=run_id,
-            task_id="plan_commit",
-            task_goal="Commit approved plan to memory",
-            outcome="success",
-            structured_result_json=json.dumps(structured_result, ensure_ascii=False),
-            memory_index_text=memory_index_text,
-            **{f"topic_{k.lower().replace('.md', '')}_text": v for k, v in topic_texts.items()},
-        )
-
-        try:
-            resp = model.invoke(msgs)
-            patch_raw = llm_text(resp).strip()
-            edit_text = _normalize_patch_text(patch_raw)
-            tool_out = tool_backend.call(
-                "memory_apply_aider_edits",
-                json.dumps({
-                    "edits_text": edit_text,
-                    "allowed_paths": ["MEMORY/"],
-                    "emit_diff": True,
-                }, ensure_ascii=False),
-                toolcall_key="plan_commit_memory_patch",
-            )
-            status = str(getattr(tool_out, "status", "") or "").strip().lower()
-            if status != "success":
-                refresh_needed = True
-        except Exception as exc:
-            logger.warning("Plan commit memory patch failed: %s", exc)
-            refresh_needed = True
-
-    if refresh_needed:
-        _refresh_memory_index(memory_store)
-
-    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -1289,12 +1364,10 @@ def _director_observations_view(
     return sanitized
 
 
-def _director_task_status_board(
+def _director_task_outcomes_history(
     tasks: list[dict],
     observations: list[dict],
-    *,
-    max_items: int | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     obs_map: dict[str, dict] = {}
     for row in observations or []:
         if isinstance(row, dict):
@@ -1302,13 +1375,16 @@ def _director_task_status_board(
             if tid:
                 obs_map[tid] = row
 
-    board: list[dict] = []
+    history: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+
     for item in tasks or []:
         if not isinstance(item, dict):
             continue
         tid = str(item.get("task_id") or "").strip()
         if not tid:
             continue
+        seen_task_ids.add(tid)
         row: dict[str, Any] = {
             "task_id": tid,
             "status": _trim_text(str(item.get("status") or "").strip(), limit=32),
@@ -1339,11 +1415,94 @@ def _director_task_status_board(
                         compact_steps.append(hint)
                 if compact_steps:
                     row["next_steps"] = compact_steps
-        board.append(row)
+        history.append(row)
 
-    if max_items is not None and len(board) > max_items:
-        return board[-max_items:]
-    return board
+    for obs in observations or []:
+        if not isinstance(obs, dict):
+            continue
+        tid = str(obs.get("task_id") or "").strip()
+        if not tid or tid in seen_task_ids:
+            continue
+        row: dict[str, Any] = {"task_id": tid}
+        for key in (
+            "outcome",
+            "summary",
+            "key_artifacts",
+            "open_questions",
+            "facts",
+            "decisions",
+            "next_steps",
+        ):
+            if key in obs:
+                row[key] = obs.get(key)
+        artifacts = obs.get("key_artifacts")
+        if isinstance(artifacts, list):
+            row["artifact_count"] = len(artifacts)
+        decisions = obs.get("decisions")
+        if isinstance(decisions, list):
+            row["decision_count"] = len(decisions)
+        history.append(row)
+
+    return history
+
+
+def _render_task_outcomes_history_lines(history: list[dict[str, Any]]) -> str:
+    if not history:
+        return "(none)"
+
+    def _fmt_list(value: Any, *, limit: int = 3) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        items = []
+        for item in value:
+            text = _trim_text(" ".join(str(item).split()), limit=120)
+            if text:
+                items.append(text)
+            if len(items) >= limit:
+                break
+        return items
+
+    lines: list[str] = []
+    record_idx = 0
+    for row in history:
+        if not isinstance(row, dict):
+            continue
+        fields: list[str] = []
+        for key in ("task_id", "status", "outcome", "goal", "summary"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = _trim_text(" ".join(str(value).split()), limit=220 if key == "summary" else 140)
+            if text:
+                fields.append(f"{key}: {text}")
+
+        for key in ("artifact_count", "decision_count"):
+            if key in row:
+                fields.append(f"{key}: {row.get(key)}")
+
+        list_fields = ("next_steps", "open_questions", "facts", "decisions")
+        for field_key in list_fields:
+            items = _fmt_list(row.get(field_key))
+            if not items:
+                continue
+            fields.append(f"{field_key}:")
+            for item in items:
+                fields.append(f"  - {item}")
+
+        if not fields:
+            continue
+
+        record_idx += 1
+        lines.append(f"## Record {record_idx}")
+        lines.append("")
+        lines.append("```md")
+        lines.extend(fields)
+        lines.append("```")
+        lines.append("")
+
+    if not lines:
+        return "(none)"
+    return "\n".join(lines).rstrip()
 
 
 def _cap_messages(messages: list[AnyMessage], *, max_messages: int | None = None) -> list[AnyMessage]:
@@ -1377,32 +1536,11 @@ def _next_task_index(tasks: list[dict]) -> int:
     return max_idx + 1
 
 
-def _read_memory_topics(memory_store: MemoryStore) -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    for name in ("GOAL.md", "FACTS.md", "FILES.md", "CONSTRAINTS.md", "QUESTIONS.md", "RUNBOOK.md"):
-        topic_path = memory_store.topics_dir / name
-        try:
-            out[name] = topic_path.read_text(encoding="utf-8")
-        except Exception:
-            out[name] = ""
-    return out
-
-
-def _normalize_patch_text(raw: str) -> str:
-    text = str(raw or "").strip()
-    if text.startswith("```") and text.endswith("```"):
-        m = re.match(r"^```[^\n]*\n(.*?)\n```$", text, re.DOTALL)
-        if m:
-            text = m.group(1).strip()
-    return text
-
-
 __all__ = [
     "run_proposal",
     "run_director",
+    "run_fast_director",
     "run_task",
-    "memory_patch_node",
-    "finalize_memory_patch_node",
-    "plan_commit_node",
+    "run_memory_patch",
     "summarize_node",
 ]

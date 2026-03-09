@@ -10,192 +10,273 @@
 |        \_____________________________________________\   |
 |         \_____________________________________________\  |
 |                                                          |
-|     An Automated Agent System for Catalysis Research     |
+|   Agentic Catalysis Research and Scientific Writing      |
 |                                                          |
 +----------------------------------------------------------+
 ```
-CatMaster is a **open-source** task-based LLM orchestration and tooling framework for computational materials workflows. It provides a structured planning/execution loop, tool registry for geometry/input preparation and job submission (VASP, MACE via DPDispatcher), and unified tracing/reporting (task state, tool calls, memory events, and final reports).
 
-## Highlights
+CatMaster is an open-source agent system for computational catalysis workflows. It has moved well beyond a single planner-plus-tools loop: the current codebase has separate execution, research, and writing lanes, shared file-based memory, run-history retrieval, MCP-backed filesystem tooling, role-scoped skills, and a manuscript production path that can assemble and compile a TeX paper bundle.
 
-- Task-based orchestrator with plan review and file-based memory (`files/MEMORY/**` + `metadata/memory/events.jsonl`) carried along tasks.
-- Tool registry for materials workflows (Materials Project retrieval, slab construction, adsorption site enumeration, VASP/MACE job submission), and long-tail tools with powerful LLM and python_exec
-- HITL (human-in-the-loop) intervention for blocked runs with replanning.
-- Unified run artifacts and traces (event/tool/patch traces, observations, final report).
-- Demo scripts and documented application cases in `demos/`, with result summaries in `demos/examples/`. You can try them!
+## What CatMaster Is Now
 
-## Project layout
+The current architecture is organized around four lane-level workflows:
 
-- `catmaster/`: core orchestration, runtime, tools, and UI.
-- `demos/`: runnable scripts for end-to-end use cases and examples.
-- `docs/`: capability and design notes (start with `docs/abilities.md`).
+- `standard`: proposal -> director -> task runner -> memory patch. This is the full execution lane for multi-step work.
+- `fast`: a proposal-free execution lane driven by `fast_director` for quicker bounded tasks.
+- `research`: a campaign-level planner that can dispatch literature review, bounded child experiments, ask human input, conclude, and hand off to writing.
+- `writing`: a dedicated writing lane with `write_director -> section_writer -> write_reviewer -> assemble -> finalize`, centered on TeX manuscript generation.
 
-## Environment setup
+That lane split is the biggest architectural change relative to the older README and `docs/abilities.md`. CatMaster is no longer just a task executor with memory. It is now a multi-lane system with:
 
-CatMaster is designed for real-world research environments, aiming at production-level research—for example, you have supercomputer cluster access for DFT calculations and an optional GPU server for ML-related research, while processing files on your laptop. Because of this, the environment setup is a bit complex, but definitely worth it. Once you set it up, you can open multiple terminals, raise many questions, have your coffee break, and let the LLMs do trivial things for you. But before that, you should carefully read the following setup guidance:
+- LangGraph-based orchestration for execution, research, and writing.
+- Shared project memory in `files/MEMORY/**`, plus campaign-local research state.
+- A run ledger with history retrieval and reranking.
+- Two skill roots: `skills/` and `writing_skills/`.
+- A prompt-first writing workflow that can read project evidence, generate figures, assemble an `achemso` manuscript, and run a compile-fix pass.
 
-First, you should download the source code of the project (Find it in release/source code.zip, or directly download the repository if you like dev version), place somewhere (recommned: WSL for convinient environemnt setting) and preparew the environment:
+## Technical Highlights
 
-### Python dependencies
+- Graph-based runtime instead of a monolithic orchestrator.
+  - `catmaster/agents/graph.py`
+  - `catmaster/agents/research_graph.py`
+  - `catmaster/agents/writing_graph.py`
 
-Pick the right requirements set for your environment:
-- `requirements/pc.txt`: local machine dependencies.
-- `requirements/gpu.txt`: GPU/MACE-side dependencies.
+- Lane-specific agent roles and tool surfaces.
+  - Execution roles: `proposal`, `director`, `task_runner`, `memory_patch`
+  - Research roles: `research_lead`
+  - Writing roles: `write_director`, `section_writer`, `write_reviewer`, `academic_polisher`, `tex_compile_fixer`
 
-The CPU side cluster normally do not need python dependencies, If you wish to use local as GPU-server workload (not dedicated gpu-server), you should install the dependencies in pc.txt and gpu.txt on the same local machine. Virtual environment recommended
+- Shared project workspace semantics.
+  - The real working root is always project `files/`.
+  - `metadata/runs/<run_id>` stores audit data, task state, traces, reports, and UI events.
+  - Research campaign file outputs live in `files/research/<campaign_id>/`.
+  - The active manuscript bundle lives in `files/manuscript/`, with rollover to `files/manuscript_archive/`.
 
-Typical installation:
+- Research lane as a campaign controller, not just another execution run.
+  - `RunLiterature`
+  - `RunExperiment`
+  - `RunWriter`
+  - `AskHuman`
+  - `Conclude`
+
+- Writing lane as a first-class system, not a report formatter.
+  - Prompt-first request interface
+  - Fixed `achemso` shell
+  - Section-level TeX generation
+  - Figure planning vs realized figure artifact separation
+  - Final compile-fix pass via `pdflatex`
+
+- Metadata-driven skills.
+  - `skills/` for execution/research skills
+  - `writing_skills/` for manuscript and figure-writing skills
+  - Visibility filtered by role and lane metadata, not just hardcoded lists
+
+- MCP filesystem integration and role-scoped tool access.
+  - Proposal/director/task-runner roles get different filesystem surfaces
+  - Writing director and section writer get their own writing-specific tool bundle
+
+## Current Capability Surface
+
+### Execution and planning
+
+- Full execution lane with proposal review, HITL pause/resume, replanning, memory patching, and final reporting.
+- Fast lane for proposal-free bounded execution.
+- Child experiment runs launched from the research lane while still working against the shared project `files/` root.
+
+### Research lane
+
+- Campaign persistence with `ResearchStore`
+- Literature review workflow with structured packs
+- Experiment dispatch and pack persistence
+- Ask-human pause/resume continuity
+- Context brokerage using:
+  - project memory
+  - run history
+  - campaign state
+  - persisted research artifacts
+- `RunWriter` handoff using a fixed manuscript-style house prompt
+
+### Writing lane
+
+- Direct prompt-based writing runs from the WebUI
+- Optional retrieval context from a source research campaign
+- `write_director` planning with director-grade tools
+- `section_writer` with:
+  - MCP filesystem access
+  - `bash_exec`
+  - literature/research read tools
+  - schematic figure generation
+  - `apply_aider_edits`
+- Review loop focused on manuscript quality rather than audit-log prose
+- Fixed `achemso`-style final assembly into:
+  - `files/manuscript/MANUSCRIPT.tex`
+  - `files/manuscript/sections/*.tex`
+  - `files/manuscript/figures/*`
+  - `files/manuscript/references.bib`
+- Final compile-fix step that requires `pdflatex`
+
+### Scientific tooling
+
+The tool registry still covers the core catalysis workflow:
+
+- molecule generation from SMILES
+- slab construction and surface preparation
+- selective dynamics helpers
+- supercells
+- adsorption-site enumeration
+- adsorbate placement and batch adsorption generation
+- NEB geometry/input generation
+- VASP input preparation
+- VASP and MACE execution through DPDispatcher
+- Materials Project retrieval
+- structure rendering and image analysis
+
+### Memory and history
+
+- Shared file-based memory under `files/MEMORY/**`
+- Memory index synthesis for agent context
+- Run ledger indexing and history retrieval
+- Research context review over prior project runs, memory, and campaign artifacts
+
+## Project Layout
+
+- `catmaster/`: orchestration graphs, runtime services, WebUI, and tools
+- `configs/`: LLM and DPDispatcher configuration
+- `skills/`: execution and research skills
+- `writing_skills/`: writing-specific skills and template assets
+- `reference_scripts/`: helper scripts and reference templates
+- `devdocs/`: internal development/finalization notes
+- `demos/`: example prompts and workflow demos
+
+## Project Space Layout
+
+Within a project space, the important paths are:
+
+- `files/`
+  - the real workspace root for agent operations
+- `files/MEMORY/`
+  - shared project memory
+- `files/research/<campaign_id>/`
+  - research campaign file outputs
+- `files/manuscript/`
+  - active manuscript bundle produced by the writing lane
+- `files/manuscript_archive/<run_id>/`
+  - archived prior manuscript bundles
+- `metadata/runs/<run_id>/`
+  - per-run audit layer: task state, traces, reports, UI events, tool logs
+- `metadata/research_campaigns/<campaign_id>/`
+  - structured research campaign state
+
+## Environment Setup
+
+CatMaster targets real catalysis environments: local workstation + optional GPU machine + remote CPU/VASP cluster.
+
+### Python
+
+Typical local setup:
+
 ```bash
 conda create -n catmaster python=3.11
 pip install -r requirements/pc.txt
 ```
 
-### WebUI
+If the same machine is also your GPU-side execution host, install both:
 
-Run the web workbench (recommended):
 ```bash
-python -m catmaster.webui --project-space-root /path/to/project_space
+pip install -r requirements/pc.txt
+pip install -r requirements/gpu.txt
 ```
 
-Or use the main entry point:
+### OVITO
+
+`render_structure_views` prefers OVITO. `ovito` is already included in `requirements/pc.txt`.
+
+If Ubuntu is missing OpenGL runtime symbols:
+
 ```bash
-python main.py --project-space-root /path/to/project_space
+sudo apt update
+sudo apt install -y libopengl0
 ```
 
-Project space selection is parameter-driven (`--project-space-root`/constructor arguments), not environment-variable driven.
+### Node.js
 
-**For GPU SIDE**: Ensure the remote host has the Python/MACE runtime; the task scripts are forwarded via DPDispatcher, so syncing the full repo is not required.
-**For CPU SIDE**: VASP execution now runs a forwarded Python boot script; ensure the CPU cluster provides Python 3.10+ in the job environment (module/conda).
+MCP filesystem tools run through `npx @modelcontextprotocol/server-filesystem`, so Node.js is required.
+
+```bash
+brew install node
+```
+
+Then verify:
+
+```bash
+node -v
+npm -v
+npx -v
+```
+
+### LaTeX
+
+The writing lane now expects `pdflatex` for the final compile-fix pass. If `pdflatex` is not available, manuscript finalization fails instead of silently degrading.
 
 ### Materials Project
 
-Register and set your Materials Project API key in ~/.bashrc if you do not want LLM to raise error and make a human-in-the-loop intervention request if they can not find relevant structure:
 ```bash
 export MP_API_KEY=YOUR_API_KEY
 ```
 
-### Pymatgen POTCAR Configs:
+### POTCAR setup
 
-Pymatgen needs POTCAR files to generate VASP inputs. You should download the POTCAR files from VASP portal and place them in a local dir.
-Then refer to https://pymatgen.org/installation.html to setup POTCARs for pymatgen.
+Pymatgen still requires local POTCAR availability. Download the VASP POTCAR files and configure Pymatgen accordingly:
 
+https://pymatgen.org/installation.html
 
-### DPDispatcher config (configs folder only)
+### DPDispatcher
 
-All DPDispatcher runtime configs are unified under `configs/dpdispatcher/`.
-
-- `machines_template.yaml`: tracked template for deployment.
-- `machines.yaml`: local machine config (gitignored).
-- `resources.yaml`: tracked resource presets.
-- `tasks.yaml`: tracked task templates and default `resources` bindings.
+DPDispatcher runtime config lives in `configs/dpdispatcher/`.
 
 Setup:
-1. Copy template: `cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml`
-2. Fill SSH/queue/env details in `machines.yaml`.
-3. Verify machine names referenced in `resources.yaml`.
-4. Keep task command patterns in `tasks.yaml` unless you know your site-specific changes are required.
 
-**FOR ANY EXECUTION ON REMOTE MACHINES, PASSWORDLESS SSH CONNECTIONS (PRIVATE KEY LOGIN) SHOULD BE CONFIGURED BEFORE LAUNCHING THE CODE.**
-
-### CPU (VASP) requirements
-
-- Slurm-based HPC environment.
-- Python 3.10+ available on compute nodes (for `task_script/vasp_boot.py`).
-- VASP available in PATH or sourced via an environment script. Make sure launch command in tasks.yaml matches your site setup.
-- DPDispatcher uses SSH to submit jobs; the MPI bootstrap should be set for SSH.
-
-### GPU (MACE) requirements
-
-- GPU host with CUDA/cuDNN and a Python environment for MACE.
-- **Important:** MACE jobs forward the MACE script via DPDispatcher; you only need the remote runtime environment.
-
-### VASP remote environment script
-
-To execute vasp, you need to ensure VASP is correctly installed in cpu server and slurm system configured if you use slurm. (Hint: Taobao may help you?). Use the reference shell in `reference_scripts/catmaster_env_vasp.sh` as a template and update paths for your site. The current file contains site-specific paths and should be adapted before use. We are planning for support more DFT backends, however, for catalysis research, we have to admit the VASP is the dominant tool and have the best corresponding environment (guidance, comparable results, even the LLMs are more familiar with it and have better chance for fill-in correct params etc.)
-
-Reference (from `reference_scripts/catmaster_env_vasp.sh`):
 ```bash
-export PATH=/public/software/vasp.6.4.1-vtst-sol/bin:$PATH
-export PYTHONPATH=/public/home/abcdefg/catmaster_code:$PYTHONPATH  # optional: only if you run custom Python not forwarded
-source /public/software/vasp.6.4.1-vtst-sol/env.sh
-ulimit -s unlimited
-export I_MPI_HYDRA_BOOTSTRAP=ssh
+cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml
 ```
 
-Notes:
-- `I_MPI_HYDRA_BOOTSTRAP=ssh` (SSH_HYDRA) must be set for DPDispatcher on some MPI stacks.
-- Ensure the VASP environment script is sourced and `vasp_std` is in PATH.
+Then fill in SSH / queue / environment details in `machines.yaml`.
+
+Remote execution assumptions:
+
+- passwordless SSH
+- Slurm-style HPC on CPU/VASP side
+- Python 3.10+ available on compute nodes
+- remote VASP or MACE runtime already installed
 
 ## LLM Configuration
-CatMaster now supports multiple providers via `configs/llm.yaml` (with secrets from env). To use LLM, acquire your API key and export it (e.g. ~/.bashrc):
+
+CatMaster uses `configs/llm.yaml`, with credentials coming from environment variables.
+
+Typical setup:
 
 ```bash
-export OPENAI_API_KEY="sk-projxxxxxxxxxxx"
-# Optionally, change endpoint:
-export OPENAI_BASE_URL="https://your-proxy-or-custom-endpoint/v1"
+export OPENROUTER_API_KEY="..."
 ```
 
-### Switch provider via configs/llm.yaml
+Current notable config areas:
 
-Driver-template example (OpenRouter chat-completions + OpenAI responses):
-```yaml
-tool_calling_profiles:
-  openrouter_chat_completions:
-    driver: openai_chat_completions
-    supports_builtin_tools: false
-    parallel_tool_calls: false
-    request_options: {}
-    extra_body: {}
-  openai_responses:
-    driver: openai_responses
-    supports_builtin_tools: true
-    parallel_tool_calls: true
-    request_options: {}
-    extra_body: {}
+- `models`: provider/model registry
+- `agents`: role -> model mapping
+- `image_generation`: image model and static image config for schematic figure generation
+- `writing.author_name`: fixed manuscript author name, default `CatMaster`
 
-models:
-  "openai/gpt-5.2:online":
-    provider: openrouter
-    model: openai/gpt-5.2:online
-    api_key_env: OPENROUTER_API_KEY
-    base_url: https://openrouter.ai/api/v1
-    tool_calling:
-      profile: openrouter_chat_completions
-      request_options: {}
-      extra_body:
-        # OpenRouter/provider-specific fields go here.
-        # prompt_cache_retention: 24h
+The current role map includes the writing and research stack, not just the original execution roles.
 
-  "gpt-5.2":
-    provider: openai
-    model: gpt-5.2
-    api_key_env: OPENAI_API_KEY
-    tool_calling:
-      profile: openai_responses
-      request_options: {}
-      extra_body: {}
+## Quick Start
 
-agents:
-  proposal: "openai/gpt-5.2:online"
-  director: "openai/gpt-5.2:online"
-  task_runner: "openai/gpt-5.2:online"
-  memory_patch: "openai/gpt-5.2:online"
-  summary: "gpt-5.2"
-
-agent_policies:
-  proposal:
-    browse_tools_enabled: true
-```
-
-## Quick start (WebUI)
-
-After environment setup, start CatMaster from the WebUI entry:
+Run the WebUI:
 
 ```bash
 python -m catmaster.webui --project-space-root ./project_space
 ```
 
-Equivalent command:
+Equivalent:
 
 ```bash
 python main.py --project-space-root ./project_space
@@ -207,41 +288,24 @@ Then open:
 http://127.0.0.1:7860
 ```
 
-Notes:
-- You still need your model provider key (e.g., `OPENAI_API_KEY`) in the environment.
-- Run summaries are saved in each project under `reports/FINAL_REPORT.md`.
+Supported top-level lanes in the current UI/runtime:
 
-## Application cases
+- `standard`
+- `fast`
+- `research`
+- `writing`
 
-- Start with `docs/abilities.md` for current capabilities.
-- See runnable examples under `demos/`.
-- Browse `demos/examples` for summarized runs, key files and final reports from those demos.
+## Writing Workflow Notes
 
-## Common environment variables
+CatMaster's current writing behavior is intentionally different from the old `dossier -> single writer` design.
 
-- `MP_API_KEY`: Materials Project API key.
-- `OPENAI_API_KEY`: OpenAI API key.
-- `OPENROUTER_API_KEY`: OpenRouter API key (when using OpenRouter models).
-- `OPENAI_BASE_URL`: optional custom OpenAI-compatible endpoint.
-- `OPENROUTER_BASE_URL`: optional OpenRouter endpoint override.
+- Research can hand off to writing through `RunWriter`.
+- Direct writing runs are prompt-first.
+- Writing is TeX-first.
+- The active manuscript bundle is stable and inspectable at `files/manuscript/`.
+- Figures are treated as explicit manuscript assets, not just planning placeholders.
 
----
+## Development Notes
 
-Finally, the project is currently in its prototype/conceptual validation stage and under active development, you can open issues if you meet problems when using this system.
-
-## License
-This project is licensed under the Apache-2.0 License.
-
-## Citation
-If you find CatMaster useful in your research, please consider citing:
-```
-@misc{chen2026catmasteragenticautonomouscomputational,
-      title={CatMaster: An Agentic Autonomous System for Computational Heterogeneous Catalysis Research}, 
-      author={Honghao Chen and Jiangjie Qiu and Yi Shen Tew and Xiaonan Wang},
-      year={2026},
-      eprint={2601.13508},
-      archivePrefix={arXiv},
-      primaryClass={cond-mat.mtrl-sci},
-      url={https://arxiv.org/abs/2601.13508}, 
-}
-```
+- `devdocs/` contains internal design/finalization notes and is not the primary user-facing documentation.
+- The old `docs/abilities.md` summary has been retired; this README is now the canonical top-level capability overview.

@@ -5,77 +5,31 @@ import pytest
 pytest.importorskip("langchain_core")
 
 from catmaster.agents.orchestrator_prompts import (
-    build_memory_patch_prompt,
-    build_memory_patch_repair_prompt,
+    MEMORY_PATCHER_SYSTEM_PROMPT,
+    MEMORY_PATCH_CONTEXT_TEMPLATE,
 )
 
 
-def test_memory_patch_prompt_requires_aider_edits_and_path_scope() -> None:
-    prompt = build_memory_patch_prompt()
-    messages = prompt.format_messages(
-        run_id="run_01",
-        task_id="task_01",
-        task_goal="demo",
-        outcome="success",
-        structured_result_json="{}",
-        memory_index_text="",
-        topic_goal_text="# GOAL",
-        topic_facts_text="# FACTS",
-        topic_files_text="# FILES",
-        topic_constraints_text="# CONSTRAINTS",
-        topic_questions_text="# QUESTIONS",
-        topic_runbook_text="# RUNBOOK",
-    )
-    system_content = str(messages[0].content)
-    human_content = str(messages[1].content)
-    assert "Output ONLY Aider SEARCH/REPLACE edit blocks." in system_content
-    assert "Do NOT use markdown code fences." in system_content
-    assert "Allowed paths to modify: MEMORY/**" in system_content
-    assert "Never modify any other path." in system_content
-    assert "Treat only text inside `<editable_file path=\"...\">...</editable_file>`" in system_content
-    assert "Topic schema contract:" in system_content
-    assert "Write-routing from task structured result:" in system_content
-    assert "Merge-first policy for `MEMORY/topics/FILES.md`:" in system_content
-    assert "Do NOT append blindly. Canonicalize and merge before writing." in system_content
-    assert "Exclude routine internal audit logs (`metadata/**`, `audit/**`, `.logs/**`)" in system_content
-    assert "- PATH: <rel_path> | kind=<kind> | desc=<desc> | source=<task_id>" in system_content
-    assert "<editable_file path=\"MEMORY/MEMORY.md\">" in human_content
-    assert "Event path:" not in human_content
-    assert "<editable_file path=\"MEMORY/topics/GOAL.md\">" in human_content
-    assert "<editable_file path=\"MEMORY/topics/FACTS.md\">" in human_content
-    assert "<editable_file path=\"MEMORY/topics/FILES.md\">" in human_content
-    assert "<editable_file path=\"MEMORY/topics/CONSTRAINTS.md\">" in human_content
-    assert "<editable_file path=\"MEMORY/topics/QUESTIONS.md\">" in human_content
-    assert "<editable_file path=\"MEMORY/topics/RUNBOOK.md\">" in human_content
+def test_memory_patcher_system_prompt_requires_read_then_patch() -> None:
+    system_content = MEMORY_PATCHER_SYSTEM_PROMPT
+    assert "Memory Patcher agent" in system_content
+    assert "`apply_aider_edits`" in system_content
+    assert "read_text_file" in system_content
+    assert "read_multiple_files" in system_content
+    assert "Only modify files under `MEMORY/**`." in system_content
+    assert "If an edit apply fails, re-read the target file and retry" in system_content
+    assert "FACTS keeps verified facts/results only" in system_content
+    assert "FILES keeps artifact path/index entries only" in system_content
 
 
-def test_memory_patch_repair_prompt_requires_aider_format_output() -> None:
-    prompt = build_memory_patch_repair_prompt()
-    messages = prompt.format_messages(
-        previous_edit_text="MEMORY/MEMORY.md\n<<<<<<< SEARCH",
-        apply_error="replace failed",
-        apply_error_context_json='{"error_code":"replace_no_match"}',
-        run_id="run_01",
-        task_id="task_01",
-        task_goal="demo",
-        outcome="success",
-        structured_result_json="{}",
-        memory_index_text="",
-        topic_goal_text="# GOAL",
-        topic_facts_text="# FACTS",
-        topic_files_text="# FILES",
-        topic_constraints_text="# CONSTRAINTS",
-        topic_questions_text="# QUESTIONS",
-        topic_runbook_text="# RUNBOOK",
+def test_memory_patch_context_template_contains_update_and_editable_sections() -> None:
+    content = MEMORY_PATCH_CONTEXT_TEMPLATE.format(
+        pending_memory_updates_json='[{"topic":"MEMORY/topics/FACTS.md","content":"x"}]',
+        editable_file_snapshots='<editable_file path="MEMORY/topics/FACTS.md"># FACTS</editable_file>',
     )
-    system_content = str(messages[0].content)
-    human_content = str(messages[1].content)
-    assert "Output ONLY corrected Aider SEARCH/REPLACE edit blocks" in system_content
-    assert "allowed paths: MEMORY/** only" in system_content
-    assert "replace_no_match" in system_content
-    assert "Keep the same topic schema contract and write-routing rules" in system_content
-    assert "preserve merge-first behavior for `FILES.md`" in system_content
-    assert "Apply error context (JSON, reference only)" in human_content
+    assert "Pending memory updates" in content
+    assert "<editable_file path=\"MEMORY/topics/FACTS.md\">" in content
+    assert "Aider SEARCH/REPLACE format reminder:" in content
 
 
 def test_task_runner_system_prompt_has_key_rules() -> None:

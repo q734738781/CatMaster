@@ -170,9 +170,48 @@ class ReviseProposalPayload(BaseModel):
 class StopAndSynthesizePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    stop_reason: str | None = Field(
+    final_answer_md: str = Field(
         ...,
-        description="Short stop reason. Use null only when no additional stop reason is needed.",
+        description=(
+            "Concise final user-facing answer markdown. Include final requested values with units and "
+            "project-relative evidence paths; avoid long narrative report sections."
+        ),
+    )
+
+
+class MemoryUpdate(BaseModel):
+    """Requested durable memory update item emitted by director."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    topic: Literal[
+        "MEMORY/MEMORY.md",
+        "MEMORY/topics/FACTS.md",
+        "MEMORY/topics/FILES.md",
+        "MEMORY/topics/CONSTRAINTS.md",
+        "MEMORY/topics/QUESTIONS.md",
+        "MEMORY/topics/RUNBOOK.md",
+    ] = Field(
+        ...,
+        description=(
+            "Target memory file to update. Topic semantics: "
+            "FACTS=verified scientific facts/results only; "
+            "FILES=artifact path index and file roles; "
+            "CONSTRAINTS=hard limits/policies; "
+            "QUESTIONS=unresolved questions; "
+            "RUNBOOK=reusable procedural checklist; "
+            "MEMORY.md=index-level concise summary/pointers."
+        ),
+    )
+    content: str = Field(
+        ...,
+        description=(
+            "Brief durable information to record for this topic; keep concise and reusable. "
+            "Match topic semantics strictly: "
+            "for FACTS write only verifiable facts/results (include units/conditions when relevant), "
+            "for FILES write only project-relative artifact paths and their roles. "
+            "Do not mix file-index notes into FACTS, and do not put scientific conclusions into FILES."
+        ),
     )
 
 
@@ -211,6 +250,12 @@ class DirectorOutput(BaseModel):
         ...,
         description="Payload for StopAndSynthesize branch (must be non-null only when state=StopAndSynthesize).",
     )
+    update_memory: list[MemoryUpdate] = Field(
+        ...,
+        description=(
+            "Memory updates to persist at run end. Use [] when no durable scientific invariant/result/constraint changed."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_state_payload(self) -> "DirectorOutput":
@@ -226,6 +271,94 @@ class DirectorOutput(BaseModel):
         for branch, payload in payloads.items():
             if branch != self.state and payload is not None:
                 raise ValueError(f"{branch} payload must be null when state={self.state}")
+        if self.state != "StopAndSynthesize" and self.update_memory:
+            raise ValueError("update_memory must be [] unless state=StopAndSynthesize")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Fast-director response
+# ---------------------------------------------------------------------------
+
+class FastDirectorOutput(BaseModel):
+    """Structured output from the fast-lane director agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal[
+        "PerformNextTask",
+        "StopAndSynthesize",
+    ] = Field(..., description="Decision state for the next action in fast lane.")
+    rationale: str = Field(
+        ...,
+        description=(
+            "Very brief decision rationale (usually 1-2 sentences): explain decision cause/tradeoff only; "
+            "do not repeat long context or tool logs."
+        ),
+    )
+
+    perform_next_task: PerformNextTaskPayload | None = Field(
+        ...,
+        description="Payload for PerformNextTask branch (must be non-null only when state=PerformNextTask).",
+    )
+    stop_and_synthesize: StopAndSynthesizePayload | None = Field(
+        ...,
+        description="Payload for StopAndSynthesize branch (must be non-null only when state=StopAndSynthesize).",
+    )
+    update_memory: list[MemoryUpdate] = Field(
+        ...,
+        description=(
+            "Memory updates to persist at run end. Use [] when no durable scientific invariant/result/constraint changed."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_state_payload(self) -> "FastDirectorOutput":
+        payloads = {
+            "PerformNextTask": self.perform_next_task,
+            "StopAndSynthesize": self.stop_and_synthesize,
+        }
+        active_payload = payloads.get(self.state)
+        if active_payload is None:
+            raise ValueError(f"{self.state} requires its matching payload")
+        for branch, payload in payloads.items():
+            if branch != self.state and payload is not None:
+                raise ValueError(f"{branch} payload must be null when state={self.state}")
+        if self.state != "StopAndSynthesize" and self.update_memory:
+            raise ValueError("update_memory must be [] unless state=StopAndSynthesize")
+        return self
+
+
+class MemoryPatchOutput(BaseModel):
+    """Structured output from memory patcher agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["done", "blocked"] = Field(..., description="Terminal memory patch status.")
+    summary: str = Field(..., description="Concise patch result summary.")
+    applied_topics: list[str] = Field(
+        ...,
+        description="Topics/files that were successfully updated. Use [] when none.",
+    )
+    error: str = Field(
+        ...,
+        description="Failure reason for status=blocked. For status=done, use empty string ''.",
+    )
+    needs_human: bool = Field(
+        ...,
+        description="Whether a human must intervene for status=blocked. For status=done, set false.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_status_payload(self) -> "MemoryPatchOutput":
+        if self.status == "done":
+            if self.error.strip():
+                raise ValueError("status=done requires error=''")
+            if self.needs_human:
+                raise ValueError("status=done requires needs_human=false")
+            return self
+        if not self.error.strip():
+            raise ValueError("status=blocked requires non-empty error")
         return self
 
 
@@ -312,10 +445,13 @@ __all__ = [
     "TaskFileRecord",
     "TaskDecisionRecord",
     "TaskPacket",
+    "MemoryUpdate",
     "ProposalOutput",
     "PerformNextTaskPayload",
     "ReviseProposalPayload",
     "StopAndSynthesizePayload",
     "DirectorOutput",
+    "FastDirectorOutput",
     "TaskOutput",
+    "MemoryPatchOutput",
 ]

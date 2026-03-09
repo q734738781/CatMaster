@@ -182,7 +182,7 @@ When adding new run phases or behaviors, emit events via the Reporter to preserv
 
 - Do not write ad-hoc long-form memory blobs into prompts or metadata files.
 - Use `files/MEMORY/MEMORY.md` as the short index (autoload excerpt), and put details in `files/MEMORY/topics/*.md`.
-- Persist per-task memory updates via Aider SEARCH/REPLACE edit flow (`MEMORY/**` + optional `notes/**`) and apply with `memory_apply_aider_edits`.
+- Use `apply_aider_edits` for deterministic SEARCH/REPLACE updates when memory or other project files must be synchronized.
 - `MemoryStore.merge_task_result(...)` is compatibility-only (event logging), not the canonical MEMORY updater.
 - Keep immutable audit trails in `metadata/memory/events.jsonl`.
 - Paths recorded in memory files must be project-files-relative paths (no `metadata/...`).
@@ -260,3 +260,46 @@ def example_tool(payload: Dict[str, Any]):
         },
     )
 ```
+
+---
+
+## 11) MCP adoption rules (for upcoming tool development)
+
+Prioritize MCP-ization for cross-cutting capabilities with clear standard interfaces:
+
+- filesystem
+- browser / web search
+- external services
+- scheduler / remote execution
+- database / retrieval
+
+Do **not** prioritize MCP-ization yet for local domain tools:
+
+- adsorption
+- slab
+- NEB
+- thermo
+- MACE
+
+Rationale:
+
+- These local domain tools are deeply coupled to the current Python/ASE/pymatgen/workspace contract.
+- Forcing full MCP migration now would introduce high engineering cost.
+- Standardization payoff is much higher first for filesystem / web / browser classes than for tightly coupled local scientific workflows.
+
+---
+
+## 12) Scientific tool design philosophy
+
+### Computational primitives over monolithic workflows
+
+Prefer computational primitives over monolithic workflow tools.
+
+New scientific tools should represent one scientifically coherent transformation with explicit inputs, outputs, and method-critical toggles.
+
+Do not hide major scientific assumptions inside large bundle tools when the same workflow can be composed from existing primitives plus task-specific skills.
+
+Large tools are acceptable mainly for:
+- infrastructure-heavy execution/collection steps
+- strictly deterministic boilerplate reduction
+- dispatch/collection/report collation where scientific branching is minimal

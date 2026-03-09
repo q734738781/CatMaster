@@ -90,6 +90,15 @@ def build_home_page(
         proposal_review: bool,
         log_llm: bool,
         full_auto_major: bool,
+        seed_hypotheses: str,
+        exploration_policy: str,
+        writing_mode: str,
+        target_section: str,
+        max_cycles: int,
+        max_literature_queries: int,
+        max_fast_runs: int,
+        max_standard_runs: int,
+        allow_deep_report: bool,
         ctx: str,
     ) -> str:
         session = registry.get_session(ctx)
@@ -101,6 +110,15 @@ def build_home_page(
             proposal_review=proposal_review,
             log_llm=log_llm,
             full_auto_major=full_auto_major,
+            seed_hypotheses=seed_hypotheses,
+            exploration_policy=exploration_policy,
+            writing_mode=writing_mode,
+            target_section=target_section,
+            max_cycles=max_cycles,
+            max_literature_queries=max_literature_queries,
+            max_fast_runs=max_fast_runs,
+            max_standard_runs=max_standard_runs,
+            allow_deep_report=allow_deep_report,
         )
 
     def _select_run(run_name: str, ctx: str) -> Tuple[str, str]:
@@ -126,6 +144,9 @@ def build_home_page(
     def _interrupt_run(note: str, ctx: str) -> str:
         session = registry.get_session(ctx)
         return session.request_interrupt_current_run(note=note or "")
+
+    def _on_lane_change(lane: str) -> Tuple[Dict[str, Any]]:
+        return (gr.update(visible=(lane == "research")),)
 
     def _poll_home(
         ctx: str, selected_run: str,
@@ -225,7 +246,7 @@ def build_home_page(
                         )
                         lane_box = gr.Dropdown(
                             label="Lane",
-                            choices=["fast", "standard"],
+                            choices=["fast", "standard", "research", "writing"],
                             value="standard",
                         )
                     resume_run_box = gr.Dropdown(
@@ -239,6 +260,34 @@ def build_home_page(
                             proposal_review_box = gr.Checkbox(label="Proposal Review", value=True)
                             log_llm_box = gr.Checkbox(label="Log LLM", value=False)
                             full_auto_major_box = gr.Checkbox(label="Full Auto Major", value=False)
+                        with gr.Group(visible=False) as research_controls_group:
+                            seed_hypotheses_box = gr.Textbox(
+                                label="Seed Hypotheses",
+                                lines=4,
+                                placeholder="One hypothesis per line.",
+                            )
+                            with gr.Row():
+                                exploration_policy_box = gr.Dropdown(
+                                    label="Exploration Policy",
+                                    choices=["anchored", "local_expand", "open"],
+                                    value="anchored",
+                                )
+                                writing_mode_box = gr.Dropdown(
+                                    label="Writing Mode",
+                                    choices=["none", "internal_report", "paper_outline", "section_draft", "full_draft"],
+                                    value="none",
+                                )
+                            target_section_box = gr.Textbox(
+                                label="Target Section",
+                                placeholder="Used when Writing Mode = section_draft",
+                            )
+                            with gr.Row():
+                                max_cycles_box = gr.Number(label="Max Cycles", value=6, precision=0)
+                                max_literature_box = gr.Number(label="Max Literature Queries", value=4, precision=0)
+                            with gr.Row():
+                                max_fast_runs_box = gr.Number(label="Max Fast Runs", value=3, precision=0)
+                                max_standard_runs_box = gr.Number(label="Max Standard Runs", value=2, precision=0)
+                            allow_deep_report_box = gr.Checkbox(label="Allow Deep Report", value=False)
 
                 with gr.Column(scale=5, elem_classes=["cm-panel"]):
                     gr.Markdown("### Final Report")
@@ -256,6 +305,9 @@ def build_home_page(
             inputs=[
                 prompt_box, lane_box, run_mode_box, resume_run_box,
                 proposal_review_box, log_llm_box, full_auto_major_box,
+                seed_hypotheses_box, exploration_policy_box, writing_mode_box, target_section_box,
+                max_cycles_box, max_literature_box, max_fast_runs_box, max_standard_runs_box,
+                allow_deep_report_box,
                 ctx_state,
             ],
             outputs=[ws.status_md],
@@ -271,6 +323,13 @@ def build_home_page(
             _on_run_mode_change,
             inputs=[run_mode_box, selected_run_state],
             outputs=[prompt_box, lane_box, resume_run_box],
+            queue=False,
+        )
+
+        lane_box.change(
+            _on_lane_change,
+            inputs=[lane_box],
+            outputs=[research_controls_group],
             queue=False,
         )
 

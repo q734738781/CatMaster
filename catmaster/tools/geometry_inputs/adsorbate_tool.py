@@ -83,9 +83,9 @@ class PlaceAdsorbateInput(BaseModel):
     It writes metadata sidecar <output>.meta.json and an ads_indices index JSON."""
 
     slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
-    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ).")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ). Internal relative geometry is preserved; no automatic reorientation is applied.")
     site: str = Field("auto", description="Site label like ontop_0|bridge_1|hollow_2 or 'auto' (which use all[0]).")
-    distance: float = Field(2.0, ge=0.0, description="Height used to generate adsorption sites (Å).")
+    distance: float = Field(2.0, ge=0.0, description="Height above the surface used when enumerating adsorption site coordinates (Å). The molecule is translated so its placement reference point lands on that site coordinate.")
     output_poscar: str = Field("adsorption/adsorbed.vasp", description="Output POSCAR path (workspace-relative).")
 
 
@@ -115,9 +115,9 @@ class GenerateBatchAdsorptionStructuresInput(BaseModel):
 
     slab_file: Optional[str] = Field(None, description="Slab structure file (POSCAR/CONTCAR/CIF).")
     slab_dir: Optional[str] = Field(None, description="Directory containing slab files for high-throughput placement.")
-    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ).")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ). Internal relative geometry is preserved; no automatic reorientation is applied.")
     mode: str = Field("all", description="all|ontop|bridge|hollow")
-    distance: float = Field(2.0, ge=0.0, description="Height used to generate adsorption sites (Å).")
+    distance: float = Field(2.0, ge=0.0, description="Height above the surface used when enumerating adsorption site coordinates (Å). The molecule is translated so its placement reference point lands on each site coordinate.")
     max_structures: int = Field(1000, ge=1, description="Maximum number of adsorbed structures to generate.")
     output_dir: str = Field("adsorption/batch", description="Directory to write batch POSCARs.")
 
@@ -447,7 +447,7 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             site_label = f"{kind}_{idx}"
             site_coord = np.array(lst[idx], dtype=float)
 
-        ads_struct = asf.add_adsorbate(mol, site_coord, translate=True, reorient=True)
+        ads_struct = asf.add_adsorbate(mol, site_coord, translate=True, reorient=False)
 
         # Selective dynamics handling: preserve slab flags and set adsorbate to [True,True,True]
         slab_sd_list: List[List[bool]]
@@ -497,7 +497,13 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "adsorbate_file_rel": workspace_relpath(ads_path),
             "output_poscar_rel": workspace_relpath(out_path),
             "site": {"label": site_label, "cart_coords": _to_list3(site_coord)},
-            "geom": {"adsorbate_com": ads_com, "units": {"distance": "Å"}},
+            "geom": {
+                "adsorbate_com": ads_com,
+                "placement_reference": "center_of_mass_of_lowest_z_atoms",
+                "site_height_distance": float(params.distance),
+                "reoriented": False,
+                "units": {"distance": "Å"},
+            },
             "natoms": len(ads_struct),
             "ads_indices_added": ads_indices_added,
             "ads_indices": ads_indices,
@@ -509,6 +515,7 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         content = (
             "place_adsorbate completed.\n"
             f"site={site_label} output_poscar_rel={data['output_poscar_rel']}\n"
+            "placement_reference=center_of_mass_of_lowest_z_atoms reoriented=False\n"
             f"ads_count_added={data['ads_count_added']} ads_count_total={data['ads_count_total']}\n"
             f"metadata_rel={data['metadata_rel']} ads_indices_json_rel={data['ads_indices_json_rel']}"
         )
@@ -598,7 +605,7 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, 
                     for idx, coord in enumerate(ads_sites.get(kind, [])):
                         if generated >= params.max_structures:
                             break
-                        ads_struct = asf.add_adsorbate(mol, coord, translate=True, reorient=True)
+                        ads_struct = asf.add_adsorbate(mol, coord, translate=True, reorient=False)
 
                         slab_sd_list = [list(map(bool, v)) for v in slab_sd] if slab_sd and len(slab_sd) == len(slab) else [
                             [True, True, True] for _ in range(len(slab))

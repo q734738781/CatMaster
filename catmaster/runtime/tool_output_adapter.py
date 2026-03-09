@@ -254,6 +254,7 @@ def adapt_tool_return(
             error_code="invalid_return_type",
         )
 
+    suppress_content_offload_ref = bool(artifact.pop("suppress_content_offload_ref", False))
     artifact.setdefault("tool_args", _json_safe(tool_args or {}))
     data = artifact.get("data")
     if isinstance(data, Mapping) and data:
@@ -290,7 +291,7 @@ def adapt_tool_return(
             if key in previous_artifact:
                 artifact[key] = _json_safe(previous_artifact.get(key))
         summary = content_to_text(content).strip() or f"{tool_name} completed."
-        content = f"{summary}\nOffload: {offload_ref}"
+        content = summary if suppress_content_offload_ref else f"{summary}\nOffload: {offload_ref}"
 
     return content, artifact
 
