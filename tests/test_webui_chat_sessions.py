@@ -51,6 +51,30 @@ def test_chat_session_store_excludes_hitl_from_chat_and_history(tmp_path: Path) 
     assert str(session_payload.get("title") or "") == "Normal request."
 
 
+def test_chat_session_store_excludes_run_errors_from_chat_and_history(tmp_path: Path) -> None:
+    ensure_project_space_layout(tmp_path, create=True)
+    store = ChatSessionStore(workspace=tmp_path)
+    session_id = store.get_active_session_id()
+
+    store.append_message(session_id, role="user", content="Normal request.", kind="chat")
+    store.append_message(session_id, role="assistant", content="Run crashed badly.", kind="run_error")
+    store.append_message(session_id, role="assistant", content="Final answer.", kind="run_result")
+
+    pack = store.build_history_pack(session_id, recent_messages=8)
+    assert [str(item.get("content")) for item in pack.recent_messages] == [
+        "Normal request.",
+        "Final answer.",
+    ]
+    chat_messages = store.chat_messages(session_id, limit=10)
+    assert chat_messages == [
+        {"role": "user", "content": "Normal request."},
+        {"role": "assistant", "content": "Final answer."},
+    ]
+    assert "Run crashed badly." not in pack.summary_text
+    session_payload = store.load_session(session_id)
+    assert "Run crashed badly." not in str(session_payload.get("summary_text") or "")
+
+
 def test_websession_injects_chat_history_for_standard_lane(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "ws"
     session = WebSession()

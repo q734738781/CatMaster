@@ -33,22 +33,19 @@ This skill should be used when:
 
 ## Visual Enhancement with Scientific Schematics
 
-**⚠️ MANDATORY: Every scientific paper MUST include a graphical abstract plus 1-2 additional AI-generated figures using the scientific-schematics skill.**
-
-This is not optional. Scientific papers without visual elements are incomplete. Before finalizing any document:
-1. **ALWAYS generate a graphical abstract** as the first visual element
-2. Generate at minimum ONE additional schematic or diagram using scientific-schematics
-3. Prefer 3-4 total figures for comprehensive papers (graphical abstract + methods flowchart + results visualization + conceptual diagram)
+Figures are optional and should be used only when they materially improve scientific communication.
+Do not force a graphical abstract or extra AI-generated figures into every manuscript.
+Before adding a figure, ask whether the claim is clearer as prose, table, caption, or a compact visual.
 
 ### Graphical Abstract (REQUIRED)
 
-**Every scientific writeup MUST include a graphical abstract.** This is a visual summary of your paper that:
+If a graphical abstract is explicitly requested, it should be a visual summary of the paper that:
 - Appears before or immediately after the text abstract
 - Captures the entire paper's key message in one image
 - Is suitable for journal table of contents display
 - Uses landscape orientation (typically 1200x600px)
 
-**Generate the graphical abstract FIRST:**
+If a graphical abstract is explicitly requested:
 ```bash
 python scripts/generate_schematic.py "Graphical abstract for [paper title]: [brief description showing workflow from input → methods → key findings → conclusions]" -o figures/graphical_abstract.png
 ```
@@ -60,25 +57,12 @@ python scripts/generate_schematic.py "Graphical abstract for [paper title]: [bri
 - **Text**: Minimal labels, large readable fonts
 - Log: `[HH:MM:SS] GENERATED: Graphical abstract for paper summary`
 
-### Additional Figures (GENERATE EXTENSIVELY)
+### Additional Figures
 
-**⚠️ CRITICAL: Use BOTH scientific-schematics AND generate-image EXTENSIVELY throughout all documents.**
+Generate figures conservatively. Add a figure only when it improves the scientific argument, comparison, or interpretability.
+Do not add visuals just to satisfy a quota.
 
-Every document should be richly illustrated. Generate figures liberally - when in doubt, add a visual.
-
-**MINIMUM Figure Requirements:**
-
-| Document Type | Minimum | Recommended |
-|--------------|---------|-------------|
-| Research Papers | 5 | 6-8 |
-| Literature Reviews | 4 | 5-7 |
-| Market Research | 20 | 25-30 |
-| Presentations | 1/slide | 1-2/slide |
-| Posters | 6 | 8-10 |
-| Grants | 4 | 5-7 |
-| Clinical Reports | 3 | 4-6 |
-
-**Use scientific-schematics EXTENSIVELY for technical diagrams:**
+Use scientific schematics for technical diagrams when a compact visual would genuinely clarify the text:
 ```bash
 python scripts/generate_schematic.py "your diagram description" -o figures/output.png
 ```
@@ -94,7 +78,7 @@ python scripts/generate_schematic.py "your diagram description" -o figures/outpu
 - Comparison matrices, timeline diagrams
 - Any technical concept that benefits from schematic visualization
 
-**Use generate-image EXTENSIVELY for visual content:**
+Use image-generation tools for visual content only when a real manuscript need exists:
 ```bash
 python scripts/generate_image.py "your image description" -o figures/output.png
 ```
@@ -108,18 +92,12 @@ python scripts/generate_image.py "your image description" -o figures/output.png
 - Product mockups, prototype visualizations
 - Any visual that enhances understanding or engagement
 
-The AI will automatically:
-- Create publication-quality images with proper formatting
-- Review and refine through multiple iterations
-- Ensure accessibility (colorblind-friendly, high contrast)
-- Save outputs in the figures/ directory
-
-**When in Doubt, Generate a Figure:**
-- Complex concept → generate a schematic
-- Data discussion → generate a visualization
-- Process description → generate a flowchart
-- Comparison → generate a comparison diagram
-- Reader benefit → generate a visual
+When deciding whether to create a figure:
+- complex concept with strong spatial/process logic -> consider a schematic
+- comparison or ranking that is clearer visually -> consider a plot or compact summary figure
+- if the point is mostly textual explanation -> keep it in prose or caption instead
+- do not use matplotlib or other plotting tools to render long prose, long bullet lists, or caption-like explanation inside the image
+- keep figure labels minimal and readable; long interpretation belongs in the caption or manuscript body
 
 For detailed guidance, refer to the scientific-schematics and generate-image skill documentation.
 
@@ -715,4 +693,3 @@ This skill includes LaTeX style packages and templates for professional report f
 **For venue-specific writing styles** (tone, voice, abstract format, reviewer expectations), see the **venue-templates** skill which provides comprehensive style guides for Nature/Science, Cell Press, medical journals, ML conferences, and CS conferences.
 
 Load these references as needed when working on specific aspects of scientific writing.
-

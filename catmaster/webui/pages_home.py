@@ -146,6 +146,7 @@ def build_home_page(
             chat_messages,                               # chatbot
             selected,                                    # selected_run_state
             gr.update(choices=runs, value=selected or None),  # runs_dropdown
+            gr.update(choices=runs, value=selected or None),  # resume_run_box
             nav_header_html("home", ps_name),            # nav_html
             sidebar_html,                                # sidebar_cards_html
             proposal or "No plan yet.\n\nPlans appear for multi-step tasks.",
@@ -332,6 +333,7 @@ def build_home_page(
             cards, selected_run=selected, search_text=search_text,
         )
         return (
+            gr.update(choices=runs, value=(selected if selected else None), allow_custom_value=True),
             gr.update(choices=runs, value=(selected if selected else None), allow_custom_value=True),
             sidebar_html,
             nav_header_html("home", ps_name),
@@ -619,7 +621,7 @@ def build_home_page(
         sidebar_timer.tick(
             _poll_home_sidebar,
             inputs=[ctx_state, selected_run_state, search_box],
-            outputs=[runs_dropdown, sidebar_cards_html, nav_html, selected_run_state],
+            outputs=[runs_dropdown, resume_run_box, sidebar_cards_html, nav_html, selected_run_state],
             queue=False,
             trigger_mode="always_last",
         )
@@ -639,12 +641,13 @@ def build_home_page(
                 chatbot,
                 selected_run_state,
                 runs_dropdown,
+                resume_run_box,
                 nav_html,
-            sidebar_cards_html,
-            plan_md,
-            results_md,
-        ],
-        queue=False,
+                sidebar_cards_html,
+                plan_md,
+                results_md,
+            ],
+            queue=False,
         )
 
     return page

@@ -22,7 +22,7 @@ def _message_to_chat(message: Dict[str, Any]) -> Dict[str, str]:
 
 def _is_conversation_message(message: Dict[str, Any]) -> bool:
     kind = str(message.get("kind") or "chat").strip() or "chat"
-    return kind in {"chat", "run_result", "run_error"}
+    return kind in {"chat", "run_result"}
 
 
 @dataclass

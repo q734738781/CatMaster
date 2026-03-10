@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import json
 import math
+import os
+import signal
+import subprocess
+import sys
+import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +25,7 @@ from matplotlib.gridspec import GridSpec
 from pydantic import BaseModel, Field, field_validator
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import project_space_root, resolve_workspace_path, workspace_relpath, workspace_scope
 
 
 _SUPPORTED_LABEL_MODES = {"elements", "none"}
@@ -420,93 +426,223 @@ def _try_render_with_ovito(
             pass
 
 
+def _render_structure_views_impl(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    tool_name = "render_structure_views"
+    params = RenderStructureViewsInput(**payload)
+    if params.views_preset not in _SUPPORTED_VIEWS_PRESETS:
+        raise ValueError(f"Unsupported views_preset: {params.views_preset}")
+    if params.fit_mode not in _SUPPORTED_FIT_MODES:
+        raise ValueError(f"Unsupported fit_mode: {params.fit_mode}")
+    if params.label_mode not in _SUPPORTED_LABEL_MODES:
+        raise ValueError(f"Unsupported label_mode: {params.label_mode}")
+    if params.style_preset not in _SUPPORTED_STYLE_PRESETS:
+        raise ValueError(f"Unsupported style_preset: {params.style_preset}")
+    if params.background not in _BACKGROUND_RGB:
+        raise ValueError(f"Unsupported background: {params.background}")
+
+    structure_path = resolve_workspace_path(params.structure_path, must_exist=True)
+    panel_path = (
+        resolve_workspace_path(params.output_path)
+        if params.output_path
+        else _default_output_path(structure_path)
+    )
+    supercell = tuple(int(v) for v in params.supercell)
+    tile_size = (int(params.tile_size[0]), int(params.tile_size[1]))
+
+    atoms = _load_atoms(structure_path, supercell)
+    legend_mapping = _legend_mapping(atoms.get_chemical_symbols())
+    tile_paths = _tile_output_paths(panel_path)
+
+    backend_name = "OVITO TachyonRenderer"
+    ovito_ok = _try_render_with_ovito(
+        structure_path=structure_path,
+        tile_paths=tile_paths,
+        supercell=supercell,
+        fit_mode=params.fit_mode,
+        tile_size=tile_size,
+        background=params.background,
+        show_cell=params.show_cell,
+    )
+    if not ovito_ok:
+        backend_name = "ASE/Matplotlib fallback"
+        for view_name, tile_path in tile_paths.items():
+            _render_matplotlib_view(
+                atoms=atoms,
+                view_name=view_name,
+                fit_mode=params.fit_mode,
+                background=params.background,
+                show_cell=params.show_cell,
+                legend_mapping=legend_mapping,
+                target_path=tile_path,
+                tile_size=tile_size,
+            )
+
+    _compose_panel(
+        tile_paths=tile_paths,
+        panel_path=panel_path,
+        background=params.background,
+        show_legend=params.show_legend,
+        label_mode=params.label_mode,
+        legend_mapping=legend_mapping,
+        tile_size=tile_size,
+        backend_name=backend_name,
+    )
+
+    data = {
+        "image_path": workspace_relpath(panel_path),
+        "tile_paths": {name: workspace_relpath(path) for name, path in tile_paths.items()},
+        "legend_mapping": legend_mapping,
+        "view_specs": {
+            "preset": params.views_preset,
+            "fit_mode": params.fit_mode,
+            "supercell": list(supercell),
+        },
+        "notes": [
+            "simulation cell hidden" if not params.show_cell else "simulation cell shown",
+            f"rendered with {backend_name}",
+            "label_mode=none only affects legend labels in V1",
+        ],
+    }
+    content = "\n".join(
+        [
+            "render_structure_views completed.",
+            f"image_path={data['image_path']}",
+            f"views={', '.join(tile_paths.keys())}",
+            f"elements={', '.join(legend_mapping.keys()) or '(none)'}",
+        ]
+    )
+    return content, {"tool_name": tool_name, "data": data}
+
+
+def _child_entry(*, payload_path: Path, result_path: Path, project_space: Path) -> int:
+    try:
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        with workspace_scope(project_space):
+            content, artifact = _render_structure_views_impl(payload)
+        result_path.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "content": content,
+                    "artifact": artifact,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return 0
+    except Exception as exc:
+        result_path.write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return 1
+
+
+def _child_process_failure_message(*, returncode: int, stderr: str) -> str:
+    if returncode < 0:
+        signum = -returncode
+        try:
+            signame = signal.Signals(signum).name
+        except Exception:
+            signame = f"SIG{signum}"
+        base = f"render_structure_views child process terminated by signal {signum} ({signame})"
+    else:
+        base = f"render_structure_views child process exited with code {returncode}"
+    stderr_text = str(stderr or "").strip()
+    if stderr_text:
+        return f"{base}\nstderr:\n{stderr_text}"
+    return base
+
+
 def render_structure_views(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     tool_name = "render_structure_views"
     try:
-        params = RenderStructureViewsInput(**payload)
-        if params.views_preset not in _SUPPORTED_VIEWS_PRESETS:
-            raise ValueError(f"Unsupported views_preset: {params.views_preset}")
-        if params.fit_mode not in _SUPPORTED_FIT_MODES:
-            raise ValueError(f"Unsupported fit_mode: {params.fit_mode}")
-        if params.label_mode not in _SUPPORTED_LABEL_MODES:
-            raise ValueError(f"Unsupported label_mode: {params.label_mode}")
-        if params.style_preset not in _SUPPORTED_STYLE_PRESETS:
-            raise ValueError(f"Unsupported style_preset: {params.style_preset}")
-        if params.background not in _BACKGROUND_RGB:
-            raise ValueError(f"Unsupported background: {params.background}")
-
-        structure_path = resolve_workspace_path(params.structure_path, must_exist=True)
-        panel_path = (
-            resolve_workspace_path(params.output_path)
-            if params.output_path
-            else _default_output_path(structure_path)
-        )
-        supercell = tuple(int(v) for v in params.supercell)
-        tile_size = (int(params.tile_size[0]), int(params.tile_size[1]))
-
-        atoms = _load_atoms(structure_path, supercell)
-        legend_mapping = _legend_mapping(atoms.get_chemical_symbols())
-        tile_paths = _tile_output_paths(panel_path)
-
-        backend_name = "OVITO TachyonRenderer"
-        ovito_ok = _try_render_with_ovito(
-            structure_path=structure_path,
-            tile_paths=tile_paths,
-            supercell=supercell,
-            fit_mode=params.fit_mode,
-            tile_size=tile_size,
-            background=params.background,
-            show_cell=params.show_cell,
-        )
-        if not ovito_ok:
-            backend_name = "ASE/Matplotlib fallback"
-            for view_name, tile_path in tile_paths.items():
-                _render_matplotlib_view(
-                    atoms=atoms,
-                    view_name=view_name,
-                    fit_mode=params.fit_mode,
-                    background=params.background,
-                    show_cell=params.show_cell,
-                    legend_mapping=legend_mapping,
-                    target_path=tile_path,
-                    tile_size=tile_size,
-                )
-
-        _compose_panel(
-            tile_paths=tile_paths,
-            panel_path=panel_path,
-            background=params.background,
-            show_legend=params.show_legend,
-            label_mode=params.label_mode,
-            legend_mapping=legend_mapping,
-            tile_size=tile_size,
-            backend_name=backend_name,
-        )
-
-        data = {
-            "image_path": workspace_relpath(panel_path),
-            "tile_paths": {name: workspace_relpath(path) for name, path in tile_paths.items()},
-            "legend_mapping": legend_mapping,
-            "view_specs": {
-                "preset": params.views_preset,
-                "fit_mode": params.fit_mode,
-                "supercell": list(supercell),
-            },
-            "notes": [
-                "simulation cell hidden" if not params.show_cell else "simulation cell shown",
-                f"rendered with {backend_name}",
-                "label_mode=none only affects legend labels in V1",
-            ],
-        }
-        content = "\n".join(
-            [
-                "render_structure_views completed.",
-                f"image_path={data['image_path']}",
-                f"views={', '.join(tile_paths.keys())}",
-                f"elements={', '.join(legend_mapping.keys()) or '(none)'}",
+        project_space = project_space_root()
+        with tempfile.TemporaryDirectory(prefix="catmaster_render_views_") as tmpdir:
+            tmp = Path(tmpdir)
+            payload_path = tmp / "payload.json"
+            result_path = tmp / "result.json"
+            payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            cmd = [
+                sys.executable,
+                "-m",
+                "catmaster.tools.analysis.render_structure_views",
+                "--child",
+                "--payload-file",
+                str(payload_path),
+                "--result-file",
+                str(result_path),
+                "--project-space",
+                str(project_space),
             ]
-        )
-        return content, {"tool_name": tool_name, "data": data}
+            proc = subprocess.run(
+                cmd,
+                cwd=str(Path(__file__).resolve().parents[3]),
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            if proc.returncode != 0:
+                raise CatMasterToolExecutionError(
+                    tool_name=tool_name,
+                    public_message=_child_process_failure_message(
+                        returncode=int(proc.returncode),
+                        stderr=str(proc.stderr or ""),
+                    ),
+                    artifact={
+                        "tool_name": tool_name,
+                        "data": {
+                            "structure_path": payload.get("structure_path"),
+                            "output_path": payload.get("output_path"),
+                            "child_returncode": int(proc.returncode),
+                            "child_stdout": str(proc.stdout or ""),
+                            "child_stderr": str(proc.stderr or ""),
+                        },
+                    },
+                    error_code="render_structure_views_child_failed",
+                )
+            if not result_path.exists():
+                raise CatMasterToolExecutionError(
+                    tool_name=tool_name,
+                    public_message="render_structure_views child completed without producing a result payload",
+                    artifact={
+                        "tool_name": tool_name,
+                        "data": {
+                            "structure_path": payload.get("structure_path"),
+                            "output_path": payload.get("output_path"),
+                            "child_stdout": str(proc.stdout or ""),
+                            "child_stderr": str(proc.stderr or ""),
+                        },
+                    },
+                    error_code="render_structure_views_missing_result",
+                )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            if not bool(result.get("ok")):
+                err = str(result.get("error") or "unknown error")
+                err_type = str(result.get("error_type") or "Error")
+                raise CatMasterToolExecutionError(
+                    tool_name=tool_name,
+                    public_message=f"{tool_name} failed: {err_type}: {err}",
+                    artifact={
+                        "tool_name": tool_name,
+                        "data": {
+                            "structure_path": payload.get("structure_path"),
+                            "output_path": payload.get("output_path"),
+                            "child_stdout": str(proc.stdout or ""),
+                            "child_stderr": str(proc.stderr or ""),
+                        },
+                    },
+                    error_code="render_structure_views_failed",
+                )
+            return str(result.get("content") or ""), dict(result.get("artifact") or {})
     except CatMasterToolExecutionError:
         raise
     except Exception as exc:
@@ -516,6 +652,35 @@ def render_structure_views(payload: dict[str, Any]) -> tuple[str, dict[str, Any]
             artifact={"tool_name": tool_name, "data": {"structure_path": payload.get("structure_path")}},
             error_code="render_structure_views_failed",
         ) from exc
+
+
+def _main() -> int:
+    if "--child" not in sys.argv:
+        raise SystemExit("render_structure_views module is not a standalone CLI")
+    try:
+        payload_file = None
+        result_file = None
+        project_space = None
+        args = list(sys.argv[1:])
+        for idx, token in enumerate(args):
+            if token == "--payload-file" and idx + 1 < len(args):
+                payload_file = Path(args[idx + 1]).expanduser().resolve()
+            elif token == "--result-file" and idx + 1 < len(args):
+                result_file = Path(args[idx + 1]).expanduser().resolve()
+            elif token == "--project-space" and idx + 1 < len(args):
+                project_space = Path(args[idx + 1]).expanduser().resolve()
+        if payload_file is None or result_file is None or project_space is None:
+            raise SystemExit("Missing required child-process arguments")
+        return _child_entry(payload_path=payload_file, result_path=result_file, project_space=project_space)
+    except SystemExit:
+        raise
+    except Exception as exc:  # pragma: no cover - child-process last resort
+        sys.stderr.write(f"render_structure_views child bootstrap failed: {type(exc).__name__}: {exc}\n")
+        return 1
+
+
+if __name__ == "__main__":  # pragma: no cover - subprocess entrypoint
+    raise SystemExit(_main())
 
 
 __all__ = ["RenderStructureViewsInput", "render_structure_views"]

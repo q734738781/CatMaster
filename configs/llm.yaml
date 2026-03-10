@@ -251,7 +251,7 @@ writing:
 agent_runtime:
   recursion_limit: 9999
   max_tool_calls: 60
-  print_state_messages: false
+  print_state_messages: true
   print_http_raw_post: true
 
 agent_policies:

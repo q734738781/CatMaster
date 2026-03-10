@@ -46,6 +46,9 @@ _GRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
 _BIB_RE = re.compile(r"\\bibliography\{([^}]+)\}")
 _BEGIN_RE = re.compile(r"\\begin\{([^}]+)\}")
 _END_RE = re.compile(r"\\end\{([^}]+)\}")
+_MISSING_BIBKEY_RE = re.compile(r'Warning--I didn\'t find a database entry for "([^"]+)"')
+_CITE_RE = re.compile(r"\\cite[a-zA-Z*]*\{")
+_SUPPRESS_CITE_RE = re.compile(r"^\s*\\renewcommand\{\\cite\}\[2\]\[\]\{\s*\}\s*$", re.MULTILINE)
 
 
 def _resolve_config() -> LLMConfig:
@@ -199,33 +202,126 @@ def _static_diagnostics(root_tex: Path) -> tuple[list[Path], list[str]]:
     return files, deduped
 
 
-def _compiler_command(root_tex: Path) -> tuple[list[str], str] | None:
+def _needs_bibtex(files: list[Path]) -> bool:
+    for path in files:
+        text = _strip_comments(path.read_text(encoding="utf-8"))
+        if _BIB_RE.search(text):
+            return True
+    return False
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _achemso_bib_template() -> Path:
+    return _repo_root() / "writing_skills" / "achemso-latex-manuscript" / "assets" / "achemso-demo.bib"
+
+
+def _has_real_citations(files: list[Path]) -> bool:
+    for path in files:
+        text = _strip_comments(path.read_text(encoding="utf-8"))
+        if _CITE_RE.search(text):
+            return True
+    return False
+
+
+def _enforce_bibliography_wrapper(*, root_tex: Path, files: list[Path]) -> list[str]:
+    touched: list[str] = []
+    wants_bibliography = _has_real_citations(files)
+    root_text = root_tex.read_text(encoding="utf-8")
+    updated = root_text
+
+    if _SUPPRESS_CITE_RE.search(updated):
+        updated = _SUPPRESS_CITE_RE.sub("", updated)
+        updated = re.sub(r"\n{3,}", "\n\n", updated)
+
+    has_bibliography = bool(_BIB_RE.search(_strip_comments(updated)))
+    if wants_bibliography and not has_bibliography:
+        updated = re.sub(
+            r"\\end\{document\}",
+            lambda _m: "\\bibliography{references}\n\\end{document}",
+            updated,
+            count=1,
+        )
+
+    if updated != root_text:
+        root_tex.write_text(updated, encoding="utf-8")
+        touched.append(workspace_relpath(root_tex))
+
+    if wants_bibliography:
+        bib_path = root_tex.parent / "references.bib"
+        if not bib_path.exists():
+            template = _achemso_bib_template()
+            if template.exists():
+                shutil.copy2(template, bib_path)
+                touched.append(workspace_relpath(bib_path))
+    return touched
+
+
+def _compiler_commands(*, root_tex: Path, needs_bibtex: bool) -> tuple[list[list[str]], str] | None:
     name = root_tex.name
-    if shutil.which("pdflatex"):
-        return (["pdflatex", "-interaction=nonstopmode", "-halt-on-error", name], "pdflatex")
-    return None
+    stem = root_tex.stem
+    if not shutil.which("pdflatex"):
+        return None
+    if needs_bibtex and not shutil.which("bibtex"):
+        raise ValueError("bibtex not available in PATH for manuscript with bibliography")
+    commands: list[list[str]] = [
+        ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", name],
+    ]
+    if needs_bibtex:
+        commands.extend(
+            [
+                ["bibtex", stem],
+                ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", name],
+                ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", name],
+            ]
+        )
+        return commands, "pdflatex+bibtex"
+    commands.append(["pdflatex", "-interaction=nonstopmode", "-halt-on-error", name])
+    return commands, "pdflatex"
 
 
-def _run_compiler(root_tex: Path) -> dict[str, Any]:
-    resolved = _compiler_command(root_tex)
+def _run_compiler(root_tex: Path, *, needs_bibtex: bool) -> dict[str, Any]:
+    resolved = _compiler_commands(root_tex=root_tex, needs_bibtex=needs_bibtex)
     if resolved is None:
         return {"available": False, "name": None, "ok": False, "stdout": "", "stderr": "", "returncode": None}
-    cmd, name = resolved
-    proc = subprocess.run(
-        cmd,
-        cwd=str(root_tex.parent),
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    commands, name = resolved
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    returncode: int | None = None
+    for cmd in commands:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root_tex.parent),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        returncode = proc.returncode
+        stdout_parts.append(proc.stdout)
+        stderr_parts.append(proc.stderr)
+        if proc.returncode != 0:
+            break
     return {
         "available": True,
         "name": name,
-        "ok": proc.returncode == 0,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-        "returncode": proc.returncode,
+        "ok": returncode == 0,
+        "stdout": "\n".join(part for part in stdout_parts if part),
+        "stderr": "\n".join(part for part in stderr_parts if part),
+        "returncode": returncode,
     }
+
+
+def _compiler_diagnostics(compiler_result: dict[str, Any]) -> list[str]:
+    diagnostics: list[str] = []
+    combined = f"{compiler_result.get('stdout') or ''}\n{compiler_result.get('stderr') or ''}"
+    missing_keys = sorted(set(_MISSING_BIBKEY_RE.findall(combined)))
+    for key in missing_keys:
+        diagnostics.append(f"Missing bibliography entry for citation key: {key}")
+    if "Empty `thebibliography' environment" in combined:
+        diagnostics.append("Bibliography resolved to an empty thebibliography environment.")
+    return diagnostics
 
 
 def _build_fix_messages(*, root_tex: Path, diagnostics: list[str], compiler_result: dict[str, Any], files: list[Path]) -> list[Any]:
@@ -251,7 +347,8 @@ def _build_fix_messages(*, root_tex: Path, diagnostics: list[str], compiler_resu
             f"Root manuscript: {workspace_relpath(root_tex)}",
             "Goal: make the manuscript bundle compile cleanly and keep references/graphics/input paths valid.",
             "Allowed edits: LaTeX syntax, path fixes, missing \\input/\\includegraphics reference corrections, environment/bracing fixes, harmless compile-oriented escapes.",
-            "Forbidden edits: changing scientific claims, changing numerical conclusions, rewriting substantive interpretation, deleting evidence-backed content just to silence errors.",
+            "Allowed citation cleanup: if a citation key is missing from the bibliography and appears hallucinated or unsupported, you may remove that \\cite command or rewrite the sentence into uncited prose while preserving the scientific meaning as closely as possible.",
+            "Forbidden edits: changing scientific claims, changing numerical conclusions, rewriting substantive interpretation, deleting evidence-backed content just to silence errors, or inventing bibliography entries.",
             "Return only file rewrites for files that truly need changes.",
             "",
             "Diagnostics:",
@@ -296,7 +393,9 @@ def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         root_tex = resolve_workspace_path(params.source_path, must_exist=True)
         if root_tex.suffix.lower() != ".tex":
             raise ValueError("source_path must point to a .tex file")
-        if _compiler_command(root_tex) is None:
+        initial_files, _ = _static_diagnostics(root_tex)
+        needs_bibtex = _needs_bibtex(initial_files)
+        if _compiler_commands(root_tex=root_tex, needs_bibtex=needs_bibtex) is None:
             raise ValueError("pdflatex not available in PATH")
         cfg = _resolve_config()
         model = build_chat_model(cfg).with_structured_output(_TexFixOutput)
@@ -306,9 +405,12 @@ def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         compiled_ok = False
         for _ in range(2):
             files, diagnostics = _static_diagnostics(root_tex)
-            compile_result = _run_compiler(root_tex)
+            touched.extend(_enforce_bibliography_wrapper(root_tex=root_tex, files=files))
+            files, diagnostics = _static_diagnostics(root_tex)
+            needs_bibtex = _needs_bibtex(files)
+            compile_result = _run_compiler(root_tex, needs_bibtex=needs_bibtex)
             compiler_name = str(compile_result.get("name") or "") or compiler_name
-            compile_errors = []
+            compile_errors = _compiler_diagnostics(compile_result)
             if not compile_result.get("ok"):
                 compile_errors.append("Compiler reported errors; inspect stdout/stderr excerpt.")
             final_diagnostics = list(dict.fromkeys([*diagnostics, *compile_errors]))
@@ -327,9 +429,20 @@ def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 break
             touched.extend(_apply_rewrites(root_tex=root_tex, rewrites=fix.files))
         files, diagnostics = _static_diagnostics(root_tex)
-        compile_result = _run_compiler(root_tex)
+        touched.extend(_enforce_bibliography_wrapper(root_tex=root_tex, files=files))
+        files, diagnostics = _static_diagnostics(root_tex)
+        needs_bibtex = _needs_bibtex(files)
+        compile_result = _run_compiler(root_tex, needs_bibtex=needs_bibtex)
         compiler_name = str(compile_result.get("name") or "") or compiler_name
-        final_diagnostics = list(dict.fromkeys([*diagnostics, *(["Compiler reported errors; inspect log excerpt."] if not compile_result.get("ok") else [])]))
+        final_diagnostics = list(
+            dict.fromkeys(
+                [
+                    *diagnostics,
+                    *_compiler_diagnostics(compile_result),
+                    *(["Compiler reported errors; inspect log excerpt."] if not compile_result.get("ok") else []),
+                ]
+            )
+        )
         compiled_ok = bool(compile_result.get("ok") and not diagnostics)
         pdf_path = root_tex.with_suffix(".pdf")
         content_lines = [

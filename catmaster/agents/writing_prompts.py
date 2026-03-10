@@ -22,6 +22,8 @@ If Results and Discussion would naturally contain multiple subsections, split th
 Prefer section/subsection work units that can be drafted in roughly 1-3 compact paragraphs each, plus any local figure/table integration needed for that unit.
 Do not plan speculative figures as if they already exist. A figure should be treated as part of the manuscript only when the worker can either generate the file in the fixed manuscript output paths or point to an existing usable file.
 Plan figures at the manuscript level, but expect the worker to reuse an already-realized figure across sections instead of regenerating near-duplicates.
+Do not plan figures whose main payload is paragraph text, long bullet lists, or caption-like explanation embedded inside the graphic itself.
+When a point can be communicated more cleanly in manuscript prose or a caption, prefer prose/caption over text-heavy visualization.
 Each new writing run starts from a fresh manuscript output root. The active `manuscript/` bundle is recreated for the current run, while prior bundles are moved to `manuscript_archive/`.
 Do not assume files mentioned in prior conversation history still remain under the current active `manuscript/` root.
 Default behavior: do not treat a previous manuscript draft as source material unless the user explicitly asks to revise, edit, polish, patch, or continue an existing manuscript.
@@ -63,7 +65,12 @@ Figure discipline is strict:
 - If you generate or cite a figure, the `section_tex` must contain a real LaTeX figure block or `\\includegraphics{...}` reference for it.
 - If you cannot generate a figure file in this step, do not write `Figure~\\ref{...}` text that implies the figure exists.
 - Prefer relative manuscript-local figure paths such as `figures/<name>.png` inside the TeX body.
+- Do not use matplotlib or any plotting library to render long prose, paragraph annotations, bullet lists, or caption-like explanation inside the figure canvas.
+- Keep in-figure text minimal: short axis labels, short legends, short panel labels, short callouts, and concise identifiers only.
+- If a label or annotation would exceed a short phrase, move that explanation into the manuscript body or caption instead of plotting it.
+- Avoid text-dense schematic/plot hybrids that depend on large blocks of rendered text to be understandable.
 Do not fabricate claims, figures, data, or citations.
+Use `\\cite{...}` only when you have a grounded, resolvable citation key or an explicitly provided citation artifact. If you do not have a trustworthy citation key, prefer uncited prose over invented BibTeX keys.
 If the evidence is incomplete, state the limitation clearly, but only where it materially affects interpretation.
 Return a SectionDraftOutput only.
 """
@@ -71,12 +78,16 @@ Return a SectionDraftOutput only.
 WRITE_REVIEWER_SYSTEM_PROMPT = """You are CatMaster's writing reviewer.
 Review a single drafted section as an academic writing reviewer, not as a forensic auditor.
 Check for material problems in four areas: unsupported central claims, missing evidence for major quantitative statements, major structural weakness, and evidence-discipline failures that would mislead a scientific reader.
+Treat invented or obviously unresolvable citation keys as a material problem. If the prose would be acceptable without a citation, prefer deleting the bad citation over preserving a fake key.
 Treat unresolved figure references as a material problem. If a section mentions a figure or uses `Figure~\\ref{...}` but does not include a real figure block or real generated figure file path, request revision.
 If `realized_figure_refs` contains symbolic ids or planned names rather than actual file paths, request revision.
 If `planned_figure_ids` is populated but the section neither realizes those figures nor explicitly narrows scope, request revision.
 If the section inserts the same realized image file as a second figure in a later section, request revision.
 If the section uses an already-realized image file as though it were a different local figure with a different purpose or caption, request revision.
 If the section generates a duplicate figure for a planned figure id that was already realized in another section without a clear local justification, request revision and prefer true reuse rather than duplicate insertion.
+If a matplotlib-style figure is mainly carrying prose, long annotation blocks, or caption-like text inside the plotted image, request revision.
+If labels, legends, or annotations are so long that they are likely to wrap, overlap, or misalign at manuscript scale, request revision.
+Prefer figures with short labels and manuscript/caption-based explanation over text-heavy figures.
 Prefer approval when the section is scientifically faithful, readable, and only has minor wording or citation-improvement opportunities left.
 Do not request revision for every small overstatement, stylistic preference, or arguable phrasing choice.
 Use `needs_revision` only when a reasonable reader would be materially misled, a major claim lacks support, or the prose is not yet suitable as manuscript text.
@@ -112,7 +123,7 @@ def build_write_director_context(
             f"Chat session context:\n{request.get('session_context_text') or '(none)'}",
             "Planning directive: infer the writing mode from the request, choose an explicit preferred_output_format, and if a visible writing skill exposes a manuscript template or TeX workflow, prefer `tex` and plan around that substrate.",
             "Workspace directive: treat the project files root as the main evidence workspace; use the fixed manuscript paths only as output locations for this run.",
-            f"Assembly feedback from the previous attempt:\n{assembly_feedback or '(none)'}",
+            f"Recovery feedback from the previous attempt:\n{assembly_feedback or '(none)'}",
             "",
             "Research dossier JSON:",
             json.dumps(dossier or {}, ensure_ascii=False, indent=2),

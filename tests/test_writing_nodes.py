@@ -15,7 +15,7 @@ from catmaster.agents.writing_nodes import (
 from catmaster.agents.writing_prompts import build_section_writer_context
 from catmaster.agents.writing_schemas import WritingRequest
 from catmaster.runtime.research import ResearchBoard, ResearchDossier, ResearchStore
-from catmaster.runtime.writing import SectionDraftModel, SectionReviewModel, WritingPlanModel, WritingSectionSpec, WritingStore
+from catmaster.runtime.writing import SectionDraftModel, SectionReviewModel, WritingBoard, WritingPlanModel, WritingSectionSpec, WritingStore
 from catmaster.llm.config import WritingRuntimeConfig
 
 
@@ -26,6 +26,15 @@ class _DummyAgent:
     async def ainvoke(self, payload):
         _ = payload
         return {"structured_response": self.payload}
+
+
+class _FailingAgent:
+    def __init__(self, exc: Exception):
+        self.exc = exc
+
+    async def ainvoke(self, payload):
+        _ = payload
+        raise self.exc
 
 
 class _DummyReviewerModel:
@@ -75,6 +84,16 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
         )
     )
     store = WritingStore(workspace=tmp_path, run_id="write_001")
+    store.ensure_exists()
+    (store.files_root / "references.bib").write_text(
+        "@article{fe110_2024,\n"
+        "  title={Fe(110) adsorption benchmark},\n"
+        "  author={Doe, Jane},\n"
+        "  journal={J. Test},\n"
+        "  year={2024}\n"
+        "}\n",
+        encoding="utf-8",
+    )
     request = WritingRequest(
         request="Write a short evidence-backed section from existing Fe adsorption results.",
         source_campaign_id="camp_001",
@@ -122,8 +141,8 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
                 "section_id": "results_discussion",
                 "heading": "Results and Discussion",
                 "status": "drafted",
-                "section_tex": "\\section{Results and Discussion}\nBridge adsorption remained preferred in the bounded calculations.",
-                "citations": ["Fe(110) study (2024)"],
+                "section_tex": "\\section{Results and Discussion}\nBridge adsorption remained preferred in the bounded calculations~\\cite{fe110_2024}.",
+                "citations": ["fe110_2024"],
                 "planned_figure_ids": [],
                 "realized_figure_refs": [],
             }
@@ -213,6 +232,121 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
     assert updated_source_board.action_refs[-1].kind == "writer"
 
 
+@pytest.mark.anyio
+async def test_review_section_node_blocks_missing_bibliography_keys(tmp_path: Path) -> None:
+    store = WritingStore(workspace=tmp_path, run_id="write_001")
+    store.ensure_exists()
+    draft = SectionDraftModel(
+        section_id="results_discussion",
+        heading="Results and Discussion",
+        status="drafted",
+        section_tex="\\section{Results and Discussion}\nA key comparison remains informative~\\cite{missing_key}.",
+        citations=["missing_key"],
+        planned_figure_ids=[],
+        realized_figure_refs=[],
+    )
+    store.persist_section_draft(draft)
+    board = WritingBoard(run_id="write_001", status="reviewing")
+    store.save_board(board)
+    plan = WritingPlanModel(
+        title="Test",
+        writing_mode="section_draft",
+        target_audience="internal",
+        section_specs=[
+            WritingSectionSpec(
+                section_id="results_discussion",
+                heading="Results and Discussion",
+                purpose="Summarize evidence.",
+            )
+        ],
+    )
+    store.persist_plan(plan)
+    review_cmd = await review_section_node(
+        {
+            "request": WritingRequest(request="Review this section.").model_dump(),
+            "board": board.model_dump(),
+            "plan": plan.model_dump(),
+            "latest_draft": draft.model_dump(),
+        },
+        writing_store=store,
+        write_reviewer_model=_DummyReviewerModel(
+            {
+                "section_id": "results_discussion",
+                "status": "approved",
+                "revision_notes": [],
+                "unsupported_claims": [],
+                "missing_citations": [],
+            }
+        ),
+        skills_runtime=None,
+    )
+    assert review_cmd.goto == "write_section"
+    review = store.load_section_reviews()[0]
+    assert review.status == "needs_revision"
+    assert review.missing_citations == ["missing_key"]
+
+
+@pytest.mark.anyio
+async def test_review_section_node_forces_progress_after_revision_limit(tmp_path: Path) -> None:
+    store = WritingStore(workspace=tmp_path, run_id="write_001")
+    store.ensure_exists()
+    draft = SectionDraftModel(
+        section_id="results_discussion",
+        heading="Results and Discussion",
+        status="drafted",
+        section_tex="\\section{Results and Discussion}\nStill cites a missing source~\\cite{missing_key}.",
+        citations=["missing_key"],
+        planned_figure_ids=[],
+        realized_figure_refs=[],
+    )
+    store.persist_section_draft(draft)
+    board = WritingBoard(
+        run_id="write_001",
+        status="reviewing",
+        revision_counts={"results_discussion": 4},
+    )
+    store.save_board(board)
+    plan = WritingPlanModel(
+        title="Test",
+        writing_mode="section_draft",
+        target_audience="internal",
+        section_specs=[
+            WritingSectionSpec(
+                section_id="results_discussion",
+                heading="Results and Discussion",
+                purpose="Summarize evidence.",
+            )
+        ],
+    )
+    store.persist_plan(plan)
+    review_cmd = await review_section_node(
+        {
+            "request": WritingRequest(request="Review this section.").model_dump(),
+            "board": board.model_dump(),
+            "plan": plan.model_dump(),
+            "latest_draft": draft.model_dump(),
+        },
+        writing_store=store,
+        write_reviewer_model=_DummyReviewerModel(
+            {
+                "section_id": "results_discussion",
+                "status": "approved",
+                "revision_notes": [],
+                "unsupported_claims": [],
+                "missing_citations": [],
+            }
+        ),
+        skills_runtime=None,
+    )
+    assert review_cmd.goto == "write_section"
+    review = store.load_section_reviews()[0]
+    assert review.status == "approved"
+    assert any("Revision limit reached" in note for note in review.revision_notes)
+    updated_board = store.load_board()
+    assert updated_board is not None
+    assert updated_board.revision_counts["results_discussion"] == 5
+
+
 def test_section_writer_context_carries_plan_level_tex_signal() -> None:
     plan = WritingPlanModel(
         title="CO adsorption on Fe(110)",
@@ -257,6 +391,51 @@ def test_section_writer_context_carries_plan_level_tex_signal() -> None:
     assert "Current manuscript figures output dir: manuscript/figures" in context
     assert "Relevant figure requests JSON:" in context
     assert "Writing plan JSON:" not in context
+
+
+@pytest.mark.anyio
+async def test_write_section_failure_routes_back_to_director(tmp_path: Path) -> None:
+    source_store = ResearchStore(workspace=tmp_path, campaign_id="camp_001")
+    store = WritingStore(workspace=tmp_path, run_id="write_001")
+    request = WritingRequest(
+        request="Revise the manuscript and improve figures.",
+        source_campaign_id="camp_001",
+    )
+    init_cmd = await init_writing_node({"request": request.model_dump()}, writing_store=store, source_store=source_store)
+    plan = WritingPlanModel(
+        title="CO adsorption on Fe(110)",
+        writing_mode="section_draft",
+        target_audience="internal",
+        section_specs=[
+            WritingSectionSpec(
+                section_id="results_discussion",
+                heading="Results and Discussion",
+                purpose="Summarize the main evidence chain.",
+            )
+        ],
+    )
+    board = init_cmd.update["board"].model_copy(update={"title": plan.title, "writing_mode": plan.writing_mode, "status": "drafting"})
+    store.persist_plan(plan)
+    store.save_board(board)
+
+    cmd = await write_section_node(
+        {
+            "request": request.model_dump(),
+            "board": board,
+            "plan": plan,
+            "dossier": {},
+        },
+        writing_store=store,
+        source_store=source_store,
+        section_writer_agent=_FailingAgent(ValueError("upstream 500")),
+        skills_runtime=None,
+    )
+    assert cmd.goto == "plan_writing"
+    assert "Section writing failed for `Results and Discussion`." in str(cmd.update["assembly_feedback"])
+    assert "ValueError: upstream 500" in str(cmd.update["assembly_feedback"])
+    persisted = store.load_board()
+    assert persisted is not None
+    assert persisted.status == "planning"
 
 
 def test_coerce_draft_splits_legacy_figure_refs() -> None:
@@ -507,17 +686,16 @@ async def test_assemble_manuscript_always_writes_master_tex_and_copies_figures(
     assert finalize_cmd.goto == "summarize_writing"
     latex_manuscript = tmp_path / "files" / "manuscript" / "MANUSCRIPT.tex"
     copied_figure = tmp_path / "files" / "manuscript" / "figures" / "FIG-demo.png"
-    copied_bib = tmp_path / "files" / "manuscript" / "references.bib"
     copied_section = tmp_path / "files" / "manuscript" / "sections" / "rd1_results_and_discussion.tex"
     assert latex_manuscript.exists()
     assert copied_figure.exists()
-    assert copied_bib.exists()
     assert copied_section.exists()
     text = latex_manuscript.read_text(encoding="utf-8")
     assert "\\documentclass[journal=jacsat,manuscript=article]{achemso}" in text
     assert "\\title{TeX assembly}" in text
     assert "\\input{sections/rd1_results_and_discussion.tex}" in text
     assert "\\begin{abstract}" not in text
+    assert "\\bibliography{references}" not in text
     copied_section_text = copied_section.read_text(encoding="utf-8")
     assert "\\section{Results and Discussion}" in copied_section_text
     assert "\\includegraphics{figures/FIG-demo.png}" in copied_section_text
@@ -527,5 +705,176 @@ async def test_assemble_manuscript_always_writes_master_tex_and_copies_figures(
     assert bundle is not None
     assert bundle.final_latex_path == "manuscript/MANUSCRIPT.tex"
     assert bundle.final_manuscript_path == "manuscript/MANUSCRIPT.tex"
+    assert bundle.bibliography_shortlist == []
     assert any(item.get("copied_ref") == "manuscript/figures/FIG-demo.png" for item in bundle.figure_manifest)
     assert any(item.get("planned_figure_ids") == ["fig_demo"] for item in bundle.figure_manifest)
+
+
+@pytest.mark.anyio
+async def test_assemble_manuscript_omits_bibliography_when_no_citations_are_used(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_polish(payload):
+        path = tmp_path / "files" / str(payload["source_path"])
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text + "\n% polished\n", encoding="utf-8")
+        return "polished", {"data": {"model_name": "fake-polisher"}}
+
+    monkeypatch.setattr("catmaster.agents.writing_nodes.polish_academic_prose", _fake_polish)
+
+    source_store = ResearchStore(workspace=tmp_path, campaign_id="camp_nobib")
+    source_store.save_board(
+        ResearchBoard(
+            campaign_id="camp_nobib",
+            question="Assemble manuscript without citations.",
+            exploration_policy="anchored",
+            status="done",
+            max_cycles=1,
+            max_literature_queries=0,
+            max_fast_runs=0,
+            max_standard_runs=0,
+        )
+    )
+    store = WritingStore(workspace=tmp_path, run_id="write_nobib")
+    request = WritingRequest(request="Write a compact manuscript section without references.", source_campaign_id="camp_nobib")
+    init_cmd = await init_writing_node({"request": request.model_dump()}, writing_store=store, source_store=source_store)
+    board_model = init_cmd.update["board"]
+    plan = WritingPlanModel(
+        title="No bibliography test",
+        writing_mode="section_draft",
+        target_audience="internal",
+        section_specs=[
+            WritingSectionSpec(
+                section_id="results",
+                heading="Results and Discussion",
+                purpose="Summarize current results without citations.",
+            )
+        ],
+    )
+    store.persist_plan(plan)
+    store.persist_section_draft(
+        SectionDraftModel(
+            section_id="results",
+            heading="Results and Discussion",
+            status="drafted",
+            section_tex="\\section{Results and Discussion}\nA compact result paragraph without citation commands.\n",
+            citations=["not_used_anywhere"],
+        )
+    )
+    store.persist_section_review(
+        SectionReviewModel(
+            section_id="results",
+            status="approved",
+            revision_notes=[],
+            unsupported_claims=[],
+            missing_citations=[],
+        )
+    )
+
+    assemble_cmd = await assemble_manuscript_node(
+        {
+            "request": request.model_dump(),
+            "board": board_model,
+            "plan": plan,
+        },
+        writing_store=store,
+        source_store=source_store,
+        writing_config=WritingRuntimeConfig(author_name="CatMaster"),
+    )
+    assert assemble_cmd.goto == "finalize_writing"
+    latex_manuscript = tmp_path / "files" / "manuscript" / "MANUSCRIPT.tex"
+    text = latex_manuscript.read_text(encoding="utf-8")
+    assert "\\bibliography{references}" not in text
+    assert not (tmp_path / "files" / "manuscript" / "references.bib").exists()
+    bundle = store.load_bundle()
+    assert bundle is not None
+    assert bundle.bibliography_shortlist == []
+
+
+@pytest.mark.anyio
+async def test_assemble_manuscript_preserves_existing_references_bib(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_polish(payload):
+        path = tmp_path / "files" / str(payload["source_path"])
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text + "\n% polished\n", encoding="utf-8")
+        return "polished", {"data": {"model_name": "fake-polisher"}}
+
+    monkeypatch.setattr("catmaster.agents.writing_nodes.polish_academic_prose", _fake_polish)
+
+    source_store = ResearchStore(workspace=tmp_path, campaign_id="camp_keepbib")
+    source_store.save_board(
+        ResearchBoard(
+            campaign_id="camp_keepbib",
+            question="Keep active bibliography entries.",
+            exploration_policy="anchored",
+            status="done",
+            max_cycles=1,
+            max_literature_queries=0,
+            max_fast_runs=0,
+            max_standard_runs=0,
+        )
+    )
+    store = WritingStore(workspace=tmp_path, run_id="write_keepbib")
+    store.ensure_exists()
+    existing_bib = (
+        "@article{Batatia2022,\n"
+        "  title={MACE foundation paper},\n"
+        "  author={Batatia, Ilyes},\n"
+        "  journal={Test Journal},\n"
+        "  year={2022}\n"
+        "}\n"
+    )
+    (store.files_root / "references.bib").write_text(existing_bib, encoding="utf-8")
+    request = WritingRequest(request="Assemble manuscript with an existing bibliography.", source_campaign_id="camp_keepbib")
+    init_cmd = await init_writing_node({"request": request.model_dump()}, writing_store=store, source_store=source_store)
+    board_model = init_cmd.update["board"]
+    plan = WritingPlanModel(
+        title="Preserve bibliography",
+        writing_mode="section_draft",
+        target_audience="internal",
+        section_specs=[
+            WritingSectionSpec(
+                section_id="results",
+                heading="Results and Discussion",
+                purpose="Use a grounded citation from the existing bibliography.",
+            )
+        ],
+    )
+    store.persist_plan(plan)
+    store.persist_section_draft(
+        SectionDraftModel(
+            section_id="results",
+            heading="Results and Discussion",
+            status="drafted",
+            section_tex="\\section{Results and Discussion}\nMACE is referenced here~\\cite{Batatia2022}.\n",
+            citations=["Batatia2022"],
+        )
+    )
+    store.persist_section_review(
+        SectionReviewModel(
+            section_id="results",
+            status="approved",
+            revision_notes=[],
+            unsupported_claims=[],
+            missing_citations=[],
+        )
+    )
+
+    assemble_cmd = await assemble_manuscript_node(
+        {
+            "request": request.model_dump(),
+            "board": board_model,
+            "plan": plan,
+        },
+        writing_store=store,
+        source_store=source_store,
+        writing_config=WritingRuntimeConfig(author_name="CatMaster"),
+    )
+    assert assemble_cmd.goto == "finalize_writing"
+    assert (store.files_root / "references.bib").read_text(encoding="utf-8") == existing_bib
+    manuscript = (store.files_root / "MANUSCRIPT.tex").read_text(encoding="utf-8")
+    assert "\\bibliography{references}" in manuscript

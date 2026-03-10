@@ -39,6 +39,9 @@ Use when a section needs structure renders, conceptual schematics, comparison pl
 - Prefer comparisons over isolated displays when the paper's claim depends on difference, ranking, or trend.
 - Show uncertainty, spread, or sensitivity when the conclusion depends on robustness.
 - If a table communicates the evidence more clearly than a plot, use a table.
+- Do not use matplotlib or plotting libraries to typeset paragraphs, long bullet lists, or caption-like explanation inside the figure.
+- Keep figure text sparse: short axis labels, short legends, short panel labels, and brief callouts only.
+- Any explanation longer than a short phrase belongs in the caption or body text, not inside the graphic.
 
 ### Caption template
 
@@ -55,6 +58,7 @@ Captions should usually answer:
 - color or symbol mapping is consistent across related figures
 - image panels have meaningful labels and scale/orientation when relevant
 - text does not simply duplicate the caption
+- labels and annotations are short enough to stay stable at manuscript export size
 - the script and source refs are sufficient to regenerate the display
 
 ## Output Contract

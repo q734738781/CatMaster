@@ -4,10 +4,18 @@ from typing import Any, Dict
 import os
 import logging
 import json
+import re
 
 from catmaster.llm.config import LLMConfig
 
 _logger = logging.getLogger(__name__)
+
+
+def _normalize_http_log_body(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n").strip()
+    cleaned = re.sub(r"\n[ \t]*\n+", "\n", cleaned)
+    return cleaned.replace("\n", "\\n")
 
 
 def _request_content_text(request: Any) -> str:
@@ -17,13 +25,29 @@ def _request_content_text(request: Any) -> str:
     except Exception as exc:
         return f"<unavailable: {exc}>"
     if isinstance(content, bytes):
-        return content.decode("utf-8", errors="replace")
+        return _normalize_http_log_body(content.decode("utf-8", errors="replace"))
     if isinstance(content, str):
-        return content
+        return _normalize_http_log_body(content)
     try:
-        return json.dumps(content, ensure_ascii=False, default=str)
+        return _normalize_http_log_body(json.dumps(content, ensure_ascii=False, default=str))
     except Exception:
-        return str(content)
+        return _normalize_http_log_body(str(content))
+
+
+def _response_content_text(response: Any) -> str:
+    """Best-effort extraction of HTTP response body for logging."""
+    try:
+        content = getattr(response, "content", b"")
+    except Exception as exc:
+        return f"<unavailable: {exc}>"
+    if isinstance(content, bytes):
+        return _normalize_http_log_body(content.decode("utf-8", errors="replace"))
+    if isinstance(content, str):
+        return _normalize_http_log_body(content)
+    try:
+        return _normalize_http_log_body(json.dumps(content, ensure_ascii=False, default=str))
+    except Exception:
+        return _normalize_http_log_body(str(content))
 
 
 def _build_http_debug_clients(cfg: LLMConfig) -> tuple[Any, Any]:
@@ -49,11 +73,61 @@ def _build_http_debug_clients(cfg: LLMConfig) -> tuple[Any, Any]:
             body,
         )
 
+    def _log_response(response: Any) -> None:
+        request = getattr(response, "request", None)
+        method = str(getattr(request, "method", "") or "").upper()
+        if method != "POST":
+            return
+        url = str(getattr(request, "url", "") or "")
+        status_code = getattr(response, "status_code", None)
+        body = _response_content_text(response)
+        _logger.info(
+            "[llm.http.raw_response] provider=%s model=%s method=%s url=%s status=%s body=%s",
+            cfg.provider,
+            cfg.model,
+            method,
+            url,
+            status_code,
+            body,
+        )
+
     async def _alog_request(request: Any) -> None:
         _log_request(request)
 
-    sync_client = httpx.Client(event_hooks={"request": [_log_request]})
-    async_client = httpx.AsyncClient(event_hooks={"request": [_alog_request]})
+    async def _alog_response(response: Any) -> None:
+        try:
+            await response.aread()
+        except Exception as exc:
+            _logger.info(
+                "[llm.http.raw_response] provider=%s model=%s method=%s url=%s status=%s body=<read failed: %s>",
+                cfg.provider,
+                cfg.model,
+                str(getattr(getattr(response, "request", None), "method", "") or "").upper(),
+                str(getattr(getattr(response, "request", None), "url", "") or ""),
+                getattr(response, "status_code", None),
+                exc,
+            )
+            return
+        _log_response(response)
+
+    def _sync_response_hook(response: Any) -> None:
+        try:
+            response.read()
+        except Exception as exc:
+            _logger.info(
+                "[llm.http.raw_response] provider=%s model=%s method=%s url=%s status=%s body=<read failed: %s>",
+                cfg.provider,
+                cfg.model,
+                str(getattr(getattr(response, "request", None), "method", "") or "").upper(),
+                str(getattr(getattr(response, "request", None), "url", "") or ""),
+                getattr(response, "status_code", None),
+                exc,
+            )
+            return
+        _log_response(response)
+
+    sync_client = httpx.Client(event_hooks={"request": [_log_request], "response": [_sync_response_hook]})
+    async_client = httpx.AsyncClient(event_hooks={"request": [_alog_request], "response": [_alog_response]})
     return sync_client, async_client
 
 

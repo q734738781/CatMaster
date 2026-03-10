@@ -12,6 +12,11 @@ metadata:
 
 Scientific visualization transforms data into clear, accurate figures for publication. Create journal-ready plots with multi-panel layouts, error bars, significance markers, and colorblind-safe palettes. Export as PDF/EPS/TIFF using matplotlib, seaborn, and plotly for manuscripts.
 
+Core restriction:
+- Do not use matplotlib, seaborn, or plotly to typeset paragraph text, long bullet lists, or caption-like explanation inside a figure.
+- Keep figure text minimal and stable at final manuscript size.
+- If a sentence is needed to explain the result, put it in the caption or body text, not on the canvas.
+
 ## When to Use This Skill
 
 This skill should be used when:
@@ -774,4 +779,3 @@ Before submitting figures, verify:
 - [ ] Legend is clear and complete
 
 Use this skill to ensure scientific figures meet the highest publication standards while remaining accessible to all readers.
-

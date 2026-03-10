@@ -24,6 +24,7 @@ from catmaster.runtime.writing import (
     WritingBoard,
     WritingPlanModel,
 )
+from catmaster.tools.base import workspace_relpath
 from catmaster.tools.analysis.polish_academic_prose import polish_academic_prose
 
 from .writing_prompts import (
@@ -37,6 +38,11 @@ from .writing_prompts import (
     build_write_reviewer_context,
 )
 from .writing_schemas import SectionDraftOutput, SectionReviewOutput, WritingFinalizeOutput, WritingPlanOutput, WritingRequest
+
+_CITE_RE = re.compile(r"\\cite[a-zA-Z*]*\{")
+_CITE_KEYS_RE = re.compile(r"\\cite[a-zA-Z*]*\{([^}]+)\}")
+_BIB_ENTRY_RE = re.compile(r"@\w+\{([^,]+),")
+_MAX_SECTION_REVISIONS = 5
 
 
 def _load_memory_index_excerpt(*, writing_store) -> str:
@@ -112,6 +118,65 @@ def _build_figure_registry(*, drafts: dict[str, SectionDraftModel]) -> list[dict
             }
         )
     return registry
+
+
+def _extract_citation_keys(section_tex: str) -> list[str]:
+    keys: list[str] = []
+    for raw_group in _CITE_KEYS_RE.findall(str(section_tex or "")):
+        for key in raw_group.split(","):
+            cleaned = str(key).strip()
+            if cleaned:
+                keys.append(cleaned)
+    return list(dict.fromkeys(keys))
+
+
+def _load_active_bibliography_keys(*, writing_store) -> set[str]:
+    bib_path = writing_store.files_root / "references.bib"
+    if not bib_path.exists():
+        return set()
+    text = bib_path.read_text(encoding="utf-8")
+    return {str(match).strip() for match in _BIB_ENTRY_RE.findall(text) if str(match).strip()}
+
+
+def _deterministic_citation_issues(*, writing_store, draft: SectionDraftModel) -> tuple[list[str], list[str]]:
+    cited_keys = _extract_citation_keys(draft.section_tex)
+    if not cited_keys:
+        return [], []
+    available_keys = _load_active_bibliography_keys(writing_store=writing_store)
+    missing = [key for key in cited_keys if key not in available_keys]
+    if not missing:
+        return [], []
+    bib_path = workspace_relpath(writing_store.files_root / "references.bib")
+    notes = [
+        "Deterministic citation check failed before reviewer.",
+        f"Active bibliography source checked: {bib_path}.",
+        "The section cites keys that are not present in the active bibliography and must be fixed before review can approve the section.",
+        "Either restore the missing bibliography entries or remove/replace the unsupported citation commands in the section text.",
+    ]
+    notes.extend(f"Missing bibliography key: {key}" for key in missing)
+    return notes, missing
+
+
+def _finalize_review_after_attempt(
+    *,
+    board: WritingBoard,
+    spec,
+    review: SectionReviewOutput,
+) -> tuple[WritingBoard, SectionReviewOutput]:
+    counts = dict(board.revision_counts)
+    attempts = int(counts.get(spec.section_id, 0)) + 1
+    counts[spec.section_id] = attempts
+    if review.status != "needs_revision":
+        return board.model_copy(update={"revision_counts": counts, "status": "drafting"}), review
+    if attempts >= _MAX_SECTION_REVISIONS:
+        forced_notes = list(review.revision_notes)
+        forced_notes.append(
+            f"Revision limit reached for `{spec.heading}` after {_MAX_SECTION_REVISIONS} attempts. "
+            "Proceed with the current draft and carry the remaining issues forward as unresolved editorial debt."
+        )
+        forced_review = review.model_copy(update={"status": "approved", "revision_notes": forced_notes})
+        return board.model_copy(update={"revision_counts": counts, "status": "drafting"}), forced_review
+    return board.model_copy(update={"revision_counts": counts, "status": "drafting"}), review
 
 
 async def init_writing_node(state: dict[str, Any], *, writing_store, source_store, progress_callback=None) -> Command:
@@ -215,19 +280,40 @@ async def write_section_node(state: dict[str, Any], *, writing_store, source_sto
         figure_registry=figure_registry,
         skill_guide=skill_guide,
     )
-    result = await _invoke_agent_with_step_budget(
-        agent=section_writer_agent,
-        messages=[HumanMessage(content=context)],
-        max_steps=30,
-        role="section_writer",
-    )
-    raw = result.get("structured_response")
-    if isinstance(raw, SectionDraftOutput):
-        draft = raw
-    elif hasattr(raw, "model_dump"):
-        draft = SectionDraftOutput.model_validate(raw.model_dump())
-    else:
-        draft = SectionDraftOutput.model_validate(raw)
+    try:
+        result = await _invoke_agent_with_step_budget(
+            agent=section_writer_agent,
+            messages=[HumanMessage(content=context)],
+            max_steps=30,
+            role="section_writer",
+        )
+        raw = result.get("structured_response")
+        if isinstance(raw, SectionDraftOutput):
+            draft = raw
+        elif hasattr(raw, "model_dump"):
+            draft = SectionDraftOutput.model_validate(raw.model_dump())
+        else:
+            draft = SectionDraftOutput.model_validate(raw)
+    except Exception as exc:
+        feedback = (
+            f"Section writing failed for `{spec.heading}`. "
+            "Re-plan or retry with a narrower, more robust local brief and avoid repeating the failed path.\n"
+            f"Failure detail: {exc.__class__.__name__}: {exc}"
+        )
+        board = board.model_copy(update={"status": "planning"})
+        writing_store.save_board(board)
+        return Command(
+            goto="plan_writing",
+            update={
+                "board": board,
+                "plan": plan,
+                "dossier": dossier,
+                "status": "planning",
+                "summary": feedback,
+                "final_answer": feedback,
+                "assembly_feedback": feedback,
+            },
+        )
     if draft.section_id != spec.section_id:
         draft = draft.model_copy(update={"section_id": spec.section_id, "heading": spec.heading})
     if not list(draft.planned_figure_ids):
@@ -250,6 +336,19 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
         raise ValueError(f"missing section spec for {draft.section_id}")
     if progress_callback is not None:
         progress_callback(current_phase="reviewing", current_work_label=f"Review section: {str(spec.heading or spec.section_id).strip()}")
+    deterministic_notes, deterministic_missing = _deterministic_citation_issues(writing_store=writing_store, draft=draft)
+    if deterministic_missing:
+        review = SectionReviewOutput(
+            section_id=spec.section_id,
+            status="needs_revision",
+            revision_notes=deterministic_notes,
+            unsupported_claims=[],
+            missing_citations=deterministic_missing,
+        )
+        board, review = _finalize_review_after_attempt(board=board, spec=spec, review=review)
+        writing_store.persist_section_review(review)
+        writing_store.save_board(board)
+        return Command(goto="write_section", update={"board": board, "plan": plan, "latest_review": review})
     figure_registry = _build_figure_registry(drafts={item.section_id: item for item in writing_store.load_section_drafts()})
     skill_guide = render_write_reviewer_skill_guide(
         skills_runtime.visible_skills("write_reviewer", "writing") if skills_runtime is not None else []
@@ -276,16 +375,8 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
         review = SectionReviewOutput.model_validate(raw)
     if review.section_id != spec.section_id:
         review = review.model_copy(update={"section_id": spec.section_id})
+    board, review = _finalize_review_after_attempt(board=board, spec=spec, review=review)
     writing_store.persist_section_review(review)
-    counts = dict(board.revision_counts)
-    if review.status == "needs_revision":
-        attempts = int(counts.get(spec.section_id, 0)) + 1
-        counts[spec.section_id] = attempts
-        board = board.model_copy(update={"revision_counts": counts, "status": "drafting"})
-        writing_store.save_board(board)
-        if attempts < 2:
-            return Command(goto="write_section", update={"board": board, "plan": plan, "latest_review": review})
-    board = board.model_copy(update={"status": "drafting"})
     writing_store.save_board(board)
     return Command(goto="write_section", update={"board": board, "plan": plan, "latest_review": review})
 
@@ -303,6 +394,7 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
     figure_manifest: list[dict[str, Any]] = []
     section_inputs: list[str] = []
     section_graphics_usage: dict[str, list[str]] = {}
+    include_bibliography = False
     if plan.writing_mode == "paper_outline":
         section_inputs = _materialize_outline_sections(
             writing_store=writing_store,
@@ -322,6 +414,8 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
                     section_tex=section_tex,
                 )
                 section_inputs.append(section_ref)
+                if _section_uses_citations(rewritten_section_tex):
+                    include_bibliography = True
                 for graphic_ref in _extract_graphics_targets(rewritten_section_tex):
                     section_graphics_usage.setdefault(graphic_ref, []).append(spec.section_id)
             bibliography.extend(draft.citations)
@@ -371,6 +465,7 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
             plan=plan,
             section_inputs=section_inputs,
             author_name=str(getattr(writing_config, "author_name", "") or "CatMaster"),
+            include_bibliography=include_bibliography,
         )
     if latex_path is None:
         raise ValueError("writing assembly produced no TeX manuscript output")
@@ -393,7 +488,7 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
         writing_mode=plan.writing_mode,
         title=plan.title,
         ordered_sections=[spec.heading for spec in plan.section_specs],
-        bibliography_shortlist=list(dict.fromkeys(bibliography))[:20],
+        bibliography_shortlist=list(dict.fromkeys(bibliography))[:20] if include_bibliography else [],
         figure_manifest=figure_manifest,
         final_manuscript_path=preferred_path,
         final_latex_path=latex_path,
@@ -540,12 +635,18 @@ def _materialize_outline_sections(*, writing_store, plan) -> list[str]:
     return refs
 
 
-def _write_achemso_manuscript(*, writing_store, plan, section_inputs: list[str], author_name: str) -> str:
-    bib_template_path = _achemso_asset_path("achemso-demo.bib")
+def _section_uses_citations(section_tex: str) -> bool:
+    return bool(_CITE_RE.search(str(section_tex or "")))
+
+
+def _write_achemso_manuscript(*, writing_store, plan, section_inputs: list[str], author_name: str, include_bibliography: bool) -> str:
     manuscript_dir = writing_store.files_root
     manuscript_dir.mkdir(parents=True, exist_ok=True)
-    bibliography_path = manuscript_dir / "references.bib"
-    shutil.copy2(bib_template_path, bibliography_path)
+    if include_bibliography:
+        bib_template_path = _achemso_asset_path("achemso-demo.bib")
+        bibliography_path = manuscript_dir / "references.bib"
+        if not bibliography_path.exists():
+            shutil.copy2(bib_template_path, bibliography_path)
     title = str(plan.title or "").strip() or "Untitled manuscript"
     body_inputs = "\n".join(f"\\input{{{ref}}}" for ref in section_inputs).strip() or "% No sections assembled"
     abstract_text = str(plan.abstract_md or "").strip()
@@ -584,7 +685,7 @@ def _write_achemso_manuscript(*, writing_store, plan, section_inputs: list[str],
             "\\begin{suppinfo}",
             "\\end{suppinfo}",
             "",
-            "\\bibliography{references}",
+            "\\bibliography{references}" if include_bibliography else "",
             "\\end{document}",
         ]
     ).strip()
