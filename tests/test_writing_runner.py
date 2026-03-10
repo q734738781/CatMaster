@@ -70,8 +70,6 @@ async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
         project_id="proj",
     )
     runner.reporter = None
-    runner.run_ledger_store = None
-    runner.history_reader = None
     runner.skills_runtime = None
     runner.store = SimpleNamespace(ensure_exists=lambda: None)
     runner._write_task_state = lambda payload: None

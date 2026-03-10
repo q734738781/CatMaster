@@ -244,6 +244,7 @@ def test_section_writer_context_carries_plan_level_tex_signal() -> None:
         working_figures_dir="manuscript/figures",
         prior_draft=None,
         review_notes=[],
+        figure_registry=[],
         skill_guide="template-aware skill available",
     )
     assert "Preferred output format: tex" in context
@@ -310,6 +311,96 @@ async def test_writing_nodes_allow_direct_request_without_dossier(tmp_path: Path
         skills_runtime=None,
     )
     assert plan_cmd.goto == "write_section"
+
+
+@pytest.mark.anyio
+async def test_assemble_manuscript_routes_back_to_planning_on_duplicate_figure_inclusion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_polish(_payload):
+        return "polished", {"data": {"model_name": "fake-polisher"}}
+
+    monkeypatch.setattr("catmaster.agents.writing_nodes.polish_academic_prose", _fake_polish)
+
+    source_store = ResearchStore(workspace=tmp_path, campaign_id="camp_dup")
+    source_store.save_board(
+        ResearchBoard(
+            campaign_id="camp_dup",
+            question="Check duplicate figures.",
+            exploration_policy="anchored",
+            status="done",
+            max_cycles=1,
+            max_literature_queries=0,
+            max_fast_runs=0,
+            max_standard_runs=0,
+        )
+    )
+    source_store.persist_dossier(
+        ResearchDossier(
+            campaign_id="camp_dup",
+            question="Check duplicate figures.",
+            exploration_policy="anchored",
+            final_answer_md="Existing results are enough.",
+            confidence="medium",
+        )
+    )
+    store = WritingStore(workspace=tmp_path, run_id="write_dup")
+    request = WritingRequest(request="Write a short draft.", source_campaign_id="camp_dup")
+    init_cmd = await init_writing_node({"request": request.model_dump()}, writing_store=store, source_store=source_store)
+    board_model = init_cmd.update["board"]
+    plan = WritingPlanModel(
+        title="Duplicate figure test",
+        writing_mode="full_draft",
+        target_audience="internal",
+        section_specs=[
+            WritingSectionSpec(section_id="intro", heading="Introduction", purpose="Intro."),
+            WritingSectionSpec(section_id="results", heading="Results", purpose="Results."),
+        ],
+    )
+    store.persist_plan(plan)
+    fig_path = tmp_path / "files" / "manuscript" / "figures" / "FIG-dup.png"
+    fig_path.parent.mkdir(parents=True, exist_ok=True)
+    fig_path.write_bytes(b"fakepng")
+    store.persist_section_draft(
+        SectionDraftModel(
+            section_id="intro",
+            heading="Introduction",
+            status="drafted",
+            section_tex="\\section{Introduction}\n\\begin{figure}\\includegraphics{FIG-dup.png}\\end{figure}\n",
+            planned_figure_ids=["fig_dup"],
+            realized_figure_refs=["manuscript/figures/FIG-dup.png"],
+        )
+    )
+    store.persist_section_draft(
+        SectionDraftModel(
+            section_id="results",
+            heading="Results",
+            status="drafted",
+            section_tex="\\section{Results}\n\\begin{figure}\\includegraphics{FIG-dup.png}\\end{figure}\n",
+            planned_figure_ids=["fig_dup_reused_badly"],
+            realized_figure_refs=["manuscript/figures/FIG-dup.png"],
+        )
+    )
+    store.persist_section_review(
+        SectionReviewModel(section_id="intro", status="approved", revision_notes=[], unsupported_claims=[], missing_citations=[])
+    )
+    store.persist_section_review(
+        SectionReviewModel(section_id="results", status="approved", revision_notes=[], unsupported_claims=[], missing_citations=[])
+    )
+
+    assemble_cmd = await assemble_manuscript_node(
+        {
+            "request": request.model_dump(),
+            "board": board_model,
+            "plan": plan,
+        },
+        writing_store=store,
+        source_store=source_store,
+        writing_config=WritingRuntimeConfig(author_name="CatMaster"),
+    )
+    assert assemble_cmd.goto == "plan_writing"
+    assert "same realized figure image was inserted" in str(assemble_cmd.update.get("assembly_feedback") or "")
 
 
 @pytest.mark.anyio

@@ -12,6 +12,9 @@ class ResearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(...)
+    session_context_text: str = Field("")
+    chat_session_id: str | None = Field(None)
+    entry_context_tokens_estimate: int = Field(0, ge=0)
     seed_hypotheses: list[str] = Field(default_factory=list)
     exploration_policy: Literal["anchored", "local_expand", "open"] = Field("anchored")
     max_cycles: int = Field(6, ge=1)
@@ -38,6 +41,14 @@ class NewHypothesisProposal(BaseModel):
     text: str = Field(...)
     parent_hypothesis_ids: list[str] = Field(default_factory=list)
     rationale: str = Field(...)
+
+
+class HypothesisEvidenceLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hypothesis_id: str = Field(...)
+    ref_path: str = Field(...)
+    note: str = Field("")
 
 
 class RunLiteraturePayload(BaseModel):
@@ -72,9 +83,7 @@ class RunWriterPayload(BaseModel):
 class ConcludePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    final_answer_md: str = Field(...)
-    supported_claims: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
+    why_now: str = Field(...)
     recommended_next_steps: list[str] = Field(default_factory=list)
     confidence: Literal["high", "medium", "low"] = Field(...)
     memory_promotion_candidates: list[MemoryUpdate] = Field(default_factory=list)
@@ -85,9 +94,6 @@ class ResearchLeadOutput(BaseModel):
 
     state: Literal["RunLiterature", "RunExperiment", "RunWriter", "AskHuman", "Conclude"] = Field(...)
     rationale: str = Field(...)
-    current_best_answer_md: str | None = Field(None)
-    hypothesis_updates: list[HypothesisUpdate] = Field(default_factory=list)
-    new_hypotheses: list[NewHypothesisProposal] = Field(default_factory=list)
     run_literature: RunLiteraturePayload | None = Field(None)
     run_experiment: ExperimentBrief | None = Field(None)
     run_writer: RunWriterPayload | None = Field(None)
@@ -112,8 +118,8 @@ class ResearchLeadOutput(BaseModel):
             if not self.ask_human or not [q for q in self.ask_human.questions if str(q).strip()]:
                 raise ValueError("AskHuman requires non-empty questions")
         if self.state == "Conclude":
-            if not self.conclude or not str(self.conclude.final_answer_md or "").strip():
-                raise ValueError("Conclude requires non-empty final_answer_md")
+            if not self.conclude or not str(self.conclude.why_now or "").strip():
+                raise ValueError("Conclude requires non-empty why_now")
         if self.state == "RunExperiment":
             brief = self.run_experiment
             if brief is None:
@@ -125,14 +131,30 @@ class ResearchLeadOutput(BaseModel):
             if not list(brief.expected_outputs or []):
                 raise ValueError("RunExperiment requires expected_outputs")
         return self
+
+
+class ResearchStateSyncOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_best_answer_md: str = Field(...)
+    hypothesis_updates: list[HypothesisUpdate] = Field(default_factory=list)
+    new_hypotheses: list[NewHypothesisProposal] = Field(default_factory=list)
+    supported_claims: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    evidence_links: list[HypothesisEvidenceLink] = Field(default_factory=list)
+    board_notes: str = Field("")
+
+
 __all__ = [
     "AskHumanPayload",
     "ConcludePayload",
     "ExperimentBrief",
+    "HypothesisEvidenceLink",
     "HypothesisUpdate",
     "NewHypothesisProposal",
     "ResearchLeadOutput",
     "ResearchRequest",
+    "ResearchStateSyncOutput",
     "RunWriterPayload",
     "RunLiteraturePayload",
 ]

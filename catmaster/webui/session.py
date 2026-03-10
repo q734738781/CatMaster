@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -18,6 +19,7 @@ from catmaster.ui import make_event
 
 from . import io
 from .constants import (
+    SIDEBAR_POLL_INTERVAL,
     LIVE_SUMMARY_MAX_EVENTS,
     LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
     LIVE_SUMMARY_MAX_PARAMS_CHARS,
@@ -28,6 +30,7 @@ from .constants import (
     MAX_TEXT_PREVIEW_CHARS,
     MAX_TRACE_LINES,
 )
+from .chat_sessions import ChatSessionStore
 from .live_state import apply_events, new_live_state, should_refresh_live_summary
 from .live_summary_service import summarize_live_state
 from .summary_service import snapshot_summary, summarize_run
@@ -36,6 +39,62 @@ from .web_reporter import PromptBroker, WebReporter
 RUN_MODE_NEW = "new_run"
 RUN_MODE_RESUME_SELECTED = "resume_selected_run"
 SUPPORTED_LANES = {"fast", "standard", "research", "writing"}
+
+_RECENT_SESSION_TURNS = 8
+
+
+def _estimate_tokens(text: str) -> int:
+    compact = str(text or "").strip()
+    if not compact:
+        return 0
+    return max(1, len(compact) // 4)
+
+
+def _format_exception_for_ui(exc: BaseException, *, max_items: int = 6, max_depth: int = 6) -> str:
+    lines: list[str] = []
+
+    def _walk(err: BaseException, depth: int) -> None:
+        if len(lines) >= max_items:
+            return
+        indent = "  " * depth
+        label = err.__class__.__name__
+        message = str(err).strip()
+        lines.append(f"{indent}{label}: {message or '(no message)'}")
+        if depth >= max_depth:
+            return
+        nested = getattr(err, "exceptions", None)
+        if nested:
+            for child in nested:
+                if isinstance(child, BaseException):
+                    _walk(child, depth + 1)
+                    if len(lines) >= max_items:
+                        return
+
+    _walk(exc, 0)
+    if not lines:
+        return str(exc)
+    if len(lines) >= max_items:
+        lines.append("  ...")
+    return "\n".join(lines)
+
+
+def _entry_system_prompt(lane: str) -> str:
+    target = str(lane or "standard").strip() or "standard"
+    if target == "fast":
+        from catmaster.agents.orchestrator_prompts import FAST_DIRECTOR_SYSTEM_PROMPT
+
+        return FAST_DIRECTOR_SYSTEM_PROMPT
+    if target == "research":
+        from catmaster.agents.research_prompts import RESEARCH_LEAD_SYSTEM_PROMPT
+
+        return RESEARCH_LEAD_SYSTEM_PROMPT
+    if target == "writing":
+        from catmaster.agents.writing_prompts import WRITE_DIRECTOR_SYSTEM_PROMPT
+
+        return WRITE_DIRECTOR_SYSTEM_PROMPT
+    from catmaster.agents.orchestrator_prompts import PROPOSAL_SYSTEM_PROMPT
+
+    return PROPOSAL_SYSTEM_PROMPT
 
 
 class WebSession:
@@ -56,6 +115,16 @@ class WebSession:
         self._last_submitted_prompt_ts: float = 0.0
         self.event_lines: List[str] = []
         self.live_state_by_run: Dict[str, Dict[str, Any]] = {}
+        self.active_chat_session_id: str = ""
+        self._sidebar_cache: Dict[str, Any] = {
+            "workspace": "",
+            "runs": [],
+            "cards": [],
+            "generated_at": 0.0,
+        }
+        self._sidebar_cache_dirty: bool = True
+        self._bg_refresh_thread: Optional[threading.Thread] = None
+        self._bg_refresh_stop = threading.Event()
 
     def set_workspace_root(self, path: str) -> Tuple[bool, str, List[Tuple[str, str]]]:
         try:
@@ -66,6 +135,95 @@ class WebSession:
         with self._lock:
             self.workspace_root = root
         return True, f"Project-space root: {root}", self._list_workspace_choices(root)
+
+    def _mark_sidebar_cache_dirty(self) -> None:
+        with self._lock:
+            self._sidebar_cache_dirty = True
+
+    def _compute_sidebar_snapshot(self, workspace: Path) -> Dict[str, Any]:
+        runs_root = system_root(workspace=workspace) / "runs"
+        runs: List[Tuple[str, str]] = []
+        cards: List[Dict[str, Any]] = []
+        if runs_root.exists():
+            run_dirs = [p for p in runs_root.iterdir() if p.is_dir()]
+            for run_dir in sorted(run_dirs, key=lambda p: p.name, reverse=True):
+                display = run_dir.name
+                meta = {}
+                meta_path = run_dir / "meta.json"
+                if meta_path.exists():
+                    try:
+                        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        meta = {}
+                model = str(meta.get("model_name") or "")
+                start = str(meta.get("start_time") or "")
+                if model or start:
+                    display = f"{run_dir.name} | {model} | {start}"
+                runs.append((display, run_dir.name))
+
+                summary = snapshot_summary(run_dir)
+                cards.append(
+                    {
+                        "run_name": run_dir.name,
+                        "headline": str(summary.get("headline") or run_dir.name),
+                        "summary": str(summary.get("summary") or ""),
+                        "next_actions": summary.get("next_actions") if isinstance(summary.get("next_actions"), list) else [],
+                        "status": str(summary.get("status") or ""),
+                        "source": str(summary.get("source") or "rule"),
+                        "model_name": model,
+                        "start_time": start,
+                        "project_space": str(meta.get("workspace") or ""),
+                    }
+                )
+        return {
+            "workspace": str(workspace),
+            "runs": runs,
+            "cards": cards,
+            "generated_at": time.time(),
+        }
+
+    def _refresh_sidebar_cache_if_needed(self, *, force: bool = False) -> None:
+        ws = self._workspace_path()
+        if ws is None:
+            with self._lock:
+                self._sidebar_cache = {"workspace": "", "runs": [], "cards": [], "generated_at": time.time()}
+                self._sidebar_cache_dirty = False
+            return
+        with self._lock:
+            stale = (time.time() - float(self._sidebar_cache.get("generated_at") or 0.0)) >= max(2, SIDEBAR_POLL_INTERVAL)
+            dirty = self._sidebar_cache_dirty
+            cached_ws = str(self._sidebar_cache.get("workspace") or "")
+        if not force and not dirty and not stale and cached_ws == str(ws):
+            return
+        snapshot = self._compute_sidebar_snapshot(ws)
+        with self._lock:
+            self._sidebar_cache = snapshot
+            self._sidebar_cache_dirty = False
+
+    def _background_refresh_loop(self) -> None:
+        while not self._bg_refresh_stop.wait(timeout=1.0):
+            try:
+                self._refresh_sidebar_cache_if_needed(force=False)
+            except Exception:
+                continue
+
+    def _ensure_background_refresh_thread(self) -> None:
+        with self._lock:
+            thread = self._bg_refresh_thread
+            if thread is not None and thread.is_alive():
+                return
+            self._bg_refresh_stop.clear()
+            thread = threading.Thread(target=self._background_refresh_loop, daemon=True)
+            self._bg_refresh_thread = thread
+        thread.start()
+
+    def get_sidebar_snapshot(self) -> Dict[str, Any]:
+        self._refresh_sidebar_cache_if_needed(force=False)
+        with self._lock:
+            snapshot = dict(self._sidebar_cache)
+            snapshot["runs"] = list(snapshot.get("runs") or [])
+            snapshot["cards"] = list(snapshot.get("cards") or [])
+        return snapshot
 
     def open_workspace(self, path: str, *, create: bool = True) -> Tuple[bool, str]:
         if self.run_thread and self.run_thread.is_alive():
@@ -90,8 +248,12 @@ class WebSession:
             self.live_state_by_run = {}
             self.run_info = {}
             self.run_control = None
+            self.active_chat_session_id = ""
             if self.run_status != "running":
                 self.run_status = "idle"
+            self._sidebar_cache_dirty = True
+        self.ensure_active_chat_session()
+        self._ensure_background_refresh_thread()
         return True, f"Project space: {ws}"
 
     def open_workspace_by_name(self, name: str) -> Tuple[bool, str]:
@@ -144,8 +306,10 @@ class WebSession:
             self.event_lines = []
             self.live_state_by_run = {}
             self.run_control = None
+            self.active_chat_session_id = ""
             if self.run_status != "running":
                 self.run_status = "idle"
+            self._sidebar_cache_dirty = True
         return True, f"Project space cleared: {ws}"
 
     def list_workspaces(self) -> List[Tuple[str, str]]:
@@ -155,29 +319,9 @@ class WebSession:
         return self._list_workspace_choices(root)
 
     def list_runs(self) -> List[Tuple[str, str]]:
-        ws = self._workspace_path()
-        if ws is None:
-            return []
-        runs_root = system_root(workspace=ws) / "runs"
-        if not runs_root.exists():
-            return []
-        runs: List[Tuple[str, str]] = []
-        for run_dir in sorted(runs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            if not run_dir.is_dir():
-                continue
-            display = run_dir.name
-            meta_path = run_dir / "meta.json"
-            if meta_path.exists():
-                try:
-                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                    model = meta.get("model_name") or ""
-                    start = meta.get("start_time") or ""
-                    if model or start:
-                        display = f"{run_dir.name} | {model} | {start}"
-                except Exception:
-                    pass
-            runs.append((display, run_dir.name))
-        return runs
+        snapshot = self.get_sidebar_snapshot()
+        runs = snapshot.get("runs")
+        return list(runs) if isinstance(runs, list) else []
 
     def select_run(self, run_name: str) -> str:
         if not run_name:
@@ -205,6 +349,7 @@ class WebSession:
             self.selected_run_dir = candidate
             self.last_event_seq = 0
             self.event_lines = []
+            self._sidebar_cache_dirty = True
         return f"Selected run: {candidate.name}"
 
     def start_run(
@@ -238,6 +383,9 @@ class WebSession:
             requested_lane = "standard"
         is_resume = mode == RUN_MODE_RESUME_SELECTED
         resume_feedback = (prompt or "").strip() if is_resume else ""
+        session_user_prompt = str(prompt or "")
+        effective_prompt_text = session_user_prompt
+        session_context = {"session_id": "", "context_text": "", "estimated_tokens": 0}
 
         with self._lock:
             ws = self.workspace
@@ -258,6 +406,14 @@ class WebSession:
                 return err
             resume_dir = str(resume_target) if resume_target else None
             effective_lane = resume_lane or "standard"
+        if not is_resume:
+            session_context = self.build_session_context(
+                current_prompt=session_user_prompt,
+                lane=effective_lane,
+            )
+            effective_prompt_text = session_user_prompt
+        else:
+            effective_prompt_text = resume_feedback
 
         with self._lock:
             self.run_status = "starting"
@@ -305,8 +461,9 @@ class WebSession:
                             }
                             self.selected_run_dir = run_dir
                             self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
+                        self._save_ui_prompt(run_dir, prompt, is_resume=is_resume)
                     result = orch.run(
-                        prompt,
+                        effective_prompt_text,
                         lane=effective_lane,
                         resume_feedback=resume_feedback,
                     )
@@ -315,37 +472,12 @@ class WebSession:
                         self.run_status = "done" if run_status in {"done", "failure", "needs_intervention"} else run_status
                     skip_summarize = True
                     return
-                from catmaster.agents.research_runner import ResearchRunner
-                from catmaster.agents.writing_runner import WritingRunner
-                from catmaster.agents.runner_factory import build_graph_runner
-                from catmaster.agents.research_schemas import ResearchRequest
-                from catmaster.agents.writing_schemas import WritingRequest
                 from catmaster.llm.factory import build_chat_model
                 from catmaster.runtime.run_context import RunContext
                 from catmaster.runtime.memory_store import MemoryStore
-                from catmaster.runtime.run_ledger.store import RunLedgerStore
-                from catmaster.runtime.run_ledger.openrouter_embeddings import OpenRouterEmbeddings
-                from catmaster.runtime.run_ledger.vector_index import VectorIndex
-                from catmaster.runtime.run_ledger.hybrid_search import HybridRunLedgerSearcher
-                from catmaster.runtime.run_ledger.history_reader import HistoryReader
                 from catmaster.runtime.skills import SkillCatalog, CatMasterSkillsRuntime
-                from catmaster.tools.base import system_root
 
                 project_id = self._project_id_for_workspace(ws)
-                run_ledger_store = RunLedgerStore.create_default(workspace=ws)
-                embeddings = OpenRouterEmbeddings(system_root=system_root(workspace=ws))
-                vector_index = VectorIndex.create_default(workspace=ws)
-                hybrid_searcher = HybridRunLedgerSearcher(
-                    run_ledger_store=run_ledger_store,
-                    vector_index=vector_index,
-                    embeddings=embeddings,
-                )
-                history_reader = HistoryReader(
-                    searcher=hybrid_searcher,
-                    run_ledger_store=run_ledger_store,
-                    system_root=system_root(workspace=ws),
-                    rerank_model=build_chat_model(llm_profile.config_for_role("history_reader")),
-                )
                 repo_root = Path(__file__).resolve().parents[2]
                 skills_runtime = CatMasterSkillsRuntime(
                     catalog=SkillCatalog.create_default(repo_root=repo_root)
@@ -353,6 +485,9 @@ class WebSession:
                 stream_debug_console = os.environ.get("CATMASTER_STREAM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 
                 if effective_lane == "research":
+                    from catmaster.agents.research_runner import ResearchRunner
+                    from catmaster.agents.research_schemas import ResearchRequest
+
                     if is_resume and resume_target is not None:
                         run_ctx = RunContext.load(resume_target)
                         if self.run_control is not None:
@@ -373,11 +508,12 @@ class WebSession:
                         run_context=run_ctx,
                         memory_store=memory_store,
                         reporter=self.reporter,
-                        run_ledger_store=run_ledger_store,
-                        history_reader=history_reader,
                         skills_runtime=skills_runtime,
                     )
                 elif effective_lane == "writing":
+                    from catmaster.agents.writing_runner import WritingRunner
+                    from catmaster.agents.writing_schemas import WritingRequest
+
                     if is_resume and resume_target is not None:
                         run_ctx = RunContext.load(resume_target)
                         if self.run_control is not None:
@@ -395,11 +531,11 @@ class WebSession:
                         llm_profile=llm_profile,
                         run_context=run_ctx,
                         reporter=self.reporter,
-                        run_ledger_store=run_ledger_store,
-                        history_reader=history_reader,
                         skills_runtime=skills_runtime,
                     )
                 else:
+                    from catmaster.agents.runner_factory import build_graph_runner
+
                     built = build_graph_runner(
                         workspace=ws,
                         llm_profile=llm_profile,
@@ -425,12 +561,17 @@ class WebSession:
                 if self.reporter:
                     self.reporter.set_run_dir(run_dir)
                 self._write_active_runs(effective_lane, run_dir, workspace=ws)
+                self._save_ui_prompt(run_dir, session_user_prompt, is_resume=is_resume)
+                self._mark_sidebar_cache_dirty()
                 if effective_lane == "research":
                     if is_resume:
                         result = runner.resume(resume_feedback=resume_feedback)
                     else:
                         research_request = ResearchRequest(
-                            question=prompt,
+                            question=session_user_prompt,
+                            session_context_text=str(session_context.get("context_text") or ""),
+                            chat_session_id=str(session_context.get("session_id") or ""),
+                            entry_context_tokens_estimate=int(session_context.get("estimated_tokens") or 0),
                             seed_hypotheses=[line.strip() for line in str(seed_hypotheses or "").splitlines() if line.strip()],
                             exploration_policy=str(exploration_policy or "anchored").strip() or "anchored",
                             writing_mode=str(writing_mode or "none").strip() or "none",
@@ -447,15 +588,21 @@ class WebSession:
                         result = runner.resume()
                     else:
                         writing_request = WritingRequest(
-                            request=prompt,
+                            request=effective_prompt_text,
+                            session_context_text=str(session_context.get("context_text") or ""),
+                            chat_session_id=str(session_context.get("session_id") or ""),
+                            entry_context_tokens_estimate=int(session_context.get("estimated_tokens") or 0),
                             source_campaign_id=(str(source_campaign_id or "").strip() or None),
                         )
                         result = runner.run(writing_request)
                 else:
                     result = runner.run(
-                        prompt,
+                        effective_prompt_text,
                         lane=effective_lane,
                         proposal_review=proposal_review,
+                        session_context_text=str(session_context.get("context_text") or ""),
+                        chat_session_id=str(session_context.get("session_id") or ""),
+                        entry_context_tokens_estimate=int(session_context.get("estimated_tokens") or 0),
                     )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
@@ -466,7 +613,7 @@ class WebSession:
                     else:
                         self.run_status = run_status
             except Exception as exc:
-                run_error = str(exc)
+                run_error = _format_exception_for_ui(exc)
                 with self._lock:
                     self.run_status = "error"
                     self.run_error = run_error
@@ -482,7 +629,30 @@ class WebSession:
                     self.reporter.close()
                 if (not skip_summarize) and run_dir and run_dir.exists():
                     summarize_run(run_dir, run_error=run_error or None)
+                    if run_error:
+                        self._append_chat_message(
+                            role="assistant",
+                            content=f"Run `{run_dir.name}` ended with error:\n\n{run_error}",
+                            kind="run_error",
+                            source_run_id=run_dir.name,
+                        )
+                    else:
+                        response_text = self._read_chat_result_text(run_dir)
+                        if response_text:
+                            self._append_chat_message(
+                                role="assistant",
+                                content=response_text,
+                                kind="run_result",
+                                source_run_id=run_dir.name if run_dir else "",
+                            )
+                self._mark_sidebar_cache_dirty()
 
+        self._append_chat_message(
+            role="user",
+            content=session_user_prompt,
+            kind="hitl" if is_resume else "chat",
+            source_run_id=resume_target.name if is_resume and resume_target is not None else "",
+        )
         self.run_thread = threading.Thread(target=_run, daemon=True)
         self.run_thread.start()
         return "Run started."
@@ -604,14 +774,15 @@ class WebSession:
     def get_prompt(self) -> Optional[Dict[str, Any]]:
         if self._in_submit_grace_period():
             return None
+        run_dir = self.get_selected_run_dir()
         broker = self.broker
         if broker:
             pending = broker.get_pending()
             if isinstance(pending, dict):
-                return pending
-        run_dir = self.get_selected_run_dir()
+                return self._annotate_prompt_payload(run_dir, pending)
         if run_dir is not None:
-            return self._load_prompt_from_run_dir(run_dir)
+            pending = self._load_prompt_from_run_dir(run_dir)
+            return pending
         return None
 
     _SUBMIT_GRACE_SEC = 15
@@ -650,6 +821,209 @@ class WebSession:
     def current_workspace_path(self) -> str:
         with self._lock:
             return str(self.workspace) if self.workspace else ""
+
+    def _chat_store(self) -> Optional[ChatSessionStore]:
+        ws = self._workspace_path()
+        if ws is None:
+            return None
+        return ChatSessionStore(workspace=ws)
+
+    def ensure_active_chat_session(self) -> str:
+        with self._lock:
+            current = str(self.active_chat_session_id or "").strip()
+        store = self._chat_store()
+        if store is None:
+            return ""
+        if current:
+            store.ensure_session(current)
+            return current
+        session_id = store.get_active_session_id()
+        with self._lock:
+            self.active_chat_session_id = session_id
+        return session_id
+
+    def list_chat_sessions(self) -> List[Tuple[str, str]]:
+        store = self._chat_store()
+        if store is None:
+            return []
+        out: List[Tuple[str, str]] = []
+        for item in store.list_sessions():
+            session_id = str(item.get("session_id") or "").strip()
+            if not session_id:
+                continue
+            title = str(item.get("title") or session_id).strip() or session_id
+            suffix = " (active)" if bool(item.get("is_active")) else ""
+            out.append((f"{title}{suffix}", session_id))
+        return out
+
+    def create_chat_session(self) -> str:
+        store = self._chat_store()
+        if store is None:
+            return ""
+        session_id = store.create_active_session()
+        with self._lock:
+            self.active_chat_session_id = session_id
+        return session_id
+
+    def select_chat_session(self, session_id: str) -> str:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return ""
+        store = self._chat_store()
+        if store is None:
+            return ""
+        store.set_active_session_id(sid)
+        with self._lock:
+            self.active_chat_session_id = sid
+        return sid
+
+    def get_chat_messages(self, *, limit: int = 40) -> List[Dict[str, str]]:
+        session_id = self.ensure_active_chat_session()
+        store = self._chat_store()
+        if store is None or not session_id:
+            return []
+        return store.chat_messages(session_id, limit=limit)
+
+    def current_chat_session_id(self) -> str:
+        return self.ensure_active_chat_session()
+
+    def _append_chat_message(
+        self,
+        *,
+        role: str,
+        content: str,
+        kind: str = "chat",
+        source_run_id: str = "",
+        source_prompt_id: str = "",
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        session_id = self.ensure_active_chat_session()
+        store = self._chat_store()
+        if store is None or not session_id:
+            return
+        try:
+            store.append_message(
+                session_id,
+                role=role,
+                content=content,
+                kind=kind,
+                source_run_id=source_run_id,
+                source_prompt_id=source_prompt_id,
+                meta=meta,
+            )
+        except Exception:
+            return
+
+    def _ensure_prompt_logged_to_chat(self, pending: Optional[Dict[str, Any]]) -> None:
+        if not isinstance(pending, dict):
+            return
+        prompt_id = str(pending.get("prompt_id") or "")
+        if not prompt_id:
+            return
+        payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
+        kind = str(pending.get("kind") or "").strip() or "hitl"
+        body_parts = [str(payload.get("title") or "").strip(), str(payload.get("body") or "").strip()]
+        # Prompt display text is rendered in components; store the raw payload body here.
+        title = ""
+        if kind == "proposal_review":
+            title = "Revised Proposal Review" if bool(payload.get("is_revised")) else "Proposal Review"
+            body_parts = [str(payload.get("proposal_description") or "").strip()]
+            meta_lines: List[str] = []
+            if payload.get("run_id"):
+                label = "same run" if bool(payload.get("is_revised")) else "run"
+                meta_lines.append(f"{label}: {payload.get('run_id')}")
+            if payload.get("reason"):
+                meta_lines.append(f"reason: {payload.get('reason')}")
+            todo = payload.get("todo") if isinstance(payload.get("todo"), list) else []
+            if todo:
+                meta_lines.append("work packages:")
+                meta_lines.extend(f"{idx + 1}. {item}" for idx, item in enumerate(todo))
+            if meta_lines:
+                body_parts.append("\n".join(meta_lines))
+        elif kind == "hitl":
+            title = "HITL Feedback Required"
+            report_text = str(payload.get("report_text") or "").strip()
+            report_path = str(payload.get("report_path") or "").strip()
+            body_parts = [report_text]
+            if report_path:
+                body_parts.append(f"report: {report_path}")
+        elif kind == "interrupt_feedback":
+            title = "Interrupt Guidance Required"
+            body_parts = [str(payload.get("guidance") or "").strip()]
+        content = title.strip()
+        body_text = "\n\n".join(part for part in body_parts if part)
+        if body_text:
+            content = f"{content}\n\n{body_text}" if content else body_text
+        session_id = self.ensure_active_chat_session()
+        store = self._chat_store()
+        if store is None or not session_id:
+            return
+        try:
+            store.ensure_prompt_message(
+                session_id,
+                prompt_id=prompt_id,
+                title=title,
+                body=body_text,
+                meta_text="",
+                run_id=str(payload.get("run_id") or ""),
+            )
+        except Exception:
+            return
+
+    def build_session_context(self, *, current_prompt: str, lane: str) -> Dict[str, Any]:
+        session_id = self.ensure_active_chat_session()
+        store = self._chat_store()
+        if store is None or not session_id:
+            return {
+                "session_id": "",
+                "context_text": "",
+                "estimated_tokens": _estimate_tokens(_entry_system_prompt(lane) + "\n" + str(current_prompt or "")),
+            }
+        pack = store.build_history_pack(session_id, recent_messages=_RECENT_SESSION_TURNS)
+        if not pack.summary_text and not pack.recent_messages:
+            return {
+                "session_id": pack.session_id,
+                "context_text": "",
+                "estimated_tokens": _estimate_tokens(_entry_system_prompt(lane) + "\n" + str(current_prompt or "")),
+            }
+        lines: List[str] = []
+        if pack.summary_text:
+            lines.append(pack.summary_text)
+        if pack.recent_messages:
+            if lines:
+                lines.append("")
+            lines.append("Relevant conversation history:")
+            for item in pack.recent_messages:
+                role = str(item.get("role") or "assistant").capitalize()
+                kind = str(item.get("kind") or "chat")
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                if kind != "chat":
+                    role = f"{role} ({kind})"
+                lines.append(f"{role}: {content}")
+        context_text = "\n".join(lines).strip()
+        estimated_tokens = _estimate_tokens(
+            "\n".join(
+                [
+                    _entry_system_prompt(lane),
+                    context_text,
+                    str(current_prompt or ""),
+                ]
+            )
+        )
+        return {
+            "session_id": pack.session_id,
+            "context_text": context_text,
+            "estimated_tokens": estimated_tokens,
+        }
+
+    def entry_context_status_text(self, *, lane: str, current_prompt: str = "") -> str:
+        pack = self.build_session_context(current_prompt=current_prompt, lane=lane)
+        session_id = str(pack.get("session_id") or self.ensure_active_chat_session()).strip()
+        estimated_tokens = int(pack.get("estimated_tokens") or 0)
+        lane_text = str(lane or "standard").strip() or "standard"
+        return f"Session `{session_id}` | entry context est. `{estimated_tokens}` tokens | lane `{lane_text}`"
 
     def read_memory_index(self) -> str:
         ws = self._workspace_path()
@@ -729,6 +1103,48 @@ class WebSession:
         if not text.startswith("(unavailable)"):
             return text, "legacy_workspace_report"
         return text, "unavailable"
+
+    @staticmethod
+    def _extract_report_reply(text: str) -> str:
+        raw = str(text or "").strip()
+        if not raw or raw.startswith("(unavailable)"):
+            return ""
+        final_answer_match = re.search(
+            r"(?ms)^## Final Answer\s*\n(.*?)(?:\n^## |\Z)",
+            raw,
+        )
+        if final_answer_match:
+            return str(final_answer_match.group(1) or "").strip()
+        summary_match = re.search(
+            r"(?ms)^## Summary\s*\n(.*?)(?:\n^## |\Z)",
+            raw,
+        )
+        if summary_match:
+            return str(summary_match.group(1) or "").strip()
+        return raw
+
+    def _read_chat_result_text(self, run_dir: Optional[Path]) -> str:
+        if run_dir is None:
+            return ""
+        task_state_path = run_dir / "task_state.json"
+        if task_state_path.exists():
+            try:
+                payload = json.loads(task_state_path.read_text(encoding="utf-8"))
+            except Exception:
+                payload = {}
+            if isinstance(payload, dict):
+                final_answer = str(payload.get("final_answer") or "").strip()
+                if final_answer:
+                    return final_answer
+                summary = str(payload.get("summary") or "").strip()
+                if summary:
+                    return summary
+        report_text, _ = self.read_final_report_with_source(run_dir)
+        reply = self._extract_report_reply(report_text)
+        if reply:
+            return reply
+        summary = snapshot_summary(run_dir)
+        return str(summary.get("summary") or "").strip()
 
     def _resolve_latest_run_dir(self, *, workspace: Path) -> Optional[Path]:
         latest_link = workspace_root(workspace) / "reports" / "latest_run"
@@ -845,6 +1261,7 @@ class WebSession:
             max_recent_events=80,
             max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
         )
+        self._hydrate_live_state_task_from_task_state(run_dir, state)
         terminal_status = self._terminal_status_from_task_state(run_dir)
         if terminal_status:
             self._apply_terminal_status(state, terminal_status)
@@ -900,6 +1317,7 @@ class WebSession:
             max_recent_events=80,
             max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
         )
+        self._hydrate_live_state_task_from_task_state(run_dir, state)
         terminal_status = self._terminal_status_from_task_state(run_dir)
         if terminal_status:
             self._apply_terminal_status(state, terminal_status)
@@ -918,6 +1336,59 @@ class WebSession:
                 timeout_s=LIVE_SUMMARY_TIMEOUT_SEC,
             )
         return self._public_live_state(state)
+
+    def _hydrate_live_state_task_from_task_state(self, run_dir: Optional[Path], state: Dict[str, Any]) -> None:
+        if run_dir is None:
+            return
+        if str(state.get("current_task_goal") or "").strip() and str(state.get("current_phase") or "").strip():
+            return
+        path = run_dir / "task_state.json"
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+        work_label = str(payload.get("current_work_label") or "").strip()
+        if work_label and not str(state.get("current_task_goal") or "").strip():
+            state["current_task_goal"] = work_label
+        phase = str(payload.get("current_phase") or "").strip()
+        if phase and not str(state.get("current_phase") or "").strip():
+            state["current_phase"] = phase
+        if str(state.get("current_task_goal") or "").strip():
+            return
+
+        current_packet = payload.get("current_task_packet")
+        if isinstance(current_packet, dict):
+            goal = str(current_packet.get("goal") or "").strip()
+            if goal:
+                state["current_task_goal"] = goal
+                state["current_task_id"] = str(payload.get("current_task_id") or state.get("current_task_id") or "").strip()
+                return
+
+        tasks = payload.get("tasks")
+        if isinstance(tasks, list):
+            preferred: Optional[Dict[str, Any]] = None
+            fallback: Optional[Dict[str, Any]] = None
+            for item in tasks:
+                if not isinstance(item, dict):
+                    continue
+                if fallback is None:
+                    fallback = item
+                status = str(item.get("status") or "").strip().lower()
+                if status not in {"success", "done", "completed"}:
+                    preferred = item
+                    break
+            chosen = preferred or fallback
+            if isinstance(chosen, dict):
+                task_packet = chosen.get("task_packet") if isinstance(chosen.get("task_packet"), dict) else {}
+                goal = str(task_packet.get("goal") or chosen.get("goal") or "").strip()
+                if goal:
+                    state["current_task_goal"] = goal
+                    state["current_task_id"] = str(chosen.get("task_id") or state.get("current_task_id") or "").strip()
+                    return
 
     @staticmethod
     def _terminal_status_from_task_state(run_dir: Optional[Path]) -> str:
@@ -951,38 +1422,9 @@ class WebSession:
         state["current_phase"] = "finalizing"
 
     def list_run_cards(self) -> List[Dict[str, Any]]:
-        ws = self._workspace_path()
-        if ws is None:
-            return []
-        cards: List[Dict[str, Any]] = []
-        runs_root = system_root(workspace=ws) / "runs"
-        if not runs_root.exists():
-            return []
-        for run_dir in sorted(runs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            if not run_dir.is_dir():
-                continue
-            summary = snapshot_summary(run_dir)
-            meta = {}
-            meta_path = run_dir / "meta.json"
-            if meta_path.exists():
-                try:
-                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                except Exception:
-                    meta = {}
-            cards.append(
-                {
-                    "run_name": run_dir.name,
-                    "headline": str(summary.get("headline") or run_dir.name),
-                    "summary": str(summary.get("summary") or ""),
-                    "next_actions": summary.get("next_actions") if isinstance(summary.get("next_actions"), list) else [],
-                    "status": str(summary.get("status") or ""),
-                    "source": str(summary.get("source") or "rule"),
-                    "model_name": str(meta.get("model_name") or ""),
-                    "start_time": str(meta.get("start_time") or ""),
-                    "project_space": str(meta.get("workspace") or ""),
-                }
-            )
-        return cards
+        snapshot = self.get_sidebar_snapshot()
+        cards = snapshot.get("cards")
+        return list(cards) if isinstance(cards, list) else []
 
     def _resolve_resume_dir(self, lane: str, *, workspace: Path) -> Optional[str]:
         sys_root = system_root(workspace=workspace).resolve()
@@ -1069,6 +1511,15 @@ class WebSession:
             return str(run_dir.expanduser().resolve())
         except Exception:
             return str(run_dir)
+
+    @staticmethod
+    def _save_ui_prompt(run_dir: Path, prompt: str, *, is_resume: bool) -> None:
+        if not run_dir or not run_dir.exists():
+            return
+        try:
+            (run_dir / "ui_prompt.txt").write_text(prompt or "", encoding="utf-8")
+        except Exception:
+            pass
 
     @staticmethod
     def _project_id_for_workspace(workspace: Path) -> str:
@@ -1160,7 +1611,7 @@ class WebSession:
                     newer_than=prompt_mtime,
                 ):
                     return None
-                return payload
+                return self._annotate_prompt_payload(run_dir, payload)
 
         state_path = run_dir / "task_state.json"
         if not state_path.exists():
@@ -1209,13 +1660,56 @@ class WebSession:
             }
 
         prompt_id = str(interrupt_payload.get("prompt_id") or f"snapshot::{run_dir.name}::{interrupt_type or 'interrupt'}")
-        return {
+        return self._annotate_prompt_payload(run_dir, {
             "prompt_id": prompt_id,
             "kind": prompt_kind,
             "payload": payload,
             "created_at": time.time(),
             "source": "task_state_snapshot",
-        }
+        })
+
+    @staticmethod
+    def _read_task_state_payload(run_dir: Optional[Path]) -> Dict[str, Any]:
+        if run_dir is None:
+            return {}
+        state_path = run_dir / "task_state.json"
+        if not state_path.exists():
+            return {}
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _annotate_prompt_payload(
+        self,
+        run_dir: Optional[Path],
+        pending: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        annotated = dict(pending)
+        payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
+        payload = dict(payload)
+        run_id = run_dir.name if run_dir is not None else ""
+        prompt_id = str(pending.get("prompt_id") or "")
+        if run_id and not payload.get("run_id"):
+            payload["run_id"] = run_id
+        if prompt_id and not payload.get("prompt_id"):
+            payload["prompt_id"] = prompt_id
+
+        if str(pending.get("kind") or "") == "proposal_review":
+            state = self._read_task_state_payload(run_dir)
+            history = list(state.get("hitl_history") or [])
+            had_task_intervention = any(
+                isinstance(item, dict)
+                and (str(item.get("interrupt_type") or "") == "task_intervention" or bool(item.get("task_id")))
+                for item in history
+            )
+            if had_task_intervention:
+                payload["is_revised"] = True
+                payload.setdefault("reason", "replanning after HITL")
+
+        annotated["payload"] = payload
+        return annotated
 
     @staticmethod
     def _submit_prompt_via_file(run_dir: Path, *, prompt_id: str, text: str) -> bool:

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from catmaster.agents.research_nodes import validate_research_action
+from catmaster.agents.research_nodes import validate_research_action, validate_research_state_sync
 from catmaster.agents.research_schemas import (
     ExperimentBrief,
     NewHypothesisProposal,
     ResearchLeadOutput,
     ResearchRequest,
+    ResearchStateSyncOutput,
     RunLiteraturePayload,
     RunWriterPayload,
 )
@@ -27,17 +28,15 @@ def _board() -> ResearchBoard:
     )
 
 
-def test_anchored_policy_rejects_new_hypotheses() -> None:
-    board = _board()
+def test_anchored_policy_rejects_sync_new_hypotheses() -> None:
     request = ResearchRequest(question="Q", exploration_policy="anchored")
-    action = ResearchLeadOutput(
-        state="RunLiterature",
-        rationale="Need grounding.",
+    sync = ResearchStateSyncOutput(
+        current_best_answer_md="Current answer",
         new_hypotheses=[NewHypothesisProposal(text="H2", rationale="expand")],
-        run_literature=RunLiteraturePayload(query="q", depth="quick", why_now="need citation"),
+        open_questions=["Need evidence"],
     )
     with pytest.raises(ValueError, match="anchored policy"):
-        validate_research_action(action=action, request=request, board=board)
+        validate_research_state_sync(sync=sync, request=request)
 
 
 def test_deep_report_rejected_when_request_disallows_it() -> None:
@@ -81,3 +80,13 @@ def test_run_writer_requires_writing_mode() -> None:
     )
     with pytest.raises(ValueError, match="writing_mode"):
         validate_research_action(action=action, request=request, board=board)
+
+
+def test_local_expand_sync_requires_parent_hypothesis_ids() -> None:
+    request = ResearchRequest(question="Q", exploration_policy="local_expand")
+    sync = ResearchStateSyncOutput(
+        current_best_answer_md="Current answer",
+        new_hypotheses=[NewHypothesisProposal(text="H2", rationale="expand")],
+    )
+    with pytest.raises(ValueError, match="parent_hypothesis_ids"):
+        validate_research_state_sync(sync=sync, request=request)

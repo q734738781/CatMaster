@@ -17,6 +17,7 @@ AgentRole = Literal[
     "director",
     "task_runner",
     "research_lead",
+    "research_state_updater",
     "write_director",
     "section_writer",
     "write_reviewer",
@@ -24,7 +25,6 @@ AgentRole = Literal[
     "tex_compile_fixer",
     "memory_patch",
     "summary",
-    "history_reader",
     "tool_selector",
     "image_analyzer",
     "literature_web_search",
@@ -37,12 +37,12 @@ _logger = logging.getLogger(__name__)
 REQUIRED_AGENT_ROLES: tuple[str, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
 OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
     "research_lead": "director",
+    "research_state_updater": "research_lead",
     "write_director": "research_lead",
     "section_writer": "task_runner",
     "write_reviewer": "summary",
     "academic_polisher": "summary",
     "tex_compile_fixer": "academic_polisher",
-    "history_reader": "summary",
     "tool_selector": "task_runner",
     "image_analyzer": "task_runner",
     "literature_synthesizer": "director",
@@ -54,6 +54,7 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "director",
     "task_runner",
     "research_lead",
+    "research_state_updater",
     "write_director",
     "section_writer",
     "write_reviewer",
@@ -61,7 +62,6 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "tex_compile_fixer",
     "memory_patch",
     "summary",
-    "history_reader",
     "tool_selector",
     "image_analyzer",
     "literature_web_search",
@@ -666,10 +666,6 @@ class LLMProfile:
     @property
     def summary(self) -> LLMConfig:
         return self.config_for_role("summary")
-
-    @property
-    def history_reader(self) -> LLMConfig:
-        return self.config_for_role("history_reader")
 
     @property
     def tool_selector(self) -> LLMConfig:

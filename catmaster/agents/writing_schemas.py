@@ -11,6 +11,9 @@ class WritingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request: str = Field(...)
+    session_context_text: str = Field("")
+    chat_session_id: str | None = Field(None)
+    entry_context_tokens_estimate: int = Field(0, ge=0)
     source_campaign_id: str | None = Field(None)
 
 

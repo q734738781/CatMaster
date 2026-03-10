@@ -398,6 +398,10 @@ class LiteratureSubagent:
             "The outer caller provides a research intent, not database-ready search strings. "
             "You must decide how to search. Rewrite scholarly queries into short database-friendly phrases. "
             "Do not pass full reporting instructions verbatim into scholarly databases. "
+            "Use this toolchain for current research information, literature verification, background grounding for scientific writing, representative citation finding, method/benchmark convention lookup, and recent developments that matter for the request. "
+            "Prefer representative, high-signal evidence over exhaustive harvesting when the requested depth is quick, standard, or focused. "
+            "When scholarly grounding is needed, prioritize higher-quality and more influential papers first: foundational papers, highly cited papers, stronger venues, recent representative work, and papers that directly support the claim or method in question. "
+            "Do not inflate the evidence pack with low-value near-duplicates just to look comprehensive. "
             "Source routing rule: start with public web search for broad orientation, public summaries, landing-page abstracts, and lightweight evidence checks. "
             "Only use OpenAlex or Semantic Scholar when you need paper-level metadata, citations, DOI/year/venue details, recommendation expansion, or explicit literature grounding. "
             "Do not automatically call both scholarly search and public web in the same first pass unless the request clearly needs both. "
@@ -407,7 +411,8 @@ class LiteratureSubagent:
             "Do not repeat near-identical searches on the same source just to be more complete. "
             "For quick or focused requests, prefer a small number of high-value retrieval steps over exhaustive coverage. "
             "Stay within the requested depth and return a LiteratureContextPack only. "
-            "Ground claims in retrieved evidence. Do not invent papers or citations."
+            "Ground claims in retrieved evidence. Do not invent papers or citations. "
+            "When returning results, make the pack useful for downstream writing or planning: concise synthesis, representative citations, and clear uncertainty where evidence is thin or conflicting."
         )
         agent = create_agent(
             model=model,
@@ -432,6 +437,11 @@ class LiteratureSubagent:
                 "- web-first for broad orientation or public-page summaries\n"
                 "- scholarly search only when paper metadata / citations / explicit literature grounding are needed\n"
                 "- avoid doing OpenAlex and public web together in the first pass unless clearly justified\n\n"
+                "Retrieval-quality guidance:\n"
+                "- prioritize representative, high-signal papers over exhaustive lists\n"
+                "- prefer stronger venues, highly cited papers, recent representative work, and papers that directly support the claim or method\n"
+                "- use recommendations only after you already have a small promising seed set\n"
+                "- use the returned pack to support planning or writing, not to build a giant bibliography by default\n\n"
                 "Stopping guidance:\n"
                 "- stop once the evidence pack is adequate for the requested depth\n"
                 "- do not issue repeated near-identical searches against the same source\n"

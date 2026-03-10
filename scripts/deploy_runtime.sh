@@ -125,6 +125,8 @@ else
     "catmaster"
     "configs"
     "requirements"
+    "skills"
+    "writing_skills"
     "main.py"
     "README.md"
     "LICENSE"

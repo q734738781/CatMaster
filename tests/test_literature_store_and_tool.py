@@ -326,6 +326,8 @@ def test_literature_subagent_invoke_research_agent_uses_internal_agent(monkeypat
     create_kwargs = observed["create_kwargs"]
     assert create_kwargs["name"] == "literature_research_subagent"
     assert "Rewrite scholarly queries into short database-friendly phrases" in create_kwargs["system_prompt"]
+    assert "prioritize higher-quality and more influential papers first" in create_kwargs["system_prompt"]
+    assert "make the pack useful for downstream writing or planning" in create_kwargs["system_prompt"]
     assert "start with public web search for broad orientation" in create_kwargs["system_prompt"]
     assert "Only use OpenAlex or Semantic Scholar when you need paper-level metadata" in create_kwargs["system_prompt"]
     assert create_kwargs["response_format"] == ("tool_strategy", "LiteratureContextPack", False)
@@ -340,6 +342,8 @@ def test_literature_subagent_invoke_research_agent_uses_internal_agent(monkeypat
     assert "Topic hint: CO adsorption on Fe(110)" in content
     assert "Source-routing guidance:" in content
     assert "web-first for broad orientation or public-page summaries" in content
+    assert "Retrieval-quality guidance:" in content
+    assert "prioritize representative, high-signal papers over exhaustive lists" in content
     assert "Stopping guidance:" in content
     assert "- internal tool-call budget: 4" in content
     assert observed["config"] == {"recursion_limit": 12}

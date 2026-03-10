@@ -88,7 +88,7 @@ class ResearchContextBuilder:
         board: ResearchBoard,
         latest_literature: LiteratureContextPack | None = None,
         latest_experiment: ExperimentRunPack | None = None,
-        history_summary: str = "",
+        session_context: str = "",
     ) -> ResearchPlannerContextPack:
         literature_packs = self.store.load_literature_packs()
         experiment_packs = self.store.load_experiment_packs()
@@ -101,12 +101,11 @@ class ResearchContextBuilder:
             recent_actions_md=self._recent_actions(board),
             budget_snapshot_md=self._budget_snapshot(board),
             durable_memory_summary_md=self._durable_memory_summary(board),
-            history_summary_md=_clean(
-                history_summary or board.history_context_summary or "(empty)",
+            session_context_md=_clean(
+                session_context or "(empty)",
                 max_chars=self.budget.history_max_chars,
             ),
             human_feedback_md=self._human_feedback(board),
-            context_review_md="",
             workspace_summary_md=self._workspace_summary(board, experiment_packs),
             latest_literature_summary_md=self._latest_literature_summary(latest_lit),
             latest_experiment_summary_md=self._latest_experiment_summary(latest_exp),
@@ -128,9 +127,8 @@ class ResearchContextBuilder:
                 f"Recent actions:\n{pack.recent_actions_md}",
                 f"Budget snapshot:\n{pack.budget_snapshot_md}",
                 f"Durable memory summary:\n{pack.durable_memory_summary_md}",
-                f"Historical context:\n{pack.history_summary_md or '(empty)'}",
+                f"Chat session context:\n{pack.session_context_md or '(empty)'}",
                 f"Human feedback:\n{pack.human_feedback_md or '(none)'}",
-                f"Reviewed supplemental context:\n{pack.context_review_md or '(none)'}",
                 f"Workspace summary:\n{pack.workspace_summary_md}",
                 f"Latest literature:\n{pack.latest_literature_summary_md}",
                 f"Latest experiment:\n{pack.latest_experiment_summary_md}",

@@ -9,8 +9,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from catmaster.runtime.memory_store import MemoryStore
 from catmaster.runtime.research import ResearchStore
-from catmaster.runtime.run_ledger.history_reader import HistoryReader
-from catmaster.runtime.run_ledger.models import RunEvidenceChunk
+
+
+class WritingEvidenceChunk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(...)
+    path: str = Field(...)
+    section: str = Field(...)
+    line_range: list[int] = Field(default_factory=lambda: [0, 0])
+    text: str = Field("")
+    score: float = Field(0.0)
 
 
 class ReadResearchPackInput(BaseModel):
@@ -33,14 +42,13 @@ class ReviewResearchContextInput(BaseModel):
 class WritingToolDeps:
     workspace: Any
     memory_store: MemoryStore
-    history_reader: HistoryReader | None
     project_id: str
 
     def source_store(self, campaign_id: str) -> ResearchStore:
         return ResearchStore(workspace=self.workspace, campaign_id=campaign_id)
 
 
-def _chunk_md(title: str, chunks: list[RunEvidenceChunk]) -> str:
+def _chunk_md(title: str, chunks: list[WritingEvidenceChunk]) -> str:
     if not chunks:
         return f"{title}:\n- (none)"
     lines = [f"{title}:"]
@@ -89,7 +97,7 @@ def make_review_research_context_tool(deps: WritingToolDeps) -> StructuredTool:
         source_campaign_id = str(source_campaign_id or "").strip() or None
         store = deps.source_store(source_campaign_id) if source_campaign_id is not None else None
         board = store.load_board() if store is not None else None
-        chunks: list[RunEvidenceChunk] = []
+        chunks: list[WritingEvidenceChunk] = []
         for topic in ("FACTS", "CONSTRAINTS", "QUESTIONS", "FILES"):
             try:
                 raw = deps.memory_store.read_topic(topic)
@@ -99,7 +107,7 @@ def make_review_research_context_tool(deps: WritingToolDeps) -> StructuredTool:
             if not text:
                 continue
             chunks.append(
-                RunEvidenceChunk(
+                WritingEvidenceChunk(
                     run_id="memory",
                     path=f"MEMORY/topics/{topic}.md",
                     section="summary",
@@ -111,40 +119,24 @@ def make_review_research_context_tool(deps: WritingToolDeps) -> StructuredTool:
         if board is not None:
             for ref in list(board.action_refs)[-8:]:
                 chunks.append(
-                    RunEvidenceChunk(
+                    WritingEvidenceChunk(
                         run_id="workspace",
                         path=ref.ref_path,
                         section=f"{ref.kind}/{ref.status}",
                         line_range=[0, 0],
                         text=ref.summary,
                         score=0.0,
-                    )
                 )
-        if deps.history_reader is not None:
-            history = await deps.history_reader.aload_candidate_chunks(
-                query=query,
-                project_id=deps.project_id,
-                lane=None,
             )
-            chunks.extend(history)
-            selected, confidence = await deps.history_reader.aselect_relevant_chunks(
-                query=query,
-                chunks=chunks,
-                max_pick=max_chunks,
-            )
-            citations = deps.history_reader.citations_from_chunks(selected)
-        else:
-            selected = chunks[:max_chunks]
-            citations = []
-            confidence = 0.0
-        history_chunks = [item for item in selected if item.run_id not in {"memory", "workspace"}]
+        selected = chunks[:max_chunks]
+        citations = []
+        confidence = 0.0
         memory_chunks = [item for item in selected if item.run_id == "memory"]
         workspace_chunks = [item for item in selected if item.run_id == "workspace"]
         text = "\n\n".join(
             [
                 f"Query: {query}",
                 f"Section: {section_id or '(none)'}",
-                _chunk_md("Relevant historical context", history_chunks),
                 _chunk_md("Relevant durable memory", memory_chunks),
                 _chunk_md("Relevant workspace refs", workspace_chunks),
             ]
@@ -162,7 +154,7 @@ def make_review_research_context_tool(deps: WritingToolDeps) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=_arun,
         name="review_research_context",
-        description="Review the most relevant memory, historical runs, and research workspace refs for a writing section query.",
+        description="Review the most relevant durable memory and research workspace refs for a writing section query.",
         args_schema=ReviewResearchContextInput,
         response_format="content_and_artifact",
     )

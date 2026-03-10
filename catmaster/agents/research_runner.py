@@ -3,28 +3,32 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from langchain_core.tools import StructuredTool
+
+from catmaster.agents.graph import _build_role_middleware, _load_create_agent, _load_tool_strategy
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.memory_store import MemoryStore
+from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
+from catmaster.runtime.manager_tools import memory_read_index
 from catmaster.runtime.research import ResearchStore
 from catmaster.runtime.research.experiment_runner import ExperimentLaneRunner
 from catmaster.runtime.research.literature_runner import ResearchLiteratureRunner
 from catmaster.runtime.run_context import RunContext
-from catmaster.runtime.run_ledger.blob_builder import build_run_search_blob
-from catmaster.runtime.run_ledger.history_reader import HistoryReader
-from catmaster.runtime.run_ledger.models import RunLedgerEntry
-from catmaster.runtime.run_ledger.store import RunLedgerStore
 from catmaster.runtime.skills import CatMasterSkillsRuntime
-from catmaster.tools.base import system_root
+from catmaster.runtime.tool_surface import _dedupe_tools
+from catmaster.tools.registry import get_tool_registry
 from catmaster.ui import make_event
 from catmaster.ui.reporters import NullReporter, Reporter
 
 from .research_graph import build_research_graph
-from .research_schemas import ResearchRequest
+from .research_prompts import RESEARCH_LEAD_SYSTEM_PROMPT, RESEARCH_STATE_UPDATER_SYSTEM_PROMPT
+from .research_schemas import ResearchLeadOutput, ResearchRequest, ResearchStateSyncOutput
 from .writing_runner import WritingRunner
 from .writing_schemas import WritingRequest
 
@@ -47,20 +51,15 @@ class ResearchRunner:
         run_context: RunContext,
         memory_store: MemoryStore,
         reporter: Reporter | None = None,
-        run_ledger_store: RunLedgerStore | None = None,
-        history_reader: HistoryReader | None = None,
         skills_runtime: CatMasterSkillsRuntime | None = None,
     ) -> None:
         self.llm_profile = llm_profile
         self.run_context = run_context
         self.memory_store = memory_store
         self.reporter = reporter or NullReporter()
-        self.run_ledger_store = run_ledger_store
-        self.history_reader = history_reader
         self.skills_runtime = skills_runtime
         self.store = ResearchStore(workspace=run_context.workspace, campaign_id=run_context.run_id)
         self.store.ensure_exists()
-        self.planner_model = build_chat_model(llm_profile.config_for_role("research_lead"))
         self.literature_runner = ResearchLiteratureRunner(allow_deep_report=False)
         self.experiment_runner = ExperimentLaneRunner(
             workspace=run_context.workspace,
@@ -68,6 +67,48 @@ class ResearchRunner:
             project_id=run_context.project_id,
             reporter=self.reporter,
         )
+
+    @staticmethod
+    def _build_structured_agent(*, role: str, model, tools, skills_runtime, mounted_skill_tokens, system_prompt: str, schema: Any) -> Any:
+        create_agent = _load_create_agent()
+        ToolStrategy = _load_tool_strategy()
+        middleware = _build_role_middleware(
+            role=role,
+            lane="research",
+            max_tool_calls=12,
+            skills_runtime=skills_runtime,
+            mounted_skill_tokens=mounted_skill_tokens,
+            selector_model=None,
+            enable_selector=False,
+        )
+        return create_agent(
+            model=model,
+            tools=list(tools),
+            system_prompt=system_prompt,
+            response_format=ToolStrategy(schema, handle_errors=False),
+            middleware=middleware,
+        )
+
+    def _build_memory_read_tool(self) -> StructuredTool:
+        return StructuredTool.from_function(
+            func=lambda max_lines=None, max_chars=1800: memory_read_index(
+                max_lines=max_lines,
+                max_chars=max_chars,
+                workspace=self.run_context.workspace,
+            ),
+            name="memory_read_index",
+            description="Read the project MEMORY.md index to ground high-level planning decisions. Read-only.",
+        )
+
+    @asynccontextmanager
+    async def _open_mcp_filesystem_runtime(self):
+        cfg = getattr(getattr(self.llm_profile, "mcp", None), "filesystem", None)
+        if cfg is None or not getattr(cfg, "enabled", False):
+            yield None
+            return
+        runtime = MCPFilesystemRuntime(config=cfg, run_context=self.run_context, reporter=self.reporter)
+        async with runtime as opened:
+            yield opened
 
     def _emit(self, name: str, *, payload: dict[str, Any] | None = None) -> None:
         try:
@@ -104,7 +145,6 @@ class ResearchRunner:
             "status": "running",
             "summary": "",
             "final_answer": "",
-            "history_context_summary": await self._load_history_context(request_model.question),
             "resume_mode": False,
         }
         self._write_task_state(
@@ -112,8 +152,12 @@ class ResearchRunner:
                 "schema_version": 1,
                 "lane": "research",
                 "question": request_model.question,
+                "chat_session_id": request_model.chat_session_id,
+                "entry_context_tokens_estimate": request_model.entry_context_tokens_estimate,
                 "campaign_id": self.run_context.run_id,
                 "status": "running",
+                "current_phase": "planning",
+                "current_work_label": "Initialize research campaign",
                 "cycle_index": 0,
                 "summary": "",
             }
@@ -136,19 +180,51 @@ class ResearchRunner:
         *,
         request_model: ResearchRequest,
     ) -> dict[str, Any]:
-        graph = build_research_graph(
-            store=self.store,
-            planner_model=self.planner_model,
-            memory_store=self.memory_store,
-            literature_runner=ResearchLiteratureRunner(
-                allow_deep_report=request_model.allow_deep_report
-            ),
-            experiment_runner=self.experiment_runner,
-            history_reader=self.history_reader,
-            project_id=self.run_context.project_id,
-            skills_runtime=self.skills_runtime,
+        registry = get_tool_registry()
+        local_tools = registry.as_langchain_tools(
+            allowlist=["memory_read_index"],
+            run_dir=str(self.run_context.run_dir),
+            workspace=str(self.run_context.workspace),
         )
-        result = await graph.ainvoke(initial_state, config={"configurable": {"thread_id": self.run_context.run_id}})
+        if not local_tools:
+            local_tools = [self._build_memory_read_tool()]
+        async with self._open_mcp_filesystem_runtime() as mcp_fs_runtime:
+            planner_tools = list(local_tools)
+            mounted_skill_tokens: tuple[str, ...] = ()
+            if mcp_fs_runtime is not None:
+                planner_tools.extend(mcp_fs_runtime.role_filtered_tools(role="director"))
+                mounted_skill_tokens = tuple(mcp_fs_runtime.skill_mounts.keys())
+            planner_agent = self._build_structured_agent(
+                role="research_lead",
+                model=build_chat_model(self.llm_profile.config_for_role("research_lead")),
+                tools=_dedupe_tools(planner_tools),
+                skills_runtime=self.skills_runtime,
+                mounted_skill_tokens=mounted_skill_tokens,
+                system_prompt=RESEARCH_LEAD_SYSTEM_PROMPT,
+                schema=ResearchLeadOutput,
+            )
+            state_updater_agent = self._build_structured_agent(
+                role="research_state_updater",
+                model=build_chat_model(self.llm_profile.config_for_role("research_state_updater")),
+                tools=_dedupe_tools(planner_tools),
+                skills_runtime=self.skills_runtime,
+                mounted_skill_tokens=mounted_skill_tokens,
+                system_prompt=RESEARCH_STATE_UPDATER_SYSTEM_PROMPT,
+                schema=ResearchStateSyncOutput,
+            )
+            graph = build_research_graph(
+                store=self.store,
+                planner_agent=planner_agent,
+                state_updater_agent=state_updater_agent,
+                memory_store=self.memory_store,
+                literature_runner=ResearchLiteratureRunner(
+                    allow_deep_report=request_model.allow_deep_report
+                ),
+                experiment_runner=self.experiment_runner,
+                skills_runtime=self.skills_runtime,
+                progress_callback=self._update_task_state_progress,
+            )
+            result = await graph.ainvoke(initial_state, config={"configurable": {"thread_id": self.run_context.run_id}})
         summary = str(result.get("summary") or "").strip()
         status = str(result.get("status") or "done")
         writing_result: dict[str, Any] | None = None
@@ -162,8 +238,12 @@ class ResearchRunner:
                 "schema_version": 1,
                 "lane": "research",
                 "question": request_model.question,
+                "chat_session_id": request_model.chat_session_id,
+                "entry_context_tokens_estimate": request_model.entry_context_tokens_estimate,
                 "campaign_id": self.run_context.run_id,
                 "status": status,
+                "current_phase": "done" if status == "done" else status,
+                "current_work_label": "Research campaign completed" if status == "done" else (summary[:180] if summary else ""),
                 "cycle_index": self._read_board_cycle_index(),
                 "board_path": f"research_campaigns/{self.run_context.run_id}/board.json",
                 "latest_action": self._lead_action_state(result.get("lead_action")),
@@ -172,19 +252,6 @@ class ResearchRunner:
             }
         )
         report_paths = self._publish_report(question=request_model.question, final_answer=summary)
-        export_paths = self._publish_run_export(
-            request=request_model,
-            status=status,
-            final_answer=summary,
-            report_paths=report_paths,
-        )
-        await self._upsert_run_ledger(
-            request=request_model,
-            status=status,
-            final_answer=summary,
-            report_paths=report_paths,
-            export_paths=export_paths,
-        )
         self._emit("RUN_END", payload={"lane": "research", "status": status})
         return {
             "summary": summary,
@@ -193,7 +260,7 @@ class ResearchRunner:
             "run_id": self.run_context.run_id,
             "run_dir": str(self.run_context.run_dir),
             "final_report_path": report_paths.get("final_report", ""),
-            "run_export_path": export_paths.get("run_export", ""),
+            "run_export_path": "",
             "writing_run_id": str((writing_result or {}).get("run_id") or ""),
         }
 
@@ -209,8 +276,6 @@ class ResearchRunner:
             llm_profile=self.llm_profile,
             run_context=run_ctx,
             reporter=self.reporter,
-            run_ledger_store=self.run_ledger_store,
-            history_reader=self.history_reader,
             skills_runtime=self.skills_runtime,
         )
         writing_prompt_lines = [
@@ -226,6 +291,9 @@ class ResearchRunner:
         return await runner.arun(
             WritingRequest(
                 request="\n".join(writing_prompt_lines).strip(),
+                session_context_text=request_model.session_context_text,
+                chat_session_id=request_model.chat_session_id,
+                entry_context_tokens_estimate=request_model.entry_context_tokens_estimate,
                 source_campaign_id=self.run_context.run_id,
             )
         )
@@ -252,7 +320,7 @@ class ResearchRunner:
             status = "running"
         elif board.status == "needs_human":
             if feedback_text:
-                resume_goto = "plan_research"
+                resume_goto = "sync_research_state"
                 status = "running"
             else:
                 resume_goto = "summarize_research"
@@ -281,7 +349,6 @@ class ResearchRunner:
             "experiment_packs": experiment_packs,
             "conclusion": conclusion,
             "dossier": dossier,
-            "history_context_summary": board.history_context_summary or "",
             "resume_mode": True,
             "resume_goto": resume_goto,
             "status": status,
@@ -289,23 +356,23 @@ class ResearchRunner:
             "final_answer": final_answer,
         }
 
-    async def _load_history_context(self, question: str) -> str:
-        if self.history_reader is None:
-            return ""
-        try:
-            pack = await self.history_reader.aload_context(
-                query=question,
-                project_id=self.run_context.project_id,
-                lane=None,
-            )
-        except Exception as exc:
-            logger.warning("research history prefetch failed: %s", exc)
-            return ""
-        return str(pack.context_text or "").strip()
-
     def _write_task_state(self, body: dict[str, Any]) -> None:
         path = self.run_context.run_dir / "task_state.json"
         path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _update_task_state_progress(self, *, current_phase: str, current_work_label: str) -> None:
+        path = self.run_context.run_dir / "task_state.json"
+        existing: dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except Exception:
+                existing = {}
+        existing["current_phase"] = str(current_phase or "").strip()
+        existing["current_work_label"] = str(current_work_label or "").strip()
+        path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _publish_report(self, *, question: str, final_answer: str) -> dict[str, str]:
         reports_dir = self.run_context.run_dir / "reports"
@@ -329,80 +396,6 @@ class ResearchRunner:
             lines.append(f"- Dossier file exists: {dossier_path}")
         final_report.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         return {"final_report": str(final_report)}
-
-    def _publish_run_export(
-        self,
-        *,
-        request: ResearchRequest,
-        status: str,
-        final_answer: str,
-        report_paths: dict[str, str],
-    ) -> dict[str, str]:
-        reports_dir = self.run_context.run_dir / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        export_path = reports_dir / "RUN_EXPORT.json"
-        blob = build_run_search_blob(self.run_context.run_dir)
-        payload = {
-            "request": request.question,
-            "answer_summary": final_answer,
-            "lane": "research",
-            "status": status,
-            "task_goals": [request.question],
-            "top_observations": [],
-            "tool_names": blob.tool_names,
-            "artifact_paths": blob.artifact_paths,
-            "final_report_path": self._system_relpath(report_paths.get("final_report", "")),
-            "run_dir": self._system_relpath(self.run_context.run_dir),
-            "run_id": self.run_context.run_id,
-            "project_id": self.run_context.project_id,
-        }
-        export_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {
-            "run_export": str(export_path),
-            "run_export_relpath": self._system_relpath(export_path),
-        }
-
-    async def _upsert_run_ledger(
-        self,
-        *,
-        request: ResearchRequest,
-        status: str,
-        final_answer: str,
-        report_paths: dict[str, str],
-        export_paths: dict[str, str],
-    ) -> None:
-        if self.run_ledger_store is None:
-            return
-        blob = build_run_search_blob(self.run_context.run_dir)
-        entry = RunLedgerEntry(
-            project_id=self.run_context.project_id,
-            run_id=self.run_context.run_id,
-            lane="research",
-            status=status,
-            request=request.question,
-            answer_summary=final_answer,
-            search_blob_text=blob.search_blob_text,
-            final_report_relpath=self._system_relpath(report_paths.get("final_report", "")),
-            run_export_relpath=str(export_paths.get("run_export_relpath") or ""),
-            ts_start=self.run_context.start_time,
-            ts_end=datetime.now(timezone.utc).isoformat(),
-            model_name=self.run_context.model_name,
-            provider=str(self.run_context.provider or ""),
-        )
-        self.run_ledger_store.upsert_entry(entry)
-        if self.history_reader is not None:
-            try:
-                await self.history_reader.aindex_entry(entry)
-            except Exception as exc:
-                logger.warning("research run ledger index update failed: %s", exc)
-
-    def _system_relpath(self, raw: str | Path) -> str:
-        path = Path(str(raw)).expanduser().resolve()
-        root = system_root(self.run_context.workspace).resolve()
-        try:
-            return str(path.relative_to(root)).replace("\\", "/")
-        except Exception:
-            return str(path)
 
     def _read_board_cycle_index(self) -> int:
         board_path = self.store.metadata_root / "board.json"

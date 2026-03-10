@@ -225,6 +225,7 @@ agents:
   director: "openai/gpt-5.4:online-high"
   task_runner: "openai/gpt-5.4:online-medium"
   research_lead: "openai/gpt-5.4:online-high"
+  research_state_updater: "openai/gpt-5.4:online-high"
   write_director: "openai/gpt-5.4:online-high"
   section_writer: "openai/gpt-5.4:online-medium"
   write_reviewer: "openai/gpt-5.4:online-medium"
@@ -238,7 +239,6 @@ agents:
   memory_patch: "openai/gpt-5.4:online-medium"
   tool_selector: "openai/gpt-5.4:online-minimal"
   summary: "google/gemini-3-flash-preview"
-  history_reader: "google/gemini-3-flash-preview"
 
 image_generation:
   model_label: "google/nanobanana_2"
@@ -266,6 +266,7 @@ literature:
     fast_director: focused
     task_runner: none
     research_lead: deep_report
+    research_state_updater: deep_report
     write_director: none
     section_writer: standard
     write_reviewer: none

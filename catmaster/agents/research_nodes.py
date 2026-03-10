@@ -6,6 +6,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import Command
 
+from catmaster.agents.nodes import _invoke_agent_with_step_budget
 from catmaster.runtime.literature.models import LiteratureContextPack
 from catmaster.runtime.memory_store import MemoryStore
 from catmaster.runtime.research import (
@@ -16,7 +17,6 @@ from catmaster.runtime.research import (
     ResearchActionRef,
     ResearchBoard,
     ResearchContextBuilder,
-    ResearchContextReviewer,
     ResearchDossier,
     ResearchPlannerContextPack,
     ResearchStore,
@@ -27,11 +27,14 @@ from catmaster.runtime.skills import CatMasterSkillsRuntime, render_research_lea
 
 from .research_prompts import (
     RESEARCH_LEAD_SYSTEM_PROMPT,
+    RESEARCH_STATE_UPDATER_SYSTEM_PROMPT,
     build_research_lead_context,
+    build_research_state_sync_context,
 )
 from .research_schemas import (
     ResearchLeadOutput,
     ResearchRequest,
+    ResearchStateSyncOutput,
 )
 
 
@@ -66,10 +69,15 @@ def validate_research_action(
             raise ValueError("RunWriter requires writing_mode != none")
         if action.run_writer is None:
             raise ValueError("missing writer payload")
-    if request.exploration_policy == "anchored" and action.new_hypotheses:
+def validate_research_state_sync(
+    *,
+    sync: ResearchStateSyncOutput,
+    request: ResearchRequest,
+) -> None:
+    if request.exploration_policy == "anchored" and sync.new_hypotheses:
         raise ValueError("anchored policy forbids new hypotheses")
     if request.exploration_policy == "local_expand":
-        for item in action.new_hypotheses:
+        for item in sync.new_hypotheses:
             if not item.parent_hypothesis_ids:
                 raise ValueError("local_expand hypotheses require parent_hypothesis_ids")
 
@@ -132,18 +140,18 @@ def _dedupe_clean(items: list[str], *, limit: int = 20) -> list[str]:
 def _apply_hypothesis_updates(
     *,
     board: ResearchBoard,
-    action: ResearchLeadOutput,
+    sync: ResearchStateSyncOutput,
     request: ResearchRequest,
 ) -> ResearchBoard:
     hypotheses = [item.model_copy(deep=True) for item in board.hypotheses]
     by_id = {item.hypothesis_id: item for item in hypotheses}
-    for update in action.hypothesis_updates:
+    for update in sync.hypothesis_updates:
         record = by_id.get(update.hypothesis_id)
         if record is None:
             continue
         record.status = update.status
         record.note = update.note
-    for proposal in action.new_hypotheses:
+    for proposal in sync.new_hypotheses:
         new_id = _next_hypothesis_id(
             ResearchBoard.model_validate({**board.model_dump(), "hypotheses": [item.model_dump() for item in hypotheses]})
         )
@@ -156,14 +164,87 @@ def _apply_hypothesis_updates(
                 note=proposal.rationale,
             )
         )
+    by_id = {item.hypothesis_id: item for item in hypotheses}
+    for link in sync.evidence_links:
+        record = by_id.get(link.hypothesis_id)
+        if record is None:
+            continue
+        refs = list(record.evidence_refs)
+        if link.ref_path and link.ref_path not in refs:
+            refs.append(link.ref_path)
+        record.evidence_refs = refs
     return board.model_copy(update={"hypotheses": hypotheses})
+
+
+def _latest_action_markdown(
+    *,
+    board: ResearchBoard,
+    latest_literature: LiteratureContextPack | None,
+    latest_experiment: ExperimentRunPack | None,
+) -> str:
+    if not board.action_refs:
+        return "No completed action yet. Initialize the campaign state from the question, session context, memory, and seeded hypotheses only."
+    latest_ref = board.action_refs[-1]
+    lines = [
+        f"- action_id: {latest_ref.action_id}",
+        f"- kind: {latest_ref.kind}",
+        f"- status: {latest_ref.status}",
+        f"- ref_path: {latest_ref.ref_path}",
+        f"- summary: {latest_ref.summary}",
+    ]
+    if latest_ref.kind == "literature" and latest_literature is not None:
+        lines.extend(
+            [
+                "",
+                "Latest literature pack:",
+                f"- query: {latest_literature.query}",
+                f"- depth: {latest_literature.depth}",
+                f"- summary: {latest_literature.summary}",
+                "Follow-up questions:",
+                *([f"- {item}" for item in latest_literature.followup_questions] or ["- (none)"]),
+            ]
+        )
+    if latest_ref.kind == "experiment" and latest_experiment is not None:
+        lines.extend(
+            [
+                "",
+                "Latest experiment pack:",
+                f"- title: {latest_experiment.brief.title}",
+                f"- lane: {latest_experiment.lane}",
+                f"- summary: {latest_experiment.summary}",
+                f"- linked hypotheses: {', '.join(latest_experiment.brief.hypothesis_ids) or '(none)'}",
+                "Top observations:",
+                *([f"- {item}" for item in latest_experiment.top_observations] or ["- (none)"]),
+                "Open questions:",
+                *([f"- {item}" for item in latest_experiment.open_questions] or ["- (none)"]),
+            ]
+        )
+    return "\n".join(lines).strip()
+
+
+def _apply_state_sync_output(
+    *,
+    board: ResearchBoard,
+    sync: ResearchStateSyncOutput,
+    request: ResearchRequest,
+) -> ResearchBoard:
+    updated = _apply_hypothesis_updates(board=board, sync=sync, request=request)
+    return _board_with_updates(
+        updated,
+        current_best_answer_md=str(sync.current_best_answer_md or "").strip(),
+        supported_claims=_dedupe_clean(list(sync.supported_claims), limit=20),
+        open_questions=_dedupe_clean(list(sync.open_questions), limit=20),
+    )
 
 
 async def init_campaign_node(
     state: dict[str, Any],
     *,
     store: ResearchStore,
+    progress_callback=None,
 ) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="planning", current_work_label="Initialize research campaign")
     if state.get("resume_mode"):
         resume_goto = str(state.get("resume_goto") or "plan_research").strip() or "plan_research"
         if resume_goto == "summarize_research":
@@ -178,24 +259,138 @@ async def init_campaign_node(
         return Command(goto=resume_goto, update={"status": state.get("status", "running")})
     request = ResearchRequest.model_validate(state["request"])
     board = init_research_board(request=request, campaign_id=store.campaign_id)
-    history_context_summary = str(state.get("history_context_summary") or "").strip()
-    if history_context_summary:
-        board = _board_with_updates(board, history_context_summary=history_context_summary)
     store.write_request(request)
     store.save_board(board)
-    return Command(goto="plan_research", update={"board": board, "status": "running"})
+    return Command(
+        goto="initialize_research_state",
+        update={"board": board, "status": "running", "sync_reason": "initialize"},
+    )
+
+
+async def _run_state_sync(
+    state: dict[str, Any],
+    *,
+    store: ResearchStore,
+    state_updater_agent: Any,
+    memory_store: MemoryStore,
+    skills_runtime: CatMasterSkillsRuntime | None,
+    progress_callback=None,
+) -> Command:
+    sync_reason = str(state.get("sync_reason") or "").strip().lower()
+    label = "Sync research state"
+    if sync_reason == "initialize":
+        label = "Initialize research state"
+    elif sync_reason == "literature":
+        label = "Sync after literature review"
+    elif sync_reason == "experiment":
+        label = "Sync after experiment"
+    elif sync_reason == "writer":
+        label = "Sync after writing handoff"
+    elif sync_reason == "human_feedback":
+        label = "Sync after human feedback"
+    if progress_callback is not None:
+        progress_callback(current_phase="syncing", current_work_label=label)
+    request = ResearchRequest.model_validate(state["request"])
+    board = ResearchBoard.model_validate(
+        state["board"].model_dump() if hasattr(state.get("board"), "model_dump") else state["board"]
+    )
+    latest_literature = state.get("latest_literature")
+    latest_experiment = state.get("latest_experiment")
+    if isinstance(latest_literature, dict):
+        latest_literature = LiteratureContextPack.model_validate(latest_literature)
+    if isinstance(latest_experiment, dict):
+        latest_experiment = ExperimentRunPack.model_validate(latest_experiment)
+    skill_guide = render_research_lead_skill_guide(
+        skills_runtime.visible_skills("research_state_updater") if skills_runtime is not None else []
+    )
+    context_pack = ResearchContextBuilder(store=store, memory_store=memory_store).build_planner_context(
+        board=board,
+        latest_literature=latest_literature if isinstance(latest_literature, LiteratureContextPack) else None,
+        latest_experiment=latest_experiment if isinstance(latest_experiment, ExperimentRunPack) else None,
+        session_context=str(request.session_context_text or ""),
+    )
+    context = build_research_state_sync_context(
+        pack=context_pack,
+        latest_action_md=_latest_action_markdown(
+            board=board,
+            latest_literature=latest_literature if isinstance(latest_literature, LiteratureContextPack) else None,
+            latest_experiment=latest_experiment if isinstance(latest_experiment, ExperimentRunPack) else None,
+        ),
+        research_skill_guide=skill_guide,
+    )
+    messages = [HumanMessage(content=context)]
+    raw = (
+        await _invoke_agent_with_step_budget(
+            agent=state_updater_agent,
+            messages=messages,
+            max_steps=12,
+            role="research_state_updater",
+        )
+    ).get("structured_response")
+    sync = raw if isinstance(raw, ResearchStateSyncOutput) else ResearchStateSyncOutput.model_validate(raw)
+    validate_research_state_sync(sync=sync, request=request)
+    board = _apply_state_sync_output(board=board, sync=sync, request=request)
+    store.save_board(board)
+    return Command(
+        goto="plan_research",
+        update={
+            "board": board,
+            "planner_context": context_pack,
+            "latest_state_sync": sync,
+            "sync_reason": "",
+        },
+    )
+
+
+async def initialize_research_state_node(
+    state: dict[str, Any],
+    *,
+    store: ResearchStore,
+    state_updater_agent: Any,
+    memory_store: MemoryStore,
+    skills_runtime: CatMasterSkillsRuntime | None,
+    progress_callback=None,
+) -> Command:
+    return await _run_state_sync(
+        state,
+        store=store,
+        state_updater_agent=state_updater_agent,
+        memory_store=memory_store,
+        skills_runtime=skills_runtime,
+        progress_callback=progress_callback,
+    )
+
+
+async def sync_research_state_node(
+    state: dict[str, Any],
+    *,
+    store: ResearchStore,
+    state_updater_agent: Any,
+    memory_store: MemoryStore,
+    skills_runtime: CatMasterSkillsRuntime | None,
+    progress_callback=None,
+) -> Command:
+    return await _run_state_sync(
+        state,
+        store=store,
+        state_updater_agent=state_updater_agent,
+        memory_store=memory_store,
+        skills_runtime=skills_runtime,
+        progress_callback=progress_callback,
+    )
 
 
 async def plan_research_node(
     state: dict[str, Any],
     *,
     store: ResearchStore,
-    planner_model: Any,
+    planner_agent: Any,
     memory_store: MemoryStore,
-    history_reader: Any,
-    project_id: str,
     skills_runtime: CatMasterSkillsRuntime | None,
+    progress_callback=None,
 ) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="planning", current_work_label="Plan next research action")
     request = ResearchRequest.model_validate(state["request"])
     board = ResearchBoard.model_validate(
         state["board"].model_dump() if hasattr(state.get("board"), "model_dump") else state["board"]
@@ -213,31 +408,24 @@ async def plan_research_node(
         board=board,
         latest_literature=latest_literature if isinstance(latest_literature, LiteratureContextPack) else None,
         latest_experiment=latest_experiment if isinstance(latest_experiment, ExperimentRunPack) else None,
-        history_summary=str(state.get("history_context_summary") or board.history_context_summary or ""),
+        session_context=str(request.session_context_text or ""),
     )
-    review_pack = None
-    if history_reader is not None:
-        review_pack = await ResearchContextReviewer(
-            history_reader=history_reader,
-            store=store,
-            memory_store=memory_store,
-            project_id=project_id,
-        ).areview(board=board)
-        context_pack = context_pack.model_copy(update={"context_review_md": ResearchContextReviewer.render(review_pack)})
     context = build_research_lead_context(
         pack=context_pack,
         research_skill_guide=skill_guide,
     )
-    structured = planner_model.with_structured_output(ResearchLeadOutput)
-    messages = [
-        SystemMessage(content=RESEARCH_LEAD_SYSTEM_PROMPT),
-        HumanMessage(content=context),
-    ]
+    messages = [HumanMessage(content=context)]
     last_error = ""
     action: ResearchLeadOutput | None = None
     for attempt in range(2):
-        response = await structured.ainvoke(messages)
-        action = response if isinstance(response, ResearchLeadOutput) else ResearchLeadOutput.model_validate(response)
+        result = await _invoke_agent_with_step_budget(
+            agent=planner_agent,
+            messages=messages,
+            max_steps=12,
+            role="research_lead",
+        )
+        raw = result.get("structured_response")
+        action = raw if isinstance(raw, ResearchLeadOutput) else ResearchLeadOutput.model_validate(raw)
         try:
             validate_research_action(action=action, request=request, board=board)
             break
@@ -256,16 +444,12 @@ async def plan_research_node(
             )
     if action is None:
         raise RuntimeError(f"research lead failed to produce action: {last_error}")
-    board = _apply_hypothesis_updates(board=board, action=action, request=request)
-    if action.current_best_answer_md:
-        board = _board_with_updates(board, current_best_answer_md=action.current_best_answer_md)
     return Command(
         goto=action.state,
         update={
             "lead_action": action,
             "board": board,
             "planner_context": context_pack,
-            "context_review": review_pack,
         },
     )
 
@@ -275,12 +459,18 @@ async def execute_literature_node(
     *,
     store: ResearchStore,
     literature_runner: ResearchLiteratureRunner,
+    progress_callback=None,
 ) -> Command:
     board = ResearchBoard.model_validate(state["board"])
     action = ResearchLeadOutput.model_validate(state["lead_action"])
     payload = action.run_literature
     if payload is None:
         raise ValueError("execute_literature_node missing payload")
+    if progress_callback is not None:
+        progress_callback(
+            current_phase="executing",
+            current_work_label=f"Literature review: {str(payload.query or '').strip() or 'Research literature'}",
+        )
     pack = await literature_runner.arun(payload)
     action_id = f"lit_{board.used_literature_queries + 1:03d}"
     ref_path = store.persist_literature_pack(pack, action_id=action_id)
@@ -289,8 +479,6 @@ async def execute_literature_node(
         cycle_index=board.cycle_index + 1,
         used_literature_queries=board.used_literature_queries + 1,
         latest_literature_ref=ref_path,
-        current_best_answer_md=action.current_best_answer_md or board.current_best_answer_md,
-        open_questions=list(dict.fromkeys([*board.open_questions, *pack.followup_questions]))[:20],
         action_refs=list(board.action_refs)
         + [
             ResearchActionRef(
@@ -316,7 +504,15 @@ async def execute_literature_node(
     )
     packs = list(state.get("literature_packs") or [])
     packs.append(pack)
-    return Command(goto="plan_research", update={"board": board, "latest_literature": pack, "literature_packs": packs})
+    return Command(
+        goto="sync_research_state",
+        update={
+            "board": board,
+            "latest_literature": pack,
+            "literature_packs": packs,
+            "sync_reason": "literature",
+        },
+    )
 
 
 async def execute_experiment_node(
@@ -324,6 +520,7 @@ async def execute_experiment_node(
     *,
     store: ResearchStore,
     experiment_runner: ExperimentLaneRunner,
+    progress_callback=None,
 ) -> Command:
     request = ResearchRequest.model_validate(state["request"])
     board = ResearchBoard.model_validate(state["board"])
@@ -331,14 +528,17 @@ async def execute_experiment_node(
     brief = action.run_experiment
     if brief is None:
         raise ValueError("execute_experiment_node missing brief")
+    if progress_callback is not None:
+        progress_callback(
+            current_phase="executing",
+            current_work_label=f"Experiment: {str(brief.title or brief.goal or '').strip() or 'Run experiment'}",
+        )
     pack = await experiment_runner.arun(brief=brief, research_request=request, board=board)
     action_id = pack.experiment_id
     ref_path = store.persist_experiment_pack(pack, action_id=action_id)
     board_update = {
         "cycle_index": board.cycle_index + 1,
         "latest_experiment_ref": ref_path,
-        "current_best_answer_md": action.current_best_answer_md or board.current_best_answer_md,
-        "open_questions": list(dict.fromkeys([*board.open_questions, *pack.open_questions]))[:20],
         "action_refs": list(board.action_refs)
         + [
             ResearchActionRef(
@@ -370,23 +570,34 @@ async def execute_experiment_node(
     )
     packs = list(state.get("experiment_packs") or [])
     packs.append(pack)
-    return Command(goto="plan_research", update={"board": board, "latest_experiment": pack, "experiment_packs": packs})
+    return Command(
+        goto="sync_research_state",
+        update={
+            "board": board,
+            "latest_experiment": pack,
+            "experiment_packs": packs,
+            "sync_reason": "experiment",
+        },
+    )
 
 
 async def execute_writer_handoff_node(
     state: dict[str, Any],
     *,
     store: ResearchStore,
+    progress_callback=None,
 ) -> dict[str, Any]:
     board = ResearchBoard.model_validate(state["board"])
     action = ResearchLeadOutput.model_validate(state["lead_action"])
     payload = action.run_writer
     if payload is None:
         raise ValueError("RunWriter payload is missing")
+    if progress_callback is not None:
+        progress_callback(current_phase="executing", current_work_label="Launch writing handoff")
     action_id = f"writer_request_{len(board.action_refs) + 1:03d}"
     summary = "\n".join(
         [
-            action.current_best_answer_md or board.current_best_answer_md or "Writer handoff requested.",
+            board.current_best_answer_md or "Writer handoff requested.",
             "",
             "Writer handoff requested from research lead.",
             f"Reason: {payload.why_now}",
@@ -396,7 +607,6 @@ async def execute_writer_handoff_node(
     board = _board_with_updates(
         board,
         status="done",
-        current_best_answer_md=action.current_best_answer_md or board.current_best_answer_md,
         action_refs=list(board.action_refs)
         + [
             ResearchActionRef(
@@ -427,12 +637,15 @@ async def finalize_ask_human_node(
     state: dict[str, Any],
     *,
     store: ResearchStore,
+    progress_callback=None,
 ) -> dict[str, Any]:
     board = ResearchBoard.model_validate(state["board"])
     action = ResearchLeadOutput.model_validate(state["lead_action"])
     payload = action.ask_human
     if payload is None:
         raise ValueError("AskHuman payload is missing")
+    if progress_callback is not None:
+        progress_callback(current_phase="waiting_human", current_work_label="Await human feedback")
     action_id = f"ask_{len(board.action_refs) + 1:03d}"
     record = {
         "action_id": action_id,
@@ -463,7 +676,7 @@ async def finalize_ask_human_node(
     store.save_board(board)
     store.append_action_log({"ts": datetime.now(timezone.utc).isoformat(), **record, "questions": payload.questions})
     summary_lines = [
-        action.current_best_answer_md or board.current_best_answer_md or "Research campaign needs human input.",
+        board.current_best_answer_md or "Research campaign needs human input.",
         "",
         "Questions:",
         *[f"- {item}" for item in payload.questions],
@@ -482,20 +695,28 @@ async def persist_conclusion_node(
     state: dict[str, Any],
     *,
     store: ResearchStore,
+    progress_callback=None,
 ) -> Command:
     board = ResearchBoard.model_validate(state["board"])
     action = ResearchLeadOutput.model_validate(state["lead_action"])
     payload = action.conclude
     if payload is None:
         raise ValueError("Conclude payload is missing")
-    ref_path = store.persist_conclusion(payload)
+    if progress_callback is not None:
+        progress_callback(current_phase="finalizing", current_work_label="Conclude research campaign")
+    conclusion = ConclusionRecord(
+        final_answer_md=board.current_best_answer_md,
+        supported_claims=list(board.supported_claims),
+        open_questions=list(board.open_questions),
+        recommended_next_steps=list(payload.recommended_next_steps),
+        confidence=payload.confidence,
+        memory_promotion_candidates=list(payload.memory_promotion_candidates),
+    )
+    ref_path = store.persist_conclusion(conclusion)
     action_id = f"conclusion_{len(board.action_refs) + 1:03d}"
     board = _board_with_updates(
         board,
         status="done",
-        current_best_answer_md=payload.final_answer_md,
-        supported_claims=list(payload.supported_claims),
-        open_questions=list(payload.open_questions),
         memory_promotion_candidates=[item.model_dump() for item in payload.memory_promotion_candidates],
         action_refs=list(board.action_refs)
         + [
@@ -503,14 +724,13 @@ async def persist_conclusion_node(
                 action_id=action_id,
                 kind="conclusion",
                 status="done",
-                summary=payload.final_answer_md[:240],
+                summary=(board.current_best_answer_md or payload.why_now)[:240],
                 ref_path=ref_path,
                 run_id=None,
             )
         ],
     )
     store.save_board(board)
-    conclusion = ConclusionRecord.model_validate(payload.model_dump())
     return Command(goto="build_dossier", update={"board": board, "conclusion": conclusion})
 
 
@@ -518,7 +738,10 @@ async def build_dossier_node(
     state: dict[str, Any],
     *,
     store: ResearchStore,
+    progress_callback=None,
 ) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="finalizing", current_work_label="Build research dossier")
     board = ResearchBoard.model_validate(state["board"])
     raw_conclusion = state.get("conclusion")
     conclusion = (
@@ -580,10 +803,13 @@ __all__ = [
     "execute_literature_node",
     "execute_writer_handoff_node",
     "finalize_ask_human_node",
+    "initialize_research_state_node",
     "init_campaign_node",
     "init_research_board",
     "persist_conclusion_node",
     "plan_research_node",
+    "sync_research_state_node",
     "summarize_research_node",
     "validate_research_action",
+    "validate_research_state_sync",
 ]

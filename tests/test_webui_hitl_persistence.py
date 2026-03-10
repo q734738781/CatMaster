@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from catmaster.tools.base import ensure_project_space_layout, system_root
+from catmaster.webui.components import unpack_prompt
 from catmaster.webui.session import WebSession
 from catmaster.webui.web_reporter import PromptBroker
 
@@ -150,3 +151,75 @@ def test_session_hides_prompt_after_persisted_submit(tmp_path: Path) -> None:
     session.select_run("run_003")
 
     assert session.get_prompt() is None
+
+
+def test_session_marks_revised_proposal_review_after_task_intervention(tmp_path: Path) -> None:
+    ensure_project_space_layout(tmp_path, create=True)
+    run_dir = system_root(workspace=tmp_path) / "runs" / "run_004"
+    hitl_dir = run_dir / "hitl"
+    hitl_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "task_state.json").write_text(
+        json.dumps(
+            {
+                "status": "awaiting_human_feedback",
+                "hitl_history": [
+                    {
+                        "interrupt_type": "proposal_review",
+                        "feedback": "yes",
+                        "approved": True,
+                    },
+                    {
+                        "task_id": "task_01",
+                        "feedback": "Retry may help",
+                    },
+                ],
+                "last_interrupt": {
+                    "type": "proposal_review",
+                    "proposal_md": "# revised proposal",
+                    "work_packages": ["wp1"],
+                    "message": "need review",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path.parent))
+    ok, _ = session.open_workspace(str(tmp_path), create=False)
+    assert ok
+    session.select_run("run_004")
+
+    pending = session.get_prompt()
+    assert isinstance(pending, dict)
+    payload = pending.get("payload")
+    assert isinstance(payload, dict)
+    assert payload.get("run_id") == "run_004"
+    assert payload.get("is_revised") is True
+    assert payload.get("reason") == "replanning after HITL"
+
+
+def test_unpack_prompt_shows_revised_proposal_review_meta() -> None:
+    display = unpack_prompt(
+        {
+            "prompt_id": "prompt_123",
+            "kind": "proposal_review",
+            "payload": {
+                "run_id": "run_004",
+                "prompt_id": "prompt_123",
+                "is_revised": True,
+                "reason": "replanning after HITL",
+                "proposal_description": "# revised proposal",
+                "todo": ["wp1", "wp2"],
+            },
+        }
+    )
+
+    assert display.visible is True
+    assert display.title == "Revised Proposal Review"
+    assert "same run: `run_004`" in display.meta
+    assert "reason: replanning after HITL" in display.meta
+    assert "prompt id: `prompt_123`" in display.meta

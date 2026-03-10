@@ -31,6 +31,7 @@ class WritingState(TypedDict, total=False):
     status: str
     summary: str
     final_answer: str
+    assembly_feedback: str
 
 
 def build_writing_graph(
@@ -43,9 +44,10 @@ def build_writing_graph(
     source_store,
     skills_runtime,
     writing_config,
+    progress_callback=None,
 ):
     graph = StateGraph(WritingState)
-    graph.add_node("init_writing", partial(init_writing_node, writing_store=writing_store, source_store=source_store))
+    graph.add_node("init_writing", partial(init_writing_node, writing_store=writing_store, source_store=source_store, progress_callback=progress_callback))
     graph.add_node(
         "plan_writing",
         partial(
@@ -54,6 +56,7 @@ def build_writing_graph(
             source_store=source_store,
             write_director_agent=write_director_agent,
             skills_runtime=skills_runtime,
+            progress_callback=progress_callback,
         ),
     )
     graph.add_node(
@@ -64,6 +67,7 @@ def build_writing_graph(
             source_store=source_store,
             section_writer_agent=section_writer_agent,
             skills_runtime=skills_runtime,
+            progress_callback=progress_callback,
         ),
     )
     graph.add_node(
@@ -73,6 +77,7 @@ def build_writing_graph(
             writing_store=writing_store,
             write_reviewer_model=write_reviewer_model,
             skills_runtime=skills_runtime,
+            progress_callback=progress_callback,
         ),
     )
     graph.add_node(
@@ -82,6 +87,7 @@ def build_writing_graph(
             writing_store=writing_store,
             source_store=source_store,
             writing_config=writing_config,
+            progress_callback=progress_callback,
         ),
     )
     graph.add_node(
@@ -92,6 +98,7 @@ def build_writing_graph(
             source_store=source_store,
             write_finalizer_agent=write_finalizer_agent,
             skills_runtime=skills_runtime,
+            progress_callback=progress_callback,
         ),
     )
     graph.add_node("summarize_writing", summarize_writing_node)

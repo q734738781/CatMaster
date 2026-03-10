@@ -48,12 +48,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _historical_runs_context_section(state: Dict[str, Any]) -> str:
-    text = str(state.get("historical_runs_context_text") or "").strip()
+def _session_context_section(state: Dict[str, Any]) -> str:
+    text = str(state.get("session_context_text") or "").strip()
     if not text:
         text = "(none)"
     return (
-        "=== Relevant historical runs (auto-retrieved) ===\n"
+        "=== Relevant chat session context ===\n"
         f"{text}"
     )
 
@@ -92,7 +92,7 @@ def _build_proposal_context(
             execution_context_guide=execution_context_guide,
             feedback=feedback,
         )
-        ctx = f"{ctx}\n\n{_historical_runs_context_section(state)}"
+        ctx = f"{ctx}\n\n{_session_context_section(state)}"
         if not review_enabled:
             ctx = f"{ctx}\n\n{PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX}"
         logger.info("[_build_proposal_context] revision context total_len=%d", len(ctx))
@@ -104,7 +104,7 @@ def _build_proposal_context(
         artifacts_index=artifacts_index,
         execution_context_guide=execution_context_guide,
     )
-    ctx = f"{ctx}\n\n{_historical_runs_context_section(state)}"
+    ctx = f"{ctx}\n\n{_session_context_section(state)}"
     if not review_enabled:
         ctx = f"{ctx}\n\n{PROPOSAL_NO_REVIEW_CONTEXT_APPENDIX}"
     logger.info("[_build_proposal_context] fresh context total_len=%d", len(ctx))
@@ -135,7 +135,7 @@ def _build_director_context(
         already_done_json=json.dumps(director_observations, ensure_ascii=False),
         execution_context_guide=execution_context_guide,
     )
-    return f"{ctx}\n\n{_historical_runs_context_section(state)}"
+    return f"{ctx}\n\n{_session_context_section(state)}"
 
 
 def _build_fast_director_context(
@@ -156,7 +156,7 @@ def _build_fast_director_context(
         task_outcomes_history_text=_render_task_outcomes_history_lines(task_outcomes_history),
         execution_context_guide=execution_context_guide,
     )
-    return f"{ctx}\n\n{_historical_runs_context_section(state)}"
+    return f"{ctx}\n\n{_session_context_section(state)}"
 
 
 def _build_task_context(

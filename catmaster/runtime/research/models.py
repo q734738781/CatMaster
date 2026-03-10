@@ -96,7 +96,6 @@ class ResearchBoard(BaseModel):
     latest_writer_ref: str | None = Field(None)
     latest_human_questions: list[str] = Field(default_factory=list)
     human_feedback_summary: str = Field("")
-    history_context_summary: str = Field("")
 
 
 class DossierExperimentRow(BaseModel):
@@ -150,25 +149,13 @@ class ResearchPlannerContextPack(BaseModel):
     recent_actions_md: str = Field("")
     budget_snapshot_md: str = Field("")
     durable_memory_summary_md: str = Field("")
-    history_summary_md: str = Field("")
+    session_context_md: str = Field("")
     human_feedback_md: str = Field("")
-    context_review_md: str = Field("")
     workspace_summary_md: str = Field("")
     latest_literature_summary_md: str = Field("")
     latest_experiment_summary_md: str = Field("")
     current_best_answer_md: str = Field("")
     open_questions_md: str = Field("")
-
-
-class ResearchContextReviewPack(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(...)
-    history_focus_md: str = Field("")
-    durable_memory_focus_md: str = Field("")
-    workspace_focus_md: str = Field("")
-    citations: list[dict] = Field(default_factory=list)
-    confidence: float = Field(0.0, ge=0.0, le=1.0)
 
 
 __all__ = [
@@ -180,7 +167,6 @@ __all__ = [
     "ResearchActionRef",
     "ResearchArtifactRef",
     "ResearchBoard",
-    "ResearchContextReviewPack",
     "ResearchDossier",
     "ResearchPlannerContextPack",
 ]

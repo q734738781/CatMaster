@@ -96,7 +96,27 @@ def _coerce_draft(raw: Any) -> SectionDraftModel:
     return draft.model_copy(update={"planned_figure_ids": planned, "realized_figure_refs": realized})
 
 
-async def init_writing_node(state: dict[str, Any], *, writing_store, source_store) -> Command:
+def _build_figure_registry(*, drafts: dict[str, SectionDraftModel]) -> list[dict[str, Any]]:
+    registry: list[dict[str, Any]] = []
+    for section_id, draft in drafts.items():
+        realized = [str(item).strip() for item in draft.realized_figure_refs if str(item).strip()]
+        planned = [str(item).strip() for item in draft.planned_figure_ids if str(item).strip()]
+        if not realized and not planned:
+            continue
+        registry.append(
+            {
+                "section_id": section_id,
+                "heading": draft.heading,
+                "planned_figure_ids": planned,
+                "realized_figure_refs": realized,
+            }
+        )
+    return registry
+
+
+async def init_writing_node(state: dict[str, Any], *, writing_store, source_store, progress_callback=None) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="planning", current_work_label="Initialize writing run")
     if state.get("resume_mode"):
         goto = str(state.get("resume_goto") or "plan_writing").strip() or "plan_writing"
         return Command(goto=goto, update={"status": state.get("status", "planning")})
@@ -113,7 +133,9 @@ async def init_writing_node(state: dict[str, Any], *, writing_store, source_stor
     return Command(goto="plan_writing", update={"board": board, "dossier": dossier, "status": "planning"})
 
 
-async def plan_writing_node(state: dict[str, Any], *, writing_store, source_store, write_director_agent, skills_runtime: CatMasterSkillsRuntime | None) -> Command:
+async def plan_writing_node(state: dict[str, Any], *, writing_store, source_store, write_director_agent, skills_runtime: CatMasterSkillsRuntime | None, progress_callback=None) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="planning", current_work_label="Plan manuscript structure")
     request = WritingRequest.model_validate(state["request"])
     board = WritingBoard.model_validate(state["board"])
     dossier = state.get("dossier") or (source_store.load_dossier() if source_store is not None else None)
@@ -130,11 +152,12 @@ async def plan_writing_node(state: dict[str, Any], *, writing_store, source_stor
         memory_index_excerpt=memory_index_excerpt,
         latest_literature=[item.model_dump() for item in (source_store.load_literature_packs() if source_store is not None else [])],
         latest_experiments=[item.model_dump() for item in (source_store.load_experiment_packs() if source_store is not None else [])],
+        assembly_feedback=str(state.get("assembly_feedback") or "").strip() or None,
         skill_guide=skill_guide,
     )
     result = await _invoke_agent_with_step_budget(
         agent=write_director_agent,
-        messages=[SystemMessage(content=WRITE_DIRECTOR_SYSTEM_PROMPT), HumanMessage(content=context)],
+        messages=[HumanMessage(content=context)],
         max_steps=20,
         role="write_director",
     )
@@ -149,11 +172,11 @@ async def plan_writing_node(state: dict[str, Any], *, writing_store, source_stor
     writing_store.persist_plan(plan)
     writing_store.save_board(board)
     if plan.writing_mode == "paper_outline":
-        return Command(goto="assemble_manuscript", update={"board": board, "plan": plan, "dossier": dossier, "status": "drafting"})
-    return Command(goto="write_section", update={"board": board, "plan": plan, "dossier": dossier, "status": "drafting"})
+        return Command(goto="assemble_manuscript", update={"board": board, "plan": plan, "dossier": dossier, "status": "drafting", "assembly_feedback": None})
+    return Command(goto="write_section", update={"board": board, "plan": plan, "dossier": dossier, "status": "drafting", "assembly_feedback": None})
 
 
-async def write_section_node(state: dict[str, Any], *, writing_store, source_store, section_writer_agent, skills_runtime: CatMasterSkillsRuntime | None) -> Command:
+async def write_section_node(state: dict[str, Any], *, writing_store, source_store, section_writer_agent, skills_runtime: CatMasterSkillsRuntime | None, progress_callback=None) -> Command:
     request = WritingRequest.model_validate(state["request"])
     board = WritingBoard.model_validate(state["board"])
     plan = state.get("plan") or writing_store.load_plan()
@@ -166,9 +189,12 @@ async def write_section_node(state: dict[str, Any], *, writing_store, source_sto
         writing_store.save_board(board)
         return Command(goto="assemble_manuscript", update={"board": board, "plan": plan, "section_drafts": list(drafts.values()), "section_reviews": list(reviews.values())})
     spec = plan.section_specs[next_index]
+    if progress_callback is not None:
+        progress_callback(current_phase="drafting", current_work_label=f"Write section: {str(spec.heading or spec.section_id).strip()}")
     prior_draft = drafts.get(spec.section_id)
     prior_review = reviews.get(spec.section_id)
     review_notes = list(prior_review.revision_notes) if prior_review is not None else []
+    figure_registry = _build_figure_registry(drafts=drafts)
     dossier = state.get("dossier") or (source_store.load_dossier() if source_store is not None else None)
     dossier_json = dossier.model_dump() if hasattr(dossier, "model_dump") else dossier or {}
     skill_guide = render_section_writer_skill_guide(
@@ -186,11 +212,12 @@ async def write_section_node(state: dict[str, Any], *, writing_store, source_sto
         working_figures_dir=_files_rel(writing_store=writing_store, path=writing_store.manuscript_figures_dir),
         prior_draft=prior_draft,
         review_notes=review_notes,
+        figure_registry=figure_registry,
         skill_guide=skill_guide,
     )
     result = await _invoke_agent_with_step_budget(
         agent=section_writer_agent,
-        messages=[SystemMessage(content=SECTION_WRITER_SYSTEM_PROMPT), HumanMessage(content=context)],
+        messages=[HumanMessage(content=context)],
         max_steps=30,
         role="section_writer",
     )
@@ -211,7 +238,7 @@ async def write_section_node(state: dict[str, Any], *, writing_store, source_sto
     return Command(goto="review_section", update={"board": board, "plan": plan, "latest_draft": draft, "dossier": dossier})
 
 
-async def review_section_node(state: dict[str, Any], *, writing_store, write_reviewer_model: Any, skills_runtime: CatMasterSkillsRuntime | None) -> Command:
+async def review_section_node(state: dict[str, Any], *, writing_store, write_reviewer_model: Any, skills_runtime: CatMasterSkillsRuntime | None, progress_callback=None) -> Command:
     request = WritingRequest.model_validate(state["request"])
     board = WritingBoard.model_validate(state["board"])
     plan = state.get("plan") or writing_store.load_plan()
@@ -221,6 +248,9 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
     spec = next((item for item in plan.section_specs if item.section_id == draft.section_id), None)
     if spec is None:
         raise ValueError(f"missing section spec for {draft.section_id}")
+    if progress_callback is not None:
+        progress_callback(current_phase="reviewing", current_work_label=f"Review section: {str(spec.heading or spec.section_id).strip()}")
+    figure_registry = _build_figure_registry(drafts={item.section_id: item for item in writing_store.load_section_drafts()})
     skill_guide = render_write_reviewer_skill_guide(
         skills_runtime.visible_skills("write_reviewer", "writing") if skills_runtime is not None else []
     )
@@ -228,6 +258,7 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
         request=request.model_dump(),
         spec=spec,
         draft=draft,
+        figure_registry=figure_registry,
         skill_guide=skill_guide,
     )
     structured = write_reviewer_model.with_structured_output(SectionReviewOutput)
@@ -259,7 +290,9 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
     return Command(goto="write_section", update={"board": board, "plan": plan, "latest_review": review})
 
 
-async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, source_store, writing_config) -> Command:
+async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, source_store, writing_config, progress_callback=None) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="finalizing", current_work_label="Assemble manuscript")
     request = WritingRequest.model_validate(state["request"])
     board = WritingBoard.model_validate(state["board"])
     plan = state.get("plan") or writing_store.load_plan()
@@ -269,6 +302,7 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
     bibliography: list[str] = []
     figure_manifest: list[dict[str, Any]] = []
     section_inputs: list[str] = []
+    section_graphics_usage: dict[str, list[str]] = {}
     if plan.writing_mode == "paper_outline":
         section_inputs = _materialize_outline_sections(
             writing_store=writing_store,
@@ -281,14 +315,15 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
                 continue
             section_tex = _resolve_section_tex(writing_store=writing_store, draft=draft)
             if section_tex is not None:
-                section_inputs.append(
-                    _materialize_section_tex(
-                        writing_store=writing_store,
-                        spec=spec,
-                        draft=draft,
-                        section_tex=section_tex,
-                    )
+                section_ref, rewritten_section_tex = _materialize_section_tex(
+                    writing_store=writing_store,
+                    spec=spec,
+                    draft=draft,
+                    section_tex=section_tex,
                 )
+                section_inputs.append(section_ref)
+                for graphic_ref in _extract_graphics_targets(rewritten_section_tex):
+                    section_graphics_usage.setdefault(graphic_ref, []).append(spec.section_id)
             bibliography.extend(draft.citations)
             for ref in draft.realized_figure_refs:
                 copied_ref = _materialize_figure_ref(writing_store=writing_store, ref=ref)
@@ -300,6 +335,35 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
                 if copied_ref is not None:
                     record["copied_ref"] = copied_ref
                 figure_manifest.append(record)
+    duplicate_graphics = {
+        graphic_ref: section_ids
+        for graphic_ref, section_ids in section_graphics_usage.items()
+        if len(set(section_ids)) > 1
+    }
+    if duplicate_graphics:
+        details = "; ".join(
+            f"{graphic_ref} used in {', '.join(sorted(set(section_ids)))}"
+            for graphic_ref, section_ids in sorted(duplicate_graphics.items())
+        )
+        feedback = (
+            "Assembly failed because the same realized figure image was inserted as separate local figures across sections. "
+            "Re-plan or revise sections so each realized image is used as one manuscript-level figure object.\n"
+            f"Duplicate inclusions: {details}"
+        )
+        board = board.model_copy(update={"status": "planning"})
+        writing_store.save_board(board)
+        return Command(
+            goto="plan_writing",
+            update={
+                "board": board,
+                "plan": plan,
+                "dossier": state.get("dossier"),
+                "status": "planning",
+                "summary": feedback,
+                "final_answer": feedback,
+                "assembly_feedback": feedback,
+            },
+        )
     latex_path = None
     if section_inputs or plan.writing_mode == "paper_outline":
         latex_path = _write_achemso_manuscript(
@@ -366,7 +430,10 @@ async def finalize_writing_node(
     source_store,
     write_finalizer_agent,
     skills_runtime: CatMasterSkillsRuntime | None,
+    progress_callback=None,
 ) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="finalizing", current_work_label="Compile and finalize manuscript")
     request = WritingRequest.model_validate(state["request"])
     board = WritingBoard.model_validate(state["board"])
     plan = state.get("plan") or writing_store.load_plan()
@@ -386,7 +453,7 @@ async def finalize_writing_node(
     )
     result = await _invoke_agent_with_step_budget(
         agent=write_finalizer_agent,
-        messages=[SystemMessage(content=WRITE_FINALIZER_SYSTEM_PROMPT), HumanMessage(content=context)],
+        messages=[HumanMessage(content=context)],
         max_steps=12,
         role="write_director",
     )
@@ -444,7 +511,7 @@ def _resolve_section_tex(*, writing_store, draft) -> str | None:
     return inline or None
 
 
-def _materialize_section_tex(*, writing_store, spec, draft, section_tex: str) -> str:
+def _materialize_section_tex(*, writing_store, spec, draft=None, section_tex: str) -> tuple[str, str]:
     manuscript_sections_dir = writing_store.manuscript_sections_dir
     manuscript_sections_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{_slug(spec.section_id, fallback='section')}_{_slug(spec.heading, fallback='body')}.tex"
@@ -455,7 +522,7 @@ def _materialize_section_tex(*, writing_store, spec, draft, section_tex: str) ->
         realized_figure_refs=[str(item) for item in getattr(draft, "realized_figure_refs", []) if str(item).strip()],
     )
     path.write_text(rewritten + "\n", encoding="utf-8")
-    return f"sections/{filename}"
+    return f"sections/{filename}", rewritten
 
 
 def _materialize_outline_sections(*, writing_store, plan) -> list[str]:
@@ -468,7 +535,8 @@ def _materialize_outline_sections(*, writing_store, plan) -> list[str]:
                 "",
             ]
         ).strip()
-        refs.append(_materialize_section_tex(writing_store=writing_store, spec=spec, section_tex=body))
+        section_ref, _ = _materialize_section_tex(writing_store=writing_store, spec=spec, section_tex=body)
+        refs.append(section_ref)
     return refs
 
 
@@ -554,6 +622,15 @@ def _rewrite_section_graphics(*, writing_store, section_tex: str, realized_figur
         return f"\\includegraphics{{{target_ref}}}"
 
     return re.sub(r"\\includegraphics(?:\[([^\]]*)\])?\{([^}]+)\}", _replace, section_tex)
+
+
+def _extract_graphics_targets(section_tex: str) -> list[str]:
+    refs: list[str] = []
+    for match in re.finditer(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", str(section_tex or "")):
+        ref = str(match.group(1) or "").strip()
+        if ref:
+            refs.append(ref)
+    return refs
 
 
 def _copy_workspace_graphic_for_manuscript(*, writing_store, ref: str, fallback_refs: list[str] | None = None) -> str | None:

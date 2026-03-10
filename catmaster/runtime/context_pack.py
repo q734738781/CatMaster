@@ -43,8 +43,9 @@ def _workspace_policy_summary(role: str, *, files_root_abs: str) -> str:
     return (
         "Project files policy:\n"
         '- Treat "." as the project files root.\n'
-        f"- Reference absolute files root (orientation only): {files_root_abs}\n"
+        f"- Project files root (reference only): {files_root_abs}\n"
         '- Use relative paths for filesystem function-tool arguments; keep returned paths relative to ".".\n'
+        '- Do not pass the absolute root directly to filesystem tools.\n'
         "- Absolute paths are fallback-only references; if used for filesystem tools, they must be under project files root.\n"
         "- Never use metadata paths in filesystem function-tool arguments.\n"
         "- Use search_files / list_directory / directory_tree to discover files.\n"

@@ -52,7 +52,6 @@ def build_monitor_page(
     *,
     registry: SessionRegistry,
     default_workspace: str,
-    theme: Optional[Any] = None,
 ) -> gr.Blocks:
 
     # ------------------------------------------------------------------
@@ -372,7 +371,7 @@ def build_monitor_page(
     # Layout
     # ------------------------------------------------------------------
 
-    with gr.Blocks(theme=theme, title="CatMaster Monitor") as page:
+    with gr.Blocks(title="CatMaster Monitor") as page:
         gr.HTML(f"<style>{SHARED_CSS}\n{_MONITOR_EXTRA_CSS}</style>")
         gr.HTML(_AUTOSCROLL_JS)
         ctx_state = gr.State("")

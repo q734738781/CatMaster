@@ -146,8 +146,8 @@ def test_start_run_standard_llmprofile_path_imports_build_chat_model(tmp_path: P
     fake_runner_factory_mod = types.ModuleType("catmaster.agents.runner_factory")
 
     class _DummyRunner:
-        def run(self, prompt: str, *, lane: str, proposal_review: bool):
-            _ = (prompt, lane, proposal_review)
+        def run(self, prompt: str, **kwargs):
+            _ = (prompt, kwargs)
             return {"status": "done"}
 
     def fake_build_graph_runner(**kwargs):

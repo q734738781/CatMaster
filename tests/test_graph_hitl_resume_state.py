@@ -13,8 +13,14 @@ from catmaster.agents.graph import GraphRunner
 
 
 class _DummyReporter:
+    def __init__(self) -> None:
+        self.events = []
+
     def is_live(self) -> bool:
         return True
+
+    def emit(self, event) -> None:
+        self.events.append(event)
 
 
 def test_invoke_loop_marks_running_before_resume_after_hitl() -> None:
@@ -110,3 +116,42 @@ def test_proposal_review_node_appends_hitl_history_on_approval(monkeypatch: pyte
     assert history[0]["interrupt_type"] == "proposal_review"
     assert history[0]["feedback"] == "approve"
     assert history[0]["approved"] is True
+
+
+def test_run_task_wrapper_emits_task_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    reporter = _DummyReporter()
+
+    async def _fake_run_task(*_args, **_kwargs):
+        return SimpleNamespace(
+            update={
+                "task_result": {
+                    "task_outcome": "success",
+                    "task_summary": "Finished the comparison.",
+                    "key_artifacts": [{"path": "runs/demo/out.txt", "kind": "output", "description": "artifact"}],
+                }
+            }
+        )
+
+    monkeypatch.setattr(graph, "run_task", _fake_run_task)
+
+    command = asyncio.run(
+        graph._run_task_wrapper(  # type: ignore[attr-defined]
+            {
+                "current_task_id": "task_01",
+                "current_task_packet": {"goal": "Run the larger-box comparison."},
+            },
+            agent=object(),
+            memory_store=object(),  # unused by the monkeypatched run_task
+            max_steps=10,
+            continue_goto="run_director",
+            intervention_goto="needs_intervention",
+            run_dir=tmp_path,
+            reporter=reporter,
+            run_id="run_test",
+        )
+    )
+
+    assert command.update["task_result"]["task_outcome"] == "success"
+    event_names = [getattr(event, "name", "") for event in reporter.events]
+    assert event_names == ["TASK_START", "TASK_SUMMARY", "TASK_END"]
+    assert getattr(reporter.events[0], "task_id", "") == "task_01"

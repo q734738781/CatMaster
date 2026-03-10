@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
@@ -13,39 +13,12 @@ from .pages_monitor import build_monitor_page
 from .session_registry import SessionRegistry
 
 
-def _make_theme() -> Optional[Any]:
-    themes = getattr(gr, "themes", None)
-    if themes is None:
-        return None
-    soft = getattr(themes, "Soft", None)
-    if soft is None:
-        return None
-    try:
-        return soft(
-            primary_hue="indigo",
-            secondary_hue="violet",
-            neutral_hue="gray",
-            radius_size="lg",
-            text_size="lg",
-            font=["IBM Plex Sans", "Space Grotesk", "sans-serif"],
-            font_mono=["IBM Plex Mono", "monospace"],
-        )
-    except TypeError:
-        try:
-            return soft()
-        except Exception:
-            return None
-    except Exception:
-        return None
-
-
 def create_app(*, project_space_root: str) -> FastAPI:
     default_project_space_root = str(Path(project_space_root).expanduser().resolve())
     registry = SessionRegistry(default_project_space_root=default_project_space_root)
-    theme = _make_theme()
 
-    home_page = build_home_page(registry=registry, default_workspace=default_project_space_root, theme=theme)
-    monitor_page = build_monitor_page(registry=registry, default_workspace=default_project_space_root, theme=theme)
+    home_page = build_home_page(registry=registry, default_workspace=default_project_space_root)
+    monitor_page = build_monitor_page(registry=registry, default_workspace=default_project_space_root)
 
     app = FastAPI(title="CatMaster WebUI")
 

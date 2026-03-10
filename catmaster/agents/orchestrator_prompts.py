@@ -385,9 +385,6 @@ Reference hint:
 Workspace policy:
 {workspace_policy}
 
-Workspace absolute root (reference only, do not pass directly to filesystem tools):
-{workspace_root_abs_ref}
-
 Memory index excerpt:
 {memory_index_excerpt}
 

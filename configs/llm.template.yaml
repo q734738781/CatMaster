@@ -122,6 +122,7 @@ agents:
   director: "openrouter-main"
   task_runner: "openrouter-main"
   research_lead: "openrouter-main-xhigh"
+  research_state_updater: "openrouter-main-xhigh"
   write_director: "openrouter-main-xhigh"
   section_writer: "openrouter-main"
   write_reviewer: "openrouter-main"
@@ -142,8 +143,6 @@ agents:
   tool_selector: "openrouter-main"
   memory_patch: "openrouter-main"
   summary: "openrouter-main"
-  # Optional: if omitted, it falls back to `summary`.
-  history_reader: "openrouter-main"
 
 image_generation:
   # Optional: if omitted, the image-generation tool falls back to `image_analyzer`.
@@ -172,6 +171,7 @@ literature:
     fast_director: focused
     task_runner: none
     research_lead: deep_report
+    research_state_updater: deep_report
     write_director: none
     section_writer: standard
     write_reviewer: none
