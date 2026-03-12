@@ -262,7 +262,15 @@ class WebSession:
             return False, "Project-space root not set."
         if not name:
             return False, "Select a project space first."
-        target = (root / name).resolve()
+        candidate = str(name or "").strip()
+        if candidate in {".", root.name} and self._looks_like_project_space(root):
+            target = root.resolve()
+        else:
+            raw = Path(candidate).expanduser()
+            if raw.is_absolute():
+                target = raw.resolve()
+            else:
+                target = (root / candidate).resolve()
         return self.open_workspace(str(target), create=False)
 
     def create_workspace(self, name: str) -> Tuple[bool, str]:
@@ -366,6 +374,7 @@ class WebSession:
         seed_hypotheses: str = "",
         exploration_policy: str = "anchored",
         writing_mode: str = "none",
+        output_format: str = "tex",
         target_section: str = "",
         source_campaign_id: str = "",
         title_hint: str = "",
@@ -575,6 +584,7 @@ class WebSession:
                             seed_hypotheses=[line.strip() for line in str(seed_hypotheses or "").splitlines() if line.strip()],
                             exploration_policy=str(exploration_policy or "anchored").strip() or "anchored",
                             writing_mode=str(writing_mode or "none").strip() or "none",
+                            output_format=str(output_format or "tex").strip() or "tex",
                             target_section=(str(target_section or "").strip() or None),
                             max_cycles=int(max_cycles),
                             max_literature_queries=int(max_literature_queries),
@@ -587,12 +597,18 @@ class WebSession:
                     if is_resume:
                         result = runner.resume()
                     else:
+                        resolved_writing_mode = str(writing_mode or "internal_report").strip() or "internal_report"
+                        if resolved_writing_mode == "none":
+                            resolved_writing_mode = "internal_report"
                         writing_request = WritingRequest(
                             request=effective_prompt_text,
                             session_context_text=str(session_context.get("context_text") or ""),
                             chat_session_id=str(session_context.get("session_id") or ""),
                             entry_context_tokens_estimate=int(session_context.get("estimated_tokens") or 0),
                             source_campaign_id=(str(source_campaign_id or "").strip() or None),
+                            writing_mode=resolved_writing_mode,
+                            output_format=str(output_format or "tex").strip() or "tex",
+                            target_section=(str(target_section or "").strip() or None),
                         )
                         result = runner.run(writing_request)
                 else:
@@ -1496,14 +1512,27 @@ class WebSession:
         choices: List[Tuple[str, str]] = []
         if not root.exists():
             return choices
+        root_is_project = self._looks_like_project_space(root)
+        if root_is_project:
+            choices.append((root.name, root.name))
         for entry in sorted(root.iterdir(), key=lambda p: p.name):
             if not entry.is_dir():
                 continue
             name = entry.name
             if name.startswith("."):
                 continue
+            if root_is_project and name in {"files", "metadata"}:
+                continue
             choices.append((name, name))
         return choices
+
+    @staticmethod
+    def _looks_like_project_space(path: Path) -> bool:
+        try:
+            resolved = path.expanduser().resolve()
+        except Exception:
+            return False
+        return (resolved / "files").is_dir() and (resolved / "metadata").is_dir()
 
     @staticmethod
     def _run_key(run_dir: Path) -> str:

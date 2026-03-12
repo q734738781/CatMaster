@@ -46,7 +46,7 @@ def test_safe_selector_prepare_filters_missing_always_include_without_error() ->
         always_include=["read_text_file", "create_directory", "write_file"],
     )
     request = _Request(
-        tools=[_Tool("read_text_file"), _Tool("bash_exec")],
+        tools=[_Tool("read_text_file"), _Tool("bash")],
         messages=[HumanMessage(content="hello")],
         model=SimpleNamespace(),
     )
@@ -54,7 +54,7 @@ def test_safe_selector_prepare_filters_missing_always_include_without_error() ->
     prepared = middleware._prepare_selection_request(request)
 
     assert prepared is not None
-    assert prepared.valid_tool_names == ["bash_exec"]
+    assert prepared.valid_tool_names == ["bash"]
     assert "read_text_file" in prepared.system_message
     assert "write_file" not in prepared.system_message
 
@@ -66,16 +66,16 @@ def test_safe_selector_invalid_selection_falls_back_to_original_request() -> Non
         always_include=["read_text_file", "create_directory"],
     )
     request = _Request(
-        tools=[_Tool("read_text_file"), _Tool("create_directory"), _Tool("bash_exec")],
+        tools=[_Tool("read_text_file"), _Tool("create_directory"), _Tool("bash")],
         messages=[HumanMessage(content="make a folder")],
         model=SimpleNamespace(),
     )
-    available_tools = [_Tool("bash_exec")]
+    available_tools = [_Tool("bash")]
 
     out = middleware._process_selection_response(
         {"tools": ["make_directory"]},
         available_tools,
-        ["bash_exec"],
+        ["bash"],
         request,
     )
 
@@ -89,15 +89,15 @@ def test_safe_selector_only_always_included_selection_falls_back_to_original_req
         always_include=["read_text_file"],
     )
     request = _Request(
-        tools=[_Tool("read_text_file"), _Tool("bash_exec")],
+        tools=[_Tool("read_text_file"), _Tool("bash")],
         messages=[HumanMessage(content="inspect file")],
         model=SimpleNamespace(),
     )
 
     out = middleware._process_selection_response(
         {"tools": ["read_text_file"]},
-        [_Tool("bash_exec")],
-        ["bash_exec"],
+        [_Tool("bash")],
+        ["bash"],
         request,
     )
 
@@ -106,7 +106,7 @@ def test_safe_selector_only_always_included_selection_falls_back_to_original_req
 
 def test_safe_selector_async_exception_falls_back_to_original_request() -> None:
     request = _Request(
-        tools=[_Tool("read_text_file"), _Tool("bash_exec")],
+        tools=[_Tool("read_text_file"), _Tool("bash")],
         messages=[HumanMessage(content="inspect file")],
         model=_BrokenModel(),
     )

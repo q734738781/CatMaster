@@ -50,7 +50,7 @@ def _workspace_policy_summary(role: str, *, files_root_abs: str) -> str:
         "- Never use metadata paths in filesystem function-tool arguments.\n"
         "- Use search_files / list_directory / directory_tree to discover files.\n"
         "- Use read_text_file with head/tail for progressive disclosure.\n"
-        "- Use bash_exec for shell commands, content grep, parser invocation, and external binaries.\n"
+        "- Use bash for shell commands, content grep, parser invocation, and external binaries.\n"
         f"- Role: {role}"
     )
 

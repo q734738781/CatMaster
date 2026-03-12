@@ -13,13 +13,13 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     assert "Do not rerun the same preparation tool with identical parameters" in system_content
     assert "Bundle independent filesystem operations in the same turn whenever possible" in system_content
     assert "do not issue concurrent write calls" in system_content
-    assert "prefer a single focused bash_exec over many single-path filesystem tool calls" in system_content
+    assert "prefer a single focused bash over many single-path filesystem tool calls" in system_content
     assert "Prefer read_multiple_files when you need several small text files at once." in system_content
     assert "Tool schemas are authoritative" in system_content
     assert "Do not initiate file edits on your own." in system_content
     assert "Only edit files when the current task packet explicitly requires" in system_content
     assert "For `MEMORY/**`, only update when scientific invariants" in system_content
-    assert "Do NOT put function tool names into bash_exec commands" in system_content
+    assert "Do NOT put function tool names into bash commands" in system_content
     assert "ase, pymatgen, numpy, matplotlib, scipy, pandas, fitz, requests" in system_content
     assert "For remote/batch job failures, do one minimal triage" in system_content
     assert "Do not do open-ended exploration for remote failures (no SSH)." in system_content

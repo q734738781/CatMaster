@@ -27,7 +27,7 @@ class _Registry:
     def as_langchain_tools(self, *, run_dir=None, workspace=None):
         _ = (run_dir, workspace)
         return [
-            _Tool("bash_exec"),
+            _Tool("bash"),
             StructuredTool.from_function(
                 func=lambda runtime=None, **kwargs: _fake_literature_impl(kwargs),
                 name="run_literature_research",

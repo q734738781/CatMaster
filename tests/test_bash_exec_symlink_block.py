@@ -83,7 +83,7 @@ def test_bash_exec_persists_full_stream_logs_without_pre_truncation(tmp_path) ->
                 "timeout_s": 5.0,
             }
         )
-        audit_dir = system_root(tmp_path) / "audit" / "bash_exec"
+        audit_dir = system_root(tmp_path) / "audit" / "bash"
 
     _, artifact = out
     data = artifact.get("data", {})

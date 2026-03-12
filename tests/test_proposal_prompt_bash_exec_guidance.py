@@ -14,7 +14,7 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     system_content = PROPOSAL_SYSTEM_PROMPT
     assert "Allowed helper tools in this stage" in system_content
     assert "Filesystem read/discovery tools" in system_content
-    assert "`bash_exec`" in system_content
+    assert "`bash`" in system_content
     assert "`apply_aider_edits`" not in system_content
     assert "`write_note`" not in system_content
     assert "`read_file`" not in system_content
@@ -36,7 +36,7 @@ def test_proposal_prompt_mentions_bash_exec_heredoc_and_no_persist() -> None:
     assert "Treat `.` as the project files root" in system_content
     assert "reference absolute project-files-root path" in system_content
     assert "use relative paths in arguments by default" in system_content
-    assert "`bash_exec` command text is exempt" in system_content
+    assert "`bash` command text is exempt" in system_content
     assert "ProposalOutput" not in system_content
 
 

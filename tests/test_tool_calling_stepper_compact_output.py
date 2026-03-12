@@ -18,15 +18,15 @@ class BashLikeInput(BaseModel):
 def _bash_like_tool(_payload: dict) -> dict:
     return {
         "status": "success",
-        "tool_name": "bash_exec",
+        "tool_name": "bash",
         "data": {
             "stdout": "x" * 6000,
             "stderr": "y" * 4000,
             "exit_code": 0,
             "timed_out": False,
             "cwd": ".",
-            "stdout_path": ".logs/bash_exec/fake.stdout.txt",
-            "stderr_path": ".logs/bash_exec/fake.stderr.txt",
+            "stdout_path": ".logs/bash/fake.stdout.txt",
+            "stderr_path": ".logs/bash/fake.stderr.txt",
         },
         "warnings": [],
         "error": "",
@@ -45,7 +45,7 @@ class CaptureInputDriver(FakeDriver):
 
 def test_stepper_preserves_bash_exec_streams_for_next_turn(tmp_path) -> None:
     registry = ToolRegistry(register_all_tools=False)
-    registry.register_tool("bash_exec", _bash_like_tool, BashLikeInput)
+    registry.register_tool("bash", _bash_like_tool, BashLikeInput)
 
     tool_executor = ToolExecutor(registry)
     artifact_store = ArtifactStore(tmp_path)
@@ -63,7 +63,7 @@ def test_stepper_preserves_bash_exec_streams_for_next_turn(tmp_path) -> None:
                 {
                     "type": "function_call",
                     "call_id": "call-bash",
-                    "name": "bash_exec",
+                    "name": "bash",
                     "arguments": json.dumps({"script": "echo test"}),
                 }
             ],

@@ -17,7 +17,7 @@ def test_live_state_handles_interrupt_lifecycle() -> None:
     events = [
         _event("INTERRUPT_REQUESTED", ts=1.0, payload={"source": "ui"}),
         _event("INTERRUPT_ACKED", ts=2.0, payload={"phase": "toolcall"}),
-        _event("TOOL_CALL_INTERRUPTED", ts=3.0, payload={"tool": "bash_exec", "toolcall_id": "x1"}, task_id="task_01"),
+        _event("TOOL_CALL_INTERRUPTED", ts=3.0, payload={"tool": "bash", "toolcall_id": "x1"}, task_id="task_01"),
         _event("RUN_PAUSED", ts=4.0, payload={"phase": "toolcall"}),
     ]
 

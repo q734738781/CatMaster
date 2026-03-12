@@ -6,7 +6,7 @@ metadata:
   catmaster-roles: "section_writer write_director write_reviewer"
   catmaster-lanes: "writing"
   catmaster-tags: "writing figures captions"
-  catmaster-suggested-tools: "review_research_context read_research_pack generate_schematic_figure bash_exec render_structure_views analyze_images"
+  catmaster-suggested-tools: "review_research_context read_research_pack generate_schematic_figure bash render_structure_views analyze_images"
 ---
 
 # figure-design-and-captioning
@@ -21,7 +21,7 @@ Use when a section needs structure renders, conceptual schematics, comparison pl
 - `review_research_context`
 - `read_research_pack`
 - `generate_schematic_figure`
-- `bash_exec`
+- `bash`
 - `render_structure_views`
 - `analyze_images`
 

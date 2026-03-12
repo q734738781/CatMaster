@@ -22,6 +22,7 @@ class ResearchRequest(BaseModel):
     max_fast_runs: int = Field(3, ge=0)
     max_standard_runs: int = Field(2, ge=0)
     writing_mode: Literal["none", "internal_report", "paper_outline", "section_draft", "full_draft"] = Field("none")
+    output_format: Literal["md", "tex"] = Field("tex")
     target_section: str | None = Field(None)
     allow_deep_report: bool = Field(False)
     campaign_title: str | None = Field(None)
@@ -76,8 +77,10 @@ class AskHumanPayload(BaseModel):
 class RunWriterPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    why_now: str = Field(...)
-    use_existing_evidence_only: bool = Field(True)
+    request: str = Field(...)
+    writing_mode: Literal["internal_report", "paper_outline", "section_draft", "full_draft"] = Field(...)
+    output_format: Literal["md", "tex"] = Field("tex")
+    target_section: str | None = Field(None)
 
 
 class ConcludePayload(BaseModel):

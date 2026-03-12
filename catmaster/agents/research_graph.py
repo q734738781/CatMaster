@@ -48,6 +48,7 @@ def build_research_graph(
     memory_store,
     literature_runner,
     experiment_runner,
+    writer_runner=None,
     skills_runtime,
     progress_callback=None,
 ):
@@ -88,7 +89,15 @@ def build_research_graph(
     )
     graph.add_node("RunLiterature", partial(execute_literature_node, store=store, literature_runner=literature_runner, progress_callback=progress_callback))
     graph.add_node("RunExperiment", partial(execute_experiment_node, store=store, experiment_runner=experiment_runner, progress_callback=progress_callback))
-    graph.add_node("RunWriter", partial(execute_writer_handoff_node, store=store, progress_callback=progress_callback))
+    graph.add_node(
+        "RunWriter",
+        partial(
+            execute_writer_handoff_node,
+            store=store,
+            writer_runner=writer_runner,
+            progress_callback=progress_callback,
+        ),
+    )
     graph.add_node("AskHuman", partial(finalize_ask_human_node, store=store, progress_callback=progress_callback))
     graph.add_node("Conclude", partial(persist_conclusion_node, store=store, progress_callback=progress_callback))
     graph.add_node("build_dossier", partial(build_dossier_node, store=store, progress_callback=progress_callback))

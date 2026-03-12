@@ -3,7 +3,7 @@
 allowed_tools: null
 # denied_tools can block tools even when allowed_tools is null
 # denied_tools:
-#   - bash_exec
+#   - bash
 
 denied_tools: 
   - memory_apply_aider_edits

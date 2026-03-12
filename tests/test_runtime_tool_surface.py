@@ -31,7 +31,7 @@ class _Registry:
     def as_langchain_tools(self, *, run_dir=None, workspace=None):
         _ = (run_dir, workspace)
         return [
-            _Tool("bash_exec"),
+            _Tool("bash"),
             _Tool("write_note"),
             _Tool("read_file"),
             _Tool("list_directory_with_sizes"),
@@ -108,7 +108,7 @@ def test_build_runtime_tool_surface_role_split(tmp_path) -> None:
     fast_director_names = [tool.name for tool in surface.fast_director_tools]
     task_names = [tool.name for tool in surface.task_tools]
 
-    assert "bash_exec" in proposal_names
+    assert "bash" in proposal_names
     assert "run_literature_research" in proposal_names
     assert "search_files" in proposal_names
     assert "read_file" not in proposal_names
@@ -117,13 +117,13 @@ def test_build_runtime_tool_surface_role_split(tmp_path) -> None:
     assert "apply_aider_edits" not in proposal_names
     assert "write_note" not in proposal_names
 
-    assert "bash_exec" in director_names
+    assert "bash" in director_names
     assert "run_literature_research" in director_names
     assert "search_files" in director_names
     assert "apply_aider_edits" in director_names
     assert "write_note" in director_names
 
-    assert "bash_exec" in fast_director_names
+    assert "bash" in fast_director_names
     assert "run_literature_research" in fast_director_names
     assert "search_files" in fast_director_names
     assert "apply_aider_edits" not in fast_director_names

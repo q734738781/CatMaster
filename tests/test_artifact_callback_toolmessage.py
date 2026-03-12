@@ -30,7 +30,7 @@ def test_artifact_persistence_parses_tool_message_output(tmp_path) -> None:
 
     rid = uuid.uuid4()
     handler.on_tool_start(
-        serialized={"name": "bash_exec"},
+        serialized={"name": "bash"},
         input_str=json.dumps({"cmd": "echo ok"}),
         run_id=rid,
     )
@@ -39,12 +39,12 @@ def test_artifact_persistence_parses_tool_message_output(tmp_path) -> None:
         ToolMessage(
             content=json.dumps({
                 "status": "success",
-                "tool_name": "bash_exec",
+                "tool_name": "bash",
                 "data": {"stdout": "ok"},
                 "error": None,
             }, ensure_ascii=False),
             tool_call_id="call_1",
-            name="bash_exec",
+            name="bash",
         ),
         run_id=rid,
     )
@@ -56,7 +56,7 @@ def test_artifact_persistence_parses_tool_message_output(tmp_path) -> None:
     ]
     assert records
     assert records[0]["status"] == "success"
-    assert records[0]["tool_name"] == "bash_exec"
+    assert records[0]["tool_name"] == "bash"
 
 
 def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:

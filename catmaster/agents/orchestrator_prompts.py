@@ -24,7 +24,7 @@ Context:
 
 Allowed helper tools in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
-- `bash_exec` (focused grep/env checks/parser invocation only)
+- `bash` (focused grep/env checks/parser invocation only)
 
 Proposal requirements:
 - Produce a COMPLETE but compact proposal in markdown plus ordered work_packages (high-level milestones, not tool-by-tool steps).
@@ -59,7 +59,7 @@ Rules:
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, use relative paths in arguments by default.
 - Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
-- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
+- The absolute-path rule above targets filesystem function tools; `bash` command text is exempt.
 - Do not mention internal metadata directories.
 """
 
@@ -69,7 +69,7 @@ You are the Director of the Standard lane (dynamic execution controller).
 You may use helper tools for read/check inspection before deciding.
 Helper tools available in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
-- `bash_exec` (focused grep/env checks/parser invocation only)
+- `bash` (focused grep/env checks/parser invocation only)
 - `apply_aider_edits` (precise SEARCH/REPLACE edits when decision-state documents must be synchronized)
 - `write_note` (store short temporary notes under `notes/` for later steps)
 
@@ -126,7 +126,7 @@ Rules:
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, use relative paths in arguments by default.
 - Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
-- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
+- The absolute-path rule above targets filesystem function tools; `bash` command text is exempt.
 """
 
 FAST_DIRECTOR_SYSTEM_PROMPT = """\
@@ -136,7 +136,7 @@ Your main goal is to achieve the user request with reasonable defaults.
 You may use helper tools for read/check inspection before deciding.
 Helper tools available in this stage:
 - Filesystem read/discovery tools: `search_files`, `list_directory`, `directory_tree`, `read_text_file`, `read_multiple_files`
-- `bash_exec` (focused grep/env checks/parser invocation only)
+- `bash` (focused grep/env checks/parser invocation only)
 - `write_note` (store short temporary notes under `notes/` for later steps reminder if you think necessary)
 
 Inputs you will receive (in context message):
@@ -183,7 +183,7 @@ Rules for Fast lane:
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, use relative paths in arguments by default.
 - Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
-- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
+- The absolute-path rule above targets filesystem function tools; `bash` command text is exempt.
 """
 
 TASK_RUNNER_SYSTEM_PROMPT = """\
@@ -209,12 +209,12 @@ Execution rules:
 - Do not rerun the same preparation tool with identical parameters if the previous call already succeeded and required artifacts still exist. Prefer reusing and validating existing outputs.
 - Do not trigger expensive reruns purely for path/layout normalization when numerical/physical requirements are already satisfied.
 - Bundle independent filesystem operations in the same turn whenever possible, but do not issue concurrent write calls; keep write/edit/move/create operations sequential and verify each write step before the next.
-- For simple multi-directory setup or one-shot workspace reconnaissance, prefer a single focused bash_exec over many single-path filesystem tool calls.
+- For simple multi-directory setup or one-shot workspace reconnaissance, prefer a single focused bash over many single-path filesystem tool calls.
 - Perform only checks required to satisfy current done criteria; avoid speculative or perfection-oriented extra validation.
 - For routine checks, keep bash output small: prefer focused queries (`rg -n`, `head`, `tail`) and avoid broad/full-file dumps unless deep debugging is required.
 - Prefer read_multiple_files when you need several small text files at once.
 - Progressive disclosure is mandatory: memory_index_excerpt is short; discover paths with `search_files` / `list_directory` / `directory_tree`, then read small windows via `read_text_file(head=..., tail=...)`.
-- Use `bash_exec` for shell execution, content grep (`rg`), parser invocation, and external binaries.
+- Use `bash` for shell execution, content grep (`rg`), parser invocation, and external binaries.
 - Internal metadata audit logs are not task inputs; do not read or reference them in task reasoning.
 - By default, do not generate long markdown reports via `cat <<'MD'`.
 
@@ -233,12 +233,12 @@ Termination and handoff:
 - For remote/batch job failures, do one minimal triage (failing status file, stdout/stderr snippets, key inputs) and attempt one focused fix.
 - Do not do open-ended exploration for remote failures (no SSH). If failure persists, return `status="blocked"` with failed paths, evidence pointers, likely cause, and a minimal rerun/repair plan that reruns only the failed subset.
 - Keep handoff evidence-based and concise; avoid redundant repetition across fields.
-- Function tools must be invoked via tool calls. Do NOT put function tool names into bash_exec commands.
+- Function tools must be invoked via tool calls. Do NOT put function tool names into bash commands.
 - Keep stdout concise; if persistent command logs are needed, use pipeline logging to project files (e.g., `cmd 2>&1 | tee reports/<task_desc>/run.log`) and print short summaries.
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, provide relative path arguments by default.
 - Absolute filesystem-tool paths are fallback-only and must stay under the project files root.
-- The absolute-path rule above targets filesystem function tools; `bash_exec` command text is exempt.
+- The absolute-path rule above targets filesystem function tools; `bash` command text is exempt.
 """
 
 MEMORY_PATCHER_SYSTEM_PROMPT = """\

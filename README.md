@@ -316,13 +316,32 @@ Important config areas:
 Run the WebUI:
 
 ```bash
-python -m catmaster.webui --project-space-root ./project_space
+./start_webui.sh
 ```
 
 Equivalent:
 
 ```bash
+python -m catmaster.webui --project-space-root ./project_space
+```
+
+Also works:
+
+```bash
 python main.py --project-space-root ./project_space
+```
+
+The helper script will:
+
+- launch with `conda run -n catmaster`
+- export the repository root into `PYTHONPATH`
+- default `--project-space-root` to `./project_space`
+
+Useful overrides:
+
+```bash
+CATMASTER_CONDA_ENV=catmaster ./start_webui.sh --port 7991
+CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace ./start_webui.sh
 ```
 
 Then open:

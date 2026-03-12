@@ -18,6 +18,8 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath, syst
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
 from catmaster.runtime.tool_runtime import current_toolcall_key, current_run_dir
 
+TOOL_NAME = "bash"
+
 
 class BashExecInput(BaseModel):
     """
@@ -99,10 +101,10 @@ def _resolve_audit_logs_dir() -> Path:
     run_dir = (current_run_dir() or "").strip()
     if run_dir:
         try:
-            return Path(run_dir).expanduser().resolve() / "audit" / "bash_exec"
+            return Path(run_dir).expanduser().resolve() / "audit" / TOOL_NAME
         except Exception:
             pass
-    return system_root() / "audit" / "bash_exec"
+    return system_root() / "audit" / TOOL_NAME
 
 
 def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> tuple[list[str], str, str]:
@@ -116,7 +118,7 @@ def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> tuple[lis
         stdout_path.write_text(stdout or "", encoding="utf-8")
         stderr_path.write_text(stderr or "", encoding="utf-8")
     except Exception as exc:
-        warnings.append(f"failed to persist bash_exec logs: {type(exc).__name__}: {exc}")
+        warnings.append(f"failed to persist {TOOL_NAME} logs: {type(exc).__name__}: {exc}")
     return warnings, str(stdout_path), str(stderr_path)
 
 
@@ -140,7 +142,7 @@ def _success(
 ) -> tuple[str, dict[str, Any]]:
     content = _render_success_content(data)
     return content, {
-        "tool_name": "bash_exec",
+        "tool_name": TOOL_NAME,
         "data": data,
         "warnings": warnings,
         "execution_time": execution_time,
@@ -157,12 +159,12 @@ def _fail(
 ) -> None:
     normalized = str(message or "").strip()
     if not normalized:
-        normalized = "bash_exec failed."
+        normalized = f"{TOOL_NAME} failed."
     raise CatMasterToolExecutionError(
-        tool_name="bash_exec",
+        tool_name=TOOL_NAME,
         public_message=normalized,
         artifact={
-            "tool_name": "bash_exec",
+            "tool_name": TOOL_NAME,
             "data": data or {},
             "warnings": warnings or [],
             "execution_time": execution_time,
@@ -221,7 +223,7 @@ def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if blocked_reason:
         _fail(
             message=(
-                "Symbolic link operations are disabled in bash_exec. "
+                f"Symbolic link operations are disabled in {TOOL_NAME}. "
                 "Use copy/move operations (e.g., cp/rsync/mv) instead."
             ),
             data={
@@ -346,10 +348,10 @@ def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         _fail(
             message=f"Failed to start/execute bash subprocess: {exc}",
             execution_time=time.perf_counter() - t0,
-            error_code="bash_exec_runtime_error",
+            error_code="bash_runtime_error",
         )
     finally:
         _unregister_active_proc(toolcall_key)
 
 
-__all__ = ["bash_exec", "BashExecInput", "cancel_bash_exec_toolcall"]
+__all__ = ["bash_exec", "BashExecInput", "cancel_bash_exec_toolcall", "TOOL_NAME"]

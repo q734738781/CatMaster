@@ -28,19 +28,19 @@ from catmaster.ui.reporters import NullReporter, Reporter
 
 from .research_graph import build_research_graph
 from .research_prompts import RESEARCH_LEAD_SYSTEM_PROMPT, RESEARCH_STATE_UPDATER_SYSTEM_PROMPT
-from .research_schemas import ResearchLeadOutput, ResearchRequest, ResearchStateSyncOutput
+from .research_schemas import ResearchLeadOutput, ResearchRequest, ResearchStateSyncOutput, RunWriterPayload
 from .writing_runner import WritingRunner
 from .writing_schemas import WritingRequest
 
 logger = logging.getLogger(__name__)
 
 
-RESEARCH_TO_WRITER_HOUSE_PROMPT = """Write a manuscript for current results presented workspace in TeX, using only the existing workspace evidence, and available research artifacts.
+RESEARCH_TO_WRITER_HOUSE_PROMPT = """Write from the current workspace evidence and available research artifacts only.
 Do not perform new expensive computations.
-Do not write this as an experiment log, execution trace, or lab report.
-Write it as a compact journal-style scientific sections with Abstract, Introduction, Results and Discussion and Methods.
-Prefer ACS-like manuscript tone when appropriate.
-You can generate lightweight schematic figures and using existing data to create new result figures to enhance the manuscript."""
+Choose the writing workflow strictly from the requested writing mode and output format.
+If the requested output format is markdown, do not switch into LaTeX/manuscript compilation workflow.
+If the requested output format is TeX, write TeX-ready scientific content and keep compilation concerns inside the TeX branch only.
+Do not drift into experiment logs or execution traces unless the requested writing mode explicitly implies a report-style deliverable."""
 
 
 class ResearchRunner:
@@ -174,6 +174,39 @@ class ResearchRunner:
         self._emit("RUN_START", payload={"lane": "research", "question": request_model.question, "mode": "resume"})
         return await self._run_graph(state, request_model=request_model)
 
+    async def _execute_writer_request(
+        self,
+        *,
+        request_model: ResearchRequest,
+        writer_payload: RunWriterPayload,
+    ) -> dict[str, Any]:
+        run_ctx = RunContext.create(
+            workspace=self.run_context.workspace,
+            project_id=self.run_context.project_id,
+            model_name=self.llm_profile.config_for_role("write_director").model,
+            provider=self.llm_profile.config_for_role("write_director").provider,
+            base_url=self.llm_profile.config_for_role("write_director").base_url,
+        )
+        runner = WritingRunner(
+            llm_profile=self.llm_profile,
+            run_context=run_ctx,
+            reporter=self.reporter,
+            skills_runtime=self.skills_runtime,
+        )
+        result = await runner.arun(
+            self._build_writer_request(
+                request_model=request_model,
+                source_campaign_id=self.run_context.run_id,
+                writer_payload=writer_payload,
+            )
+        )
+        final_output_path = str((result or {}).get("final_output_path") or "").strip()
+        if not final_output_path:
+            final_output_path = str((result or {}).get("final_report_path") or "").strip()
+        enriched = dict(result or {})
+        enriched["final_output_path"] = final_output_path
+        return enriched
+
     async def _run_graph(
         self,
         initial_state: dict[str, Any],
@@ -221,18 +254,17 @@ class ResearchRunner:
                     allow_deep_report=request_model.allow_deep_report
                 ),
                 experiment_runner=self.experiment_runner,
+                writer_runner=lambda payload: self._execute_writer_request(
+                    request_model=request_model,
+                    writer_payload=payload,
+                ),
                 skills_runtime=self.skills_runtime,
                 progress_callback=self._update_task_state_progress,
             )
             result = await graph.ainvoke(initial_state, config={"configurable": {"thread_id": self.run_context.run_id}})
         summary = str(result.get("summary") or "").strip()
         status = str(result.get("status") or "done")
-        writing_result: dict[str, Any] | None = None
-        if status == "done" and request_model.writing_mode != "none":
-            writing_result = await self._launch_writing_handoff(request_model=request_model)
-            writing_summary = str((writing_result or {}).get("summary") or "").strip()
-            if writing_summary:
-                summary = "\n\n".join([summary, writing_summary]).strip()
+        writing_result = result.get("writing_result") if isinstance(result.get("writing_result"), dict) else {}
         self._write_task_state(
             {
                 "schema_version": 1,
@@ -247,7 +279,7 @@ class ResearchRunner:
                 "cycle_index": self._read_board_cycle_index(),
                 "board_path": f"research_campaigns/{self.run_context.run_id}/board.json",
                 "latest_action": self._lead_action_state(result.get("lead_action")),
-                "latest_writing_run_id": str((writing_result or {}).get("run_id") or ""),
+                "latest_writing_run_id": str((result.get("writing_run_id") or writing_result.get("run_id") or "")),
                 "summary": summary,
             }
         )
@@ -261,41 +293,57 @@ class ResearchRunner:
             "run_dir": str(self.run_context.run_dir),
             "final_report_path": report_paths.get("final_report", ""),
             "run_export_path": "",
-            "writing_run_id": str((writing_result or {}).get("run_id") or ""),
+            "writing_run_id": str((result.get("writing_run_id") or writing_result.get("run_id") or "")),
         }
 
-    async def _launch_writing_handoff(self, *, request_model: ResearchRequest) -> dict[str, Any]:
-        run_ctx = RunContext.create(
-            workspace=self.run_context.workspace,
-            project_id=self.run_context.project_id,
-            model_name=self.llm_profile.config_for_role("write_director").model,
-            provider=self.llm_profile.config_for_role("write_director").provider,
-            base_url=self.llm_profile.config_for_role("write_director").base_url,
+    @staticmethod
+    def _build_writer_request(
+        *,
+        request_model: ResearchRequest,
+        source_campaign_id: str,
+        writer_payload: RunWriterPayload | None = None,
+    ) -> WritingRequest:
+        payload = writer_payload
+        request_text = (
+            str(payload.request or "").strip()
+            if payload is not None and str(payload.request or "").strip()
+            else "\n".join(
+                line
+                for line in [
+                    RESEARCH_TO_WRITER_HOUSE_PROMPT,
+                    f"Research question: {request_model.question}",
+                    f"Preferred writing mode: {request_model.writing_mode}." if request_model.writing_mode != "none" else "",
+                    f"Preferred output format: {request_model.output_format}." if request_model.writing_mode != "none" else "",
+                    f"Prefer focusing on section: {request_model.target_section}." if str(request_model.target_section or "").strip() else "",
+                    f"Preferred title direction: {request_model.campaign_title}." if str(request_model.campaign_title or "").strip() else "",
+                ]
+                if line
+            ).strip()
         )
-        runner = WritingRunner(
-            llm_profile=self.llm_profile,
-            run_context=run_ctx,
-            reporter=self.reporter,
-            skills_runtime=self.skills_runtime,
+        writing_mode = (
+            str(payload.writing_mode or "").strip()
+            if payload is not None
+            else str(request_model.writing_mode or "").strip()
+        ) or "internal_report"
+        output_format = (
+            str(payload.output_format or "").strip()
+            if payload is not None
+            else str(request_model.output_format or "").strip()
+        ) or "tex"
+        target_section = (
+            str(payload.target_section or "").strip()
+            if payload is not None
+            else str(request_model.target_section or "").strip()
         )
-        writing_prompt_lines = [
-            RESEARCH_TO_WRITER_HOUSE_PROMPT,
-            f"Research question: {request_model.question}",
-        ]
-        if request_model.writing_mode != "none":
-            writing_prompt_lines.append(f"Preferred writing mode: {request_model.writing_mode}.")
-        if str(request_model.target_section or "").strip():
-            writing_prompt_lines.append(f"Prefer focusing on section: {request_model.target_section}.")
-        if str(request_model.campaign_title or "").strip():
-            writing_prompt_lines.append(f"Preferred title direction: {request_model.campaign_title}.")
-        return await runner.arun(
-            WritingRequest(
-                request="\n".join(writing_prompt_lines).strip(),
-                session_context_text=request_model.session_context_text,
-                chat_session_id=request_model.chat_session_id,
-                entry_context_tokens_estimate=request_model.entry_context_tokens_estimate,
-                source_campaign_id=self.run_context.run_id,
-            )
+        return WritingRequest(
+            request=request_text,
+            session_context_text=request_model.session_context_text,
+            chat_session_id=request_model.chat_session_id,
+            entry_context_tokens_estimate=request_model.entry_context_tokens_estimate,
+            source_campaign_id=source_campaign_id,
+            writing_mode=writing_mode,
+            output_format=output_format,
+            target_section=(target_section or None),
         )
 
     def _build_resume_state(self, *, resume_feedback: str = "") -> dict[str, Any]:

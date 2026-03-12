@@ -99,24 +99,24 @@ def test_orchestrator_proposal_function_tools_default_allowlist() -> None:
     profile = _profile_for_roles()
     orch = _orchestrator_for_kwargs(profile)
     orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
-        {"name": "bash_exec"},
+        {"name": "bash"},
         {"name": "write_note"},
     ])
     orch.tool_policy = SimpleNamespace(denied_tools=set())
 
     tools = orch._proposal_function_tools()
 
-    assert [tool["name"] for tool in tools] == ["bash_exec"]
+    assert [tool["name"] for tool in tools] == ["bash"]
 
 
 def test_orchestrator_proposal_function_tools_respects_denied() -> None:
     profile = _profile_for_roles()
     orch = _orchestrator_for_kwargs(profile)
     orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
-        {"name": "bash_exec"},
+        {"name": "bash"},
         {"name": "write_note"},
     ])
-    orch.tool_policy = SimpleNamespace(denied_tools={"bash_exec"})
+    orch.tool_policy = SimpleNamespace(denied_tools={"bash"})
 
     tools = orch._proposal_function_tools()
 
@@ -128,7 +128,7 @@ def test_orchestrator_proposal_function_tools_disabled_returns_empty() -> None:
     profile.agent_policies.proposal.browse_tools_enabled = False
     orch = _orchestrator_for_kwargs(profile)
     orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
-        {"name": "bash_exec"},
+        {"name": "bash"},
         {"name": "write_note"},
     ])
     orch.tool_policy = SimpleNamespace(denied_tools=set())
@@ -142,7 +142,7 @@ def test_orchestrator_tool_schema_respects_policy_filter() -> None:
     profile = _profile_for_roles()
     orch = _orchestrator_for_kwargs(profile)
     orch.tool_backend = SimpleNamespace(list_function_tools=lambda: [
-        {"name": "bash_exec"},
+        {"name": "bash"},
         {"name": "memory_apply_aider_edits"},
     ])
     orch.tool_policy = ToolPolicy(denied_tools={"memory_apply_aider_edits"})
@@ -160,7 +160,7 @@ def test_orchestrator_tool_schema_respects_policy_filter() -> None:
 
     text = orch._tool_schema()
     short = orch._tool_schema_short()
-    assert "bash_exec" in text
-    assert "bash_exec" in short
+    assert "bash" in text
+    assert "bash" in short
     assert "memory_apply_aider_edits" not in text
     assert "memory_apply_aider_edits" not in short

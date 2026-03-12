@@ -27,7 +27,7 @@ def test_director_observations_view_drops_metadata_paths() -> None:
             ],
             "resume_state": {"next_step": 2},
             "interrupted_toolcall": {
-                "tool": "bash_exec",
+                "tool": "bash",
                 "status": "failed",
                 "highlights": "timeout",
                 "cancel_accepted": True,
@@ -49,7 +49,7 @@ def test_director_observations_view_drops_metadata_paths() -> None:
     assert "event_path" not in row
     assert "resume_state" not in row
     assert row["interrupted_toolcall"] == {
-        "tool": "bash_exec",
+        "tool": "bash",
         "status": "failed",
         "highlights": "timeout",
         "cancel_accepted": True,

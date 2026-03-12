@@ -24,7 +24,7 @@ def test_fast_director_prompt_has_no_proposal_lifecycle() -> None:
     assert "Treat `.` as project files root" in system_content
     assert "reference absolute project-files-root path" in system_content
     assert "use relative paths in arguments by default" in system_content
-    assert "`bash_exec` command text is exempt" in system_content
+    assert "`bash` command text is exempt" in system_content
     assert "Do not invent file paths, tool outputs, or numerical results" in system_content
     assert "fill `update_memory`, otherwise return `[]`" in system_content
     assert "planning-only / explanation-only" in system_content

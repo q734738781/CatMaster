@@ -6,7 +6,7 @@ metadata:
   catmaster-roles: "section_writer write_reviewer"
   catmaster-lanes: "writing"
   catmaster-tags: "writing results discussion"
-  catmaster-suggested-tools: "review_research_context read_research_pack bash_exec"
+  catmaster-suggested-tools: "review_research_context read_research_pack bash"
 ---
 
 # results-and-discussion-writing
@@ -20,7 +20,7 @@ Use when the section must explain computed structures, trends, figures, or compa
 ## Suggested tools
 - `review_research_context`
 - `read_research_pack`
-- `bash_exec`
+- `bash`
 
 ## Workflow
 1. Decide whether the subsection belongs in Results, Discussion, or a deliberate hybrid. Do not mix them by accident.

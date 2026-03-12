@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from catmaster.agents.writing_nodes import (
+    assemble_markdown_node,
     assemble_manuscript_node,
+    finalize_markdown_node,
     finalize_writing_node,
     init_writing_node,
     plan_writing_node,
@@ -230,6 +232,171 @@ async def test_writing_nodes_pipeline_builds_manuscript_and_updates_source_board
     assert updated_source_board is not None
     assert updated_source_board.latest_writer_ref == "manuscript/MANUSCRIPT.tex"
     assert updated_source_board.action_refs[-1].kind == "writer"
+
+
+@pytest.mark.anyio
+async def test_markdown_writing_pipeline_skips_tex_compile_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_polish(payload):
+        path = tmp_path / "files" / str(payload["source_path"])
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text + "\n<!-- polished -->\n", encoding="utf-8")
+        return "polished", {"data": {"model_name": "fake-polisher"}}
+
+    monkeypatch.setattr("catmaster.agents.writing_nodes.polish_academic_prose", _fake_polish)
+    source_store = ResearchStore(workspace=tmp_path, campaign_id="camp_md")
+    source_store.save_board(
+        ResearchBoard(
+            campaign_id="camp_md",
+            question="Summarize the validation campaign.",
+            exploration_policy="anchored",
+            status="done",
+            max_cycles=4,
+            max_literature_queries=2,
+            max_fast_runs=2,
+            max_standard_runs=1,
+        )
+    )
+    source_store.persist_dossier(
+        ResearchDossier(
+            campaign_id="camp_md",
+            question="Summarize the validation campaign.",
+            exploration_policy="anchored",
+            final_answer_md="Hypothesis H1 remains best supported.",
+            confidence="medium",
+        )
+    )
+    store = WritingStore(workspace=tmp_path, run_id="write_md")
+    store.ensure_exists()
+    request = WritingRequest(
+        request="Write a compact markdown experiment report.",
+        source_campaign_id="camp_md",
+        writing_mode="internal_report",
+        output_format="md",
+    )
+    init_cmd = await init_writing_node({"request": request.model_dump()}, writing_store=store, source_store=source_store)
+    plan_cmd = await plan_writing_node(
+        {
+            "request": request.model_dump(),
+            "board": init_cmd.update["board"],
+            "dossier": init_cmd.update["dossier"],
+        },
+        writing_store=store,
+        source_store=source_store,
+        write_director_agent=_DummyAgent(
+            WritingPlanModel(
+                title="Validation Report",
+                writing_mode="full_draft",
+                preferred_output_format="tex",
+                target_audience="internal",
+                section_specs=[
+                    WritingSectionSpec(
+                        section_id="results",
+                        heading="Results",
+                        purpose="Summarize the main validation results.",
+                    )
+                ],
+            )
+        ),
+        skills_runtime=None,
+    )
+    assert plan_cmd.update["plan"].preferred_output_format == "md"
+
+    draft_cmd = await write_section_node(
+        {
+            "request": request.model_dump(),
+            "board": plan_cmd.update["board"],
+            "plan": plan_cmd.update["plan"],
+            "dossier": plan_cmd.update["dossier"],
+        },
+        writing_store=store,
+        source_store=source_store,
+        section_writer_agent=_DummyAgent(
+            {
+                "section_id": "results",
+                "heading": "Results",
+                "status": "drafted",
+                "section_md": "## Results\n\nHypothesis H1 remained the best supported candidate after validation.",
+                "planned_figure_ids": [],
+                "realized_figure_refs": [],
+            }
+        ),
+        skills_runtime=None,
+    )
+    review_cmd = await review_section_node(
+        {
+            "request": request.model_dump(),
+            "board": draft_cmd.update["board"],
+            "plan": draft_cmd.update["plan"],
+            "latest_draft": draft_cmd.update["latest_draft"],
+        },
+        writing_store=store,
+        write_reviewer_model=_DummyReviewerModel(
+            {
+                "section_id": "results",
+                "status": "approved",
+                "revision_notes": [],
+                "unsupported_claims": [],
+                "missing_citations": [],
+            }
+        ),
+        skills_runtime=None,
+    )
+    advance_cmd = await write_section_node(
+        {
+            "request": request.model_dump(),
+            "board": review_cmd.update["board"],
+            "plan": review_cmd.update["plan"],
+            "dossier": source_store.load_dossier(),
+        },
+        writing_store=store,
+        source_store=source_store,
+        section_writer_agent=_DummyAgent({}),
+        skills_runtime=None,
+    )
+    assert advance_cmd.goto == "assemble_markdown"
+
+    assemble_cmd = await assemble_markdown_node(
+        {
+            "request": request.model_dump(),
+            "board": advance_cmd.update["board"],
+            "plan": advance_cmd.update["plan"],
+        },
+        writing_store=store,
+        source_store=source_store,
+    )
+    assert assemble_cmd.goto == "finalize_markdown"
+    finalize_cmd = await finalize_markdown_node(
+        {
+            "request": request.model_dump(),
+            "board": assemble_cmd.update["board"],
+            "plan": advance_cmd.update["plan"],
+            "bundle": assemble_cmd.update["bundle"],
+            "summary": assemble_cmd.update["summary"],
+        },
+        writing_store=store,
+        source_store=source_store,
+        write_finalizer_agent=_DummyAgent(
+            {
+                "summary": "Markdown final checks completed.",
+                "compile_notes": ["no TeX compile required"],
+                "final_output_path": "manuscript/REPORT.md",
+            }
+        ),
+        skills_runtime=None,
+    )
+    assert finalize_cmd.goto == "summarize_writing"
+    report_path = tmp_path / "files" / "manuscript" / "REPORT.md"
+    assert report_path.exists()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "# Validation Report" in report_text
+    assert "<!-- polished -->" in report_text
+    assert not (tmp_path / "files" / "manuscript" / "MANUSCRIPT.tex").exists()
+    updated_source_board = source_store.load_board()
+    assert updated_source_board is not None
+    assert updated_source_board.latest_writer_ref == "manuscript/REPORT.md"
 
 
 @pytest.mark.anyio

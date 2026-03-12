@@ -58,3 +58,20 @@ def test_goal_still_flows_via_state_not_memory_topic(tmp_path: Path) -> None:
 
         assert "Find the most stable adsorption geometry" in director_ctx
         assert "Task goal:\nCompare bridge vs ontop on the bounded slab" in task_ctx
+
+
+def test_task_context_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        store = MemoryStore.create_default(workspace=tmp_path)
+        store.ensure_exists()
+        state = {
+            "user_request": "Inspect workspace",
+            "current_task_packet": {
+                "goal": "Inspect workspace",
+                "suggested_tools": ["bash_exec", "read_text_file"],
+            },
+        }
+
+        task_ctx = _build_task_context(state, store)
+
+        assert "Suggested tools:\nbash, read_text_file" in task_ctx

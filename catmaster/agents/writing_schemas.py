@@ -15,6 +15,9 @@ class WritingRequest(BaseModel):
     chat_session_id: str | None = Field(None)
     entry_context_tokens_estimate: int = Field(0, ge=0)
     source_campaign_id: str | None = Field(None)
+    writing_mode: Literal["internal_report", "paper_outline", "section_draft", "full_draft"] = Field("internal_report")
+    output_format: Literal["md", "tex"] = Field("tex")
+    target_section: str | None = Field(None)
 
 
 class WritingPlanOutput(WritingPlanModel):
@@ -34,6 +37,7 @@ class WritingFinalizeOutput(BaseModel):
 
     summary: str = Field(...)
     compile_notes: list[str] = Field(default_factory=list)
+    final_output_path: str | None = Field(None)
     final_latex_path: str | None = Field(None)
 
 

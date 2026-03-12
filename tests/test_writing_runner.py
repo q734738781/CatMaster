@@ -19,7 +19,7 @@ class _Registry:
     def as_langchain_tools(self, **kwargs):
         _ = kwargs
         return [
-            _Tool("bash_exec"),
+            _Tool("bash"),
             _Tool("apply_aider_edits"),
             _Tool("agentic_compile_tex"),
             _Tool("polish_academic_prose"),
@@ -86,9 +86,64 @@ async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
     )
 
     assert result["status"] == "done"
-    assert "bash_exec" in captured["write_director"]
+    assert "bash" in captured["write_director"]
     assert "mcp_director" in captured["write_director"]
     assert "agentic_compile_tex" in captured["write_director"]
     assert "polish_academic_prose" in captured["write_director"]
     assert "apply_aider_edits" not in captured["write_director"]
     assert "polish_academic_prose" not in captured["section_writer"]
+
+
+@pytest.mark.anyio
+async def test_markdown_writing_request_does_not_expose_compile_tool(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, list[str]] = {}
+
+    def _fake_build_agent(*, tools, role, **kwargs):
+        _ = kwargs
+        captured[role] = [tool.name for tool in tools]
+        return object()
+
+    @asynccontextmanager
+    async def _fake_open_mcp_runtime():
+        yield SimpleNamespace(skill_mounts={}, role_filtered_tools=lambda role: [])
+
+    monkeypatch.setattr("catmaster.agents.writing_runner.get_tool_registry", lambda: _Registry())
+    monkeypatch.setattr("catmaster.agents.writing_runner._build_agent", _fake_build_agent)
+    monkeypatch.setattr("catmaster.agents.writing_runner.build_chat_model", lambda cfg: object())
+    monkeypatch.setattr("catmaster.agents.writing_runner.build_writing_graph", lambda **kwargs: _FakeGraph())
+
+    runner = WritingRunner.__new__(WritingRunner)
+    runner.llm_profile = SimpleNamespace(
+        config_for_role=lambda role: SimpleNamespace(model=role),
+        mcp=SimpleNamespace(filesystem=SimpleNamespace(enabled=True)),
+        writing=SimpleNamespace(author_name="CatMaster"),
+    )
+    runner.run_context = SimpleNamespace(
+        workspace=tmp_path,
+        run_dir=tmp_path / "metadata" / "runs" / "write_001",
+        run_id="write_001",
+        project_id="proj",
+    )
+    runner.reporter = None
+    runner.skills_runtime = None
+    runner.store = SimpleNamespace(ensure_exists=lambda: None)
+    runner._write_task_state = lambda payload: None
+    runner._publish_final_report = lambda **kwargs: None
+    runner._open_mcp_filesystem_runtime = _fake_open_mcp_runtime
+
+    request = WritingRequest(
+        request="Write an internal report in markdown.",
+        source_campaign_id=None,
+        writing_mode="internal_report",
+        output_format="md",
+    )
+    result = await WritingRunner._run_graph(
+        runner,
+        {"request": request.model_dump(), "status": "planning", "resume_mode": False},
+    )
+
+    assert result["status"] == "done"
+    assert "agentic_compile_tex" not in captured["write_director"]

@@ -74,9 +74,9 @@ def test_adapt_tool_return_offloads_large_fields_by_hard_limit(tmp_path) -> None
         preview_chars=128,
     )
     raw_result = (
-        "bash_exec completed.",
+        "bash completed.",
         {
-            "tool_name": "bash_exec",
+            "tool_name": "bash",
             "data": {
                 "stdout": "x" * 800,
                 "stderr": "",
@@ -88,7 +88,7 @@ def test_adapt_tool_return_offloads_large_fields_by_hard_limit(tmp_path) -> None
     )
 
     content, artifact = adapt_tool_return(
-        tool_name="bash_exec",
+        tool_name="bash",
         raw_result=raw_result,
         workspace_files_root=tmp_path,
         output_config=config,
@@ -99,7 +99,7 @@ def test_adapt_tool_return_offloads_large_fields_by_hard_limit(tmp_path) -> None
         stdout_field = data.get("stdout")
         assert "offload_ref" in stdout_field
         assert (tmp_path / stdout_field["offload_ref"]).exists()
-        assert str(content) == "bash_exec completed."
+        assert str(content) == "bash completed."
     else:
         refs = artifact.get("offload_refs") or []
         assert refs

@@ -29,6 +29,7 @@ Operating rules:
 - Use literature when the next decision needs grounding, conventions, benchmark context, or representative citations.
 - Use experiments only for bounded, execution-ready tasks that produce new numerical evidence, structure generation, verification, or other real execution outputs.
 - Use writer when the task is to synthesize existing workspace artifacts, memory, prior runs, figures, and already-computed evidence into manuscript text, figures, tables, or evidence maps without launching new expensive calculations.
+- When you choose RunWriter, structure the payload like a real user writing request: provide the concrete writer `request`, `writing_mode`, `output_format`, and optional `target_section`.
 - anchored policy: do not silently change topic and do not introduce new hypotheses.
 - local_expand policy: only propose local variants/ablations tied to existing hypotheses.
 - open policy: new hypotheses are allowed, but keep them relevant to the stated question.

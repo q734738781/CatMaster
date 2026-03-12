@@ -30,9 +30,9 @@ from catmaster.ui.reporters import NullReporter, Reporter
 
 from .writing_graph import build_writing_graph
 from .writing_prompts import (
-    SECTION_WRITER_SYSTEM_PROMPT,
-    WRITE_DIRECTOR_SYSTEM_PROMPT,
-    WRITE_FINALIZER_SYSTEM_PROMPT,
+    get_section_writer_system_prompt,
+    get_write_director_system_prompt,
+    get_write_finalizer_system_prompt,
 )
 from .writing_schemas import SectionDraftOutput, WritingFinalizeOutput, WritingPlanOutput, WritingRequest
 
@@ -126,9 +126,9 @@ class WritingRunner:
             "summarize_writing"
             if board.status == "done"
             else (
-                "finalize_writing"
+                ("finalize_markdown" if getattr(board, "output_format", "tex") == "md" else "finalize_writing")
                 if board.status == "finalizing"
-                else ("assemble_manuscript" if board.status == "reviewing" else "write_section" if board.status == "drafting" else "plan_writing")
+                else (("assemble_markdown" if getattr(board, "output_format", "tex") == "md" else "assemble_manuscript") if board.status == "reviewing" else "write_section" if board.status == "drafting" else "plan_writing")
             )
         )
         state = {
@@ -142,6 +142,7 @@ class WritingRunner:
 
     async def _run_graph(self, initial_state: dict[str, Any]) -> dict[str, Any]:
         request_model = WritingRequest.model_validate(initial_state["request"])
+        requested_output_format = str(request_model.output_format or "tex").strip().lower() or "tex"
         source_campaign_id = str(request_model.source_campaign_id or "").strip() or None
         source_store = (
             ResearchStore(workspace=self.run_context.workspace, campaign_id=source_campaign_id)
@@ -151,7 +152,7 @@ class WritingRunner:
         registry = get_tool_registry()
         local_tools = registry.as_langchain_tools(
             allowlist=[
-                "bash_exec",
+                "bash",
                 "apply_aider_edits",
                 "render_structure_views",
                 "analyze_images",
@@ -172,8 +173,8 @@ class WritingRunner:
         async with self._open_mcp_filesystem_runtime() as mcp_fs_runtime:
             mounted_skill_tokens = tuple(mcp_fs_runtime.skill_mounts.keys()) if mcp_fs_runtime is not None else ()
             local_by_name = {str(getattr(tool, "name", "") or ""): tool for tool in local_tools}
-            bash_tool = local_by_name.get("bash_exec")
-            compile_tool = local_by_name.get("agentic_compile_tex")
+            bash_tool = local_by_name.get("bash") or local_by_name.get("bash_exec")
+            compile_tool = local_by_name.get("agentic_compile_tex") if requested_output_format == "tex" else None
             polish_tool = local_by_name.get("polish_academic_prose")
             section_tools = [
                 _make_role_scoped_literature_tool(tool, role="section_writer")
@@ -202,7 +203,7 @@ class WritingRunner:
             write_director_agent = _build_agent(
                 model=build_chat_model(self.llm_profile.config_for_role("write_director")),
                 tools=_dedupe_tools(director_tools),
-                system_prompt=WRITE_DIRECTOR_SYSTEM_PROMPT,
+                system_prompt=get_write_director_system_prompt(requested_output_format),
                 schema=WritingPlanOutput,
                 role="write_director",
                 skills_runtime=self.skills_runtime,
@@ -211,7 +212,7 @@ class WritingRunner:
             write_finalizer_agent = _build_agent(
                 model=build_chat_model(self.llm_profile.config_for_role("write_director")),
                 tools=_dedupe_tools(director_tools),
-                system_prompt=WRITE_FINALIZER_SYSTEM_PROMPT,
+                system_prompt=get_write_finalizer_system_prompt(requested_output_format),
                 schema=WritingFinalizeOutput,
                 role="write_director",
                 skills_runtime=self.skills_runtime,
@@ -220,7 +221,7 @@ class WritingRunner:
             section_writer_agent = _build_agent(
                 model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
                 tools=_dedupe_tools(section_tools),
-                system_prompt=SECTION_WRITER_SYSTEM_PROMPT,
+                system_prompt=get_section_writer_system_prompt(requested_output_format),
                 schema=SectionDraftOutput,
                 role="section_writer",
                 skills_runtime=self.skills_runtime,
@@ -254,11 +255,17 @@ class WritingRunner:
                 "entry_context_tokens_estimate": request_model.entry_context_tokens_estimate,
                 "source_campaign_id": request_model.source_campaign_id,
                 "writing_mode": str(getattr(board, "writing_mode", "") or ""),
+                "output_format": str(getattr(board, "output_format", request_model.output_format) or request_model.output_format or ""),
                 "summary": summary,
                 "final_answer": summary,
             }
         )
-        self._publish_final_report(request_model=request_model, summary=summary, writing_mode=str(getattr(board, "writing_mode", "") or ""))
+        self._publish_final_report(
+            request_model=request_model,
+            summary=summary,
+            writing_mode=str(getattr(board, "writing_mode", "") or ""),
+            output_format=str(getattr(board, "output_format", request_model.output_format) or request_model.output_format or ""),
+        )
         return {
             "status": status,
             "summary": summary,
@@ -295,7 +302,7 @@ class WritingRunner:
         existing["current_work_label"] = str(current_work_label or "").strip()
         path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def _publish_final_report(self, *, request_model: WritingRequest, summary: str, writing_mode: str) -> None:
+    def _publish_final_report(self, *, request_model: WritingRequest, summary: str, writing_mode: str, output_format: str) -> None:
         reports_dir = self.run_context.run_dir / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
         path = reports_dir / "FINAL_REPORT.md"
@@ -313,6 +320,7 @@ class WritingRunner:
                     "## Writing Context",
                     f"- Source campaign: {request_model.source_campaign_id or '(none)'}",
                     f"- Writing mode: {writing_mode or '(planned by director)'}",
+                    f"- Output format: {output_format or request_model.output_format or '(requested by user)'}",
                 ]
             ).strip()
             + "\n",

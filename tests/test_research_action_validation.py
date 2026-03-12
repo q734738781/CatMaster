@@ -76,9 +76,28 @@ def test_run_writer_requires_writing_mode() -> None:
     action = ResearchLeadOutput(
         state="RunWriter",
         rationale="Enough evidence exists; write now.",
-        run_writer=RunWriterPayload(why_now="Sufficient existing evidence for manuscript drafting."),
+        run_writer=RunWriterPayload(
+            request="Write a compact markdown report from the current evidence.",
+            writing_mode="internal_report",
+            output_format="md",
+        ),
     )
-    with pytest.raises(ValueError, match="writing_mode"):
+    validate_research_action(action=action, request=request, board=board)
+
+
+def test_run_writer_requires_non_empty_request() -> None:
+    board = _board()
+    request = ResearchRequest(question="Q", writing_mode="none")
+    action = ResearchLeadOutput(
+        state="RunWriter",
+        rationale="Enough evidence exists; write now.",
+        run_writer=RunWriterPayload(
+            request="   ",
+            writing_mode="internal_report",
+            output_format="md",
+        ),
+    )
+    with pytest.raises(ValueError, match="non-empty request"):
         validate_research_action(action=action, request=request, board=board)
 
 

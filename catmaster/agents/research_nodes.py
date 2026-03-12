@@ -65,10 +65,12 @@ def validate_research_action(
         if missing:
             raise ValueError(f"unknown hypothesis ids: {', '.join(missing)}")
     if action.state == "RunWriter":
-        if request.writing_mode == "none":
-            raise ValueError("RunWriter requires writing_mode != none")
         if action.run_writer is None:
             raise ValueError("missing writer payload")
+        if not str(action.run_writer.request or "").strip():
+            raise ValueError("RunWriter requires non-empty request")
+        if str(action.run_writer.writing_mode or "").strip() == "none":
+            raise ValueError("RunWriter requires concrete writing_mode")
 def validate_research_state_sync(
     *,
     sync: ResearchStateSyncOutput,
@@ -585,6 +587,7 @@ async def execute_writer_handoff_node(
     state: dict[str, Any],
     *,
     store: ResearchStore,
+    writer_runner=None,
     progress_callback=None,
 ) -> dict[str, Any]:
     board = ResearchBoard.model_validate(state["board"])
@@ -592,30 +595,41 @@ async def execute_writer_handoff_node(
     payload = action.run_writer
     if payload is None:
         raise ValueError("RunWriter payload is missing")
+    if writer_runner is None:
+        raise ValueError("RunWriter executor is unavailable")
     if progress_callback is not None:
-        progress_callback(current_phase="executing", current_work_label="Launch writing handoff")
+        progress_callback(current_phase="executing", current_work_label="Run writer request")
     action_id = f"writer_request_{len(board.action_refs) + 1:03d}"
+    writing_result = await writer_runner(payload)
+    writing_summary = str((writing_result or {}).get("summary") or "").strip()
+    writing_run_id = str((writing_result or {}).get("run_id") or "").strip()
+    writing_output_path = (
+        str((writing_result or {}).get("final_output_path") or "").strip()
+        or str((writing_result or {}).get("final_report_path") or "").strip()
+    )
     summary = "\n".join(
-        [
-            board.current_best_answer_md or "Writer handoff requested.",
-            "",
-            "Writer handoff requested from research lead.",
-            f"Reason: {payload.why_now}",
-            "Scope: write from existing evidence; do not launch new expensive calculations.",
+        line
+        for line in [
+            board.current_best_answer_md or "",
+            writing_summary,
+            f"Writer run id: {writing_run_id}" if writing_run_id else "",
+            f"Writer output: {writing_output_path}" if writing_output_path else "",
         ]
+        if str(line or "").strip()
     ).strip()
     board = _board_with_updates(
         board,
         status="done",
+        latest_writer_ref=(writing_output_path or board.latest_writer_ref),
         action_refs=list(board.action_refs)
         + [
             ResearchActionRef(
                 action_id=action_id,
                 kind="writer",
                 status="done",
-                summary=payload.why_now[:240],
-                ref_path="request.json",
-                run_id=None,
+                summary=(writing_summary or payload.request)[:240],
+                ref_path=writing_output_path or "request.json",
+                run_id=writing_run_id or None,
             )
         ],
     )
@@ -626,11 +640,19 @@ async def execute_writer_handoff_node(
             "action_id": action_id,
             "kind": "writer",
             "status": "done",
-            "summary": payload.why_now,
-            "ref_path": "request.json",
+            "summary": writing_summary or payload.request,
+            "ref_path": writing_output_path or "request.json",
+            "run_id": writing_run_id or None,
         }
     )
-    return {"board": board, "status": "done", "summary": summary, "final_answer": summary}
+    return {
+        "board": board,
+        "status": "done",
+        "summary": summary,
+        "final_answer": summary,
+        "writing_run_id": writing_run_id,
+        "writing_result": writing_result or {},
+    }
 
 
 async def finalize_ask_human_node(
@@ -778,11 +800,6 @@ async def build_dossier_node(
             f"Dossier metadata: {dossier_json_path}",
         ]
     ).strip()
-    if ResearchRequest.model_validate(state["request"]).writing_mode == "none":
-        return Command(
-            goto="summarize_research",
-            update={"dossier": dossier, "status": "done", "summary": summary, "final_answer": summary},
-        )
     return Command(
         goto="summarize_research",
         update={
@@ -790,7 +807,6 @@ async def build_dossier_node(
             "status": "done",
             "summary": summary,
             "final_answer": summary,
-            "writing_requested": True,
         },
     )
 def summarize_research_node(state: dict[str, Any]) -> dict[str, Any]:

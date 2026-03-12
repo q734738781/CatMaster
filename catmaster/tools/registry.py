@@ -20,6 +20,7 @@ class ToolRegistry:
 
     def __init__(self, register_all_tools: bool = True):
         self.tools = {}
+        self.aliases: dict[str, str] = {}
         if register_all_tools:
             self._register_all_tools()
     
@@ -121,7 +122,8 @@ class ToolRegistry:
         self.register_tool("agentic_compile_tex", agentic_compile_tex, AgenticCompileTexInput)
         self.register_tool("polish_academic_prose", polish_academic_prose, PolishAcademicProseInput)
         self.register_tool("run_literature_research", run_literature_research, RunLiteratureResearchInput)
-        self.register_tool("bash_exec", bash_exec, BashExecInput)
+        self.register_tool("bash", bash_exec, BashExecInput)
+        self.register_alias("bash_exec", "bash")
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
         self.register_tool("write_note", write_note, MemoryNoteInput)
     
@@ -143,6 +145,23 @@ class ToolRegistry:
             "parameters": input_model.model_json_schema()
         }
 
+    def register_alias(self, alias: str, target: str) -> None:
+        alias_name = str(alias or "").strip()
+        target_name = str(target or "").strip()
+        if not alias_name or not target_name:
+            raise ValueError("Tool alias and target must be non-empty.")
+        self.aliases[alias_name] = target_name
+
+    def _canonical_tool_name(self, name: str) -> str:
+        current = str(name or "").strip()
+        if not current:
+            return current
+        seen: set[str] = set()
+        while current in self.aliases and current not in seen:
+            seen.add(current)
+            current = self.aliases[current]
+        return current
+
     def as_openai_tools(
         self,
         *,
@@ -151,7 +170,12 @@ class ToolRegistry:
     ) -> list[dict]:
         tools: list[dict] = []
         names = allowlist if allowlist is not None else list(self.tools.keys())
-        for name in names:
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
             info = self.tools.get(name)
             if not info:
                 continue
@@ -169,15 +193,16 @@ class ToolRegistry:
     
     def get_tool_info(self, name: str) -> Dict[str, Any]:
         """Get tool information by name."""
-        return self.tools.get(name, {})
+        return self.tools.get(self._canonical_tool_name(name), {})
     
     def get_tool_function(self, name: str) -> Callable:
         """Get tool function by name."""
-        tool_info = self.tools.get(name)
+        canonical_name = self._canonical_tool_name(name)
+        tool_info = self.tools.get(canonical_name)
         if tool_info and tool_info.get("function") is not None:
             return tool_info["function"]
         if tool_info and tool_info.get("coroutine") is not None:
-            raise ValueError(f"Tool {name} is async-only and has no sync function.")
+            raise ValueError(f"Tool {canonical_name} is async-only and has no sync function.")
         raise ValueError(f"Unknown tool: {name}")
     
     def list_tools(self) -> Dict[str, Dict[str, Any]]:
@@ -193,7 +218,12 @@ class ToolRegistry:
         """Get tool descriptions formatted for LLM consumption."""
         descriptions = []
         names = allowlist if allowlist is not None else list(self.tools.keys())
-        for name in names:
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
             info = self.tools.get(name)
             if not info:
                 continue
@@ -212,7 +242,12 @@ class ToolRegistry:
         """Get short tool descriptions (name + docstring only) for LLM planning."""
         descriptions = []
         names = allowlist if allowlist is not None else list(self.tools.keys())
-        for name in names:
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
             info = self.tools.get(name)
             if not info:
                 continue
@@ -240,7 +275,12 @@ class ToolRegistry:
         """
         tools: list[StructuredTool] = []
         names = allowlist if allowlist is not None else list(self.tools.keys())
-        for name in names:
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
             info = self.tools.get(name)
             if not info:
                 continue

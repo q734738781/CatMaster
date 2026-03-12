@@ -165,6 +165,34 @@ def test_websession_injects_chat_history_for_research_lane(tmp_path: Path) -> No
     assert int(pack["estimated_tokens"]) > 0
 
 
+def test_websession_lists_and_switches_chat_sessions(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+
+    initial_sessions = session.list_chat_sessions()
+    assert len(initial_sessions) == 1
+    first_label, first_session_id = initial_sessions[0]
+    assert first_session_id == session.current_chat_session_id()
+    assert "(active)" in first_label
+
+    session._append_chat_message(role="user", content="Session A")
+    second_session_id = session.create_chat_session()
+    session._append_chat_message(role="user", content="Session B")
+
+    sessions = session.list_chat_sessions()
+    values = {value for _, value in sessions}
+    assert first_session_id in values
+    assert second_session_id in values
+    assert session.current_chat_session_id() == second_session_id
+
+    session.select_chat_session(first_session_id)
+    assert session.current_chat_session_id() == first_session_id
+    assert session.get_chat_messages(limit=10) == [{"role": "user", "content": "Session A"}]
+
+
 def test_sidebar_snapshot_reads_cached_runs(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     session = WebSession()
@@ -186,6 +214,27 @@ def test_sidebar_snapshot_reads_cached_runs(tmp_path: Path) -> None:
     assert cards
     assert runs[0][1] == "run_001"
     assert cards[0]["run_name"] == "run_001"
+
+
+def test_list_workspaces_includes_root_when_root_is_project_space(tmp_path: Path) -> None:
+    ensure_project_space_layout(tmp_path, create=True)
+    session = WebSession()
+
+    ok, _, choices = session.set_workspace_root(str(tmp_path))
+
+    assert ok
+    assert choices == [(tmp_path.name, tmp_path.name)]
+
+
+def test_open_workspace_by_name_accepts_root_project_space_name(tmp_path: Path) -> None:
+    ensure_project_space_layout(tmp_path, create=True)
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+
+    ok, msg = session.open_workspace_by_name(tmp_path.name)
+
+    assert ok, msg
+    assert session.current_workspace_path() == str(tmp_path.resolve())
 
 
 def test_websession_chat_result_prefers_task_state_final_answer(tmp_path: Path) -> None:

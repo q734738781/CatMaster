@@ -6,7 +6,9 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from .writing_nodes import (
+    assemble_markdown_node,
     assemble_manuscript_node,
+    finalize_markdown_node,
     finalize_writing_node,
     init_writing_node,
     plan_writing_node,
@@ -81,12 +83,32 @@ def build_writing_graph(
         ),
     )
     graph.add_node(
+        "assemble_markdown",
+        partial(
+            assemble_markdown_node,
+            writing_store=writing_store,
+            source_store=source_store,
+            progress_callback=progress_callback,
+        ),
+    )
+    graph.add_node(
         "assemble_manuscript",
         partial(
             assemble_manuscript_node,
             writing_store=writing_store,
             source_store=source_store,
             writing_config=writing_config,
+            progress_callback=progress_callback,
+        ),
+    )
+    graph.add_node(
+        "finalize_markdown",
+        partial(
+            finalize_markdown_node,
+            writing_store=writing_store,
+            source_store=source_store,
+            write_finalizer_agent=write_finalizer_agent,
+            skills_runtime=skills_runtime,
             progress_callback=progress_callback,
         ),
     )

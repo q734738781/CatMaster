@@ -172,7 +172,7 @@ class LocalToolBackend(ToolBackend):
         if not active:
             return False
         tool_name = str(active.get("tool_name") or "")
-        if tool_name == "bash_exec":
+        if tool_name in {"bash", "bash_exec"}:
             try:
                 from catmaster.tools.misc.bash_exec import cancel_bash_exec_toolcall
 

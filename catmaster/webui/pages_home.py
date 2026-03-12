@@ -88,8 +88,72 @@ def build_home_page(
 
     def _chat_session_updates(session, *, lane: str) -> tuple[Dict[str, Any], str]:
         choices = session.list_chat_sessions()
+        if not choices and session.current_workspace_path():
+            session.create_chat_session()
+            choices = session.list_chat_sessions()
         current = session.current_chat_session_id()
+        choice_values = {str(value) for _, value in choices}
+        if current not in choice_values:
+            current = choices[0][1] if choices else None
         return gr.update(choices=choices, value=(current or None)), session.entry_context_status_text(lane=lane)
+
+    def _project_space_view(
+        session,
+        *,
+        ctx: str,
+        lane: str,
+        selected_run: str = "",
+        search_text: str = "",
+    ) -> tuple:
+        snapshot = session.get_sidebar_snapshot()
+        runs = list(snapshot.get("runs") or [])
+        cards = list(snapshot.get("cards") or [])
+        selected = (selected_run or "").strip()
+        run_names = {name for _, name in runs}
+        if not selected and runs:
+            selected = runs[0][1]
+        if selected and selected not in run_names:
+            selected = ""
+        if selected:
+            session.select_run(selected)
+
+        run_dir = session.get_selected_run_dir()
+        ps_name = registry.project_space_name_for_session(session)
+        run_info = session.run_status_text()
+        run_status = session.run_status or "idle"
+        model_name = str((session.run_info or {}).get("model_name", ""))
+        is_running = run_status in ("running", "starting", "interrupting")
+
+        reporter = session.reporter
+        active_reporter_dir = reporter.get_run_dir() if reporter else None
+        live_dir = active_reporter_dir if (is_running and active_reporter_dir) else run_dir
+        live_state = _get_live_state(session, live_dir)
+        chat_messages = _chat_messages_for_home(session, live_state, run_status)
+        chat_session_update, chat_context_status = _chat_session_updates(session, lane=lane)
+        sidebar_html = render_sidebar_run_cards_html(
+            cards, selected_run=selected, search_text=search_text,
+        )
+        detail_dir = live_dir if (is_running and active_reporter_dir) else run_dir
+        proposal = session.read_proposal(detail_dir) if run_status in _PLAN_ACTIVE_STATUSES else ""
+        tracker_md = render_live_tracker_markdown(live_state)
+        run_choices_update = gr.update(choices=runs, value=(selected or None))
+
+        return (
+            compact_status_bar_html(
+                run_status, run_info, model_name,
+                _monitor_url(ctx, ps_name, selected), ps_name,
+            ),
+            chat_session_update,
+            chat_context_status,
+            chat_messages,
+            selected,
+            run_choices_update,
+            gr.update(choices=runs, value=(selected or None)),
+            nav_header_html("home", ps_name),
+            sidebar_html,
+            proposal or "No plan yet.\n\nPlans appear for multi-step tasks.",
+            tracker_md,
+        )
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -103,33 +167,26 @@ def build_home_page(
             run=params.get("run"),
         )
         session = registry.get_session(state.ctx)
-        snapshot = session.get_sidebar_snapshot()
-        runs = list(snapshot.get("runs") or [])
-        cards = list(snapshot.get("cards") or [])
-        selected = state.run_name or (runs[0][1] if runs else "")
-        if selected:
-            session.select_run(selected)
-        run_dir = session.get_selected_run_dir()
         workspaces = session.list_workspaces()
         ps_name = registry.project_space_name_for_session(session)
-        run_info = session.run_status_text()
-        run_status = session.run_status or "idle"
-        model_name = str((session.run_info or {}).get("model_name", ""))
-        is_running = run_status in ("running", "starting", "interrupting")
-
-        reporter = session.reporter
-        active_reporter_dir = reporter.get_run_dir() if reporter else None
-        live_dir = active_reporter_dir if (is_running and active_reporter_dir) else run_dir
-        live_state = _get_live_state(session, live_dir)
-        chat_messages = _chat_messages_for_home(session, live_state, run_status)
-        chat_session_update, chat_context_status = _chat_session_updates(session, lane="standard")
-
-        sidebar_html = render_sidebar_run_cards_html(
-            cards, selected_run=selected, search_text="",
+        (
+            status_bar,
+            chat_session_update,
+            chat_context_status,
+            chat_messages,
+            selected,
+            runs_update,
+            resume_runs_update,
+            nav_html,
+            sidebar_html,
+            proposal,
+            tracker_md,
+        ) = _project_space_view(
+            session,
+            ctx=state.ctx,
+            lane="standard",
+            selected_run=state.run_name,
         )
-        detail_dir = live_dir if (is_running and active_reporter_dir) else run_dir
-        proposal = session.read_proposal(detail_dir) if run_status in _PLAN_ACTIVE_STATUSES else ""
-        tracker_md = render_live_tracker_markdown(live_state)
 
         return (
             state.ctx,                                   # ctx_state
@@ -137,19 +194,16 @@ def build_home_page(
             gr.update(choices=workspaces, value=ps_name or None),  # ws_list
             state.project_space_path,                    # ws_current_box
             state.status,                                # ws_status_md
-            compact_status_bar_html(
-                run_status, run_info, model_name,
-                _monitor_url(state.ctx, ps_name, selected), ps_name,
-            ),                                           # status_bar_html
+            status_bar,                                  # status_bar_html
             chat_session_update,                         # chat_session_dropdown
             chat_context_status,                         # chat_context_status_md
             chat_messages,                               # chatbot
             selected,                                    # selected_run_state
-            gr.update(choices=runs, value=selected or None),  # runs_dropdown
-            gr.update(choices=runs, value=selected or None),  # resume_run_box
-            nav_header_html("home", ps_name),            # nav_html
+            runs_update,                                 # runs_dropdown
+            resume_runs_update,                          # resume_run_box
+            nav_html,                                    # nav_html
             sidebar_html,                                # sidebar_cards_html
-            proposal or "No plan yet.\n\nPlans appear for multi-step tasks.",
+            proposal,
             tracker_md,                                  # results_md
         )
 
@@ -164,6 +218,7 @@ def build_home_page(
         seed_hypotheses: str,
         exploration_policy: str,
         writing_mode: str,
+        output_format: str,
         target_section: str,
         max_cycles: int,
         max_literature_queries: int,
@@ -186,6 +241,7 @@ def build_home_page(
             seed_hypotheses=seed_hypotheses,
             exploration_policy=exploration_policy,
             writing_mode=writing_mode,
+            output_format=output_format,
             target_section=target_section,
             max_cycles=max_cycles,
             max_literature_queries=max_literature_queries,
@@ -248,9 +304,13 @@ def build_home_page(
         session = registry.get_session(ctx)
         return session.request_interrupt_current_run()
 
-    def _on_lane_change(lane: str, ctx: str) -> Tuple[Dict[str, Any], str]:
+    def _on_lane_change(lane: str, ctx: str) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
         session = registry.get_session(ctx)
-        return (gr.update(visible=(lane == "research")), session.entry_context_status_text(lane=lane))
+        return (
+            gr.update(visible=(lane == "research")),
+            gr.update(visible=(lane in {"research", "writing"})),
+            session.entry_context_status_text(lane=lane),
+        )
 
     def _poll_home_active(
         ctx: str, selected_run: str, lane: str,
@@ -354,26 +414,93 @@ def build_home_page(
             session.current_workspace_path(),
         )
 
-    def _ws_open(root_path: str, name: str, ctx: str) -> Tuple[str, str]:
+    def _ws_open(root_path: str, name: str, lane: str, ctx: str) -> Tuple[Any, ...]:
         session = registry.get_session(ctx)
         session.set_workspace_root(root_path)
         _, msg = session.open_workspace_by_name(name)
-        return msg, session.current_workspace_path()
+        (
+            status_bar,
+            chat_session_update,
+            chat_context_status,
+            chat_messages,
+            selected,
+            runs_update,
+            resume_runs_update,
+            nav_html,
+            sidebar_html,
+            proposal,
+            tracker_md,
+        ) = _project_space_view(session, ctx=ctx, lane=lane)
+        return (
+            msg,
+            session.current_workspace_path(),
+            status_bar,
+            chat_session_update,
+            chat_context_status,
+            chat_messages,
+            runs_update,
+            resume_runs_update,
+            nav_html,
+            sidebar_html,
+            selected,
+            proposal,
+            tracker_md,
+        )
 
-    def _ws_create(root_path: str, name: str, ctx: str) -> Tuple[Any, str, str, str]:
+    def _ws_create(root_path: str, name: str, lane: str, ctx: str) -> Tuple[Any, ...]:
         session = registry.get_session(ctx)
         ok, msg, choices = session.set_workspace_root(root_path)
         if not ok:
-            return gr.update(choices=[], value=None), msg, session.current_workspace_path(), name
+            return (
+                gr.update(choices=[], value=None),
+                msg,
+                session.current_workspace_path(),
+                name,
+                compact_status_bar_html("idle", "", "", "/monitor/", ""),
+                gr.update(choices=[], value=None),
+                session.entry_context_status_text(lane=lane),
+                [],
+                gr.update(choices=[], value=None),
+                gr.update(choices=[], value=None),
+                nav_header_html("home"),
+                "",
+                "",
+                "No plan yet.\n\nPlans appear for multi-step tasks.",
+                "No results yet.",
+            )
         created, create_msg = session.create_workspace(name)
         if created:
             choices = session.list_workspaces()
         ps_name = registry.project_space_name_for_session(session)
+        (
+            status_bar,
+            chat_session_update,
+            chat_context_status,
+            chat_messages,
+            selected,
+            runs_update,
+            resume_runs_update,
+            nav_html,
+            sidebar_html,
+            proposal,
+            tracker_md,
+        ) = _project_space_view(session, ctx=ctx, lane=lane)
         return (
             gr.update(choices=choices, value=ps_name if created else None),
             create_msg or msg,
             session.current_workspace_path(),
             "",
+            status_bar,
+            chat_session_update,
+            chat_context_status,
+            chat_messages,
+            runs_update,
+            resume_runs_update,
+            nav_html,
+            sidebar_html,
+            selected,
+            proposal,
+            tracker_md,
         )
 
     # ------------------------------------------------------------------
@@ -400,7 +527,7 @@ def build_home_page(
 
             gr.HTML('<hr class="cm-divider">')
             gr.Markdown("### Chat Sessions")
-            chat_session_dropdown = gr.Dropdown(label="Active Session", choices=[])
+            chat_session_dropdown = gr.Dropdown(label="Active Session", choices=[], interactive=True)
             new_chat_session_btn = gr.Button("New Session", size="sm")
 
             gr.HTML('<hr class="cm-divider">')
@@ -410,56 +537,6 @@ def build_home_page(
             )
             runs_dropdown = gr.Dropdown(label="Select Task", choices=[])
             sidebar_cards_html = gr.HTML("")
-
-            with gr.Accordion("Run Settings", open=False):
-                run_mode_box = gr.Dropdown(
-                    label="Run Mode",
-                    choices=[
-                        ("New Run", "new_run"),
-                        ("Resume Selected Run", "resume_selected_run"),
-                    ],
-                    value="new_run",
-                )
-                resume_run_box = gr.Dropdown(
-                    label="Resume Run", choices=[], visible=False,
-                )
-                lane_box = gr.Dropdown(
-                    choices=["fast", "standard", "research", "writing"],
-                    value="standard",
-                    label="Lane",
-                )
-                with gr.Row():
-                    proposal_review_box = gr.Checkbox(label="Proposal Review", value=True)
-                    log_llm_box = gr.Checkbox(label="Log LLM", value=False)
-                    full_auto_major_box = gr.Checkbox(label="Full Auto Major", value=False)
-                with gr.Group(visible=False) as research_controls_group:
-                    seed_hypotheses_box = gr.Textbox(
-                        label="Seed Hypotheses", lines=3,
-                        placeholder="One hypothesis per line.",
-                    )
-                    with gr.Row():
-                        exploration_policy_box = gr.Dropdown(
-                            label="Exploration Policy",
-                            choices=["anchored", "local_expand", "open"],
-                            value="anchored",
-                        )
-                        writing_mode_box = gr.Dropdown(
-                            label="Writing Mode",
-                            choices=["none", "internal_report", "paper_outline",
-                                     "section_draft", "full_draft"],
-                            value="none",
-                        )
-                    target_section_box = gr.Textbox(
-                        label="Target Section",
-                        placeholder="Used when Writing Mode = section_draft",
-                    )
-                    with gr.Row():
-                        max_cycles_box = gr.Number(label="Max Cycles", value=6, precision=0)
-                        max_literature_box = gr.Number(label="Max Lit Queries", value=4, precision=0)
-                    with gr.Row():
-                        max_fast_runs_box = gr.Number(label="Max Fast Runs", value=3, precision=0)
-                        max_standard_runs_box = gr.Number(label="Max Std Runs", value=2, precision=0)
-                    allow_deep_report_box = gr.Checkbox(label="Allow Deep Report", value=False)
 
         # -- Navigation --
         nav_html = gr.HTML(nav_header_html("home"))
@@ -484,6 +561,66 @@ def build_home_page(
                         placeholder="Start a new task below to begin the conversation.",
                     )
                     chat_context_status_md = gr.Markdown("")
+                    with gr.Accordion("Run Settings", open=False):
+                        with gr.Row():
+                            run_mode_box = gr.Dropdown(
+                                label="Run Mode",
+                                choices=[
+                                    ("New Run", "new_run"),
+                                    ("Resume Selected Run", "resume_selected_run"),
+                                ],
+                                value="new_run",
+                                scale=2,
+                            )
+                            resume_run_box = gr.Dropdown(
+                                label="Resume Run", choices=[], visible=False, scale=3,
+                            )
+                            lane_box = gr.Dropdown(
+                                choices=["fast", "standard", "research", "writing"],
+                                value="standard",
+                                label="Lane",
+                                scale=2,
+                            )
+                        with gr.Group(visible=False) as writing_controls_group:
+                            with gr.Row():
+                                writing_mode_box = gr.Dropdown(
+                                    label="Writing Mode",
+                                    choices=["none", "internal_report", "paper_outline",
+                                             "section_draft", "full_draft"],
+                                    value="none",
+                                )
+                                output_format_box = gr.Dropdown(
+                                    label="Output Format",
+                                    choices=["md", "tex"],
+                                    value="md",
+                                )
+                            target_section_box = gr.Textbox(
+                                label="Target Section",
+                                placeholder="Used when Writing Mode = section_draft",
+                                visible=False,
+                            )
+                        with gr.Row():
+                            proposal_review_box = gr.Checkbox(label="Proposal Review", value=True)
+                            log_llm_box = gr.Checkbox(label="Log LLM", value=False)
+                            full_auto_major_box = gr.Checkbox(label="Full Auto Major", value=False)
+                        with gr.Group(visible=False) as research_controls_group:
+                            seed_hypotheses_box = gr.Textbox(
+                                label="Seed Hypotheses", lines=3,
+                                placeholder="One hypothesis per line.",
+                            )
+                            with gr.Row():
+                                exploration_policy_box = gr.Dropdown(
+                                    label="Exploration Policy",
+                                    choices=["anchored", "local_expand", "open"],
+                                    value="anchored",
+                                )
+                            with gr.Row():
+                                max_cycles_box = gr.Number(label="Max Cycles", value=6, precision=0)
+                                max_literature_box = gr.Number(label="Max Lit Queries", value=4, precision=0)
+                            with gr.Row():
+                                max_fast_runs_box = gr.Number(label="Max Fast Runs", value=3, precision=0)
+                                max_standard_runs_box = gr.Number(label="Max Std Runs", value=2, precision=0)
+                            allow_deep_report_box = gr.Checkbox(label="Allow Deep Report", value=False)
                     with gr.Row():
                         prompt_box = gr.Textbox(
                             placeholder="Describe what CatMaster should do...",
@@ -523,13 +660,47 @@ def build_home_page(
         )
         ws_open_btn.click(
             _ws_open,
-            inputs=[ws_root_box, ws_list, ctx_state],
-            outputs=[ws_status_md, ws_current_box],
+            inputs=[ws_root_box, ws_list, lane_box, ctx_state],
+            outputs=[
+                ws_status_md,
+                ws_current_box,
+                status_bar_html,
+                chat_session_dropdown,
+                chat_context_status_md,
+                chatbot,
+                runs_dropdown,
+                resume_run_box,
+                nav_html,
+                sidebar_cards_html,
+                selected_run_state,
+                plan_md,
+                results_md,
+            ],
+            queue=False,
+            show_progress="hidden",
         )
         ws_create_btn.click(
             _ws_create,
-            inputs=[ws_root_box, ws_new_name, ctx_state],
-            outputs=[ws_list, ws_status_md, ws_current_box, ws_new_name],
+            inputs=[ws_root_box, ws_new_name, lane_box, ctx_state],
+            outputs=[
+                ws_list,
+                ws_status_md,
+                ws_current_box,
+                ws_new_name,
+                status_bar_html,
+                chat_session_dropdown,
+                chat_context_status_md,
+                chatbot,
+                runs_dropdown,
+                resume_run_box,
+                nav_html,
+                sidebar_cards_html,
+                selected_run_state,
+                plan_md,
+                results_md,
+            ],
+            queue=False,
+            show_progress="hidden",
         )
 
         start_btn.click(
@@ -537,19 +708,23 @@ def build_home_page(
             inputs=[
                 prompt_box, lane_box, run_mode_box, resume_run_box,
                 proposal_review_box, log_llm_box, full_auto_major_box,
-                seed_hypotheses_box, exploration_policy_box, writing_mode_box,
+                seed_hypotheses_box, exploration_policy_box, writing_mode_box, output_format_box,
                 target_section_box,
                 max_cycles_box, max_literature_box, max_fast_runs_box,
                 max_standard_runs_box, allow_deep_report_box,
                 ctx_state,
             ],
             outputs=[ws_status_md, prompt_box, chat_context_status_md],
+            queue=False,
+            show_progress="hidden",
         )
 
         interrupt_btn.click(
             _interrupt_run,
             inputs=[ctx_state],
             outputs=[ws_status_md],
+            queue=False,
+            show_progress="hidden",
         )
 
         run_mode_box.change(
@@ -562,7 +737,14 @@ def build_home_page(
         lane_box.change(
             _on_lane_change,
             inputs=[lane_box, ctx_state],
-            outputs=[research_controls_group, chat_context_status_md],
+            outputs=[research_controls_group, writing_controls_group, chat_context_status_md],
+            queue=False,
+        )
+
+        writing_mode_box.change(
+            lambda mode: gr.update(visible=(mode == "section_draft")),
+            inputs=[writing_mode_box],
+            outputs=[target_section_box],
             queue=False,
         )
 
@@ -571,6 +753,7 @@ def build_home_page(
             inputs=[ctx_state, lane_box],
             outputs=[chat_session_dropdown, chatbot, chat_context_status_md, ws_status_md],
             queue=False,
+            show_progress="hidden",
         )
 
         chat_session_dropdown.change(
@@ -578,6 +761,7 @@ def build_home_page(
             inputs=[chat_session_dropdown, lane_box, ctx_state],
             outputs=[chat_session_dropdown, chatbot, chat_context_status_md],
             queue=False,
+            show_progress="hidden",
         )
 
         runs_dropdown.change(

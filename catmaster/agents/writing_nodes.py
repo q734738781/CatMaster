@@ -28,14 +28,11 @@ from catmaster.tools.base import workspace_relpath
 from catmaster.tools.analysis.polish_academic_prose import polish_academic_prose
 
 from .writing_prompts import (
-    SECTION_WRITER_SYSTEM_PROMPT,
-    WRITE_DIRECTOR_SYSTEM_PROMPT,
-    WRITE_FINALIZER_SYSTEM_PROMPT,
-    WRITE_REVIEWER_SYSTEM_PROMPT,
     build_section_writer_context,
     build_write_finalizer_context,
     build_write_director_context,
     build_write_reviewer_context,
+    get_write_reviewer_system_prompt,
 )
 from .writing_schemas import SectionDraftOutput, SectionReviewOutput, WritingFinalizeOutput, WritingPlanOutput, WritingRequest
 
@@ -43,6 +40,25 @@ _CITE_RE = re.compile(r"\\cite[a-zA-Z*]*\{")
 _CITE_KEYS_RE = re.compile(r"\\cite[a-zA-Z*]*\{([^}]+)\}")
 _BIB_ENTRY_RE = re.compile(r"@\w+\{([^,]+),")
 _MAX_SECTION_REVISIONS = 5
+
+
+def _normalized_output_format(value: str | None, *, default: str = "tex") -> str:
+    text = str(value or "").strip().lower()
+    return text if text in {"md", "tex"} else default
+
+
+def _resolve_output_format(*, request: WritingRequest | None = None, plan: WritingPlanModel | None = None, board: WritingBoard | None = None) -> str:
+    if plan is not None:
+        return _normalized_output_format(getattr(plan, "preferred_output_format", None), default="tex")
+    if board is not None:
+        return _normalized_output_format(getattr(board, "output_format", None), default="tex")
+    if request is not None:
+        return _normalized_output_format(getattr(request, "output_format", None), default="tex")
+    return "tex"
+
+
+def _next_stage_for_plan(plan: WritingPlanModel) -> str:
+    return "assemble_markdown" if _resolve_output_format(plan=plan) == "md" else "assemble_manuscript"
 
 
 def _load_memory_index_excerpt(*, writing_store) -> str:
@@ -190,6 +206,8 @@ async def init_writing_node(state: dict[str, Any], *, writing_store, source_stor
     board = WritingBoard(
         run_id=writing_store.run_id,
         source_campaign_id=request.source_campaign_id,
+        writing_mode=request.writing_mode,
+        output_format=_resolve_output_format(request=request),
         status="planning",
         title="",
     )
@@ -233,11 +251,25 @@ async def plan_writing_node(state: dict[str, Any], *, writing_store, source_stor
         plan = WritingPlanOutput.model_validate(raw.model_dump())
     else:
         plan = WritingPlanOutput.model_validate(raw)
-    board = board.model_copy(update={"title": plan.title, "writing_mode": plan.writing_mode, "status": "drafting", "current_section_index": 0})
+    plan = plan.model_copy(
+        update={
+            "writing_mode": request.writing_mode,
+            "preferred_output_format": _resolve_output_format(request=request),
+        }
+    )
+    board = board.model_copy(
+        update={
+            "title": plan.title,
+            "writing_mode": plan.writing_mode,
+            "output_format": _resolve_output_format(plan=plan),
+            "status": "drafting",
+            "current_section_index": 0,
+        }
+    )
     writing_store.persist_plan(plan)
     writing_store.save_board(board)
     if plan.writing_mode == "paper_outline":
-        return Command(goto="assemble_manuscript", update={"board": board, "plan": plan, "dossier": dossier, "status": "drafting", "assembly_feedback": None})
+        return Command(goto=_next_stage_for_plan(plan), update={"board": board, "plan": plan, "dossier": dossier, "status": "drafting", "assembly_feedback": None})
     return Command(goto="write_section", update={"board": board, "plan": plan, "dossier": dossier, "status": "drafting", "assembly_feedback": None})
 
 
@@ -252,7 +284,7 @@ async def write_section_node(state: dict[str, Any], *, writing_store, source_sto
     if next_index >= len(plan.section_specs):
         board = board.model_copy(update={"current_section_index": next_index, "status": "reviewing"})
         writing_store.save_board(board)
-        return Command(goto="assemble_manuscript", update={"board": board, "plan": plan, "section_drafts": list(drafts.values()), "section_reviews": list(reviews.values())})
+        return Command(goto=_next_stage_for_plan(plan), update={"board": board, "plan": plan, "section_drafts": list(drafts.values()), "section_reviews": list(reviews.values())})
     spec = plan.section_specs[next_index]
     if progress_callback is not None:
         progress_callback(current_phase="drafting", current_work_label=f"Write section: {str(spec.heading or spec.section_id).strip()}")
@@ -336,7 +368,10 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
         raise ValueError(f"missing section spec for {draft.section_id}")
     if progress_callback is not None:
         progress_callback(current_phase="reviewing", current_work_label=f"Review section: {str(spec.heading or spec.section_id).strip()}")
-    deterministic_notes, deterministic_missing = _deterministic_citation_issues(writing_store=writing_store, draft=draft)
+    output_format = _resolve_output_format(plan=plan, request=request, board=board)
+    deterministic_notes, deterministic_missing = ([], [])
+    if output_format == "tex":
+        deterministic_notes, deterministic_missing = _deterministic_citation_issues(writing_store=writing_store, draft=draft)
     if deterministic_missing:
         review = SectionReviewOutput(
             section_id=spec.section_id,
@@ -363,7 +398,7 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
     structured = write_reviewer_model.with_structured_output(SectionReviewOutput)
     raw = await structured.ainvoke(
         [
-            SystemMessage(content=WRITE_REVIEWER_SYSTEM_PROMPT),
+            SystemMessage(content=get_write_reviewer_system_prompt(output_format)),
             HumanMessage(content=context),
         ]
     )
@@ -381,15 +416,154 @@ async def review_section_node(state: dict[str, Any], *, writing_store, write_rev
     return Command(goto="write_section", update={"board": board, "plan": plan, "latest_review": review})
 
 
-async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, source_store, writing_config, progress_callback=None) -> Command:
+def _writer_output_filename(*, plan: WritingPlanModel, output_format: str) -> str:
+    fmt = _normalized_output_format(output_format)
+    if fmt == "md":
+        if plan.writing_mode == "paper_outline":
+            return "OUTLINE.md"
+        if plan.writing_mode == "section_draft":
+            return "SECTION_DRAFT.md"
+        if plan.writing_mode == "full_draft":
+            return "MANUSCRIPT.md"
+        return "REPORT.md"
+    return "MANUSCRIPT.tex"
+
+
+def _resolve_section_markdown(*, draft: SectionDraftModel, spec) -> str:
+    inline = str(draft.section_md or "").strip()
+    if inline:
+        return inline
+    tex = str(draft.section_tex or "").strip()
+    if not tex:
+        return ""
+    text = re.sub(r"\\section\*?\{([^}]+)\}", r"## \1", tex)
+    text = re.sub(r"\\subsection\*?\{([^}]+)\}", r"### \1", text)
+    text = re.sub(r"\\cite[a-zA-Z*]*\{([^}]+)\}", r"[\1]", text)
+    text = re.sub(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", r"![figure](\1)", text)
+    return text.strip()
+
+
+def _sync_source_board_writer_output(*, source_store, plan: WritingPlanModel, final_path: str) -> None:
+    try:
+        source_board = source_store.load_board() if source_store is not None else None
+        if source_board is None:
+            return
+        source_board.latest_writer_ref = final_path or source_board.latest_writer_ref
+        source_board.action_refs = list(source_board.action_refs) + [
+            ResearchActionRef(
+                action_id=f"writer_{len(source_board.action_refs) + 1:03d}",
+                kind="writer",
+                status="done",
+                summary=plan.title,
+                ref_path=final_path,
+                run_id=None,
+            )
+        ]
+        source_store.save_board(source_board)
+    except Exception:
+        return
+
+
+async def assemble_markdown_node(state: dict[str, Any], *, writing_store, source_store, progress_callback=None) -> Command:
     if progress_callback is not None:
-        progress_callback(current_phase="finalizing", current_work_label="Assemble manuscript")
+        progress_callback(current_phase="finalizing", current_work_label="Assemble markdown deliverable")
     request = WritingRequest.model_validate(state["request"])
     board = WritingBoard.model_validate(state["board"])
-    plan = state.get("plan") or writing_store.load_plan()
-    plan = _coerce_plan(plan)
+    plan = _coerce_plan(state.get("plan") or writing_store.load_plan())
     drafts = {item.section_id: item for item in writing_store.load_section_drafts()}
-    reviews = {item.section_id: item for item in writing_store.load_section_reviews()}
+    sections: list[str] = []
+    figure_manifest: list[dict[str, Any]] = []
+    if plan.writing_mode == "paper_outline":
+        if str(plan.outline_md or "").strip():
+            sections.append(str(plan.outline_md).strip())
+        else:
+            for spec in plan.section_specs:
+                sections.append(f"## {spec.heading}\n\n{spec.purpose}".strip())
+    else:
+        for spec in plan.section_specs:
+            draft = drafts.get(spec.section_id)
+            if draft is None:
+                continue
+            body = _resolve_section_markdown(draft=draft, spec=spec)
+            if not body:
+                continue
+            if not body.lstrip().startswith("#"):
+                body = f"## {spec.heading}\n\n{body}"
+            sections.append(body.strip())
+            for ref in draft.realized_figure_refs:
+                figure_manifest.append(
+                    {
+                        "section_id": draft.section_id,
+                        "realized_ref": ref,
+                        "planned_figure_ids": list(draft.planned_figure_ids),
+                    }
+                )
+    if not sections:
+        raise ValueError("writing assembly produced no markdown output")
+    title = str(plan.title or "").strip() or "Untitled document"
+    lines = [f"# {title}", ""]
+    if plan.writing_mode != "section_draft" and str(plan.abstract_md or "").strip():
+        lines.extend(["## Abstract", str(plan.abstract_md).strip(), ""])
+    for idx, section in enumerate(sections):
+        if idx > 0:
+            lines.append("")
+        lines.append(section.strip())
+    output_path = writing_store.write_manuscript(_writer_output_filename(plan=plan, output_format="md"), "\n".join(lines).strip() + "\n")
+    polish_note = "Academic polish: skipped."
+    try:
+        _, polish_artifact = polish_academic_prose(
+            {
+                "source_path": output_path,
+                "focus": request.request,
+            }
+        )
+        polish_data = polish_artifact.get("data") if isinstance(polish_artifact, dict) else {}
+        model_name = str(polish_data.get("model_name") or "").strip()
+        polish_note = f"Academic polish: applied in place to {output_path}" + (f" via {model_name}" if model_name else "")
+    except Exception as exc:
+        polish_note = f"Academic polish: skipped ({exc})"
+    bundle = ManuscriptBundleModel(
+        source_campaign_id=request.source_campaign_id,
+        writing_mode=plan.writing_mode,
+        output_format="md",
+        title=plan.title,
+        ordered_sections=[spec.heading for spec in plan.section_specs],
+        bibliography_shortlist=[],
+        figure_manifest=figure_manifest,
+        final_manuscript_path=output_path,
+        final_latex_path=None,
+    )
+    bundle_path = writing_store.persist_bundle(bundle)
+    board = board.model_copy(update={"status": "finalizing", "output_format": "md", "latest_manuscript_ref": output_path, "latest_bundle_ref": bundle_path})
+    writing_store.save_board(board)
+    summary = "\n".join(
+        [
+            f"Writing source campaign: {request.source_campaign_id or '(none)'}",
+            f"Title: {plan.title}",
+            f"Primary output: {output_path}",
+            polish_note,
+            f"Bundle: {bundle_path}",
+        ]
+    ).strip()
+    return Command(
+        goto="finalize_markdown",
+        update={
+            "board": board,
+            "status": "finalizing",
+            "summary": summary,
+            "final_answer": summary,
+            "bundle": bundle,
+        },
+    )
+
+
+async def assemble_tex_node(state: dict[str, Any], *, writing_store, source_store, writing_config, progress_callback=None) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="finalizing", current_work_label="Assemble TeX deliverable")
+    request = WritingRequest.model_validate(state["request"])
+    board = WritingBoard.model_validate(state["board"])
+    plan = _coerce_plan(state.get("plan") or writing_store.load_plan())
+    drafts = {item.section_id: item for item in writing_store.load_section_drafts()}
     bibliography: list[str] = []
     figure_manifest: list[dict[str, Any]] = []
     section_inputs: list[str] = []
@@ -486,6 +660,7 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
     bundle = ManuscriptBundleModel(
         source_campaign_id=request.source_campaign_id,
         writing_mode=plan.writing_mode,
+        output_format="tex",
         title=plan.title,
         ordered_sections=[spec.heading for spec in plan.section_specs],
         bibliography_shortlist=list(dict.fromkeys(bibliography))[:20] if include_bibliography else [],
@@ -494,7 +669,7 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
         final_latex_path=latex_path,
     )
     bundle_path = writing_store.persist_bundle(bundle)
-    board = board.model_copy(update={"status": "finalizing", "latest_manuscript_ref": preferred_path, "latest_bundle_ref": bundle_path})
+    board = board.model_copy(update={"status": "finalizing", "output_format": "tex", "latest_manuscript_ref": preferred_path, "latest_bundle_ref": bundle_path})
     writing_store.save_board(board)
     summary = "\n".join(
         [
@@ -518,7 +693,69 @@ async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, sour
     )
 
 
-async def finalize_writing_node(
+async def finalize_markdown_node(
+    state: dict[str, Any],
+    *,
+    writing_store,
+    source_store,
+    write_finalizer_agent,
+    skills_runtime: CatMasterSkillsRuntime | None,
+    progress_callback=None,
+) -> Command:
+    if progress_callback is not None:
+        progress_callback(current_phase="finalizing", current_work_label="Finalize markdown deliverable")
+    request = WritingRequest.model_validate(state["request"])
+    board = WritingBoard.model_validate(state["board"])
+    plan = _coerce_plan(state.get("plan") or writing_store.load_plan())
+    bundle = state.get("bundle") or writing_store.load_bundle()
+    if bundle is None:
+        raise ValueError("missing manuscript bundle for finalization")
+    bundle_json = bundle.model_dump() if hasattr(bundle, "model_dump") else bundle
+    skill_guide = render_write_director_skill_guide(
+        skills_runtime.visible_skills("write_director", "writing") if skills_runtime is not None else []
+    )
+    context = build_write_finalizer_context(
+        request=request.model_dump(),
+        plan=plan,
+        bundle=bundle_json,
+        skill_guide=skill_guide,
+    )
+    result = await _invoke_agent_with_step_budget(
+        agent=write_finalizer_agent,
+        messages=[HumanMessage(content=context)],
+        max_steps=12,
+        role="write_director",
+    )
+    raw = result.get("structured_response")
+    if isinstance(raw, WritingFinalizeOutput):
+        finalized = raw
+    elif hasattr(raw, "model_dump"):
+        finalized = WritingFinalizeOutput.model_validate(raw.model_dump())
+    else:
+        finalized = WritingFinalizeOutput.model_validate(raw)
+    final_path = str(finalized.final_output_path or bundle.final_manuscript_path).strip()
+    board = board.model_copy(update={"status": "done", "output_format": "md", "latest_manuscript_ref": final_path or board.latest_manuscript_ref})
+    writing_store.save_board(board)
+    _sync_source_board_writer_output(source_store=source_store, plan=plan, final_path=final_path or bundle.final_manuscript_path)
+    summary = "\n".join(
+        [
+            str(state.get("summary") or "").strip(),
+            str(finalized.summary or "").strip(),
+            *[f"- {item}" for item in finalized.compile_notes if str(item).strip()],
+        ]
+    ).strip()
+    return Command(
+        goto="summarize_writing",
+        update={
+            "board": board,
+            "status": "done",
+            "summary": summary,
+            "final_answer": summary,
+        },
+    )
+
+
+async def finalize_tex_node(
     state: dict[str, Any],
     *,
     writing_store,
@@ -559,26 +796,10 @@ async def finalize_writing_node(
         finalized = WritingFinalizeOutput.model_validate(raw.model_dump())
     else:
         finalized = WritingFinalizeOutput.model_validate(raw)
-    final_path = str(finalized.final_latex_path or getattr(bundle, "final_latex_path", None) or bundle.final_manuscript_path).strip()
-    board = board.model_copy(update={"status": "done", "latest_manuscript_ref": final_path or board.latest_manuscript_ref})
+    final_path = str(finalized.final_latex_path or finalized.final_output_path or getattr(bundle, "final_latex_path", None) or bundle.final_manuscript_path).strip()
+    board = board.model_copy(update={"status": "done", "output_format": "tex", "latest_manuscript_ref": final_path or board.latest_manuscript_ref})
     writing_store.save_board(board)
-    try:
-        source_board = source_store.load_board() if source_store is not None else None
-        if source_board is not None:
-            source_board.latest_writer_ref = final_path or source_board.latest_writer_ref
-            source_board.action_refs = list(source_board.action_refs) + [
-                ResearchActionRef(
-                    action_id=f"writer_{len(source_board.action_refs) + 1:03d}",
-                    kind="writer",
-                    status="done",
-                    summary=plan.title,
-                    ref_path=final_path or bundle.final_manuscript_path,
-                    run_id=None,
-                )
-            ]
-            source_store.save_board(source_board)
-    except Exception:
-        pass
+    _sync_source_board_writer_output(source_store=source_store, plan=plan, final_path=final_path or bundle.final_manuscript_path)
     summary = "\n".join(
         [
             str(state.get("summary") or "").strip(),
@@ -594,6 +815,35 @@ async def finalize_writing_node(
             "summary": summary,
             "final_answer": summary,
         },
+    )
+
+
+async def assemble_manuscript_node(state: dict[str, Any], *, writing_store, source_store, writing_config, progress_callback=None) -> Command:
+    return await assemble_tex_node(
+        state,
+        writing_store=writing_store,
+        source_store=source_store,
+        writing_config=writing_config,
+        progress_callback=progress_callback,
+    )
+
+
+async def finalize_writing_node(
+    state: dict[str, Any],
+    *,
+    writing_store,
+    source_store,
+    write_finalizer_agent,
+    skills_runtime: CatMasterSkillsRuntime | None,
+    progress_callback=None,
+) -> Command:
+    return await finalize_tex_node(
+        state,
+        writing_store=writing_store,
+        source_store=source_store,
+        write_finalizer_agent=write_finalizer_agent,
+        skills_runtime=skills_runtime,
+        progress_callback=progress_callback,
     )
 def _resolve_section_tex(*, writing_store, draft) -> str | None:
     explicit = _read_first_explicit_latex_artifact(
@@ -789,7 +1039,11 @@ def summarize_writing_node(state: dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "assemble_markdown_node",
     "assemble_manuscript_node",
+    "assemble_tex_node",
+    "finalize_markdown_node",
+    "finalize_tex_node",
     "finalize_writing_node",
     "init_writing_node",
     "plan_writing_node",

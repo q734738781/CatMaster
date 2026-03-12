@@ -30,6 +30,7 @@ class WritingPlanModel(BaseModel):
 
     title: str = Field(...)
     writing_mode: Literal["internal_report", "paper_outline", "section_draft", "full_draft"] = Field("internal_report")
+    preferred_output_format: Literal["md", "tex"] = Field("tex")
     target_audience: str = Field(...)
     abstract_md: str = Field("")
     outline_md: str = Field("")
@@ -37,7 +38,6 @@ class WritingPlanModel(BaseModel):
     figure_requests: list[FigureRequest] = Field(default_factory=list)
     citation_needs: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
-    preferred_output_format: Literal["tex"] = Field("tex")
 
 
 class ClaimEvidenceMapRow(BaseModel):
@@ -54,6 +54,7 @@ class SectionDraftModel(BaseModel):
     heading: str = Field(...)
     status: Literal["drafted", "revised"] = Field(...)
     title: str = Field("")
+    section_md: str = Field("")
     section_tex: str = Field("")
     citations: list[str] = Field(default_factory=list)
     artifact_refs: list[str] = Field(default_factory=list)
@@ -80,6 +81,7 @@ class ManuscriptBundleModel(BaseModel):
 
     source_campaign_id: str | None = Field(None)
     writing_mode: str = Field(...)
+    output_format: Literal["md", "tex"] = Field("tex")
     title: str = Field(...)
     ordered_sections: list[str] = Field(default_factory=list)
     bibliography_shortlist: list[str] = Field(default_factory=list)
@@ -94,6 +96,7 @@ class WritingBoard(BaseModel):
     run_id: str = Field(...)
     source_campaign_id: str | None = Field(None)
     writing_mode: str = Field("auto")
+    output_format: Literal["md", "tex"] = Field("tex")
     status: Literal["planning", "drafting", "reviewing", "finalizing", "done", "failed"] = Field("planning")
     title: str = Field("")
     current_section_index: int = Field(0, ge=0)

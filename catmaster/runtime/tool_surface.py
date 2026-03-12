@@ -119,7 +119,7 @@ def _build_capability_guides(
         else "Filesystem tools: disabled."
     )
 
-    domain_names = [name for name in names if name and name not in {"bash_exec"}]
+    domain_names = [name for name in names if name and name not in {"bash"}]
     domain_lines_full = [f"- {name}: {_tool_doc(registry, name)}" for name in domain_names]
     domain_lines_short = [f"- {name}" for name in domain_names]
 
@@ -130,7 +130,7 @@ def _build_capability_guides(
             filesystem_full,
             "",
             "Shell / external command:",
-            "- bash_exec: run focused shell commands, content grep, parser invocations, and scientific binaries.",
+            "- bash: run focused shell commands, content grep, parser invocations, and scientific binaries.",
             "",
             "Domain tools:",
             *(domain_lines_full or ["- (none)"]),
@@ -140,7 +140,7 @@ def _build_capability_guides(
         [
             "Task runner capabilities (short):",
             filesystem_short,
-            "Shell: bash_exec",
+            "Shell: bash",
             "Domain tools:",
             *(domain_lines_short or ["- (none)"]),
         ]
@@ -165,7 +165,7 @@ def build_runtime_tool_surface(
     )
 
     local_by_name = {str(getattr(tool, "name", "") or ""): tool for tool in local_tools}
-    bash_tool = local_by_name.get("bash_exec")
+    bash_tool = local_by_name.get("bash") or local_by_name.get("bash_exec")
     aider_tool = local_by_name.get("apply_aider_edits")
     note_tool = local_by_name.get("write_note")
     planning_local_tools = [

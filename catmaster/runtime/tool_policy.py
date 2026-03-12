@@ -11,6 +11,20 @@ except Exception:  # pragma: no cover
     yaml = None
 
 
+_TOOL_NAME_ALIASES = {
+    "bash_exec": "bash",
+}
+
+
+def _normalize_tool_name(name: str) -> str:
+    current = str(name or "").strip()
+    seen: set[str] = set()
+    while current in _TOOL_NAME_ALIASES and current not in seen:
+        seen.add(current)
+        current = _TOOL_NAME_ALIASES[current]
+    return current
+
+
 @dataclass
 class ToolPolicy:
     allowed_tools: set[str] | None = None
@@ -19,12 +33,18 @@ class ToolPolicy:
     parallel_tool_calls: bool = False
     max_tool_calls_per_task: int = 100
 
+    def __post_init__(self) -> None:
+        if self.allowed_tools is not None:
+            self.allowed_tools = {_normalize_tool_name(name) for name in self.allowed_tools if str(name).strip()}
+        if self.denied_tools is not None:
+            self.denied_tools = {_normalize_tool_name(name) for name in self.denied_tools if str(name).strip()}
+
     def filter_function_tools(self, function_tools: list[dict]) -> list[dict]:
         allowed = self.allowed_tools
         denied = self.denied_tools or set()
         filtered: list[dict] = []
         for tool in function_tools:
-            name = tool.get("name")
+            name = _normalize_tool_name(str(tool.get("name") or ""))
             if allowed is not None and name not in allowed:
                 continue
             if name in denied:

@@ -24,7 +24,7 @@ def test_apply_events_builds_live_tracker_state() -> None:
             task_id="task_01",
             step_id=0,
             payload={
-                "tool": "bash_exec",
+                "tool": "bash",
                 "params_compact": "cmd=echo hi",
                 "params_full": {"cmd": "echo hi"},
                 "toolcall_id": "task_01_s1_bash_0001",
@@ -36,7 +36,7 @@ def test_apply_events_builds_live_tracker_state() -> None:
             task_id="task_01",
             step_id=0,
             payload={
-                "tool": "bash_exec",
+                "tool": "bash",
                 "status": "success",
                 "highlights": "ok",
                 "toolcall_id": "task_01_s1_bash_0001",
@@ -68,7 +68,7 @@ def test_apply_events_builds_live_tracker_state() -> None:
     assert state["progress"]["pending"] == 2
     assert state["active_toolcall"] is None
     assert len(state["recent_toolcalls"]) == 1
-    assert state["recent_toolcalls"][0]["tool"] == "bash_exec"
+    assert state["recent_toolcalls"][0]["tool"] == "bash"
     assert state["recent_toolcalls"][0]["duration_sec"] == 3
     assert len(state["journal_recent"]) == 1
     assert state["journal_recent"][0]["task_id"] == "task_01"
@@ -76,7 +76,7 @@ def test_apply_events_builds_live_tracker_state() -> None:
 
 def test_should_refresh_live_summary_uses_tool_batch_and_interval() -> None:
     state = new_live_state("run_002")
-    tool_event = [_event("TOOL_CALL_END", ts=10.0, task_id="task_01", payload={"tool": "bash_exec", "status": "success"})]
+    tool_event = [_event("TOOL_CALL_END", ts=10.0, task_id="task_01", payload={"tool": "bash", "status": "success"})]
 
     assert should_refresh_live_summary(state, tool_event, min_interval_s=8, tool_event_batch=5) is False
     assert should_refresh_live_summary(state, tool_event, min_interval_s=8, tool_event_batch=5) is False
