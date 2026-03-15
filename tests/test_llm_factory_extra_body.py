@@ -31,6 +31,7 @@ def test_build_chat_model_passes_provider_bound_extra_body(monkeypatch) -> None:
     build_chat_model(cfg)
 
     assert captured.get("extra_body") == {"prompt_cache_retention": "24h"}
+    assert captured.get("streaming") is True
 
 
 def test_build_chat_model_passes_provider_openrouter_extra_body(monkeypatch) -> None:
@@ -62,7 +63,7 @@ def test_build_chat_model_passes_provider_openrouter_extra_body(monkeypatch) -> 
     }
 
 
-def test_build_chat_model_maps_reasoning_object_to_reasoning_effort(monkeypatch) -> None:
+def test_build_chat_model_passes_reasoning_object(monkeypatch) -> None:
     captured: dict = {}
 
     class FakeChatOpenAI:
@@ -81,7 +82,28 @@ def test_build_chat_model_maps_reasoning_object_to_reasoning_effort(monkeypatch)
 
     build_chat_model(cfg)
 
-    assert captured.get("reasoning_effort") == "high"
+    assert captured.get("reasoning") == {"effort": "high"}
+
+
+def test_build_chat_model_passes_reasoning_summary_config(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "langchain_openai", types.SimpleNamespace(ChatOpenAI=FakeChatOpenAI))
+
+    cfg = LLMConfig(
+        provider="openai",
+        model="gpt-5",
+        api_key="test-key",
+        reasoning={"effort": "medium", "summary": "auto"},
+    )
+
+    build_chat_model(cfg)
+
+    assert captured.get("reasoning") == {"effort": "medium", "summary": "auto"}
 
 
 def test_build_chat_model_maps_openai_request_options(monkeypatch) -> None:

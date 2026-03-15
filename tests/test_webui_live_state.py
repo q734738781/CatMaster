@@ -86,3 +86,23 @@ def test_should_refresh_live_summary_uses_tool_batch_and_interval() -> None:
 
     task_trigger = [_event("TASK_END", ts=11.0, task_id="task_01", payload={"outcome": "success"})]
     assert should_refresh_live_summary(state, task_trigger, min_interval_s=100, tool_event_batch=5) is False
+
+
+def test_apply_events_tracks_llm_stream_and_graph_node() -> None:
+    state = new_live_state("run_003")
+    events = [
+        _event("GRAPH_NODE_UPDATE", ts=1.0, payload={"node": "director", "text_preview": "thinking"}),
+        _event("LLM_CALL_START", ts=2.0, payload={"model": "gpt-5", "phase": "react"}),
+        _event("LLM_REASONING_DELTA", ts=2.5, payload={"model": "gpt-5", "phase": "react", "text": "Check spin state."}),
+        _event("LLM_TOKEN_DELTA", ts=3.0, payload={"model": "gpt-5", "phase": "react", "text": "Hello"}),
+        _event("LLM_TOKEN_DELTA", ts=4.0, payload={"model": "gpt-5", "phase": "react", "text": " world"}),
+        _event("LLM_CALL_END", ts=5.0, payload={"model": "gpt-5", "phase": "react", "usage": {"output_tokens": 2}, "reasoning_text": "Check spin state."}),
+    ]
+
+    state, changed = apply_events(state, events)
+
+    assert changed is True
+    assert state["current_node"] == "director"
+    assert state["llm"]["status"] == "completed"
+    assert state["llm"]["text"] == "Hello world"
+    assert state["llm"]["reasoning_text"] == "Check spin state."

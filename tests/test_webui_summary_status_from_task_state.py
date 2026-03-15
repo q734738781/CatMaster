@@ -12,7 +12,6 @@ def _init_run_dir(path: Path) -> None:
         json.dumps({"workspace": "/tmp/ws", "model_name": "m"}),
         encoding="utf-8",
     )
-    (path / "ui_events.jsonl").write_text("", encoding="utf-8")
 
 
 def test_snapshot_summary_prefers_terminal_task_state_over_stale_cache(tmp_path: Path) -> None:

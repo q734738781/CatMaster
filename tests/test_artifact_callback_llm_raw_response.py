@@ -68,3 +68,48 @@ def test_llm_tracing_handler_persists_raw_response_and_toolcall_arguments(tmp_pa
         ensure_ascii=False,
     )
 
+
+def test_llm_tracing_handler_extracts_reasoning_summary_and_usage_details(tmp_path) -> None:
+    trace = TraceStore(tmp_path)
+    handler = LLMTracingHandler(trace, run_id="run_reasoning")
+    rid = uuid.uuid4()
+
+    message = AIMessage(
+        content=[
+            {
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "Checking whether spin needs to be constrained."}
+                ],
+            },
+            {"type": "text", "text": "Triplet is more stable."},
+        ],
+        usage_metadata={
+            "input_tokens": 10,
+            "output_tokens": 8,
+            "total_tokens": 18,
+            "input_token_details": {"cache_read": 2},
+            "output_token_details": {"reasoning": 3},
+        },
+    )
+    result = LLMResult(generations=[[ChatGeneration(message=message)]], llm_output={})
+
+    handler.on_llm_start(
+        serialized={"kwargs": {"model_name": "gpt-5"}},
+        prompts=["prompt"],
+        run_id=rid,
+    )
+    handler.on_llm_end(result, run_id=rid)
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "event_trace.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    usage_record = next(r for r in records if r.get("event") == "LLM_USAGE")
+    raw_record = next(r for r in records if r.get("event") == "LLM_RAW_RESPONSE")
+
+    assert usage_record["payload"]["usage"]["input_token_details"]["cache_read"] == 2
+    assert usage_record["payload"]["usage"]["output_token_details"]["reasoning"] == 3
+    assert "spin needs to be constrained" in usage_record["payload"]["reasoning_text"]
+    assert "spin needs to be constrained" in raw_record["payload"]["generations"][0]["reasoning_text"]

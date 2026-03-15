@@ -1355,24 +1355,92 @@ class GraphRunner:
                 tool_summary,
             )
 
+    def _emit_stream_update(self, update: dict[str, Any]) -> None:
+        for node, payload in (update or {}).items():
+            if node == "__interrupt__":
+                continue
+            if not isinstance(payload, dict):
+                self._emit(
+                    "GRAPH_NODE_UPDATE",
+                    category="graph",
+                    payload={
+                        "node": str(node or ""),
+                        "keys": [],
+                        "message_count": 0,
+                        "tool_calls": [],
+                        "text_preview": self._stream_preview(payload),
+                    },
+                )
+                continue
+
+            keys = [str(key) for key in payload.keys()]
+            message_fields = [
+                str(key)
+                for key, value in payload.items()
+                if isinstance(value, list) and (key == "messages" or str(key).endswith("_messages"))
+            ]
+            message_count = sum(len(payload.get(field, []) or []) for field in message_fields)
+            text_preview = ""
+            tool_calls: list[str] = []
+
+            selected_field = "messages" if "messages" in message_fields else (message_fields[0] if message_fields else "")
+            if selected_field:
+                selected_messages = payload.get(selected_field, []) or []
+                if selected_messages:
+                    tail = selected_messages[-1]
+                    content = getattr(tail, "content", None)
+                    if isinstance(content, str):
+                        text_preview = _snippet(content, 180)
+                    elif isinstance(content, list):
+                        fragments: list[str] = []
+                        for item in content:
+                            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                                fragments.append(str(item.get("text") or ""))
+                        if fragments:
+                            text_preview = _snippet("\n".join(fragments), 180)
+                    raw_tool_calls = getattr(tail, "tool_calls", None)
+                    if isinstance(raw_tool_calls, list):
+                        tool_calls = [
+                            str(call.get("name") or "").strip()
+                            for call in raw_tool_calls
+                            if isinstance(call, dict) and str(call.get("name") or "").strip()
+                        ]
+
+            self._emit(
+                "GRAPH_NODE_UPDATE",
+                category="graph",
+                payload={
+                    "node": str(node or ""),
+                    "keys": keys[:12],
+                    "message_count": message_count,
+                    "tool_calls": tool_calls[:8],
+                    "text_preview": text_preview,
+                },
+            )
+
     async def _ainvoke_graph_once(
         self,
         compiled: Any,
         graph_input: Any,
         config: Dict[str, Any],
     ) -> Dict[str, Any]:
-        if not (self.stream_debug_console or self.print_state_messages):
+        live_stream = self.reporter.is_live()
+        if not (live_stream or self.stream_debug_console or self.print_state_messages):
             return await compiled.ainvoke(graph_input, config=config)
 
         logger.info(
-            "[graph.stream] enabled stream_mode=updates (stream_debug_console=%s, print_state_messages=%s)",
+            "[graph.stream] enabled stream_mode=updates (live=%s, stream_debug_console=%s, print_state_messages=%s)",
+            live_stream,
             self.stream_debug_console,
             self.print_state_messages,
         )
         streamed_result: Dict[str, Any] = {}
         async for update in compiled.astream(graph_input, config=config, stream_mode="updates"):
             if isinstance(update, dict):
-                self._log_stream_update(update)
+                if self.stream_debug_console or self.print_state_messages:
+                    self._log_stream_update(update)
+                if live_stream:
+                    self._emit_stream_update(update)
                 if "__interrupt__" in update:
                     streamed_result["__interrupt__"] = update["__interrupt__"]
 

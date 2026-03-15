@@ -16,7 +16,7 @@
   - `EDIFF = 1e-6`, `EDIFFG = -0.02`
   - `ISMEAR = 1`, `SIGMA = 0.2`
   - `ISYM = 0`
-  - D3 dispersion: `IVDW = 11`
+  - D3(BJ) dispersion: `IVDW = 12`
   - `LASPH = True`, `LWAVE = False`, `LCHARG = False`
 - KPOINTS: Γ-centered **17×17×17** (from `k_product=45` on the ~2.86 Å cubic cell)
 - POTCAR: **PAW_PBE Fe_pv (02Aug2007)**
@@ -66,7 +66,7 @@ Surface energies computed from relaxed symmetric slabs using:
   - `slab_thickness=12 Å`, `vacuum_thickness=15 Å`, `orthogonal=True`, `supercell=[2,2,1]`
 - Clean slab constraints: bottom **3** layers fixed (`freeze_layers=3`, `layer_tol=0.2 Å`)
 - Site enumeration: `mode='all'`, distance = **2.0 Å**
-- Adsorption-stage relaxations: `k_product=25`, D3 (`IVDW=11`), dipole correction (`LDIPOL=True`, `IDIPOL=3`, `DIPOL=[0.5,0.5,0.5]`)
+- Adsorption-stage relaxations: `k_product=25`, D3(BJ) (`IVDW=12`), dipole correction (`LDIPOL=True`, `IDIPOL=3`, `DIPOL=[0.5,0.5,0.5]`)
 
 **Adsorption energy definition**
 

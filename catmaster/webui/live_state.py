@@ -27,9 +27,19 @@ def new_live_state(run_id: str = "") -> Dict[str, Any]:
         "current_task_id": "",
         "current_task_goal": "",
         "current_phase": "",
+        "current_node": "",
         "active_toolcall": None,
         "recent_toolcalls": [],
         "last_task_summary": None,
+        "llm": {
+            "model": "",
+            "phase": "",
+            "status": "idle",
+            "text": "",
+            "reasoning_text": "",
+            "usage": {},
+            "elapsed_ms": 0,
+        },
         "progress": {
             "completed": 0,
             "pending": 0,
@@ -167,6 +177,59 @@ def apply_event(
         }
         state["active_toolcall"] = active
         changed = True
+    elif name == "GRAPH_NODE_UPDATE":
+        node = str(payload.get("node") or "").strip()
+        if node:
+            state["current_node"] = node
+            if node not in {"proposal", "director", "task", "summarize"}:
+                state["current_phase"] = node
+        changed = True
+    elif name == "LLM_CALL_START":
+        state["status"] = "running"
+        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
+        llm.update(
+            {
+                "model": str(payload.get("model") or ""),
+                "phase": str(payload.get("phase") or ""),
+                "status": "running",
+                "text": "",
+                "reasoning_text": "",
+                "usage": {},
+                "elapsed_ms": 0,
+            }
+        )
+        state["llm"] = llm
+        changed = True
+    elif name == "LLM_REASONING_DELTA":
+        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
+        llm["status"] = "running"
+        llm["model"] = str(payload.get("model") or llm.get("model") or "")
+        llm["phase"] = str(payload.get("phase") or llm.get("phase") or "")
+        llm["reasoning_text"] = str(llm.get("reasoning_text") or "") + str(payload.get("text") or "")
+        state["llm"] = llm
+        changed = True
+    elif name == "LLM_TOKEN_DELTA":
+        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
+        llm["status"] = "running"
+        llm["model"] = str(payload.get("model") or llm.get("model") or "")
+        llm["phase"] = str(payload.get("phase") or llm.get("phase") or "")
+        llm["text"] = str(llm.get("text") or "") + str(payload.get("text") or "")
+        state["llm"] = llm
+        changed = True
+    elif name == "LLM_CALL_END":
+        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
+        llm.update(
+            {
+                "model": str(payload.get("model") or llm.get("model") or ""),
+                "phase": str(payload.get("phase") or llm.get("phase") or ""),
+                "status": "completed",
+                "reasoning_text": str(payload.get("reasoning_text") or llm.get("reasoning_text") or ""),
+                "usage": payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+                "elapsed_ms": int(payload.get("elapsed_ms") or 0),
+            }
+        )
+        state["llm"] = llm
+        changed = True
     elif name == "INTERRUPT_REQUESTED":
         state["status"] = "interrupting"
         state["current_phase"] = "interrupting"
@@ -245,6 +308,9 @@ def apply_event(
         else:
             state["current_phase"] = "finalizing"
         state["active_toolcall"] = None
+        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
+        llm["status"] = "idle"
+        state["llm"] = llm
         changed = True
     elif name == "RUN_PAUSED":
         state["status"] = "interrupted_paused"

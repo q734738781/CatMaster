@@ -158,6 +158,21 @@ def test_struct_writer_single_point_defaults() -> None:
     assert "EDIFFG" not in settings_sp
 
 
+def test_struct_writer_use_d3_defaults_to_ivdw_12() -> None:
+    writer = StructWriter()
+    required = writer._required_overrides("slab", False, {})
+    settings = writer._build_user_incar_settings(
+        calc_type="slab",
+        required_overrides=required,
+        use_d3=True,
+        use_dft_plus_u=False,
+        user_incar_overrides={},
+        single_point=False,
+        compute_dos=False,
+    )
+    assert settings["IVDW"] == 12
+
+
 @pytest.mark.parametrize("calc_type", ["gas", "slab"])
 def test_struct_writer_required_overrides_rejects_relax_cell_conflict(calc_type: str) -> None:
     writer = StructWriter()

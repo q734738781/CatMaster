@@ -156,13 +156,19 @@ def _resolve_extra_body(cfg: LLMConfig) -> Dict[str, Any]:
     return {}
 
 
-def _resolve_reasoning_effort(cfg: LLMConfig) -> str | None:
+def _resolve_reasoning_config(cfg: LLMConfig) -> Dict[str, Any] | None:
     reasoning = cfg.reasoning if isinstance(cfg.reasoning, dict) else {}
-    effort = reasoning.get("effort")
-    if effort is None:
-        return None
-    text = str(effort).strip()
-    return text or None
+    cleaned: Dict[str, Any] = {}
+    for key, value in reasoning.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                cleaned[str(key)] = text
+        else:
+            cleaned[str(key)] = value
+    return cleaned or None
 
 
 def _resolve_model_kwargs(cfg: LLMConfig) -> dict[str, Any]:
@@ -266,7 +272,7 @@ def build_chat_model(cfg: LLMConfig) -> Any:
                 sorted(merged_extra_body.keys()),
             )
 
-        reasoning_effort = _resolve_reasoning_effort(cfg)
+        reasoning_config = _resolve_reasoning_config(cfg)
 
         if cfg.print_http_raw_post:
             http_client, http_async_client = _build_http_debug_clients(cfg)
@@ -284,8 +290,9 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             model=cfg.model,
             api_key=api_key,
             temperature=cfg.temperature,
-            reasoning_effort=reasoning_effort,
+            reasoning=reasoning_config,
             model_kwargs=model_kwargs,
+            streaming=True,
             **kwargs,
         )
 

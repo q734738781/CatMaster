@@ -32,10 +32,14 @@ def test_prompt_broker_supports_persisted_submit(tmp_path: Path) -> None:
     t = threading.Thread(target=_run_prompt, daemon=True)
     t.start()
 
-    pending_path = tmp_path / "hitl" / "pending_prompt.json"
-    assert _wait_for(pending_path)
-
-    pending = json.loads(pending_path.read_text(encoding="utf-8"))
+    deadline = time.time() + 3.0
+    pending = None
+    while time.time() < deadline:
+        pending = broker.get_pending()
+        if isinstance(pending, dict):
+            break
+        time.sleep(0.05)
+    assert isinstance(pending, dict)
     prompt_id = str(pending.get("prompt_id") or "")
     assert prompt_id
 
@@ -43,7 +47,6 @@ def test_prompt_broker_supports_persisted_submit(tmp_path: Path) -> None:
     t.join(timeout=3.0)
     assert not t.is_alive()
     assert captured.get("text") == "approved"
-    assert not pending_path.exists()
 
 
 def test_session_loads_prompt_from_task_state_snapshot(tmp_path: Path) -> None:
@@ -82,32 +85,16 @@ def test_session_loads_prompt_from_task_state_snapshot(tmp_path: Path) -> None:
     assert "awaiting_human_feedback" in status_text
 
 
-def test_submit_prompt_via_file_clears_pending_prompt(tmp_path: Path) -> None:
+def test_submit_prompt_via_file_is_disabled(tmp_path: Path) -> None:
     run_dir = tmp_path / "run_002"
     hitl_dir = run_dir / "hitl"
     hitl_dir.mkdir(parents=True, exist_ok=True)
-    pending_path = hitl_dir / "pending_prompt.json"
-    pending_path.write_text(
-        json.dumps(
-            {
-                "prompt_id": "p_123",
-                "kind": "proposal_review",
-                "payload": {"proposal_description": "x"},
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
 
     ok = WebSession._submit_prompt_via_file(run_dir, prompt_id="p_123", text="approved")
-    assert ok is True
-    assert not pending_path.exists()
-    response_path = hitl_dir / "pending_response.json"
-    assert response_path.exists()
+    assert ok is False
 
 
-def test_session_hides_prompt_after_persisted_submit(tmp_path: Path) -> None:
+def test_session_snapshot_prompt_comes_from_task_state_only(tmp_path: Path) -> None:
     ensure_project_space_layout(tmp_path, create=True)
     run_dir = system_root(workspace=tmp_path) / "runs" / "run_003"
     hitl_dir = run_dir / "hitl"
@@ -127,22 +114,9 @@ def test_session_hides_prompt_after_persisted_submit(tmp_path: Path) -> None:
             },
             ensure_ascii=False,
             indent=2,
-        ),
-        encoding="utf-8",
-    )
-    state_mtime = state_path.stat().st_mtime
-    (hitl_dir / "pending_response.json").write_text(
-        json.dumps(
-            {
-                "prompt_id": "snapshot::run_003::proposal_review",
-                "text": "approved",
-                "submitted_at": state_mtime + 1.0,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+            ),
+            encoding="utf-8",
+        )
 
     session = WebSession()
     session.set_workspace_root(str(tmp_path.parent))
@@ -150,7 +124,9 @@ def test_session_hides_prompt_after_persisted_submit(tmp_path: Path) -> None:
     assert ok
     session.select_run("run_003")
 
-    assert session.get_prompt() is None
+    pending = session.get_prompt()
+    assert isinstance(pending, dict)
+    assert pending.get("kind") == "proposal_review"
 
 
 def test_session_marks_revised_proposal_review_after_task_intervention(tmp_path: Path) -> None:

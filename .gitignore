@@ -4,6 +4,7 @@ dpdispatcher.log
 /.idea
 *.pyc
 __pycache__
+node_modules/
 /workspace
 /logs
 /tests/test_output

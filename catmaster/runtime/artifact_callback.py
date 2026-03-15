@@ -85,6 +85,81 @@ def _content_to_text(content: Any) -> str:
         return str(content)
 
 
+def _append_text(out: list[str], value: Any) -> None:
+    if not isinstance(value, str):
+        return
+    text = value.strip()
+    if text:
+        out.append(text)
+
+
+def _extract_reasoning_fragments(value: Any, *, in_reasoning: bool = False) -> list[str]:
+    out: list[str] = []
+    if isinstance(value, str):
+        if in_reasoning:
+            _append_text(out, value)
+        return out
+    if isinstance(value, list):
+        for item in value:
+            out.extend(_extract_reasoning_fragments(item, in_reasoning=in_reasoning))
+        return out
+    if not isinstance(value, dict):
+        dumped = _to_dict_obj(value)
+        if dumped:
+            return _extract_reasoning_fragments(dumped, in_reasoning=in_reasoning)
+        return out
+
+    block_type = str(value.get("type") or "").strip().lower()
+    local_reasoning = in_reasoning or block_type in {"reasoning", "reasoning_content", "thinking"}
+
+    if block_type == "summary_text":
+        _append_text(out, value.get("text"))
+
+    if local_reasoning:
+        for key in ("text", "reasoning", "reasoning_text", "thinking", "content"):
+            field = value.get(key)
+            if isinstance(field, str):
+                _append_text(out, field)
+
+    for key in ("summary", "content", "items", "parts", "blocks", "reasoning", "reasoning_content"):
+        nested = value.get(key)
+        if isinstance(nested, (list, dict)):
+            out.extend(_extract_reasoning_fragments(nested, in_reasoning=local_reasoning or key.startswith("reasoning") or key == "summary"))
+    return out
+
+
+def _dedupe_preserve_order(items: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in items:
+        text = str(raw or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _extract_reasoning_text(message: Any) -> str:
+    candidates: list[str] = []
+    if message is None:
+        return ""
+
+    for value in (
+        getattr(message, "content", None),
+        getattr(message, "content_blocks", None),
+        getattr(message, "additional_kwargs", None),
+        getattr(message, "response_metadata", None),
+    ):
+        if value is not None:
+            candidates.extend(_extract_reasoning_fragments(value))
+
+    if not candidates and isinstance(message, dict):
+        candidates.extend(_extract_reasoning_fragments(message))
+
+    return "\n".join(_dedupe_preserve_order(candidates))
+
+
 def _message_to_log_payload(message: Any) -> dict[str, Any]:
     payload = _to_dict_obj(message)
     if not payload:
@@ -159,6 +234,16 @@ def _extract_usage_from_llm_result(response: LLMResult) -> Dict[str, Any]:
         output_tokens = _pick_int(mapping, ["completion_tokens", "output_tokens"])
         total_tokens = _pick_int(mapping, ["total_tokens"])
         input_cached_tokens = _extract_cached_tokens(mapping)
+        input_token_details = (
+            _to_dict_obj(mapping.get("input_token_details"))
+            or _to_dict_obj(mapping.get("input_tokens_details"))
+            or _to_dict_obj(mapping.get("prompt_tokens_details"))
+        )
+        output_token_details = (
+            _to_dict_obj(mapping.get("output_token_details"))
+            or _to_dict_obj(mapping.get("output_tokens_details"))
+            or _to_dict_obj(mapping.get("completion_tokens_details"))
+        )
         usage: Dict[str, Any] = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -166,6 +251,20 @@ def _extract_usage_from_llm_result(response: LLMResult) -> Dict[str, Any]:
         }
         if input_cached_tokens is not None:
             usage["input_cached_tokens"] = input_cached_tokens
+        if input_token_details:
+            usage["input_token_details"] = _json_safe(input_token_details)
+            usage["prompt_tokens_details"] = _json_safe(input_token_details)
+        if output_token_details:
+            usage["output_token_details"] = _json_safe(output_token_details)
+            usage["completion_tokens_details"] = _json_safe(output_token_details)
+        if mapping.get("source") is not None:
+            usage["source"] = str(mapping.get("source") or "")
+        cost = mapping.get("cost")
+        if isinstance(cost, (int, float)):
+            usage["cost"] = float(cost)
+        cost_details = _to_dict_obj(mapping.get("cost_details"))
+        if cost_details:
+            usage["cost_details"] = _json_safe(cost_details)
         return usage
 
     usage: Dict[str, Any] = {}
@@ -189,6 +288,7 @@ def _extract_usage_from_llm_result(response: LLMResult) -> Dict[str, Any]:
                         "output_tokens": usage_meta.get("output_tokens"),
                         "total_tokens": usage_meta.get("total_tokens"),
                         "input_token_details": _to_dict_obj(usage_meta.get("input_token_details")),
+                        "output_token_details": _to_dict_obj(usage_meta.get("output_token_details")),
                     })
                 if usage:
                     break
@@ -219,6 +319,9 @@ def _extract_raw_generations(response: LLMResult) -> list[dict[str, Any]]:
             content = getattr(message, "content", None)
             row["response_text"] = _content_to_text(content)
             row["response_content_raw"] = _json_safe(content)
+            reasoning_text = _extract_reasoning_text(message)
+            if reasoning_text:
+                row["reasoning_text"] = reasoning_text
 
             additional_kwargs = _to_dict_obj(getattr(message, "additional_kwargs", None))
             response_metadata = _to_dict_obj(getattr(message, "response_metadata", None))
@@ -496,6 +599,11 @@ class LLMTracingHandler(BaseCallbackHandler):
 
         usage = _extract_usage_from_llm_result(response)
         generations = _extract_raw_generations(response)
+        reasoning_text = ""
+        for generation in generations:
+            reasoning_text = str(generation.get("reasoning_text") or "").strip()
+            if reasoning_text:
+                break
 
         self.trace_store.append_event({
             "event": "LLM_USAGE",
@@ -505,6 +613,7 @@ class LLMTracingHandler(BaseCallbackHandler):
                 "usage": usage,
                 "elapsed_ms": elapsed_ms,
                 "run_id": self.run_id,
+                "reasoning_text": reasoning_text,
             },
         })
         self.trace_store.append_event({
@@ -584,11 +693,31 @@ class UIEventHandler(BaseCallbackHandler):
         self._tool_pending: Dict[str, Dict[str, Any]] = {}
         self._llm_pending: Dict[str, Dict[str, Any]] = {}
 
-    def _emit(self, name: str, *, category: str = "tool", **extra: Any) -> None:
+    @staticmethod
+    def _context(metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, Any]:
+        merged: Dict[str, Any] = {}
+        if isinstance(metadata, dict):
+            merged.update(metadata)
+        raw_metadata = kwargs.get("metadata")
+        if isinstance(raw_metadata, dict):
+            merged.update(raw_metadata)
+        return merged
+
+    def _emit(
+        self,
+        name: str,
+        *,
+        category: str = "tool",
+        task_id: Optional[str] = None,
+        step_id: Optional[int] = None,
+        **extra: Any,
+    ) -> None:
         self.reporter.emit(make_event(
             name,
             category=category,
             run_id=self.run_id or None,
+            task_id=(task_id or None),
+            step_id=step_id,
             payload=extra,
         ))
 
@@ -598,14 +727,24 @@ class UIEventHandler(BaseCallbackHandler):
         input_str: str,
         *,
         run_id: uuid.UUID,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
+        ctx = self._context(metadata, **kwargs)
+        task_id = str(ctx.get("task_id") or "")
+        step_id = ctx.get("step_id")
+        if not isinstance(step_id, int):
+            step_id = None
         self._tool_pending[str(run_id)] = {
             "tool": serialized.get("name", ""),
+            "task_id": task_id,
+            "step_id": step_id,
         }
         self._emit(
             "TOOL_CALL_START",
             category="tool",
+            task_id=task_id or None,
+            step_id=step_id,
             tool=serialized.get("name", ""),
         )
 
@@ -621,6 +760,8 @@ class UIEventHandler(BaseCallbackHandler):
         self._emit(
             "TOOL_CALL_END",
             category="tool",
+            task_id=str(info.get("task_id") or "") or None,
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
             tool=str(parsed.get("tool_name") or info.get("tool") or ""),
             status=str(parsed.get("tool_status") or ""),
             error=parsed.get("error"),
@@ -637,6 +778,8 @@ class UIEventHandler(BaseCallbackHandler):
         self._emit(
             "TOOL_CALL_END",
             category="tool",
+            task_id=str(info.get("task_id") or "") or None,
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
             tool=str(info.get("tool") or ""),
             status="error",
             error=str(error),
@@ -648,14 +791,73 @@ class UIEventHandler(BaseCallbackHandler):
         prompts: List[str],
         *,
         run_id: uuid.UUID,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
+        ctx = self._context(metadata, **kwargs)
         model = str(serialized.get("kwargs", {}).get("model_name") or "")
         self._llm_pending[str(run_id)] = {
             "model": model,
             "start_ts": time.time(),
+            "task_id": str(ctx.get("task_id") or ""),
+            "step_id": ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
+            "node": str(ctx.get("langgraph_node") or ctx.get("node") or ""),
         }
-        self._emit("LLM_CALL_START", category="llm", model=model, phase="react")
+        self._emit(
+            "LLM_CALL_START",
+            category="llm",
+            task_id=str(ctx.get("task_id") or "") or None,
+            step_id=ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
+            model=model,
+            phase="react",
+            node=str(ctx.get("langgraph_node") or ctx.get("node") or ""),
+        )
+
+    def on_chat_model_start(
+        self,
+        serialized: Dict[str, Any],
+        messages: List[List[Any]],
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        _ = (messages, parent_run_id, tags)
+        self.on_llm_start(serialized, [], run_id=run_id, metadata=metadata, **kwargs)
+
+    def on_llm_new_token(
+        self,
+        token: str,
+        *,
+        run_id: uuid.UUID,
+        **kwargs: Any,
+    ) -> None:
+        info = self._llm_pending.get(str(run_id), {})
+        chunk = kwargs.get("chunk")
+        reasoning_text = _extract_reasoning_text(chunk)
+        if reasoning_text:
+            self._emit(
+                "LLM_REASONING_DELTA",
+                category="llm",
+                task_id=str(info.get("task_id") or "") or None,
+                step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+                model=str(info.get("model") or ""),
+                phase="react",
+                node=str(info.get("node") or ""),
+                text=reasoning_text,
+            )
+        self._emit(
+            "LLM_TOKEN_DELTA",
+            category="llm",
+            task_id=str(info.get("task_id") or "") or None,
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            model=str(info.get("model") or ""),
+            phase="react",
+            node=str(info.get("node") or ""),
+            text=str(token or ""),
+        )
 
     def on_llm_end(
         self,
@@ -667,13 +869,23 @@ class UIEventHandler(BaseCallbackHandler):
         info = self._llm_pending.pop(str(run_id), {})
         elapsed_ms = int((time.time() - float(info.get("start_ts") or time.time())) * 1000)
         usage = _extract_usage_from_llm_result(response)
+        reasoning_text = ""
+        generations = _extract_raw_generations(response)
+        for generation in generations:
+            reasoning_text = str(generation.get("reasoning_text") or "").strip()
+            if reasoning_text:
+                break
         self._emit(
             "LLM_CALL_END",
             category="llm",
+            task_id=str(info.get("task_id") or "") or None,
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
             model=str(info.get("model") or ""),
             phase="react",
+            node=str(info.get("node") or ""),
             usage=usage,
             elapsed_ms=elapsed_ms,
+            reasoning_text=reasoning_text,
         )
 
 

@@ -26,7 +26,6 @@ from .constants import (
     LIVE_SUMMARY_MIN_INTERVAL_SEC,
     LIVE_SUMMARY_TIMEOUT_SEC,
     LIVE_SUMMARY_TOOL_EVENT_BATCH,
-    MAX_EVENT_FEED,
     MAX_TEXT_PREVIEW_CHARS,
     MAX_TRACE_LINES,
 )
@@ -736,18 +735,14 @@ class WebSession:
         return candidate
 
     def submit_prompt(self, prompt_id: str, text: str) -> str:
-        broker = self.broker
         if not prompt_id:
             return "No active prompt."
         ok = False
-        if broker:
-            ok = broker.submit(prompt_id, text)
-            if not ok:
-                ok = broker.submit_persisted(prompt_id, text)
-        else:
-            run_dir = self.get_selected_run_dir()
-            if run_dir is not None:
-                ok = self._submit_prompt_via_file(run_dir, prompt_id=prompt_id, text=text)
+        reporter = self.reporter
+        if reporter is not None:
+            ok = reporter.submit_prompt(prompt_id, text)
+        elif self.broker:
+            ok = self.broker.submit(prompt_id, text)
         if ok:
             with self._lock:
                 self._last_submitted_prompt_ts = time.time()
@@ -1218,35 +1213,6 @@ class WebSession:
         except Exception:
             return {}
 
-    def read_ui_events_from_file(self, run_dir: Optional[Path]) -> str:
-        ws = self._workspace_path()
-        if ws is None or not run_dir:
-            return ""
-        return io.tail_jsonl(run_dir / "ui_events.jsonl", project_space=ws, max_lines=MAX_EVENT_FEED)
-
-    def read_ui_events_objects(self, run_dir: Optional[Path], *, max_lines: int = MAX_EVENT_FEED) -> List[Dict[str, Any]]:
-        if not run_dir:
-            return []
-        path = run_dir / "ui_events.jsonl"
-        if not path.exists():
-            return []
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            return []
-        out: List[Dict[str, Any]] = []
-        for raw in lines[-max_lines:]:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(payload, dict):
-                out.append(payload)
-        return out
-
     def update_live_state(
         self,
         run_dir: Optional[Path],
@@ -1256,20 +1222,17 @@ class WebSession:
     ) -> Dict[str, Any]:
         if run_dir is None:
             return {}
+        reporter = self.reporter
+        active_run = reporter.get_run_dir() if reporter else None
+        if reporter and active_run and active_run == run_dir:
+            snapshot = reporter.get_snapshot()
+            live_state = snapshot.get("live_state")
+            return dict(live_state) if isinstance(live_state, dict) else {}
         key = self._run_key(run_dir)
         with self._lock:
             state = self.live_state_by_run.get(key)
         if state is None:
             state = new_live_state(run_id=run_dir.name)
-            if not events:
-                history = self.read_ui_events_objects(run_dir, max_lines=MAX_EVENT_FEED)
-                state, _ = apply_events(
-                    state,
-                    history,
-                    max_recent_toolcalls=20,
-                    max_recent_events=80,
-                    max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
-                )
         state, changed = apply_events(
             state,
             events,
@@ -1324,15 +1287,13 @@ class WebSession:
     def snapshot_live_state(self, run_dir: Optional[Path]) -> Dict[str, Any]:
         if run_dir is None:
             return {}
-        events = self.read_ui_events_objects(run_dir, max_lines=MAX_EVENT_FEED)
+        reporter = self.reporter
+        active_run = reporter.get_run_dir() if reporter else None
+        if reporter and active_run and active_run == run_dir:
+            snapshot = reporter.get_snapshot()
+            live_state = snapshot.get("live_state")
+            return dict(live_state) if isinstance(live_state, dict) else {}
         state = new_live_state(run_id=run_dir.name)
-        state, _ = apply_events(
-            state,
-            events,
-            max_recent_toolcalls=20,
-            max_recent_events=80,
-            max_journal_items=LIVE_SUMMARY_MAX_JOURNAL_ITEMS,
-        )
         self._hydrate_live_state_task_from_task_state(run_dir, state)
         terminal_status = self._terminal_status_from_task_state(run_dir)
         if terminal_status:
@@ -1619,29 +1580,6 @@ class WebSession:
         return ""
 
     def _load_prompt_from_run_dir(self, run_dir: Path) -> Optional[Dict[str, Any]]:
-        hitl_prompt = run_dir / "hitl" / "pending_prompt.json"
-        if hitl_prompt.exists():
-            try:
-                payload = json.loads(hitl_prompt.read_text(encoding="utf-8"))
-            except Exception:
-                payload = None
-            if isinstance(payload, dict):
-                prompt_id = str(payload.get("prompt_id") or "")
-                prompt_mtime = 0.0
-                try:
-                    prompt_mtime = float(hitl_prompt.stat().st_mtime)
-                except Exception:
-                    prompt_mtime = 0.0
-                # If feedback was already submitted for this prompt and persisted,
-                # do not keep showing the stale pending prompt.
-                if self._has_submitted_feedback(
-                    run_dir,
-                    prompt_id=prompt_id,
-                    newer_than=prompt_mtime,
-                ):
-                    return None
-                return self._annotate_prompt_payload(run_dir, payload)
-
         state_path = run_dir / "task_state.json"
         if not state_path.exists():
             return None
@@ -1653,14 +1591,6 @@ class WebSession:
             return None
         status = str(state.get("status") or "").strip().lower()
         if status != "awaiting_human_feedback":
-            return None
-        state_mtime = 0.0
-        try:
-            state_mtime = float(state_path.stat().st_mtime)
-        except Exception:
-            state_mtime = 0.0
-        # Snapshot fallback should not re-open a prompt after feedback was submitted.
-        if self._has_submitted_feedback(run_dir, prompt_id="", newer_than=state_mtime):
             return None
         interrupt_payload = state.get("last_interrupt")
         if not isinstance(interrupt_payload, dict):
@@ -1742,35 +1672,8 @@ class WebSession:
 
     @staticmethod
     def _submit_prompt_via_file(run_dir: Path, *, prompt_id: str, text: str) -> bool:
-        pending_path = run_dir / "hitl" / "pending_prompt.json"
-        response_path = run_dir / "hitl" / "pending_response.json"
-        if not pending_path.exists():
-            return False
-        try:
-            pending = json.loads(pending_path.read_text(encoding="utf-8"))
-        except Exception:
-            return False
-        if not isinstance(pending, dict):
-            return False
-        if str(pending.get("prompt_id") or "") != str(prompt_id or ""):
-            return False
-        payload = {
-            "prompt_id": str(prompt_id),
-            "text": str(text or ""),
-            "submitted_at": time.time(),
-        }
-        try:
-            response_path.parent.mkdir(parents=True, exist_ok=True)
-            response_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            try:
-                # Clear stale UI prompt immediately; graph-side broker still consumes
-                # pending_response.json for resume.
-                pending_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-            return True
-        except Exception:
-            return False
+        _ = (run_dir, prompt_id, text)
+        return False
 
     @staticmethod
     def _has_submitted_feedback(
@@ -1779,21 +1682,5 @@ class WebSession:
         prompt_id: str,
         newer_than: float,
     ) -> bool:
-        response_path = run_dir / "hitl" / "pending_response.json"
-        if not response_path.exists():
-            return False
-        try:
-            raw = json.loads(response_path.read_text(encoding="utf-8"))
-        except Exception:
-            return False
-        if not isinstance(raw, dict):
-            return False
-        resp_prompt_id = str(raw.get("prompt_id") or "")
-        if prompt_id and resp_prompt_id != prompt_id:
-            return False
-        submitted_at = raw.get("submitted_at")
-        if not isinstance(submitted_at, (int, float)):
-            return bool((not prompt_id) or (resp_prompt_id == prompt_id))
-        if newer_than > 0 and float(submitted_at) + 1e-6 < float(newer_than):
-            return False
-        return True
+        _ = (run_dir, prompt_id, newer_than)
+        return False
