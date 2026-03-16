@@ -86,8 +86,7 @@ def _active_run_name(session, runtime: dict[str, Any] | None = None) -> str:
         run_id = str(info.get("run_id") or "").strip()
         if run_id:
             return run_id
-    current = session.get_selected_run_dir()
-    return current.name if current is not None else ""
+    return ""
 
 
 def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
@@ -174,6 +173,8 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         "workspace_path": session.current_workspace_path(),
         "workspace_name": registry.project_space_name_for_session(session),
         "workspaces": _serialize_choices(session.list_workspaces()),
+        "chat_sessions": _serialize_choices(session.list_chat_sessions()),
+        "current_chat_session": session.current_chat_session_id(),
         "runs": _serialize_choices(session.list_runs()),
         "active_run": active_run,
         "selected_run": selected_run,
@@ -195,6 +196,25 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         "runtime": runtime,
         "can_submit_prompt": bool(runtime_matches_selection and prompt_payload),
     }
+
+
+def _apply_chat_session_view(snapshot: dict[str, Any], *, active_run: str = "") -> dict[str, Any]:
+    active = str(active_run or snapshot.get("active_run") or "").strip()
+    if active:
+        snapshot["selected_run"] = active
+        return snapshot
+    snapshot["selected_run"] = ""
+    snapshot["live_state"] = {}
+    snapshot["llm"] = {}
+    snapshot["graph"] = {"node": "", "message_count": 0, "tool_calls": [], "text_preview": ""}
+    snapshot["prompt"] = None
+    snapshot["events"] = []
+    snapshot["usage_summary"] = {}
+    snapshot["proposal"] = ""
+    snapshot["todo_items"] = []
+    snapshot["result_text"] = ""
+    snapshot["can_submit_prompt"] = False
+    return snapshot
 
 
 def _build_details(*, registry: SessionRegistry, ctx: str, run_name: str) -> dict[str, Any]:
@@ -358,6 +378,26 @@ def create_app(*, project_space_root: str) -> FastAPI:
             run_name=str(payload.get("run_name") or ""),
         )
         snapshot["status_message"] = message
+        return JSONResponse(snapshot)
+
+    @app.post("/api/session/{ctx}/chat/create")
+    async def _chat_create(ctx: str, request: Request):
+        payload = await _json_body(request)
+        session = registry.get_session(ctx)
+        session_id = session.create_chat_session()
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        snapshot = _apply_chat_session_view(snapshot)
+        snapshot["status_message"] = f"Started new chat session: {session_id}"
+        return JSONResponse(snapshot)
+
+    @app.post("/api/session/{ctx}/chat/select")
+    async def _chat_select(ctx: str, request: Request):
+        payload = await _json_body(request)
+        session = registry.get_session(ctx)
+        session_id = session.select_chat_session(str(payload.get("session_id") or ""))
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        snapshot = _apply_chat_session_view(snapshot)
+        snapshot["status_message"] = f"Switched to chat session: {session_id}" if session_id else "Chat session not found."
         return JSONResponse(snapshot)
 
     @app.post("/api/session/{ctx}/run/start")

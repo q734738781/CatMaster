@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 RUN_STATE_FILE = "run_state.json"
 PROPOSAL_FILE = "proposal.md"
 MEMORY_STORE_FILE = "deepagent_memory.sqlite"
+CHECKPOINT_STORE_FILE = "deepagent_threads.sqlite"
 MEMORY_FILE_PATH = "/memories/AGENTS.md"
 
 _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
@@ -178,18 +179,16 @@ class SpecialistRunner:
         *,
         entrypoint: SpecialistEntrypoint,
         proposal_review: bool,
-        session_context_text: str = "",
         chat_session_id: str = "",
-        entry_context_tokens_estimate: int = 0,
+        thread_id: str = "",
     ) -> dict[str, Any]:
         return asyncio.run(
             self.arun(
                 prompt,
                 entrypoint=entrypoint,
                 proposal_review=proposal_review,
-                session_context_text=session_context_text,
                 chat_session_id=chat_session_id,
-                entry_context_tokens_estimate=entry_context_tokens_estimate,
+                thread_id=thread_id,
             )
         )
 
@@ -202,17 +201,15 @@ class SpecialistRunner:
         *,
         entrypoint: SpecialistEntrypoint,
         proposal_review: bool,
-        session_context_text: str = "",
         chat_session_id: str = "",
-        entry_context_tokens_estimate: int = 0,
+        thread_id: str = "",
     ) -> dict[str, Any]:
         payload = {
             "entrypoint": entrypoint,
             "user_prompt": str(prompt or "").strip(),
             "proposal_review": bool(proposal_review),
-            "session_context_text": str(session_context_text or "").strip(),
             "chat_session_id": str(chat_session_id or "").strip(),
-            "entry_context_tokens_estimate": int(entry_context_tokens_estimate or 0),
+            "thread_id": str(thread_id or "").strip(),
         }
         return await self._run_impl(payload=payload, resume_feedback=None)
 
@@ -232,6 +229,7 @@ class SpecialistRunner:
         prompt = str(payload.get("user_prompt") or "").strip()
         if not prompt:
             raise ValueError("Prompt is required.")
+        thread_id = self._resolve_thread_id(payload)
 
         files_root = workspace_root(self.run_context.workspace)
         files_root.mkdir(parents=True, exist_ok=True)
@@ -251,7 +249,6 @@ class SpecialistRunner:
                 checkpoint = await self._build_proposal_checkpoint(
                     entrypoint=entrypoint,
                     prompt=prompt,
-                    session_context_text=str(payload.get("session_context_text") or ""),
                     usage_handler=usage_handler,
                 )
                 proposal_path = self.run_context.run_dir / PROPOSAL_FILE
@@ -263,7 +260,7 @@ class SpecialistRunner:
                         "status": "awaiting_human_feedback",
                         "phase": "proposal_review",
                         "active_specialist": entrypoint,
-                        "thread_id": self.run_context.run_id,
+                        "thread_id": thread_id,
                         "proposal_review": True,
                         "pending_human_input": {
                             "kind": "proposal_review",
@@ -275,9 +272,7 @@ class SpecialistRunner:
                         "delegation_log": [],
                         "text_preview": checkpoint.proposal_md[:280],
                         "user_prompt": prompt,
-                        "session_context_text": str(payload.get("session_context_text") or ""),
                         "chat_session_id": str(payload.get("chat_session_id") or ""),
-                        "entry_context_tokens_estimate": int(payload.get("entry_context_tokens_estimate") or 0),
                     }
                 )
                 self._emit(
@@ -320,7 +315,7 @@ class SpecialistRunner:
                 result = await agent.ainvoke(
                     {"messages": [{"role": "user", "content": message_text}]},
                     config={
-                        "configurable": {"thread_id": self.run_context.run_id},
+                        "configurable": {"thread_id": thread_id},
                         "callbacks": self._langchain_callbacks(usage_handler=usage_handler),
                     },
                 )
@@ -335,7 +330,7 @@ class SpecialistRunner:
                     "status": status,
                     "phase": "finalized",
                     "active_specialist": entrypoint,
-                    "thread_id": self.run_context.run_id,
+                    "thread_id": thread_id,
                     "proposal_review": bool(payload.get("proposal_review", False)),
                     "pending_human_input": None,
                     "todo_items": [],
@@ -343,9 +338,7 @@ class SpecialistRunner:
                     "delegation_log": [],
                     "text_preview": final_answer[:280],
                     "user_prompt": prompt,
-                    "session_context_text": str(payload.get("session_context_text") or ""),
                     "chat_session_id": str(payload.get("chat_session_id") or ""),
-                    "entry_context_tokens_estimate": int(payload.get("entry_context_tokens_estimate") or 0),
                     "final_answer": final_answer,
                     "summary": parsed["summary"],
                     "facts": list(parsed["facts"]),
@@ -371,7 +364,6 @@ class SpecialistRunner:
         *,
         entrypoint: SpecialistEntrypoint,
         prompt: str,
-        session_context_text: str,
         usage_handler: SpecialistUsageCallbackHandler,
     ) -> ProposalCheckpoint:
         create_agent = self._load_create_agent()
@@ -389,10 +381,7 @@ class SpecialistRunner:
                 "messages": [
                     {
                         "role": "user",
-                        "content": self._compose_request_text(
-                            prompt=prompt,
-                            session_context_text=session_context_text,
-                        ),
+                        "content": prompt,
                     }
                 ]
             },
@@ -528,7 +517,7 @@ class SpecialistRunner:
             await stack.aclose()
 
     async def _open_sqlite_state(self, stack: AsyncExitStack) -> tuple[Any, Any]:
-        checkpoint_path = self.run_context.run_dir / "deepagent_state.sqlite"
+        checkpoint_path = system_root(self.run_context.workspace) / CHECKPOINT_STORE_FILE
         store_path = system_root(self.run_context.workspace) / MEMORY_STORE_FILE
         try:
             from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -606,8 +595,8 @@ class SpecialistRunner:
         deepagents_root = files_root / ".deepagents"
         base = deepagents_root / "skills"
         layouts = {
-            base / "experiment": repo_root / "skills",
-            base / "writing": repo_root / "writing_skills",
+            base / "experiment": repo_root / "skills" / "experiment",
+            base / "writing": repo_root / "skills" / "writing",
         }
         for target, source in layouts.items():
             if not source.exists():
@@ -632,11 +621,14 @@ class SpecialistRunner:
             "/.deepagents/skills/writing",
         ]
 
-    def _compose_request_text(self, *, prompt: str, session_context_text: str) -> str:
-        context = str(session_context_text or "").strip()
-        if not context:
-            return prompt
-        return f"{prompt}\n\nRelevant prior session context:\n{context}"
+    def _resolve_thread_id(self, payload: dict[str, Any]) -> str:
+        thread_id = str(payload.get("thread_id") or "").strip()
+        if thread_id:
+            return thread_id
+        chat_session_id = str(payload.get("chat_session_id") or "").strip()
+        if chat_session_id:
+            return chat_session_id
+        return self.run_context.run_id
 
     def _system_prompt(self, entrypoint: SpecialistEntrypoint) -> str:
         return self._base_system_prompt(entrypoint)

@@ -1,10 +1,10 @@
 # Skill Authoring Guide
 
-This directory contains CatMaster starter skills. A skill here is prompt-level SOP, not a tool schema dump and not a hidden runtime contract.
+This directory contains CatMaster starter skills grouped by lane. A skill here is prompt-level SOP, not a tool schema dump and not a hidden runtime contract.
 
 ## Required format
 
-Each skill must live at `skills/<skill-name>/SKILL.md` and must satisfy all of the following:
+Each skill must live at either `skills/experiment/<skill-name>/SKILL.md` or `skills/writing/<skill-name>/SKILL.md` and must satisfy all of the following:
 
 - YAML frontmatter at the top.
 - `name` must exactly match the directory name.
@@ -27,7 +27,9 @@ Use this pattern:
 ---
 name: slab-construction-and-surface-modeling
 description: Use this skill for slab construction, vacuum and layer choices, surface supercell setup, and atom-fixing strategy in heterogeneous catalysis workflows.
-compatibility: Designed for CatMaster local tools and project-space relative-path execution.
+license: project-local
+compatibility: local
+allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height supercell"
 metadata:
   catmaster-suggested-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height supercell"
 ---
@@ -35,6 +37,8 @@ metadata:
 
 Rules:
 
+- `license`, `compatibility`, and `allowed-tools` should follow the DeepAgent skill frontmatter pattern.
+- `allowed-tools` should list concrete tool names separated by spaces.
 - `metadata.catmaster-suggested-tools` should list tool names separated by spaces.
 - The frontmatter suggested-tools list and the body `## Suggested tools` list must agree.
 - If no tool should be suggested, use an empty frontmatter string and body text `- (none specified)`.

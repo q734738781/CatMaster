@@ -215,7 +215,7 @@ def _repo_root() -> Path:
 
 
 def _achemso_bib_template() -> Path:
-    return _repo_root() / "writing_skills" / "achemso-latex-manuscript" / "assets" / "achemso-demo.bib"
+    return _repo_root() / "skills" / "writing" / "achemso-latex-manuscript" / "assets" / "achemso-demo.bib"
 
 
 def _has_real_citations(files: list[Path]) -> bool:

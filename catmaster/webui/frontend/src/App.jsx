@@ -993,6 +993,19 @@ function App({ boot }) {
     }, { loadDetails: view === "monitor" });
   }
 
+  async function handleChatCreate() {
+    await postAndApply(`/api/session/${escapePath(ctx)}/chat/create`, {
+      lane,
+    });
+  }
+
+  async function handleChatSelect(sessionId) {
+    await postAndApply(`/api/session/${escapePath(ctx)}/chat/select`, {
+      session_id: sessionId,
+      lane,
+    });
+  }
+
   async function handleStartRun() {
     await postAndApply(`/api/session/${escapePath(ctx)}/run/start`, {
       ...form,
@@ -1022,6 +1035,7 @@ function App({ boot }) {
   }
 
   const workspaceOptions = snapshot?.workspaces || [];
+  const chatSessionOptions = snapshot?.chat_sessions || [];
   const runOptions = snapshot?.runs || [];
   const cards = (snapshot?.cards || []).filter((card) => {
     if (!deferredSearch.trim()) {
@@ -1111,6 +1125,29 @@ function App({ boot }) {
               <input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="new workspace" />
             </label>
             <button type="button" onClick={handleWorkspaceCreate}>Create Workspace</button>
+          </div>
+
+          <div className="divider" />
+
+          <div className="control-stack">
+            <div className="section-head">
+              <div className="section-label">Chat Sessions</div>
+              <button type="button" className="ghost-btn" onClick={handleChatCreate}>New Chat</button>
+            </div>
+            <label>
+              <span>Current chat</span>
+              <select
+                value={snapshot?.current_chat_session || ""}
+                onChange={(event) => handleChatSelect(event.target.value)}
+              >
+                <option value="">(select chat session)</option>
+                {chatSessionOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <div className="divider" />

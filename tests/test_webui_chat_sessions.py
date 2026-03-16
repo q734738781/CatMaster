@@ -120,7 +120,7 @@ def test_chat_session_store_excludes_run_errors_from_chat_and_history(tmp_path: 
     assert "Run crashed badly." not in str(session_payload.get("summary_text") or "")
 
 
-def test_websession_injects_chat_history_for_experiment_lane(tmp_path: Path, monkeypatch) -> None:
+def test_websession_binds_chat_session_as_deepagent_thread_for_experiment_lane(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "ws"
     session = WebSession()
     session.set_workspace_root(str(tmp_path))
@@ -138,7 +138,8 @@ def test_websession_injects_chat_history_for_experiment_lane(tmp_path: Path, mon
         def run(self, prompt: str, **kwargs):
             captured["prompt"] = prompt
             captured["entrypoint"] = str(kwargs.get("entrypoint") or "")
-            captured["session_context_text"] = str(kwargs.get("session_context_text") or "")
+            captured["chat_session_id"] = str(kwargs.get("chat_session_id") or "")
+            captured["thread_id"] = str(kwargs.get("thread_id") or "")
             _write_completed_run(run_dir, entrypoint="experiment", final_answer="Agent answer.")
             return {"status": "done"}
 
@@ -165,13 +166,11 @@ def test_websession_injects_chat_history_for_experiment_lane(tmp_path: Path, mon
     session.run_thread.join(timeout=5)
     assert captured["entrypoint"] == "experiment"
     assert "Current request." in captured["prompt"]
-    assert "Relevant conversation history:" in captured["session_context_text"]
-    assert "Earlier user question." in captured["session_context_text"]
-    assert "Earlier assistant answer." in captured["session_context_text"]
-    assert "Earlier chat session summary:" not in captured["session_context_text"]
+    assert captured["chat_session_id"] == session.current_chat_session_id()
+    assert captured["thread_id"] == session.current_chat_session_id()
 
 
-def test_websession_injects_chat_history_for_research_lane(tmp_path: Path) -> None:
+def test_websession_builds_thread_binding_for_research_lane(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     session = WebSession()
     session.set_workspace_root(str(tmp_path))
@@ -180,15 +179,12 @@ def test_websession_injects_chat_history_for_research_lane(tmp_path: Path) -> No
 
     session._append_chat_message(role="user", content="Earlier user question.")
     session._append_chat_message(role="assistant", content="Earlier assistant answer.", kind="run_result")
-    pack = session.build_session_context(current_prompt="Research prompt.", lane="research")
+    pack = session.build_thread_binding(lane="research")
     assert pack["session_id"]
-    assert "Relevant conversation history:" in pack["context_text"]
-    assert "Earlier user question." in pack["context_text"]
-    assert "Earlier assistant answer." in pack["context_text"]
-    assert int(pack["estimated_tokens"]) > 0
+    assert pack["thread_id"] == pack["session_id"]
 
 
-def test_websession_context_only_keeps_recent_three_completed_turns(tmp_path: Path) -> None:
+def test_websession_entry_context_status_reports_deepagent_thread(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     session = WebSession()
     session.set_workspace_root(str(tmp_path))
@@ -199,15 +195,10 @@ def test_websession_context_only_keeps_recent_three_completed_turns(tmp_path: Pa
         session._append_chat_message(role="user", content=f"Question {idx}")
         session._append_chat_message(role="assistant", content=f"Answer {idx}", kind="run_result")
 
-    pack = session.build_session_context(current_prompt="Newest prompt.", lane="experiment")
-    assert "Question 0" not in pack["context_text"]
-    assert "Answer 0" not in pack["context_text"]
-    assert "Question 1" not in pack["context_text"]
-    assert "Answer 1" not in pack["context_text"]
-    assert "Question 2" in pack["context_text"]
-    assert "Answer 2" in pack["context_text"]
-    assert "Question 4" in pack["context_text"]
-    assert "Answer 4" in pack["context_text"]
+    status = session.entry_context_status_text(lane="experiment")
+    current_session = session.current_chat_session_id()
+    assert f"Session `{current_session}`" in status
+    assert f"deepagent thread `{current_session}`" in status
 
 
 def test_websession_lists_and_switches_chat_sessions(tmp_path: Path) -> None:

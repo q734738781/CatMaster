@@ -384,7 +384,7 @@ class WebSession:
         resume_feedback = (prompt or "").strip() if is_resume else ""
         session_user_prompt = str(prompt or "")
         effective_prompt_text = session_user_prompt
-        session_context = {"session_id": "", "context_text": "", "estimated_tokens": 0}
+        thread_binding = {"session_id": "", "thread_id": ""}
 
         with self._lock:
             ws = self.workspace
@@ -406,10 +406,7 @@ class WebSession:
             resume_dir = str(resume_target) if resume_target else None
             effective_lane = resume_lane or "research"
         if not is_resume:
-            session_context = self.build_session_context(
-                current_prompt=session_user_prompt,
-                lane=effective_lane,
-            )
+            thread_binding = self.build_thread_binding(lane=effective_lane)
             effective_prompt_text = session_user_prompt
         else:
             effective_prompt_text = resume_feedback
@@ -471,9 +468,8 @@ class WebSession:
                         effective_prompt_text,
                         entrypoint=effective_lane,
                         proposal_review=proposal_review,
-                        session_context_text=str(session_context.get("context_text") or ""),
-                        chat_session_id=str(session_context.get("session_id") or ""),
-                        entry_context_tokens_estimate=int(session_context.get("estimated_tokens") or 0),
+                        chat_session_id=str(thread_binding.get("session_id") or ""),
+                        thread_id=str(thread_binding.get("thread_id") or ""),
                     )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
@@ -845,65 +841,20 @@ class WebSession:
         except Exception:
             return
 
-    def build_session_context(self, *, current_prompt: str, lane: str) -> Dict[str, Any]:
+    def build_thread_binding(self, *, lane: str) -> Dict[str, Any]:
         session_id = self.ensure_active_chat_session()
-        store = self._chat_store()
-        if store is None or not session_id:
-            return {
-                "session_id": "",
-                "context_text": "",
-                "estimated_tokens": _estimate_tokens(_entry_system_prompt(lane) + "\n" + str(current_prompt or "")),
-            }
-        messages = store.list_messages(session_id)
-        turns: list[tuple[str, str]] = []
-        current_query = ""
-        for item in messages:
-            role = str(item.get("role") or "").strip().lower()
-            kind = str(item.get("kind") or "").strip().lower()
-            content = str(item.get("content") or "").strip()
-            if not content:
-                continue
-            if role == "user" and kind == "chat":
-                current_query = content
-                continue
-            if role == "assistant" and kind == "run_result":
-                if current_query:
-                    turns.append((current_query, content))
-                    current_query = ""
-        recent_turns = turns[-_RECENT_SESSION_TURNS:]
-        if not recent_turns:
-            return {
-                "session_id": session_id,
-                "context_text": "",
-                "estimated_tokens": _estimate_tokens(_entry_system_prompt(lane) + "\n" + str(current_prompt or "")),
-            }
-        lines: List[str] = []
-        lines.append("Relevant conversation history:")
-        for query, answer in recent_turns:
-            lines.append(f"User: {query}")
-            lines.append(f"Assistant: {answer}")
-        context_text = "\n".join(lines).strip()
-        estimated_tokens = _estimate_tokens(
-            "\n".join(
-                [
-                    _entry_system_prompt(lane),
-                    context_text,
-                    str(current_prompt or ""),
-                ]
-            )
-        )
         return {
             "session_id": session_id,
-            "context_text": context_text,
-            "estimated_tokens": estimated_tokens,
+            "thread_id": session_id,
         }
 
     def entry_context_status_text(self, *, lane: str, current_prompt: str = "") -> str:
-        pack = self.build_session_context(current_prompt=current_prompt, lane=lane)
+        _ = current_prompt
+        pack = self.build_thread_binding(lane=lane)
         session_id = str(pack.get("session_id") or self.ensure_active_chat_session()).strip()
-        estimated_tokens = int(pack.get("estimated_tokens") or 0)
+        thread_id = str(pack.get("thread_id") or session_id).strip()
         lane_text = str(lane or "research").strip() or "research"
-        return f"Session `{session_id}` | entry context est. `{estimated_tokens}` tokens | lane `{lane_text}`"
+        return f"Session `{session_id}` | deepagent thread `{thread_id}` | lane `{lane_text}`"
 
     def read_memory_index(self) -> str:
         workspace = self._workspace_path()

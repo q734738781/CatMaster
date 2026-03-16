@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--autorun|--no-autorun]
+  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--skip-frontend-build] [--autorun|--no-autorun]
 
 Options:
   --target DIR
@@ -24,6 +24,9 @@ Options:
   --full-repo
       Sync full repository instead of runtime-only paths.
 
+  --skip-frontend-build
+      Do not rebuild catmaster/webui/static from catmaster/webui/frontend before deploy.
+
   --autorun
       Start runtime WebUI automatically after deployment (default).
 
@@ -39,6 +42,7 @@ DRY_RUN=0
 NO_DELETE=0
 FULL_REPO=0
 AUTORUN=1
+SKIP_FRONTEND_BUILD=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,6 +64,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full-repo)
       FULL_REPO=1
+      shift
+      ;;
+    --skip-frontend-build)
+      SKIP_FRONTEND_BUILD=1
       shift
       ;;
     --autorun)
@@ -118,6 +126,20 @@ echo "Source: $REPO_ROOT"
 echo "Target: $TARGET_DIR"
 echo "Project space root for launcher: $PROJECT_SPACE_ROOT"
 echo
+
+if [[ $DRY_RUN -eq 0 && $SKIP_FRONTEND_BUILD -eq 0 ]]; then
+  FRONTEND_DIR="$REPO_ROOT/catmaster/webui/frontend"
+  if [[ -f "$FRONTEND_DIR/package.json" ]]; then
+    if ! command -v npm >/dev/null 2>&1; then
+      echo "npm is required to build the WebUI bundle before deploy." >&2
+      exit 1
+    fi
+    echo "Building WebUI bundle..."
+    (cd "$FRONTEND_DIR" && npm run build)
+    echo
+  fi
+fi
+
 if [[ $FULL_REPO -eq 1 ]]; then
   rsync "${RSYNC_ARGS[@]}" "$REPO_ROOT/" "$TARGET_DIR/"
 else
@@ -126,8 +148,9 @@ else
     "configs"
     "requirements"
     "skills"
-    "writing_skills"
+    "scripts"
     "main.py"
+    "start_webui.sh"
     "README.md"
     "LICENSE"
   )
@@ -156,21 +179,6 @@ source_repo=$REPO_ROOT
 source_commit=$COMMIT
 deployed_at_utc=$DEPLOY_TIME
 project_space_root_default=$PROJECT_SPACE_ROOT
-EOF
-
-  cat > "$TARGET_DIR/start_webui.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_PROJECT_SPACE_ROOT_FILE="$ROOT/.project_space_root_default"
-if [[ -f "$DEFAULT_PROJECT_SPACE_ROOT_FILE" ]]; then
-  DEFAULT_PROJECT_SPACE_ROOT="$(<"$DEFAULT_PROJECT_SPACE_ROOT_FILE")"
-else
-  DEFAULT_PROJECT_SPACE_ROOT="$(cd "$ROOT/.." && pwd)/project_space"
-fi
-PROJECT_SPACE_ROOT="${CATMASTER_PROJECT_SPACE_ROOT:-$DEFAULT_PROJECT_SPACE_ROOT}"
-cd "$ROOT"
-exec python main.py --project-space-root "$PROJECT_SPACE_ROOT" "$@"
 EOF
   chmod +x "$TARGET_DIR/start_webui.sh"
 

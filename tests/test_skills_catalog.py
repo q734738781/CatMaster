@@ -101,10 +101,10 @@ def test_default_catalog_discovers_writing_skills() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     catalog = SkillCatalog.create_default(repo_root=repo_root)
     metas = {item.name: item for item in catalog.refresh()}
-    assert "scientific-section-synthesis" in metas
-    assert metas["scientific-section-synthesis"].mount_token == "@writing_skills"
-    assert metas["scientific-section-synthesis"].lanes == ["writing"]
-    assert "section_writer" in metas["scientific-section-synthesis"].roles
+    assert "scientific-writing" in metas
+    assert metas["scientific-writing"].mount_token == "@writing"
+    assert metas["scientific-writing"].lanes == ["writing"]
+    assert "section_writer" in metas["scientific-writing"].roles
     assert "achemso-latex-manuscript" in metas
     assert "write_director" in metas["achemso-latex-manuscript"].roles
 
@@ -143,9 +143,9 @@ def test_starter_skills_use_standard_sections_and_consistent_suggested_tools() -
         "## References",
     ]
 
-    skill_root = repo_root / "skills"
+    skill_root = repo_root / "skills" / "experiment"
     skill_paths = sorted(path for path in skill_root.glob("*/SKILL.md"))
-    assert skill_paths, "expected starter skills under skills/*/SKILL.md"
+    assert skill_paths, "expected starter skills under skills/experiment/*/SKILL.md"
 
     for path in skill_paths:
         name = path.parent.name
@@ -172,7 +172,7 @@ def test_method_critical_defaults_sections_exist_for_targeted_skills() -> None:
         "adsorption-site-screening",
     ]
     for name in targeted:
-        path = repo_root / "skills" / name / "SKILL.md"
+        path = repo_root / "skills" / "experiment" / name / "SKILL.md"
         text = path.read_text(encoding="utf-8")
         assert "## Method-critical defaults" in text, f"{path} missing method-critical defaults section"
 
@@ -204,6 +204,39 @@ def test_skill_catalog_falls_back_to_suggested_tools_section(tmp_path: Path) -> 
     metas = catalog.refresh()
     assert [item.name for item in metas] == ["skill-beta"]
     assert metas[0].suggested_tools == ["tool_x", "tool_y"]
+
+
+def test_skill_catalog_prefers_allowed_tools_frontmatter(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "skills" / "skill-delta"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: skill-delta",
+                "description: delta skill",
+                "allowed-tools: \"tool_a tool_b\"",
+                "metadata:",
+                "  catmaster-suggested-tools: \"tool_x tool_y\"",
+                "---",
+                "",
+                "# skill-delta",
+                "",
+                "## Suggested tools",
+                "- tool_x",
+                "- tool_y",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    catalog = SkillCatalog(
+        source_roots=[tmp_path / "skills"],
+        repo_root=tmp_path,
+    )
+    metas = catalog.refresh()
+    assert [item.name for item in metas] == ["skill-delta"]
+    assert metas[0].suggested_tools == ["tool_a", "tool_b"]
 
 
 def test_skill_catalog_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path) -> None:

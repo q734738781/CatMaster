@@ -90,3 +90,50 @@ def test_active_run_name_falls_back_to_run_info_when_runtime_has_no_run_name() -
             return _DummyRunDir()
 
     assert server._active_run_name(_DummySession(), {"run_name": ""}) == "run_new"
+
+
+def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    runs_root = ws / "metadata" / "runs"
+    run_dir = runs_root / "run_old"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (ws / "files").mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_state.json").write_text(
+        json.dumps(
+            {
+                "status": "done",
+                "entrypoint": "experiment",
+                "summary": "Old answer",
+                "facts": [],
+                "files": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+
+    select_run = client.post(
+        f"/api/session/{ctx}/run/select",
+        json={"run_name": "run_old", "lane": "experiment"},
+    )
+    assert select_run.status_code == 200
+    assert select_run.json()["selected_run"] == "run_old"
+
+    response = client.post(
+        f"/api/session/{ctx}/chat/create",
+        json={"lane": "experiment"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_run"] == ""
+    assert payload["result_text"] == ""
+    assert payload["proposal"] == ""
+    assert payload["todo_items"] == []
+    assert payload["current_chat_session"]
+    assert len(payload["chat_sessions"]) >= 2

@@ -135,7 +135,7 @@ That split is what lets CatMaster do different kinds of work well:
 - shared project memory in `files/MEMORY/**`
 - run ledger indexing and history retrieval
 - MCP filesystem integration with role-scoped access
-- metadata-driven skills from both `skills/` and `writing_skills/`
+- metadata-driven skills under `skills/experiment/` and `skills/writing/`
 - fixed manuscript assembly with figure handling and compile-fix
 - research-to-writer handoff for turning campaign evidence into a draft
 
@@ -178,7 +178,7 @@ That split is what lets CatMaster do different kinds of work well:
 - `catmaster/`: orchestration graphs, runtime services, WebUI, and tools
 - `configs/`: LLM and DPDispatcher configuration
 - `skills/`: execution and research skills
-- `writing_skills/`: writing skills and template assets
+- `skills/writing/`: writing skills and template assets
 - `reference_scripts/`: helper scripts and reference templates
 - `devdocs/`: internal development and finalization notes
 - `demos/`: example prompts and workflow demos

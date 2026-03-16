@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover
 
 _FRONTMATTER_DELIMITER = "---"
 _SUGGESTED_TOOLS_KEY = "catmaster-suggested-tools"
+_ALLOWED_TOOLS_KEY = "allowed-tools"
 _ROLES_KEY = "catmaster-roles"
 _LANES_KEY = "catmaster-lanes"
 _TAGS_KEY = "catmaster-tags"
@@ -197,7 +198,10 @@ class SkillCatalog:
     @classmethod
     def create_default(cls, *, repo_root: Path | None = None) -> "SkillCatalog":
         resolved_repo_root = (repo_root or Path.cwd()).expanduser().resolve()
-        roots = [resolved_repo_root / "skills", resolved_repo_root / "writing_skills"]
+        roots = [
+            resolved_repo_root / "skills" / "experiment",
+            resolved_repo_root / "skills" / "writing",
+        ]
         return cls(
             source_roots=roots,
             repo_root=resolved_repo_root,
@@ -228,7 +232,9 @@ class SkillCatalog:
                         )
                     metadata = frontmatter.get("metadata")
                     metadata_dict = metadata if isinstance(metadata, dict) else {}
-                    suggested_tools = _split_suggested_tools(metadata_dict.get(_SUGGESTED_TOOLS_KEY))
+                    suggested_tools = _split_suggested_tools(frontmatter.get(_ALLOWED_TOOLS_KEY))
+                    if not suggested_tools:
+                        suggested_tools = _split_suggested_tools(metadata_dict.get(_SUGGESTED_TOOLS_KEY))
                     roles = _split_string_list(metadata_dict.get(_ROLES_KEY))
                     lanes = _split_string_list(metadata_dict.get(_LANES_KEY))
                     tags = _split_string_list(metadata_dict.get(_TAGS_KEY))
@@ -240,7 +246,7 @@ class SkillCatalog:
                         compatibility = None
                     source_root_name = source_root.name
                     mount_token = f"@{source_root_name}"
-                    if source_root_name == "writing_skills":
+                    if source_root_name == "writing":
                         if not lanes:
                             lanes = ["writing"]
                         if not roles:
