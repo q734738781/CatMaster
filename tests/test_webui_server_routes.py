@@ -76,3 +76,17 @@ def test_memory_route_returns_workspace_memory(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert "prefer compact reports" in payload["memory"]
+
+
+def test_active_run_name_falls_back_to_run_info_when_runtime_has_no_run_name() -> None:
+    class _DummyRunDir:
+        name = "run_old"
+
+    class _DummySession:
+        run_info = {"run_id": "run_new"}
+
+        @staticmethod
+        def get_selected_run_dir():
+            return _DummyRunDir()
+
+    assert server._active_run_name(_DummySession(), {"run_name": ""}) == "run_new"

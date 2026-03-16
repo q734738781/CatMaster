@@ -76,8 +76,23 @@ def _runtime_snapshot(session) -> dict[str, Any]:
     }
 
 
+def _active_run_name(session, runtime: dict[str, Any] | None = None) -> str:
+    runtime_dict = runtime if isinstance(runtime, dict) else {}
+    runtime_run = str(runtime_dict.get("run_name") or "").strip()
+    if runtime_run:
+        return runtime_run
+    info = getattr(session, "run_info", None)
+    if isinstance(info, dict):
+        run_id = str(info.get("run_id") or "").strip()
+        if run_id:
+            return run_id
+    current = session.get_selected_run_dir()
+    return current.name if current is not None else ""
+
+
 def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
     run_name = str(runtime.get("run_name") or "").strip()
+    active_run = _active_run_name(session, runtime)
     selected_run = run_name
     run_dir = None
     workspace_path = str(session.current_workspace_path() or "").strip()
@@ -92,6 +107,7 @@ def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
     if not usage_summary and run_dir is not None:
         usage_summary = session.read_usage_summary(run_dir)
     return {
+        "active_run": active_run,
         "selected_run": selected_run,
         "chat_messages": session.get_chat_messages(limit=40),
         "cards": _serialize_cards(session.list_run_cards()),
@@ -132,6 +148,7 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
     selected_run = _pick_selected_run(session, run_name)
     run_dir = session.get_selected_run_dir()
     runtime = _runtime_snapshot(session)
+    active_run = _active_run_name(session, runtime)
     runtime_matches_selection = bool(selected_run) and selected_run == str(runtime.get("run_name") or "")
 
     if runtime_matches_selection:
@@ -158,6 +175,7 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         "workspace_name": registry.project_space_name_for_session(session),
         "workspaces": _serialize_choices(session.list_workspaces()),
         "runs": _serialize_choices(session.list_runs()),
+        "active_run": active_run,
         "selected_run": selected_run,
         "cards": cards,
         "run_status": str(session.run_status or "idle"),
@@ -351,7 +369,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
             lane=str(payload.get("lane") or "research"),
             run_mode=str(payload.get("run_mode") or "new_run"),
             resume_run_name=str(payload.get("resume_run_name") or ""),
-            proposal_review=bool(payload.get("proposal_review", True)),
+            proposal_review=bool(payload.get("proposal_review", False)),
             log_llm=bool(payload.get("log_llm", False)),
             full_auto_major=bool(payload.get("full_auto_major", False)),
             seed_hypotheses=str(payload.get("seed_hypotheses") or ""),

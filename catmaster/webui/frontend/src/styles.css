@@ -51,6 +51,7 @@
 
 html, body, #app {
   min-height: 100%;
+  height: 100%;
 }
 
 body {
@@ -191,6 +192,7 @@ button:disabled {
   display: grid;
   grid-template-rows: auto auto 1fr;
   min-height: 100vh;
+  height: 100vh;
 }
 
 .topbar {
@@ -350,6 +352,7 @@ button:disabled {
   display: grid;
   gap: 0;
   overflow: hidden;
+  min-height: 0;
 }
 
 .layout.home {
@@ -368,13 +371,15 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .center-stage {
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   background: var(--bg-base);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .right-rail {
@@ -385,6 +390,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .home-sidecar {
@@ -526,7 +532,8 @@ button:disabled {
   flex-direction: column;
   padding: 12px 16px;
   gap: 10px;
-  overflow-y: auto;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .center-header {
@@ -615,7 +622,7 @@ button:disabled {
   gap: 6px;
   overflow-y: auto;
   padding: 2px 0;
-  min-height: 200px;
+  min-height: 0;
 }
 
 .chat-bubble {

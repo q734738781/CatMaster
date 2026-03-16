@@ -13,6 +13,10 @@ function escapePath(value) {
   return encodeURIComponent(String(value));
 }
 
+function isRunActive(status) {
+  return ["running", "starting", "interrupting", "awaiting_human_feedback"].includes(String(status || "").trim());
+}
+
 async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
     headers: {
@@ -75,7 +79,7 @@ function buildLiveAssistantMessage(snapshot) {
   const llm = snapshot?.llm || live.llm || {};
   const graph = snapshot?.graph || {};
   const status = String(snapshot?.run_status || live.status || "").trim();
-  const isActive = ["running", "starting", "interrupting"].includes(status);
+  const isActive = isRunActive(status);
   if (!isActive) {
     return null;
   }
@@ -688,7 +692,7 @@ function App({ boot }) {
     prompt: "",
     run_mode: "new_run",
     resume_run_name: "",
-    proposal_review: true,
+    proposal_review: false,
   });
   const deferredSearch = useDeferredValue(search);
   const eventSourceRef = useRef(null);
@@ -767,7 +771,7 @@ function App({ boot }) {
       const event = data.event || {};
       const runtime = data.runtime || {};
       latestSeqRef.current = Number(runtime.seq || event.seq || latestSeqRef.current || 0);
-      const streamRunName = data.selected_run || runtime.run_name || "";
+      const streamRunName = data.active_run || data.selected_run || runtime.run_name || "";
       const streamActive = Boolean(runtime.active) && Boolean(streamRunName);
       const shouldApplyStream = view === "home"
         ? streamActive
@@ -786,6 +790,7 @@ function App({ boot }) {
             }
             return {
               ...prev,
+              active_run: data.active_run || prev.active_run || "",
               selected_run: streamRunName || prev.selected_run || "",
               runtime,
               live_state: runtime.live_state || prev.live_state || {},
