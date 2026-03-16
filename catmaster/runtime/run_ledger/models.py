@@ -13,7 +13,6 @@ class RunLedgerEntry:
     request: str
     answer_summary: str
     search_blob_text: str
-    final_report_relpath: str
     run_export_relpath: str
     ts_start: str
     ts_end: str
@@ -48,7 +47,6 @@ class RunSearchHit:
     source: str
     request: str = ""
     answer_summary: str = ""
-    final_report_relpath: str = ""
     run_export_relpath: str = ""
 
     def to_dict(self) -> Dict[str, Any]:

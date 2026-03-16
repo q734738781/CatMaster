@@ -18,20 +18,29 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath, syst
 from catmaster.tools.misc.subprocess_utils import build_no_network_prefix, kill_process_tree
 from catmaster.runtime.tool_runtime import current_toolcall_key, current_run_dir
 
+TOOL_NAME = "bash"
+
 
 class BashExecInput(BaseModel):
     """
     Execute a multi-line bash script inside the workspace (default) and return stdout/stderr.
     Network access is disabled by default using Linux network namespaces (unshare).
+    In environments where unshare is unavailable or permission-restricted, set no_network=false explicitly.
     Symbolic link operations are disabled; use copy/move operations instead.
     Stdout/stderr are returned as-is and projection/offload is handled centrally.
     Keep output short in scripts and print one-line summaries when possible.
     """
 
     script: str = Field(..., description="Bash script to execute (multi-line).")
-    cwd: str = Field(".", description="Working directory inside project files root.")
+    cwd: str = Field(".", description="Working directory inside project files root. DeepAgent virtual absolute paths like '/' and '/foo/bar' are supported.")
     timeout_s: float = Field(86400.0, ge=0.1, description="Timeout seconds.")
-    no_network: bool = Field(True, description="Disable network using unshare network namespace.")
+    no_network: bool = Field(
+        True,
+        description=(
+            "Disable network using unshare network namespace. "
+            "Set false explicitly when only inspecting local files in environments where unshare is unavailable."
+        ),
+    )
 
 
 _FORBIDDEN_SYMLINK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -99,10 +108,10 @@ def _resolve_audit_logs_dir() -> Path:
     run_dir = (current_run_dir() or "").strip()
     if run_dir:
         try:
-            return Path(run_dir).expanduser().resolve() / "audit" / "bash_exec"
+            return Path(run_dir).expanduser().resolve() / "audit" / TOOL_NAME
         except Exception:
             pass
-    return system_root() / "audit" / "bash_exec"
+    return system_root() / "audit" / TOOL_NAME
 
 
 def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> tuple[list[str], str, str]:
@@ -116,7 +125,7 @@ def _write_stream_logs(toolcall_key: str, stdout: str, stderr: str) -> tuple[lis
         stdout_path.write_text(stdout or "", encoding="utf-8")
         stderr_path.write_text(stderr or "", encoding="utf-8")
     except Exception as exc:
-        warnings.append(f"failed to persist bash_exec logs: {type(exc).__name__}: {exc}")
+        warnings.append(f"failed to persist {TOOL_NAME} logs: {type(exc).__name__}: {exc}")
     return warnings, str(stdout_path), str(stderr_path)
 
 
@@ -140,7 +149,7 @@ def _success(
 ) -> tuple[str, dict[str, Any]]:
     content = _render_success_content(data)
     return content, {
-        "tool_name": "bash_exec",
+        "tool_name": TOOL_NAME,
         "data": data,
         "warnings": warnings,
         "execution_time": execution_time,
@@ -157,12 +166,12 @@ def _fail(
 ) -> None:
     normalized = str(message or "").strip()
     if not normalized:
-        normalized = "bash_exec failed."
+        normalized = f"{TOOL_NAME} failed."
     raise CatMasterToolExecutionError(
-        tool_name="bash_exec",
+        tool_name=TOOL_NAME,
         public_message=normalized,
         artifact={
-            "tool_name": "bash_exec",
+            "tool_name": TOOL_NAME,
             "data": data or {},
             "warnings": warnings or [],
             "execution_time": execution_time,
@@ -221,7 +230,7 @@ def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if blocked_reason:
         _fail(
             message=(
-                "Symbolic link operations are disabled in bash_exec. "
+                f"Symbolic link operations are disabled in {TOOL_NAME}. "
                 "Use copy/move operations (e.g., cp/rsync/mv) instead."
             ),
             data={
@@ -346,10 +355,10 @@ def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         _fail(
             message=f"Failed to start/execute bash subprocess: {exc}",
             execution_time=time.perf_counter() - t0,
-            error_code="bash_exec_runtime_error",
+            error_code="bash_runtime_error",
         )
     finally:
         _unregister_active_proc(toolcall_key)
 
 
-__all__ = ["bash_exec", "BashExecInput", "cancel_bash_exec_toolcall"]
+__all__ = ["bash_exec", "BashExecInput", "cancel_bash_exec_toolcall", "TOOL_NAME"]

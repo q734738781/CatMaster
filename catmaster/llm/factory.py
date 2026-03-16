@@ -4,10 +4,18 @@ from typing import Any, Dict
 import os
 import logging
 import json
+import re
 
 from catmaster.llm.config import LLMConfig
 
 _logger = logging.getLogger(__name__)
+
+
+def _normalize_http_log_body(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n").strip()
+    cleaned = re.sub(r"\n[ \t]*\n+", "\n", cleaned)
+    return cleaned.replace("\n", "\\n")
 
 
 def _request_content_text(request: Any) -> str:
@@ -17,13 +25,29 @@ def _request_content_text(request: Any) -> str:
     except Exception as exc:
         return f"<unavailable: {exc}>"
     if isinstance(content, bytes):
-        return content.decode("utf-8", errors="replace")
+        return _normalize_http_log_body(content.decode("utf-8", errors="replace"))
     if isinstance(content, str):
-        return content
+        return _normalize_http_log_body(content)
     try:
-        return json.dumps(content, ensure_ascii=False, default=str)
+        return _normalize_http_log_body(json.dumps(content, ensure_ascii=False, default=str))
     except Exception:
-        return str(content)
+        return _normalize_http_log_body(str(content))
+
+
+def _response_content_text(response: Any) -> str:
+    """Best-effort extraction of HTTP response body for logging."""
+    try:
+        content = getattr(response, "content", b"")
+    except Exception as exc:
+        return f"<unavailable: {exc}>"
+    if isinstance(content, bytes):
+        return _normalize_http_log_body(content.decode("utf-8", errors="replace"))
+    if isinstance(content, str):
+        return _normalize_http_log_body(content)
+    try:
+        return _normalize_http_log_body(json.dumps(content, ensure_ascii=False, default=str))
+    except Exception:
+        return _normalize_http_log_body(str(content))
 
 
 def _build_http_debug_clients(cfg: LLMConfig) -> tuple[Any, Any]:
@@ -49,11 +73,61 @@ def _build_http_debug_clients(cfg: LLMConfig) -> tuple[Any, Any]:
             body,
         )
 
+    def _log_response(response: Any) -> None:
+        request = getattr(response, "request", None)
+        method = str(getattr(request, "method", "") or "").upper()
+        if method != "POST":
+            return
+        url = str(getattr(request, "url", "") or "")
+        status_code = getattr(response, "status_code", None)
+        body = _response_content_text(response)
+        _logger.info(
+            "[llm.http.raw_response] provider=%s model=%s method=%s url=%s status=%s body=%s",
+            cfg.provider,
+            cfg.model,
+            method,
+            url,
+            status_code,
+            body,
+        )
+
     async def _alog_request(request: Any) -> None:
         _log_request(request)
 
-    sync_client = httpx.Client(event_hooks={"request": [_log_request]})
-    async_client = httpx.AsyncClient(event_hooks={"request": [_alog_request]})
+    async def _alog_response(response: Any) -> None:
+        try:
+            await response.aread()
+        except Exception as exc:
+            _logger.info(
+                "[llm.http.raw_response] provider=%s model=%s method=%s url=%s status=%s body=<read failed: %s>",
+                cfg.provider,
+                cfg.model,
+                str(getattr(getattr(response, "request", None), "method", "") or "").upper(),
+                str(getattr(getattr(response, "request", None), "url", "") or ""),
+                getattr(response, "status_code", None),
+                exc,
+            )
+            return
+        _log_response(response)
+
+    def _sync_response_hook(response: Any) -> None:
+        try:
+            response.read()
+        except Exception as exc:
+            _logger.info(
+                "[llm.http.raw_response] provider=%s model=%s method=%s url=%s status=%s body=<read failed: %s>",
+                cfg.provider,
+                cfg.model,
+                str(getattr(getattr(response, "request", None), "method", "") or "").upper(),
+                str(getattr(getattr(response, "request", None), "url", "") or ""),
+                getattr(response, "status_code", None),
+                exc,
+            )
+            return
+        _log_response(response)
+
+    sync_client = httpx.Client(event_hooks={"request": [_log_request], "response": [_sync_response_hook]})
+    async_client = httpx.AsyncClient(event_hooks={"request": [_alog_request], "response": [_alog_response]})
     return sync_client, async_client
 
 
@@ -82,13 +156,19 @@ def _resolve_extra_body(cfg: LLMConfig) -> Dict[str, Any]:
     return {}
 
 
-def _resolve_reasoning_effort(cfg: LLMConfig) -> str | None:
+def _resolve_reasoning_config(cfg: LLMConfig) -> Dict[str, Any] | None:
     reasoning = cfg.reasoning if isinstance(cfg.reasoning, dict) else {}
-    effort = reasoning.get("effort")
-    if effort is None:
-        return None
-    text = str(effort).strip()
-    return text or None
+    cleaned: Dict[str, Any] = {}
+    for key, value in reasoning.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                cleaned[str(key)] = text
+        else:
+            cleaned[str(key)] = value
+    return cleaned or None
 
 
 def _resolve_model_kwargs(cfg: LLMConfig) -> dict[str, Any]:
@@ -120,6 +200,49 @@ def _resolve_model_kwargs(cfg: LLMConfig) -> dict[str, Any]:
         model_kwargs.update(extra_model_kwargs)
 
     return model_kwargs
+
+
+def _resolve_openrouter_header_fields(cfg: LLMConfig) -> dict[str, str]:
+    headers = dict(cfg.default_headers) if isinstance(cfg.default_headers, dict) else {}
+    out: dict[str, str] = {}
+    referer = str(headers.pop("HTTP-Referer", "") or "").strip()
+    title = str(headers.pop("X-Title", "") or "").strip()
+    if referer:
+        out["app_url"] = referer
+    if title:
+        out["app_title"] = title
+    return out
+
+
+def _resolve_openrouter_request_kwargs(cfg: LLMConfig) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if cfg.base_url:
+        kwargs["base_url"] = cfg.base_url
+    kwargs.update(_resolve_openrouter_header_fields(cfg))
+
+    model_kwargs = _resolve_model_kwargs(cfg)
+    extra_body = _resolve_extra_body(cfg)
+    provider_config = extra_body.pop("provider", None)
+    route = extra_body.pop("route", None)
+    plugins = extra_body.pop("plugins", None)
+    prompt_cache_retention = extra_body.pop("prompt_cache_retention", None)
+
+    if isinstance(provider_config, dict) and provider_config:
+        kwargs["openrouter_provider"] = provider_config
+    if route is not None:
+        kwargs["route"] = route
+    if isinstance(plugins, list) and plugins:
+        kwargs["plugins"] = plugins
+    if prompt_cache_retention is not None:
+        _logger.warning(
+            "Ignoring unsupported OpenRouter request option prompt_cache_retention=%r for ChatOpenRouter.",
+            prompt_cache_retention,
+        )
+    if extra_body:
+        model_kwargs.update(extra_body)
+    if model_kwargs:
+        kwargs["model_kwargs"] = model_kwargs
+    return kwargs
 
 
 def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> None:
@@ -166,7 +289,37 @@ def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> Non
 
 def build_chat_model(cfg: LLMConfig) -> Any:
     """Build a LangChain ChatModel from an LLMConfig."""
-    if cfg.provider in ("openai", "openrouter", "oai_compatible", "deepseek"):
+    if cfg.provider == "openrouter":
+        from langchain_openrouter import ChatOpenRouter
+
+        api_key = _require_api_key(cfg)
+        kwargs = _resolve_openrouter_request_kwargs(cfg)
+        reasoning_config = _resolve_reasoning_config(cfg)
+
+        if cfg.timeout_s is not None:
+            kwargs["timeout"] = int(cfg.timeout_s)
+        if cfg.max_retries is not None:
+            kwargs["max_retries"] = cfg.max_retries
+        if cfg.print_http_raw_post:
+            _logger.warning(
+                "print_http_raw_post is not supported for provider=openrouter with ChatOpenRouter; ignoring."
+            )
+
+        max_tokens = cfg.max_tokens
+        if max_tokens is None and cfg.max_output_tokens is not None:
+            max_tokens = cfg.max_output_tokens
+
+        return ChatOpenRouter(
+            model=cfg.model,
+            api_key=api_key,
+            temperature=cfg.temperature,
+            reasoning=reasoning_config,
+            streaming=True,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+
+    if cfg.provider in ("openai", "oai_compatible", "deepseek"):
         from langchain_openai import ChatOpenAI
 
         api_key = _require_api_key(cfg)
@@ -192,7 +345,7 @@ def build_chat_model(cfg: LLMConfig) -> Any:
                 sorted(merged_extra_body.keys()),
             )
 
-        reasoning_effort = _resolve_reasoning_effort(cfg)
+        reasoning_config = _resolve_reasoning_config(cfg)
 
         if cfg.print_http_raw_post:
             http_client, http_async_client = _build_http_debug_clients(cfg)
@@ -210,8 +363,9 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             model=cfg.model,
             api_key=api_key,
             temperature=cfg.temperature,
-            reasoning_effort=reasoning_effort,
+            reasoning=reasoning_config,
             model_kwargs=model_kwargs,
+            streaming=True,
             **kwargs,
         )
 

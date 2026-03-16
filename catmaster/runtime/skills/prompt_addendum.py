@@ -54,9 +54,10 @@ def render_skills_addendum(*, role: str, skills: list[SkillMeta], mounted_skill_
             [
                 f"1. After deciding to use a skill, read `{example_token}/<skill-name>/SKILL.md` with standard filesystem read tools.",
                 "2. Resolve relative references against that skill directory first.",
-                "3. Load only needed assets under that skill directory (for example `references/` or `scripts/`).",
-                "4. Prefer running or patching referenced scripts over retyping large blocks.",
-                "5. Reuse templates/assets when available instead of recreating from scratch.",
+                "3. For shell commands, remember the default cwd is the project root; resolve any skill-relative paths against the skill directory before running them.",
+                "4. Load only needed assets under that skill directory (for example `references/` or `scripts/`).",
+                "5. Prefer running or patching referenced scripts over retyping large blocks.",
+                "6. Reuse templates/assets when available instead of recreating from scratch.",
             ]
         )
     else:

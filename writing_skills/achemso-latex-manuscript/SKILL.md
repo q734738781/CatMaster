@@ -6,7 +6,7 @@ metadata:
   catmaster-roles: "write_director section_writer write_reviewer"
   catmaster-lanes: "writing"
   catmaster-tags: "writing latex achemso acs"
-  catmaster-suggested-tools: "apply_aider_edits read_research_pack review_research_context bash_exec"
+  catmaster-suggested-tools: "apply_aider_edits read_research_pack review_research_context bash"
 ---
 
 # achemso-latex-manuscript
@@ -26,7 +26,7 @@ Read these assets first through the read-only skills mount:
 - `apply_aider_edits`
 - `read_research_pack`
 - `review_research_context`
-- `bash_exec`
+- `bash`
 
 ## Workflow
 1. Read the `SKILL.md` and the two asset files before drafting the section.

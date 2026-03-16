@@ -45,7 +45,6 @@ class RunLedgerStore:
                         request TEXT NOT NULL,
                         answer_summary TEXT NOT NULL,
                         search_blob_text TEXT NOT NULL,
-                        final_report_relpath TEXT NOT NULL,
                         run_export_relpath TEXT NOT NULL,
                         ts_start TEXT NOT NULL,
                         ts_end TEXT NOT NULL,
@@ -97,7 +96,6 @@ class RunLedgerStore:
             request=str(row["request"] or ""),
             answer_summary=str(row["answer_summary"] or ""),
             search_blob_text=str(row["search_blob_text"] or ""),
-            final_report_relpath=str(row["final_report_relpath"] or ""),
             run_export_relpath=str(row["run_export_relpath"] or ""),
             ts_start=str(row["ts_start"] or ""),
             ts_end=str(row["ts_end"] or ""),
@@ -116,7 +114,6 @@ class RunLedgerStore:
             source=source,
             request=str(row["request"] or ""),
             answer_summary=str(row["answer_summary"] or ""),
-            final_report_relpath=str(row["final_report_relpath"] or ""),
             run_export_relpath=str(row["run_export_relpath"] or ""),
         )
 
@@ -129,9 +126,9 @@ class RunLedgerStore:
                     INSERT INTO run_ledger (
                         run_id, project_id, lane, status,
                         request, answer_summary, search_blob_text,
-                        final_report_relpath, run_export_relpath,
+                        run_export_relpath,
                         ts_start, ts_end, model_name, provider, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id) DO UPDATE SET
                         project_id=excluded.project_id,
                         lane=excluded.lane,
@@ -139,7 +136,6 @@ class RunLedgerStore:
                         request=excluded.request,
                         answer_summary=excluded.answer_summary,
                         search_blob_text=excluded.search_blob_text,
-                        final_report_relpath=excluded.final_report_relpath,
                         run_export_relpath=excluded.run_export_relpath,
                         ts_start=excluded.ts_start,
                         ts_end=excluded.ts_end,
@@ -155,7 +151,6 @@ class RunLedgerStore:
                         entry.request,
                         entry.answer_summary,
                         entry.search_blob_text,
-                        entry.final_report_relpath,
                         entry.run_export_relpath,
                         entry.ts_start,
                         entry.ts_end,

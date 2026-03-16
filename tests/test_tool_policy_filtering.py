@@ -35,3 +35,18 @@ def test_tool_policy_ignores_legacy_skill_flag() -> None:
 def test_tool_policy_default_max_tool_calls_per_task_is_100() -> None:
     policy = ToolPolicy.from_dict({})
     assert policy.max_tool_calls_per_task == 100
+
+
+def test_tool_policy_normalizes_legacy_bash_exec_alias() -> None:
+    tools = [
+        {"name": "bash", "type": "function"},
+        {"name": "write_note", "type": "function"},
+    ]
+
+    policy = ToolPolicy(allowed_tools={"bash_exec"})
+    filtered = policy.filter_function_tools(tools)
+    assert [tool["name"] for tool in filtered] == ["bash"]
+
+    policy = ToolPolicy(denied_tools={"bash_exec"})
+    filtered = policy.filter_function_tools(tools)
+    assert [tool["name"] for tool in filtered] == ["write_note"]

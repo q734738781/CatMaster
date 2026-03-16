@@ -225,6 +225,7 @@ agents:
   director: "openai/gpt-5.4:online-high"
   task_runner: "openai/gpt-5.4:online-medium"
   research_lead: "openai/gpt-5.4:online-high"
+  research_state_updater: "openai/gpt-5.4:online-high"
   write_director: "openai/gpt-5.4:online-high"
   section_writer: "openai/gpt-5.4:online-medium"
   write_reviewer: "openai/gpt-5.4:online-medium"
@@ -232,13 +233,11 @@ agents:
   tex_compile_fixer: "openai/gpt-5.4:online-medium"
   # Tool Agent Models
   image_analyzer: "openai/gpt-5.4:online-medium"
-  literature_web_search: "openai/gpt-5-mini:online"
   literature_synthesizer: "openai/gpt-5.4:medium"
   literature_deep_research: "openai/gpt-5.4:xhigh"
   memory_patch: "openai/gpt-5.4:online-medium"
   tool_selector: "openai/gpt-5.4:online-minimal"
   summary: "google/gemini-3-flash-preview"
-  history_reader: "google/gemini-3-flash-preview"
 
 image_generation:
   model_label: "google/nanobanana_2"
@@ -251,8 +250,8 @@ writing:
 agent_runtime:
   recursion_limit: 9999
   max_tool_calls: 60
-  print_state_messages: false
-  print_http_raw_post: true
+  print_state_messages: true
+  print_http_raw_post: false
 
 agent_policies:
   proposal:
@@ -266,6 +265,7 @@ literature:
     fast_director: focused
     task_runner: none
     research_lead: deep_report
+    research_state_updater: deep_report
     write_director: none
     section_writer: standard
     write_reviewer: none
@@ -310,29 +310,6 @@ literature:
       public_web_limit: 5
       use_public_web: true
 
-mcp:
-  filesystem:
-    enabled: true
-    transport: stdio
-    mode: stateful
-    server_name: filesystem
-    command: npx
-    args_prefix:
-      - -y
-      - "@modelcontextprotocol/server-filesystem"
-    model_root_token: "."
-    hide_list_allowed_directories: true
-    expose_roles:
-      proposal: readonly
-      director: readonly
-      task_runner: full
-    offload:
-      output_dir_rel: "_tool_outputs/mcp_filesystem"
-      max_paths_inline: 20
-      max_lines_inline: 80
-      max_chars_inline: 12000
-      max_tree_chars_inline: 8000
-      max_read_multiple_chars_inline: 12000
 
 # ---------------------------------------------------------------------------
 # Quick provider-specific examples (copy into a model block if needed)

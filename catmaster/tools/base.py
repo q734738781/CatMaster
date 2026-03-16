@@ -126,10 +126,24 @@ def resolve_scoped_path(
     if scope not in {"files", "metadata"}:
         raise ValueError(f"Invalid scope: {scope}")
     root = (workspace_root(workspace) if scope == "files" else system_root(workspace)).resolve()
-    p = Path(path).expanduser()
-    if not p.is_absolute():
-        p = root / p
-    p = p.resolve()
+    raw_path = str(path or "").strip() or "."
+    p = Path(raw_path).expanduser()
+    if p.is_absolute():
+        resolved_absolute = p.resolve()
+        if scope == "files":
+            try:
+                resolved_absolute.relative_to(root)
+            except ValueError:
+                # DeepAgent exposes the project filesystem with a virtual `/` root.
+                # Treat absolute file-scope paths like `/foo/bar` as virtual paths
+                # relative to <project_space>/files.
+                p = (root / raw_path.lstrip("/")).resolve()
+            else:
+                p = resolved_absolute
+        else:
+            p = resolved_absolute
+    else:
+        p = (root / p).resolve()
     try:
         p.relative_to(root)
     except ValueError:

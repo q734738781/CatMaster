@@ -162,9 +162,9 @@ class StructWriter:
             user_incar_settings.setdefault("ISMEAR", 0)
             user_incar_settings.setdefault("SIGMA", 0.1)
 
-        # DFT-D3 toggle
+        # DFT-D3(BJ) toggle
         if use_d3:
-            user_incar_settings.setdefault("IVDW", 11)
+            user_incar_settings.setdefault("IVDW", 12)
 
         # DFT+U toggle
         if use_dft_plus_u:

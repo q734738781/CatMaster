@@ -59,7 +59,7 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
     )
 
     model = _DummyModel()
-    bash = _DummyTool("bash_exec")
+    bash = _DummyTool("bash")
 
     graph._build_proposal_agent(model, [bash])
     graph._build_director_agent(model, [bash])

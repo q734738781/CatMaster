@@ -14,8 +14,6 @@ def test_memory_patcher_system_prompt_requires_read_then_patch() -> None:
     system_content = MEMORY_PATCHER_SYSTEM_PROMPT
     assert "Memory Patcher agent" in system_content
     assert "`apply_aider_edits`" in system_content
-    assert "read_text_file" in system_content
-    assert "read_multiple_files" in system_content
     assert "Only modify files under `MEMORY/**`." in system_content
     assert "If an edit apply fails, re-read the target file and retry" in system_content
     assert "FACTS keeps verified facts/results only" in system_content

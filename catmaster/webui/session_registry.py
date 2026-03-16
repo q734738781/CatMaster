@@ -103,6 +103,9 @@ class SessionRegistry:
                 return resolved, resolved.name
             return None, value
 
+        if value in {".", self.default_project_space_root.name} and self._looks_like_project_space(self.default_project_space_root):
+            return self.default_project_space_root, self.default_project_space_root.name
+
         candidate = (self.default_project_space_root / value).resolve()
         if candidate.exists() and candidate.is_dir():
             return candidate, value
@@ -114,9 +117,19 @@ class SessionRegistry:
             return None
         try:
             resolved = Path(path).expanduser().resolve()
+            if resolved == self.default_project_space_root:
+                return self.default_project_space_root.name
             return str(resolved.relative_to(self.default_project_space_root))
         except Exception:
             return Path(path).name if path else None
+
+    @staticmethod
+    def _looks_like_project_space(path: Path) -> bool:
+        try:
+            resolved = Path(path).expanduser().resolve()
+        except Exception:
+            return False
+        return (resolved / "files").is_dir() and (resolved / "metadata").is_dir()
 
 
 __all__ = ["BootstrapState", "SessionRegistry"]

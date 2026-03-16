@@ -177,7 +177,6 @@ class VectorIndex:
                     source="dense",
                     request=str(meta.get("request") or ""),
                     answer_summary=str(meta.get("answer_summary") or ""),
-                    final_report_relpath=str(meta.get("final_report_relpath") or ""),
                     run_export_relpath=str(meta.get("run_export_relpath") or ""),
                 )
             )

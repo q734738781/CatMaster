@@ -25,12 +25,7 @@ def test_history_reader_builds_context_pack_with_citations(tmp_path: Path) -> No
         run_dir = sys_root / "runs" / "run_001"
         (run_dir / "reports").mkdir(parents=True, exist_ok=True)
 
-        final_rel = "runs/run_001/reports/FINAL_REPORT.md"
         export_rel = "runs/run_001/reports/RUN_EXPORT.json"
-        (sys_root / final_rel).write_text(
-            "# Final Report\n\n## Result\nontop site is stable.\n",
-            encoding="utf-8",
-        )
         (sys_root / export_rel).write_text(
             json.dumps({"answer_summary": "ontop is best"}, ensure_ascii=False),
             encoding="utf-8",
@@ -44,7 +39,6 @@ def test_history_reader_builds_context_pack_with_citations(tmp_path: Path) -> No
             request="CO adsorption on Fe(111)",
             answer_summary="ontop is best",
             search_blob_text="CO adsorption ontop Fe(111)",
-            final_report_relpath=final_rel,
             run_export_relpath=export_rel,
             ts_start="2026-03-05T10:00:00Z",
             ts_end="2026-03-05T10:01:00Z",
@@ -62,7 +56,6 @@ def test_history_reader_builds_context_pack_with_citations(tmp_path: Path) -> No
             source="hybrid",
             request=entry.request,
             answer_summary=entry.answer_summary,
-            final_report_relpath=entry.final_report_relpath,
             run_export_relpath=entry.run_export_relpath,
         )
         reader = HistoryReader(
@@ -79,8 +72,8 @@ def test_history_reader_builds_context_pack_with_citations(tmp_path: Path) -> No
         )
         assert pack.selected_runs == ["run_001"]
         assert "Relevant historical runs" in pack.context_text
-        assert final_rel not in pack.context_text
+        assert export_rel not in pack.context_text
         assert str(sys_root) not in pack.context_text
         assert pack.citations
         assert pack.citations[0]["run_id"] == "run_001"
-        assert pack.citations[0]["path"] == final_rel
+        assert pack.citations[0]["path"] == export_rel

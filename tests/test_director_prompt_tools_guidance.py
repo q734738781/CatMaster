@@ -11,10 +11,9 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     human_content = DIRECTOR_CONTEXT_TEMPLATE
     assert "You may use helper tools for read/check inspection before deciding." in system_content
     assert "Helper tools available in this stage" in system_content
-    assert "Filesystem read/discovery tools" in system_content
-    assert "`bash_exec`" in system_content
+    assert "`run_literature_research`" in system_content
     assert "`apply_aider_edits`" in system_content
-    assert "`write_note`" in system_content
+    assert "`write_note`" not in system_content
     assert "`read_file`" not in system_content
     assert "`list_directory_with_sizes`" not in system_content
     assert "`get_file_info`" not in system_content
@@ -48,7 +47,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "Treat `.` as project files root" in system_content
     assert "reference absolute project-files-root path" in system_content
     assert "use relative paths in arguments by default" in system_content
-    assert "`bash_exec` command text is exempt" in system_content
+    assert "`bash` command text is exempt" not in system_content
     assert "expected_outputs default shape" not in system_content
     assert "`goal`:" not in system_content
     assert "`task_detail`:" not in system_content

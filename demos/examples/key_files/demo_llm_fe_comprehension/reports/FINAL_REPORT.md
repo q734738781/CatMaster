@@ -33,7 +33,7 @@ Bulk VASP relaxation:
 Key bulk INCAR settings (from generated input):
 - `ENCUT=520`, `ISPIN=2`, `ISIF=3`, `EDIFF=1e-6`, `EDIFFG=-0.02`, `NSW=500`, `IBRION=2`
 - Smearing: `ISMEAR=1`, `SIGMA=0.2`
-- Dispersion: D3 via `IVDW=11`
+- Dispersion: D3(BJ) via `IVDW=12`
 - POTCAR: `Fe_pv` (PAW_PBE Fe_pv (02Aug2007))
 - KPOINTS: Γ-centered **17×17×17** (k_product = 45)
 

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from catmaster.agents.research_schemas import ConcludePayload, ResearchRequest
+from catmaster.agents.research_schemas import ResearchRequest
 from catmaster.runtime.literature.models import LiteratureContextPack
 from catmaster.runtime.research import (
+    ConclusionRecord,
     ExperimentBriefModel,
     ExperimentRunPack,
     HypothesisRecord,
@@ -78,7 +79,7 @@ def test_research_store_round_trip(tmp_path: Path) -> None:
     assert exp_path == "research_campaigns/camp_001/experiments/exp-001.json"
 
     conclusion_path = store.persist_conclusion(
-        ConcludePayload(
+        ConclusionRecord(
             final_answer_md="Bridge-like coordination appears most plausible so far.",
             supported_claims=["Bridge geometry is stable in the bounded child run."],
             open_questions=["Needs higher-level validation."],

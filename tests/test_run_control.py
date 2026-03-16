@@ -11,7 +11,7 @@ def test_run_control_interrupt_flow() -> None:
     assert req["requested"] is True
     assert control.is_interrupt_requested() is True
 
-    ack = control.ack_interrupt(phase="toolcall", details={"tool": "bash_exec"})
+    ack = control.ack_interrupt(phase="toolcall", details={"tool": "bash"})
     assert ack["acked"] is True
     assert ack["phase"] == "toolcall"
 

@@ -114,12 +114,6 @@ def test_graph_runner_child_policy_skips_goal_init_history_and_literature_tool(
         _ = (self, compiled, initial_state, config, workspace, lane)
         return {"tasks": [], "observations": [], "summary": "ok", "status": "done"}
 
-    class _HistoryReader:
-        async def aload_context(self, **kwargs):
-            _ = kwargs
-            calls["history"] = int(calls["history"]) + 1
-            raise AssertionError("history should not be called")
-
     monkeypatch.setattr(graph, "build_runtime_tool_surface", fake_build_runtime_tool_surface)
     monkeypatch.setattr(graph, "build_standard_graph", fake_build_standard_graph)
     monkeypatch.setattr(graph.GraphRunner, "_ainvoke_loop", fake_ainvoke_loop)
@@ -137,7 +131,6 @@ def test_graph_runner_child_policy_skips_goal_init_history_and_literature_tool(
         memory_patch_model=_DummyModel(),
         memory_store=_memory_store(tmp_path),
         run_context=run_context,
-        history_reader=_HistoryReader(),
         run_policy=graph.GraphRunPolicy(
             allow_memory_patch=False,
             allow_human_intervention=False,

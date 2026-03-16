@@ -13,8 +13,6 @@ import copy
 import inspect
 import json
 import logging
-import shutil
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -49,13 +47,7 @@ from catmaster.runtime.tool_output_adapter import (
     tool_error_to_message,
 )
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
-from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
 from catmaster.runtime.tool_surface import RuntimeToolSurface, build_runtime_tool_surface
-from catmaster.runtime.usage_stats import write_usage_summary
-from catmaster.runtime.run_ledger.blob_builder import build_run_search_blob
-from catmaster.runtime.run_ledger.models import RunLedgerEntry
-from catmaster.runtime.run_ledger.store import RunLedgerStore
-from catmaster.runtime.run_ledger.history_reader import HistoryReader
 from catmaster.runtime.skills import (
     CatMasterSkillsMiddleware,
     CatMasterSkillsRuntime,
@@ -67,7 +59,6 @@ from catmaster.tools.base import workspace_scope, system_root
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
 from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, FastDirectorOutput, TaskOutput, MemoryPatchOutput
-from catmaster.llm.config import MCPConfig
 from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_SYSTEM_PROMPT,
     DIRECTOR_SYSTEM_PROMPT,
@@ -79,14 +70,6 @@ from catmaster.agents.orchestrator_prompts import (
 logger = logging.getLogger(__name__)
 
 _TASK_RUNNER_TOOL_DENYLIST: set[str] = set()
-_MEMORY_PATCH_READONLY_TOOL_ALLOWLIST: set[str] = {
-    "search_files",
-    "list_directory",
-    "read_text_file",
-    "read_multiple_files",
-}
-
-
 def _dedupe_tools_by_name(tools: Sequence[BaseTool]) -> list[BaseTool]:
     out: list[BaseTool] = []
     seen: set[str] = set()
@@ -166,8 +149,9 @@ class GraphRunPolicy:
 class CatMasterState(TypedDict, total=False):
     user_request: str
     lane: str
-    historical_runs_context_text: str
-    historical_runs_citations: list[dict]
+    chat_session_id: str
+    session_context_text: str
+    entry_context_tokens_estimate: int
 
     # Per-agent message histories
     proposal_messages: Annotated[list[AnyMessage], add_messages]
@@ -353,13 +337,7 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
     return [_ResetToolCallCounterMiddleware(), _ToolCallBudgetMiddleware()]
 
 
-_SKILL_FILESYSTEM_ALWAYS_INCLUDE = [
-    "read_text_file",
-    "read_multiple_files",
-    "search_files",
-    "list_directory",
-    "directory_tree",
-]
+_SKILL_FILESYSTEM_ALWAYS_INCLUDE: list[str] = []
 
 
 def _build_role_middleware(
@@ -614,7 +592,26 @@ async def _run_task_wrapper(
     continue_goto: str,
     intervention_goto: str,
     run_dir: Path,
+    reporter: Optional[Reporter] = None,
+    run_id: str = "",
 ) -> Command:
+    task_id = str(state.get("current_task_id", "") or "").strip()
+    task_packet = state.get("current_task_packet") if isinstance(state.get("current_task_packet"), dict) else {}
+    task_goal = str(task_packet.get("goal") or "").strip()
+    if reporter is not None and task_id:
+        try:
+            reporter.emit(
+                make_event(
+                    "TASK_START",
+                    category="task",
+                    run_id=run_id or None,
+                    task_id=task_id,
+                    payload={"goal": task_goal},
+                )
+            )
+        except Exception:
+            pass
+
     command = await run_task(
         state,
         agent=agent,
@@ -626,9 +623,38 @@ async def _run_task_wrapper(
     update = command.update or {}
     task_result = update.get("task_result") or {}
     if task_result:
+        if reporter is not None and task_id:
+            task_summary = str(task_result.get("task_summary") or "").strip()
+            task_outcome = str(task_result.get("task_outcome") or "").strip() or "failure"
+            key_artifacts = list(task_result.get("key_artifacts") or [])
+            try:
+                reporter.emit(
+                    make_event(
+                        "TASK_SUMMARY",
+                        category="task",
+                        run_id=run_id or None,
+                        task_id=task_id,
+                        payload={
+                            "outcome": task_outcome,
+                            "summary_snippet": _snippet(task_summary, 320),
+                            "artifacts": key_artifacts,
+                        },
+                    )
+                )
+                reporter.emit(
+                    make_event(
+                        "TASK_END",
+                        category="task",
+                        run_id=run_id or None,
+                        task_id=task_id,
+                        payload={"outcome": task_outcome},
+                    )
+                )
+            except Exception:
+                pass
         _write_observation_file(
             run_dir=run_dir,
-            task_id=str(state.get("current_task_id", "") or ""),
+            task_id=task_id,
             outcome=str(task_result.get("task_outcome", "") or ""),
             summary=str(task_result.get("task_summary", "") or ""),
             key_artifacts=list(task_result.get("key_artifacts") or []),
@@ -700,6 +726,20 @@ def _write_observation_file(
         path.write_text("\n".join(lines), encoding="utf-8")
     except Exception:
         pass
+
+
+def _derive_graph_task_state_fields(state: Dict[str, Any]) -> Dict[str, Any]:
+    current_task_id = str(state.get("current_task_id") or "").strip()
+    current_task_packet = state.get("current_task_packet") if isinstance(state.get("current_task_packet"), dict) else {}
+    current_work_label = str(current_task_packet.get("goal") or "").strip()
+    status = str(state.get("status") or "running").strip().lower()
+    current_phase = "executing" if current_task_id else ("planning" if status in {"running", "starting", ""} else status)
+    return {
+        "current_task_id": current_task_id,
+        "current_task_packet": current_task_packet,
+        "current_work_label": current_work_label,
+        "current_phase": current_phase,
+    }
 
 
 def _proposal_review_node(state: CatMasterState) -> Command:
@@ -799,6 +839,7 @@ def build_standard_graph(
     memory_tools: Sequence[BaseTool],
     proposal_execution_context_guide: str,
     director_execution_context_guide: Optional[str] = None,
+    reporter: Reporter | None = None,
     run_id: str = "",
     run_dir: Optional[Path] = None,
     patch_repair_attempts: int = 1,
@@ -912,6 +953,8 @@ def build_standard_graph(
         continue_goto="run_director",
         intervention_goto="needs_intervention" if allow_human_intervention else "run_director",
         run_dir=effective_run_dir,
+        reporter=reporter,
+        run_id=run_id,
     ))
 
     graph.add_node("run_memory_patch", partial(
@@ -950,6 +993,7 @@ def build_fast_graph(
     task_tools: Sequence[BaseTool],
     memory_tools: Sequence[BaseTool],
     fast_director_execution_context_guide: str,
+    reporter: Reporter | None = None,
     run_id: str = "",
     run_dir: Optional[Path] = None,
     patch_repair_attempts: int = 1,
@@ -1032,6 +1076,8 @@ def build_fast_graph(
         continue_goto="run_fast_director",
         intervention_goto="run_fast_director",
         run_dir=effective_run_dir,
+        reporter=reporter,
+        run_id=run_id,
     ))
 
     graph.add_node("run_memory_patch", partial(
@@ -1087,7 +1133,6 @@ class GraphRunner:
         reporter: Optional[Reporter] = None,
         tool_backend: Optional[ToolBackend] = None,
         run_control: Optional[RunControl] = None,
-        mcp_config: Optional[MCPConfig] = None,
         max_task_steps: int = 60,
         max_plan_steps: int = 60,
         recursion_limit: int = 300,
@@ -1095,8 +1140,6 @@ class GraphRunner:
         stream_debug_console: bool = False,
         print_state_messages: bool = False,
         checkpointer: Optional[BaseCheckpointSaver] = None,
-        run_ledger_store: Optional[RunLedgerStore] = None,
-        history_reader: Optional[HistoryReader] = None,
         skills_runtime: Optional[CatMasterSkillsRuntime] = None,
         tool_selector_model: Optional[BaseChatModel] = None,
         run_policy: GraphRunPolicy | None = None,
@@ -1111,7 +1154,6 @@ class GraphRunner:
         self.reporter = reporter or NullReporter()
         self.tool_backend = tool_backend
         self.run_control = run_control
-        self.mcp_config = mcp_config or MCPConfig()
         self.max_task_steps = max_task_steps
         self.max_plan_steps = max_plan_steps
         try:
@@ -1123,8 +1165,6 @@ class GraphRunner:
         self.stream_debug_console = bool(stream_debug_console)
         self.print_state_messages = bool(print_state_messages)
         self.checkpointer = checkpointer or MemorySaver()
-        self.run_ledger_store = run_ledger_store
-        self.history_reader = history_reader
         self.skills_runtime = skills_runtime
         self.tool_selector_model = tool_selector_model
         self.run_policy = run_policy or GraphRunPolicy()
@@ -1206,62 +1246,6 @@ class GraphRunner:
             )
             tool_summary = ""
             if message_fields:
-                if self.print_state_messages:
-                    for field in message_fields:
-                        field_messages = payload.get(field, []) or []
-                        for idx, msg in enumerate(field_messages):
-                            try:
-                                dumped = msg.model_dump() if hasattr(msg, "model_dump") else str(msg)
-                                msg_text = json.dumps(dumped, ensure_ascii=False, default=str)
-                            except Exception:
-                                dumped = {}
-                                msg_text = str(msg)
-                            logger.info(
-                                "[graph.stream.messages] node=%s field=%s idx=%d payload=%s",
-                                node,
-                                field,
-                                idx,
-                                msg_text,
-                            )
-                            if isinstance(dumped, dict):
-                                msg_type = str(dumped.get("type") or "").strip().lower()
-                                if msg_type == "ai":
-                                    parsed_calls = list(dumped.get("tool_calls") or [])
-                                    for call_idx, call in enumerate(parsed_calls):
-                                        name = str(call.get("name") or "")
-                                        args = call.get("args")
-                                        if isinstance(args, str):
-                                            args_json = args
-                                        else:
-                                            try:
-                                                args_json = json.dumps(args, ensure_ascii=False, default=str)
-                                            except Exception:
-                                                args_json = str(args)
-                                        logger.info(
-                                            "[graph.stream.tool_input] node=%s field=%s msg_idx=%d call_idx=%d name=%s args_json=%s",
-                                            node,
-                                            field,
-                                            idx,
-                                            call_idx,
-                                            name,
-                                            args_json,
-                                        )
-                                    raw_calls = list(
-                                        (dumped.get("additional_kwargs") or {}).get("tool_calls") or []
-                                    )
-                                    for call_idx, call in enumerate(raw_calls):
-                                        fn = call.get("function") if isinstance(call, dict) else {}
-                                        if not isinstance(fn, dict):
-                                            fn = {}
-                                        logger.info(
-                                            "[graph.stream.tool_input.raw] node=%s field=%s msg_idx=%d call_idx=%d name=%s arguments_raw=%s",
-                                            node,
-                                            field,
-                                            idx,
-                                            call_idx,
-                                            str(fn.get("name") or ""),
-                                            str(fn.get("arguments") or ""),
-                                        )
                 # Prefer canonical `messages`; otherwise use the first message field.
                 selected_field = "messages" if "messages" in message_fields else message_fields[0]
                 selected_messages = payload.get(selected_field, []) or []
@@ -1273,19 +1257,6 @@ class GraphRunner:
                         names = [name for name in names if name]
                         if names:
                             tool_summary = f" tool_calls={','.join(names[:6])}"
-                        # Debug mode: print full toolcall payload per turn without truncation.
-                        for idx, call in enumerate(tool_calls):
-                            try:
-                                payload_text = json.dumps(call, ensure_ascii=False, default=str)
-                            except Exception:
-                                payload_text = str(call)
-                            logger.info(
-                                "[graph.stream.toolcall] node=%s field=%s idx=%d payload=%s",
-                                node,
-                                selected_field,
-                                idx,
-                                payload_text,
-                            )
             logger.info(
                 "[graph.stream] node=%s keys=%s%s%s",
                 node,
@@ -1294,24 +1265,92 @@ class GraphRunner:
                 tool_summary,
             )
 
+    def _emit_stream_update(self, update: dict[str, Any]) -> None:
+        for node, payload in (update or {}).items():
+            if node == "__interrupt__":
+                continue
+            if not isinstance(payload, dict):
+                self._emit(
+                    "GRAPH_NODE_UPDATE",
+                    category="graph",
+                    payload={
+                        "node": str(node or ""),
+                        "keys": [],
+                        "message_count": 0,
+                        "tool_calls": [],
+                        "text_preview": self._stream_preview(payload),
+                    },
+                )
+                continue
+
+            keys = [str(key) for key in payload.keys()]
+            message_fields = [
+                str(key)
+                for key, value in payload.items()
+                if isinstance(value, list) and (key == "messages" or str(key).endswith("_messages"))
+            ]
+            message_count = sum(len(payload.get(field, []) or []) for field in message_fields)
+            text_preview = ""
+            tool_calls: list[str] = []
+
+            selected_field = "messages" if "messages" in message_fields else (message_fields[0] if message_fields else "")
+            if selected_field:
+                selected_messages = payload.get(selected_field, []) or []
+                if selected_messages:
+                    tail = selected_messages[-1]
+                    content = getattr(tail, "content", None)
+                    if isinstance(content, str):
+                        text_preview = _snippet(content, 180)
+                    elif isinstance(content, list):
+                        fragments: list[str] = []
+                        for item in content:
+                            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                                fragments.append(str(item.get("text") or ""))
+                        if fragments:
+                            text_preview = _snippet("\n".join(fragments), 180)
+                    raw_tool_calls = getattr(tail, "tool_calls", None)
+                    if isinstance(raw_tool_calls, list):
+                        tool_calls = [
+                            str(call.get("name") or "").strip()
+                            for call in raw_tool_calls
+                            if isinstance(call, dict) and str(call.get("name") or "").strip()
+                        ]
+
+            self._emit(
+                "GRAPH_NODE_UPDATE",
+                category="graph",
+                payload={
+                    "node": str(node or ""),
+                    "keys": keys[:12],
+                    "message_count": message_count,
+                    "tool_calls": tool_calls[:8],
+                    "text_preview": text_preview,
+                },
+            )
+
     async def _ainvoke_graph_once(
         self,
         compiled: Any,
         graph_input: Any,
         config: Dict[str, Any],
     ) -> Dict[str, Any]:
-        if not (self.stream_debug_console or self.print_state_messages):
+        live_stream = self.reporter.is_live()
+        if not (live_stream or self.stream_debug_console or self.print_state_messages):
             return await compiled.ainvoke(graph_input, config=config)
 
         logger.info(
-            "[graph.stream] enabled stream_mode=updates (stream_debug_console=%s, print_state_messages=%s)",
+            "[graph.stream] enabled stream_mode=updates (live=%s, stream_debug_console=%s, print_state_messages=%s)",
+            live_stream,
             self.stream_debug_console,
             self.print_state_messages,
         )
         streamed_result: Dict[str, Any] = {}
         async for update in compiled.astream(graph_input, config=config, stream_mode="updates"):
             if isinstance(update, dict):
-                self._log_stream_update(update)
+                if self.stream_debug_console or self.print_state_messages:
+                    self._log_stream_update(update)
+                if live_stream:
+                    self._emit_stream_update(update)
                 if "__interrupt__" in update:
                     streamed_result["__interrupt__"] = update["__interrupt__"]
 
@@ -1386,6 +1425,7 @@ class GraphRunner:
             "status": state.get("status", "running"),
             "hitl_history": state.get("hitl_history", []),
         }
+        body.update(_derive_graph_task_state_fields(state))
         memory_patch_result = state.get("memory_patch_result")
         if isinstance(memory_patch_result, dict) and memory_patch_result:
             body["memory_patch_result"] = memory_patch_result
@@ -1397,12 +1437,15 @@ class GraphRunner:
                 "proposal_path": "proposal.md",
                 "work_packages": state.get("work_packages", []),
             }
-        historical_runs_context = str(state.get("historical_runs_context_text") or "").strip()
-        if historical_runs_context:
-            body["historical_runs_context_text"] = historical_runs_context
-        historical_runs_citations = state.get("historical_runs_citations")
-        if isinstance(historical_runs_citations, list) and historical_runs_citations:
-            body["historical_runs_citations"] = historical_runs_citations
+        session_context = str(state.get("session_context_text") or "").strip()
+        if session_context:
+            body["session_context_text"] = session_context
+        chat_session_id = str(state.get("chat_session_id") or "").strip()
+        if chat_session_id:
+            body["chat_session_id"] = chat_session_id
+        entry_context_tokens_estimate = int(state.get("entry_context_tokens_estimate") or 0)
+        if entry_context_tokens_estimate > 0:
+            body["entry_context_tokens_estimate"] = entry_context_tokens_estimate
         last_interrupt = state.get("last_interrupt")
         if isinstance(last_interrupt, dict) and last_interrupt:
             body["last_interrupt"] = last_interrupt
@@ -1426,178 +1469,9 @@ class GraphRunner:
                     body[key] = existing.get(key)
         path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def _publish_report(self, user_request: str, final_answer: str) -> Dict[str, str]:
-        """Generate FINAL_REPORT.md and copy memory into the current run reports."""
-        run_reports = self.run_context.run_dir / "reports"
-        run_reports.mkdir(parents=True, exist_ok=True)
-
-        final_report = run_reports / "FINAL_REPORT.md"
-        final_report.write_text("\n".join([
-            "# Final Report",
-            "",
-            "## User Query",
-            user_request,
-            "",
-            "## Final Answer",
-            final_answer,
-            "",
-        ]), encoding="utf-8")
-
-        memory_src = self.memory_store.index_path
-        memory_dst = run_reports / "MEMORY.md"
-        try:
-            shutil.copy2(memory_src, memory_dst)
-        except Exception:
-            if memory_src.exists():
-                memory_dst.write_text(
-                    memory_src.read_text(encoding="utf-8"), encoding="utf-8",
-                )
-
-        return {
-            "run_dir": str(self.run_context.run_dir),
-            "final_report": str(final_report),
-            "memory_report": str(memory_dst),
-        }
-
-    def _relpath_to_system_root(self, path: Path) -> str:
-        sys_root = system_root(workspace=self.run_context.workspace).resolve()
-        try:
-            return str(path.resolve().relative_to(sys_root)).replace("\\", "/")
-        except Exception:
-            return str(path.resolve())
-
-    @staticmethod
-    def _task_goals_for_export(state: Dict[str, Any], fallback_goals: List[str]) -> List[str]:
-        tasks = state.get("tasks")
-        if isinstance(tasks, list):
-            out: List[str] = []
-            for item in tasks:
-                if not isinstance(item, dict):
-                    continue
-                for key in ("goal", "task_detail", "title", "task"):
-                    value = " ".join(str(item.get(key) or "").split()).strip()
-                    if value:
-                        out.append(value)
-                        break
-                if len(out) >= 10:
-                    break
-            if out:
-                return out
-        return list(fallback_goals[:10])
-
-    @staticmethod
-    def _top_observations_for_export(state: Dict[str, Any], *, limit: int = 10) -> List[str]:
-        observations = state.get("observations")
-        if not isinstance(observations, list):
-            return []
-        out: List[str] = []
-        for item in observations:
-            if isinstance(item, dict):
-                text = (
-                    str(item.get("summary") or item.get("observation") or item.get("value") or "")
-                    .replace("\n", " ")
-                    .strip()
-                )
-            else:
-                text = str(item).replace("\n", " ").strip()
-            if not text:
-                continue
-            out.append(text)
-            if len(out) >= limit:
-                break
-        return out
-
-    def _publish_run_export(
-        self,
-        *,
-        state: Dict[str, Any],
-        user_request: str,
-        final_answer: str,
-        lane: str,
-        status: str,
-        report_paths: Dict[str, str],
-    ) -> Dict[str, str]:
-        run_reports = self.run_context.run_dir / "reports"
-        run_reports.mkdir(parents=True, exist_ok=True)
-        export_path = run_reports / "RUN_EXPORT.json"
-
-        blob = build_run_search_blob(self.run_context.run_dir)
-        task_goals = self._task_goals_for_export(state, blob.task_goals)
-        top_observations = self._top_observations_for_export(state)
-        payload: Dict[str, Any] = {
-            "request": user_request,
-            "answer_summary": final_answer,
-            "lane": lane,
-            "status": status,
-            "task_goals": task_goals,
-            "top_observations": top_observations,
-            "tool_names": blob.tool_names,
-            "artifact_paths": blob.artifact_paths,
-            "final_report_path": self._relpath_to_system_root(Path(report_paths.get("final_report", ""))),
-            "run_dir": self._relpath_to_system_root(self.run_context.run_dir),
-            "run_id": self.run_context.run_id,
-            "project_id": self.run_context.project_id,
-        }
-        export_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {
-            "run_export": str(export_path),
-            "run_export_relpath": self._relpath_to_system_root(export_path),
-        }
-
-    async def _upsert_run_ledger(
-        self,
-        *,
-        lane: str,
-        status: str,
-        user_request: str,
-        final_answer: str,
-        report_paths: Dict[str, str],
-        export_paths: Dict[str, str],
-    ) -> None:
-        if self.run_ledger_store is None:
-            return
-        blob = build_run_search_blob(self.run_context.run_dir)
-        final_report_relpath = self._relpath_to_system_root(Path(report_paths.get("final_report", "")))
-        run_export_relpath = str(export_paths.get("run_export_relpath") or "").strip()
-        entry = RunLedgerEntry(
-            project_id=self.run_context.project_id,
-            run_id=self.run_context.run_id,
-            lane=lane,
-            status=status,
-            request=user_request,
-            answer_summary=final_answer,
-            search_blob_text=blob.search_blob_text,
-            final_report_relpath=final_report_relpath,
-            run_export_relpath=run_export_relpath,
-            ts_start=self.run_context.start_time,
-            ts_end=datetime.now(timezone.utc).isoformat(),
-            model_name=self.run_context.model_name,
-            provider=str(self.run_context.provider or ""),
-        )
-        self.run_ledger_store.upsert_entry(entry)
-        if self.history_reader is not None:
-            try:
-                await self.history_reader.aindex_entry(entry)
-            except Exception as exc:
-                logger.warning("run ledger dense index update failed: %s", exc)
-
     # ------------------------------------------------------------------
     # Main run
     # ------------------------------------------------------------------
-
-    @asynccontextmanager
-    async def _open_mcp_filesystem_runtime(self):
-        fs_cfg = self.mcp_config.filesystem if self.mcp_config is not None else None
-        if fs_cfg is None or not fs_cfg.enabled:
-            yield None
-            return
-        runtime = MCPFilesystemRuntime(
-            config=fs_cfg,
-            run_context=self.run_context,
-            reporter=self.reporter,
-        )
-        async with runtime as active:
-            yield active
 
     def run(
         self,
@@ -1605,6 +1479,9 @@ class GraphRunner:
         *,
         lane: str = "standard",
         proposal_review: bool = True,
+        session_context_text: str = "",
+        chat_session_id: str = "",
+        entry_context_tokens_estimate: int = 0,
     ) -> Dict[str, Any]:
         try:
             asyncio.get_running_loop()
@@ -1612,7 +1489,16 @@ class GraphRunner:
             pass
         else:
             raise RuntimeError("GraphRunner.run() cannot be called inside a running event loop; use GraphRunner.arun().")
-        return asyncio.run(self.arun(user_request, lane=lane, proposal_review=proposal_review))
+        return asyncio.run(
+            self.arun(
+                user_request,
+                lane=lane,
+                proposal_review=proposal_review,
+                session_context_text=session_context_text,
+                chat_session_id=chat_session_id,
+                entry_context_tokens_estimate=entry_context_tokens_estimate,
+            )
+        )
 
     async def arun(
         self,
@@ -1620,6 +1506,9 @@ class GraphRunner:
         *,
         lane: str = "standard",
         proposal_review: bool = True,
+        session_context_text: str = "",
+        chat_session_id: str = "",
+        entry_context_tokens_estimate: int = 0,
     ) -> Dict[str, Any]:
         workspace = self.run_context.workspace
         run_dir = self.run_context.run_dir
@@ -1629,173 +1518,147 @@ class GraphRunner:
             trace_store=self.trace_store,
             reporter=self.reporter,
             run_id=self.run_context.run_id,
-            print_raw_tool_calls=self.print_state_messages,
-            print_llm_context_messages=self.print_state_messages,
+            enable_step_logs=self.print_state_messages,
         )
 
         try:
-            async with self._open_mcp_filesystem_runtime() as mcp_fs_runtime:
-                surface: RuntimeToolSurface = build_runtime_tool_surface(
-                    registry=self.registry,
-                    run_context=self.run_context,
+            surface: RuntimeToolSurface = build_runtime_tool_surface(
+                registry=self.registry,
+                run_context=self.run_context,
+                run_dir=run_dir,
+                task_runner_denylist=_TASK_RUNNER_TOOL_DENYLIST,
+                include_literature_tool=self.run_policy.enable_literature_tool,
+            )
+            local_pool = _dedupe_tools_by_name(
+                list(surface.proposal_tools) + list(surface.director_tools) + list(surface.task_tools)
+            )
+            apply_tool = next(
+                (tool for tool in local_pool if str(getattr(tool, "name", "") or "") == "apply_aider_edits"),
+                None,
+            )
+            if apply_tool is not None:
+                apply_tool = _make_memory_scoped_apply_tool(apply_tool)
+            memory_tools = _dedupe_tools_by_name(
+                [apply_tool] if apply_tool is not None else []
+            )
+            if apply_tool is None:
+                logger.warning("apply_aider_edits is unavailable for memory patcher; updates may fail.")
+
+            if self.skills_runtime is not None:
+                self.skills_runtime.refresh_catalog()
+                proposal_execution_context_guide = render_proposal_skill_guide(
+                    self.skills_runtime.visible_skills("proposal")
+                )
+                director_execution_context_guide = render_director_skill_guide(
+                    self.skills_runtime.visible_skills("director")
+                )
+                fast_director_execution_context_guide = render_fast_director_skill_guide(
+                    self.skills_runtime.visible_skills("fast_director")
+                )
+            else:
+                proposal_execution_context_guide = render_proposal_skill_guide([])
+                director_execution_context_guide = render_director_skill_guide([])
+                fast_director_execution_context_guide = render_fast_director_skill_guide([])
+            mounted_skill_tokens: tuple[str, ...] = ()
+
+            if lane == "fast":
+                fast_director_tools = [
+                    tool
+                    for tool in surface.fast_director_tools
+                    if str(getattr(tool, "name", "") or "") != "apply_aider_edits"
+                ]
+                compiled = build_fast_graph(
+                    task_runner_model=self.task_runner_model,
+                    director_model=self.director_model,
+                    memory_patch_model=self.memory_patch_model,
+                    memory_store=self.memory_store,
+                    director_tools=fast_director_tools,
+                    task_tools=surface.task_tools,
+                    memory_tools=memory_tools,
+                    fast_director_execution_context_guide=fast_director_execution_context_guide,
+                    reporter=self.reporter,
+                    run_id=self.run_context.run_id,
                     run_dir=run_dir,
-                    mcp_fs_runtime=mcp_fs_runtime,
-                    task_runner_denylist=_TASK_RUNNER_TOOL_DENYLIST,
-                    include_literature_tool=self.run_policy.enable_literature_tool,
+                    patch_repair_attempts=self.patch_repair_attempts,
+                    tool_backend=self.tool_backend,
+                    max_task_steps=self.max_task_steps,
+                    max_plan_steps=self.max_plan_steps,
+                    checkpointer=self.checkpointer,
+                    run_control=self.run_control,
+                    skills_runtime=self.skills_runtime,
+                    mounted_skill_tokens=mounted_skill_tokens,
+                    tool_selector_model=self.tool_selector_model,
+                    allow_memory_patch=self.run_policy.allow_memory_patch,
                 )
-                local_pool = _dedupe_tools_by_name(
-                    list(surface.proposal_tools) + list(surface.director_tools) + list(surface.task_tools)
+            else:
+                compiled = build_standard_graph(
+                    task_runner_model=self.task_runner_model,
+                    proposal_model=self.proposal_model,
+                    director_model=self.director_model,
+                    memory_patch_model=self.memory_patch_model,
+                    memory_store=self.memory_store,
+                    proposal_tools=surface.proposal_tools,
+                    director_tools=surface.director_tools,
+                    task_tools=surface.task_tools,
+                    memory_tools=memory_tools,
+                    proposal_execution_context_guide=proposal_execution_context_guide,
+                    director_execution_context_guide=director_execution_context_guide,
+                    reporter=self.reporter,
+                    run_id=self.run_context.run_id,
+                    run_dir=run_dir,
+                    patch_repair_attempts=self.patch_repair_attempts,
+                    tool_backend=self.tool_backend,
+                    max_task_steps=self.max_task_steps,
+                    max_plan_steps=self.max_plan_steps,
+                    checkpointer=self.checkpointer,
+                    run_control=self.run_control,
+                    skills_runtime=self.skills_runtime,
+                    mounted_skill_tokens=mounted_skill_tokens,
+                    tool_selector_model=self.tool_selector_model,
+                    allow_human_intervention=self.run_policy.allow_human_intervention,
+                    allow_memory_patch=self.run_policy.allow_memory_patch,
                 )
-                apply_tool = next(
-                    (tool for tool in local_pool if str(getattr(tool, "name", "") or "") == "apply_aider_edits"),
-                    None,
-                )
-                if apply_tool is not None:
-                    apply_tool = _make_memory_scoped_apply_tool(apply_tool)
-                memory_read_tools: list[BaseTool] = []
-                if mcp_fs_runtime is not None:
-                    memory_read_tools = [
-                        tool
-                        for tool in mcp_fs_runtime.role_filtered_tools(role="memory_patch")
-                        if str(getattr(tool, "name", "") or "") in _MEMORY_PATCH_READONLY_TOOL_ALLOWLIST
-                    ]
-                memory_tools = _dedupe_tools_by_name(
-                    memory_read_tools + ([apply_tool] if apply_tool is not None else [])
-                )
-                if apply_tool is None:
-                    logger.warning("apply_aider_edits is unavailable for memory patcher; updates may fail.")
 
-                if self.skills_runtime is not None:
-                    self.skills_runtime.refresh_catalog()
-                    proposal_execution_context_guide = render_proposal_skill_guide(
-                        self.skills_runtime.visible_skills("proposal")
-                    )
-                    director_execution_context_guide = render_director_skill_guide(
-                        self.skills_runtime.visible_skills("director")
-                    )
-                    fast_director_execution_context_guide = render_fast_director_skill_guide(
-                        self.skills_runtime.visible_skills("fast_director")
-                    )
-                else:
-                    proposal_execution_context_guide = render_proposal_skill_guide([])
-                    director_execution_context_guide = render_director_skill_guide([])
-                    fast_director_execution_context_guide = render_fast_director_skill_guide([])
-                mounted_skill_tokens = tuple(mcp_fs_runtime.skill_mounts.keys()) if mcp_fs_runtime is not None else ()
+            initial_state: CatMasterState = {
+                "user_request": user_request,
+                "lane": lane,
+                "chat_session_id": str(chat_session_id or "").strip(),
+                "session_context_text": str(session_context_text or "").strip(),
+                "entry_context_tokens_estimate": int(entry_context_tokens_estimate or 0),
+                "proposal_messages": [],
+                "director_messages": [],
+                "runner_messages": [],
+                "proposal_md": "",
+                "work_packages": [],
+                "proposal_approved": False,
+                "proposal_feedback": "",
+                "proposal_review_enabled": bool(proposal_review),
+                "director_decision": {},
+                "next_action": "",
+                "tasks": [],
+                "observations": [],
+                "current_task_id": "task_01",
+                "current_task_packet": {"goal": user_request},
+                "task_result": {},
+                "pending_memory_updates": [],
+                "memory_patch_result": {},
+                "status": "running",
+                "summary": "",
+                "contract_violation": {},
+                "hitl_history": [],
+            }
 
-                if lane == "fast":
-                    fast_director_tools = [
-                        tool
-                        for tool in surface.fast_director_tools
-                        if str(getattr(tool, "name", "") or "") != "apply_aider_edits"
-                    ]
-                    compiled = build_fast_graph(
-                        task_runner_model=self.task_runner_model,
-                        director_model=self.director_model,
-                        memory_patch_model=self.memory_patch_model,
-                        memory_store=self.memory_store,
-                        director_tools=fast_director_tools,
-                        task_tools=surface.task_tools,
-                        memory_tools=memory_tools,
-                        fast_director_execution_context_guide=fast_director_execution_context_guide,
-                        run_id=self.run_context.run_id,
-                        run_dir=run_dir,
-                        patch_repair_attempts=self.patch_repair_attempts,
-                        tool_backend=self.tool_backend,
-                        max_task_steps=self.max_task_steps,
-                        max_plan_steps=self.max_plan_steps,
-                        checkpointer=self.checkpointer,
-                        run_control=self.run_control,
-                        skills_runtime=self.skills_runtime,
-                        mounted_skill_tokens=mounted_skill_tokens,
-                        tool_selector_model=self.tool_selector_model,
-                        allow_memory_patch=self.run_policy.allow_memory_patch,
-                    )
-                else:
-                    compiled = build_standard_graph(
-                        task_runner_model=self.task_runner_model,
-                        proposal_model=self.proposal_model,
-                        director_model=self.director_model,
-                        memory_patch_model=self.memory_patch_model,
-                        memory_store=self.memory_store,
-                        proposal_tools=surface.proposal_tools,
-                        director_tools=surface.director_tools,
-                        task_tools=surface.task_tools,
-                        memory_tools=memory_tools,
-                        proposal_execution_context_guide=proposal_execution_context_guide,
-                        director_execution_context_guide=director_execution_context_guide,
-                        run_id=self.run_context.run_id,
-                        run_dir=run_dir,
-                        patch_repair_attempts=self.patch_repair_attempts,
-                        tool_backend=self.tool_backend,
-                        max_task_steps=self.max_task_steps,
-                        max_plan_steps=self.max_plan_steps,
-                        checkpointer=self.checkpointer,
-                        run_control=self.run_control,
-                        skills_runtime=self.skills_runtime,
-                        mounted_skill_tokens=mounted_skill_tokens,
-                        tool_selector_model=self.tool_selector_model,
-                        allow_human_intervention=self.run_policy.allow_human_intervention,
-                        allow_memory_patch=self.run_policy.allow_memory_patch,
-                    )
+            self._write_task_state(initial_state, lane)
 
-                historical_runs_context_text = ""
-                historical_runs_citations: list[dict[str, Any]] = []
-                if self.history_reader is not None and self.run_policy.enable_history_prefetch:
-                    try:
-                        history_pack = await self.history_reader.aload_context(
-                            query=user_request,
-                            project_id=self.run_context.project_id,
-                            lane=lane,
-                        )
-                        historical_runs_context_text = str(history_pack.context_text or "").strip()
-                        raw_citations = history_pack.citations if isinstance(history_pack.citations, list) else []
-                        historical_runs_citations = [c for c in raw_citations if isinstance(c, dict)]
-                    except Exception as exc:
-                        logger.warning("historical runs prefetch failed: %s", exc)
-
-                initial_state: CatMasterState = {
-                    "user_request": user_request,
-                    "lane": lane,
-                    "historical_runs_context_text": historical_runs_context_text,
-                    "historical_runs_citations": historical_runs_citations,
-                    "proposal_messages": [],
-                    "director_messages": [],
-                    "runner_messages": [],
-                    "proposal_md": "",
-                    "work_packages": [],
-                    "proposal_approved": False,
-                    "proposal_feedback": "",
-                    "proposal_review_enabled": bool(proposal_review),
-                    "director_decision": {},
-                    "next_action": "",
-                    "tasks": [],
-                    "observations": [],
-                    "current_task_id": "task_01",
-                    "current_task_packet": {"goal": user_request},
-                    "task_result": {},
-                    "pending_memory_updates": [],
-                    "memory_patch_result": {},
-                    "status": "running",
-                    "summary": "",
-                    "contract_violation": {},
-                    "hitl_history": [],
-                }
-
-                self._write_task_state(initial_state, lane)
-
-                thread_id = self.run_context.run_id
-                config: Dict[str, Any] = {
-                    "callbacks": callbacks,
-                    "configurable": {"thread_id": thread_id},
-                    "recursion_limit": self.recursion_limit,
-                }
-                return await self._ainvoke_loop(compiled, initial_state, config, workspace, lane)
+            thread_id = self.run_context.run_id
+            config: Dict[str, Any] = {
+                "callbacks": callbacks,
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": self.recursion_limit,
+            }
+            return await self._ainvoke_loop(compiled, initial_state, config, workspace, lane)
         finally:
-            try:
-                write_usage_summary(self.run_context.run_dir)
-            except Exception as exc:
-                logger.debug("usage summary write failed: %s", exc)
-
+            pass
 
     async def _ainvoke_loop(
         self,
@@ -1888,40 +1751,9 @@ class GraphRunner:
 
             status = result.get("status", "done")
             summary = result.get("summary", "")
-            report_paths: dict[str, str] = {}
-            export_paths: dict[str, str] = {}
-
             self._write_task_state({**result, "status": status}, lane)
 
-            if status in ("done", "failure"):
-                try:
-                    report_paths = self._publish_report(user_request, summary)
-                    export_paths = self._publish_run_export(
-                        state=result,
-                        user_request=user_request,
-                        final_answer=summary,
-                        lane=lane,
-                        status=status,
-                        report_paths=report_paths,
-                    )
-                    await self._upsert_run_ledger(
-                        lane=lane,
-                        status=status,
-                        user_request=user_request,
-                        final_answer=summary,
-                        report_paths=report_paths,
-                        export_paths=export_paths,
-                    )
-                except Exception as exc:
-                    logger.warning("finalization side-effects failed: %s", exc)
-
             self._emit("RUN_END", payload={"status": status, "summary_snippet": _snippet(summary, 320)})
-
-            final_report_path = ""
-            run_export_path = ""
-            if status in ("done", "failure"):
-                final_report_path = report_paths.get("final_report", "")
-                run_export_path = export_paths.get("run_export", "")
 
             return {
                 "tasks": result.get("tasks", []),
@@ -1932,8 +1764,7 @@ class GraphRunner:
                 "pending_memory_updates": result.get("pending_memory_updates", []),
                 "run_id": self.run_context.run_id,
                 "run_dir": str(self.run_context.run_dir),
-                "final_report_path": final_report_path,
-                "run_export_path": run_export_path,
+                "run_export_path": "",
             }
 
         if workspace is not None:

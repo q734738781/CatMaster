@@ -204,3 +204,20 @@ def test_skill_catalog_falls_back_to_suggested_tools_section(tmp_path: Path) -> 
     metas = catalog.refresh()
     assert [item.name for item in metas] == ["skill-beta"]
     assert metas[0].suggested_tools == ["tool_x", "tool_y"]
+
+
+def test_skill_catalog_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path) -> None:
+    _write_skill(
+        root=tmp_path,
+        name="skill-gamma",
+        description="gamma skill",
+        suggested_tools="bash_exec tool_x bash_exec",
+    )
+
+    catalog = SkillCatalog(
+        source_roots=[tmp_path / "skills"],
+        repo_root=tmp_path,
+    )
+    metas = catalog.refresh()
+    assert [item.name for item in metas] == ["skill-gamma"]
+    assert metas[0].suggested_tools == ["bash", "tool_x"]

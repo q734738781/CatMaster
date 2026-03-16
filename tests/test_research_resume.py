@@ -33,9 +33,7 @@ def _runner(tmp_path: Path) -> ResearchRunner:
         llm_profile=_profile(),
         run_context=run_context,
         memory_store=memory_store,
-        history_reader=None,
         skills_runtime=None,
-        run_ledger_store=None,
         reporter=None,
     )
 

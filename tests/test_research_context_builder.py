@@ -50,7 +50,6 @@ def test_research_context_builder_uses_persisted_campaign_and_memory_state(tmp_p
         open_questions=["Need validation on other coverages."],
         latest_human_questions=["Should we trust the bridge preference at finite coverage?"],
         human_feedback_summary="User wants finite-coverage validation before concluding.",
-        history_context_summary="Prior standard runs on Fe surfaces exist.",
     )
     store.save_board(board)
     store.persist_literature_pack(
@@ -81,7 +80,10 @@ def test_research_context_builder_uses_persisted_campaign_and_memory_state(tmp_p
     )
 
     builder = ResearchContextBuilder(store=store, memory_store=memory_store)
-    pack = builder.build_planner_context(board=board, history_summary=board.history_context_summary)
+    pack = builder.build_planner_context(
+        board=board,
+        session_context="Earlier chat session summary:\n- User: prioritize finite-coverage validation before concluding.",
+    )
     rendered = builder.render(pack)
 
     assert "cycle: 2/4" in pack.campaign_summary_md
@@ -91,6 +93,7 @@ def test_research_context_builder_uses_persisted_campaign_and_memory_state(tmp_p
     assert "lit_001" in pack.recent_actions_md
     assert "Bridge remained stable" in pack.latest_experiment_summary_md
     assert "finite-coverage validation" in pack.human_feedback_md
+    assert "Earlier chat session summary" in pack.session_context_md
     assert "Campaign goal:\nConduct research about the following request and converge on the best supported answer." in rendered
     assert "Request: What controls CO adsorption on Fe(110)?" in rendered
     assert "What controls CO adsorption on Fe(110)?" in rendered

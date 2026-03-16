@@ -153,7 +153,6 @@ class HistoryReader:
                 "status": entry.status,
                 "request": entry.request,
                 "answer_summary": entry.answer_summary,
-                "final_report_relpath": entry.final_report_relpath,
                 "run_export_relpath": entry.run_export_relpath,
             }
             await asyncio.to_thread(
@@ -252,18 +251,15 @@ class HistoryReader:
     def _build_candidates(self, entries: List[RunLedgerEntry], query: str) -> List[RunEvidenceChunk]:
         chunks: List[RunEvidenceChunk] = []
         for entry in entries:
-            report_path = _resolve_path(self.system_root, entry.final_report_relpath)
-            report_text = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
-            if not report_text:
-                export_path = _resolve_path(self.system_root, entry.run_export_relpath)
-                export = _safe_json(export_path)
-                report_text = str(export.get("answer_summary") or entry.answer_summary or "")
+            export_path = _resolve_path(self.system_root, entry.run_export_relpath)
+            export = _safe_json(export_path)
+            result_text = _normalize_text(export.get("answer_summary") or entry.answer_summary or "")
             rel_path = _to_project_relpath(
                 self.system_root,
-                report_path,
-                fallback=entry.final_report_relpath,
+                export_path,
+                fallback=entry.run_export_relpath,
             )
-            md_chunks = _line_chunks_from_markdown(report_text, run_id=entry.run_id, path=rel_path)
+            md_chunks = _line_chunks_from_markdown(result_text, run_id=entry.run_id, path=rel_path)
             for ch in md_chunks:
                 score = _overlap_score(query, ch.text)
                 chunks.append(replace(ch, score=score))
@@ -317,7 +313,7 @@ class HistoryReader:
             fallback.append(
                 RunEvidenceChunk(
                     run_id=entry.run_id,
-                    path=entry.final_report_relpath or entry.run_export_relpath or "",
+                    path=entry.run_export_relpath or "",
                     section="summary",
                     line_range=[0, 0],
                     text=summary,

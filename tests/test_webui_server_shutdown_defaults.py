@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("fastapi")
-pytest.importorskip("gradio")
 pytest.importorskip("langchain_core")
 
 from catmaster.webui import server

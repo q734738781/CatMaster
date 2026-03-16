@@ -11,15 +11,9 @@ from catmaster.runtime.local_tool_backend import LocalToolBackend
 from catmaster.runtime.memory_store import MemoryStore
 from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.run_control import RunControl
-from catmaster.runtime.run_ledger.history_reader import HistoryReader
-from catmaster.runtime.run_ledger.hybrid_search import HybridRunLedgerSearcher
-from catmaster.runtime.run_ledger.openrouter_embeddings import OpenRouterEmbeddings
-from catmaster.runtime.run_ledger.store import RunLedgerStore
-from catmaster.runtime.run_ledger.vector_index import VectorIndex
 from catmaster.runtime.skills import CatMasterSkillsRuntime, SkillCatalog
 from catmaster.runtime.tool_executor import ToolExecutor
 from catmaster.runtime.trace_store import TraceStore
-from catmaster.tools.base import system_root
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
 from catmaster.ui.reporters import NullReporter, Reporter
 
@@ -64,20 +58,6 @@ def build_graph_runner(
         role="langgraph",
         workspace=workspace,
     )
-    run_ledger_store = RunLedgerStore.create_default(workspace=workspace)
-    embeddings = OpenRouterEmbeddings(system_root=system_root(workspace=workspace))
-    vector_index = VectorIndex.create_default(workspace=workspace)
-    hybrid_searcher = HybridRunLedgerSearcher(
-        run_ledger_store=run_ledger_store,
-        vector_index=vector_index,
-        embeddings=embeddings,
-    )
-    history_reader = HistoryReader(
-        searcher=hybrid_searcher,
-        run_ledger_store=run_ledger_store,
-        system_root=system_root(workspace=workspace),
-        rerank_model=build_chat_model(llm_profile.config_for_role("history_reader")),
-    )
     repo_root = Path(__file__).resolve().parents[2]
     skills_runtime = CatMasterSkillsRuntime(
         catalog=SkillCatalog.create_default(repo_root=repo_root)
@@ -93,14 +73,11 @@ def build_graph_runner(
         reporter=reporter or NullReporter(),
         tool_backend=tool_backend,
         run_control=run_control,
-        mcp_config=llm_profile.mcp,
         max_task_steps=llm_profile.agent_runtime.max_tool_calls,
         max_plan_steps=llm_profile.agent_runtime.max_tool_calls,
         recursion_limit=llm_profile.agent_runtime.recursion_limit,
         stream_debug_console=stream_debug_console,
         print_state_messages=llm_profile.agent_runtime.print_state_messages,
-        run_ledger_store=run_ledger_store,
-        history_reader=history_reader,
         skills_runtime=skills_runtime,
         tool_selector_model=build_chat_model(llm_profile.config_for_role("tool_selector")),
         run_policy=run_policy,

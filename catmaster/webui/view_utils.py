@@ -544,6 +544,64 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Sidebar run cards (compact list for left sidebar)
+# ---------------------------------------------------------------------------
+
+def render_sidebar_run_cards_html(
+    cards: List[Dict[str, Any]],
+    *,
+    selected_run: str,
+    search_text: str,
+) -> str:
+    needle = (search_text or "").strip().lower()
+    filtered: List[Dict[str, Any]] = []
+    for card in cards:
+        run_name = str(card.get("run_name") or "")
+        hay = " ".join([
+            run_name,
+            str(card.get("headline") or ""),
+            str(card.get("summary") or ""),
+            str(card.get("status") or ""),
+            str(card.get("model_name") or ""),
+        ]).lower()
+        if needle and needle not in hay:
+            continue
+        filtered.append(card)
+
+    if not filtered:
+        return (
+            '<div style="color:#9ca3af;font-size:0.8rem;text-align:center;'
+            'padding:16px 8px;">No tasks found.</div>'
+        )
+
+    out: List[str] = ['<div class="cm-sidebar-runs">']
+    for card in filtered[:30]:
+        run_name = str(card.get("run_name") or "")
+        headline = escape(str(card.get("headline") or run_name))
+        status_str = str(card.get("status") or "unknown")
+        model_name = escape(str(card.get("model_name") or ""))
+        start_time = str(card.get("start_time") or "")
+        is_active = run_name and run_name == selected_run
+
+        dot_color = status_color(status_str)
+        active_cls = " cm-run-item-active" if is_active else ""
+        time_short = start_time.split("T")[-1][:5] if "T" in start_time else start_time[:16]
+        meta_parts = [p for p in [status_str, model_name, time_short] if p]
+
+        out.append(
+            f'<div class="cm-run-item{active_cls}">'
+            f'<span class="cm-run-dot" style="background:{dot_color};'
+            f'box-shadow:0 0 4px {dot_color}40;"></span>'
+            f'<div class="cm-run-info">'
+            f'<div class="cm-run-title">{headline}</div>'
+            f'<div class="cm-run-meta">{escape(" | ".join(meta_parts))}</div>'
+            f"</div></div>"
+        )
+    out.append("</div>")
+    return "".join(out)
+
+
 __all__ = [
     "render_cost_card_markdown",
     "format_event_html",
@@ -551,6 +609,7 @@ __all__ = [
     "render_live_tracker_markdown",
     "render_progress_bar_html",
     "render_run_cards_html",
+    "render_sidebar_run_cards_html",
     "summarize_event",
     "truncate",
 ]

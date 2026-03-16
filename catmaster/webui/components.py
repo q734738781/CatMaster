@@ -101,30 +101,38 @@ def nav_header_html(active: str, project_space: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Hero status banner (home page)
+# Compact status bar (home page)
 # ---------------------------------------------------------------------------
 
-def hero_banner_html(
+def compact_status_bar_html(
     status: str,
     run_info: str,
+    model_name: str,
     monitor_url: str,
     project_space: str,
 ) -> str:
-    badge = status_badge_html(status, large=True)
-    ps = escape(project_space) if project_space else "(none)"
-    info = escape(run_info) if run_info else ""
+    badge = status_badge_html(status)
+    info_escaped = escape(run_info) if run_info else ""
+    model_escaped = escape(model_name) if model_name else ""
+    ps_escaped = escape(project_space) if project_space else ""
+    right_parts: list[str] = []
+    if model_escaped:
+        right_parts.append(f'<span class="cm-status-model">{model_escaped}</span>')
+    if ps_escaped:
+        right_parts.append(f'<span class="cm-status-ps">{ps_escaped}</span>')
+    right_parts.append(
+        f'<a class="cm-status-link" href="{monitor_url}" target="_blank">'
+        f"Monitor &rarr;</a>"
+    )
     return (
-        f'<div class="cm-hero">'
-        f'<div class="cm-hero-left">'
-        f'<div class="cm-hero-status">{badge}</div>'
-        f'<div class="cm-hero-info">{info}</div>'
+        f'<div class="cm-status-bar">'
+        f'<div class="cm-status-left">'
+        f"{badge}"
+        f'<span class="cm-status-info">{info_escaped}</span>'
         f"</div>"
-        f'<div class="cm-hero-right">'
-        f'<span class="cm-hero-ps">Project: <b>{ps}</b></span>'
-        f'<a class="cm-hero-monitor-link" href="{monitor_url}" target="_blank">'
-        f"Open Monitor &rarr;</a>"
-        f"</div>"
-        f"</div>"
+        f'<div class="cm-status-right">'
+        + "".join(right_parts)
+        + "</div></div>"
     )
 
 
@@ -133,120 +141,168 @@ def hero_banner_html(
 # ---------------------------------------------------------------------------
 
 SHARED_CSS = """\
-/* ---- pulsing dot animation ---- */
 @keyframes cm-pulse {
   0%,100% { opacity:1; box-shadow:0 0 6px currentColor; }
   50% { opacity:.5; box-shadow:0 0 14px currentColor; }
 }
 
-/* ---- page background: warm neutral, very subtle violet tint ---- */
 .gradio-container {
-  background: linear-gradient(160deg, #faf9fb 0%, #f5f3ff 30%, #f9fafb 70%, #f3f4f6 100%) !important;
+  background: #f7f8fa !important;
   min-height: 100vh;
 }
 
-/* ---- navigation bar: medium indigo gradient, white text ---- */
+/* ---- navigation bar ---- */
 .cm-nav {
   display:flex; align-items:center; justify-content:space-between;
-  padding:10px 24px;
-  background: linear-gradient(135deg, #4338ca 0%, #4f46e5 45%, #6366f1 100%);
-  border-radius: 0 0 14px 14px;
-  box-shadow: 0 4px 20px rgba(79,70,229,.25), 0 1px 3px rgba(0,0,0,.08);
-  margin-bottom: 12px;
+  padding:8px 20px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.12);
+  margin-bottom: 8px;
 }
-.cm-nav-brand {
-  display:inline-flex; align-items:center; gap:10px;
-}
+.cm-nav-brand { display:inline-flex; align-items:center; gap:8px; }
 .cm-nav-title {
-  font-size:1.3rem; font-weight:800; color:#fff;
-  letter-spacing:-0.02em; text-shadow:0 1px 3px rgba(0,0,0,.12);
+  font-size:1.1rem; font-weight:700; color:#fff;
+  letter-spacing:-0.01em;
 }
-.cm-nav-links { display:flex; gap:4px; }
+.cm-nav-links { display:flex; gap:2px; }
 .cm-nav-link {
-  text-decoration:none; font-size:0.88rem; font-weight:600;
-  color:rgba(255,255,255,.72); padding:5px 14px; border-radius:8px;
-  transition: all .18s ease;
+  text-decoration:none; font-size:0.82rem; font-weight:600;
+  color:rgba(255,255,255,.6); padding:5px 12px; border-radius:6px;
+  transition: all .15s ease;
 }
-.cm-nav-link:hover { color:#fff; background:rgba(255,255,255,.12); }
-.cm-nav-link.active {
-  color:#fff; background:rgba(255,255,255,.18);
-  box-shadow: inset 0 -2px 0 0 #c7d2fe;
-}
+.cm-nav-link:hover { color:#fff; background:rgba(255,255,255,.08); }
+.cm-nav-link.active { color:#fff; background:rgba(255,255,255,.12); }
 .cm-nav-chip {
-  font-size:0.76rem; color:#fff;
-  background:rgba(255,255,255,.15); padding:3px 12px;
-  border-radius:999px; border:1px solid rgba(255,255,255,.2);
+  font-size:0.72rem; color:rgba(255,255,255,.75);
+  background:rgba(255,255,255,.08); padding:3px 10px;
+  border-radius:999px; border:1px solid rgba(255,255,255,.1);
 }
 
-/* ---- hero banner: subtle indigo tint ---- */
-.cm-hero {
-  display:flex; justify-content:space-between; align-items:center;
-  padding:14px 20px; border-radius:14px; margin-bottom:10px;
-  background: linear-gradient(135deg, rgba(99,102,241,.06) 0%, rgba(139,92,246,.04) 100%);
-  border:1px solid rgba(99,102,241,.12);
+/* ---- compact status bar ---- */
+.cm-status-bar {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 16px; border-radius:10px;
+  background:#fff; border:1px solid #e8eaed;
+  margin-bottom:8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04);
 }
-.cm-hero-left { display:flex; align-items:center; gap:16px; }
-.cm-hero-status { flex-shrink:0; }
-.cm-hero-info { font-size:0.84rem; color:var(--body-text-color-subdued,#6b7280); }
-.cm-hero-right { display:flex; align-items:center; gap:16px; text-align:right; }
-.cm-hero-ps { font-size:0.82rem; color:var(--body-text-color-subdued,#6b7280); }
-.cm-hero-monitor-link {
-  font-size:0.82rem; font-weight:600; color:#4f46e5;
-  text-decoration:none; padding:5px 14px; border-radius:8px;
-  background:rgba(99,102,241,.08); transition:all .15s;
+.cm-status-left { display:flex; align-items:center; gap:12px; }
+.cm-status-info { font-size:0.8rem; color:#5f6368; }
+.cm-status-right { display:flex; align-items:center; gap:10px; }
+.cm-status-model { font-size:0.75rem; color:#80868b; font-family:monospace; }
+.cm-status-ps { font-size:0.75rem; color:#80868b; }
+.cm-status-link {
+  font-size:0.78rem; font-weight:600; color:#4f46e5;
+  text-decoration:none; padding:3px 10px; border-radius:6px;
+  background:rgba(79,70,229,.06); transition:all .12s;
 }
-.cm-hero-monitor-link:hover {
-  background:rgba(99,102,241,.15); color:#4338ca;
-}
+.cm-status-link:hover { background:rgba(79,70,229,.12); }
 
 /* ---- shell container ---- */
-.cm-shell { max-width:1360px; margin:0 auto; }
-
-/* ---- glassmorphism panels ---- */
-.cm-panel {
-  background: rgba(255,255,255,.88);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(229,231,235,.6);
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: 0 4px 24px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03);
-  transition: box-shadow .2s ease, transform .15s ease;
-}
-.cm-panel:hover {
-  box-shadow: 0 8px 32px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.04);
-  transform: translateY(-1px);
-}
-
+.cm-shell { max-width:1440px; margin:0 auto; }
 .cm-top-align { align-items:flex-start !important; }
+
+/* ---- right panel ---- */
+.cm-right-card {
+  background:#fff; border:1px solid #e8eaed;
+  border-radius:12px; padding:14px; margin-bottom:8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.03);
+}
+.cm-right-card-header {
+  display:flex; align-items:center; gap:8px;
+  font-size:0.85rem; font-weight:700; color:#202124;
+  margin-bottom:10px; padding-bottom:8px;
+  border-bottom:1px solid #f1f3f4;
+}
+.cm-right-card-icon {
+  width:22px; height:22px; display:flex; align-items:center;
+  justify-content:center; border-radius:6px; font-size:0.75rem;
+  font-weight:700;
+}
+.cm-plan-icon { background:#e8f5e9; color:#2e7d32; }
+.cm-results-icon { background:#fff3e0; color:#ef6c00; }
+
+/* ---- content / report area ---- */
+.cm-content-area {
+  background:#fff; border:1px solid #e8eaed;
+  border-radius:12px; padding:20px 24px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.03);
+  min-height:300px;
+}
 
 /* ---- scrollable containers ---- */
 .cm-scroll-md,.cm-scroll-html,.cm-scroll-code {
-  max-height:560px; overflow-y:auto; overflow-x:hidden; padding-right:6px;
+  max-height:600px; overflow-y:auto; overflow-x:hidden; padding-right:6px;
+}
+.cm-right-scroll {
+  max-height:260px; overflow-y:auto; overflow-x:hidden; padding-right:4px;
 }
 
-/* ---- HITL panel: warm amber attention ---- */
+/* ---- HITL panel ---- */
 .cm-hitl-panel {
-  border:2px solid #f59e0b; border-radius:16px; padding:16px;
-  background: linear-gradient(135deg, rgba(245,158,11,.05) 0%, rgba(252,211,77,.03) 100%);
-  box-shadow: 0 0 16px rgba(245,158,11,.08);
+  border:2px solid #f59e0b; border-radius:12px; padding:14px;
+  background: linear-gradient(135deg, rgba(245,158,11,.04) 0%, rgba(252,211,77,.02) 100%);
+  box-shadow: 0 0 12px rgba(245,158,11,.08);
   animation: cm-hitl-glow 2.2s ease-in-out infinite;
 }
 @keyframes cm-hitl-glow {
-  0%,100% { box-shadow: 0 0 16px rgba(245,158,11,.08); }
-  50% { box-shadow: 0 0 28px rgba(245,158,11,.16); }
+  0%,100% { box-shadow: 0 0 12px rgba(245,158,11,.08); }
+  50% { box-shadow: 0 0 24px rgba(245,158,11,.14); }
 }
 
-/* ---- typography refinements ---- */
-.cm-panel h3, .cm-panel h4 {
-  letter-spacing: -0.02em;
-  color: var(--body-text-color, #111827);
+/* ---- panels (monitor) ---- */
+.cm-panel {
+  background: rgba(255,255,255,.92);
+  border:1px solid #e8eaed; border-radius:12px;
+  padding:14px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.03);
+  transition: box-shadow .2s ease;
+}
+.cm-panel:hover { box-shadow: 0 4px 16px rgba(0,0,0,.06); }
+
+/* ---- event feed (monitor) ---- */
+.cm-event-feed {
+  max-height:560px; overflow-y:auto; overflow-x:hidden;
+  padding-right:6px; font-family:var(--font-mono);
+  scroll-behavior:smooth;
 }
 
-/* ---- faded divider ---- */
+/* ---- sidebar run list ---- */
+.cm-sidebar-runs {
+  display:flex; flex-direction:column; gap:4px;
+  max-height:400px; overflow-y:auto; padding-right:4px;
+}
+.cm-run-item {
+  display:flex; align-items:center; gap:8px;
+  padding:8px 10px; border-radius:8px;
+  background:transparent; border:1px solid transparent;
+  transition: all .12s ease; cursor:default;
+}
+.cm-run-item:hover {
+  background:rgba(79,70,229,.04); border-color:#e8eaed;
+}
+.cm-run-item-active {
+  background:rgba(79,70,229,.06) !important;
+  border-color:rgba(79,70,229,.25) !important;
+}
+.cm-run-dot {
+  width:8px; height:8px; border-radius:50%; flex-shrink:0;
+}
+.cm-run-info { flex:1; min-width:0; }
+.cm-run-title {
+  font-size:0.78rem; font-weight:600; color:#202124;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.cm-run-meta {
+  font-size:0.68rem; color:#80868b; margin-top:1px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* ---- divider ---- */
 .cm-divider {
-  height:1px; border:none; margin:12px 0;
-  background: linear-gradient(90deg, transparent 0%, #e5e7eb 30%, #e5e7eb 70%, transparent 100%);
+  height:1px; border:none; margin:10px 0;
+  background: linear-gradient(90deg, transparent 0%, #e8eaed 30%, #e8eaed 70%, transparent 100%);
 }
 """
 
@@ -425,27 +481,50 @@ def unpack_prompt(pending: Optional[Dict[str, Any]]) -> PromptDisplay:
     payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
     title = "Input Required"
     body = ""
-    meta = ""
+    meta_lines: list[str] = []
+    run_id = str(payload.get("run_id") or "")
+    prompt_id_text = str(payload.get("prompt_id") or prompt_id or "")
     if kind == "proposal_review":
-        title = "Proposal Review"
+        is_revised = bool(payload.get("is_revised"))
+        title = "Revised Proposal Review" if is_revised else "Proposal Review"
         body = payload.get("proposal_description", "") or ""
         todo = payload.get("todo", []) or []
+        if is_revised:
+            if run_id:
+                meta_lines.append(f"same run: `{run_id}`")
+            reason = str(payload.get("reason") or "replanning after HITL")
+            meta_lines.append(f"reason: {reason}")
+        elif run_id:
+            meta_lines.append(f"run: `{run_id}`")
+        if prompt_id_text:
+            meta_lines.append(f"prompt id: `{prompt_id_text}`")
         if isinstance(todo, list) and todo:
-            meta = "Work packages:\n" + "\n".join(
+            meta_lines.append("Work packages:")
+            meta_lines.extend(
                 f"{i + 1}. {item}" for i, item in enumerate(todo)
             )
     elif kind == "hitl":
         title = "HITL Feedback Required"
         body = payload.get("report_text", "") or ""
         rp = payload.get("report_path", "") or ""
-        meta = f"Report: {rp}" if rp else ""
+        if run_id:
+            meta_lines.append(f"run: `{run_id}`")
+        if prompt_id_text:
+            meta_lines.append(f"prompt id: `{prompt_id_text}`")
+        if rp:
+            meta_lines.append(f"report: `{rp}`")
     elif kind == "interrupt_feedback":
         title = "Interrupt Guidance Required"
         body = payload.get("guidance", "") or "Run was interrupted."
         run_id = payload.get("run_id", "") or ""
         phase = payload.get("phase", "") or ""
-        bits = [f"run_id={run_id}" if run_id else "", f"phase={phase}" if phase else ""]
-        meta = " ".join(b for b in bits if b)
+        if run_id:
+            meta_lines.append(f"run: `{run_id}`")
+        if prompt_id_text:
+            meta_lines.append(f"prompt id: `{prompt_id_text}`")
+        if phase:
+            meta_lines.append(f"phase: `{phase}`")
+    meta = "\n".join(meta_lines)
     return PromptDisplay(visible=True, title=title, body=body, meta=meta, prompt_id=prompt_id)
 
 
@@ -456,7 +535,7 @@ __all__ = [
     "WorkspaceComponents",
     "build_hitl_group",
     "build_workspace_controls",
-    "hero_banner_html",
+    "compact_status_bar_html",
     "nav_header_html",
     "status_badge_html",
     "status_color",

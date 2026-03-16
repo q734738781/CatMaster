@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from catmaster.tools.base import ensure_project_space_layout
 from catmaster.webui.session_registry import SessionRegistry
 
 
@@ -27,3 +28,13 @@ def test_monitor_url_encodes_values(tmp_path: Path) -> None:
     registry = SessionRegistry(default_project_space_root=tmp_path)
     url = registry.monitor_url(ctx="ctx test", project_space="a/b", run="run 1")
     assert url == "/monitor/?ctx=ctx+test&project_space=a%2Fb&run=run+1"
+
+
+def test_bootstrap_loads_root_project_space_when_root_itself_is_project(tmp_path: Path) -> None:
+    ensure_project_space_layout(tmp_path, create=True)
+    registry = SessionRegistry(default_project_space_root=tmp_path)
+
+    state = registry.bootstrap(ctx="ctx_test_root", project_space=tmp_path.name, run="")
+
+    assert state.project_space_name == tmp_path.name
+    assert state.project_space_path == str(tmp_path.resolve())

@@ -7,7 +7,8 @@ import pytest
 
 pytest.importorskip("langchain_core")
 
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, LLMResult
 
 from catmaster.runtime.artifact_callback import ArtifactPersistenceHandler, UIEventHandler
 from catmaster.runtime.artifact_store import ArtifactStore
@@ -30,7 +31,7 @@ def test_artifact_persistence_parses_tool_message_output(tmp_path) -> None:
 
     rid = uuid.uuid4()
     handler.on_tool_start(
-        serialized={"name": "bash_exec"},
+        serialized={"name": "bash"},
         input_str=json.dumps({"cmd": "echo ok"}),
         run_id=rid,
     )
@@ -39,12 +40,12 @@ def test_artifact_persistence_parses_tool_message_output(tmp_path) -> None:
         ToolMessage(
             content=json.dumps({
                 "status": "success",
-                "tool_name": "bash_exec",
+                "tool_name": "bash",
                 "data": {"stdout": "ok"},
                 "error": None,
             }, ensure_ascii=False),
             tool_call_id="call_1",
-            name="bash_exec",
+            name="bash",
         ),
         run_id=rid,
     )
@@ -56,7 +57,7 @@ def test_artifact_persistence_parses_tool_message_output(tmp_path) -> None:
     ]
     assert records
     assert records[0]["status"] == "success"
-    assert records[0]["tool_name"] == "bash_exec"
+    assert records[0]["tool_name"] == "bash"
 
 
 def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
@@ -66,7 +67,7 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
     rid = uuid.uuid4()
     handler.on_tool_start(
         serialized={"name": "demo_tool"},
-        input_str="{}",
+        input_str='{"alpha": 1}',
         run_id=rid,
     )
 
@@ -85,9 +86,17 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
 
     end_events = [e for e in reporter.events if e.name == "TOOL_CALL_END"]
     assert end_events
+    start_events = [e for e in reporter.events if e.name == "TOOL_CALL_START"]
+    assert start_events
+    start_payload = start_events[-1].payload
+    assert start_payload.get("tool") == "demo_tool"
+    assert start_payload.get("toolcall_id") == str(rid)
+    assert "alpha" in str(start_payload.get("params_compact") or "")
     payload = end_events[-1].payload
     assert payload.get("tool") == "demo_tool"
     assert payload.get("status") == "success"
+    assert payload.get("toolcall_id") == str(rid)
+    assert "alpha" in str(payload.get("params_compact") or "")
 
 
 def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
@@ -144,3 +153,67 @@ def test_artifact_persistence_tool_start_json_safes_non_serializable_inputs(tmp_
     payload = json.loads(input_files[0].read_text(encoding="utf-8"))
     assert payload["raw_params"]["path"] == "x.txt"
     assert payload["raw_params"]["runtime"] == "<ToolRuntime stub>"
+
+
+def test_ui_event_handler_emits_llm_preview_and_tool_plan() -> None:
+    reporter = _CollectReporter()
+    handler = UIEventHandler(reporter, run_id="run_x")
+
+    rid = uuid.uuid4()
+    handler.on_llm_start(
+        serialized={"kwargs": {"model_name": "gpt-5"}},
+        prompts=["prompt"],
+        run_id=rid,
+    )
+    handler.on_llm_end(
+        LLMResult(
+            generations=[[
+                ChatGeneration(
+                    message=AIMessage(
+                        content="Progress: built O2 and preparing relax.",
+                        tool_calls=[{
+                            "id": "call_1",
+                            "type": "tool_call",
+                            "name": "mace_relax_batch",
+                            "args": {"input": "o2/O2.vasp"},
+                        }],
+                    )
+                )
+            ]],
+            llm_output={},
+        ),
+        run_id=rid,
+    )
+
+    end_events = [e for e in reporter.events if e.name == "LLM_CALL_END"]
+    assert end_events
+    payload = end_events[-1].payload
+    assert payload.get("text_preview") == "Progress: built O2 and preparing relax."
+    assert payload.get("tool_calls") == ["mace_relax_batch"]
+
+
+def test_ui_event_handler_reasoning_delta_emits_only_new_suffix() -> None:
+    reporter = _CollectReporter()
+    handler = UIEventHandler(reporter, run_id="run_x")
+
+    rid = uuid.uuid4()
+    handler.on_llm_start(
+        serialized={"kwargs": {"model_name": "gpt-5"}},
+        prompts=["prompt"],
+        run_id=rid,
+    )
+    handler.on_llm_new_token(
+        "",
+        run_id=rid,
+        chunk={"reasoning_details": [{"type": "reasoning.summary", "summary": "Running batch process"}]},
+    )
+    handler.on_llm_new_token(
+        "",
+        run_id=rid,
+        chunk={"reasoning_details": [{"type": "reasoning.summary", "summary": "Running batch process on boxed O2"}]},
+    )
+
+    reasoning_events = [e for e in reporter.events if e.name == "LLM_REASONING_DELTA"]
+    assert len(reasoning_events) == 2
+    assert reasoning_events[0].payload.get("text") == "Running batch process"
+    assert reasoning_events[1].payload.get("text") == " on boxed O2"

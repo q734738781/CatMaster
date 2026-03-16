@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import system_root, workspace_root, workspace_scope
+from catmaster.tools.base import resolve_workspace_path, system_root, workspace_root, workspace_scope
 from catmaster.tools.misc.bash_exec import bash_exec
 
 
@@ -83,7 +83,7 @@ def test_bash_exec_persists_full_stream_logs_without_pre_truncation(tmp_path) ->
                 "timeout_s": 5.0,
             }
         )
-        audit_dir = system_root(tmp_path) / "audit" / "bash_exec"
+        audit_dir = system_root(tmp_path) / "audit" / "bash"
 
     _, artifact = out
     data = artifact.get("data", {})
@@ -121,3 +121,29 @@ def test_bash_exec_python3_uses_current_interpreter(tmp_path) -> None:
     _ = content
     stdout = str((artifact or {}).get("data", {}).get("stdout") or "").strip()
     assert stdout == sys.executable
+
+
+def test_resolve_workspace_path_accepts_deepagent_virtual_root(tmp_path) -> None:
+    with workspace_scope(tmp_path):
+        files_root = workspace_root(tmp_path)
+        (files_root / "nested").mkdir()
+        assert resolve_workspace_path("/") == files_root.resolve()
+        assert resolve_workspace_path("/nested") == (files_root / "nested").resolve()
+
+
+def test_bash_exec_accepts_virtual_root_cwd(tmp_path) -> None:
+    with workspace_scope(tmp_path):
+        files_root = workspace_root(tmp_path)
+        (files_root / "hello.txt").write_text("ok", encoding="utf-8")
+        _, artifact = bash_exec(
+            {
+                "script": "pwd && cat hello.txt",
+                "cwd": "/",
+                "no_network": False,
+                "timeout_s": 5.0,
+            }
+        )
+    data = artifact.get("data", {})
+    stdout = str(data.get("stdout") or "")
+    assert str(files_root.resolve()) in stdout
+    assert "ok" in stdout

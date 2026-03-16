@@ -170,6 +170,9 @@ class LiteratureSubagent:
         rec_seed_count = budget.recommendation_seed_count
         web_limit = budget.public_web_limit
         allow_public_web = bool(budget.use_public_web or self.config.public_web_on_search_failure)
+        public_search_enabled = bool(
+            allow_public_web and getattr(self.online_search, "public_search_enabled", lambda: True)()
+        )
 
         def search_openalex(query: str, limit: int | None = None) -> str:
             actual_limit = max(1, min(int(limit or search_limit or 1), max(search_limit, 1)))
@@ -310,27 +313,27 @@ class LiteratureSubagent:
                 func=search_openalex,
                 name="search_openalex",
                 description=(
-                    f"Search OpenAlex for scholarly works. Use short scholarly queries, not reporting instructions. "
-                    f"This is the primary metadata search tool. Default/cap limit={search_limit}. Topic hint: {topic or '(none)'}."
+                    f"Search OpenAlex for accurate scholarly metadata only. Use short paper-lookup queries, not broad background questions or reporting instructions. "
+                    f"Use this when you need DOI/year/venue/authors/citation metadata or an exact paper match. Default/cap limit={search_limit}. Topic hint: {topic or '(none)'}."
                 ),
             ),
             StructuredTool.from_function(
                 func=search_semantic_scholar,
                 name="search_semantic_scholar",
                 description=(
-                    f"Search Semantic Scholar to supplement OpenAlex with paper metadata and abstract/tldr hints. "
-                    f"Use short scholarly queries. Default/cap limit={search_limit}."
+                    f"Search Semantic Scholar only to supplement or confirm precise paper metadata, abstract/tldr hints, and recommendation seeds. "
+                    f"Do not use this for broad background search. Default/cap limit={search_limit}."
                 ),
             ),
             StructuredTool.from_function(
                 func=get_openalex_record,
                 name="get_openalex_record",
-                description="Fetch a single OpenAlex work by OpenAlex id or DOI when a specific paper needs richer metadata.",
+                description="Fetch a single OpenAlex work by OpenAlex id or DOI when a specific paper needs exact metadata confirmation.",
             ),
             StructuredTool.from_function(
                 func=get_semantic_scholar_record,
                 name="get_semantic_scholar_record",
-                description="Fetch a single Semantic Scholar paper by paper id or DOI when a specific paper needs confirmation or extra metadata.",
+                description="Fetch a single Semantic Scholar paper by paper id or DOI when a specific paper needs exact metadata or abstract confirmation.",
             ),
         ]
         if rec_limit > 0:
@@ -340,12 +343,12 @@ class LiteratureSubagent:
                     name="recommend_semantic_scholar",
                     description=(
                         f"Get Semantic Scholar recommendations from semantic scholar seed ids only. "
-                        f"Use only after you already found promising semantic scholar papers. Default/cap limit={rec_limit};"
+                        f"Use only after you already found promising semantic scholar papers and need metadata-grounded expansion. Default/cap limit={rec_limit};"
                         f" seed count should stay small (typically <= {rec_seed_count})."
                     ),
                 )
             )
-        if allow_public_web and web_limit > 0:
+        if public_search_enabled and web_limit > 0:
             tools.append(
                 StructuredTool.from_function(
                     func=search_public_web,
@@ -356,6 +359,7 @@ class LiteratureSubagent:
                     ),
                 )
             )
+        if allow_public_web:
             tools.append(
                 StructuredTool.from_function(
                     func=open_public_page,
@@ -393,21 +397,37 @@ class LiteratureSubagent:
         create_agent = _load_create_agent()
         ToolStrategy = _load_tool_strategy()
         tools = self._build_search_tools(budget=budget, topic=topic)
+        tool_names = {tool.name for tool in tools}
+        if "search_public_web" in tool_names:
+            public_web_guidance = (
+                "Source routing rule: start with public web search for broad orientation, public summaries, landing-page abstracts, and lightweight evidence checks. "
+                "Only use OpenAlex or Semantic Scholar when you need exact paper metadata, DOI/year/venue/authors/citation details, or metadata-grounded recommendation expansion from known seeds. "
+                "Do not automatically call both scholarly search and public web in the same first pass unless the request clearly needs both. "
+                "Use public web search for broad public background, landing pages, NIH summaries, or when scholarly sources are sparse. "
+            )
+        else:
+            public_web_guidance = (
+                "Public web search is unavailable in this run. Use OpenAlex as the primary exact-metadata source and Semantic Scholar as the supplementary metadata source. "
+                "If a retrieved paper or citation exposes a useful public URL, you may inspect it with the page-reading tools, but do not assume a general web search tool exists. "
+            )
         system_prompt = (
             "You are a literature research agent. "
             "The outer caller provides a research intent, not database-ready search strings. "
             "You must decide how to search. Rewrite scholarly queries into short database-friendly phrases. "
             "Do not pass full reporting instructions verbatim into scholarly databases. "
-            "Source routing rule: start with public web search for broad orientation, public summaries, landing-page abstracts, and lightweight evidence checks. "
-            "Only use OpenAlex or Semantic Scholar when you need paper-level metadata, citations, DOI/year/venue details, recommendation expansion, or explicit literature grounding. "
-            "Do not automatically call both scholarly search and public web in the same first pass unless the request clearly needs both. "
-            "Use OpenAlex as the primary scholarly metadata source when scholarly grounding is needed. Use Semantic Scholar as a supplementary scholarly source and for recommendations. "
-            "Use public web search for broad public background, landing pages, NIH summaries, or when scholarly sources are sparse. "
+            "Use this toolchain for current research information, literature verification, background grounding for scientific writing, representative citation finding, method/benchmark convention lookup, and recent developments that matter for the request. "
+            "Prefer representative, high-signal evidence over exhaustive harvesting when the requested depth is quick, standard, or focused. "
+            "When scholarly grounding is needed, prioritize higher-quality and more influential papers first: foundational papers, highly cited papers, stronger venues, recent representative work, and papers that directly support the claim or method in question. "
+            "Do not inflate the evidence pack with low-value near-duplicates just to look comprehensive. "
+            f"{public_web_guidance}"
+            "Treat OpenAlex and Semantic Scholar as metadata systems, not general background search engines. "
+            "Use OpenAlex as the primary exact-metadata source. Use Semantic Scholar only as a supplementary metadata source and for recommendations. "
             "Stop as soon as you have an adequate evidence pack for the requested depth. "
             "Do not repeat near-identical searches on the same source just to be more complete. "
             "For quick or focused requests, prefer a small number of high-value retrieval steps over exhaustive coverage. "
             "Stay within the requested depth and return a LiteratureContextPack only. "
-            "Ground claims in retrieved evidence. Do not invent papers or citations."
+            "Ground claims in retrieved evidence. Do not invent papers or citations. "
+            "When returning results, make the pack useful for downstream writing or planning: concise synthesis, representative citations, and clear uncertainty where evidence is thin or conflicting."
         )
         agent = create_agent(
             model=model,
@@ -430,8 +450,13 @@ class LiteratureSubagent:
                 "- deep_report: broader benchmark landscape and disagreements\n\n"
                 "Source-routing guidance:\n"
                 "- web-first for broad orientation or public-page summaries\n"
-                "- scholarly search only when paper metadata / citations / explicit literature grounding are needed\n"
+                "- OpenAlex and Semantic Scholar are for exact metadata lookup only: DOI, year, venue, authors, citation counts, abstract confirmation, or seed-based recommendations\n"
                 "- avoid doing OpenAlex and public web together in the first pass unless clearly justified\n\n"
+                "Retrieval-quality guidance:\n"
+                "- prioritize representative, high-signal papers over exhaustive lists\n"
+                "- prefer stronger venues, highly cited papers, recent representative work, and papers that directly support the claim or method\n"
+                "- use recommendations only after you already have a small promising seed set\n"
+                "- use the returned pack to support planning or writing, not to build a giant bibliography by default\n\n"
                 "Stopping guidance:\n"
                 "- stop once the evidence pack is adequate for the requested depth\n"
                 "- do not issue repeated near-identical searches against the same source\n"

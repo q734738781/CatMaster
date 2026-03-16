@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Run-level usage aggregation from event_trace.jsonl.
-"""
+"""Run-level usage aggregation from LangChain usage metadata."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -28,9 +26,27 @@ def load_usage_summary(run_dir: Path) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def write_usage_summary(run_dir: Path) -> Dict[str, Any]:
+def write_usage_summary_from_metadata(
+    run_dir: Path,
+    *,
+    usage_metadata: Dict[str, Any],
+    call_counts_by_model: Dict[str, int] | None = None,
+    append: bool = True,
+) -> Dict[str, Any]:
     run_path = Path(run_dir).expanduser().resolve()
-    summary = summarize_usage_from_event_trace(run_path)
+    merged_usage = _json_safe_usage(usage_metadata if isinstance(usage_metadata, dict) else {})
+    merged_counts = _coerce_call_counts(call_counts_by_model)
+    if append:
+        existing = load_usage_summary(run_path)
+        merged_usage = _merge_usage_metadata(existing.get("raw_usage_metadata"), merged_usage)
+        merged_counts = _merge_call_counts(existing.get("call_counts_by_model"), merged_counts)
+    summary = summarize_usage_from_metadata(
+        merged_usage,
+        run_dir=run_path,
+        call_counts_by_model=merged_counts,
+    )
+    summary["raw_usage_metadata"] = merged_usage
+    summary["call_counts_by_model"] = merged_counts
     path = usage_summary_path(run_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,9 +56,14 @@ def write_usage_summary(run_dir: Path) -> Dict[str, Any]:
     return summary
 
 
-def summarize_usage_from_event_trace(run_dir: Path) -> Dict[str, Any]:
-    run_path = Path(run_dir).expanduser().resolve()
-    event_path = run_path / "event_trace.jsonl"
+def summarize_usage_from_metadata(
+    usage_metadata: Dict[str, Any],
+    *,
+    run_dir: Path | None = None,
+    call_counts_by_model: Dict[str, int] | None = None,
+) -> Dict[str, Any]:
+    usage_payload = _json_safe_usage(usage_metadata if isinstance(usage_metadata, dict) else {})
+    counts = _coerce_call_counts(call_counts_by_model)
     calls = 0
     missing_usage_calls = 0
     missing_cost_calls = 0
@@ -67,125 +88,74 @@ def summarize_usage_from_event_trace(run_dir: Path) -> Dict[str, Any]:
         "prompt": 0.0,
         "completion": 0.0,
     }
-    by_role: dict[str, dict[str, Any]] = {}
     by_model: dict[str, dict[str, Any]] = {}
 
-    if event_path.exists():
-        for line in event_path.read_text(encoding="utf-8").splitlines():
-            raw = line.strip()
-            if not raw:
-                continue
-            try:
-                event = json.loads(raw)
-            except Exception:
-                continue
-            if not isinstance(event, dict):
-                continue
-            if str(event.get("event") or "") != "LLM_USAGE":
-                continue
-            payload = event.get("payload")
-            if not isinstance(payload, dict):
-                continue
-            usage = payload.get("usage")
-            if not isinstance(usage, dict):
-                continue
+    for model_name, usage in usage_payload.items():
+        if not isinstance(usage, dict):
+            continue
+        in_tok = _to_int(usage.get("input_tokens"))
+        out_tok = _to_int(usage.get("output_tokens"))
+        tot_tok = _to_int(usage.get("total_tokens"))
+        input_details = usage.get("input_token_details") if isinstance(usage.get("input_token_details"), dict) else {}
+        output_details = usage.get("output_token_details") if isinstance(usage.get("output_token_details"), dict) else {}
+        in_cached_tok = _to_int(input_details.get("cache_read"))
+        if in_cached_tok is None:
+            in_cached_tok = _to_int(input_details.get("cached_tokens"))
+        cache_write_tok = _to_int(input_details.get("cache_write"))
+        if cache_write_tok is None:
+            cache_write_tok = _to_int(input_details.get("cache_creation"))
+        reasoning_tok = _to_int(output_details.get("reasoning"))
+        call_count = max(1, int(counts.get(str(model_name), 0) or 0))
 
-            calls += 1
-            role = str(payload.get("role") or "").strip() or "(unknown)"
-            model_name = str(payload.get("model") or "").strip() or "(unknown)"
-            src = str(usage.get("source") or "").strip().lower()
-            in_tok = _to_int(usage.get("input_tokens"))
-            in_cached_tok = _to_int(usage.get("input_cached_tokens"))
-            out_tok = _to_int(usage.get("output_tokens"))
-            tot_tok = _to_int(usage.get("total_tokens"))
-            input_details = usage.get("input_token_details")
-            output_details = usage.get("output_token_details")
-            if not isinstance(input_details, dict):
-                input_details = {}
-            if not isinstance(output_details, dict):
-                output_details = {}
-            cache_write_tok = _to_int(input_details.get("cache_write"))
-            reasoning_tok = _to_int(output_details.get("reasoning"))
-            if cache_write_tok is None:
-                prompt_details = usage.get("prompt_tokens_details")
-                if isinstance(prompt_details, dict):
-                    cache_write_tok = _to_int(prompt_details.get("cache_write_tokens"))
-            if reasoning_tok is None:
-                completion_details = usage.get("completion_tokens_details")
-                if isinstance(completion_details, dict):
-                    reasoning_tok = _to_int(completion_details.get("reasoning_tokens"))
-            exact_cost = _to_float(usage.get("cost"))
-            cost_details = usage.get("cost_details") if isinstance(usage.get("cost_details"), dict) else {}
-            prompt_cost_exact = _to_float(cost_details.get("upstream_inference_prompt_cost"))
-            completion_cost_exact = _to_float(cost_details.get("upstream_inference_completions_cost"))
+        calls += call_count
+        if in_tok is None and in_cached_tok is None and out_tok is None and tot_tok is None:
+            missing_usage_calls += call_count
+        if in_tok is not None:
+            input_tokens += in_tok
+        if in_cached_tok is not None:
+            input_cached_tokens += in_cached_tok
+        if cache_write_tok is not None:
+            input_cache_write_tokens += cache_write_tok
+        if out_tok is not None:
+            output_tokens += out_tok
+        if reasoning_tok is not None:
+            reasoning_tokens += reasoning_tok
+        if tot_tok is not None:
+            total_tokens += tot_tok
+        elif in_tok is not None and out_tok is not None:
+            total_tokens += in_tok + out_tok
 
-            if src == "missing" or (
-                in_tok is None and in_cached_tok is None and out_tok is None and tot_tok is None
-            ):
-                missing_usage_calls += 1
-
-            if in_tok is not None:
-                input_tokens += in_tok
-            if in_cached_tok is not None:
-                input_cached_tokens += in_cached_tok
-            if cache_write_tok is not None:
-                input_cache_write_tokens += cache_write_tok
-            if out_tok is not None:
-                output_tokens += out_tok
-            if reasoning_tok is not None:
-                reasoning_tokens += reasoning_tok
-            if tot_tok is not None:
-                total_tokens += tot_tok
-            elif in_tok is not None and out_tok is not None:
-                total_tokens += in_tok + out_tok
-
-            call_summary = _call_cost_summary(
-                model_name=model_name,
-                input_tokens=in_tok,
-                input_cached_tokens=in_cached_tok,
-                input_cache_write_tokens=cache_write_tok,
-                output_tokens=out_tok,
-                reasoning_tokens=reasoning_tok,
-                exact_cost=exact_cost,
-            )
-            if call_summary["exact_cost"] is not None:
-                exact_cost_usd += float(call_summary["exact_cost"])
-                exact_cost_calls += 1
-            elif call_summary["estimated_cost"] is not None:
-                estimated_cost_usd += float(call_summary["estimated_cost"])
-                estimated_cost_calls += 1
-            else:
-                missing_cost_calls += 1
-
-            if prompt_cost_exact is not None:
-                exact_breakdown_usd["prompt"] += prompt_cost_exact
-            if completion_cost_exact is not None:
-                exact_breakdown_usd["completion"] += completion_cost_exact
-            for key, value in (call_summary.get("estimated_breakdown_usd") or {}).items():
-                if key in breakdown_usd:
-                    breakdown_usd[key] += float(value or 0.0)
-
-            _accumulate_bucket(
-                by_role,
-                key=role,
-                call_summary=call_summary,
-                input_tokens=in_tok,
-                input_cached_tokens=in_cached_tok,
-                input_cache_write_tokens=cache_write_tok,
-                output_tokens=out_tok,
-                reasoning_tokens=reasoning_tok,
-            )
-            _accumulate_bucket(
-                by_model,
-                key=model_name,
-                call_summary=call_summary,
-                input_tokens=in_tok,
-                input_cached_tokens=in_cached_tok,
-                input_cache_write_tokens=cache_write_tok,
-                output_tokens=out_tok,
-                reasoning_tokens=reasoning_tok,
-            )
-
+        call_summary = _call_cost_summary(
+            model_name=str(model_name),
+            input_tokens=in_tok,
+            input_cached_tokens=in_cached_tok,
+            input_cache_write_tokens=cache_write_tok,
+            output_tokens=out_tok,
+            reasoning_tokens=reasoning_tok,
+            exact_cost=None,
+        )
+        if call_summary["exact_cost"] is not None:
+            exact_cost_usd += float(call_summary["exact_cost"])
+            exact_cost_calls += call_count
+        elif call_summary["estimated_cost"] is not None:
+            estimated_cost_usd += float(call_summary["estimated_cost"])
+            estimated_cost_calls += call_count
+        else:
+            missing_cost_calls += call_count
+        for key, value in (call_summary.get("estimated_breakdown_usd") or {}).items():
+            if key in breakdown_usd:
+                breakdown_usd[key] += float(value or 0.0)
+        _accumulate_bucket(
+            by_model,
+            key=str(model_name),
+            call_summary=call_summary,
+            input_tokens=in_tok,
+            input_cached_tokens=in_cached_tok,
+            input_cache_write_tokens=cache_write_tok,
+            output_tokens=out_tok,
+            reasoning_tokens=reasoning_tok,
+            call_count=call_count,
+        )
     total_cost_usd = exact_cost_usd + estimated_cost_usd
     if total_cost_usd > 0 and missing_cost_calls == 0 and estimated_cost_calls == 0:
         cost_source = "exact"
@@ -197,7 +167,8 @@ def summarize_usage_from_event_trace(run_dir: Path) -> Dict[str, Any]:
         cost_source = "unavailable"
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "run_dir": str(run_path),
+        "run_dir": str(Path(run_dir).expanduser().resolve()) if run_dir is not None else "",
+        "source": "langchain_usage_metadata",
         "calls": calls,
         "missing_usage_calls": missing_usage_calls,
         "missing_cost_calls": missing_cost_calls,
@@ -215,7 +186,7 @@ def summarize_usage_from_event_trace(run_dir: Path) -> Dict[str, Any]:
         "estimated_cost_calls": estimated_cost_calls,
         "breakdown_usd": {k: round(float(v), 8) for k, v in breakdown_usd.items()},
         "exact_breakdown_usd": {k: round(float(v), 8) for k, v in exact_breakdown_usd.items()},
-        "by_role": _bucket_list(by_role),
+        "by_role": [],
         "by_model": _bucket_list(by_model),
     }
 
@@ -311,9 +282,10 @@ def _accumulate_bucket(
     input_cache_write_tokens: int | None,
     output_tokens: int | None,
     reasoning_tokens: int | None,
+    call_count: int = 1,
 ) -> None:
     bucket = buckets.setdefault(key, _new_bucket())
-    bucket["calls"] += 1
+    bucket["calls"] += max(1, int(call_count or 1))
     bucket["input_tokens"] += int(input_tokens or 0)
     bucket["input_cached_tokens"] += int(input_cached_tokens or 0)
     bucket["input_cache_write_tokens"] += int(input_cache_write_tokens or 0)
@@ -342,9 +314,77 @@ def _bucket_list(buckets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _json_safe_usage(raw: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for model_name, payload in raw.items():
+        if not isinstance(model_name, str) or not isinstance(payload, dict):
+            continue
+        out[model_name] = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+    return out
+
+
+def _coerce_call_counts(raw: Any) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            continue
+        coerced = _to_int(value)
+        if coerced is None:
+            continue
+        out[key] = max(0, coerced)
+    return out
+
+
+def _merge_call_counts(base: Any, update: Any) -> dict[str, int]:
+    merged = _coerce_call_counts(base)
+    for key, value in _coerce_call_counts(update).items():
+        merged[key] = int(merged.get(key, 0)) + int(value or 0)
+    return merged
+
+
+def _merge_usage_metadata(base: Any, update: Any) -> dict[str, dict[str, Any]]:
+    merged = _json_safe_usage(base)
+    incoming = _json_safe_usage(update)
+    for model_name, payload in incoming.items():
+        current = merged.get(model_name)
+        if not isinstance(current, dict):
+            merged[model_name] = payload
+            continue
+        merged[model_name] = _merge_usage_dict(current, payload)
+    return merged
+
+
+def _merge_usage_dict(base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in update.items():
+        if isinstance(value, dict):
+            current = merged.get(key)
+            if isinstance(current, dict):
+                merged[key] = _merge_usage_dict(current, value)
+            else:
+                merged[key] = dict(value)
+            continue
+        if isinstance(value, bool):
+            merged[key] = int(bool(merged.get(key, 0))) + int(value)
+            continue
+        if isinstance(value, int):
+            merged[key] = int(_to_int(merged.get(key)) or 0) + value
+            continue
+        if isinstance(value, float):
+            merged[key] = float(_to_float(merged.get(key)) or 0.0) + value
+            continue
+        if value is not None:
+            merged[key] = value
+    return merged
+
+
 __all__ = [
     "load_usage_summary",
-    "summarize_usage_from_event_trace",
+    "summarize_usage_from_metadata",
     "usage_summary_path",
-    "write_usage_summary",
+    "write_usage_summary_from_metadata",
 ]

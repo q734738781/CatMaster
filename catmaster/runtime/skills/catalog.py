@@ -20,6 +20,9 @@ _SUGGESTED_TOOLS_KEY = "catmaster-suggested-tools"
 _ROLES_KEY = "catmaster-roles"
 _LANES_KEY = "catmaster-lanes"
 _TAGS_KEY = "catmaster-tags"
+_TOOL_NAME_ALIASES = {
+    "bash_exec": "bash",
+}
 
 
 def _read_frontmatter_block(path: Path) -> str:
@@ -86,10 +89,11 @@ def _split_suggested_tools(raw: Any) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for item in parts:
-        if item in seen:
+        token = _normalize_tool_token(item)
+        if token is None or token in seen:
             continue
-        seen.add(item)
-        out.append(item)
+        seen.add(token)
+        out.append(token)
     return out
 
 
@@ -129,7 +133,7 @@ def _normalize_tool_token(raw: str) -> str | None:
     lowered = token.lower()
     if lowered in {"(none specified)", "none specified", "(none)", "none"}:
         return None
-    return token
+    return _TOOL_NAME_ALIASES.get(token, token)
 
 
 def _parse_suggested_tools_body_section(path: Path) -> list[str]:

@@ -9,6 +9,7 @@ from catmaster.runtime.literature import (
     LiteratureContextPack,
     LiteratureStore,
     LiteratureSubagent,
+    OnlineSearchAdapter,
     PaperRecord,
 )
 from catmaster.llm.config import LiteratureRuntimeConfig
@@ -258,8 +259,25 @@ def test_literature_subagent_builds_agentic_toolset_with_topic_hint(tmp_path: Pa
         config=LiteratureRuntimeConfig(),
     )
     tools = {tool.name: tool for tool in subagent._build_search_tools(budget=subagent.config.budget_for_depth("quick"), topic="CO adsorption on Fe(110)")}
-    assert "short scholarly queries" in tools["search_openalex"].description
+    assert "accurate scholarly metadata only" in tools["search_openalex"].description
+    assert "Do not use this for broad background search" in tools["search_semantic_scholar"].description
     assert "Topic hint: CO adsorption on Fe(110)" in tools["search_openalex"].description
+    assert "open_public_page" in tools
+    assert "find_in_page" in tools
+
+
+def test_literature_subagent_hides_search_public_web_without_tavily_key(tmp_path: Path) -> None:
+    subagent = LiteratureSubagent(
+        openalex=None,
+        semanticscholar=object(),
+        online_search=OnlineSearchAdapter(tavily_api_key=""),
+        store=LiteratureStore(workspace=tmp_path),
+        config=LiteratureRuntimeConfig(),
+    )
+
+    tools = {tool.name: tool for tool in subagent._build_search_tools(budget=subagent.config.budget_for_depth("quick"), topic="CO adsorption")}
+
+    assert "search_public_web" not in tools
     assert "open_public_page" in tools
     assert "find_in_page" in tools
 
@@ -326,8 +344,11 @@ def test_literature_subagent_invoke_research_agent_uses_internal_agent(monkeypat
     create_kwargs = observed["create_kwargs"]
     assert create_kwargs["name"] == "literature_research_subagent"
     assert "Rewrite scholarly queries into short database-friendly phrases" in create_kwargs["system_prompt"]
+    assert "prioritize higher-quality and more influential papers first" in create_kwargs["system_prompt"]
+    assert "make the pack useful for downstream writing or planning" in create_kwargs["system_prompt"]
     assert "start with public web search for broad orientation" in create_kwargs["system_prompt"]
-    assert "Only use OpenAlex or Semantic Scholar when you need paper-level metadata" in create_kwargs["system_prompt"]
+    assert "Only use OpenAlex or Semantic Scholar when you need exact paper metadata" in create_kwargs["system_prompt"]
+    assert "Treat OpenAlex and Semantic Scholar as metadata systems, not general background search engines" in create_kwargs["system_prompt"]
     assert create_kwargs["response_format"] == ("tool_strategy", "LiteratureContextPack", False)
     assert observed["schema"] is LiteratureContextPack
     assert observed["handle_errors"] is False
@@ -340,6 +361,8 @@ def test_literature_subagent_invoke_research_agent_uses_internal_agent(monkeypat
     assert "Topic hint: CO adsorption on Fe(110)" in content
     assert "Source-routing guidance:" in content
     assert "web-first for broad orientation or public-page summaries" in content
+    assert "Retrieval-quality guidance:" in content
+    assert "prioritize representative, high-signal papers over exhaustive lists" in content
     assert "Stopping guidance:" in content
     assert "- internal tool-call budget: 4" in content
     assert observed["config"] == {"recursion_limit": 12}

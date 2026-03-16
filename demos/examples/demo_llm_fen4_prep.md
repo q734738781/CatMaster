@@ -46,7 +46,7 @@ I need you to prepare the geometries for 1) a standard Fe-N4 single atom catalys
 ```
 
 ## Final report (verbatim)
-- Source: `workspace/demo_fen4_co/reports/FINAL_REPORT.md`
+- Source: `workspace/demo_fen4_co/run_state.json`
 ```markdown
 # Final Report
 

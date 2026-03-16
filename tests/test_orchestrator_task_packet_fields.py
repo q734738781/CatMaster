@@ -37,7 +37,7 @@ def test_resolve_task_goal_from_decision_requires_task_detail() -> None:
             "goal": "Run adsorption references",
             "task_detail": "",
             "expected_outputs": [],
-            "suggested_tools": ["bash_exec"],
+            "suggested_tools": ["bash"],
             "reference_hint": [],
         },
     }
