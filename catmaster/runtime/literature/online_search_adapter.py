@@ -1,34 +1,28 @@
 from __future__ import annotations
 
-from dataclasses import replace
+import os
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
-
-from catmaster.llm.config import LLMProfile
-from catmaster.llm.factory import build_chat_model
-from catmaster.runtime.tool_output_adapter import content_to_text
+from tavily import TavilyClient
 
 from .models import FindInPageResult, InPageMatch, PublicPageSnapshot, PublicWebHit, PublicWebSearchResult
 
 
-class _WebSearchHitModel(BaseModel):
-    title: str = Field(...)
-    url: str | None = Field(None)
-    snippet: str = Field(...)
-
-
-class _WebSearchResponseModel(BaseModel):
-    results: list[_WebSearchHitModel] = Field(default_factory=list)
-
-
 class OnlineSearchAdapter:
-    def __init__(self, *, model_override: str | None = None) -> None:
-        self.model_override = str(model_override or "").strip() or None
+    def __init__(
+        self,
+        *,
+        tavily_api_key: str | None = None,
+        search_depth: str = "advanced",
+        topic: str = "general",
+    ) -> None:
+        api_key = str(tavily_api_key if tavily_api_key is not None else os.environ.get("TAVILY_API_KEY", "")).strip()
+        self._tavily_client = TavilyClient(api_key=api_key) if api_key else None
+        self.search_depth = str(search_depth or "advanced").strip().lower() or "advanced"
+        self.topic = str(topic or "general").strip().lower() or "general"
 
     @staticmethod
     def _normalize_public_url(url: str) -> str:
@@ -52,6 +46,26 @@ class OnlineSearchAdapter:
     @staticmethod
     def _clean_text(text: str) -> str:
         return " ".join(str(text or "").split()).strip()
+
+    def public_search_enabled(self) -> bool:
+        return self._tavily_client is not None
+
+    def _require_tavily_client(self) -> TavilyClient:
+        if self._tavily_client is None:
+            raise RuntimeError("TAVILY_API_KEY is required for public web search.")
+        return self._tavily_client
+
+    @classmethod
+    def _normalize_tavily_hit(cls, payload: Any) -> PublicWebHit:
+        data = payload if isinstance(payload, dict) else {}
+        title = cls._clean_text(data.get("title") or "")
+        url = cls._clean_text(data.get("url") or "") or None
+        snippet = cls._clean_text(data.get("content") or data.get("raw_content") or "")
+        if not title:
+            title = url or "Untitled result"
+        if not snippet:
+            snippet = title
+        return PublicWebHit(title=title, url=url, snippet=snippet)
 
     @classmethod
     def _extract_page_text(cls, html_text: str) -> tuple[str | None, str | None, str]:
@@ -80,42 +94,24 @@ class OnlineSearchAdapter:
         text = cls._clean_text(body.get_text("\n", strip=True))
         return title, description, text
 
-    def _resolve_model_config(self):
-        profile = LLMProfile.from_env_or_file()
-        base_cfg = profile.config_for_role("literature_web_search")
-        if self.model_override:
-            if self.model_override in profile.models:
-                return profile.models[self.model_override]
-            return replace(base_cfg, model=self.model_override)
-        model_name = str(base_cfg.model or "")
-        if ":online" not in model_name and "deep-research" not in model_name:
-            return replace(base_cfg, model=f"{model_name}:online")
-        return base_cfg
-
     def search_public_web(self, query: str, max_results: int = 5) -> PublicWebSearchResult:
-        cfg = self._resolve_model_config()
-        model = build_chat_model(cfg).with_structured_output(_WebSearchResponseModel)
-        prompt = (
-            "Find a few public web results that help answer the literature query. "
-            "Prefer scholarly landing pages, lab/project pages, or public summaries that add context beyond paper metadata. "
-            f"Return at most {max(1, int(max_results))} results."
+        normalized_query = self._clean_text(query)
+        if not normalized_query:
+            raise ValueError("query is required")
+        response = self._require_tavily_client().search(
+            normalized_query,
+            max_results=max(1, int(max_results or 1)),
+            topic=self.topic,
+            search_depth=self.search_depth,  # type: ignore[arg-type]
+            include_raw_content=False,
+            include_answer=False,
+            include_images=False,
+            include_usage=False,
+            timeout=30.0,
         )
-        response = model.invoke(
-            [
-                SystemMessage(content=prompt),
-                HumanMessage(content=f"Query: {str(query).strip()}"),
-            ]
-        )
-        parsed = response if isinstance(response, _WebSearchResponseModel) else _WebSearchResponseModel.model_validate(response)
+        raw_results = response.get("results") if isinstance(response, dict) else []
         return PublicWebSearchResult(
-            results=[
-                PublicWebHit(
-                    title=str(item.title).strip() or "Untitled result",
-                    url=str(item.url).strip() or None if item.url is not None else None,
-                    snippet=str(item.snippet).strip() or content_to_text(item),
-                )
-                for item in parsed.results
-            ]
+            results=[self._normalize_tavily_hit(item) for item in raw_results]
         )
 
     def open_public_page(self, url: str, max_chars: int = 12000) -> PublicPageSnapshot:

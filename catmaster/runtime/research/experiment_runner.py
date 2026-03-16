@@ -151,7 +151,6 @@ class ExperimentLaneRunner:
                 )
         run_dir = Path(str(result.get("run_dir") or built.run_context.run_dir))
         experiment_index = 1 + sum(1 for item in board.action_refs if item.kind == "experiment")
-        final_report_path = self._system_relpath(result.get("final_report_path"))
         run_export_path = self._system_relpath(result.get("run_export_path"))
         return ExperimentRunPack(
             experiment_id=f"exp_{experiment_index:03d}",
@@ -163,7 +162,6 @@ class ExperimentLaneRunner:
             summary=str(result.get("summary") or "").strip(),
             top_observations=top_observations,
             key_artifacts=key_artifacts,
-            final_report_path=final_report_path or None,
             run_export_path=run_export_path or None,
             child_memory_candidates=list(result.get("pending_memory_updates") or []),
             open_questions=open_questions[:10],

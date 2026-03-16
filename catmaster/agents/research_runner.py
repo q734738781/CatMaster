@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,7 +13,6 @@ from catmaster.agents.graph import _build_role_middleware, _load_create_agent, _
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.memory_store import MemoryStore
-from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
 from catmaster.runtime.manager_tools import memory_read_index
 from catmaster.runtime.research import ResearchStore
 from catmaster.runtime.research.experiment_runner import ExperimentLaneRunner
@@ -99,16 +97,6 @@ class ResearchRunner:
             name="memory_read_index",
             description="Read the project MEMORY.md index to ground high-level planning decisions. Read-only.",
         )
-
-    @asynccontextmanager
-    async def _open_mcp_filesystem_runtime(self):
-        cfg = getattr(getattr(self.llm_profile, "mcp", None), "filesystem", None)
-        if cfg is None or not getattr(cfg, "enabled", False):
-            yield None
-            return
-        runtime = MCPFilesystemRuntime(config=cfg, run_context=self.run_context, reporter=self.reporter)
-        async with runtime as opened:
-            yield opened
 
     def _emit(self, name: str, *, payload: dict[str, Any] | None = None) -> None:
         try:
@@ -201,8 +189,6 @@ class ResearchRunner:
             )
         )
         final_output_path = str((result or {}).get("final_output_path") or "").strip()
-        if not final_output_path:
-            final_output_path = str((result or {}).get("final_report_path") or "").strip()
         enriched = dict(result or {})
         enriched["final_output_path"] = final_output_path
         return enriched
@@ -221,47 +207,43 @@ class ResearchRunner:
         )
         if not local_tools:
             local_tools = [self._build_memory_read_tool()]
-        async with self._open_mcp_filesystem_runtime() as mcp_fs_runtime:
-            planner_tools = list(local_tools)
-            mounted_skill_tokens: tuple[str, ...] = ()
-            if mcp_fs_runtime is not None:
-                planner_tools.extend(mcp_fs_runtime.role_filtered_tools(role="director"))
-                mounted_skill_tokens = tuple(mcp_fs_runtime.skill_mounts.keys())
-            planner_agent = self._build_structured_agent(
-                role="research_lead",
-                model=build_chat_model(self.llm_profile.config_for_role("research_lead")),
-                tools=_dedupe_tools(planner_tools),
-                skills_runtime=self.skills_runtime,
-                mounted_skill_tokens=mounted_skill_tokens,
-                system_prompt=RESEARCH_LEAD_SYSTEM_PROMPT,
-                schema=ResearchLeadOutput,
-            )
-            state_updater_agent = self._build_structured_agent(
-                role="research_state_updater",
-                model=build_chat_model(self.llm_profile.config_for_role("research_state_updater")),
-                tools=_dedupe_tools(planner_tools),
-                skills_runtime=self.skills_runtime,
-                mounted_skill_tokens=mounted_skill_tokens,
-                system_prompt=RESEARCH_STATE_UPDATER_SYSTEM_PROMPT,
-                schema=ResearchStateSyncOutput,
-            )
-            graph = build_research_graph(
-                store=self.store,
-                planner_agent=planner_agent,
-                state_updater_agent=state_updater_agent,
-                memory_store=self.memory_store,
-                literature_runner=ResearchLiteratureRunner(
-                    allow_deep_report=request_model.allow_deep_report
-                ),
-                experiment_runner=self.experiment_runner,
-                writer_runner=lambda payload: self._execute_writer_request(
-                    request_model=request_model,
-                    writer_payload=payload,
-                ),
-                skills_runtime=self.skills_runtime,
-                progress_callback=self._update_task_state_progress,
-            )
-            result = await graph.ainvoke(initial_state, config={"configurable": {"thread_id": self.run_context.run_id}})
+        planner_tools = list(local_tools)
+        mounted_skill_tokens: tuple[str, ...] = ()
+        planner_agent = self._build_structured_agent(
+            role="research_lead",
+            model=build_chat_model(self.llm_profile.config_for_role("research_lead")),
+            tools=_dedupe_tools(planner_tools),
+            skills_runtime=self.skills_runtime,
+            mounted_skill_tokens=mounted_skill_tokens,
+            system_prompt=RESEARCH_LEAD_SYSTEM_PROMPT,
+            schema=ResearchLeadOutput,
+        )
+        state_updater_agent = self._build_structured_agent(
+            role="research_state_updater",
+            model=build_chat_model(self.llm_profile.config_for_role("research_state_updater")),
+            tools=_dedupe_tools(planner_tools),
+            skills_runtime=self.skills_runtime,
+            mounted_skill_tokens=mounted_skill_tokens,
+            system_prompt=RESEARCH_STATE_UPDATER_SYSTEM_PROMPT,
+            schema=ResearchStateSyncOutput,
+        )
+        graph = build_research_graph(
+            store=self.store,
+            planner_agent=planner_agent,
+            state_updater_agent=state_updater_agent,
+            memory_store=self.memory_store,
+            literature_runner=ResearchLiteratureRunner(
+                allow_deep_report=request_model.allow_deep_report
+            ),
+            experiment_runner=self.experiment_runner,
+            writer_runner=lambda payload: self._execute_writer_request(
+                request_model=request_model,
+                writer_payload=payload,
+            ),
+            skills_runtime=self.skills_runtime,
+            progress_callback=self._update_task_state_progress,
+        )
+        result = await graph.ainvoke(initial_state, config={"configurable": {"thread_id": self.run_context.run_id}})
         summary = str(result.get("summary") or "").strip()
         status = str(result.get("status") or "done")
         writing_result = result.get("writing_result") if isinstance(result.get("writing_result"), dict) else {}
@@ -283,7 +265,6 @@ class ResearchRunner:
                 "summary": summary,
             }
         )
-        report_paths = self._publish_report(question=request_model.question, final_answer=summary)
         self._emit("RUN_END", payload={"lane": "research", "status": status})
         return {
             "summary": summary,
@@ -291,7 +272,6 @@ class ResearchRunner:
             "status": status,
             "run_id": self.run_context.run_id,
             "run_dir": str(self.run_context.run_dir),
-            "final_report_path": report_paths.get("final_report", ""),
             "run_export_path": "",
             "writing_run_id": str((result.get("writing_run_id") or writing_result.get("run_id") or "")),
         }
@@ -421,29 +401,6 @@ class ResearchRunner:
         existing["current_phase"] = str(current_phase or "").strip()
         existing["current_work_label"] = str(current_work_label or "").strip()
         path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def _publish_report(self, *, question: str, final_answer: str) -> dict[str, str]:
-        reports_dir = self.run_context.run_dir / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        final_report = reports_dir / "FINAL_REPORT.md"
-        dossier_path = self.run_context.workspace / "files" / "research" / self.run_context.run_id / "dossier" / "RESEARCH_DOSSIER.md"
-        lines = [
-            "# Research Final Report",
-            "",
-            "## Research Question",
-            question,
-            "",
-            "## Current Best Conclusion",
-            final_answer,
-            "",
-            "## Campaign Artifacts",
-            f"- Board: metadata/research_campaigns/{self.run_context.run_id}/board.json",
-        ]
-        if dossier_path.exists():
-            lines.append(f"- Dossier: files/research/{self.run_context.run_id}/dossier/RESEARCH_DOSSIER.md")
-            lines.append(f"- Dossier file exists: {dossier_path}")
-        final_report.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-        return {"final_report": str(final_report)}
 
     def _read_board_cycle_index(self) -> int:
         board_path = self.store.metadata_root / "board.json"

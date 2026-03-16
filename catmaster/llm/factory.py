@@ -202,6 +202,49 @@ def _resolve_model_kwargs(cfg: LLMConfig) -> dict[str, Any]:
     return model_kwargs
 
 
+def _resolve_openrouter_header_fields(cfg: LLMConfig) -> dict[str, str]:
+    headers = dict(cfg.default_headers) if isinstance(cfg.default_headers, dict) else {}
+    out: dict[str, str] = {}
+    referer = str(headers.pop("HTTP-Referer", "") or "").strip()
+    title = str(headers.pop("X-Title", "") or "").strip()
+    if referer:
+        out["app_url"] = referer
+    if title:
+        out["app_title"] = title
+    return out
+
+
+def _resolve_openrouter_request_kwargs(cfg: LLMConfig) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if cfg.base_url:
+        kwargs["base_url"] = cfg.base_url
+    kwargs.update(_resolve_openrouter_header_fields(cfg))
+
+    model_kwargs = _resolve_model_kwargs(cfg)
+    extra_body = _resolve_extra_body(cfg)
+    provider_config = extra_body.pop("provider", None)
+    route = extra_body.pop("route", None)
+    plugins = extra_body.pop("plugins", None)
+    prompt_cache_retention = extra_body.pop("prompt_cache_retention", None)
+
+    if isinstance(provider_config, dict) and provider_config:
+        kwargs["openrouter_provider"] = provider_config
+    if route is not None:
+        kwargs["route"] = route
+    if isinstance(plugins, list) and plugins:
+        kwargs["plugins"] = plugins
+    if prompt_cache_retention is not None:
+        _logger.warning(
+            "Ignoring unsupported OpenRouter request option prompt_cache_retention=%r for ChatOpenRouter.",
+            prompt_cache_retention,
+        )
+    if extra_body:
+        model_kwargs.update(extra_body)
+    if model_kwargs:
+        kwargs["model_kwargs"] = model_kwargs
+    return kwargs
+
+
 def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> None:
     if str(cfg.provider or "").strip().lower() != "openai":
         return
@@ -246,7 +289,37 @@ def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> Non
 
 def build_chat_model(cfg: LLMConfig) -> Any:
     """Build a LangChain ChatModel from an LLMConfig."""
-    if cfg.provider in ("openai", "openrouter", "oai_compatible", "deepseek"):
+    if cfg.provider == "openrouter":
+        from langchain_openrouter import ChatOpenRouter
+
+        api_key = _require_api_key(cfg)
+        kwargs = _resolve_openrouter_request_kwargs(cfg)
+        reasoning_config = _resolve_reasoning_config(cfg)
+
+        if cfg.timeout_s is not None:
+            kwargs["timeout"] = int(cfg.timeout_s)
+        if cfg.max_retries is not None:
+            kwargs["max_retries"] = cfg.max_retries
+        if cfg.print_http_raw_post:
+            _logger.warning(
+                "print_http_raw_post is not supported for provider=openrouter with ChatOpenRouter; ignoring."
+            )
+
+        max_tokens = cfg.max_tokens
+        if max_tokens is None and cfg.max_output_tokens is not None:
+            max_tokens = cfg.max_output_tokens
+
+        return ChatOpenRouter(
+            model=cfg.model,
+            api_key=api_key,
+            temperature=cfg.temperature,
+            reasoning=reasoning_config,
+            streaming=True,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+
+    if cfg.provider in ("openai", "oai_compatible", "deepseek"):
         from langchain_openai import ChatOpenAI
 
         api_key = _require_api_key(cfg)

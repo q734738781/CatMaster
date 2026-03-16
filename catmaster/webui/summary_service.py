@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 _SUMMARY_FILE = "ui_summary.json"
+_RUN_STATE_FILE = "run_state.json"
 
 
 def _utcnow() -> str:
@@ -33,13 +34,11 @@ def summarize_run(run_dir: Path, *, run_error: Optional[str] = None) -> Dict[str
         return {}
 
     meta = _load_json(run_dir / "meta.json")
-    task_state = _load_json(run_dir / "task_state.json")
-    final_report_excerpt = _read_text_excerpt(run_dir / "reports" / "FINAL_REPORT.md", max_chars=5000)
+    task_state = _load_json(run_dir / _RUN_STATE_FILE)
     summary = _fallback_summary(
         run_dir=run_dir,
         meta=meta,
         task_state=task_state,
-        final_report_excerpt=final_report_excerpt,
         run_error=run_error,
     )
     summary["generated_at"] = _utcnow()
@@ -81,11 +80,11 @@ def _fallback_summary(
     run_dir: Path,
     meta: Dict[str, Any],
     task_state: Dict[str, Any],
-    final_report_excerpt: str,
     run_error: Optional[str],
 ) -> Dict[str, Any]:
     model_name = str(meta.get("model_name") or "")
-    run_status = _infer_status(task_state=task_state, run_error=run_error, has_report=bool(final_report_excerpt))
+    has_result = bool(str(task_state.get("final_answer") or "").strip() or str(task_state.get("summary") or "").strip())
+    run_status = _infer_status(task_state=task_state, run_error=run_error, has_result=has_result)
 
     headline_bits = [run_dir.name, run_status]
     if model_name:
@@ -96,7 +95,7 @@ def _fallback_summary(
     if run_error:
         summary_parts.append(f"Run ended with error: {run_error}")
 
-    current_work = str(task_state.get("current_work_label") or "").strip()
+    current_work = str(task_state.get("text_preview") or "").strip()
     if current_work and run_status in {"running", "starting", "drafting", "planning", "executing"}:
         summary_parts.append(f"Current work: {current_work}")
 
@@ -104,17 +103,12 @@ def _fallback_summary(
     if task_summary:
         summary_parts.append(task_summary)
 
-    if final_report_excerpt:
-        first_line = final_report_excerpt.strip().splitlines()[0] if final_report_excerpt.strip() else ""
-        if first_line:
-            summary_parts.append(f"Report: {first_line[:180]}")
-
     if not summary_parts:
         summary_parts.append("Run summary is not available yet.")
 
     next_actions = _rule_next_actions(
         run_status=run_status,
-        has_report=bool(final_report_excerpt),
+        has_result=has_result,
         has_error=bool(run_error),
     )
 
@@ -128,28 +122,23 @@ def _fallback_summary(
 
 
 def _extract_task_summary(task_state: Dict[str, Any]) -> str:
-    tasks = task_state.get("tasks")
-    if not isinstance(tasks, list) or not tasks:
-        return ""
-    last_task = tasks[-1] if isinstance(tasks[-1], dict) else {}
-    summary = str(last_task.get("summary") or last_task.get("task_summary") or "").strip()
+    summary = str(task_state.get("summary") or "").strip()
     if summary:
         return summary[:240]
-    task_packet = last_task.get("task_packet") if isinstance(last_task.get("task_packet"), dict) else {}
-    goal = str(task_packet.get("goal") or last_task.get("goal") or "").strip()
+    goal = str(task_state.get("text_preview") or "").strip()
     if goal:
-        return f"Latest task: {goal[:180]}"
+        return f"Current focus: {goal[:180]}"
     return ""
 
 
-def _rule_next_actions(*, run_status: str, has_report: bool, has_error: bool) -> List[str]:
+def _rule_next_actions(*, run_status: str, has_result: bool, has_error: bool) -> List[str]:
     if has_error or run_status == "error":
         return [
-            "Open task_state and traces to locate the first failing step.",
+            "Open run_state and traces to locate the first failing step.",
             "Fix the failing input or tool configuration, then rerun.",
             "If needed, restart with a narrower task scope.",
         ]
-    if run_status in {"awaiting_human_feedback", "interrupted_paused"}:
+    if run_status in {"awaiting_human_feedback"}:
         return [
             "Resume the selected run and provide the required feedback.",
             "Keep the workspace unchanged until the paused run is closed out.",
@@ -161,43 +150,33 @@ def _rule_next_actions(*, run_status: str, has_report: bool, has_error: bool) ->
             "Avoid refreshing large detail panes until the run settles.",
             "Prepare follow-up instructions if a HITL prompt appears.",
         ]
-    if has_report:
+    if has_result:
         return [
-            "Review FINAL_REPORT.md and confirm deliverables.",
+            "Review the recorded result in run_state and confirm deliverables.",
             "Start a follow-up run only for missing or failed items.",
             "Archive key outputs into the project workspace.",
         ]
     return [
-        "Inspect task_state and artifacts for missing outputs.",
+        "Inspect run_state and artifacts for missing outputs.",
         "Run again with clearer acceptance criteria if needed.",
         "Capture the next action in the follow-up prompt.",
     ]
 
 
-def _infer_status(*, task_state: Dict[str, Any], run_error: Optional[str], has_report: bool) -> str:
+def _infer_status(*, task_state: Dict[str, Any], run_error: Optional[str], has_result: bool) -> str:
     if run_error:
         return "error"
     status = str(task_state.get("status") or "").strip().lower()
     if status:
         return status
-    if has_report:
+    if has_result:
         return "done"
     return "unknown"
 
 
 def _status_from_task_state(run_dir: Path) -> str:
-    task_state = _load_json(run_dir / "task_state.json")
+    task_state = _load_json(run_dir / _RUN_STATE_FILE)
     return str(task_state.get("status") or "").strip().lower()
-
-
-def _read_text_excerpt(path: Path, *, max_chars: int) -> str:
-    if not path.exists():
-        return ""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-    return text[:max_chars].strip()
 
 
 def _load_json(path: Path) -> Dict[str, Any]:

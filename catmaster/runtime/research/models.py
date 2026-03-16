@@ -42,7 +42,6 @@ class ExperimentRunPack(BaseModel):
     summary: str = Field(...)
     top_observations: list[str] = Field(default_factory=list)
     key_artifacts: list[ResearchArtifactRef] = Field(default_factory=list)
-    final_report_path: str | None = Field(None)
     run_export_path: str | None = Field(None)
     child_memory_candidates: list[dict] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)

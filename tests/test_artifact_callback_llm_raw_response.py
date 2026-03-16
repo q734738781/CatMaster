@@ -84,6 +84,15 @@ def test_llm_tracing_handler_extracts_reasoning_summary_and_usage_details(tmp_pa
             },
             {"type": "text", "text": "Triplet is more stable."},
         ],
+        additional_kwargs={
+            "reasoning_content": "Need a compact explanation before tool use.",
+            "reasoning_details": [
+                {
+                    "type": "reasoning.summary",
+                    "summary": "Use write_todos first, then inspect the current workspace.",
+                }
+            ],
+        },
         usage_metadata={
             "input_tokens": 10,
             "output_tokens": 8,
@@ -106,10 +115,88 @@ def test_llm_tracing_handler_extracts_reasoning_summary_and_usage_details(tmp_pa
         for line in (tmp_path / "event_trace.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    usage_record = next(r for r in records if r.get("event") == "LLM_USAGE")
     raw_record = next(r for r in records if r.get("event") == "LLM_RAW_RESPONSE")
 
-    assert usage_record["payload"]["usage"]["input_token_details"]["cache_read"] == 2
-    assert usage_record["payload"]["usage"]["output_token_details"]["reasoning"] == 3
-    assert "spin needs to be constrained" in usage_record["payload"]["reasoning_text"]
+    assert not any(r.get("event") == "LLM_USAGE" for r in records)
+    generation = raw_record["payload"]["generations"][0]
+    assert generation["usage_metadata"]["input_token_details"]["cache_read"] == 2
+    assert generation["usage_metadata"]["output_token_details"]["reasoning"] == 3
     assert "spin needs to be constrained" in raw_record["payload"]["generations"][0]["reasoning_text"]
+    assert "compact explanation before tool use" in raw_record["payload"]["generations"][0]["reasoning_text"]
+    assert "Use write_todos first" in raw_record["payload"]["generations"][0]["reasoning_text"]
+
+
+def test_llm_tracing_handler_merges_fragmented_reasoning_tokens(tmp_path) -> None:
+    trace = TraceStore(tmp_path)
+    handler = LLMTracingHandler(trace, run_id="run_fragments")
+    rid = uuid.uuid4()
+
+    message = AIMessage(
+        content=[],
+        additional_kwargs={
+            "reasoning_details": [
+                {"type": "reasoning.summary", "summary": "Evalu"},
+                {"type": "reasoning.summary", "summary": "ating"},
+                {"type": "reasoning.summary", "summary": "M"},
+                {"type": "reasoning.summary", "summary": "ACE"},
+                {"type": "reasoning.summary", "summary": "setup"},
+            ],
+        },
+    )
+    result = LLMResult(generations=[[ChatGeneration(message=message)]], llm_output={})
+
+    handler.on_llm_start(
+        serialized={"kwargs": {"model_name": "gpt-5"}},
+        prompts=["prompt"],
+        run_id=rid,
+    )
+    handler.on_llm_end(result, run_id=rid)
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "event_trace.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    raw_record = next(r for r in records if r.get("event") == "LLM_RAW_RESPONSE")
+    reasoning_text = raw_record["payload"]["generations"][0]["reasoning_text"]
+    assert "\n" not in reasoning_text
+    assert reasoning_text == "EvaluatingMACEsetup"
+
+
+def test_llm_tracing_handler_prefers_complete_reasoning_summary_over_fragments(tmp_path) -> None:
+    trace = TraceStore(tmp_path)
+    handler = LLMTracingHandler(trace, run_id="run_reasoning_mix")
+    rid = uuid.uuid4()
+
+    message = AIMessage(
+        content=[],
+        additional_kwargs={
+            "reasoning_details": [
+                {"type": "reasoning.summary", "summary": "Running batch process"},
+                {"type": "reasoning.summary", "summary": "Running"},
+                {"type": "reasoning.summary", "summary": "batch"},
+                {"type": "reasoning.summary", "summary": "process"},
+                {"type": "reasoning.summary", "summary": "on boxed O2"},
+                {"type": "reasoning.summary", "summary": "on"},
+                {"type": "reasoning.summary", "summary": "boxed"},
+                {"type": "reasoning.summary", "summary": "O2"},
+            ],
+        },
+    )
+    result = LLMResult(generations=[[ChatGeneration(message=message)]], llm_output={})
+
+    handler.on_llm_start(
+        serialized={"kwargs": {"model_name": "gpt-5"}},
+        prompts=["prompt"],
+        run_id=rid,
+    )
+    handler.on_llm_end(result, run_id=rid)
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "event_trace.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    raw_record = next(r for r in records if r.get("event") == "LLM_RAW_RESPONSE")
+    reasoning_text = raw_record["payload"]["generations"][0]["reasoning_text"]
+    assert reasoning_text == "Running batch process on boxed O2"

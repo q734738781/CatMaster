@@ -27,7 +27,6 @@ class _Registry:
     def as_langchain_tools(self, *, run_dir=None, workspace=None):
         _ = (run_dir, workspace)
         return [
-            _Tool("bash"),
             StructuredTool.from_function(
                 func=lambda runtime=None, **kwargs: _fake_literature_impl(kwargs),
                 name="run_literature_research",
@@ -49,24 +48,12 @@ class _Registry:
         return {"input_model": _DummyInputModel}
 
 
-class _MCPRuntime:
-    def role_filtered_tools(self, *, role: str):
-        if role in {"proposal", "director", "task_runner"}:
-            return [_Tool("search_files")]
-        return []
-
-    def render_capability_guide(self, *, mode: str = "full") -> str:
-        _ = mode
-        return "Filesystem tools"
-
-
 def test_build_runtime_tool_surface_can_disable_literature_tool(tmp_path) -> None:
     run_ctx = RunContext.create(workspace=tmp_path, model_name="dummy-model")
     surface = build_runtime_tool_surface(
         registry=_Registry(),
         run_context=run_ctx,
         run_dir=run_ctx.run_dir,
-        mcp_fs_runtime=_MCPRuntime(),
         include_literature_tool=False,
     )
 

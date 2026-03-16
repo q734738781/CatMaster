@@ -67,7 +67,7 @@ Screen the best HER catalyst for Pt - Ni - Cu system alloys (Pt-Ni,Pt-Cu,Ni-Cu, 
 ```
 
 ## Final report (verbatim)
-- Source: `workspace/demo_llm_Alloy_111_HER/reports/FINAL_REPORT.md`
+- Source: `workspace/demo_llm_Alloy_111_HER/run_state.json`
 ```markdown
 # Final Report
 

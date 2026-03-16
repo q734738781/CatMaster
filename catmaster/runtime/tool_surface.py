@@ -10,7 +10,6 @@ from typing import Iterable, Sequence
 from langchain_core.tools import BaseTool
 from langchain_core.tools import StructuredTool
 
-from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
 from catmaster.runtime.run_context import RunContext
 from catmaster.tools.registry import ToolRegistry
 
@@ -104,33 +103,15 @@ def _build_capability_guides(
     *,
     registry: ToolRegistry,
     task_tools: Sequence[BaseTool],
-    mcp_fs_runtime: MCPFilesystemRuntime | None,
 ) -> tuple[str, str]:
     names = [str(getattr(tool, "name", "") or "") for tool in task_tools]
-
-    filesystem_full = (
-        mcp_fs_runtime.render_capability_guide(mode="full")
-        if mcp_fs_runtime is not None
-        else "Filesystem tools: disabled."
-    )
-    filesystem_short = (
-        mcp_fs_runtime.render_capability_guide(mode="short")
-        if mcp_fs_runtime is not None
-        else "Filesystem tools: disabled."
-    )
-
-    domain_names = [name for name in names if name and name not in {"bash"}]
+    domain_names = [name for name in names if name]
     domain_lines_full = [f"- {name}: {_tool_doc(registry, name)}" for name in domain_names]
     domain_lines_short = [f"- {name}" for name in domain_names]
 
     full = "\n".join(
         [
             "Task runner standard capabilities:",
-            "",
-            filesystem_full,
-            "",
-            "Shell / external command:",
-            "- bash: run focused shell commands, content grep, parser invocations, and scientific binaries.",
             "",
             "Domain tools:",
             *(domain_lines_full or ["- (none)"]),
@@ -139,8 +120,6 @@ def _build_capability_guides(
     short = "\n".join(
         [
             "Task runner capabilities (short):",
-            filesystem_short,
-            "Shell: bash",
             "Domain tools:",
             *(domain_lines_short or ["- (none)"]),
         ]
@@ -153,7 +132,6 @@ def build_runtime_tool_surface(
     registry: ToolRegistry,
     run_context: RunContext,
     run_dir: Path,
-    mcp_fs_runtime: MCPFilesystemRuntime | None,
     task_runner_denylist: set[str] | None = None,
     include_literature_tool: bool = True,
 ) -> RuntimeToolSurface:
@@ -165,9 +143,7 @@ def build_runtime_tool_surface(
     )
 
     local_by_name = {str(getattr(tool, "name", "") or ""): tool for tool in local_tools}
-    bash_tool = local_by_name.get("bash") or local_by_name.get("bash_exec")
     aider_tool = local_by_name.get("apply_aider_edits")
-    note_tool = local_by_name.get("write_note")
     planning_local_tools = [
         tool
         for tool in local_tools
@@ -195,50 +171,17 @@ def build_runtime_tool_surface(
         )
     ]
 
-    if mcp_fs_runtime is None:
-        proposal_mcp: list[BaseTool] = []
-        director_mcp: list[BaseTool] = []
-        task_mcp: list[BaseTool] = []
-    else:
-        proposal_mcp = [
-            tool
-            for tool in mcp_fs_runtime.role_filtered_tools(role="proposal")
-            if str(getattr(tool, "name", "") or "") not in _GLOBAL_TOOL_DROP
-        ]
-        director_mcp = [
-            tool
-            for tool in mcp_fs_runtime.role_filtered_tools(role="director")
-            if str(getattr(tool, "name", "") or "") not in _GLOBAL_TOOL_DROP
-        ]
-        task_mcp = [
-            tool
-            for tool in mcp_fs_runtime.role_filtered_tools(role="task_runner")
-            if str(getattr(tool, "name", "") or "") not in _GLOBAL_TOOL_DROP
-        ]
-
-    proposal_tools = _dedupe_tools(
-        ([bash_tool] if bash_tool is not None else [])
-        + proposal_local_tools
-        + proposal_mcp
-    )
+    proposal_tools = _dedupe_tools(proposal_local_tools)
     director_tools = _dedupe_tools(
-        ([bash_tool] if bash_tool is not None else [])
-        + ([aider_tool] if aider_tool is not None else [])
-        + ([note_tool] if note_tool is not None else [])
+        ([aider_tool] if aider_tool is not None else [])
         + director_local_tools
-        + director_mcp
     )
-    fast_director_tools = _dedupe_tools(
-        ([bash_tool] if bash_tool is not None else [])
-        + fast_director_local_tools
-        + director_mcp
-    )
-    task_tools = _dedupe_tools(local_task_tools + task_mcp)
+    fast_director_tools = _dedupe_tools(fast_director_local_tools)
+    task_tools = _dedupe_tools(local_task_tools)
 
     guide_full, guide_short = _build_capability_guides(
         registry=registry,
         task_tools=task_tools,
-        mcp_fs_runtime=mcp_fs_runtime,
     )
 
     return RuntimeToolSurface(

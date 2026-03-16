@@ -603,10 +603,7 @@ async def execute_writer_handoff_node(
     writing_result = await writer_runner(payload)
     writing_summary = str((writing_result or {}).get("summary") or "").strip()
     writing_run_id = str((writing_result or {}).get("run_id") or "").strip()
-    writing_output_path = (
-        str((writing_result or {}).get("final_output_path") or "").strip()
-        or str((writing_result or {}).get("final_report_path") or "").strip()
-    )
+    writing_output_path = str((writing_result or {}).get("final_output_path") or "").strip()
     summary = "\n".join(
         line
         for line in [

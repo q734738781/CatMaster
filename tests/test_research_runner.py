@@ -119,7 +119,7 @@ def test_research_runner_build_writer_request_prefers_lead_payload() -> None:
 
 
 @pytest.mark.anyio
-async def test_research_runner_builds_planner_with_memory_and_mcp_tools(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+async def test_research_runner_builds_planner_with_memory_tools_only(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     captured: dict[str, object] = {}
 
     class _Tool:
@@ -136,20 +136,6 @@ async def test_research_runner_builds_planner_with_memory_and_mcp_tools(monkeypa
             _ = (initial_state, config)
             return {"status": "done", "summary": "ok"}
 
-    class _FakeMCP:
-        skill_mounts = {"@skills": object()}
-
-        def role_filtered_tools(self, *, role: str):
-            return [_Tool(f"mcp_{role}")]
-
-    class _FakeAsyncCM:
-        async def __aenter__(self):
-            return _FakeMCP()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            _ = (exc_type, exc, tb)
-            return None
-
     def _fake_build_structured_agent(*, role, tools, skills_runtime, mounted_skill_tokens, **kwargs):
         _ = kwargs
         captured.setdefault("roles", []).append(role)
@@ -162,7 +148,6 @@ async def test_research_runner_builds_planner_with_memory_and_mcp_tools(monkeypa
     monkeypatch.setattr("catmaster.agents.research_runner.build_chat_model", lambda cfg: object())
     monkeypatch.setattr("catmaster.agents.research_runner.build_research_graph", lambda **kwargs: _FakeGraph())
     monkeypatch.setattr(ResearchRunner, "_build_structured_agent", staticmethod(_fake_build_structured_agent))
-    monkeypatch.setattr(ResearchRunner, "_open_mcp_filesystem_runtime", lambda self: _FakeAsyncCM())
 
     runner = ResearchRunner.__new__(ResearchRunner)
     runner.llm_profile = SimpleNamespace(
@@ -182,7 +167,6 @@ async def test_research_runner_builds_planner_with_memory_and_mcp_tools(monkeypa
     runner.skills_runtime = None
     runner._write_task_state = lambda payload: None
     runner._read_board_cycle_index = lambda: 0
-    runner._publish_report = lambda **kwargs: {"final_report": ""}
     runner._emit = lambda *args, **kwargs: None
 
     request = ResearchRequest(question="Q")
@@ -193,8 +177,8 @@ async def test_research_runner_builds_planner_with_memory_and_mcp_tools(monkeypa
     )
 
     assert result["status"] == "done"
-    assert captured["tools"] == ["memory_read_index", "mcp_director"]
-    assert captured["mounted"] == ("@skills",)
+    assert captured["tools"] == ["memory_read_index"]
+    assert captured["mounted"] == ()
     assert captured["roles"] == ["research_lead", "research_state_updater"]
 
 
@@ -217,14 +201,6 @@ async def test_research_runner_does_not_implicitly_start_writer_after_graph(monk
         called["writer"] = True
         return {"run_id": "write_001", "summary": "should not happen"}
 
-    class _FakeAsyncCM:
-        async def __aenter__(self):
-            return None
-
-        async def __aexit__(self, exc_type, exc, tb):
-            _ = (exc_type, exc, tb)
-            return None
-
     runner = ResearchRunner.__new__(ResearchRunner)
     runner.llm_profile = SimpleNamespace(
         config_for_role=lambda role: SimpleNamespace(model=role, provider="openrouter", base_url="https://openrouter.ai/api/v1"),
@@ -243,9 +219,7 @@ async def test_research_runner_does_not_implicitly_start_writer_after_graph(monk
     runner.skills_runtime = None
     runner._write_task_state = lambda payload: None
     runner._read_board_cycle_index = lambda: 0
-    runner._publish_report = lambda **kwargs: {"final_report": ""}
     runner._emit = lambda *args, **kwargs: None
-    runner._open_mcp_filesystem_runtime = lambda: _FakeAsyncCM()
     runner._execute_writer_request = _unexpected_writer
 
     request = ResearchRequest(question="Q", writing_mode="full_draft", output_format="tex")

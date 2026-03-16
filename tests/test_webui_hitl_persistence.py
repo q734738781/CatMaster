@@ -5,6 +5,7 @@ import threading
 import time
 from pathlib import Path
 
+from catmaster.specialists import RUN_STATE_FILE
 from catmaster.tools.base import ensure_project_space_layout, system_root
 from catmaster.webui.components import unpack_prompt
 from catmaster.webui.session import WebSession
@@ -18,6 +19,35 @@ def _wait_for(path: Path, timeout_s: float = 3.0) -> bool:
             return True
         time.sleep(0.05)
     return False
+
+
+def _write_waiting_proposal_run(
+    run_dir: Path,
+    *,
+    proposal_text: str,
+    todo_items: list[str],
+    hitl_history: list[dict] | None = None,
+) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / RUN_STATE_FILE).write_text(
+        json.dumps(
+            {
+                "status": "awaiting_human_feedback",
+                "entrypoint": "research",
+                "pending_human_input": {
+                    "kind": "proposal_review",
+                    "questions_for_human": ["Approve?"],
+                    "todo_items": list(todo_items),
+                },
+                "todo_items": list(todo_items),
+                "hitl_history": list(hitl_history or []),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "proposal.md").write_text(proposal_text, encoding="utf-8")
 
 
 def test_prompt_broker_supports_persisted_submit(tmp_path: Path) -> None:
@@ -49,26 +79,10 @@ def test_prompt_broker_supports_persisted_submit(tmp_path: Path) -> None:
     assert captured.get("text") == "approved"
 
 
-def test_session_loads_prompt_from_task_state_snapshot(tmp_path: Path) -> None:
+def test_session_loads_prompt_from_run_state_snapshot(tmp_path: Path) -> None:
     ensure_project_space_layout(tmp_path, create=True)
     run_dir = system_root(workspace=tmp_path) / "runs" / "run_001"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "task_state.json").write_text(
-        json.dumps(
-            {
-                "status": "awaiting_human_feedback",
-                "last_interrupt": {
-                    "type": "proposal_review",
-                    "proposal_md": "# proposal",
-                    "work_packages": ["wp1", "wp2"],
-                    "message": "need review",
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    _write_waiting_proposal_run(run_dir, proposal_text="# proposal", todo_items=["wp1", "wp2"])
 
     session = WebSession()
     session.set_workspace_root(str(tmp_path.parent))
@@ -94,29 +108,12 @@ def test_submit_prompt_via_file_is_disabled(tmp_path: Path) -> None:
     assert ok is False
 
 
-def test_session_snapshot_prompt_comes_from_task_state_only(tmp_path: Path) -> None:
+def test_session_snapshot_prompt_comes_from_run_state_only(tmp_path: Path) -> None:
     ensure_project_space_layout(tmp_path, create=True)
     run_dir = system_root(workspace=tmp_path) / "runs" / "run_003"
     hitl_dir = run_dir / "hitl"
     hitl_dir.mkdir(parents=True, exist_ok=True)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    state_path = run_dir / "task_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "status": "awaiting_human_feedback",
-                "last_interrupt": {
-                    "type": "proposal_review",
-                    "proposal_md": "# proposal",
-                    "work_packages": ["wp1"],
-                    "message": "need review",
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-            ),
-            encoding="utf-8",
-        )
+    _write_waiting_proposal_run(run_dir, proposal_text="# proposal", todo_items=["wp1"])
 
     session = WebSession()
     session.set_workspace_root(str(tmp_path.parent))
@@ -134,33 +131,21 @@ def test_session_marks_revised_proposal_review_after_task_intervention(tmp_path:
     run_dir = system_root(workspace=tmp_path) / "runs" / "run_004"
     hitl_dir = run_dir / "hitl"
     hitl_dir.mkdir(parents=True, exist_ok=True)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "task_state.json").write_text(
-        json.dumps(
+    _write_waiting_proposal_run(
+        run_dir,
+        proposal_text="# revised proposal",
+        todo_items=["wp1"],
+        hitl_history=[
             {
-                "status": "awaiting_human_feedback",
-                "hitl_history": [
-                    {
-                        "interrupt_type": "proposal_review",
-                        "feedback": "yes",
-                        "approved": True,
-                    },
-                    {
-                        "task_id": "task_01",
-                        "feedback": "Retry may help",
-                    },
-                ],
-                "last_interrupt": {
-                    "type": "proposal_review",
-                    "proposal_md": "# revised proposal",
-                    "work_packages": ["wp1"],
-                    "message": "need review",
-                },
+                "interrupt_type": "proposal_review",
+                "feedback": "yes",
+                "approved": True,
             },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+            {
+                "task_id": "task_01",
+                "feedback": "Retry may help",
+            },
+        ],
     )
 
     session = WebSession()

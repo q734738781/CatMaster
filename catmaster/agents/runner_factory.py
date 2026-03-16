@@ -73,7 +73,6 @@ def build_graph_runner(
         reporter=reporter or NullReporter(),
         tool_backend=tool_backend,
         run_control=run_control,
-        mcp_config=llm_profile.mcp,
         max_task_steps=llm_profile.agent_runtime.max_tool_calls,
         max_plan_steps=llm_profile.agent_runtime.max_tool_calls,
         recursion_limit=llm_profile.agent_runtime.recursion_limit,

@@ -343,17 +343,30 @@ class WebReporter(Reporter):
         elif name == "LLM_CALL_END":
             usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
             compact_usage = _copy_usage(usage)
+            final_text = str(self._llm_state.get("text") or "").strip()
+            if not final_text:
+                final_text = str(payload.get("text_preview") or "").strip()
             self._llm_state.update(
                 {
                     "model": str(payload.get("model") or self._llm_state.get("model") or ""),
                     "phase": str(payload.get("phase") or self._llm_state.get("phase") or ""),
                     "status": "completed",
+                    "text": final_text,
                     "reasoning_text": str(payload.get("reasoning_text") or self._llm_state.get("reasoning_text") or ""),
                     "usage": compact_usage,
                     "elapsed_ms": int(payload.get("elapsed_ms") or 0),
                     "last_updated_ts": now_ts,
                 }
             )
+            tool_calls = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
+            if final_text or tool_calls:
+                self._graph_state.update(
+                    {
+                        "tool_calls": [str(item) for item in tool_calls if str(item).strip()],
+                        "text_preview": final_text,
+                        "last_updated_ts": now_ts,
+                    }
+                )
             for key, value in compact_usage.items():
                 self._usage_totals[key] = int(self._usage_totals.get(key) or 0) + int(value)
         elif name == "GRAPH_NODE_UPDATE":
@@ -368,7 +381,23 @@ class WebReporter(Reporter):
                 }
             )
         elif name == "RUN_END":
-            self._llm_state["status"] = "idle"
+            self._llm_state.update(
+                {
+                    "status": "idle",
+                    "text": "",
+                    "reasoning_text": "",
+                    "usage": {},
+                    "elapsed_ms": 0,
+                    "last_updated_ts": now_ts,
+                }
+            )
+            self._graph_state.update(
+                {
+                    "tool_calls": [],
+                    "text_preview": "",
+                    "last_updated_ts": now_ts,
+                }
+            )
 
 
 __all__ = ["PromptBroker", "WebReporter"]

@@ -40,7 +40,7 @@ I need you to compare the singlet and triplet O2 in a box: Prepare VASP inputs f
 ```
 
 ## Final report (verbatim)
-- Source: `workspace/demo_llm_o2_vasp_spin_compare_bkp/reports/FINAL_REPORT.md`
+- Source: `workspace/demo_llm_o2_vasp_spin_compare_bkp/run_state.json`
 ```markdown
 # Final Report
 

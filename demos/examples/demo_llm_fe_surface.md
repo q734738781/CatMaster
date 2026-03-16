@@ -41,7 +41,7 @@ Compute surface energies of some common surfaces (100,110,111) on BCC Fe surface
 ```
 
 ## Final report (verbatim)
-- Source: `workspace/demo_llm_fe_surface/reports/FINAL_REPORT.md`
+- Source: `workspace/demo_llm_fe_surface/run_state.json`
 ```markdown
 # Final Report
 

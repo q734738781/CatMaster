@@ -13,8 +13,6 @@ import copy
 import inspect
 import json
 import logging
-import shutil
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -49,9 +47,7 @@ from catmaster.runtime.tool_output_adapter import (
     tool_error_to_message,
 )
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
-from catmaster.runtime.mcp_filesystem import MCPFilesystemRuntime
 from catmaster.runtime.tool_surface import RuntimeToolSurface, build_runtime_tool_surface
-from catmaster.runtime.usage_stats import write_usage_summary
 from catmaster.runtime.skills import (
     CatMasterSkillsMiddleware,
     CatMasterSkillsRuntime,
@@ -63,7 +59,6 @@ from catmaster.tools.base import workspace_scope, system_root
 from catmaster.ui.reporters import Reporter, NullReporter
 from catmaster.ui import make_event
 from catmaster.agents.response_schemas import ProposalOutput, DirectorOutput, FastDirectorOutput, TaskOutput, MemoryPatchOutput
-from catmaster.llm.config import MCPConfig
 from catmaster.agents.orchestrator_prompts import (
     PROPOSAL_SYSTEM_PROMPT,
     DIRECTOR_SYSTEM_PROMPT,
@@ -75,14 +70,6 @@ from catmaster.agents.orchestrator_prompts import (
 logger = logging.getLogger(__name__)
 
 _TASK_RUNNER_TOOL_DENYLIST: set[str] = set()
-_MEMORY_PATCH_READONLY_TOOL_ALLOWLIST: set[str] = {
-    "search_files",
-    "list_directory",
-    "read_text_file",
-    "read_multiple_files",
-}
-
-
 def _dedupe_tools_by_name(tools: Sequence[BaseTool]) -> list[BaseTool]:
     out: list[BaseTool] = []
     seen: set[str] = set()
@@ -350,13 +337,7 @@ def _make_tool_call_budget_middleware(*, role: str, max_tool_calls: int) -> list
     return [_ResetToolCallCounterMiddleware(), _ToolCallBudgetMiddleware()]
 
 
-_SKILL_FILESYSTEM_ALWAYS_INCLUDE = [
-    "read_text_file",
-    "read_multiple_files",
-    "search_files",
-    "list_directory",
-    "directory_tree",
-]
+_SKILL_FILESYSTEM_ALWAYS_INCLUDE: list[str] = []
 
 
 def _build_role_middleware(
@@ -1152,7 +1133,6 @@ class GraphRunner:
         reporter: Optional[Reporter] = None,
         tool_backend: Optional[ToolBackend] = None,
         run_control: Optional[RunControl] = None,
-        mcp_config: Optional[MCPConfig] = None,
         max_task_steps: int = 60,
         max_plan_steps: int = 60,
         recursion_limit: int = 300,
@@ -1174,7 +1154,6 @@ class GraphRunner:
         self.reporter = reporter or NullReporter()
         self.tool_backend = tool_backend
         self.run_control = run_control
-        self.mcp_config = mcp_config or MCPConfig()
         self.max_task_steps = max_task_steps
         self.max_plan_steps = max_plan_steps
         try:
@@ -1267,62 +1246,6 @@ class GraphRunner:
             )
             tool_summary = ""
             if message_fields:
-                if self.print_state_messages:
-                    for field in message_fields:
-                        field_messages = payload.get(field, []) or []
-                        for idx, msg in enumerate(field_messages):
-                            try:
-                                dumped = msg.model_dump() if hasattr(msg, "model_dump") else str(msg)
-                                msg_text = json.dumps(dumped, ensure_ascii=False, default=str)
-                            except Exception:
-                                dumped = {}
-                                msg_text = str(msg)
-                            logger.info(
-                                "[graph.stream.messages] node=%s field=%s idx=%d payload=%s",
-                                node,
-                                field,
-                                idx,
-                                msg_text,
-                            )
-                            if isinstance(dumped, dict):
-                                msg_type = str(dumped.get("type") or "").strip().lower()
-                                if msg_type == "ai":
-                                    parsed_calls = list(dumped.get("tool_calls") or [])
-                                    for call_idx, call in enumerate(parsed_calls):
-                                        name = str(call.get("name") or "")
-                                        args = call.get("args")
-                                        if isinstance(args, str):
-                                            args_json = args
-                                        else:
-                                            try:
-                                                args_json = json.dumps(args, ensure_ascii=False, default=str)
-                                            except Exception:
-                                                args_json = str(args)
-                                        logger.info(
-                                            "[graph.stream.tool_input] node=%s field=%s msg_idx=%d call_idx=%d name=%s args_json=%s",
-                                            node,
-                                            field,
-                                            idx,
-                                            call_idx,
-                                            name,
-                                            args_json,
-                                        )
-                                    raw_calls = list(
-                                        (dumped.get("additional_kwargs") or {}).get("tool_calls") or []
-                                    )
-                                    for call_idx, call in enumerate(raw_calls):
-                                        fn = call.get("function") if isinstance(call, dict) else {}
-                                        if not isinstance(fn, dict):
-                                            fn = {}
-                                        logger.info(
-                                            "[graph.stream.tool_input.raw] node=%s field=%s msg_idx=%d call_idx=%d name=%s arguments_raw=%s",
-                                            node,
-                                            field,
-                                            idx,
-                                            call_idx,
-                                            str(fn.get("name") or ""),
-                                            str(fn.get("arguments") or ""),
-                                        )
                 # Prefer canonical `messages`; otherwise use the first message field.
                 selected_field = "messages" if "messages" in message_fields else message_fields[0]
                 selected_messages = payload.get(selected_field, []) or []
@@ -1334,19 +1257,6 @@ class GraphRunner:
                         names = [name for name in names if name]
                         if names:
                             tool_summary = f" tool_calls={','.join(names[:6])}"
-                        # Debug mode: print full toolcall payload per turn without truncation.
-                        for idx, call in enumerate(tool_calls):
-                            try:
-                                payload_text = json.dumps(call, ensure_ascii=False, default=str)
-                            except Exception:
-                                payload_text = str(call)
-                            logger.info(
-                                "[graph.stream.toolcall] node=%s field=%s idx=%d payload=%s",
-                                node,
-                                selected_field,
-                                idx,
-                                payload_text,
-                            )
             logger.info(
                 "[graph.stream] node=%s keys=%s%s%s",
                 node,
@@ -1559,56 +1469,9 @@ class GraphRunner:
                     body[key] = existing.get(key)
         path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def _publish_report(self, user_request: str, final_answer: str) -> Dict[str, str]:
-        """Generate FINAL_REPORT.md and copy memory into the current run reports."""
-        run_reports = self.run_context.run_dir / "reports"
-        run_reports.mkdir(parents=True, exist_ok=True)
-
-        final_report = run_reports / "FINAL_REPORT.md"
-        final_report.write_text("\n".join([
-            "# Final Report",
-            "",
-            "## User Query",
-            user_request,
-            "",
-            "## Final Answer",
-            final_answer,
-            "",
-        ]), encoding="utf-8")
-
-        memory_src = self.memory_store.index_path
-        memory_dst = run_reports / "MEMORY.md"
-        try:
-            shutil.copy2(memory_src, memory_dst)
-        except Exception:
-            if memory_src.exists():
-                memory_dst.write_text(
-                    memory_src.read_text(encoding="utf-8"), encoding="utf-8",
-                )
-
-        return {
-            "run_dir": str(self.run_context.run_dir),
-            "final_report": str(final_report),
-            "memory_report": str(memory_dst),
-        }
-
     # ------------------------------------------------------------------
     # Main run
     # ------------------------------------------------------------------
-
-    @asynccontextmanager
-    async def _open_mcp_filesystem_runtime(self):
-        fs_cfg = self.mcp_config.filesystem if self.mcp_config is not None else None
-        if fs_cfg is None or not fs_cfg.enabled:
-            yield None
-            return
-        runtime = MCPFilesystemRuntime(
-            config=fs_cfg,
-            run_context=self.run_context,
-            reporter=self.reporter,
-        )
-        async with runtime as active:
-            yield active
 
     def run(
         self,
@@ -1655,161 +1518,147 @@ class GraphRunner:
             trace_store=self.trace_store,
             reporter=self.reporter,
             run_id=self.run_context.run_id,
-            print_raw_tool_calls=self.print_state_messages,
-            print_llm_context_messages=self.print_state_messages,
+            enable_step_logs=self.print_state_messages,
         )
 
         try:
-            async with self._open_mcp_filesystem_runtime() as mcp_fs_runtime:
-                surface: RuntimeToolSurface = build_runtime_tool_surface(
-                    registry=self.registry,
-                    run_context=self.run_context,
+            surface: RuntimeToolSurface = build_runtime_tool_surface(
+                registry=self.registry,
+                run_context=self.run_context,
+                run_dir=run_dir,
+                task_runner_denylist=_TASK_RUNNER_TOOL_DENYLIST,
+                include_literature_tool=self.run_policy.enable_literature_tool,
+            )
+            local_pool = _dedupe_tools_by_name(
+                list(surface.proposal_tools) + list(surface.director_tools) + list(surface.task_tools)
+            )
+            apply_tool = next(
+                (tool for tool in local_pool if str(getattr(tool, "name", "") or "") == "apply_aider_edits"),
+                None,
+            )
+            if apply_tool is not None:
+                apply_tool = _make_memory_scoped_apply_tool(apply_tool)
+            memory_tools = _dedupe_tools_by_name(
+                [apply_tool] if apply_tool is not None else []
+            )
+            if apply_tool is None:
+                logger.warning("apply_aider_edits is unavailable for memory patcher; updates may fail.")
+
+            if self.skills_runtime is not None:
+                self.skills_runtime.refresh_catalog()
+                proposal_execution_context_guide = render_proposal_skill_guide(
+                    self.skills_runtime.visible_skills("proposal")
+                )
+                director_execution_context_guide = render_director_skill_guide(
+                    self.skills_runtime.visible_skills("director")
+                )
+                fast_director_execution_context_guide = render_fast_director_skill_guide(
+                    self.skills_runtime.visible_skills("fast_director")
+                )
+            else:
+                proposal_execution_context_guide = render_proposal_skill_guide([])
+                director_execution_context_guide = render_director_skill_guide([])
+                fast_director_execution_context_guide = render_fast_director_skill_guide([])
+            mounted_skill_tokens: tuple[str, ...] = ()
+
+            if lane == "fast":
+                fast_director_tools = [
+                    tool
+                    for tool in surface.fast_director_tools
+                    if str(getattr(tool, "name", "") or "") != "apply_aider_edits"
+                ]
+                compiled = build_fast_graph(
+                    task_runner_model=self.task_runner_model,
+                    director_model=self.director_model,
+                    memory_patch_model=self.memory_patch_model,
+                    memory_store=self.memory_store,
+                    director_tools=fast_director_tools,
+                    task_tools=surface.task_tools,
+                    memory_tools=memory_tools,
+                    fast_director_execution_context_guide=fast_director_execution_context_guide,
+                    reporter=self.reporter,
+                    run_id=self.run_context.run_id,
                     run_dir=run_dir,
-                    mcp_fs_runtime=mcp_fs_runtime,
-                    task_runner_denylist=_TASK_RUNNER_TOOL_DENYLIST,
-                    include_literature_tool=self.run_policy.enable_literature_tool,
+                    patch_repair_attempts=self.patch_repair_attempts,
+                    tool_backend=self.tool_backend,
+                    max_task_steps=self.max_task_steps,
+                    max_plan_steps=self.max_plan_steps,
+                    checkpointer=self.checkpointer,
+                    run_control=self.run_control,
+                    skills_runtime=self.skills_runtime,
+                    mounted_skill_tokens=mounted_skill_tokens,
+                    tool_selector_model=self.tool_selector_model,
+                    allow_memory_patch=self.run_policy.allow_memory_patch,
                 )
-                local_pool = _dedupe_tools_by_name(
-                    list(surface.proposal_tools) + list(surface.director_tools) + list(surface.task_tools)
+            else:
+                compiled = build_standard_graph(
+                    task_runner_model=self.task_runner_model,
+                    proposal_model=self.proposal_model,
+                    director_model=self.director_model,
+                    memory_patch_model=self.memory_patch_model,
+                    memory_store=self.memory_store,
+                    proposal_tools=surface.proposal_tools,
+                    director_tools=surface.director_tools,
+                    task_tools=surface.task_tools,
+                    memory_tools=memory_tools,
+                    proposal_execution_context_guide=proposal_execution_context_guide,
+                    director_execution_context_guide=director_execution_context_guide,
+                    reporter=self.reporter,
+                    run_id=self.run_context.run_id,
+                    run_dir=run_dir,
+                    patch_repair_attempts=self.patch_repair_attempts,
+                    tool_backend=self.tool_backend,
+                    max_task_steps=self.max_task_steps,
+                    max_plan_steps=self.max_plan_steps,
+                    checkpointer=self.checkpointer,
+                    run_control=self.run_control,
+                    skills_runtime=self.skills_runtime,
+                    mounted_skill_tokens=mounted_skill_tokens,
+                    tool_selector_model=self.tool_selector_model,
+                    allow_human_intervention=self.run_policy.allow_human_intervention,
+                    allow_memory_patch=self.run_policy.allow_memory_patch,
                 )
-                apply_tool = next(
-                    (tool for tool in local_pool if str(getattr(tool, "name", "") or "") == "apply_aider_edits"),
-                    None,
-                )
-                if apply_tool is not None:
-                    apply_tool = _make_memory_scoped_apply_tool(apply_tool)
-                memory_read_tools: list[BaseTool] = []
-                if mcp_fs_runtime is not None:
-                    memory_read_tools = [
-                        tool
-                        for tool in mcp_fs_runtime.role_filtered_tools(role="memory_patch")
-                        if str(getattr(tool, "name", "") or "") in _MEMORY_PATCH_READONLY_TOOL_ALLOWLIST
-                    ]
-                memory_tools = _dedupe_tools_by_name(
-                    memory_read_tools + ([apply_tool] if apply_tool is not None else [])
-                )
-                if apply_tool is None:
-                    logger.warning("apply_aider_edits is unavailable for memory patcher; updates may fail.")
 
-                if self.skills_runtime is not None:
-                    self.skills_runtime.refresh_catalog()
-                    proposal_execution_context_guide = render_proposal_skill_guide(
-                        self.skills_runtime.visible_skills("proposal")
-                    )
-                    director_execution_context_guide = render_director_skill_guide(
-                        self.skills_runtime.visible_skills("director")
-                    )
-                    fast_director_execution_context_guide = render_fast_director_skill_guide(
-                        self.skills_runtime.visible_skills("fast_director")
-                    )
-                else:
-                    proposal_execution_context_guide = render_proposal_skill_guide([])
-                    director_execution_context_guide = render_director_skill_guide([])
-                    fast_director_execution_context_guide = render_fast_director_skill_guide([])
-                mounted_skill_tokens = tuple(mcp_fs_runtime.skill_mounts.keys()) if mcp_fs_runtime is not None else ()
+            initial_state: CatMasterState = {
+                "user_request": user_request,
+                "lane": lane,
+                "chat_session_id": str(chat_session_id or "").strip(),
+                "session_context_text": str(session_context_text or "").strip(),
+                "entry_context_tokens_estimate": int(entry_context_tokens_estimate or 0),
+                "proposal_messages": [],
+                "director_messages": [],
+                "runner_messages": [],
+                "proposal_md": "",
+                "work_packages": [],
+                "proposal_approved": False,
+                "proposal_feedback": "",
+                "proposal_review_enabled": bool(proposal_review),
+                "director_decision": {},
+                "next_action": "",
+                "tasks": [],
+                "observations": [],
+                "current_task_id": "task_01",
+                "current_task_packet": {"goal": user_request},
+                "task_result": {},
+                "pending_memory_updates": [],
+                "memory_patch_result": {},
+                "status": "running",
+                "summary": "",
+                "contract_violation": {},
+                "hitl_history": [],
+            }
 
-                if lane == "fast":
-                    fast_director_tools = [
-                        tool
-                        for tool in surface.fast_director_tools
-                        if str(getattr(tool, "name", "") or "") != "apply_aider_edits"
-                    ]
-                    compiled = build_fast_graph(
-                        task_runner_model=self.task_runner_model,
-                        director_model=self.director_model,
-                        memory_patch_model=self.memory_patch_model,
-                        memory_store=self.memory_store,
-                        director_tools=fast_director_tools,
-                        task_tools=surface.task_tools,
-                        memory_tools=memory_tools,
-                        fast_director_execution_context_guide=fast_director_execution_context_guide,
-                        reporter=self.reporter,
-                        run_id=self.run_context.run_id,
-                        run_dir=run_dir,
-                        patch_repair_attempts=self.patch_repair_attempts,
-                        tool_backend=self.tool_backend,
-                        max_task_steps=self.max_task_steps,
-                        max_plan_steps=self.max_plan_steps,
-                        checkpointer=self.checkpointer,
-                        run_control=self.run_control,
-                        skills_runtime=self.skills_runtime,
-                        mounted_skill_tokens=mounted_skill_tokens,
-                        tool_selector_model=self.tool_selector_model,
-                        allow_memory_patch=self.run_policy.allow_memory_patch,
-                    )
-                else:
-                    compiled = build_standard_graph(
-                        task_runner_model=self.task_runner_model,
-                        proposal_model=self.proposal_model,
-                        director_model=self.director_model,
-                        memory_patch_model=self.memory_patch_model,
-                        memory_store=self.memory_store,
-                        proposal_tools=surface.proposal_tools,
-                        director_tools=surface.director_tools,
-                        task_tools=surface.task_tools,
-                        memory_tools=memory_tools,
-                        proposal_execution_context_guide=proposal_execution_context_guide,
-                        director_execution_context_guide=director_execution_context_guide,
-                        reporter=self.reporter,
-                        run_id=self.run_context.run_id,
-                        run_dir=run_dir,
-                        patch_repair_attempts=self.patch_repair_attempts,
-                        tool_backend=self.tool_backend,
-                        max_task_steps=self.max_task_steps,
-                        max_plan_steps=self.max_plan_steps,
-                        checkpointer=self.checkpointer,
-                        run_control=self.run_control,
-                        skills_runtime=self.skills_runtime,
-                        mounted_skill_tokens=mounted_skill_tokens,
-                        tool_selector_model=self.tool_selector_model,
-                        allow_human_intervention=self.run_policy.allow_human_intervention,
-                        allow_memory_patch=self.run_policy.allow_memory_patch,
-                    )
+            self._write_task_state(initial_state, lane)
 
-                initial_state: CatMasterState = {
-                    "user_request": user_request,
-                    "lane": lane,
-                    "chat_session_id": str(chat_session_id or "").strip(),
-                    "session_context_text": str(session_context_text or "").strip(),
-                    "entry_context_tokens_estimate": int(entry_context_tokens_estimate or 0),
-                    "proposal_messages": [],
-                    "director_messages": [],
-                    "runner_messages": [],
-                    "proposal_md": "",
-                    "work_packages": [],
-                    "proposal_approved": False,
-                    "proposal_feedback": "",
-                    "proposal_review_enabled": bool(proposal_review),
-                    "director_decision": {},
-                    "next_action": "",
-                    "tasks": [],
-                    "observations": [],
-                    "current_task_id": "task_01",
-                    "current_task_packet": {"goal": user_request},
-                    "task_result": {},
-                    "pending_memory_updates": [],
-                    "memory_patch_result": {},
-                    "status": "running",
-                    "summary": "",
-                    "contract_violation": {},
-                    "hitl_history": [],
-                }
-
-                self._write_task_state(initial_state, lane)
-
-                thread_id = self.run_context.run_id
-                config: Dict[str, Any] = {
-                    "callbacks": callbacks,
-                    "configurable": {"thread_id": thread_id},
-                    "recursion_limit": self.recursion_limit,
-                }
-                return await self._ainvoke_loop(compiled, initial_state, config, workspace, lane)
+            thread_id = self.run_context.run_id
+            config: Dict[str, Any] = {
+                "callbacks": callbacks,
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": self.recursion_limit,
+            }
+            return await self._ainvoke_loop(compiled, initial_state, config, workspace, lane)
         finally:
-            try:
-                write_usage_summary(self.run_context.run_dir)
-            except Exception as exc:
-                logger.debug("usage summary write failed: %s", exc)
-
+            pass
 
     async def _ainvoke_loop(
         self,
@@ -1902,21 +1751,9 @@ class GraphRunner:
 
             status = result.get("status", "done")
             summary = result.get("summary", "")
-            report_paths: dict[str, str] = {}
-
             self._write_task_state({**result, "status": status}, lane)
 
-            if status in ("done", "failure"):
-                try:
-                    report_paths = self._publish_report(user_request, summary)
-                except Exception as exc:
-                    logger.warning("finalization side-effects failed: %s", exc)
-
             self._emit("RUN_END", payload={"status": status, "summary_snippet": _snippet(summary, 320)})
-
-            final_report_path = ""
-            if status in ("done", "failure"):
-                final_report_path = report_paths.get("final_report", "")
 
             return {
                 "tasks": result.get("tasks", []),
@@ -1927,7 +1764,6 @@ class GraphRunner:
                 "pending_memory_updates": result.get("pending_memory_updates", []),
                 "run_id": self.run_context.run_id,
                 "run_dir": str(self.run_context.run_dir),
-                "final_report_path": final_report_path,
                 "run_export_path": "",
             }
 

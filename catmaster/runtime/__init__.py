@@ -15,7 +15,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ToolPolicy": ("catmaster.runtime.tool_policy", "ToolPolicy"),
     "ToolBackend": ("catmaster.runtime.tool_backend", "ToolBackend"),
     "LocalToolBackend": ("catmaster.runtime.local_tool_backend", "LocalToolBackend"),
-    "MCPFilesystemRuntime": ("catmaster.runtime.mcp_filesystem", "MCPFilesystemRuntime"),
     "RuntimeToolSurface": ("catmaster.runtime.tool_surface", "RuntimeToolSurface"),
     "build_runtime_tool_surface": ("catmaster.runtime.tool_surface", "build_runtime_tool_surface"),
     "RunControl": ("catmaster.runtime.run_control", "RunControl"),
@@ -28,9 +27,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "memory_events_tail": ("catmaster.runtime.manager_tools", "memory_events_tail"),
     "context_pack_build": ("catmaster.runtime.manager_tools", "context_pack_build"),
     "load_usage_summary": ("catmaster.runtime.usage_stats", "load_usage_summary"),
-    "summarize_usage_from_event_trace": ("catmaster.runtime.usage_stats", "summarize_usage_from_event_trace"),
     "usage_summary_path": ("catmaster.runtime.usage_stats", "usage_summary_path"),
-    "write_usage_summary": ("catmaster.runtime.usage_stats", "write_usage_summary"),
+    "summarize_usage_from_metadata": ("catmaster.runtime.usage_stats", "summarize_usage_from_metadata"),
+    "write_usage_summary_from_metadata": ("catmaster.runtime.usage_stats", "write_usage_summary_from_metadata"),
 }
 
 __all__ = list(_EXPORTS.keys())

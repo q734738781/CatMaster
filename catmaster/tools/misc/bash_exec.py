@@ -25,15 +25,22 @@ class BashExecInput(BaseModel):
     """
     Execute a multi-line bash script inside the workspace (default) and return stdout/stderr.
     Network access is disabled by default using Linux network namespaces (unshare).
+    In environments where unshare is unavailable or permission-restricted, set no_network=false explicitly.
     Symbolic link operations are disabled; use copy/move operations instead.
     Stdout/stderr are returned as-is and projection/offload is handled centrally.
     Keep output short in scripts and print one-line summaries when possible.
     """
 
     script: str = Field(..., description="Bash script to execute (multi-line).")
-    cwd: str = Field(".", description="Working directory inside project files root.")
+    cwd: str = Field(".", description="Working directory inside project files root. DeepAgent virtual absolute paths like '/' and '/foo/bar' are supported.")
     timeout_s: float = Field(86400.0, ge=0.1, description="Timeout seconds.")
-    no_network: bool = Field(True, description="Disable network using unshare network namespace.")
+    no_network: bool = Field(
+        True,
+        description=(
+            "Disable network using unshare network namespace. "
+            "Set false explicitly when only inspecting local files in environments where unshare is unavailable."
+        ),
+    )
 
 
 _FORBIDDEN_SYMLINK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [

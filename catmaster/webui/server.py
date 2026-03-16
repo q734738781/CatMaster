@@ -76,6 +76,32 @@ def _runtime_snapshot(session) -> dict[str, Any]:
     }
 
 
+def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
+    run_name = str(runtime.get("run_name") or "").strip()
+    selected_run = run_name
+    run_dir = None
+    workspace_path = str(session.current_workspace_path() or "").strip()
+    if run_name and workspace_path:
+        resolved = session._resolve_run_dir_by_name(run_name, workspace=Path(workspace_path))
+        if resolved is not None:
+            run_dir = resolved
+    if run_dir is None:
+        run_dir = session.get_selected_run_dir()
+        selected_run = run_dir.name if run_dir is not None else selected_run
+    usage_summary = dict(runtime.get("usage_totals") or {})
+    if not usage_summary and run_dir is not None:
+        usage_summary = session.read_usage_summary(run_dir)
+    return {
+        "selected_run": selected_run,
+        "chat_messages": session.get_chat_messages(limit=40),
+        "cards": _serialize_cards(session.list_run_cards()),
+        "usage_summary": usage_summary,
+        "proposal": session.read_proposal(run_dir),
+        "todo_items": session.read_todo_items(run_dir),
+        "result_text": session.read_result_text(run_dir),
+    }
+
+
 def _pick_selected_run(session, requested_run: str = "") -> str:
     selected = str(requested_run or "").strip()
     runs = session.list_runs()
@@ -101,7 +127,7 @@ def _run_dir_for_name(session, run_name: str):
     return session.get_selected_run_dir(), selected
 
 
-def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "standard", run_name: str = "") -> dict[str, Any]:
+def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "research", run_name: str = "") -> dict[str, Any]:
     session = registry.get_session(ctx)
     selected_run = _pick_selected_run(session, run_name)
     run_dir = session.get_selected_run_dir()
@@ -123,7 +149,6 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "standar
         llm = live_state.get("llm") if isinstance(live_state.get("llm"), dict) else {}
         graph = {"node": str(live_state.get("current_node") or ""), "message_count": 0, "tool_calls": [], "text_preview": ""}
 
-    final_report, report_source = session.read_final_report_with_source(run_dir)
     cards = _serialize_cards(session.list_run_cards())
     prompt_payload = prompt if isinstance(prompt, dict) else None
     return {
@@ -145,8 +170,8 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "standar
         "events": events[-120:],
         "usage_summary": usage_summary,
         "proposal": session.read_proposal(run_dir),
-        "final_report": final_report,
-        "report_source": report_source,
+        "todo_items": session.read_todo_items(run_dir),
+        "result_text": session.read_result_text(run_dir),
         "chat_messages": session.get_chat_messages(limit=40),
         "entry_context_status": session.entry_context_status_text(lane=lane),
         "runtime": runtime,
@@ -171,6 +196,15 @@ def _build_details(*, registry: SessionRegistry, ctx: str, run_name: str) -> dic
         "trace_event": session.read_trace(run_dir, "event_trace.jsonl"),
         "trace_tool": session.read_trace(run_dir, "tool_trace.jsonl"),
         "trace_patch": session.read_trace(run_dir, "patch_trace.jsonl"),
+    }
+
+
+def _build_memory(*, registry: SessionRegistry, ctx: str, run_name: str = "") -> dict[str, Any]:
+    session = registry.get_session(ctx)
+    _run_dir, selected_run = _run_dir_for_name(session, run_name)
+    return {
+        "selected_run": selected_run,
+        "memory": session.read_memory_index(),
     }
 
 
@@ -240,7 +274,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         ctx: Optional[str] = None,
         project_space: Optional[str] = None,
         run: Optional[str] = None,
-        lane: str = "standard",
+        lane: str = "research",
     ):
         state = registry.bootstrap(ctx=ctx, project_space=project_space, run=run)
         snapshot = _build_snapshot(registry=registry, ctx=state.ctx, lane=lane, run_name=state.run_name)
@@ -249,12 +283,16 @@ def create_app(*, project_space_root: str) -> FastAPI:
         return JSONResponse(snapshot)
 
     @app.get("/api/session/{ctx}/snapshot")
-    def _session_snapshot(ctx: str, lane: str = "standard", run: str = ""):
+    def _session_snapshot(ctx: str, lane: str = "research", run: str = ""):
         return JSONResponse(_build_snapshot(registry=registry, ctx=ctx, lane=lane, run_name=run))
 
     @app.get("/api/session/{ctx}/details")
     def _session_details(ctx: str, run: str = ""):
         return JSONResponse(_build_details(registry=registry, ctx=ctx, run_name=run))
+
+    @app.get("/api/session/{ctx}/memory")
+    def _session_memory(ctx: str, run: str = ""):
+        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run))
 
     @app.post("/api/session/{ctx}/workspace/open")
     async def _workspace_open(ctx: str, request: Request):
@@ -263,7 +301,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         root_path = str(payload.get("root_path") or registry.default_project_space_root)
         session.set_workspace_root(root_path)
         ok, message = session.open_workspace_by_name(str(payload.get("workspace") or ""))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "standard"))
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
         snapshot["ok"] = ok
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
@@ -273,7 +311,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         payload = await _json_body(request)
         session = registry.get_session(ctx)
         ok, message, _choices = session.set_workspace_root(str(payload.get("root_path") or registry.default_project_space_root))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "standard"))
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
         snapshot["ok"] = ok
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
@@ -285,7 +323,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         root_path = str(payload.get("root_path") or registry.default_project_space_root)
         session.set_workspace_root(root_path)
         ok, message = session.create_workspace(str(payload.get("workspace") or ""))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "standard"))
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
         snapshot["ok"] = ok
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
@@ -298,7 +336,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         snapshot = _build_snapshot(
             registry=registry,
             ctx=ctx,
-            lane=str(payload.get("lane") or "standard"),
+            lane=str(payload.get("lane") or "research"),
             run_name=str(payload.get("run_name") or ""),
         )
         snapshot["status_message"] = message
@@ -310,7 +348,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         session = registry.get_session(ctx)
         message = session.start_run(
             prompt=str(payload.get("prompt") or ""),
-            lane=str(payload.get("lane") or "standard"),
+            lane=str(payload.get("lane") or "research"),
             run_mode=str(payload.get("run_mode") or "new_run"),
             resume_run_name=str(payload.get("resume_run_name") or ""),
             proposal_review=bool(payload.get("proposal_review", True)),
@@ -327,7 +365,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
             max_standard_runs=int(payload.get("max_standard_runs") or 2),
             allow_deep_report=bool(payload.get("allow_deep_report", False)),
         )
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "standard"))
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
 
@@ -336,7 +374,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         payload = await _json_body(request)
         session = registry.get_session(ctx)
         message = session.request_interrupt_current_run(note=str(payload.get("note") or ""))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "standard"))
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
 
@@ -348,7 +386,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         snapshot = _build_snapshot(
             registry=registry,
             ctx=ctx,
-            lane=str(payload.get("lane") or "standard"),
+            lane=str(payload.get("lane") or "research"),
             run_name=str(payload.get("run_name") or ""),
         )
         snapshot["status_message"] = message
@@ -379,6 +417,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
                         "run_status": str(session.run_status or "idle"),
                         "run_status_text": session.run_status_text(),
                     }
+                    envelope.update(_stream_patch(session, runtime))
                     yield f"id: {int(event.get('seq') or seq)}\ndata: {json.dumps(envelope, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(_event_stream(), media_type="text/event-stream")

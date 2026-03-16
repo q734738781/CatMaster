@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +18,6 @@ class _Registry:
     def as_langchain_tools(self, **kwargs):
         _ = kwargs
         return [
-            _Tool("bash"),
             _Tool("apply_aider_edits"),
             _Tool("agentic_compile_tex"),
             _Tool("polish_academic_prose"),
@@ -34,7 +32,7 @@ class _FakeGraph:
 
 
 @pytest.mark.anyio
-async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
+async def test_write_director_uses_local_tools_only_and_excludes_aider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -45,13 +43,6 @@ async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
         captured[role] = [tool.name for tool in tools]
         return object()
 
-    @asynccontextmanager
-    async def _fake_open_mcp_runtime():
-        yield SimpleNamespace(
-            skill_mounts={},
-            role_filtered_tools=lambda role: [_Tool(f"mcp_{role}")]
-        )
-
     monkeypatch.setattr("catmaster.agents.writing_runner.get_tool_registry", lambda: _Registry())
     monkeypatch.setattr("catmaster.agents.writing_runner._build_agent", _fake_build_agent)
     monkeypatch.setattr("catmaster.agents.writing_runner.build_chat_model", lambda cfg: object())
@@ -60,7 +51,6 @@ async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
     runner = WritingRunner.__new__(WritingRunner)
     runner.llm_profile = SimpleNamespace(
         config_for_role=lambda role: SimpleNamespace(model=role),
-        mcp=SimpleNamespace(filesystem=SimpleNamespace(enabled=True)),
         writing=SimpleNamespace(author_name="CatMaster"),
     )
     runner.run_context = SimpleNamespace(
@@ -73,8 +63,6 @@ async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
     runner.skills_runtime = None
     runner.store = SimpleNamespace(ensure_exists=lambda: None)
     runner._write_task_state = lambda payload: None
-    runner._publish_final_report = lambda **kwargs: None
-    runner._open_mcp_filesystem_runtime = _fake_open_mcp_runtime
 
     request = WritingRequest(
         request="Write from existing evidence.",
@@ -86,8 +74,6 @@ async def test_write_director_gets_bash_and_director_mcp_but_not_aider(
     )
 
     assert result["status"] == "done"
-    assert "bash" in captured["write_director"]
-    assert "mcp_director" in captured["write_director"]
     assert "agentic_compile_tex" in captured["write_director"]
     assert "polish_academic_prose" in captured["write_director"]
     assert "apply_aider_edits" not in captured["write_director"]
@@ -106,10 +92,6 @@ async def test_markdown_writing_request_does_not_expose_compile_tool(
         captured[role] = [tool.name for tool in tools]
         return object()
 
-    @asynccontextmanager
-    async def _fake_open_mcp_runtime():
-        yield SimpleNamespace(skill_mounts={}, role_filtered_tools=lambda role: [])
-
     monkeypatch.setattr("catmaster.agents.writing_runner.get_tool_registry", lambda: _Registry())
     monkeypatch.setattr("catmaster.agents.writing_runner._build_agent", _fake_build_agent)
     monkeypatch.setattr("catmaster.agents.writing_runner.build_chat_model", lambda cfg: object())
@@ -118,7 +100,6 @@ async def test_markdown_writing_request_does_not_expose_compile_tool(
     runner = WritingRunner.__new__(WritingRunner)
     runner.llm_profile = SimpleNamespace(
         config_for_role=lambda role: SimpleNamespace(model=role),
-        mcp=SimpleNamespace(filesystem=SimpleNamespace(enabled=True)),
         writing=SimpleNamespace(author_name="CatMaster"),
     )
     runner.run_context = SimpleNamespace(
@@ -131,8 +112,6 @@ async def test_markdown_writing_request_does_not_expose_compile_tool(
     runner.skills_runtime = None
     runner.store = SimpleNamespace(ensure_exists=lambda: None)
     runner._write_task_state = lambda payload: None
-    runner._publish_final_report = lambda **kwargs: None
-    runner._open_mcp_filesystem_runtime = _fake_open_mcp_runtime
 
     request = WritingRequest(
         request="Write an internal report in markdown.",

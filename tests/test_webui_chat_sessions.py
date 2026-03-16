@@ -1,13 +1,60 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import catmaster.specialists as specialists_mod
+from catmaster.specialists import RUN_STATE_FILE
 from catmaster.tools.base import ensure_project_space_layout, system_root
 from catmaster.webui.chat_sessions import ChatSessionStore
 from catmaster.webui.session import WebSession
+
+
+def _install_dummy_llm_profile(monkeypatch) -> None:
+    fake_llm_config_mod = types.ModuleType("catmaster.llm.config")
+
+    class DummyLLMProfile:
+        def __init__(self):
+            self.main = SimpleNamespace(model="task-model", provider="openai", base_url=None)
+            self.agent_runtime = SimpleNamespace(max_tool_calls=4, recursion_limit=8, print_state_messages=False)
+
+        @classmethod
+        def from_env_or_file(cls, *_a, **_k):
+            return cls()
+
+        def config_for_role(self, role: str):
+            return SimpleNamespace(model=role, provider="openai", base_url=None)
+
+    fake_llm_config_mod.LLMProfile = DummyLLMProfile
+    monkeypatch.setitem(sys.modules, "catmaster.llm.config", fake_llm_config_mod)
+
+
+def _write_completed_run(
+    run_dir: Path,
+    *,
+    entrypoint: str = "research",
+    final_answer: str = "Agent answer.",
+    summary: str = "Run finished.",
+) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / RUN_STATE_FILE).write_text(
+        json.dumps(
+            {
+                "entrypoint": entrypoint,
+                "status": "done",
+                "summary": summary,
+                "final_answer": final_answer,
+                "text_preview": final_answer,
+                "facts": ["fact one"],
+                "artifacts": [{"path": "outputs/result.txt", "kind": "file", "description": "reported file"}],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_chat_session_store_builds_summary_and_recent_messages(tmp_path: Path) -> None:
@@ -41,10 +88,9 @@ def test_chat_session_store_excludes_hitl_from_chat_and_history(tmp_path: Path) 
         "Final answer.",
     ]
     chat_messages = store.chat_messages(session_id, limit=10)
-    assert chat_messages == [
-        {"role": "user", "content": "Normal request."},
-        {"role": "assistant", "content": "Final answer."},
-    ]
+    assert [item["role"] for item in chat_messages] == ["user", "assistant"]
+    assert [item["content"] for item in chat_messages] == ["Normal request.", "Final answer."]
+    assert [item["kind"] for item in chat_messages] == ["chat", "run_result"]
     assert "Proposal Review" not in pack.summary_text
     session_payload = store.load_session(session_id)
     assert "Proposal Review" not in str(session_payload.get("summary_text") or "")
@@ -66,16 +112,15 @@ def test_chat_session_store_excludes_run_errors_from_chat_and_history(tmp_path: 
         "Final answer.",
     ]
     chat_messages = store.chat_messages(session_id, limit=10)
-    assert chat_messages == [
-        {"role": "user", "content": "Normal request."},
-        {"role": "assistant", "content": "Final answer."},
-    ]
+    assert [item["role"] for item in chat_messages] == ["user", "assistant"]
+    assert [item["content"] for item in chat_messages] == ["Normal request.", "Final answer."]
+    assert [item["kind"] for item in chat_messages] == ["chat", "run_result"]
     assert "Run crashed badly." not in pack.summary_text
     session_payload = store.load_session(session_id)
     assert "Run crashed badly." not in str(session_payload.get("summary_text") or "")
 
 
-def test_websession_injects_chat_history_for_standard_lane(tmp_path: Path, monkeypatch) -> None:
+def test_websession_injects_chat_history_for_experiment_lane(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "ws"
     session = WebSession()
     session.set_workspace_root(str(tmp_path))
@@ -83,55 +128,32 @@ def test_websession_injects_chat_history_for_standard_lane(tmp_path: Path, monke
     assert ok
 
     session._append_chat_message(role="user", content="Earlier user question.")
-    session._append_chat_message(role="assistant", content="Earlier assistant answer.")
-
-    fake_llm_config_mod = types.ModuleType("catmaster.llm.config")
-
-    class DummyLLMProfile:
-        def __init__(self):
-            self.main = SimpleNamespace(model="task-model", provider="openai", base_url=None)
-            self.mcp = SimpleNamespace(filesystem=SimpleNamespace(enabled=False))
-            self.agent_runtime = SimpleNamespace(max_tool_calls=4, recursion_limit=8, print_state_messages=False)
-
-        @classmethod
-        def from_env_or_file(cls, *_a, **_k):
-            return cls()
-
-        def config_for_role(self, role: str):
-            return SimpleNamespace(model=role, provider="openai", base_url=None)
-
-    fake_llm_config_mod.LLMProfile = DummyLLMProfile
-    monkeypatch.setitem(sys.modules, "catmaster.llm.config", fake_llm_config_mod)
-
-    fake_llm_factory_mod = types.ModuleType("catmaster.llm.factory")
-    fake_llm_factory_mod.build_chat_model = lambda cfg: {"model": getattr(cfg, "model", "")}
-    monkeypatch.setitem(sys.modules, "catmaster.llm.factory", fake_llm_factory_mod)
+    session._append_chat_message(role="assistant", content="Earlier assistant answer.", kind="run_result")
+    _install_dummy_llm_profile(monkeypatch)
 
     captured: dict[str, str] = {}
-    fake_runner_factory_mod = types.ModuleType("catmaster.agents.runner_factory")
+    run_dir = system_root(workspace=ws) / "runs" / "run_test"
 
-    class _DummyRunner:
+    class DummyRunner:
         def run(self, prompt: str, **kwargs):
             captured["prompt"] = prompt
-            captured["lane"] = str(kwargs.get("lane") or "")
+            captured["entrypoint"] = str(kwargs.get("entrypoint") or "")
             captured["session_context_text"] = str(kwargs.get("session_context_text") or "")
+            _write_completed_run(run_dir, entrypoint="experiment", final_answer="Agent answer.")
             return {"status": "done"}
 
-    def fake_build_graph_runner(**kwargs):
+    def fake_build_specialist_runner(**kwargs):
         _ = kwargs
-        run_dir = system_root(workspace=ws) / "runs" / "run_test"
-        run_dir.mkdir(parents=True, exist_ok=True)
         return SimpleNamespace(
-            runner=_DummyRunner(),
+            runner=DummyRunner(),
             run_context=SimpleNamespace(run_id="run_test", run_dir=run_dir, model_name="task-model"),
         )
 
-    fake_runner_factory_mod.build_graph_runner = fake_build_graph_runner
-    monkeypatch.setitem(sys.modules, "catmaster.agents.runner_factory", fake_runner_factory_mod)
+    monkeypatch.setattr(specialists_mod, "build_specialist_runner", fake_build_specialist_runner)
 
     msg = session.start_run(
         prompt="Current request.",
-        lane="standard",
+        lane="experiment",
         run_mode="new_run",
         resume_run_name="",
         proposal_review=True,
@@ -141,12 +163,12 @@ def test_websession_injects_chat_history_for_standard_lane(tmp_path: Path, monke
     assert msg == "Run started."
     assert session.run_thread is not None
     session.run_thread.join(timeout=5)
-    assert captured["lane"] == "standard"
+    assert captured["entrypoint"] == "experiment"
     assert "Current request." in captured["prompt"]
     assert "Relevant conversation history:" in captured["session_context_text"]
-    assert "Session ID:" not in captured["session_context_text"]
     assert "Earlier user question." in captured["session_context_text"]
     assert "Earlier assistant answer." in captured["session_context_text"]
+    assert "Earlier chat session summary:" not in captured["session_context_text"]
 
 
 def test_websession_injects_chat_history_for_research_lane(tmp_path: Path) -> None:
@@ -157,12 +179,35 @@ def test_websession_injects_chat_history_for_research_lane(tmp_path: Path) -> No
     assert ok
 
     session._append_chat_message(role="user", content="Earlier user question.")
+    session._append_chat_message(role="assistant", content="Earlier assistant answer.", kind="run_result")
     pack = session.build_session_context(current_prompt="Research prompt.", lane="research")
     assert pack["session_id"]
     assert "Relevant conversation history:" in pack["context_text"]
-    assert "Session ID:" not in pack["context_text"]
     assert "Earlier user question." in pack["context_text"]
+    assert "Earlier assistant answer." in pack["context_text"]
     assert int(pack["estimated_tokens"]) > 0
+
+
+def test_websession_context_only_keeps_recent_three_completed_turns(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+
+    for idx in range(5):
+        session._append_chat_message(role="user", content=f"Question {idx}")
+        session._append_chat_message(role="assistant", content=f"Answer {idx}", kind="run_result")
+
+    pack = session.build_session_context(current_prompt="Newest prompt.", lane="experiment")
+    assert "Question 0" not in pack["context_text"]
+    assert "Answer 0" not in pack["context_text"]
+    assert "Question 1" not in pack["context_text"]
+    assert "Answer 1" not in pack["context_text"]
+    assert "Question 2" in pack["context_text"]
+    assert "Answer 2" in pack["context_text"]
+    assert "Question 4" in pack["context_text"]
+    assert "Answer 4" in pack["context_text"]
 
 
 def test_websession_lists_and_switches_chat_sessions(tmp_path: Path) -> None:
@@ -190,7 +235,10 @@ def test_websession_lists_and_switches_chat_sessions(tmp_path: Path) -> None:
 
     session.select_chat_session(first_session_id)
     assert session.current_chat_session_id() == first_session_id
-    assert session.get_chat_messages(limit=10) == [{"role": "user", "content": "Session A"}]
+    messages = session.get_chat_messages(limit=10)
+    assert [item["role"] for item in messages] == ["user"]
+    assert [item["content"] for item in messages] == ["Session A"]
+    assert [item["kind"] for item in messages] == ["chat"]
 
 
 def test_sidebar_snapshot_reads_cached_runs(tmp_path: Path) -> None:
@@ -203,7 +251,7 @@ def test_sidebar_snapshot_reads_cached_runs(tmp_path: Path) -> None:
     runs_root = system_root(workspace=ws) / "runs"
     run_dir = runs_root / "run_001"
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "task_state.json").write_text('{"status":"done"}', encoding="utf-8")
+    (run_dir / RUN_STATE_FILE).write_text('{"status":"done","entrypoint":"research"}', encoding="utf-8")
     (run_dir / "meta.json").write_text('{"model_name":"m1","start_time":"2026-03-09T00:00:00Z"}', encoding="utf-8")
 
     session._mark_sidebar_cache_dirty()
@@ -214,6 +262,37 @@ def test_sidebar_snapshot_reads_cached_runs(tmp_path: Path) -> None:
     assert cards
     assert runs[0][1] == "run_001"
     assert cards[0]["run_name"] == "run_001"
+
+
+def test_websession_reads_persistent_memory_index(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+
+    db_path = system_root(workspace=ws) / "deepagent_memory.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE store (prefix TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL)")
+    prefix = ".".join(("catmaster", session._project_id_for_workspace(ws), "filesystem"))
+    payload = {
+        "content": [
+            "# Persistent Project Memory",
+            "",
+            "- Prefer MACE screening before VASP unless accuracy is required.",
+        ],
+    }
+    conn.execute(
+        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
+        (prefix, "/AGENTS.md", json.dumps(payload).encode("utf-8")),
+    )
+    conn.commit()
+    conn.close()
+
+    text = session.read_memory_index()
+    assert "Persistent Memory" in text
+    assert "Prefer MACE screening before VASP" in text
+    assert "catmaster." in text
 
 
 def test_list_workspaces_includes_root_when_root_is_project_space(tmp_path: Path) -> None:
@@ -237,18 +316,13 @@ def test_open_workspace_by_name_accepts_root_project_space_name(tmp_path: Path) 
     assert session.current_workspace_path() == str(tmp_path.resolve())
 
 
-def test_websession_chat_result_prefers_task_state_final_answer(tmp_path: Path) -> None:
+def test_websession_chat_result_prefers_run_state_final_answer(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ensure_project_space_layout(ws, create=True)
     run_dir = system_root(workspace=ws) / "runs" / "run_001"
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "task_state.json").write_text(
+    (run_dir / RUN_STATE_FILE).write_text(
         '{"summary":"UI card summary.","final_answer":"Only the final answer should go back to chat.","status":"done"}',
-        encoding="utf-8",
-    )
-    (run_dir / "reports").mkdir(parents=True, exist_ok=True)
-    (run_dir / "reports" / "FINAL_REPORT.md").write_text(
-        "# Final Report\n\n## User Query\nQ\n\n## Final Answer\nA\n",
         encoding="utf-8",
     )
 
@@ -259,13 +333,20 @@ def test_websession_chat_result_prefers_task_state_final_answer(tmp_path: Path) 
     assert session._read_chat_result_text(run_dir) == "Only the final answer should go back to chat."
 
 
-def test_websession_chat_result_extracts_final_answer_from_report(tmp_path: Path) -> None:
+def test_websession_result_text_formats_summary_facts_and_files(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ensure_project_space_layout(ws, create=True)
     run_dir = system_root(workspace=ws) / "runs" / "run_001"
-    (run_dir / "reports").mkdir(parents=True, exist_ok=True)
-    (run_dir / "reports" / "FINAL_REPORT.md").write_text(
-        "# Final Report\n\n## User Query\nQ\n\n## Final Answer\nConcise answer.\n\n## Notes\nIgnore.\n",
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / RUN_STATE_FILE).write_text(
+        json.dumps(
+            {
+                "status": "done",
+                "summary": "Concise answer.",
+                "facts": ["fact a", "fact b"],
+                "artifacts": [{"path": "outputs/a.txt", "kind": "file", "description": "reported file"}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -273,16 +354,22 @@ def test_websession_chat_result_extracts_final_answer_from_report(tmp_path: Path
     session.set_workspace_root(str(tmp_path))
     ok, _ = session.open_workspace(str(ws), create=False)
     assert ok
-    assert session._read_chat_result_text(run_dir) == "Concise answer."
+    result_text = session.read_result_text(run_dir)
+    assert "## Summary" in result_text
+    assert "Concise answer." in result_text
+    assert "## Facts" in result_text
+    assert "fact a" in result_text
+    assert "## Files" in result_text
+    assert "outputs/a.txt" in result_text
 
 
-def test_snapshot_live_state_falls_back_to_task_state_goal_when_task_events_missing(tmp_path: Path) -> None:
+def test_snapshot_live_state_uses_run_state_text_preview_and_phase(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ensure_project_space_layout(ws, create=True)
     run_dir = system_root(workspace=ws) / "runs" / "run_001"
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "task_state.json").write_text(
-        '{"status":"running","tasks":[{"task_id":"task_01","goal":"Prepare a 30 A comparison.","task_packet":{"goal":"Prepare a 30 A comparison."},"status":"running"}]}',
+    (run_dir / RUN_STATE_FILE).write_text(
+        '{"status":"running","entrypoint":"research","phase":"executing","text_preview":"Prepare a 30 A comparison."}',
         encoding="utf-8",
     )
 
@@ -292,17 +379,17 @@ def test_snapshot_live_state_falls_back_to_task_state_goal_when_task_events_miss
     assert ok
 
     live = session.snapshot_live_state(run_dir)
-    assert live.get("current_task_id") == "task_01"
     assert live.get("current_task_goal") == "Prepare a 30 A comparison."
+    assert live.get("current_phase") == "executing"
 
 
-def test_snapshot_live_state_prefers_unified_writing_progress_fields(tmp_path: Path) -> None:
+def test_snapshot_live_state_falls_back_to_first_todo_item(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ensure_project_space_layout(ws, create=True)
     run_dir = system_root(workspace=ws) / "runs" / "run_001"
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "task_state.json").write_text(
-        '{"status":"drafting","lane":"writing","current_phase":"drafting","current_work_label":"Write section: Results and Discussion","request":"Write paper."}',
+    (run_dir / RUN_STATE_FILE).write_text(
+        '{"status":"running","entrypoint":"writing","phase":"drafting","todo_items":["Write section: Results and Discussion","Polish abstract"]}',
         encoding="utf-8",
     )
 
@@ -314,23 +401,3 @@ def test_snapshot_live_state_prefers_unified_writing_progress_fields(tmp_path: P
     live = session.snapshot_live_state(run_dir)
     assert live.get("current_task_goal") == "Write section: Results and Discussion"
     assert live.get("current_phase") == "drafting"
-
-
-def test_snapshot_live_state_prefers_unified_research_progress_fields(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    ensure_project_space_layout(ws, create=True)
-    run_dir = system_root(workspace=ws) / "runs" / "run_001"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "task_state.json").write_text(
-        '{"status":"running","lane":"research","current_phase":"executing","current_work_label":"Experiment: O2 gas-phase comparison","question":"Study O2 on Fe."}',
-        encoding="utf-8",
-    )
-
-    session = WebSession()
-    session.set_workspace_root(str(tmp_path))
-    ok, _ = session.open_workspace(str(ws), create=False)
-    assert ok
-
-    live = session.snapshot_live_state(run_dir)
-    assert live.get("current_task_goal") == "Experiment: O2 gas-phase comparison"
-    assert live.get("current_phase") == "executing"

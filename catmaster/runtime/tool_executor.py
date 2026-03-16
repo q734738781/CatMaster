@@ -149,7 +149,7 @@ class ToolExecutor:
         if attempt_count >= self.max_attempts:
             return (
                 f"Max attempts reached for tool {tool_name}. "
-                "Ask the user for clarification or choose a safer diagnostic tool (e.g., bash with ls/cat) before retrying."
+                "Ask the user for clarification or choose a safer diagnostic tool before retrying."
             )
         return (
             f"Fix parameters for tool {tool_name} to satisfy the schema. "

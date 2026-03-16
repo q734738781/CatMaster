@@ -14,6 +14,12 @@ matplotlib
 dpdispatcher
 pyyaml
 httpx
+langchain-openrouter
+openrouter
+tavily-python
 faiss-cpu
+deepagents
+langgraph-checkpoint-sqlite>=3.0.3
+aiosqlite
 
 # If you plan to use MACE in local, you should also install the dependencies list in this file as well as pc.txt.

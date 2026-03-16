@@ -93,11 +93,6 @@ class ToolRegistry:
             apply_aider_edits,
             ApplyAiderEditsInput,
         )
-        from catmaster.tools.misc.memory import (
-            write_note,
-            MemoryNoteInput,
-        )
-        
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
@@ -125,7 +120,6 @@ class ToolRegistry:
         self.register_tool("bash", bash_exec, BashExecInput)
         self.register_alias("bash_exec", "bash")
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
-        self.register_tool("write_note", write_note, MemoryNoteInput)
     
     def register_tool(
         self, 

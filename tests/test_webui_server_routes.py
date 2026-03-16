@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -7,6 +9,7 @@ from starlette.routing import Match
 
 from catmaster.webui import server
 from catmaster.webui.server import create_app
+from catmaster.webui.session import WebSession
 
 
 def _scope(path: str) -> dict:
@@ -45,3 +48,31 @@ def test_pages_load_react_static_bundle(tmp_path: Path) -> None:
 def test_coerce_int_treats_empty_string_as_default() -> None:
     assert server._coerce_int("", 0) == 0
     assert server._coerce_int("7", 0) == 7
+
+
+def test_memory_route_returns_workspace_memory(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    (ws / "files").mkdir(parents=True)
+    (ws / "metadata").mkdir(parents=True)
+    db_path = ws / "metadata" / "deepagent_memory.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE store (prefix TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL)")
+    prefix = ".".join(("catmaster", WebSession._project_id_for_workspace(ws), "filesystem"))
+    payload = {"content": ["Stable preference: prefer compact reports."]}
+    conn.execute(
+        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
+        (prefix, "/AGENTS.md", json.dumps(payload).encode("utf-8")),
+    )
+    conn.commit()
+    conn.close()
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+
+    response = client.get(f"/api/session/{ctx}/memory")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "prefer compact reports" in payload["memory"]

@@ -17,15 +17,6 @@ def _safe_json(path: Path) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _read_text(path: Path) -> str:
-    if not path.exists():
-        return ""
-    try:
-        return path.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-
-
 def _squash(text: str) -> str:
     return " ".join(str(text or "").split()).strip()
 
@@ -129,22 +120,18 @@ def _collect_artifact_paths(run_dir: Path, task_state: Dict[str, Any], *, limit:
     return out
 
 
-def _answer_summary(task_state: Dict[str, Any], final_report: str, *, limit: int = 800) -> str:
+def _answer_summary(task_state: Dict[str, Any], *, limit: int = 800) -> str:
     summary = _squash(str(task_state.get("summary") or ""))
-    if summary:
-        return summary[:limit]
-    final_text = _squash(final_report)
-    return final_text[:limit]
+    return summary[:limit]
 
 
 def build_run_search_blob(run_dir: Path, *, max_chars: int = 5500) -> RunSearchBlob:
     run_root = Path(run_dir).expanduser().resolve()
     meta = _safe_json(run_root / "meta.json")
     task_state = _safe_json(run_root / "task_state.json")
-    final_report = _read_text(run_root / "reports" / "FINAL_REPORT.md")
 
     request = _squash(str(task_state.get("user_request") or meta.get("user_request") or ""))
-    answer_summary = _answer_summary(task_state, final_report)
+    answer_summary = _answer_summary(task_state)
     task_goals = _collect_task_goals(task_state)
     tool_names = _collect_tool_names(run_root / "tool_trace.jsonl")
     artifact_paths = _collect_artifact_paths(run_root, task_state)

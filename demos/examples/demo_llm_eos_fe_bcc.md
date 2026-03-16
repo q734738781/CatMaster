@@ -41,7 +41,7 @@ I need you to compute the equation of state diagram for BCC FeDownload the struc
 ```
 
 ## Final report (verbatim)
-- Source: `workspace/demo_llm_eos_fe_bcc/reports/FINAL_REPORT.md`
+- Source: `workspace/demo_llm_eos_fe_bcc/run_state.json`
 ```markdown
 # Final Report
 

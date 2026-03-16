@@ -106,3 +106,78 @@ def test_apply_events_tracks_llm_stream_and_graph_node() -> None:
     assert state["llm"]["status"] == "completed"
     assert state["llm"]["text"] == "Hello world"
     assert state["llm"]["reasoning_text"] == "Check spin state."
+
+
+def test_apply_events_uses_llm_end_preview_when_no_token_delta() -> None:
+    state = new_live_state("run_004")
+    events = [
+        _event("LLM_CALL_START", ts=1.0, payload={"model": "gpt-5", "phase": "react"}),
+        _event(
+            "LLM_CALL_END",
+            ts=2.0,
+            payload={
+                "model": "gpt-5",
+                "phase": "react",
+                "text_preview": "Progress: running a quick MACE relaxation now.",
+                "usage": {"output_tokens": 12},
+            },
+        ),
+    ]
+
+    state, changed = apply_events(state, events)
+
+    assert changed is True
+    assert state["llm"]["status"] == "completed"
+    assert state["llm"]["text"] == "Progress: running a quick MACE relaxation now."
+
+
+def test_run_end_clears_live_llm_and_tool_state() -> None:
+    state = new_live_state("run_005")
+    events = [
+        _event("LLM_CALL_START", ts=1.0, payload={"model": "gpt-5", "phase": "react"}),
+        _event("LLM_REASONING_DELTA", ts=1.5, payload={"text": "Preparing final answer."}),
+        _event("LLM_CALL_END", ts=2.0, payload={"text_preview": "## Summary\nDone."}),
+        _event(
+            "TOOL_CALL_START",
+            ts=2.5,
+            task_id="task_01",
+            step_id=0,
+            payload={"tool": "execute", "params_compact": "{\"command\":\"pwd\"}", "toolcall_id": "call_1"},
+        ),
+        _event("RUN_END", ts=3.0, payload={"status": "done"}),
+    ]
+
+    state, changed = apply_events(state, events)
+
+    assert changed is True
+    assert state["status"] == "done"
+    assert state["active_toolcall"] is None
+    assert state["recent_toolcalls"] == []
+    assert state["llm"]["status"] == "idle"
+    assert state["llm"]["text"] == ""
+    assert state["llm"]["reasoning_text"] == ""
+
+
+def test_write_todos_tool_start_updates_live_todo_panel() -> None:
+    state = new_live_state("run_006")
+    events = [
+        _event(
+            "TOOL_CALL_START",
+            ts=1.0,
+            payload={
+                "tool": "write_todos",
+                "params_full": {
+                    "todos": [
+                        {"content": "Inspect the current workspace", "status": "in_progress"},
+                        {"content": "Run quick MACE relax", "status": "pending"},
+                    ]
+                },
+            },
+        )
+    ]
+
+    state, changed = apply_events(state, events)
+
+    assert changed is True
+    assert state["todo_items"] == ["Inspect the current workspace", "Run quick MACE relax"]
+    assert state["todo_rows"][0]["status"] == "in_progress"

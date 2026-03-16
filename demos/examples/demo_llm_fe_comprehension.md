@@ -62,7 +62,7 @@ Compute surface energies of bcc Fe (100),(110),(111) facet of conventional cell 
 ```
 
 ## Final report (verbatim)
-- Source: `workspace/demo_llm_fe_comprehension/reports/FINAL_REPORT.md`
+- Source: `workspace/demo_llm_fe_comprehension/run_state.json`
 ```markdown
 # Final Report
 

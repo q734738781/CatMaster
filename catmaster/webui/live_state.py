@@ -24,6 +24,8 @@ def new_live_state(run_id: str = "") -> Dict[str, Any]:
     return {
         "run_id": run_id,
         "status": "unknown",
+        "todo_items": [],
+        "todo_rows": [],
         "current_task_id": "",
         "current_task_goal": "",
         "current_phase": "",
@@ -164,6 +166,10 @@ def apply_event(
         state["status"] = "running"
         state["current_phase"] = "executing"
         state["current_task_id"] = task_id or state.get("current_task_id", "")
+        todo_rows = _normalize_todos(payload.get("params_full"))
+        if str(payload.get("tool") or "").strip() == "write_todos" and todo_rows:
+            state["todo_rows"] = todo_rows
+            state["todo_items"] = [str(item.get("content") or "").strip() for item in todo_rows if str(item.get("content") or "").strip()]
         active = {
             "task_id": task_id,
             "step_id": step_id if isinstance(step_id, int) else None,
@@ -218,11 +224,15 @@ def apply_event(
         changed = True
     elif name == "LLM_CALL_END":
         llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
+        final_text = str(llm.get("text") or "").strip()
+        if not final_text:
+            final_text = str(payload.get("text_preview") or "").strip()
         llm.update(
             {
                 "model": str(payload.get("model") or llm.get("model") or ""),
                 "phase": str(payload.get("phase") or llm.get("phase") or ""),
                 "status": "completed",
+                "text": final_text,
                 "reasoning_text": str(payload.get("reasoning_text") or llm.get("reasoning_text") or ""),
                 "usage": payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
                 "elapsed_ms": int(payload.get("elapsed_ms") or 0),
@@ -308,9 +318,26 @@ def apply_event(
         else:
             state["current_phase"] = "finalizing"
         state["active_toolcall"] = None
+        state["recent_toolcalls"] = []
         llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
-        llm["status"] = "idle"
+        llm.update(
+            {
+                "status": "idle",
+                "text": "",
+                "reasoning_text": "",
+                "usage": {},
+                "elapsed_ms": 0,
+            }
+        )
         state["llm"] = llm
+        graph = state.get("graph") if isinstance(state.get("graph"), dict) else {}
+        graph.update(
+            {
+                "tool_calls": [],
+                "text_preview": "",
+            }
+        )
+        state["graph"] = graph
         changed = True
     elif name == "RUN_PAUSED":
         state["status"] = "interrupted_paused"
@@ -366,6 +393,7 @@ def compact_live_state_for_llm(
     return {
         "run_id": state.get("run_id", ""),
         "status": state.get("status", "unknown"),
+        "todo_items": list(state.get("todo_items", [])[-12:]),
         "current_task_id": state.get("current_task_id", ""),
         "current_task_goal": state.get("current_task_goal", ""),
         "current_phase": state.get("current_phase", ""),
@@ -393,6 +421,27 @@ def _recompute_pending(state: Dict[str, Any]) -> None:
     state["progress"]["failed"] = failed
     state["progress"]["needs_intervention"] = needs_intervention
     state["progress"]["pending"] = max(0, total - completed - failed - needs_intervention)
+
+
+def _normalize_todos(value: Any) -> list[dict[str, str]]:
+    if isinstance(value, dict):
+        todos = value.get("todos")
+    else:
+        todos = None
+    if not isinstance(todos, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in todos:
+        if isinstance(item, dict):
+            content = str(item.get("content") or "").strip()
+            status = str(item.get("status") or "pending").strip() or "pending"
+        else:
+            content = str(item or "").strip()
+            status = "pending"
+        if not content:
+            continue
+        rows.append({"content": content, "status": status})
+    return rows
 
 
 def _mark_seen_task(state: Dict[str, Any], task_id: str) -> None:

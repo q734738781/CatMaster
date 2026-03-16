@@ -40,11 +40,6 @@ def test_build_run_search_blob_from_run_dir(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    (run_dir / "reports" / "FINAL_REPORT.md").write_text(
-        "# Final Report\n\nCO adsorption on Fe(111) completed.\n",
-        encoding="utf-8",
-    )
-
     blob = build_run_search_blob(run_dir)
     assert blob.run_id == "run_001"
     assert "Evaluate CO adsorption on Fe(111)" in blob.search_blob_text

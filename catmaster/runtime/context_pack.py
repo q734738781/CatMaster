@@ -48,9 +48,6 @@ def _workspace_policy_summary(role: str, *, files_root_abs: str) -> str:
         '- Do not pass the absolute root directly to filesystem tools.\n'
         "- Absolute paths are fallback-only references; if used for filesystem tools, they must be under project files root.\n"
         "- Never use metadata paths in filesystem function-tool arguments.\n"
-        "- Use search_files / list_directory / directory_tree to discover files.\n"
-        "- Use read_text_file with head/tail for progressive disclosure.\n"
-        "- Use bash for shell commands, content grep, parser invocation, and external binaries.\n"
         f"- Role: {role}"
     )
 

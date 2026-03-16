@@ -14,10 +14,16 @@ def _utc_ts() -> float:
     return time.time()
 
 
-def _message_to_chat(message: Dict[str, Any]) -> Dict[str, str]:
+def _message_to_chat(message: Dict[str, Any]) -> Dict[str, Any]:
     role = str(message.get("role") or "assistant")
     content = str(message.get("content") or "").strip()
-    return {"role": role, "content": content}
+    return {
+        "role": role,
+        "content": content,
+        "kind": str(message.get("kind") or "chat"),
+        "created_at": message.get("created_at"),
+        "source_run_id": str(message.get("source_run_id") or ""),
+    }
 
 
 def _is_conversation_message(message: Dict[str, Any]) -> bool:

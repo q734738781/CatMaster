@@ -31,10 +31,16 @@ aider-chat
 langchain
 langchain-core
 langchain-openai
+langchain-openrouter
 langchain-mcp-adapters
 langchain-community
 langgraph
+deepagents
+langgraph-checkpoint-sqlite>=3.0.3
+aiosqlite
 httpx
+openrouter
+tavily-python
 faiss-cpu
 
 # Utilities

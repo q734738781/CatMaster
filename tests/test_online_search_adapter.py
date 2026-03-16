@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from catmaster.runtime.literature import OnlineSearchAdapter
 
@@ -35,6 +36,64 @@ class _FakeClient:
     def get(self, url: str):
         _ = url
         return self._response
+
+
+class _FakeTavilyClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def search(self, query: str, **kwargs):
+        self.calls.append({"query": query, **kwargs})
+        return {
+            "results": [
+                {
+                    "title": "CO adsorption on Fe surfaces",
+                    "url": "https://example.org/fe-co",
+                    "content": "Representative background summary from a public landing page.",
+                },
+                {
+                    "title": "",
+                    "url": "https://example.org/untitled",
+                    "raw_content": "Fallback raw content should still produce a snippet.",
+                },
+            ]
+        }
+
+
+def test_search_public_web_uses_tavily_results() -> None:
+    adapter = OnlineSearchAdapter(tavily_api_key="test-key")
+    fake_client = _FakeTavilyClient()
+    adapter._tavily_client = fake_client
+
+    result = adapter.search_public_web("CO adsorption Fe surfaces", max_results=4)
+
+    assert fake_client.calls == [
+        {
+            "query": "CO adsorption Fe surfaces",
+            "max_results": 4,
+            "topic": "general",
+            "search_depth": "advanced",
+            "include_raw_content": False,
+            "include_answer": False,
+            "include_images": False,
+            "include_usage": False,
+            "timeout": 30.0,
+        }
+    ]
+    assert [hit.title for hit in result.results] == [
+        "CO adsorption on Fe surfaces",
+        "https://example.org/untitled",
+    ]
+    assert result.results[0].url == "https://example.org/fe-co"
+    assert result.results[1].snippet == "Fallback raw content should still produce a snippet."
+
+
+def test_search_public_web_requires_tavily_key() -> None:
+    adapter = OnlineSearchAdapter(tavily_api_key="")
+
+    assert adapter.public_search_enabled() is False
+    with pytest.raises(RuntimeError, match="TAVILY_API_KEY"):
+        adapter.search_public_web("CO adsorption Fe surfaces")
 
 
 def test_open_public_page_extracts_title_description_and_text(monkeypatch) -> None:
