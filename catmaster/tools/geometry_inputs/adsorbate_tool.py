@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.core import Structure, Molecule
 from pymatgen.io.vasp.inputs import Poscar
@@ -84,9 +84,43 @@ class PlaceAdsorbateInput(BaseModel):
 
     slab_file: str = Field(..., description="Slab structure file (POSCAR/CONTCAR/CIF).")
     adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ). Internal relative geometry is preserved; no automatic reorientation is applied.")
-    site: str = Field("auto", description="Site label like ontop_0|bridge_1|hollow_2 or 'auto' (which use all[0]).")
+    site_label: Optional[str] = Field(
+        None,
+        description=(
+            "Optional ASF site label like ontop_0|bridge_1|hollow_2 or 'auto'. "
+            "These labels are the ones returned by enumerate_adsorption_sites."
+        ),
+    )
+    site: Optional[str] = Field(
+        None,
+        description="Deprecated alias for site_label. Prefer site_label in new calls.",
+    )
+    site_cart_coords: Optional[List[float]] = Field(
+        None,
+        description=(
+            "Optional Cartesian [x, y, z] in Angstrom. If provided, the tool places the adsorbate directly at "
+            "that Cartesian site coordinate. "
+            "This is mutually exclusive with site_label."
+        ),
+    )
     distance: float = Field(2.0, ge=0.0, description="Height above the surface used when enumerating adsorption site coordinates (Å). The molecule is translated so its placement reference point lands on that site coordinate.")
     output_poscar: str = Field("adsorption/adsorbed.vasp", description="Output POSCAR path (workspace-relative).")
+
+    @model_validator(mode="after")
+    def _validate_site_input(self) -> "PlaceAdsorbateInput":
+        if self.site is not None and self.site_label is not None:
+            raise ValueError("Provide only one of site_label or legacy site.")
+        if self.site_label is None and self.site is not None:
+            self.site_label = self.site
+        if self.site_cart_coords is not None and self.site_label is not None:
+            raise ValueError("Provide exactly one of site_label or site_cart_coords.")
+        if self.site_cart_coords is None and self.site_label is None:
+            self.site_label = "auto"
+        if self.site_cart_coords is not None:
+            if len(self.site_cart_coords) != 3:
+                raise ValueError("site_cart_coords must be a 3-element Cartesian [x, y, z] list in Angstrom.")
+            self.site_cart_coords = [float(v) for v in self.site_cart_coords]
+        return self
 
 
 class GenerateBatchAdsorptionStructuresInput(BaseModel):
@@ -151,6 +185,45 @@ def _parse_site(site: str) -> Tuple[str, int]:
     if idx < 0:
         raise ValueError("site index must be >=0")
     return kind, idx
+
+
+def _enumerated_site_rows(ads_sites: Dict[str, Any], kinds: List[str]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for kind in kinds:
+        for i, c in enumerate(ads_sites.get(kind, [])):
+            coord = _to_list3(c)
+            rows.append(
+                {
+                    "label": f"{kind}_{i}",
+                    "kind": kind,
+                    "cart_coords": coord,
+                }
+            )
+    return rows
+
+
+def _choose_site(
+    *,
+    ads_sites: Dict[str, Any],
+    site_label: str,
+    site_cart_coords: Optional[List[float]],
+) -> tuple[str, np.ndarray, str, Optional[List[float]]]:
+    if site_cart_coords is not None:
+        coord = np.array(site_cart_coords, dtype=float).reshape(3)
+        return "", coord, "cart_direct", [float(v) for v in coord.tolist()]
+
+    kind, idx = _parse_site(site_label)
+    if kind == "auto":
+        for pref in ("ontop", "bridge", "hollow"):
+            lst = ads_sites.get(pref, [])
+            if lst:
+                return f"{pref}_0", np.array(lst[0], dtype=float), "auto", None
+        raise RuntimeError("No adsorption sites found.")
+
+    lst = ads_sites.get(kind, [])
+    if idx >= len(lst):
+        raise ValueError(f"Requested {kind}_{idx} but only {len(lst)} {kind} sites available.")
+    return f"{kind}_{idx}", np.array(lst[idx], dtype=float), "label", None
 
 
 def _collect_slab_files(root: Path) -> List[Path]:
@@ -278,7 +351,10 @@ def _write_adsorbate_meta(
     parent_structure_path: Path,
     adsorbate_path: Path,
     tool_name: str,
-    site_label: str,
+    site_label: str | None,
+    site_input_mode: str,
+    site_cart_coords_input: List[float] | None,
+    site_cart_coords: List[float],
     distance: float,
     ads_indices_added: List[int],
     ads_indices: List[int],
@@ -301,6 +377,9 @@ def _write_adsorbate_meta(
             "output_structure_rel": workspace_relpath(output_structure_path),
             "adsorbate_file_rel": workspace_relpath(adsorbate_path),
             "site_label": site_label,
+            "site_input_mode": site_input_mode,
+            "site_cart_coords_input": [float(v) for v in site_cart_coords_input] if site_cart_coords_input is not None else None,
+            "site_cart_coords": [float(v) for v in site_cart_coords],
             "distance": float(distance),
             "ads_indices_added": _normalize_indices(ads_indices_added),
             "ads_indices": _normalize_indices(ads_indices),
@@ -353,10 +432,7 @@ def enumerate_adsorption_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, 
         ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
 
         kinds = ["ontop", "bridge", "hollow"] if params.mode == "all" else [params.mode]
-        site_rows: List[Dict[str, Any]] = []
-        for kind in kinds:
-            for i, c in enumerate(ads_sites.get(kind, [])):
-                site_rows.append({"label": f"{kind}_{i}", "kind": kind, "cart_coords": _to_list3(c)})
+        site_rows = _enumerated_site_rows(ads_sites, kinds)
 
         total_found = len(site_rows)
 
@@ -425,27 +501,11 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         asf = AdsorbateSiteFinder(slab)
         ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
 
-        kind, idx = _parse_site(params.site)
-        if kind == "auto":
-            chosen_kind = None
-            chosen_coord = None
-            for pref in ("ontop", "bridge", "hollow"):
-                lst = ads_sites.get(pref, [])
-                if lst:
-                    chosen_kind = pref
-                    chosen_coord = lst[0]
-                    idx = 0
-                    break
-            if chosen_coord is None:
-                raise RuntimeError("No adsorption sites found.")
-            site_label = f"{chosen_kind}_{idx}"
-            site_coord = np.array(chosen_coord, dtype=float)
-        else:
-            lst = ads_sites.get(kind, [])
-            if idx >= len(lst):
-                raise ValueError(f"Requested {kind}_{idx} but only {len(lst)} {kind} sites available.")
-            site_label = f"{kind}_{idx}"
-            site_coord = np.array(lst[idx], dtype=float)
+        site_label, site_coord, selection_mode, requested_site_cart_coords = _choose_site(
+            ads_sites=ads_sites,
+            site_label=str(params.site_label),
+            site_cart_coords=params.site_cart_coords,
+        )
 
         ads_struct = asf.add_adsorbate(mol, site_coord, translate=True, reorient=False)
 
@@ -473,6 +533,9 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             adsorbate_path=ads_path,
             tool_name="place_adsorbate",
             site_label=site_label,
+            site_input_mode=selection_mode,
+            site_cart_coords_input=requested_site_cart_coords,
+            site_cart_coords=_to_list3(site_coord),
             distance=float(params.distance),
             ads_indices_added=ads_indices_added,
             ads_indices=ads_indices,
@@ -496,7 +559,13 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "slab_file_rel": workspace_relpath(slab_path),
             "adsorbate_file_rel": workspace_relpath(ads_path),
             "output_poscar_rel": workspace_relpath(out_path),
-            "site": {"label": site_label, "cart_coords": _to_list3(site_coord)},
+            "site": {
+                "label": site_label or None,
+                "cart_coords": _to_list3(site_coord),
+                "selection_mode": selection_mode,
+                "requested_site_cart_coords": requested_site_cart_coords,
+                "label_source": "enumerate_adsorption_sites" if site_label else None,
+            },
             "geom": {
                 "adsorbate_com": ads_com,
                 "placement_reference": "center_of_mass_of_lowest_z_atoms",
@@ -514,7 +583,7 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         }
         content = (
             "place_adsorbate completed.\n"
-            f"site={site_label} output_poscar_rel={data['output_poscar_rel']}\n"
+            f"site_label={site_label or 'none'} selection_mode={selection_mode} output_poscar_rel={data['output_poscar_rel']}\n"
             "placement_reference=center_of_mass_of_lowest_z_atoms reoriented=False\n"
             f"ads_count_added={data['ads_count_added']} ads_count_total={data['ads_count_total']}\n"
             f"metadata_rel={data['metadata_rel']} ads_indices_json_rel={data['ads_indices_json_rel']}"
@@ -626,6 +695,9 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, 
                             adsorbate_path=ads_path,
                             tool_name="generate_batch_adsorption_structures",
                             site_label=site_label,
+                            site_input_mode="label",
+                            site_cart_coords_input=None,
+                            site_cart_coords=_to_list3(coord),
                             distance=float(params.distance),
                             ads_indices_added=ads_indices_added,
                             ads_indices=ads_indices,

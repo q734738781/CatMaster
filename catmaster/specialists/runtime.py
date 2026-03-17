@@ -58,6 +58,7 @@ _EXPERIMENT_TOOL_ALLOWLIST = {
     "build_slab",
     "fix_atoms_by_layers",
     "fix_atoms_by_height",
+    "fix_atoms_by_indices",
     "supercell",
     "enumerate_adsorption_sites",
     "place_adsorbate",
@@ -70,6 +71,8 @@ _EXPERIMENT_TOOL_ALLOWLIST = {
     "render_structure_views",
     "analyze_images",
     "generate_schematic_figure",
+    "vaspkit_adsorbate_thermo_correction",
+    "vaspkit_gas_thermo_correction",
 }
 _WRITING_TOOL_ALLOWLIST = {
     "analyze_images",
@@ -83,12 +86,17 @@ _RESEARCH_TOOL_ALLOWLIST = {
     "mp_download_structure",
 }
 _TASK_WORKER_TOOL_ALLOWLIST = set(_EXPERIMENT_TOOL_ALLOWLIST)
-_LITREVIEW_AGENT_TOOL_ALLOWLIST = {
+_METADATA_AGENT_TOOL_ALLOWLIST = {
     "search_openalex",
     "search_semantic_scholar",
     "get_openalex_record",
     "get_semantic_scholar_record",
     "recommend_semantic_scholar",
+}
+_LITREVIEW_AGENT_TOOL_ALLOWLIST = {
+    "search_public_web",
+    "open_public_page",
+    "find_in_page",
 }
 _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES = {"internet_search"}
 _WRITING_WORKER_TOOL_ALLOWLIST = {
@@ -96,7 +104,7 @@ _WRITING_WORKER_TOOL_ALLOWLIST = {
     "analyze_images",
     "render_structure_views",
     "generate_schematic_figure",
-    "agentic_compile_tex",
+    "compile_text",
 }
 _LITREVIEW_COMPACT_TRIGGER_TOKENS = 65_000
 _LITREVIEW_COMPACT_KEEP_TOKENS = 6_500
@@ -109,6 +117,73 @@ class _InternetSearchInput(BaseModel):
         "general",
         description="Tavily search topic. Use `general` for scientific background lookup.",
     )
+    include_raw_content: bool = Field(
+        False,
+        description="Whether Tavily should include raw page content excerpts in the response.",
+    )
+
+
+def _compact_search_text(value: Any, *, max_chars: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 1)].rstrip() + "…"
+
+
+def _format_lightweight_internet_search_content(
+    data: dict[str, Any],
+    *,
+    max_results: int = 5,
+) -> str:
+    status = str(data.get("status") or "").strip().lower()
+    if status == "error":
+        query = _compact_search_text(data.get("query") or "", max_chars=160)
+        message = _compact_search_text(data.get("message") or "unknown error", max_chars=280)
+        source = _compact_search_text(data.get("source") or "search backend", max_chars=40)
+        return f"internet_search failed for query={query!r} via {source}: {message}"
+
+    query = _compact_search_text(data.get("query") or "", max_chars=200)
+    topic = _compact_search_text(data.get("topic") or "general", max_chars=20)
+    answer = _compact_search_text(data.get("answer") or "", max_chars=360)
+    follow_up_raw = data.get("follow_up_questions") or []
+    follow_up = [
+        _compact_search_text(item, max_chars=140)
+        for item in follow_up_raw
+        if str(item or "").strip()
+    ][:3]
+    results_raw = data.get("results") or []
+    result_lines: list[str] = []
+    raw_content_present = False
+    for idx, item in enumerate(results_raw[: max(1, int(max_results or 1))], start=1):
+        if not isinstance(item, dict):
+            continue
+        title = _compact_search_text(item.get("title") or "Untitled result", max_chars=120)
+        url = _compact_search_text(item.get("url") or "", max_chars=220)
+        snippet = _compact_search_text(item.get("content") or "", max_chars=220)
+        if not snippet:
+            snippet = "(no summary provided)"
+        if str(item.get("raw_content") or "").strip():
+            raw_content_present = True
+        result_lines.append(f"- [{idx}] {title} | {url} | {snippet}")
+
+    lines = [
+        f"Query: {query or '(none)'}",
+        f"Topic: {topic}",
+        f"Results returned: {len(results_raw)}",
+    ]
+    if answer:
+        lines.append(f"Answer summary: {answer}")
+    if follow_up:
+        lines.append("Follow-up questions:")
+        lines.extend(f"- {item}" for item in follow_up)
+    if result_lines:
+        lines.append("Top results:")
+        lines.extend(result_lines)
+    else:
+        lines.append("Top results: (none)")
+    if raw_content_present:
+        lines.append("Note: raw page content was returned by Tavily but omitted from tool content.")
+    return "\n".join(lines)
 
 
 class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
@@ -532,11 +607,13 @@ class SpecialistRunner:
         create_deep_agent = self._load_create_deep_agent()
         tools = self._specialist_tools(entrypoint)
         skills = self._virtual_skill_paths(entrypoint)
+        agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
+        model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
         kwargs: dict[str, Any] = {
             "model": build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])),
             "tools": tools,
             "system_prompt": self._system_prompt(entrypoint, thread_id=thread_id),
-            "middleware": self._build_default_middleware(),
+            "middleware": self._build_default_middleware(model_call_run_limit=model_call_run_limit),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
             "backend": runtime["backend"],
@@ -580,14 +657,7 @@ class SpecialistRunner:
                 skills=self._virtual_skill_paths("writing"),
                 middleware=subagent_middleware,
             ),
-            SubAgent(
-                name="litreview_agent",
-                description="Retrieve scholarly literature grounding, benchmark conventions, and representative citations when deeper review is needed.",
-                system_prompt=self._litreview_agent_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-                tools=self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
-                middleware=self._litreview_middleware(runtime=runtime),
-            ),
+            self._compiled_litreview_subagent(runtime=runtime),
         ]
 
     def _experiment_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
@@ -607,7 +677,7 @@ class SpecialistRunner:
                 name="literature_agent",
                 description="Run lightweight Tavily-backed public-web search for quick background grounding and literature orientation.",
                 system_prompt=self._lightweight_literature_agent_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("summary")),
+                model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
                 tools=self._lightweight_literature_tools(),
                 middleware=subagent_middleware,
             ),
@@ -629,12 +699,14 @@ class SpecialistRunner:
         ]
 
     def _subagent_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
+        agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
+        model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
         return [
-            *self._build_default_middleware(),
+            *self._build_default_middleware(model_call_run_limit=model_call_run_limit),
             self._new_memory_middleware(backend=runtime["backend"]),
         ]
 
-    def _litreview_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
+    def _metadata_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
         middleware = self._subagent_middleware(runtime=runtime)
         try:
             SummarizationMiddleware = self._load_summarization_middleware()
@@ -650,6 +722,47 @@ class SpecialistRunner:
             return middleware
         middleware.extend([summarizer, create_summarization_tool_middleware(summarizer)])
         return middleware
+
+    def _compiled_litreview_subagent(self, *, runtime: dict[str, Any]) -> Any:
+        CompiledSubAgent = self._load_compiled_subagent()
+        return CompiledSubAgent(
+            name="litreview_agent",
+            description="Orchestrate literature review by delegating broad public-web review to `literature_agent` and exact DOI/venue/author resolution to `metadata_agent`.",
+            runnable=self._build_litreview_agent(runtime=runtime),
+        )
+
+    def _build_litreview_agent(self, *, runtime: dict[str, Any]) -> Any:
+        create_deep_agent = self._load_create_deep_agent()
+        SubAgent = self._load_subagent()
+        return create_deep_agent(
+            model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
+            tools=[],
+            system_prompt=self._litreview_wrapper_prompt(),
+            middleware=self._subagent_middleware(runtime=runtime),
+            checkpointer=runtime["checkpointer"],
+            store=runtime["store"],
+            backend=runtime["backend"],
+            name="litreview_agent",
+            memory=self._memory_sources(),
+            subagents=[
+                SubAgent(
+                    name="literature_agent",
+                    description="Use Tavily-backed public web search and page reading for broader literature review, background grounding, and public-source synthesis.",
+                    system_prompt=self._litreview_agent_prompt(),
+                    model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
+                    tools=self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
+                    middleware=self._subagent_middleware(runtime=runtime),
+                ),
+                SubAgent(
+                    name="metadata_agent",
+                    description="Resolve exact paper metadata, DOI/year/venue/authors, and citation details from scholarly databases.",
+                    system_prompt=self._metadata_agent_prompt(),
+                    model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
+                    tools=self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST),
+                    middleware=self._metadata_middleware(runtime=runtime),
+                ),
+            ],
+        )
 
     @asynccontextmanager
     async def _open_agent_runtime(self, *, files_root: Path):
@@ -745,30 +858,41 @@ class SpecialistRunner:
             query: str,
             max_results: int = 5,
             topic: Literal["general", "news", "finance"] = "general",
+            include_raw_content: bool = False,
         ) -> tuple[str, dict[str, Any]]:
             data: dict[str, Any]
             try:
-                from catmaster.runtime.literature.online_search_adapter import OnlineSearchAdapter
+                import os
+                from tavily import TavilyClient
 
-                adapter = OnlineSearchAdapter(topic=topic)
-                result = adapter.search_public_web(query, max_results=max_results)
-                data = {
-                    "status": "ok",
-                    "source": "tavily",
-                    "query": query,
-                    "topic": topic,
-                    "count": len(result.results),
-                    "results": [hit.model_dump() for hit in result.results],
-                }
+                api_key = str(os.environ.get("TAVILY_API_KEY", "")).strip()
+                if not api_key:
+                    raise RuntimeError("TAVILY_API_KEY is required for public web search.")
+                tavily_client = TavilyClient(api_key=api_key)
+                response = tavily_client.search(
+                    query,
+                    max_results=max_results,
+                    include_raw_content=include_raw_content,
+                    topic=topic,
+                )
+                payload = response if isinstance(response, dict) else {"result": response}
+                if isinstance(payload, dict):
+                    payload.setdefault("query", query)
+                    payload.setdefault("topic", topic)
+                data = payload
             except Exception as exc:
                 data = {
                     "status": "error",
                     "source": "tavily",
                     "query": query,
                     "topic": topic,
+                    "include_raw_content": bool(include_raw_content),
                     "message": str(exc),
                 }
-            return json.dumps(data, ensure_ascii=False), {
+            return _format_lightweight_internet_search_content(
+                data,
+                max_results=max_results,
+            ), {
                 "tool_name": "internet_search",
                 "data": data,
             }
@@ -940,12 +1064,13 @@ class SpecialistRunner:
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
                 "You may delegate only to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.\n"
-                "Use `litreview_agent` whenever external scholarly grounding, benchmark conventions, or representative citations are needed.\n"
+                "Use `litreview_agent` for all literature-review work. It can internally delegate to `literature_agent` for Tavily-backed public-web review and to `metadata_agent` for exact DOI/year/venue/authors/citation metadata.\n"
                 "If the user requests a report, manuscript, note, LaTeX document, or other substantial written artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
                 f"{cls._writing_handoff_policy()}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
                 f"{cls._memory_write_policy()}\n"
+                f"{cls._workspace_path_discipline()}\n"
                 f"{cls._soft_reporting_contract()}"
             )
         if entrypoint == "writing":
@@ -961,6 +1086,7 @@ class SpecialistRunner:
                 "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
                 f"{cls._writing_handoff_policy()}\n"
                 f"{cls._memory_write_policy()}\n"
+                f"{cls._workspace_path_discipline()}\n"
                 f"{cls._soft_reporting_contract()}"
             )
         return (
@@ -968,6 +1094,7 @@ class SpecialistRunner:
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
             "Use `task_worker_agent` for context-heavy isolated execution subtasks, and `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
             f"Do not orchestrate other specialists. {cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
         )
 
@@ -990,14 +1117,24 @@ class SpecialistRunner:
         )
 
     @staticmethod
+    def _workspace_path_discipline() -> str:
+        return (
+            "Workspace path discipline: treat the project files root as your working directory. "
+            "Prefer workspace-relative paths. Treat `/` only as the workspace virtual root, not as a host filesystem root. "
+            "If you see a host absolute path like `/home/...`, convert it back to a workspace-relative path before using it, "
+            "and never recreate host absolute path segments inside the workspace."
+        )
+
+    @staticmethod
     def _soft_reporting_contract() -> str:
         return (
             "For multi-step work, use `write_todos` early to maintain a concise checklist and update it when the plan changes. "
             "When you finish, reply with a concise markdown report containing only three sections in this order: "
             "`Summary`, `Facts`, and `Files`. "
-            "`Summary` should be a short user-facing wrap-up. "
+            "`Summary` must directly answer the user's actual question with the key result, key numbers/conditions when available, and the main conclusion; do not say only that a report was written. "
             "`Facts` should be a flat bullet list of the few most important archival facts. "
-            "`Files` should be a flat bullet list of relevant output paths, or `(none reported)` if there are none."
+            "`Files` should be a flat bullet list of relevant workspace-relative output paths with enough directory context to be unambiguous; do not return bare filenames, and use `(none reported)` if there are none. "
+            "If you are correcting a previously wrong result after the user pointed out an error, replace or delete stale incorrect reports/notes when feasible and do not leave superseded wrong paths in `Files`."
         )
 
     @classmethod
@@ -1020,33 +1157,81 @@ class SpecialistRunner:
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform literature search; that belongs to literature_agent.\n"
             f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
         )
 
     @classmethod
     def _litreview_agent_prompt(cls) -> str:
         return (
-            "You are litreview_agent.\n"
-            "Use the scholarly literature tools directly to gather external literature grounding, benchmark conventions, citations, or background evidence.\n"
-            "Prefer OpenAlex and Semantic Scholar for exact metadata, DOI/year/venue/authors/citation details, and seed-based recommendation expansion.\n"
-            "Stay focused on representative, decision-relevant papers instead of broad browsing.\n"
-            "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, citation lists, or evidence summaries.\n"
+            "You are literature_agent.\n"
+            "Use Tavily-backed public web search and public-page reading to gather external literature grounding, benchmark conventions, broader background evidence, and public-source synthesis.\n"
+            "You are the broad-review and orientation layer, not the exact scholarly metadata resolver. If exact DOI/year/venue/authors/citation details are missing or uncertain, ResearchSpecialist should delegate that part to `metadata_agent`.\n"
+            "Stay focused on representative, decision-relevant sources instead of broad browsing.\n"
+            "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, evidence summaries, source lists, or background briefs.\n"
             "Return concise findings with clear separation between retrieved facts and inference.\n"
             "Do not perform computational execution.\n"
             f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            "When findings are likely to matter later for writing, save a reusable markdown note under `/notes/literature/` or another stable workspace path and report that path.\n"
+            "Return a polished markdown answer with exactly these sections in order: `Answer`, `Public Evidence`, `Interpretation`, and `Files`.\n"
+            "`Answer` should synthesize the best available public evidence in a few compact paragraphs.\n"
+            "`Public Evidence` should be a flat bullet list with source titles, concrete factual takeaways, and source URLs.\n"
+            "`Interpretation` should separate direct evidence from your inference, identify uncertainty, and say when metadata verification is still needed from `metadata_agent`.\n"
+            "`Files` should list any saved reusable note paths, or `(none reported)` if nothing was persisted."
+        )
+
+    @classmethod
+    def _litreview_wrapper_prompt(cls) -> str:
+        return (
+            "You are litreview_agent.\n"
+            "You are the top-level literature-review orchestrator used by ResearchSpecialist.\n"
+            "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`.\n"
+            "Delegate exact DOI/year/venue/authors/citation verification and scholarly record disambiguation to `metadata_agent`.\n"
+            "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
+            "Keep the final answer compact and decision-relevant. If the result is likely to matter later for writing, save a reusable note under `/notes/literature/` or another stable workspace path.\n"
+            "Do not perform computational execution.\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
+        )
+
+    @classmethod
+    def _metadata_agent_prompt(cls) -> str:
+        return (
+            "You are metadata_agent.\n"
+            "Use only the scholarly metadata tools to resolve exact paper matches, DOI/year/venue/authors/citation details, recommendation expansion, and citation-grade metadata.\n"
+            "You are not the broad-review layer. Do not do public-web orientation here.\n"
+            "Prefer precision over breadth. When the query is ambiguous, narrow the candidate set and explicitly state uncertainty instead of guessing.\n"
+            "You may write concise reusable citation notes or metadata tables into the workspace when helpful.\n"
+            "Do not perform computational execution.\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            "Return a polished markdown answer with exactly these sections in order: `Metadata Answer`, `Candidate Records`, `Gaps`, and `Files`.\n"
+            "`Metadata Answer` should directly state the best exact matches or the best disambiguation you could establish.\n"
+            "`Candidate Records` should be a flat bullet list with title, year, venue, DOI/identifier, and why each record is relevant.\n"
+            "`Gaps` should explain any unresolved ambiguity or missing metadata.\n"
+            "`Files` should list any saved reusable metadata-note paths, or `(none reported)` if nothing was persisted."
         )
 
     @classmethod
     def _lightweight_literature_agent_prompt(cls) -> str:
         return (
-            "You are literature_agent.\n"
-            "Use the lightweight `internet_search` tool for quick public-web orientation when ExperimentSpecialist needs external background facts or literature hints.\n"
-            "Keep search narrow, prefer concise result sets, cite source URLs, and separate retrieved facts from your inference.\n"
-            "Do not attempt full citation curation or long-form literature review here.\n"
+            "You are literature_agent for ExperimentSpecialist.\n"
+            "Use the lightweight `internet_search` tool for focused external web research when ExperimentSpecialist needs quick literature hints, benchmark conventions, or general public-web answers.\n"
+            "Treat Tavily results as preprocessed web evidence. Prefer a few narrow searches over one vague broad search.\n"
+            "This agent is not limited to academic literature: it may answer with high-quality web evidence when the user asks for broader background, methods, safety notes, public documentation, or benchmark references.\n"
+            "Use the standard DeepAgent workspace capabilities when helpful to save reusable notes or evidence summaries into the workspace.\n"
+            "When findings are likely to matter later for writing or reporting, save a concise reusable markdown note under `/notes/literature/` or another stable workspace path, and include that path in the final `Files` section.\n"
+            "Only write durable distilled facts into persistent memory when they are stable and likely to be reused across runs.\n"
             "Do not perform computational execution.\n"
             f"{cls._memory_write_policy()}\n"
-            f"{cls._soft_reporting_contract()}"
+            f"{cls._workspace_path_discipline()}\n"
+            "Return a polished markdown answer with exactly these sections in order: `Answer`, `Web Evidence`, `Interpretation`, and `Files`.\n"
+            "`Answer` should directly answer the request in a few compact paragraphs.\n"
+            "`Web Evidence` should be a flat bullet list with source titles, concrete factual takeaways, and source URLs.\n"
+            "`Interpretation` should separate direct evidence from your inference, note uncertainty, and explain why the evidence matters for the experiment context.\n"
+            "`Files` should list any saved reusable note paths, or `(none reported)` if nothing was persisted."
         )
 
     @staticmethod
@@ -1110,10 +1295,11 @@ class SpecialistRunner:
             "Draft, revise, or polish bounded writing subtasks from existing workspace evidence only.\n"
             "Do not reopen broad research loops or re-read large unrelated workspace trees on your own.\n"
             "Return concise manuscript-ready output summaries and any output artifact paths.\n"
-            "If the output is a TeX bundle, you must run `agentic_compile_tex` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
+            "If the output is a TeX bundle, you must run `compile_text` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
             f"{cls._writing_handoff_policy()}\n"
             f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
         )
 
@@ -1146,14 +1332,15 @@ class SpecialistRunner:
         return "\n\n".join(chunks)
 
     @staticmethod
-    def _build_default_middleware() -> list[Any]:
+    def _build_default_middleware(*, model_call_run_limit: int = 120) -> list[Any]:
         middleware: list[Any] = []
         try:
             from langchain.agents.middleware.model_call_limit import ModelCallLimitMiddleware
         except Exception:
             pass
         else:
-            middleware.append(ModelCallLimitMiddleware(run_limit=40))
+            if int(model_call_run_limit) > 0:
+                middleware.append(ModelCallLimitMiddleware(run_limit=int(model_call_run_limit)))
         try:
             from langchain.agents.middleware import wrap_tool_call
         except Exception:
@@ -1396,7 +1583,7 @@ class SpecialistRunner:
             return normalized_files, facts
 
         updated_facts = list(facts)
-        compile_tool = self.registry.get_tool_function("agentic_compile_tex")
+        compile_tool = self.registry.get_tool_function("compile_text")
         for tex_path in tex_paths:
             has_pdf = any(self._tex_bundle_matches(tex_path, item, suffix=".pdf") for item in normalized_files)
             has_bib = any(self._tex_bundle_matches(tex_path, item, suffix=".bib") for item in normalized_files)
@@ -1407,7 +1594,7 @@ class SpecialistRunner:
                     _content, artifact = compile_tool({"source_path": tex_path})
                 except Exception as exc:
                     _content, artifact = self._nonfatal_tool_error_result(
-                        "agentic_compile_tex",
+                        "compile_text",
                         exc,
                         {"source_path": tex_path},
                     )
@@ -1555,6 +1742,14 @@ class SpecialistRunner:
         except Exception as exc:
             raise RuntimeError("deepagents subagent support is required.") from exc
         return SubAgent
+
+    @staticmethod
+    def _load_compiled_subagent():
+        try:
+            from deepagents.middleware.subagents import CompiledSubAgent
+        except Exception as exc:
+            raise RuntimeError("deepagents compiled subagent support is required.") from exc
+        return CompiledSubAgent
 
     @staticmethod
     def _load_memory_middleware():

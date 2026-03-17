@@ -28,15 +28,17 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 
 ### 1. Enumerate before placing
 - `enumerate_adsorption_sites` writes a JSON site list and returns `default_site_label`.
+- Each enumerated site row includes Cartesian `cart_coords`; the `ontop_0` / `bridge_1` / `hollow_2` labels used by `place_adsorbate` come from this enumeration.
 - In `mode=all`, the candidate families are `ontop`, `bridge`, and `hollow`.
 - For single-structure placement, do not guess the site label if the JSON has already been generated.
 
 ### 2. Place one structure intentionally
-- `place_adsorbate` accepts explicit labels like `ontop_0`; `site=auto` prefers the first available `ontop`, then `bridge`, then `hollow`.
+- `place_adsorbate` accepts `site_label` values like `ontop_0`; `site_label=auto` prefers the first available `ontop`, then `bridge`, then `hollow`.
+- `place_adsorbate` also accepts `site_cart_coords=[x, y, z]` in Cartesian Angstrom for direct placement. `site_label` and `site_cart_coords` are mutually exclusive.
 - XYZ/internal molecular geometry is preserved during placement; the tool does not automatically reorient the molecule.
 - The placement point is the adsorption-site coordinate returned by ASF at the requested `distance`; the molecule is translated so the center of mass of its lowest-z atom layer lands on that site coordinate.
 - The tool preserves slab selective dynamics and marks newly added adsorbate atoms as movable.
-- Returned metadata includes `ads_indices_added`, merged `ads_indices`, `metadata_rel`, and `ads_indices_json_rel`.
+- Returned metadata includes `ads_indices_added`, merged `ads_indices`, `metadata_rel`, `ads_indices_json_rel`, and the chosen site coordinates.
 
 ### 3. Batch only the candidates you want to screen
 - `generate_batch_adsorption_structures` supports either `slab_file` or `slab_dir`, not both.

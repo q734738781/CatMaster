@@ -131,6 +131,13 @@ def test_resolve_workspace_path_accepts_deepagent_virtual_root(tmp_path) -> None
         assert resolve_workspace_path("/nested") == (files_root / "nested").resolve()
 
 
+def test_resolve_workspace_path_rejects_host_absolute_path(tmp_path) -> None:
+    with workspace_scope(tmp_path):
+        host_abs = str((tmp_path / "outside" / "report.md").resolve())
+        with pytest.raises(ValueError, match="Absolute host path outside project files root"):
+            resolve_workspace_path(host_abs)
+
+
 def test_bash_exec_accepts_virtual_root_cwd(tmp_path) -> None:
     with workspace_scope(tmp_path):
         files_root = workspace_root(tmp_path)

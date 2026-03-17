@@ -51,7 +51,7 @@ def test_context_pack_task_runner_preserves_non_goal_memory_excerpt(tmp_path) ->
     memory_excerpt = str(pack.get("memory_index_excerpt") or "")
     assert "Facts / decisions: MEMORY/topics/FACTS.md" in memory_excerpt
     workspace_policy = str(pack.get("workspace_policy") or "")
-    assert "Project files root (reference only):" in workspace_policy
+    assert "Project files root / working-directory pwd hint" in workspace_policy
     assert "Workspace absolute root" not in workspace_policy
 
 

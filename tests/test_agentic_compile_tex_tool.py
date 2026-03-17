@@ -8,7 +8,7 @@ from catmaster.tools.base import workspace_scope
 compile_mod = importlib.import_module("catmaster.tools.analysis.agentic_compile_tex")
 
 
-def test_agentic_compile_tex_returns_log_summary_without_rewriting(monkeypatch, tmp_path: Path) -> None:
+def test_compile_text_returns_log_summary_without_rewriting(monkeypatch, tmp_path: Path) -> None:
     manuscript_dir = tmp_path / "files" / "manuscript"
     sections_dir = manuscript_dir / "sections"
     sections_dir.mkdir(parents=True, exist_ok=True)
@@ -31,7 +31,7 @@ def test_agentic_compile_tex_returns_log_summary_without_rewriting(monkeypatch, 
     )
 
     with workspace_scope(tmp_path):
-        content, artifact = compile_mod.agentic_compile_tex({"source_path": "manuscript/MANUSCRIPT.tex"})
+        content, artifact = compile_mod.compile_text({"source_path": "manuscript/MANUSCRIPT.tex"})
 
     assert "Compiled cleanly: no" in content
     assert artifact["data"]["compiled_ok"] is False
@@ -42,7 +42,7 @@ def test_agentic_compile_tex_returns_log_summary_without_rewriting(monkeypatch, 
     assert sec_tex.read_text(encoding="utf-8") == "\\section{Results\nBody.\n"
 
 
-def test_agentic_compile_tex_runs_bibtex_and_reports_artifacts(monkeypatch, tmp_path: Path) -> None:
+def test_compile_text_runs_bibtex_and_reports_artifacts(monkeypatch, tmp_path: Path) -> None:
     manuscript_dir = tmp_path / "files" / "manuscript"
     manuscript_dir.mkdir(parents=True, exist_ok=True)
     root_tex = manuscript_dir / "MANUSCRIPT.tex"
@@ -77,7 +77,7 @@ def test_agentic_compile_tex_runs_bibtex_and_reports_artifacts(monkeypatch, tmp_
     monkeypatch.setattr(compile_mod.subprocess, "run", _fake_run)
 
     with workspace_scope(tmp_path):
-        content, artifact = compile_mod.agentic_compile_tex({"source_path": "manuscript/MANUSCRIPT.tex"})
+        content, artifact = compile_mod.compile_text({"source_path": "manuscript/MANUSCRIPT.tex"})
 
     assert "Compiler used: pdflatex+bibtex" in content
     assert artifact["data"]["compiled_ok"] is True
@@ -93,7 +93,7 @@ def test_agentic_compile_tex_runs_bibtex_and_reports_artifacts(monkeypatch, tmp_
     ]
 
 
-def test_agentic_compile_tex_flags_inline_bibliography(monkeypatch, tmp_path: Path) -> None:
+def test_compile_text_flags_inline_bibliography(monkeypatch, tmp_path: Path) -> None:
     manuscript_dir = tmp_path / "files" / "manuscript"
     manuscript_dir.mkdir(parents=True, exist_ok=True)
     root_tex = manuscript_dir / "MANUSCRIPT.tex"
@@ -118,7 +118,7 @@ def test_agentic_compile_tex_flags_inline_bibliography(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(compile_mod.subprocess, "run", lambda *_args, **_kwargs: _Proc(0))
 
     with workspace_scope(tmp_path):
-        _content, artifact = compile_mod.agentic_compile_tex({"source_path": "manuscript/MANUSCRIPT.tex"})
+        _content, artifact = compile_mod.compile_text({"source_path": "manuscript/MANUSCRIPT.tex"})
 
     assert artifact["data"]["compiled_ok"] is False
     assert artifact["data"]["bib_paths"] == []

@@ -19,7 +19,7 @@ class _Registry:
         _ = kwargs
         return [
             _Tool("apply_aider_edits"),
-            _Tool("agentic_compile_tex"),
+            _Tool("compile_text"),
             _Tool("polish_academic_prose"),
             _Tool("run_literature_research"),
         ]
@@ -74,7 +74,7 @@ async def test_write_director_uses_local_tools_only_and_excludes_aider(
     )
 
     assert result["status"] == "done"
-    assert "agentic_compile_tex" in captured["write_director"]
+    assert "compile_text" in captured["write_director"]
     assert "polish_academic_prose" in captured["write_director"]
     assert "apply_aider_edits" not in captured["write_director"]
     assert "polish_academic_prose" not in captured["section_writer"]
@@ -125,4 +125,4 @@ async def test_markdown_writing_request_does_not_expose_compile_tool(
     )
 
     assert result["status"] == "done"
-    assert "agentic_compile_tex" not in captured["write_director"]
+    assert "compile_text" not in captured["write_director"]

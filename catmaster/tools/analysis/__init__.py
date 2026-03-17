@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from catmaster.tools.analysis.agentic_compile_tex import AgenticCompileTexInput, agentic_compile_tex
+from catmaster.tools.analysis.agentic_compile_tex import (
+    AgenticCompileTexInput,
+    CompileTextInput,
+    agentic_compile_tex,
+    compile_text,
+)
 from catmaster.tools.analysis.analyze_images import AnalyzeImagesInput, analyze_images
 from catmaster.tools.analysis.generate_schematic_figure import (
     GenerateSchematicFigureInput,
@@ -11,8 +16,16 @@ from catmaster.tools.analysis.polish_academic_prose import (
     polish_academic_prose,
 )
 from catmaster.tools.analysis.render_structure_views import RenderStructureViewsInput, render_structure_views
+from catmaster.tools.analysis.vaspkit_thermo import (
+    VaspkitAdsorbateThermoCorrectionInput,
+    VaspkitGasThermoCorrectionInput,
+    vaspkit_adsorbate_thermo_correction,
+    vaspkit_gas_thermo_correction,
+)
 
 __all__ = [
+    "CompileTextInput",
+    "compile_text",
     "AgenticCompileTexInput",
     "agentic_compile_tex",
     "AnalyzeImagesInput",
@@ -23,4 +36,8 @@ __all__ = [
     "polish_academic_prose",
     "RenderStructureViewsInput",
     "render_structure_views",
+    "VaspkitAdsorbateThermoCorrectionInput",
+    "VaspkitGasThermoCorrectionInput",
+    "vaspkit_adsorbate_thermo_correction",
+    "vaspkit_gas_thermo_correction",
 ]

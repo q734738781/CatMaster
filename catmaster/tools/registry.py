@@ -35,6 +35,7 @@ class ToolRegistry:
             build_slab,
             fix_atoms_by_layers,
             fix_atoms_by_height,
+            fix_atoms_by_indices,
             supercell,
             enumerate_adsorption_sites,
             place_adsorbate,
@@ -49,6 +50,7 @@ class ToolRegistry:
             SlabBuildInput,
             FixAtomsByLayersInput,
             FixAtomsByHeightInput,
+            FixAtomsByIndicesInput,
             SupercellInput,
             EnumerateAdsorptionSitesInput,
             PlaceAdsorbateInput,
@@ -61,16 +63,20 @@ class ToolRegistry:
         from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, vasp_execute_batch
         from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, VaspExecuteBatchInput
         from catmaster.tools.analysis import (
-            agentic_compile_tex,
+            compile_text,
             analyze_images,
             generate_schematic_figure,
             polish_academic_prose,
             render_structure_views,
-            AgenticCompileTexInput,
+            vaspkit_adsorbate_thermo_correction,
+            vaspkit_gas_thermo_correction,
+            CompileTextInput,
             AnalyzeImagesInput,
             GenerateSchematicFigureInput,
             PolishAcademicProseInput,
             RenderStructureViewsInput,
+            VaspkitAdsorbateThermoCorrectionInput,
+            VaspkitGasThermoCorrectionInput,
         )
         from catmaster.runtime.literature import (
             FindInPageInput,
@@ -118,6 +124,7 @@ class ToolRegistry:
         self.register_tool("build_slab", build_slab, SlabBuildInput)
         self.register_tool("fix_atoms_by_layers", fix_atoms_by_layers, FixAtomsByLayersInput)
         self.register_tool("fix_atoms_by_height", fix_atoms_by_height, FixAtomsByHeightInput)
+        self.register_tool("fix_atoms_by_indices", fix_atoms_by_indices, FixAtomsByIndicesInput)
         self.register_tool("supercell", supercell, SupercellInput)
         self.register_tool("enumerate_adsorption_sites", enumerate_adsorption_sites, EnumerateAdsorptionSitesInput)
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
@@ -130,8 +137,19 @@ class ToolRegistry:
         self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
         self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
         self.register_tool("generate_schematic_figure", generate_schematic_figure, GenerateSchematicFigureInput)
-        self.register_tool("agentic_compile_tex", agentic_compile_tex, AgenticCompileTexInput)
+        self.register_tool("compile_text", compile_text, CompileTextInput)
+        self.register_alias("agentic_compile_tex", "compile_text")
         self.register_tool("polish_academic_prose", polish_academic_prose, PolishAcademicProseInput)
+        self.register_tool(
+            "vaspkit_adsorbate_thermo_correction",
+            vaspkit_adsorbate_thermo_correction,
+            VaspkitAdsorbateThermoCorrectionInput,
+        )
+        self.register_tool(
+            "vaspkit_gas_thermo_correction",
+            vaspkit_gas_thermo_correction,
+            VaspkitGasThermoCorrectionInput,
+        )
         self.register_tool("run_literature_research", run_literature_research, RunLiteratureResearchInput)
         self.register_tool("search_openalex", search_openalex, SearchOpenAlexInput)
         self.register_tool("search_semantic_scholar", search_semantic_scholar, SearchSemanticScholarInput)

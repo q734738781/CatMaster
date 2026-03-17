@@ -12,9 +12,11 @@ from catmaster.tools.geometry_inputs.slab_tools import (
     SlabBuildInput,
     FixAtomsByLayersInput,
     FixAtomsByHeightInput,
+    FixAtomsByIndicesInput,
     build_slab,
     fix_atoms_by_layers,
     fix_atoms_by_height,
+    fix_atoms_by_indices,
 )
 from catmaster.tools.geometry_inputs.crystal_tool import SupercellInput, supercell
 from catmaster.tools.geometry_inputs.adsorbate_tool import (
@@ -40,12 +42,14 @@ __all__ = [
     "SlabBuildInput",
     "FixAtomsByLayersInput",
     "FixAtomsByHeightInput",
+    "FixAtomsByIndicesInput",
     "EnumerateAdsorptionSitesInput",
     "PlaceAdsorbateInput",
     "GenerateBatchAdsorptionStructuresInput",
     "build_slab",
     "fix_atoms_by_layers",
     "fix_atoms_by_height",
+    "fix_atoms_by_indices",
     "vasp_relax_prepare",
     "vasp_sp_prepare",
     "SupercellInput",

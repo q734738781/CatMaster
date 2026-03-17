@@ -13,8 +13,8 @@ from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
-class AgenticCompileTexInput(BaseModel):
-    """Compile or statically validate a manuscript bundle and repair LaTeX compile/reference issues without changing scientific meaning."""
+class CompileTextInput(BaseModel):
+    """Compile or statically validate a manuscript bundle and return LaTeX diagnostics and artifacts."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -298,10 +298,13 @@ def _compiler_excerpt(compiler_result: dict[str, Any], *, limit: int = 4000) -> 
     return combined[-limit:]
 
 
-def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    tool_name = "agentic_compile_tex"
+AgenticCompileTexInput = CompileTextInput
+
+
+def compile_text(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    tool_name = "compile_text"
     try:
-        params = AgenticCompileTexInput(**payload)
+        params = CompileTextInput(**payload)
         root_tex = resolve_workspace_path(params.source_path, must_exist=True)
         if root_tex.suffix.lower() != ".tex":
             raise ValueError("source_path must point to a .tex file")
@@ -361,8 +364,12 @@ def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                     "source_path": payload.get("source_path"),
                 },
             },
-            error_code="agentic_compile_tex_failed",
+            error_code="compile_text_failed",
         ) from exc
 
 
-__all__ = ["AgenticCompileTexInput", "agentic_compile_tex"]
+def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    return compile_text(payload)
+
+
+__all__ = ["CompileTextInput", "compile_text", "AgenticCompileTexInput", "agentic_compile_tex"]

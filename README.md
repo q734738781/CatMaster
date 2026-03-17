@@ -253,6 +253,31 @@ npx -v
 
 The writing lane expects `pdflatex` for the final compile-fix pass.
 
+### VASPKIT
+
+`vaspkit` is recommended for thermochemistry correction tools such as `vaspkit_adsorbate_thermo_correction` and `vaspkit_gas_thermo_correction`.
+
+If you already have a local VASPKIT build, make sure it is on `PATH`:
+
+```bash
+export PATH=~/vaspkit/bin:$PATH
+vaspkit
+```
+
+To persist that for future shells:
+
+```bash
+echo 'export PATH=~/vaspkit/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+If `vaspkit` is unavailable, CatMaster will fall back to ASE thermochemistry:
+
+- `502` fallback uses ASE `IdealGasThermo`
+- `501` fallback uses ASE `HarmonicThermo` with a `50 cm^-1` low-frequency floor
+
+The ASE fallback is intentionally compatibility-oriented, but VASPKIT remains the preferred backend when you need the closest match to VASPKIT output conventions.
+
 ### Materials Project
 
 ```bash
@@ -343,6 +368,21 @@ Useful overrides:
 CATMASTER_CONDA_ENV=catmaster ./start_webui.sh --port 7991
 CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace ./start_webui.sh
 ```
+
+Deploy a runtime checkout:
+
+```bash
+scripts/deploy_runtime.sh --target ../CatMaster_Run
+```
+
+After deploy, the runtime can be started directly from its root:
+
+```bash
+cd ../CatMaster_Run
+./start_webui.sh --port 7991
+```
+
+The deploy script now defaults the runtime project space to `./project_space` inside the target directory. You can still override it either at deploy time with `--project-space-root`, or at run time with `CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace`.
 
 Then open:
 

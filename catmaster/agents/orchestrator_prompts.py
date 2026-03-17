@@ -97,8 +97,9 @@ Rules:
 - Do not reopen successful evidence files when the latest task already produced the requested final deliverables and no open questions remain.
 - If the latest completed task already produced the user-requested final deliverables and there are no unresolved open questions, do not run additional verification passes; return `StopAndSynthesize` immediately.
 - Do not reread the same evidence file more than once unless the previous read failed or a different missing field still requires that file.
-- When choosing `StopAndSynthesize`, fill `final_answer_md` with a concise user-facing answer that includes final numeric results, units, and project-relative evidence paths.
+- When choosing `StopAndSynthesize`, fill `final_answer_md` with a concise user-facing answer that directly answers the user's actual question and includes final numeric results, units, and project-relative evidence paths.
 - Keep `final_answer_md` short and direct; avoid long report structure, repeated background, or large bullet dumps.
+- A saved report path is supplemental only; never treat the `files` list or report existence as a substitute for stating the key conclusion in `final_answer_md`.
 - If the answer is research-grounded (including literature grounding, benchmark summaries, or prior-art-supported claims), include a short reference shortlist in `final_answer_md` (typically 2-5 representative papers with year and DOI/URL when available); evidence-pack/offload paths are supplemental only and must not replace citations.
 - Treat `.` as project files root; use only relative paths in instructions.
 - Never ask the worker to read metadata/internal run paths.
@@ -152,8 +153,9 @@ Rules for Fast lane:
 - If the latest completed task already produced the user-requested final deliverables and there are no unresolved open questions, return `StopAndSynthesize` immediately.
 - Do not reopen successful evidence files when latest task already satisfies decision needs.
 - Do not reread the same evidence file more than once unless previous read failed or a different missing field still requires that file.
-- When choosing `StopAndSynthesize`, fill `final_answer_md` with a concise user-facing answer that includes final numeric results (when applicable), units, and project-relative evidence paths.
+- When choosing `StopAndSynthesize`, fill `final_answer_md` with a concise user-facing answer that directly answers the user's actual question and includes final numeric results (when applicable), units, and project-relative evidence paths.
 - Keep `final_answer_md` short and direct; avoid long report structure, repeated background, or large bullet dumps.
+- A saved report path is supplemental only; never treat the `files` list or report existence as a substitute for stating the key conclusion in `final_answer_md`.
 - Treat `.` as project files root; use only relative paths in instructions.
 - Never ask the worker to read metadata/internal run paths.
 - Preserve scientific/computational invariants from the latest task context; allow bounded execution-detail adjustments only when needed.
@@ -200,6 +202,7 @@ Priority rules:
 Execution rules:
 - Do not rerun the same preparation tool with identical parameters if the previous call already succeeded and required artifacts still exist. Prefer reusing and validating existing outputs.
 - Do not trigger expensive reruns purely for path/layout normalization when numerical/physical requirements are already satisfied.
+- If the user points out that a prior report/result is wrong and asks for recalculation or correction, replace or delete stale incorrect reports/notes/derived summaries when feasible before finishing, and do not keep superseded wrong paths in the final handoff.
 - Bundle independent filesystem operations in the same turn whenever possible, but do not issue concurrent write calls; keep write/edit/move/create operations sequential and verify each write step before the next.
 - Perform only checks required to satisfy current done criteria; avoid speculative or perfection-oriented extra validation.
 - Internal metadata audit logs are not task inputs; do not read or reference them in task reasoning.
@@ -214,6 +217,7 @@ Parsing policy:
 
 Termination and handoff:
 - End with one concise final handoff that clearly states the task status and reusable outputs.
+- The final `summary` must directly answer the user's core question with the key conclusion and critical numbers/conditions when available; do not say only that a report was saved.
 - Use `status="done"` when task is complete.
 - Use `status="blocked"` only when still blocked after bounded self-adjustment attempts on non-critical execution parameters, or when hard scientific invariants conflict.
 - Follow schema field descriptions for per-field content quality and placeholders; do not fill fields with invented content.

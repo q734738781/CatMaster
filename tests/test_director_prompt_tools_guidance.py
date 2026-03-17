@@ -39,6 +39,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "Do not reopen successful evidence files" in system_content
     assert "fill `update_memory`, otherwise return `[]`" in system_content
     assert "research-grounded" in system_content
+    assert "A saved report path is supplemental only" in system_content
     assert "short reference shortlist" in system_content
     assert "must not replace citations" in system_content
     assert "update_memory` MUST be `[]` unless `state=StopAndSynthesize`" in system_content

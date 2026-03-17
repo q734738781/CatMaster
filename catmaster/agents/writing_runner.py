@@ -154,7 +154,7 @@ class WritingRunner:
                 "render_structure_views",
                 "analyze_images",
                 "generate_schematic_figure",
-                "agentic_compile_tex",
+                "compile_text",
                 "polish_academic_prose",
                 "run_literature_research",
             ],
@@ -169,7 +169,7 @@ class WritingRunner:
         deps.memory_store.ensure_exists()
         mounted_skill_tokens: tuple[str, ...] = ()
         local_by_name = {str(getattr(tool, "name", "") or ""): tool for tool in local_tools}
-        compile_tool = local_by_name.get("agentic_compile_tex") if requested_output_format == "tex" else None
+        compile_tool = local_by_name.get("compile_text") if requested_output_format == "tex" else None
         polish_tool = local_by_name.get("polish_academic_prose")
         section_tools = [
             _make_role_scoped_literature_tool(tool, role="section_writer")

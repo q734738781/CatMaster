@@ -2,6 +2,11 @@
 
 This directory contains CatMaster starter skills grouped by lane. A skill here is prompt-level SOP, not a tool schema dump and not a hidden runtime contract.
 
+The active runtime loads these skills through DeepAgent skill roots:
+
+- `skills/experiment/*`
+- `skills/writing/*`
+
 ## Required format
 
 Each skill must live at either `skills/experiment/<skill-name>/SKILL.md` or `skills/writing/<skill-name>/SKILL.md` and must satisfy all of the following:
@@ -38,10 +43,12 @@ metadata:
 Rules:
 
 - `license`, `compatibility`, and `allowed-tools` should follow the DeepAgent skill frontmatter pattern.
-- `allowed-tools` should list concrete tool names separated by spaces.
-- `metadata.catmaster-suggested-tools` should list tool names separated by spaces.
-- The frontmatter suggested-tools list and the body `## Suggested tools` list must agree.
+- `allowed-tools` is the primary field and should list concrete tool names separated by spaces.
+- `metadata.catmaster-suggested-tools`, if present, should carry the same semantics and the same tool set as `allowed-tools`.
+- Keep `metadata.catmaster-suggested-tools` synchronized with `allowed-tools` while legacy readers still exist.
+- The `allowed-tools` list and the body `## Suggested tools` list must agree.
 - If no tool should be suggested, use an empty frontmatter string and body text `- (none specified)`.
+- Suggested tool names must match real active-path tool names or DeepAgent built-ins. Do not leave legacy names such as removed tools or stale aliases in new or updated skills.
 
 ## Writing rules
 
@@ -50,6 +57,7 @@ Skills must be grounded in real tool behavior.
 Do:
 
 - Read the relevant tool source before editing the skill.
+- Read the current specialist tool surface when the skill is lane-specific, so the suggested tools reflect tools that are actually visible to the specialist or subagent.
 - Capture hard constraints, output files, batch summaries, and common failure modes.
 - Mention exact returned keys or artifacts when they are important handoff contracts.
 - Write a `## Method-critical defaults` section whenever the workflow contains settings that affect comparability, ranking, interpretation, or scientific validity.
@@ -108,3 +116,5 @@ Such settings should be made explicit in task packets and/or skill-guided execut
 ## Maintenance
 
 When changing a tool in a way that affects SOP, outputs, or constraints, update the corresponding skill in the same change.
+
+When changing a specialist or subagent tool surface, audit affected skill `allowed-tools` fields as part of the same change.

@@ -1,11 +1,11 @@
 ---
 name: vasp-input-preparation
-description: Use this skill for preparing VASP relaxation and single-point input sets, choosing calc_type and key defaults correctly, handling INCAR override edge cases, and producing execution-ready folder layouts before dispatch.
+description: Use this skill for preparing VASP relaxation and single-point input sets, choosing calc_type and key defaults correctly, handling INCAR override edge cases, explicit slab-frequency setup, and producing execution-ready folder layouts before dispatch.
 license: project-local
 compatibility: local
-allowed-tools: "vasp_relax_prepare vasp_sp_prepare"
+allowed-tools: "fix_atoms_by_indices vasp_relax_prepare vasp_sp_prepare"
 metadata:
-  catmaster-suggested-tools: "vasp_relax_prepare vasp_sp_prepare"
+  catmaster-suggested-tools: "fix_atoms_by_indices vasp_relax_prepare vasp_sp_prepare"
 ---
 
 # vasp-input-preparation
@@ -20,6 +20,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 4. Override INCAR only where the tool actually allows it.
 
 ## Suggested tools
+- `fix_atoms_by_indices`
 - vasp_relax_prepare
 - vasp_sp_prepare
 
@@ -27,7 +28,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 
 ### 1. Pick the right preparation tool
 - `vasp_relax_prepare` is for relax jobs.
-- `vasp_sp_prepare` is for static jobs and already enforces `NSW=0`, `IBRION=-1`.
+- `vasp_sp_prepare` is for static jobs and already enforces `NSW=1`, `IBRION=-1`.
 
 ### 2. Choose the correct regime
 - `bulk`: periodic bulk models; `relax_cell=True` is allowed and switches `ISIF=3`.
@@ -49,6 +50,13 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - Directory input preserves relative layout and appends `<stem>/` per structure.
 - Do not mix unrelated relax and SP campaigns in the same ambiguous tree.
 
+### 6. Prepare frequency jobs explicitly if requested
+- Do not treat vibrational thermochemistry jobs as ordinary relax or SP jobs. Prepare them as a separate stage after the relevant relaxed structure is finalized.
+- For finite-difference frequency runs, use `IBRION=5`, `POTIM=0.015`, `NFREE=2`, and `ISYM=0`.
+- For slab adsorbate frequency jobs, do not blindly preserve the relax-stage selective-dynamics mask. A relaxed adsorbate-slab structure may still have mobile surface atoms, which is not acceptable for adsorbate-only vibrational thermochemistry. If the target is adsorbate-only slab thermochemistry and `ads_indices` are available, explicitly run `fix_atoms_by_indices(indices=ads_indices, reverse=true)` on the relaxed adsorbate-slab structure before writing the frequency input.
+- Treat this explicit refixing step as mandatory unless the task explicitly requests a broader vibrational model.
+- Keep the frequency job on the same scientifically relevant electronic-structure footing as the corresponding energy campaign: same `ENCUT`, `EDIFF`, smearing policy, spin treatment, `DFT+U`, `D3`, dipole correction, and other reference-sensitive toggles.
+
 ## Method-critical defaults
 - Do not silently rely on defaults for `use_d3`, `use_dft_plus_u`, `enable_dipole`, spin treatment, or reference-state-sensitive INCAR toggles when they affect comparison.
 - Keep clean slab, gas-phase reference, adsorbed structures, and downstream static calculations scientifically comparable.
@@ -57,6 +65,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - Do not force bulk references to obey the slab default. Bulk `k_product` should be chosen from the bulk convergence requirement, not copied mechanically from slab policy.
 - For DOS / projected-DOS / finer electronic-structure jobs, it is acceptable to increase `k_product` to around `50` when the extra sampling is part of the stated objective.
 - Always report any non-default toggles that materially affect interpretation.
+- When frequency-derived thermochemistry is the target, do not silently reuse generic relax or SP INCARs; surface the frequency-specific overrides explicitly.
 
 ## Output Contract
 Return:

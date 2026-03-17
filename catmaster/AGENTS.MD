@@ -1,305 +1,250 @@
-# Agent Development Guide (Codex)
+# CatMaster Runtime Guide
 
-This repository implements **CatMaster**, a task-based orchestration system for computational catalysis workflows. The system is **tool-driven and auditable**:
+This repository now uses a DeepAgent-native specialist runtime as the active path. Treat the current implementation under `catmaster/specialists/` as the source of truth.
 
-- The LLM produces plans and step decisions.
-- Tools perform concrete work (structure generation, batch job dispatch, file operations, parsing).
-- The runtime records events, toolcalls, artifacts, and memory updates for traceability and resumability.
+## 1) Active architecture
 
-This document defines coding conventions intended for code-generation agents (e.g., Codex) to prevent style drift and to keep changes consistent with the existing architecture.
+### Public entrypoints
 
----
+The active runtime exposes exactly three lanes:
 
-## 1) Repository layout and responsibilities
+- `research`
+- `experiment`
+- `writing`
 
-### Key packages
+They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/specialists/runtime.py).
 
-- `catmaster/agents/`
-  - Orchestration, planning, task execution control, summarization, and prompt templates.
-  - Only agents should directly call the LLM.
-- `catmaster/runtime/`
-  - Deterministic run state, tracing, artifact persistence, file-based memory operations, context pack building.
-  - Anything involving `metadata/runs/...` lives here.
-- `catmaster/tools/`
-  - All executable “capabilities” exposed to the LLM.
-  - Tools must validate inputs with Pydantic schemas and return standardized outputs.
-- `catmaster/ui/`
-  - Reporter abstraction and UI event bus (console UI removed; WebUI lives under `catmaster/webui/`).
+### Specialist roles
 
-### Data model (high level)
+- `ResearchSpecialist`
+  - The only orchestration-capable specialist.
+  - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
+- `ExperimentSpecialist`
+  - Bounded execution specialist.
+  - May delegate only to `task_worker_agent` and a lightweight `literature_agent`.
+- `WritingSpecialist`
+  - Writing coordinator, not a free-form research agent.
+  - Should delegate substantive drafting to `writing_worker_agent`.
 
-- `task_state.json` is the run’s single source of truth for:
-  - `user_request`, `plan`, `tasks`, `observations`, and `status`.
-- File-based memory (`files/MEMORY/**` + `metadata/memory/events.jsonl`) is the durable memory layer:
-  - Director merges structured task results into memory index/topics and appends immutable event logs.
-- Artifacts/toolcalls are persisted under `metadata/runs/<run_id>/...`.
+Do not design new features around the old `director -> task runner -> memory patch` stack unless you are explicitly maintaining legacy code. The active path is the DeepAgent specialist runtime.
 
----
+## 2) Current literature architecture
 
-## 2) Language, formatting, and style
+Literature support is split into two forms:
 
-### Python version and typing
+- `litreview_agent`
+  - Used by `research`
+  - A compiled DeepAgent subagent
+  - Internally delegates to:
+    - `literature_agent` for broad Tavily-backed public-web review
+    - `metadata_agent` for exact scholarly metadata
+- lightweight `literature_agent`
+  - Used by `experiment`
+  - Exposes only a lightweight Tavily-backed `internet_search` tool for quick external grounding
 
-- Use modern Python typing (PEP 585): `list[...]`, `dict[...]`, `Optional[...]`, etc.
-- Prefer `from __future__ import annotations` at the top of non-trivial modules.
-- Add type hints to public functions and non-trivial helpers.
+The metadata side is intentionally separate from broad review:
 
-### Formatting
+- `search_openalex`
+- `search_semantic_scholar`
+- `get_openalex_record`
+- `get_semantic_scholar_record`
+- `recommend_semantic_scholar`
 
-- 4-space indentation.
-- Keep functions small and single-purpose; extract helpers instead of deeply nesting.
-- Prefer `pathlib.Path` over raw string path manipulation.
+These are for exact paper metadata, DOI/year/venue/authors/citation resolution, and seed-paper expansion. They are not the broad-review layer.
 
-### Imports
+## 3) Runtime state and persistence
 
-- Standard library imports first, then third-party, then `catmaster.*`.
-- Avoid unused imports; remove them rather than leaving them for later.
+### Run state
 
+The active runtime writes `run_state.json` in the run directory. This is the active run snapshot used by the WebUI and resume flow.
 
-### Naming
+Do not add new active-path features that depend on:
 
-- Modules: `snake_case.py`
-- Functions: `snake_case`
-- Classes: `PascalCase`
-- Constants: `UPPER_SNAKE_CASE`
-- Prefer explicit names over abbreviations unless domain-standard (e.g., `neb`, `vasp`, `mace`).
+- `task_state.json`
+- `FINAL_REPORT.md`
+- `MEMORY/**`
+- `update_memory`
+- memory patch flows
 
----
+Those belong to the legacy orchestration stack and are no longer the primary runtime contract.
 
-## 3) Error handling and return conventions
+### Threading and memory
 
-### Tools must return standardized outputs
+The active runtime uses DeepAgent/LangGraph persistence:
 
-Tools should return the structure accepted by langchain's internal tool schema.
-### Determinism
+- workspace-level SQLite thread checkpoint store:
+  - `deepagent_threads.sqlite`
+- workspace-level SQLite long-term memory store:
+  - `deepagent_memory.sqlite`
 
-- Tools must be deterministic given identical inputs (unless randomness is explicitly required and logged).
-- Avoid timestamps in output filenames unless required; if used, return the resolved path explicitly.
+Short-term conversation continuity uses a stable DeepAgent `thread_id`.
 
----
+Long-term memory uses:
 
-## 4) Path and workspace policy (critical)
+- `/.deepagents/AGENTS.md`
+- `/memories/AGENTS.md`
 
-CatMaster uses a project-space layout:
+Persistent memory is for durable project conventions, validated reusable knowledge, and stable workflow guidance only. Do not store transient task requests, scratch execution logs, speculative findings, or one-off run details.
 
-- **Project files root**: `project_space/files` (LLM/task-visible files)
-- **Metadata root**: `project_space/metadata` (run metadata, traces, internal artifacts)
+## 4) Research Kernel
 
-Rules:
+`ResearchSpecialist` maintains a lightweight research board file at:
 
-1. Tools should operate in `project_space/files` unless they are explicitly metadata tools.
-2. If a tool produces an artifact that future tasks must read, write it into project files and return a files-relative path via `workspace_relpath(...)`.
-3. Use `resolve_workspace_path(...)` (or scoped path helpers) for path resolution and validation. Do not manually join paths with strings.
-4. Do not use environment-variable-based workspace selection in new code. Project space should be passed through params/instances (for example CLI args, `WebSession`, `Orchestrator`) or explicit function arguments.
+- `files/research_kernels/<thread_id>/kernel.json`
 
----
+The schema is intentionally small:
 
-## 5) Tool development checklist (how to add/modify tools)
+- `question`
+- `hypotheses`
+- `run_cards`
+- `frontier`
+- `conclusion_draft`
 
-### 5.1 Input schema (Pydantic)
+`run_cards` are compact and decision-oriented. Each card keeps only:
 
-Every tool must have a `BaseModel` input schema with `Field(..., description="...")`:
+- `source`
+- `summary`
+- `facts`
+- `artifacts`
 
-- Keep fields stable; changing names/types is a breaking change.
-- `ToolExecutor` rejects extra fields strictly. If you introduce a new field, update the planner prompts if they produce params for that tool.
+Keep `hypotheses` to the currently active 3-5 items only.
 
-Backward compatibility guidance:
+## 5) Final output contract
 
-- If you must rename a field, support both old and new names for at least one release (e.g., accept `mp_id` and `mp_ids`) and normalize internally.
+The active specialist output contract is intentionally soft and compact.
 
-### 5.2 Tool function signature and output
+Final specialist responses should contain only these sections:
 
-- Tool function signature: `def tool_name(payload: dict) -> tuple[Any, dict]:`
-- First line should validate: `params = InputModel(**payload)`
-- Required return is LangChain-native `(content, artifact)` tuple.
-- For business failures, raise `CatMasterToolExecutionError` with a model-visible `public_message`.
-- Do not introduce new output helper protocols for tool returns.
-- Do not return arbitrary dict/list/string and rely on runtime guessing; non-native returns are treated as errors.
+- `Summary`
+- `Facts`
+- `Files`
 
-### 5.3 Registering tools
+Do not reintroduce heavy structured task-era payloads like:
 
-When adding a tool:
+- `constraints`
+- `open_questions`
+- `decisions`
+- `next_steps`
+- duplicated artifact inventories
 
-1. Implement tool module under the correct category:
-   - `catmaster/tools/geometry_inputs/`
-   - `catmaster/tools/execution/`
-   - `catmaster/tools/retrieval/`
-   - `catmaster/tools/misc/`
-2. Re-export in the category `__init__.py`.
-3. Register in `catmaster/tools/registry.py`:
-   - import function + InputModel
-   - call `register_tool("tool_name", tool_func, InputModel)`
+Proposal review is the exception: proposal checkpoints still use a structured `ProposalCheckpoint` schema because the human-interrupt flow depends on it.
 
-Migration scope policy:
-- Only tools registered/exposed to agent tool surface must follow the strict output contract immediately.
-- For unregistered/internal tools, defer migration until they are prepared for registry exposure.
+## 6) Skills
 
-### 5.4 Large outputs: write files, return paths
+### Skill roots
 
-For high-throughput workflows, avoid returning huge lists/dicts directly from tools.
+The active skill layout is:
 
-Preferred pattern:
+- `skills/experiment/*`
+- `skills/writing/*`
 
-- Write a JSON summary file into a user-workspace output directory.
-- Return:
-  - `summary_json_rel`: workspace-relative path to JSON
-  - optionally `counts`/small stats for quick display
+At runtime they are staged into:
 
-### 5.5 Batch tools: required behaviors
+- `files/.deepagents/skills/experiment`
+- `files/.deepagents/skills/writing`
 
-For tools operating on directories:
+Specialists bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime.
 
-- Accept `input_dir` and `output_dir/output_root`.
-- **Never** place `output_dir` inside `input_dir` (must validate).
-- Exclude `metadata/` and staging directories (`*_batch_*`) from input scanning.
-- Ensure outputs are isolated and do not become inputs on subsequent scans.
-- Produce a deterministic mapping from input paths to output paths. Prefer mirroring the input layout under
-  `output_root`, and for file inputs expand into a folder (e.g., `input_root/a/c.vasp` -> `output_root/a/c/...`).
+### Skill authoring
 
----
+Skills must follow the DeepAgent-style layout:
 
-## 6) Agents and prompts
+- one directory per skill
+- a `SKILL.md` file
+- YAML frontmatter at the top
 
-### Structured outputs (Pydantic)
+Recommended frontmatter fields:
 
-- Use Pydantic models + structured-output APIs (e.g., LangChain `with_structured_output`) for any LLM response that is meant to be machine-read.
-- Do not rely on JSON fences or ad-hoc JSON parsing in new code.
+- `name`
+- `description`
+- `license`
+- `compatibility`
+- `allowed-tools`
 
-### Keep schema stable
-If you change a schema, you must update:
+`allowed-tools` is a skill-level recommendation list. It does not define the runtime-visible tool surface. Visible tools are determined by the specialist/subagent `tools=[...]` binding.
 
-- prompt templates
-- Pydantic models and any validation/normalization logic
-- downstream consumers (Orchestrator/TaskRunner/Summarizer)
+When a tool surface changes, update the relevant skills in the same change.
 
-### Events and UI
+## 7) Tool conventions
 
-When adding new run phases or behaviors, emit events via the Reporter to preserve observability. Follow existing patterns in `catmaster/ui/reporters.py` and `catmaster/ui/events.py`.
+### Registration and returns
 
----
+All agent-visible tools should be registered in `catmaster/tools/registry.py` and exposed as LangChain tools.
 
-## 7) Memory rules
+Tool functions should:
 
-- Do not write ad-hoc long-form memory blobs into prompts or metadata files.
-- Use `files/MEMORY/MEMORY.md` as the short index (autoload excerpt), and put details in `files/MEMORY/topics/*.md`.
-- Use `apply_aider_edits` for deterministic SEARCH/REPLACE updates when memory or other project files must be synchronized.
-- `MemoryStore.merge_task_result(...)` is compatibility-only (event logging), not the canonical MEMORY updater.
-- Keep immutable audit trails in `metadata/memory/events.jsonl`.
-- Paths recorded in memory files must be project-files-relative paths (no `metadata/...`).
+- validate inputs with a Pydantic model
+- return LangChain-native `(content, artifact)`
+- raise `CatMasterToolExecutionError` for business failures with a model-visible `public_message`
 
----
+### Error behavior in the active path
 
-## 8) Logging, tracing, and reproducibility
+In the active specialist runtime, tools are wrapped as non-fatal. Tool exceptions are converted into model-visible error messages instead of directly killing the lane.
 
-- Prefer structured persistence over console logs:
-  - tool inputs/outputs via `ArtifactStore`
-  - run/task/tool events via `TraceStore`
-- Use the existing run directory layout; do not create ad-hoc directories under `metadata/` without coordination.
-- When writing JSON, use UTF-8 and `ensure_ascii=False`.
+This applies to both:
 
----
+- top-level specialists
+- subagents
 
-## 9) Repository hygiene
+Do not design active-path workflows that depend on tool exceptions terminating the run.
 
-- Do not add or commit `__pycache__/` or `*.pyc`.
-- Avoid committing large generated artifacts; tools should write them to the workspace at runtime, not to the repository.
-- Keep changes minimal and localized; do not refactor unrelated modules in the same change.
+### Paths
 
-### Test execution in conda (critical)
+User-visible artifacts belong under the workspace files tree, not metadata.
 
-- When running tests in the project conda environment, use:
-  - `conda run -n catmaster python -m pytest ...`
-- Do **not** use `conda run -n catmaster pytest ...` directly. In this repository it can pick the wrong interpreter and cause false `importorskip` results (tests appear skipped even when dependencies exist in the env).
+Prefer:
 
----
+- project files under `files/`
+- internal runtime state under `metadata/`
 
-## 10) Quick reference: tool skeleton
+Use path helpers from `catmaster.tools.base` rather than manual string joins.
 
-Remote tool rule (DPDispatcher/GPU):
-- If a tool needs to ship a script to the remote workdir, stage it under `task_script/` and run it via
-  `python task_script/<script>.py ...`. Do not rely on syncing the full repo to the remote host.
+## 8) Writing lane expectations
 
-```python
-from __future__ import annotations
+`WritingSpecialist` is a coordinator.
 
-from typing import Any, Dict
+Current expectations:
 
-from pydantic import BaseModel, Field
+- write from existing workspace evidence only
+- do not reopen broad research loops from writing
+- delegate substantive drafting and revision to `writing_worker_agent`
+- if producing a TeX bundle, the worker should run compile directly and use diagnostics to repair bundle issues
 
-from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+Do not assume there is still a separate active `compile_agent` in the writing lane. Match the current implementation in `catmaster/specialists/runtime.py`.
 
+## 9) Usage, logging, and UI
 
-class ExampleToolInput(BaseModel):
-    path: str = Field(..., description="Input path (workspace relative).")
-    output_dir: str = Field("outputs/example", description="Output path (workspace relative).")
+### Usage
 
+Usage accounting is based on LangChain `UsageMetadataCallbackHandler`, not the old `LLM_USAGE` trace event.
 
-def example_tool(payload: Dict[str, Any]):
-    params = ExampleToolInput(**payload)
-    in_path = resolve_workspace_path(params.path, must_exist=True)
-    out_dir = resolve_workspace_path(params.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+Run usage is written to `usage_summary.json`, including per-role breakdowns when available.
 
-    out_file = out_dir / "result.json"
-    out_file.write_text("{}", encoding="utf-8")
+### Logging
 
-    if not out_file.exists():
-        raise CatMasterToolExecutionError(
-            tool_name="example_tool",
-            public_message="result file was not created",
-            artifact={"data": {"output_dir_rel": workspace_relpath(out_dir)}},
-        )
+The active runtime uses LangChain step logging and UI event callbacks. Avoid reintroducing verbose prompt/context dumps.
 
-    return (
-        "example_tool completed.\n"
-        f"output_dir_rel={workspace_relpath(out_dir)}",
-        {
-            "tool_name": "example_tool",
-            "data": {"output_dir_rel": workspace_relpath(out_dir)},
-        },
-    )
-```
+### WebUI
 
----
+The WebUI is run-state and SSE driven. Active-path UI work should align with the current streaming model rather than polling-only or legacy task-state assumptions.
 
-## 11) MCP adoption rules (for upcoming tool development)
+## 10) Legacy code policy
 
-Prioritize MCP-ization for cross-cutting capabilities with clear standard interfaces:
+This repository still contains legacy orchestration code under areas like `catmaster/agents/`, but it is not the primary architecture.
 
-- filesystem
-- browser / web search
-- external services
-- scheduler / remote execution
-- database / retrieval
+When making changes:
 
-Do **not** prioritize MCP-ization yet for local domain tools:
+- prefer `catmaster/specialists/` for active-path behavior
+- prefer DeepAgent-native mechanisms over custom compatibility layers
+- do not add new task-era compatibility shims unless a change explicitly targets legacy support
 
-- adsorption
-- slab
-- NEB
-- thermo
-- MACE
+## 11) Testing guidance
 
-Rationale:
+When active-path behavior changes, prefer updating tests around:
 
-- These local domain tools are deeply coupled to the current Python/ASE/pymatgen/workspace contract.
-- Forcing full MCP migration now would introduce high engineering cost.
-- Standardization payoff is much higher first for filesystem / web / browser classes than for tightly coupled local scientific workflows.
+- `tests/test_specialist_runtime.py`
+- WebUI live-state tests
+- tool-specific tests
+- usage summary tests
 
----
-
-## 12) Scientific tool design philosophy
-
-### Computational primitives over monolithic workflows
-
-Prefer computational primitives over monolithic workflow tools.
-
-New scientific tools should represent one scientifically coherent transformation with explicit inputs, outputs, and method-critical toggles.
-
-Do not hide major scientific assumptions inside large bundle tools when the same workflow can be composed from existing primitives plus task-specific skills.
-
-Large tools are acceptable mainly for:
-- infrastructure-heavy execution/collection steps
-- strictly deterministic boilerplate reduction
-- dispatch/collection/report collation where scientific branching is minimal
+If a tool or prompt change affects skill-guided behavior, update the corresponding skill files too.

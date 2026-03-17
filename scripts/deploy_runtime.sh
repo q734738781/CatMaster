@@ -13,7 +13,7 @@ Options:
 
   --project-space-root DIR
       Project-space root that runtime WebUI should use.
-      Default: <target>/../cm_project_space
+      Default: <target>/project_space
 
   --dry-run
       Show rsync changes without writing files.
@@ -37,7 +37,7 @@ EOF
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${REPO_ROOT}/../CatMaster_Run"
-PROJECT_SPACE_ROOT="${REPO_ROOT}/../cm_project_space"
+PROJECT_SPACE_ROOT=""
 DRY_RUN=0
 NO_DELETE=0
 FULL_REPO=0
@@ -94,7 +94,7 @@ TARGET_DIR="$(cd "$(dirname "$TARGET_DIR")" && pwd)/$(basename "$TARGET_DIR")"
 mkdir -p "$TARGET_DIR"
 
 if [[ -z "$PROJECT_SPACE_ROOT" ]]; then
-  PROJECT_SPACE_ROOT="$(cd "$TARGET_DIR/.." && pwd)/project_space"
+  PROJECT_SPACE_ROOT="$TARGET_DIR/project_space"
 else
   PROJECT_SPACE_ROOT="$(cd "$(dirname "$PROJECT_SPACE_ROOT")" && pwd)/$(basename "$PROJECT_SPACE_ROOT")"
 fi
@@ -181,6 +181,7 @@ deployed_at_utc=$DEPLOY_TIME
 project_space_root_default=$PROJECT_SPACE_ROOT
 EOF
   chmod +x "$TARGET_DIR/start_webui.sh"
+  mkdir -p "$PROJECT_SPACE_ROOT"
 
   # Bake the current default into a helper file for visibility.
   printf '%s\n' "$PROJECT_SPACE_ROOT" > "$TARGET_DIR/.project_space_root_default"
@@ -190,10 +191,18 @@ EOF
   if [[ $AUTORUN -eq 1 ]]; then
     echo "Autorun enabled. Starting WebUI now..."
     cd "$TARGET_DIR"
-    CATMASTER_PROJECT_SPACE_ROOT="$PROJECT_SPACE_ROOT" ./start_webui.sh --port 7991
+    if [[ "$PROJECT_SPACE_ROOT" == "$TARGET_DIR/project_space" ]]; then
+      ./start_webui.sh --port 7991
+    else
+      CATMASTER_PROJECT_SPACE_ROOT="$PROJECT_SPACE_ROOT" ./start_webui.sh --port 7991
+    fi
   else
     echo "Next run command:"
-    echo "  cd \"$TARGET_DIR\" && CATMASTER_PROJECT_SPACE_ROOT=\"$PROJECT_SPACE_ROOT\" ./start_webui.sh --port 7991"
+    if [[ "$PROJECT_SPACE_ROOT" == "$TARGET_DIR/project_space" ]]; then
+      echo "  cd \"$TARGET_DIR\" && ./start_webui.sh --port 7991"
+    else
+      echo "  cd \"$TARGET_DIR\" && CATMASTER_PROJECT_SPACE_ROOT=\"$PROJECT_SPACE_ROOT\" ./start_webui.sh --port 7991"
+    fi
   fi
 else
   echo

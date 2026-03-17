@@ -21,7 +21,7 @@ class TaskFileRecord(BaseModel):
         ...,
         description=(
             "Workspace-relative artifact path (file or directory). "
-            "Always use project-relative paths; do not use absolute paths."
+            "Always use project-relative paths with clear directory context; do not use absolute paths or bare filenames."
         ),
     )
     description: str = Field(..., description="Short one-line description.")
@@ -174,7 +174,7 @@ class StopAndSynthesizePayload(BaseModel):
         ...,
         description=(
             "Concise final user-facing answer markdown. Include final requested values with units and "
-            "project-relative evidence paths; avoid long narrative report sections."
+            "project-relative evidence paths. Answer the user's actual question directly even when a report file was written; avoid long narrative report sections."
         ),
     )
 
@@ -382,6 +382,7 @@ class TaskOutput(BaseModel):
         ...,
         description=(
             "Concise task outcome/failure summary with key file pointers. "
+            "Directly answer the user's core question with key conclusions and important numbers/conditions when available; do not only say that a report/file was produced. "
             "Do not paste long tables/logs/scripts; cite file paths instead."
         ),
     )
@@ -397,6 +398,7 @@ class TaskOutput(BaseModel):
         description=(
             "Only key reproducibility/user-facing artifact paths (files or directories). "
             "Use a directory path when it is a clearer bundle-level reference. "
+            "Always use clear project-relative paths rather than bare filenames. "
             "Avoid listing low-value scratch files. Use [] when none."
         ),
     )

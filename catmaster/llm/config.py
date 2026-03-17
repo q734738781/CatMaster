@@ -101,7 +101,8 @@ class AgentPoliciesConfig:
 @dataclass
 class AgentRuntimeConfig:
     recursion_limit: int = 300
-    max_tool_calls: int = 60
+    max_tool_calls: int = 120
+    max_model_calls: int = 120
     print_state_messages: bool = False
     print_http_raw_post: bool = False
 
@@ -130,9 +131,17 @@ class AgentRuntimeConfig:
             max_tool_calls = cls.max_tool_calls
         else:
             max_tool_calls = raw_max_tool_calls
+        raw_max_model_calls = _to_int(data.get("max_model_calls"))
+        if raw_max_model_calls is None:
+            max_model_calls = cls.max_model_calls
+        elif raw_max_model_calls <= 0:
+            max_model_calls = cls.max_model_calls
+        else:
+            max_model_calls = raw_max_model_calls
         return cls(
             recursion_limit=recursion_limit,
             max_tool_calls=max_tool_calls,
+            max_model_calls=max_model_calls,
             print_state_messages=_to_bool(
                 data.get("print_state_messages"),
                 default=cls.print_state_messages,
@@ -572,6 +581,13 @@ class LLMProfile:
             max_tool_calls = AgentRuntimeConfig.max_tool_calls
         else:
             max_tool_calls = env_max_tool_calls
+        env_max_model_calls = _to_int(os.getenv("CATMASTER_MAX_MODEL_CALLS", ""))
+        if env_max_model_calls is None:
+            max_model_calls = AgentRuntimeConfig.max_model_calls
+        elif env_max_model_calls <= 0:
+            max_model_calls = AgentRuntimeConfig.max_model_calls
+        else:
+            max_model_calls = env_max_model_calls
         raw_http_env = os.getenv("CATMASTER_PRINT_HTTP_RAW_POST")
         if raw_http_env is None or not str(raw_http_env).strip():
             print_http_raw_post = False
@@ -589,6 +605,7 @@ class LLMProfile:
             agent_runtime=AgentRuntimeConfig(
                 recursion_limit=recursion_limit,
                 max_tool_calls=max_tool_calls,
+                max_model_calls=max_model_calls,
                 print_state_messages=False,
                 print_http_raw_post=print_http_raw_post,
             ),

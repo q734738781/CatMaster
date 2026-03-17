@@ -4,6 +4,8 @@ VASP input writer using pymatgen input sets.
 import math
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
+
+import numpy as np
 from pymatgen.core import Structure
 from pymatgen.io.vasp.sets import MPRelaxSet
 from pymatgen.io.vasp.inputs import Incar, Kpoints
@@ -40,12 +42,16 @@ class StructWriter:
             relax_cell: If True for bulk, set ISIF=3; otherwise ISIF=2
             k_product: K-point density product 
             user_incar_overrides: User INCAR overrides
-            single_point: If True, prepare static single-point settings (NSW=0, IBRION=-1).
+            single_point: If True, prepare static single-point-like settings (NSW=1, IBRION=-1).
             compute_dos: If True, keep orbital projection output (LORBIT=11); else set LORBIT=0.
             enable_dipole: If True, default IDIPOL=3 and DIPOL to atomic center-of-mass fractional coordinates.
             run_template: Optional run.yaml template path
         """
-        output_dir = resolve_workspace_path(str(output_dir))
+        output_dir = Path(output_dir).expanduser()
+        if output_dir.is_absolute():
+            output_dir = output_dir.resolve()
+        else:
+            output_dir = resolve_workspace_path(str(output_dir))
         output_dir.mkdir(parents=True, exist_ok=True)
 
         required_overrides = self._required_overrides(calc_type, relax_cell, user_incar_overrides or {})
@@ -67,6 +73,7 @@ class StructWriter:
             structure,
             user_potcar_functional="PBE_54",
             user_incar_settings=user_incar_settings,
+            sort_structure=False,
         )
         vasp_input_set.write_input(str(output_dir))
 
@@ -98,26 +105,13 @@ class StructWriter:
             import shutil
             shutil.copy(run_template, output_dir / "run.yaml")
 
-    def _compute_com_frac_dipol(self, structure: Structure) -> Tuple[float, float, float]:
-        total_mass = 0.0
-        com_x = 0.0
-        com_y = 0.0
-        com_z = 0.0
-
-        for site in structure.sites:
-            mass = float(site.species.weight)
-            x, y, z = site.coords
-            total_mass += mass
-            com_x += mass * float(x)
-            com_y += mass * float(y)
-            com_z += mass * float(z)
-
+    def _compute_com_frac_dipol(self, structure: Structure) -> list[float]:
+        weights = [float(site.species.weight) for site in structure.sites]
+        total_mass = float(sum(weights))
         if total_mass <= 0:
             raise ValueError("Cannot compute DIPOL center of mass: total atomic mass is non-positive.")
-
-        com_cart = (com_x / total_mass, com_y / total_mass, com_z / total_mass)
-        frac = structure.lattice.get_fractional_coords(com_cart)
-        wrapped = tuple(float(v - math.floor(float(v))) for v in frac)
+        center_of_mass = np.average(structure.frac_coords, weights=weights, axis=0).tolist()
+        wrapped = [float(v - math.floor(float(v))) for v in center_of_mass]
         return wrapped
 
     def _build_user_incar_settings(
@@ -141,7 +135,7 @@ class StructWriter:
 
         # Global baseline
         user_incar_settings.setdefault("EDIFF", 1e-6)
-        user_incar_settings.setdefault("NELM", 100)
+        user_incar_settings.setdefault("NELM", 150)
         user_incar_settings.setdefault("LCHARG", False)
         user_incar_settings.setdefault("LWAVE", False)
 
@@ -152,7 +146,7 @@ class StructWriter:
             user_incar_settings.setdefault("LORBIT", 0)
 
         if single_point:
-            user_incar_settings.setdefault("NSW", 0)
+            user_incar_settings.setdefault("NSW", 1)
             user_incar_settings.setdefault("IBRION", -1)
         else:
             user_incar_settings.setdefault("NSW", 500)
@@ -201,7 +195,6 @@ class StructWriter:
                 {
                     "ISIF": 2,
                     "ISYM": 0,
-                    "LREAL": False,
                     "ISMEAR": 0,
                     "SIGMA": 0.01,
                 }

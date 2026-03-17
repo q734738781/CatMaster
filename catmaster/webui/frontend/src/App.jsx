@@ -109,12 +109,29 @@ function shouldRecordEvent(event) {
   return !["LLM_TOKEN_DELTA", "LLM_REASONING_DELTA"].includes(name);
 }
 
+function getAgentExecutionState(agent) {
+  if (!agent || typeof agent !== "object") {
+    return "idle";
+  }
+  if (agent.active_toolcall) {
+    return "active";
+  }
+  const llmStatus = String(agent?.llm?.status || "").trim();
+  if (llmStatus === "running") {
+    return "active";
+  }
+  const hasHistory = (Array.isArray(agent.recent_toolcalls) && agent.recent_toolcalls.length)
+    || (Array.isArray(agent.todo_rows) && agent.todo_rows.length)
+    || String(agent?.llm?.text || agent?.llm?.reasoning_text || "").trim();
+  return hasHistory ? "completed" : "idle";
+}
+
 function resolveThinkingAgent(snapshot, agentTab = "ALL") {
   const live = snapshot?.live_state || {};
   const agents = live?.agents && typeof live.agents === "object" ? live.agents : {};
   if (agentTab !== "ALL") {
     const selected = agents[agentTab];
-    if (selected && typeof selected === "object") {
+    if (selected && typeof selected === "object" && getAgentExecutionState(selected) === "active") {
       const llm = selected?.llm && typeof selected.llm === "object" ? selected.llm : {};
       const hasText = String(llm.reasoning_text || llm.text || "").trim();
       if (hasText) {
@@ -124,6 +141,7 @@ function resolveThinkingAgent(snapshot, agentTab = "ALL") {
   }
   const rows = Object.entries(agents)
     .map(([name, state]) => ({ name, state: state && typeof state === "object" ? state : {} }))
+    .filter((row) => getAgentExecutionState(row.state) === "active")
     .map((row) => {
       const llm = row.state?.llm && typeof row.state.llm === "object" ? row.state.llm : {};
       const text = String(llm.reasoning_text || llm.text || "").trim();
@@ -145,7 +163,7 @@ function resolveThinkingAgent(snapshot, agentTab = "ALL") {
   }
   if (agentTab !== "ALL") {
     const selected = agents[agentTab];
-    if (selected && typeof selected === "object") {
+    if (selected && typeof selected === "object" && getAgentExecutionState(selected) === "active") {
       return { name: agentTab, state: selected };
     }
   }
@@ -162,10 +180,15 @@ function buildLiveAssistantMessage(snapshot, agentTab = "ALL") {
   const thinkingAgent = resolveThinkingAgent(snapshot, agentTab);
   const llm = thinkingAgent?.state?.llm && typeof thinkingAgent.state.llm === "object"
     ? thinkingAgent.state.llm
-    : (snapshot?.llm || live.llm || {});
+    : null;
+  const globalLlm = snapshot?.llm || live.llm || {};
+  const activeLlm = llm || (normalizeStatusToken(globalLlm?.status) === "running" ? globalLlm : null);
+  if (!activeLlm) {
+    return null;
+  }
   const graph = snapshot?.graph || {};
-  let reasoningText = compactText(llm.reasoning_text || "", 1400);
-  let draftText = compactText(llm.text || graph.text_preview || "", 1400);
+  let reasoningText = compactText(activeLlm.reasoning_text || "", 1400);
+  let draftText = compactText(activeLlm.text || graph.text_preview || "", 1400);
   const reasoningCompact = compactComparableText(reasoningText);
   const draftCompact = compactComparableText(draftText);
   if (reasoningCompact && draftCompact) {
@@ -434,20 +457,7 @@ function buildChatTimeline(snapshot, events, liveMessage) {
 }
 
 function agentVisualStatus(agent) {
-  if (!agent || typeof agent !== "object") {
-    return "idle";
-  }
-  if (agent.active_toolcall) {
-    return "active";
-  }
-  const llmStatus = String(agent?.llm?.status || "").trim();
-  if (llmStatus === "running") {
-    return "active";
-  }
-  const hasHistory = (Array.isArray(agent.recent_toolcalls) && agent.recent_toolcalls.length)
-    || (Array.isArray(agent.todo_rows) && agent.todo_rows.length)
-    || String(agent?.llm?.text || agent?.llm?.reasoning_text || "").trim();
-  return hasHistory ? "completed" : "idle";
+  return getAgentExecutionState(agent);
 }
 
 function normalizeAgentTodoRows(agentName, agent) {

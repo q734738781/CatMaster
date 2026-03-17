@@ -3,9 +3,9 @@ name: computational-heterogeneous-catalysis
 description: Use this skill for end-to-end heterogeneous catalysis workflows, including proposal framing, slab and adsorbate strategy, reaction/energy evaluation, and evidence standards for comparing catalyst candidates.
 license: project-local
 compatibility: local
-allowed-tools: ""
+allowed-tools: "vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
 metadata:
-  catmaster-suggested-tools: ""
+  catmaster-suggested-tools: "vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
 ---
 
 # computational-heterogeneous-catalysis
@@ -20,7 +20,8 @@ Use this skill to keep a heterogeneous-catalysis study coherent from catalyst se
 4. Record the campaign plan early so later execution and reporting stay aligned.
 
 ## Suggested tools
-- (none specified)
+- `vaspkit_adsorbate_thermo_correction`
+- `vaspkit_gas_thermo_correction`
 
 ## Workflow
 

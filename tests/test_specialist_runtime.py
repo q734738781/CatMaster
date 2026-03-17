@@ -16,7 +16,9 @@ import catmaster.specialists.runtime as runtime_mod
 from catmaster.specialists.runtime import (
     RUN_STATE_FILE,
     _EXPERIMENT_TOOL_ALLOWLIST,
+    _format_lightweight_internet_search_content,
     _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES,
+    _METADATA_AGENT_TOOL_ALLOWLIST,
     _LITREVIEW_AGENT_TOOL_ALLOWLIST,
     _LITREVIEW_COMPACT_KEEP_TOKENS,
     _LITREVIEW_COMPACT_TRIGGER_TOKENS,
@@ -43,6 +45,11 @@ class _FakeToolStrategy:
 
 
 class _FakeSubAgent:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+
+
+class _FakeCompiledSubAgent:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
 
@@ -117,6 +124,7 @@ def test_real_registry_covers_specialist_allowlists() -> None:
     assert _RESEARCH_TOOL_ALLOWLIST <= registered
     assert _WRITING_TOOL_ALLOWLIST <= registered
     assert _TASK_WORKER_TOOL_ALLOWLIST <= registered
+    assert _METADATA_AGENT_TOOL_ALLOWLIST <= registered
     assert _LITREVIEW_AGENT_TOOL_ALLOWLIST <= registered
     assert _WRITING_WORKER_TOOL_ALLOWLIST <= registered
     assert "bash" not in _EXPERIMENT_TOOL_ALLOWLIST
@@ -186,6 +194,60 @@ def test_specialist_tool_wrapper_returns_nonfatal_error_payload(tmp_path: Path, 
     assert artifact["data"]["tool_name"] == "polish_academic_prose"
 
 
+def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths() -> None:
+    contract = runtime_mod.SpecialistRunner._soft_reporting_contract()
+    assert "directly answer the user's actual question" in contract
+    assert "workspace-relative output paths" in contract
+    assert "replace or delete stale incorrect reports/notes" in contract
+
+
+def test_task_worker_prompt_includes_workspace_path_discipline() -> None:
+    prompt = runtime_mod.SpecialistRunner._task_worker_prompt()
+    assert "Workspace path discipline" in prompt
+    assert "Treat `/` only as the workspace virtual root" in prompt
+
+
+def test_lightweight_internet_search_content_omits_raw_content() -> None:
+    content = _format_lightweight_internet_search_content(
+        {
+            "query": "Pt(111) hydrogen adsorption benchmark DOI",
+            "topic": "general",
+            "results": [
+                {
+                    "title": "Hydrogen adsorption and diffusion on Pt {111}",
+                    "url": "https://example.org/paper",
+                    "content": "Representative DFT study discussing adsorption sites and diffusion barriers.",
+                    "raw_content": "RAW " * 500,
+                }
+            ],
+        },
+        max_results=5,
+    )
+
+    assert "Query: Pt(111) hydrogen adsorption benchmark DOI" in content
+    assert "Top results:" in content
+    assert "Hydrogen adsorption and diffusion on Pt {111}" in content
+    assert "Representative DFT study discussing adsorption sites" in content
+    assert "raw page content was returned by Tavily but omitted" in content
+    assert "RAW RAW RAW" not in content
+
+
+def test_lightweight_internet_search_content_formats_error_compactly() -> None:
+    content = _format_lightweight_internet_search_content(
+        {
+            "status": "error",
+            "source": "tavily",
+            "query": "Pt(111) H adsorption",
+            "message": "temporary upstream failure",
+        }
+    )
+
+    assert "internet_search failed" in content
+    assert "Pt(111) H adsorption" in content
+    assert "temporary upstream failure" in content
+    assert "\n" not in content
+
+
 def test_default_tool_error_middleware_returns_tool_message() -> None:
     middleware = runtime_mod.SpecialistRunner._build_default_middleware()
     handler_mw = middleware[-1]
@@ -214,6 +276,12 @@ def test_default_tool_error_middleware_returns_tool_message() -> None:
     assert result.status == "error"
     assert "Invalid SMILES" in str(result.content)
     assert result.tool_call_id == "call-1"
+
+
+def test_default_middleware_uses_configurable_model_call_limit() -> None:
+    middleware = runtime_mod.SpecialistRunner._build_default_middleware(model_call_run_limit=88)
+    tracker = next(item for item in middleware if getattr(item, "run_limit", None) is not None)
+    assert tracker.run_limit == 88
 
 
 def test_specialist_usage_callback_tracks_agent_scoped_usage() -> None:
@@ -278,7 +346,7 @@ def test_finalize_report_runs_compile_guard_for_tex_outputs(
         return (
             "compiled",
             {
-                "tool_name": "agentic_compile_tex",
+                "tool_name": "compile_text",
                 "data": {
                     "compiled_ok": True,
                     "pdf_path": "writeup/note.pdf",
@@ -289,7 +357,7 @@ def test_finalize_report_runs_compile_guard_for_tex_outputs(
             },
         )
 
-    monkeypatch.setattr(built.runner.registry, "get_tool_function", lambda name: _fake_compile if name == "agentic_compile_tex" else None)
+    monkeypatch.setattr(built.runner.registry, "get_tool_function", lambda name: _fake_compile if name == "compile_text" else None)
 
     finalized = built.runner._finalize_report(
         {
@@ -340,6 +408,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_tool_strategy", staticmethod(lambda: _FakeToolStrategy))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(
         runtime_mod.SpecialistRunner,
         "_load_summarization_middleware",
@@ -386,29 +455,45 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert all(getattr(tool, "name", None) != "run_literature_research" for tool in agent_kwargs["tools"])
     assert [subagent.kwargs["name"] for subagent in agent_kwargs["subagents"]] == expected_subagent_names
     for subagent in agent_kwargs["subagents"]:
-        assert all(getattr(tool, "name", None) != "bash" for tool in subagent.kwargs["tools"])
-        assert "middleware" in subagent.kwargs
-        middleware_names = {type(item).__name__ for item in (subagent.kwargs.get("middleware") or [])}
-        assert any(name == "catmaster_nonfatal_tool_errors" for name in middleware_names)
+        if "tools" in subagent.kwargs:
+            assert all(getattr(tool, "name", None) != "bash" for tool in subagent.kwargs["tools"])
+        if "middleware" in subagent.kwargs:
+            middleware_names = {type(item).__name__ for item in (subagent.kwargs.get("middleware") or [])}
+            assert any(name == "catmaster_nonfatal_tool_errors" for name in middleware_names)
 
     subagents_by_name = {subagent.kwargs["name"]: subagent.kwargs for subagent in agent_kwargs["subagents"]}
     if entrypoint == "research":
         assert "Maintain a lightweight Research Kernel" in agent_kwargs["system_prompt"]
         assert "/research_kernels/" in agent_kwargs["system_prompt"]
-        assert {tool.name for tool in subagents_by_name["litreview_agent"]["tools"]} == _LITREVIEW_AGENT_TOOL_ALLOWLIST
         assert "litreview_agent" in agent_kwargs["system_prompt"]
-        litreview_middleware = subagents_by_name["litreview_agent"]["middleware"]
-        summarizer = next(item for item in litreview_middleware if isinstance(item, _FakeSummarizationMiddleware))
-        compact_tool = next(item for item in litreview_middleware if isinstance(item, _FakeCompactConversationMiddleware))
-        assert summarizer.kwargs["trigger"] == ("tokens", _LITREVIEW_COMPACT_TRIGGER_TOKENS)
-        assert summarizer.kwargs["keep"] == ("tokens", _LITREVIEW_COMPACT_KEEP_TOKENS)
-        assert compact_tool.summarizer is summarizer
+        assert "metadata_agent" in agent_kwargs["system_prompt"]
+        litreview_compiled = subagents_by_name["litreview_agent"]
+        assert "runnable" in litreview_compiled
+        litreview_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "litreview_agent"]
+        assert litreview_agents, "expected nested litreview agent to be created"
+        litreview_agent_kwargs = litreview_agents[0]
+        assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
+        nested_subagents = {subagent.kwargs["name"]: subagent.kwargs for subagent in litreview_agent_kwargs["subagents"]}
+        assert {tool.name for tool in nested_subagents["literature_agent"]["tools"]} == _LITREVIEW_AGENT_TOOL_ALLOWLIST
+        assert nested_subagents["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
+        assert {tool.name for tool in nested_subagents["metadata_agent"]["tools"]} == _METADATA_AGENT_TOOL_ALLOWLIST
+        metadata_middleware = nested_subagents["metadata_agent"]["middleware"]
+        metadata_summarizer = next(item for item in metadata_middleware if isinstance(item, _FakeSummarizationMiddleware))
+        compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
+        assert metadata_summarizer.kwargs["trigger"] == ("tokens", _LITREVIEW_COMPACT_TRIGGER_TOKENS)
+        assert metadata_summarizer.kwargs["keep"] == ("tokens", _LITREVIEW_COMPACT_KEEP_TOKENS)
+        assert compact_tool.summarizer is metadata_summarizer
+        literature_middleware = nested_subagents["literature_agent"]["middleware"]
+        assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "experiment":
         assert {tool.name for tool in subagents_by_name["task_worker_agent"]["tools"]} == _TASK_WORKER_TOOL_ALLOWLIST
         assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES
+        assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
+        assert "/notes/literature/" in subagents_by_name["literature_agent"]["system_prompt"]
+        assert "Web Evidence" in subagents_by_name["literature_agent"]["system_prompt"]
     else:
         assert {tool.name for tool in agent_kwargs["tools"]} == _WRITING_TOOL_ALLOWLIST
-        assert "agentic_compile_tex" not in {tool.name for tool in agent_kwargs["tools"]}
+        assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == _WRITING_WORKER_TOOL_ALLOWLIST
         assert "literature_agent" not in subagents_by_name
 

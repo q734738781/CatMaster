@@ -30,6 +30,7 @@ def test_fast_director_prompt_has_no_proposal_lifecycle() -> None:
     assert "planning-only / explanation-only" in system_content
     assert 'FastDirectorOutput(state="StopAndSynthesize", ...)' in system_content
     assert "research-grounded" in system_content
+    assert "A saved report path is supplemental only" in system_content
     assert "short reference shortlist" in system_content
     assert "must not replace citations" in system_content
     assert "Intent routing rules (execution-priority):" in system_content
