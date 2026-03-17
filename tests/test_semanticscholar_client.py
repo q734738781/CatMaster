@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from catmaster.runtime.literature import OpenAlexClient, SemanticScholarClient
+from catmaster.runtime.literature import OpenAlexClient, SemanticScholarClient, SemanticScholarRateLimitError
 
 
 class _FakeResponse:
@@ -69,7 +69,7 @@ def test_semanticscholar_client_retries_429_then_succeeds(monkeypatch) -> None:
     assert observed["sleeps"] == 0
 
 
-def test_semanticscholar_client_raises_after_retry_budget_exhausted(monkeypatch) -> None:
+def test_semanticscholar_client_raises_rate_limit_after_retry_budget_exhausted(monkeypatch) -> None:
     responses = [
         _FakeResponse(429, {}, headers={"Retry-After": "0"}),
         _FakeResponse(429, {}, headers={"Retry-After": "0"}),
@@ -93,10 +93,11 @@ def test_semanticscholar_client_raises_after_retry_budget_exhausted(monkeypatch)
 
     try:
         client.search_papers("CO adsorption Fe(110)", limit=3)
-    except httpx.HTTPStatusError as exc:
-        assert exc.response.status_code == 429
+    except SemanticScholarRateLimitError as exc:
+        assert exc.attempts == 2
+        assert exc.wait_seconds == 0.0
     else:
-        raise AssertionError("Expected HTTPStatusError for exhausted retry budget")
+        raise AssertionError("Expected SemanticScholarRateLimitError for exhausted retry budget")
 
     assert observed["calls"] == 2
 
@@ -152,3 +153,69 @@ def test_openalex_client_reconstructs_abstract_and_open_access_fields() -> None:
     assert paper.is_open_access is True
     assert paper.has_abstract is True
     assert paper.has_fulltext is True
+
+
+def test_openalex_client_normalizes_doi_identifier() -> None:
+    observed = {}
+
+    class _FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str, params=None):
+            observed["url"] = url
+            observed["params"] = params or {}
+            return _FakeResponse(
+                200,
+                {
+                    "id": "https://openalex.org/W1",
+                    "display_name": "Normalized DOI result",
+                    "publication_year": 2024,
+                    "authorships": [],
+                },
+            )
+
+    client = OpenAlexClient()
+    client._client = lambda: _FakeClient()  # type: ignore[method-assign]
+
+    paper = client.get_work("10.1016/j.susc.2017.09.002")
+
+    assert "https%3A%2F%2Fdoi.org%2F10.1016%2Fj.susc.2017.09.002" in observed["url"]
+    assert paper.title == "Normalized DOI result"
+
+
+def test_semanticscholar_client_tries_doi_prefix_before_plain_doi(monkeypatch) -> None:
+    observed: list[str] = []
+
+    class _FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def request(self, method: str, url: str, **kwargs):
+            _ = method, kwargs
+            observed.append(url)
+            if "DOI%3A10.1016%2Fj.susc.2017.09.002" in url:
+                return _FakeResponse(
+                    200,
+                    {
+                        "paperId": "p1",
+                        "title": "Semantic Scholar DOI result",
+                        "year": 2024,
+                        "authors": [],
+                    },
+                )
+            return _FakeResponse(404, {})
+
+    client = SemanticScholarClient(retry_429_attempts=0, retry_429_wait_seconds=0.0)
+    monkeypatch.setattr(client, "_client", lambda: _FakeClient())
+
+    paper = client.get_paper("10.1016/j.susc.2017.09.002")
+
+    assert "DOI%3A10.1016%2Fj.susc.2017.09.002" in observed[0]
+    assert paper.title == "Semantic Scholar DOI result"

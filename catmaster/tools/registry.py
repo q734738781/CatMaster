@@ -73,8 +73,24 @@ class ToolRegistry:
             RenderStructureViewsInput,
         )
         from catmaster.runtime.literature import (
+            FindInPageInput,
+            GetOpenAlexRecordInput,
+            GetSemanticScholarRecordInput,
+            OpenPublicPageInput,
+            RecommendSemanticScholarInput,
             run_literature_research,
+            search_openalex,
+            search_public_web,
+            search_semantic_scholar,
+            get_openalex_record,
+            get_semantic_scholar_record,
+            recommend_semantic_scholar,
+            open_public_page,
+            find_in_page,
             RunLiteratureResearchInput,
+            SearchOpenAlexInput,
+            SearchPublicWebInput,
+            SearchSemanticScholarInput,
         )
 
         # File management tools
@@ -117,6 +133,14 @@ class ToolRegistry:
         self.register_tool("agentic_compile_tex", agentic_compile_tex, AgenticCompileTexInput)
         self.register_tool("polish_academic_prose", polish_academic_prose, PolishAcademicProseInput)
         self.register_tool("run_literature_research", run_literature_research, RunLiteratureResearchInput)
+        self.register_tool("search_openalex", search_openalex, SearchOpenAlexInput)
+        self.register_tool("search_semantic_scholar", search_semantic_scholar, SearchSemanticScholarInput)
+        self.register_tool("get_openalex_record", get_openalex_record, GetOpenAlexRecordInput)
+        self.register_tool("get_semantic_scholar_record", get_semantic_scholar_record, GetSemanticScholarRecordInput)
+        self.register_tool("recommend_semantic_scholar", recommend_semantic_scholar, RecommendSemanticScholarInput)
+        self.register_tool("search_public_web", search_public_web, SearchPublicWebInput)
+        self.register_tool("open_public_page", open_public_page, OpenPublicPageInput)
+        self.register_tool("find_in_page", find_in_page, FindInPageInput)
         self.register_tool("bash", bash_exec, BashExecInput)
         self.register_alias("bash_exec", "bash")
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)

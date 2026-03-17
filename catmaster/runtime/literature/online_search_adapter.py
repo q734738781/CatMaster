@@ -6,7 +6,11 @@ from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from tavily import TavilyClient
+
+try:
+    from tavily import TavilyClient
+except Exception:  # pragma: no cover - optional dependency in some test envs
+    TavilyClient = Any  # type: ignore[misc,assignment]
 
 from .models import FindInPageResult, InPageMatch, PublicPageSnapshot, PublicWebHit, PublicWebSearchResult
 
@@ -20,7 +24,12 @@ class OnlineSearchAdapter:
         topic: str = "general",
     ) -> None:
         api_key = str(tavily_api_key if tavily_api_key is not None else os.environ.get("TAVILY_API_KEY", "")).strip()
-        self._tavily_client = TavilyClient(api_key=api_key) if api_key else None
+        self._tavily_client = None
+        if api_key:
+            try:
+                self._tavily_client = TavilyClient(api_key=api_key)
+            except Exception:
+                self._tavily_client = None
         self.search_depth = str(search_depth or "advanced").strip().lower() or "advanced"
         self.topic = str(topic or "general").strip().lower() or "general"
 

@@ -2,9 +2,15 @@ import {
   startTransition,
   useDeferredValue,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import Markdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
 
 function escapePath(value) {
   if (value === null || value === undefined) {
@@ -69,20 +75,95 @@ function compactComparableText(value) {
   return normalizeComparableText(value).replace(/[^a-z0-9\u4e00-\u9fff]+/g, "");
 }
 
+function normalizeStatusToken(value) {
+  return String(value || "").trim().toLowerCase().replaceAll("-", "_");
+}
+
+function todoStatusRank(status) {
+  const normalized = normalizeStatusToken(status);
+  if (normalized === "in_progress" || normalized === "running") {
+    return 0;
+  }
+  if (normalized === "pending" || normalized === "queued") {
+    return 1;
+  }
+  if (normalized === "completed" || normalized === "done" || normalized === "success") {
+    return 2;
+  }
+  return 3;
+}
+
+function toolStatusRank(status) {
+  const normalized = normalizeStatusToken(status);
+  if (normalized === "running" || normalized === "in_progress") {
+    return 0;
+  }
+  if (normalized === "error" || normalized === "failure" || normalized === "validation_failed" || normalized === "interrupted") {
+    return 2;
+  }
+  return 1;
+}
+
 function shouldRecordEvent(event) {
   const name = String(event?.name || "");
   return !["LLM_TOKEN_DELTA", "LLM_REASONING_DELTA"].includes(name);
 }
 
-function buildLiveAssistantMessage(snapshot) {
+function resolveThinkingAgent(snapshot, agentTab = "ALL") {
   const live = snapshot?.live_state || {};
-  const llm = snapshot?.llm || live.llm || {};
-  const graph = snapshot?.graph || {};
+  const agents = live?.agents && typeof live.agents === "object" ? live.agents : {};
+  if (agentTab !== "ALL") {
+    const selected = agents[agentTab];
+    if (selected && typeof selected === "object") {
+      const llm = selected?.llm && typeof selected.llm === "object" ? selected.llm : {};
+      const hasText = String(llm.reasoning_text || llm.text || "").trim();
+      if (hasText) {
+        return { name: agentTab, state: selected };
+      }
+    }
+  }
+  const rows = Object.entries(agents)
+    .map(([name, state]) => ({ name, state: state && typeof state === "object" ? state : {} }))
+    .map((row) => {
+      const llm = row.state?.llm && typeof row.state.llm === "object" ? row.state.llm : {};
+      const text = String(llm.reasoning_text || llm.text || "").trim();
+      return { ...row, hasText: text };
+    })
+    .filter(({ hasText }) => hasText)
+    .sort((left, right) => {
+      const leftLlm = left.state?.llm && typeof left.state.llm === "object" ? left.state.llm : {};
+      const rightLlm = right.state?.llm && typeof right.state.llm === "object" ? right.state.llm : {};
+      const leftRunning = normalizeStatusToken(leftLlm.status) === "running" ? 0 : 1;
+      const rightRunning = normalizeStatusToken(rightLlm.status) === "running" ? 0 : 1;
+      if (leftRunning !== rightRunning) {
+        return leftRunning - rightRunning;
+      }
+      return Number(right.state?.last_updated_ts || 0) - Number(left.state?.last_updated_ts || 0);
+    });
+  if (rows.length) {
+    return rows[0];
+  }
+  if (agentTab !== "ALL") {
+    const selected = agents[agentTab];
+    if (selected && typeof selected === "object") {
+      return { name: agentTab, state: selected };
+    }
+  }
+  return null;
+}
+
+function buildLiveAssistantMessage(snapshot, agentTab = "ALL") {
+  const live = snapshot?.live_state || {};
   const status = String(snapshot?.run_status || live.status || "").trim();
   const isActive = isRunActive(status);
   if (!isActive) {
     return null;
   }
+  const thinkingAgent = resolveThinkingAgent(snapshot, agentTab);
+  const llm = thinkingAgent?.state?.llm && typeof thinkingAgent.state.llm === "object"
+    ? thinkingAgent.state.llm
+    : (snapshot?.llm || live.llm || {});
+  const graph = snapshot?.graph || {};
   let reasoningText = compactText(llm.reasoning_text || "", 1400);
   let draftText = compactText(llm.text || graph.text_preview || "", 1400);
   const reasoningCompact = compactComparableText(reasoningText);
@@ -104,7 +185,7 @@ function buildLiveAssistantMessage(snapshot) {
     role: "assistant",
     kind: "live_assistant",
     badge: "thinking",
-    status: status || "running",
+    status: thinkingAgent?.name && thinkingAgent.name !== "ALL" ? `${thinkingAgent.name}` : (status || "running"),
     content: parts.join("\n\n"),
   };
 }
@@ -275,16 +356,54 @@ function buildEventMessages(events) {
     .filter(Boolean);
 }
 
+function messageMatchesResult(message, resultText) {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+  if (String(message.role || "") !== "assistant") {
+    return false;
+  }
+  const messageText = compactText(message.content || "", 1800);
+  const left = compactComparableText(messageText);
+  const right = compactComparableText(resultText);
+  if (!left || !right) {
+    return false;
+  }
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+function decoratePersistedMessages(snapshot, persistedMessages) {
+  const rows = Array.isArray(persistedMessages) ? persistedMessages.map((message) => ({ ...message })) : [];
+  const resultText = compactText(snapshot?.result_text || "", 1800);
+  if (!resultText) {
+    return rows;
+  }
+  let matchIndex = -1;
+  rows.forEach((message, index) => {
+    if (messageMatchesResult(message, resultText)) {
+      matchIndex = index;
+    }
+  });
+  if (matchIndex < 0) {
+    return rows;
+  }
+  const matched = rows[matchIndex] || {};
+  rows[matchIndex] = {
+    ...matched,
+    kind: "result",
+    badge: "result",
+    status: matched.status || String(snapshot?.run_status || "done"),
+  };
+  return rows;
+}
+
 function buildResultFallbackMessage(snapshot, persistedMessages) {
   const resultText = compactText(snapshot?.result_text || "", 1800);
   if (!resultText) {
     return null;
   }
-  const hasAssistantResult = (Array.isArray(persistedMessages) ? persistedMessages : []).some((message) => {
-    const role = String(message?.role || "");
-    const content = String(message?.content || "");
-    return role === "assistant" && content.includes(resultText);
-  });
+  const hasAssistantResult = (Array.isArray(persistedMessages) ? persistedMessages : [])
+    .some((message) => messageMatchesResult(message, resultText));
   if (hasAssistantResult) {
     return null;
   }
@@ -298,7 +417,10 @@ function buildResultFallbackMessage(snapshot, persistedMessages) {
 }
 
 function buildChatTimeline(snapshot, events, liveMessage) {
-  const persistedMessages = Array.isArray(snapshot?.chat_messages) ? snapshot.chat_messages : [];
+  const persistedMessages = decoratePersistedMessages(
+    snapshot,
+    Array.isArray(snapshot?.chat_messages) ? snapshot.chat_messages : [],
+  );
   const rows = [...persistedMessages];
   const proposalMessage = buildProposalMessage(snapshot);
   if (proposalMessage) {
@@ -311,6 +433,159 @@ function buildChatTimeline(snapshot, events, liveMessage) {
   return mergeChatMessages(rows, liveMessage);
 }
 
+function agentVisualStatus(agent) {
+  if (!agent || typeof agent !== "object") {
+    return "idle";
+  }
+  if (agent.active_toolcall) {
+    return "active";
+  }
+  const llmStatus = String(agent?.llm?.status || "").trim();
+  if (llmStatus === "running") {
+    return "active";
+  }
+  const hasHistory = (Array.isArray(agent.recent_toolcalls) && agent.recent_toolcalls.length)
+    || (Array.isArray(agent.todo_rows) && agent.todo_rows.length)
+    || String(agent?.llm?.text || agent?.llm?.reasoning_text || "").trim();
+  return hasHistory ? "completed" : "idle";
+}
+
+function normalizeAgentTodoRows(agentName, agent) {
+  const rows = Array.isArray(agent?.todo_rows) ? agent.todo_rows : [];
+  return rows
+    .filter((row) => row && row.content)
+    .map((row, index) => ({
+      ...row,
+      status: row.status,
+      agent_name: agentName,
+      agent_sort_key: agentName,
+      row_index: index,
+    }));
+}
+
+function toolTraceRowsForAgent(agentName, agent) {
+  const rows = [];
+  const visualStatus = agentVisualStatus(agent);
+  if (agent?.active_toolcall?.tool) {
+    rows.push({
+      ...agent.active_toolcall,
+      agent_name: agentName,
+      sort_ts: Number(agent.active_toolcall.started_ts || 0),
+      agent_sort_key: agentName,
+      local_index: -1,
+    });
+  }
+  const recent = Array.isArray(agent?.recent_toolcalls) ? agent.recent_toolcalls : [];
+  recent.forEach((row, index) => {
+    if (!row?.tool) {
+      return;
+    }
+    rows.push({
+      ...row,
+      agent_name: agentName,
+      sort_ts: Number(row.ended_ts || row.started_ts || 0),
+      agent_sort_key: agentName,
+      local_index: index,
+    });
+  });
+  if (!rows.length && visualStatus !== "idle") {
+    const active = visualStatus === "active";
+    const sortTs = Number(
+      active
+        ? agent?.started_ts || agent?.last_updated_ts || 0
+        : agent?.completed_ts || agent?.last_updated_ts || 0,
+    );
+    rows.push({
+      tool: "subagent",
+      status: active ? "running" : "success",
+      highlights: active ? `${agentName} is running.` : `${agentName} completed.`,
+      params_compact: "",
+      agent_name: agentName,
+      sort_ts: sortTs,
+      agent_sort_key: agentName,
+      local_index: -1,
+      toolcall_id: `subagent:${agentName}:${sortTs || 0}:${visualStatus}`,
+    });
+  }
+  return rows;
+}
+
+function agentTabs(live) {
+  const agents = live?.agents && typeof live.agents === "object" ? live.agents : {};
+  const rows = Object.entries(agents)
+    .map(([name, value]) => {
+      const agent = value && typeof value === "object" ? value : {};
+      const status = agentVisualStatus(agent);
+      return {
+        name,
+        status,
+        lastUpdatedTs: Number(agent.last_updated_ts || 0),
+      };
+    })
+    .filter((row) => row.name);
+  rows.sort((left, right) => {
+    const leftRank = left.status === "active" ? 0 : left.status === "completed" ? 1 : 2;
+    const rightRank = right.status === "active" ? 0 : right.status === "completed" ? 1 : 2;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return (right.lastUpdatedTs || 0) - (left.lastUpdatedTs || 0);
+  });
+  return [
+    { name: "ALL", status: rows.some((row) => row.status === "active") ? "active" : "completed", lastUpdatedTs: 0 },
+    ...rows,
+  ];
+}
+
+function aggregateAgentTodos(live) {
+  const agents = live?.agents && typeof live.agents === "object" ? live.agents : {};
+  return Object.entries(agents)
+    .flatMap(([agentName, agent]) => normalizeAgentTodoRows(agentName, agent))
+    .sort((left, right) => {
+      const leftRank = todoStatusRank(left.status);
+      const rightRank = todoStatusRank(right.status);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      const agentCmp = String(left.agent_sort_key || "").localeCompare(String(right.agent_sort_key || ""));
+      if (agentCmp !== 0) {
+        return agentCmp;
+      }
+      return Number(left.row_index || 0) - Number(right.row_index || 0);
+    });
+}
+
+function aggregateAgentToolTrace(live) {
+  const agents = live?.agents && typeof live.agents === "object" ? live.agents : {};
+  const rows = Object.entries(agents).flatMap(([agentName, agent]) => toolTraceRowsForAgent(agentName, agent));
+  const seen = new Set();
+  return rows
+    .sort((left, right) => {
+      const leftRank = toolStatusRank(left.status);
+      const rightRank = toolStatusRank(right.status);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      const tsDiff = Number(right.sort_ts || 0) - Number(left.sort_ts || 0);
+      if (tsDiff !== 0) {
+        return tsDiff;
+      }
+      const agentCmp = String(left.agent_sort_key || "").localeCompare(String(right.agent_sort_key || ""));
+      if (agentCmp !== 0) {
+        return agentCmp;
+      }
+      return Number(left.local_index || 0) - Number(right.local_index || 0);
+    })
+    .filter((row) => {
+      const key = String(row.toolcall_id || `${row.agent_name}:${row.tool}:${row.sort_ts}`);
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
 const LANE_GUIDE = {
   experiment: {
     title: "Experiment",
@@ -320,12 +595,12 @@ const LANE_GUIDE = {
   research: {
     title: "Research",
     summary: "Coordinate broader investigation and delegate only when experiment or writing work is needed.",
-    subagents: ["experiment_specialist", "writing_specialist", "literature_agent"],
+    subagents: ["experiment_specialist", "writing_specialist", "litreview_agent"],
   },
   writing: {
     title: "Writing",
     summary: "Draft or revise deliverables from existing evidence and compile when needed.",
-    subagents: ["writing_worker_agent", "compile_agent"],
+    subagents: ["writing_worker_agent"],
   },
 };
 
@@ -414,6 +689,30 @@ function EventFeed({ events }) {
   );
 }
 
+function normalizeMathMarkdown(text) {
+  const source = String(text || "");
+  if (!source) {
+    return "";
+  }
+  return source
+    .replace(/\\\[((?:.|\n)*?)\\\]/g, (_match, expr) => `\n$$\n${String(expr || "").trim()}\n$$\n`)
+    .replace(/\\\(((?:.|\n)*?)\\\)/g, (_match, expr) => `$${String(expr || "").trim()}$`);
+}
+
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeKatex];
+
+function MarkdownContent({ text }) {
+  const source = normalizeMathMarkdown(text);
+  const rendered = useMemo(
+    () => (
+      <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>{source}</Markdown>
+    ),
+    [source],
+  );
+  return <div className="chat-content md-body">{rendered}</div>;
+}
+
 function ChatThread({ messages }) {
   const threadRef = useRef(null);
 
@@ -436,7 +735,7 @@ function ChatThread({ messages }) {
             {message.badge ? <div className="chat-badge">{message.badge}</div> : null}
           </div>
           {message.status ? <div className="chat-status">{message.status}</div> : null}
-          <div className="chat-content">{message.content || ""}</div>
+          <MarkdownContent text={message.content} />
         </article>
       ))}
     </div>
@@ -562,13 +861,21 @@ function UsagePanel({ usage }) {
 }
 
 function TodoPanel({ todos }) {
-  const rows = Array.isArray(todos) ? todos.filter((item) => item && item.content) : [];
+  const rows = (Array.isArray(todos) ? todos.filter((item) => item && item.content) : [])
+    .map((item, index) => ({ ...item, __sort_index: index }))
+    .sort((left, right) => {
+      const leftRank = todoStatusRank(left.status);
+      const rightRank = todoStatusRank(right.status);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return (left.__sort_index || 0) - (right.__sort_index || 0);
+    });
   return (
     <section className="todo-panel">
       <div className="section-head">
         <div>
           <div className="section-label">Todo</div>
-          <h3 className="section-title">Live checklist</h3>
         </div>
       </div>
       {rows.length ? (
@@ -577,6 +884,7 @@ function TodoPanel({ todos }) {
             <article key={`${item.content}-${index}`} className={`todo-item status-${String(item.status || "pending").replaceAll("_", "-")}`}>
               <div className="todo-item-head">
                 <span className="todo-status-pill">{item.status || "pending"}</span>
+                {item.agent_name ? <span className="todo-agent-pill">{item.agent_name}</span> : null}
               </div>
               <div className="todo-item-text">{item.content}</div>
             </article>
@@ -590,27 +898,26 @@ function TodoPanel({ todos }) {
 }
 
 function ToolTracePanel({ activeToolcall, recentToolcalls }) {
-  const active = activeToolcall && activeToolcall.tool ? activeToolcall : null;
-  const recent = Array.isArray(recentToolcalls) ? recentToolcalls.filter((item) => item && item.tool) : [];
-  const dedupedRecent = [];
-  const seen = new Set(active?.toolcall_id ? [String(active.toolcall_id)] : []);
-  for (let index = recent.length - 1; index >= 0; index -= 1) {
-    const row = recent[index];
-    const key = String(row.toolcall_id || `${row.tool}-${index}`);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    dedupedRecent.push(row);
-  }
-  const rows = [active, ...dedupedRecent].filter(Boolean);
+  const rows = (Array.isArray(recentToolcalls) ? recentToolcalls.filter((item) => item && item.tool) : [])
+    .sort((left, right) => {
+      const leftRank = toolStatusRank(left.status);
+      const rightRank = toolStatusRank(right.status);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      const leftTs = Number(left.started_ts || left.ended_ts || left.sort_ts || 0);
+      const rightTs = Number(right.started_ts || right.ended_ts || right.sort_ts || 0);
+      if (rightTs !== leftTs) {
+        return rightTs - leftTs;
+      }
+      return String(left.agent_name || "").localeCompare(String(right.agent_name || ""));
+    });
 
   return (
     <section className="tool-trace-panel">
       <div className="section-head">
         <div>
           <div className="section-label">Tool trace</div>
-          <h3 className="section-title">Live tool facts</h3>
         </div>
       </div>
       {rows.length ? (
@@ -621,7 +928,10 @@ function ToolTracePanel({ activeToolcall, recentToolcalls }) {
             return (
               <article key={`${item.toolcall_id || item.tool}-${index}`} className={`tool-trace-item status-${status.replaceAll("_", "-")}`}>
                 <div className="tool-trace-head">
-                  <div className="tool-trace-title">{String(item.tool || "").trim()}</div>
+                  <div className="tool-trace-title">
+                    {String(item.tool || "").trim()}
+                    {item.agent_name ? <span className="tool-trace-agent">{item.agent_name}</span> : null}
+                  </div>
                   <span className="tool-trace-status">{status}</span>
                 </div>
                 {summary ? <div className="tool-trace-body">{summary}</div> : null}
@@ -680,6 +990,7 @@ function App({ boot }) {
   const [events, setEvents] = useState([]);
   const [promptResponse, setPromptResponse] = useState("");
   const [monitorTab, setMonitorTab] = useState("result");
+  const [agentTab, setAgentTab] = useState("ALL");
   const [streamNonce, setStreamNonce] = useState(0);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryPanel, setMemoryPanel] = useState({
@@ -887,6 +1198,14 @@ function App({ boot }) {
     };
   }, [ctx, memoryOpen, selectedRun, snapshot?.workspace_name, view]);
 
+  useEffect(() => {
+    const live = snapshot?.live_state || {};
+    const tabs = agentTabs(live).map((item) => item.name);
+    if (!tabs.includes(agentTab)) {
+      setAgentTab("ALL");
+    }
+  }, [agentTab, snapshot?.live_state]);
+
   async function refreshSnapshot(runName = selectedRun) {
     if (!ctx) {
       return;
@@ -1048,7 +1367,7 @@ function App({ boot }) {
   const graph = snapshot?.graph || {};
   const usage = snapshot?.usage_summary || {};
   const visibleEvents = view === "monitor" ? events : [];
-  const liveAssistantMessage = buildLiveAssistantMessage(snapshot);
+  const liveAssistantMessage = buildLiveAssistantMessage(snapshot, agentTab);
   const chatMessages = buildChatTimeline(snapshot, events, liveAssistantMessage);
   const laneGuide = LANE_GUIDE[lane] || LANE_GUIDE.experiment;
   const todoRows = Array.isArray(live?.todo_rows) && live.todo_rows.length
@@ -1056,6 +1375,29 @@ function App({ boot }) {
     : (Array.isArray(snapshot?.todo_items) ? snapshot.todo_items.filter(Boolean).map((item) => ({ content: item, status: "pending" })) : []);
   const activeToolcall = live?.active_toolcall || null;
   const recentToolcalls = Array.isArray(live?.recent_toolcalls) ? live.recent_toolcalls : [];
+  const availableAgentTabs = agentTabs(live);
+  const agentStates = live?.agents && typeof live.agents === "object" ? live.agents : {};
+  const selectedAgentState = agentTab !== "ALL" && agentStates[agentTab] && typeof agentStates[agentTab] === "object"
+    ? agentStates[agentTab]
+    : null;
+  const displayedTodos = agentTab === "ALL"
+    ? aggregateAgentTodos(live)
+    : normalizeAgentTodoRows(agentTab, selectedAgentState);
+  const displayedToolTrace = agentTab === "ALL"
+    ? aggregateAgentToolTrace(live)
+    : toolTraceRowsForAgent(agentTab, selectedAgentState)
+      .sort((left, right) => {
+        const leftRank = toolStatusRank(left.status);
+        const rightRank = toolStatusRank(right.status);
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank;
+        }
+        const tsDiff = Number(right.sort_ts || 0) - Number(left.sort_ts || 0);
+        if (tsDiff !== 0) {
+          return tsDiff;
+        }
+        return Number(left.local_index || 0) - Number(right.local_index || 0);
+      });
 
   return (
     <main className={`app-shell view-${view}`}>
@@ -1334,8 +1676,21 @@ function App({ boot }) {
 
         {view === "home" ? (
           <aside className="right-rail home-sidecar">
-            <TodoPanel todos={todoRows} />
-            <ToolTracePanel activeToolcall={activeToolcall} recentToolcalls={recentToolcalls} />
+            <div className="agent-tabs" role="tablist" aria-label="Live agent trace filters">
+              {availableAgentTabs.map((item) => (
+                <button
+                  key={item.name}
+                  type="button"
+                  className={`agent-tab ${agentTab === item.name ? "active" : ""} status-${item.status}`}
+                  onClick={() => setAgentTab(item.name)}
+                >
+                  <span>{item.name}</span>
+                  {item.name !== "ALL" ? <span className="agent-tab-status">{item.status}</span> : null}
+                </button>
+              ))}
+            </div>
+            <TodoPanel todos={agentTab === "ALL" ? (displayedTodos.length ? displayedTodos : todoRows) : displayedTodos} />
+            <ToolTracePanel activeToolcall={activeToolcall} recentToolcalls={agentTab === "ALL" ? (displayedToolTrace.length ? displayedToolTrace : recentToolcalls) : displayedToolTrace} />
           </aside>
         ) : null}
       </div>

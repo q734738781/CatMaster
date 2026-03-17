@@ -209,7 +209,7 @@ class LiteratureRuntimeConfig:
     )
     public_web_on_search_failure: bool = True
     summary_key_paper_count: int = 5
-    semantic_scholar_retry_429_attempts: int = 3
+    semantic_scholar_retry_429_attempts: int = 5
     semantic_scholar_retry_429_wait_seconds: float = 15.0
     budgets: Dict[str, LiteratureDepthBudgetConfig] = field(
         default_factory=lambda: {

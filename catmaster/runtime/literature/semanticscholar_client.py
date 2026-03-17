@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Any
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -25,6 +26,23 @@ _FIELDS = ",".join(
         "tldr",
     ]
 )
+
+
+class SemanticScholarRateLimitError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        attempts: int,
+        wait_seconds: float,
+        response: httpx.Response | None = None,
+    ) -> None:
+        self.attempts = max(1, int(attempts))
+        self.wait_seconds = max(0.0, float(wait_seconds))
+        self.response = response
+        super().__init__(
+            "Semantic Scholar rate limited after "
+            f"{self.attempts} attempt(s); waited about {self.wait_seconds:.1f}s between retries."
+        )
 
 
 class SemanticScholarClient:
@@ -73,16 +91,46 @@ class SemanticScholarClient:
                 return response
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
-                if exc.response.status_code != 429 or attempt >= attempts - 1:
+                if exc.response.status_code != 429:
                     raise
                 wait_s = self._retry_after_seconds(exc.response)
                 if wait_s is None:
                     wait_s = self.retry_429_wait_seconds
+                if attempt >= attempts - 1:
+                    raise SemanticScholarRateLimitError(
+                        attempts=attempts,
+                        wait_seconds=wait_s,
+                        response=exc.response,
+                    ) from exc
                 if wait_s > 0:
                     time.sleep(wait_s)
         if last_exc is not None:
             raise last_exc
         raise RuntimeError("Semantic Scholar request failed without response")
+
+    @staticmethod
+    def _normalize_doi(raw: str) -> str | None:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        lower = text.lower()
+        if lower.startswith("https://doi.org/") or lower.startswith("http://doi.org/"):
+            parsed = urlparse(text)
+            doi = parsed.path.lstrip("/")
+            return doi or None
+        if text.startswith("10."):
+            return text
+        return None
+
+    @classmethod
+    def _paper_identifier_candidates(cls, ident: str) -> list[str]:
+        normalized = str(ident or "").strip()
+        if not normalized:
+            return []
+        doi = cls._normalize_doi(normalized)
+        if doi:
+            return [f"DOI:{doi}", doi]
+        return [normalized]
 
     @staticmethod
     def _paper_from_payload(payload: dict[str, Any], *, source: str = "semantic_scholar") -> PaperRecord:
@@ -155,15 +203,26 @@ class SemanticScholarClient:
         ident = str(paper_id_or_doi or "").strip()
         if not ident:
             raise ValueError("paper_id_or_doi is required")
-        response = self._request_with_retry(
-            "GET",
-            f"/graph/v1/paper/{ident}",
-            params={"fields": _FIELDS},
-        )
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise ValueError("Unexpected Semantic Scholar response payload")
-        return self._paper_from_payload(payload)
+        last_not_found: httpx.HTTPStatusError | None = None
+        for candidate in self._paper_identifier_candidates(ident):
+            try:
+                response = self._request_with_retry(
+                    "GET",
+                    f"/graph/v1/paper/{quote(candidate, safe='')}",
+                    params={"fields": _FIELDS},
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    last_not_found = exc
+                    continue
+                raise
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Unexpected Semantic Scholar response payload")
+            return self._paper_from_payload(payload)
+        if last_not_found is not None:
+            raise last_not_found
+        raise RuntimeError("Semantic Scholar paper lookup failed without a usable identifier")
 
     def get_recommendations(
         self,
@@ -202,4 +261,4 @@ class SemanticScholarClient:
         return hits
 
 
-__all__ = ["SemanticScholarClient"]
+__all__ = ["SemanticScholarClient", "SemanticScholarRateLimitError"]

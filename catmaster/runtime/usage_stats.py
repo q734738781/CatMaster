@@ -31,22 +31,32 @@ def write_usage_summary_from_metadata(
     *,
     usage_metadata: Dict[str, Any],
     call_counts_by_model: Dict[str, int] | None = None,
+    usage_metadata_by_role: Dict[str, Any] | None = None,
+    call_counts_by_role: Dict[str, int] | None = None,
     append: bool = True,
 ) -> Dict[str, Any]:
     run_path = Path(run_dir).expanduser().resolve()
     merged_usage = _json_safe_usage(usage_metadata if isinstance(usage_metadata, dict) else {})
     merged_counts = _coerce_call_counts(call_counts_by_model)
+    merged_usage_by_role = _json_safe_usage_by_role(usage_metadata_by_role if isinstance(usage_metadata_by_role, dict) else {})
+    merged_role_counts = _coerce_call_counts(call_counts_by_role)
     if append:
         existing = load_usage_summary(run_path)
         merged_usage = _merge_usage_metadata(existing.get("raw_usage_metadata"), merged_usage)
         merged_counts = _merge_call_counts(existing.get("call_counts_by_model"), merged_counts)
+        merged_usage_by_role = _merge_usage_metadata_by_role(existing.get("raw_usage_metadata_by_role"), merged_usage_by_role)
+        merged_role_counts = _merge_call_counts(existing.get("call_counts_by_role"), merged_role_counts)
     summary = summarize_usage_from_metadata(
         merged_usage,
         run_dir=run_path,
         call_counts_by_model=merged_counts,
+        usage_metadata_by_role=merged_usage_by_role,
+        call_counts_by_role=merged_role_counts,
     )
     summary["raw_usage_metadata"] = merged_usage
     summary["call_counts_by_model"] = merged_counts
+    summary["raw_usage_metadata_by_role"] = merged_usage_by_role
+    summary["call_counts_by_role"] = merged_role_counts
     path = usage_summary_path(run_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,9 +71,13 @@ def summarize_usage_from_metadata(
     *,
     run_dir: Path | None = None,
     call_counts_by_model: Dict[str, int] | None = None,
+    usage_metadata_by_role: Dict[str, Any] | None = None,
+    call_counts_by_role: Dict[str, int] | None = None,
 ) -> Dict[str, Any]:
     usage_payload = _json_safe_usage(usage_metadata if isinstance(usage_metadata, dict) else {})
     counts = _coerce_call_counts(call_counts_by_model)
+    usage_by_role_payload = _json_safe_usage_by_role(usage_metadata_by_role if isinstance(usage_metadata_by_role, dict) else {})
+    role_counts = _coerce_call_counts(call_counts_by_role)
     calls = 0
     missing_usage_calls = 0
     missing_cost_calls = 0
@@ -89,6 +103,7 @@ def summarize_usage_from_metadata(
         "completion": 0.0,
     }
     by_model: dict[str, dict[str, Any]] = {}
+    by_role: dict[str, dict[str, Any]] = {}
 
     for model_name, usage in usage_payload.items():
         if not isinstance(usage, dict):
@@ -156,6 +171,71 @@ def summarize_usage_from_metadata(
             reasoning_tokens=reasoning_tok,
             call_count=call_count,
         )
+    for role_name, role_usage in usage_by_role_payload.items():
+        if not isinstance(role_usage, dict):
+            continue
+        role_call_count = max(1, int(role_counts.get(str(role_name), 0) or 0))
+        role_input = 0
+        role_input_cached = 0
+        role_input_cache_write = 0
+        role_output = 0
+        role_reasoning = 0
+        call_summary_for_role: dict[str, Any] | None = None
+        for model_name, usage in role_usage.items():
+            if not isinstance(usage, dict):
+                continue
+            in_tok = _to_int(usage.get("input_tokens"))
+            out_tok = _to_int(usage.get("output_tokens"))
+            input_details = usage.get("input_token_details") if isinstance(usage.get("input_token_details"), dict) else {}
+            output_details = usage.get("output_token_details") if isinstance(usage.get("output_token_details"), dict) else {}
+            in_cached_tok = _to_int(input_details.get("cache_read"))
+            if in_cached_tok is None:
+                in_cached_tok = _to_int(input_details.get("cached_tokens"))
+            cache_write_tok = _to_int(input_details.get("cache_write"))
+            if cache_write_tok is None:
+                cache_write_tok = _to_int(input_details.get("cache_creation"))
+            reasoning_tok = _to_int(output_details.get("reasoning"))
+            role_input += int(in_tok or 0)
+            role_input_cached += int(in_cached_tok or 0)
+            role_input_cache_write += int(cache_write_tok or 0)
+            role_output += int(out_tok or 0)
+            role_reasoning += int(reasoning_tok or 0)
+            item_call_summary = _call_cost_summary(
+                model_name=str(model_name),
+                input_tokens=in_tok,
+                input_cached_tokens=in_cached_tok,
+                input_cache_write_tokens=cache_write_tok,
+                output_tokens=out_tok,
+                reasoning_tokens=reasoning_tok,
+                exact_cost=None,
+            )
+            if call_summary_for_role is None:
+                call_summary_for_role = item_call_summary
+            else:
+                merged_breakdown = {
+                    key: float(call_summary_for_role["estimated_breakdown_usd"].get(key, 0.0)) + float(item_call_summary["estimated_breakdown_usd"].get(key, 0.0))
+                    for key in set(call_summary_for_role["estimated_breakdown_usd"]) | set(item_call_summary["estimated_breakdown_usd"])
+                }
+                call_summary_for_role = {
+                    "model_name": str(call_summary_for_role.get("model_name") or ""),
+                    "pricing_model": str(call_summary_for_role.get("pricing_model") or ""),
+                    "exact_cost": (call_summary_for_role.get("exact_cost") or 0.0) + (item_call_summary.get("exact_cost") or 0.0),
+                    "estimated_cost": (call_summary_for_role.get("estimated_cost") or 0.0) + (item_call_summary.get("estimated_cost") or 0.0),
+                    "estimated_breakdown_usd": merged_breakdown,
+                }
+        if call_summary_for_role is None:
+            continue
+        _accumulate_bucket(
+            by_role,
+            key=str(role_name),
+            call_summary=call_summary_for_role,
+            input_tokens=role_input,
+            input_cached_tokens=role_input_cached,
+            input_cache_write_tokens=role_input_cache_write,
+            output_tokens=role_output,
+            reasoning_tokens=role_reasoning,
+            call_count=role_call_count,
+        )
     total_cost_usd = exact_cost_usd + estimated_cost_usd
     if total_cost_usd > 0 and missing_cost_calls == 0 and estimated_cost_calls == 0:
         cost_source = "exact"
@@ -186,7 +266,7 @@ def summarize_usage_from_metadata(
         "estimated_cost_calls": estimated_cost_calls,
         "breakdown_usd": {k: round(float(v), 8) for k, v in breakdown_usd.items()},
         "exact_breakdown_usd": {k: round(float(v), 8) for k, v in exact_breakdown_usd.items()},
-        "by_role": [],
+        "by_role": _bucket_list(by_role),
         "by_model": _bucket_list(by_model),
     }
 
@@ -325,6 +405,17 @@ def _json_safe_usage(raw: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _json_safe_usage_by_role(raw: Any) -> dict[str, dict[str, dict[str, Any]]]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for role_name, payload in raw.items():
+        if not isinstance(role_name, str):
+            continue
+        out[role_name] = _json_safe_usage(payload)
+    return out
+
+
 def _coerce_call_counts(raw: Any) -> dict[str, int]:
     if not isinstance(raw, dict):
         return {}
@@ -355,6 +446,18 @@ def _merge_usage_metadata(base: Any, update: Any) -> dict[str, dict[str, Any]]:
             merged[model_name] = payload
             continue
         merged[model_name] = _merge_usage_dict(current, payload)
+    return merged
+
+
+def _merge_usage_metadata_by_role(base: Any, update: Any) -> dict[str, dict[str, dict[str, Any]]]:
+    merged = _json_safe_usage_by_role(base)
+    incoming = _json_safe_usage_by_role(update)
+    for role_name, payload in incoming.items():
+        current = merged.get(role_name)
+        if not isinstance(current, dict):
+            merged[role_name] = payload
+            continue
+        merged[role_name] = _merge_usage_metadata(current, payload)
     return merged
 
 

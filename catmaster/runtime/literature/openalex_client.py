@@ -188,11 +188,26 @@ class OpenAlexClient:
             )
         return hits
 
+    @staticmethod
+    def _normalize_work_identifier(ident: str) -> str:
+        raw = str(ident or "").strip()
+        if not raw:
+            return raw
+        lower = raw.lower()
+        if lower.startswith("https://openalex.org/"):
+            return raw
+        if lower.startswith("https://doi.org/") or lower.startswith("http://doi.org/"):
+            return raw.replace("http://doi.org/", "https://doi.org/")
+        if raw.startswith("10."):
+            return f"https://doi.org/{raw}"
+        return raw
+
     def get_work(self, work_id_or_doi: str) -> PaperRecord:
         ident = str(work_id_or_doi or "").strip()
         if not ident:
             raise ValueError("work_id_or_doi is required")
-        path_ident = ident if ident.startswith("https://openalex.org/") else quote(ident, safe="")
+        normalized_ident = self._normalize_work_identifier(ident)
+        path_ident = normalized_ident if normalized_ident.startswith("https://openalex.org/") else quote(normalized_ident, safe="")
         params = self._params({"select": _SELECT_FIELDS})
         with self._client() as client:
             response = client.get(f"{self.base_url}/works/{path_ident}", params=params)

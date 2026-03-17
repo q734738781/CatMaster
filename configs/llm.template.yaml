@@ -174,7 +174,7 @@ literature:
     write_reviewer: none
   public_web_on_search_failure: true
   summary_key_paper_count: 5
-  semantic_scholar_retry_429_attempts: 3
+  semantic_scholar_retry_429_attempts: 5
   semantic_scholar_retry_429_wait_seconds: 15.0
   budgets:
     none:

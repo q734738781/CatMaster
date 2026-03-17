@@ -8,25 +8,29 @@ import shutil
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.artifact_callback import LangChainStepLogger, UIEventHandler
 from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.run_control import RunControl
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError, content_to_text
 from catmaster.runtime.usage_stats import write_usage_summary_from_metadata
-from catmaster.tools.base import system_root, workspace_root
+from catmaster.tools.base import system_root, workspace_root, workspace_scope
 from catmaster.tools.registry import get_tool_registry
 from catmaster.ui import make_event
 from catmaster.ui.reporters import NullReporter, Reporter
 
 from .schemas import (
     ProposalCheckpoint,
+    ResearchKernel,
     SpecialistEntrypoint,
 )
 
@@ -37,6 +41,7 @@ PROPOSAL_FILE = "proposal.md"
 MEMORY_STORE_FILE = "deepagent_memory.sqlite"
 CHECKPOINT_STORE_FILE = "deepagent_threads.sqlite"
 MEMORY_FILE_PATH = "/memories/AGENTS.md"
+RESEARCH_KERNEL_DIR = "research_kernels"
 
 _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
     "research": "research_lead",
@@ -65,41 +70,88 @@ _EXPERIMENT_TOOL_ALLOWLIST = {
     "render_structure_views",
     "analyze_images",
     "generate_schematic_figure",
-    "run_literature_research",
 }
 _WRITING_TOOL_ALLOWLIST = {
-    "agentic_compile_tex",
-    "polish_academic_prose",
     "analyze_images",
     "render_structure_views",
     "generate_schematic_figure",
-    "run_literature_research",
 }
 _RESEARCH_TOOL_ALLOWLIST = {
-    "run_literature_research",
     "analyze_images",
     "render_structure_views",
     "mp_search_materials",
     "mp_download_structure",
 }
-_TASK_WORKER_TOOL_ALLOWLIST = _EXPERIMENT_TOOL_ALLOWLIST - {"run_literature_research"}
-_LITERATURE_AGENT_TOOL_ALLOWLIST = {"run_literature_research"}
-_WRITING_WORKER_TOOL_ALLOWLIST = _WRITING_TOOL_ALLOWLIST - {"agentic_compile_tex", "run_literature_research"}
-_COMPILE_AGENT_TOOL_ALLOWLIST = {"agentic_compile_tex"}
+_TASK_WORKER_TOOL_ALLOWLIST = set(_EXPERIMENT_TOOL_ALLOWLIST)
+_LITREVIEW_AGENT_TOOL_ALLOWLIST = {
+    "search_openalex",
+    "search_semantic_scholar",
+    "get_openalex_record",
+    "get_semantic_scholar_record",
+    "recommend_semantic_scholar",
+}
+_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES = {"internet_search"}
+_WRITING_WORKER_TOOL_ALLOWLIST = {
+    "polish_academic_prose",
+    "analyze_images",
+    "render_structure_views",
+    "generate_schematic_figure",
+    "agentic_compile_tex",
+}
+_LITREVIEW_COMPACT_TRIGGER_TOKENS = 65_000
+_LITREVIEW_COMPACT_KEEP_TOKENS = 6_500
+
+
+class _InternetSearchInput(BaseModel):
+    query: str = Field(..., description="Focused public-web query for background facts or literature orientation.")
+    max_results: int = Field(5, ge=1, le=10, description="Maximum number of search results to return.")
+    topic: Literal["general", "news", "finance"] = Field(
+        "general",
+        description="Tavily search topic. Use `general` for scientific background lookup.",
+    )
 
 
 class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
     """Official LangChain usage tracker with per-model call counts for specialist runs."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, default_agent_name: str = "") -> None:
         super().__init__()
+        self.default_agent_name = str(default_agent_name or "").strip()
         self.call_counts_by_model: dict[str, int] = {}
+        self.call_counts_by_role: dict[str, int] = {}
+        self.usage_metadata_by_role: dict[str, dict[str, Any]] = {}
+        self._pending_agents_by_run: dict[str, str] = {}
+
+    def on_llm_start(self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any) -> None:
+        _ = (serialized, prompts)
+        self._remember_agent_for_run(**kwargs)
+
+    def on_chat_model_start(
+        self,
+        serialized: dict[str, Any],
+        messages: list[list[Any]],
+        **kwargs: Any,
+    ) -> None:
+        _ = (serialized, messages)
+        self._remember_agent_for_run(**kwargs)
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         model_name = self._extract_model_name(response)
+        run_id = str(kwargs.get("run_id") or "").strip()
+        agent_name = self._pending_agents_by_run.pop(run_id, "") if run_id else ""
+        usage_metadata = self._extract_usage_metadata(response)
         super().on_llm_end(response, **kwargs)
         if model_name:
             self.call_counts_by_model[model_name] = int(self.call_counts_by_model.get(model_name, 0)) + 1
+        if agent_name:
+            self.call_counts_by_role[agent_name] = int(self.call_counts_by_role.get(agent_name, 0)) + 1
+            if model_name and usage_metadata:
+                current = self.usage_metadata_by_role.setdefault(agent_name, {})
+                previous = current.get(model_name)
+                if isinstance(previous, dict):
+                    current[model_name] = self._merge_usage_dict(previous, usage_metadata)
+                else:
+                    current[model_name] = usage_metadata
 
     @staticmethod
     def _extract_model_name(response: LLMResult) -> str:
@@ -116,6 +168,63 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
         if not isinstance(response_metadata, dict):
             return ""
         return str(response_metadata.get("model_name") or "").strip()
+
+    @staticmethod
+    def _agent_name_from_kwargs(default_agent_name: str = "", **kwargs: Any) -> str:
+        for source in (kwargs.get("metadata"), kwargs.get("inheritable_metadata")):
+            if not isinstance(source, dict):
+                continue
+            for key in ("lc_agent_name", "agent_name", "agent", "subagent"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    return value
+        return str(default_agent_name or "").strip()
+
+    def _remember_agent_for_run(self, **kwargs: Any) -> None:
+        run_id = str(kwargs.get("run_id") or "").strip()
+        if not run_id:
+            return
+        agent_name = self._agent_name_from_kwargs(self.default_agent_name, **kwargs)
+        if agent_name:
+            self._pending_agents_by_run[run_id] = agent_name
+
+    @staticmethod
+    def _extract_usage_metadata(response: LLMResult) -> dict[str, Any]:
+        try:
+            generation = response.generations[0][0]
+        except Exception:
+            return {}
+        if not isinstance(generation, ChatGeneration):
+            return {}
+        message = getattr(generation, "message", None)
+        if not isinstance(message, AIMessage):
+            return {}
+        usage = getattr(message, "usage_metadata", None)
+        return dict(usage) if isinstance(usage, dict) else {}
+
+    @classmethod
+    def _merge_usage_dict(cls, base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(base)
+        for key, value in update.items():
+            if isinstance(value, dict):
+                current = merged.get(key)
+                if isinstance(current, dict):
+                    merged[key] = cls._merge_usage_dict(current, value)
+                else:
+                    merged[key] = dict(value)
+                continue
+            if isinstance(value, bool):
+                merged[key] = int(bool(merged.get(key, 0))) + int(value)
+                continue
+            if isinstance(value, int):
+                merged[key] = int(merged.get(key, 0) or 0) + value
+                continue
+            if isinstance(value, float):
+                merged[key] = float(merged.get(key, 0.0) or 0.0) + value
+                continue
+            if value is not None:
+                merged[key] = value
+        return merged
 
 
 @dataclass(frozen=True)
@@ -234,6 +343,9 @@ class SpecialistRunner:
         files_root = workspace_root(self.run_context.workspace)
         files_root.mkdir(parents=True, exist_ok=True)
         self._stage_deepagent_assets(files_root)
+        research_kernel_relpath = ""
+        if entrypoint == "research":
+            research_kernel_relpath = self._ensure_research_kernel_seed(files_root=files_root, thread_id=thread_id, prompt=prompt)
         self._emit("RUN_START", payload={"entrypoint": entrypoint, "status": "running"})
         usage_handler = self._new_usage_callback()
         usage_flushed = False
@@ -273,6 +385,7 @@ class SpecialistRunner:
                         "text_preview": checkpoint.proposal_md[:280],
                         "user_prompt": prompt,
                         "chat_session_id": str(payload.get("chat_session_id") or ""),
+                        **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
                     }
                 )
                 self._emit(
@@ -308,7 +421,11 @@ class SpecialistRunner:
                 )
 
             async with self._open_agent_runtime(files_root=files_root) as runtime:
-                agent = await self._build_entry_agent(entrypoint=entrypoint, runtime=runtime)
+                agent = await self._build_entry_agent(
+                    entrypoint=entrypoint,
+                    runtime=runtime,
+                    thread_id=thread_id,
+                )
                 message_text = prompt if resume_feedback in (None, "") else (
                     f"{prompt}\n\nHuman review feedback:\n{resume_feedback}"
                 )
@@ -316,10 +433,14 @@ class SpecialistRunner:
                     {"messages": [{"role": "user", "content": message_text}]},
                     config={
                         "configurable": {"thread_id": thread_id},
-                        "callbacks": self._langchain_callbacks(usage_handler=usage_handler),
+                        "callbacks": self._langchain_callbacks(
+                            usage_handler=usage_handler,
+                            default_agent_name=f"{entrypoint}_specialist",
+                        ),
+                        "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
                     },
                 )
-            parsed = self._coerce_report(raw=result)
+            parsed = self._finalize_report(self._coerce_report(raw=result))
             final_answer = parsed["text"]
             artifacts = self._artifact_rows(parsed["files"])
             status = "done"
@@ -342,6 +463,7 @@ class SpecialistRunner:
                     "final_answer": final_answer,
                     "summary": parsed["summary"],
                     "facts": list(parsed["facts"]),
+                    **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
                 }
             )
             self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": status})
@@ -385,7 +507,13 @@ class SpecialistRunner:
                     }
                 ]
             },
-            config={"callbacks": self._langchain_callbacks(usage_handler=usage_handler)},
+            config={
+                "callbacks": self._langchain_callbacks(
+                    usage_handler=usage_handler,
+                    default_agent_name=f"{entrypoint}_specialist",
+                ),
+                "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
+            },
         )
         raw = result.get("structured_response") if isinstance(result, dict) else None
         if isinstance(raw, ProposalCheckpoint):
@@ -394,14 +522,20 @@ class SpecialistRunner:
             return ProposalCheckpoint.model_validate(raw)
         raise RuntimeError("Proposal checkpoint generation failed.")
 
-    async def _build_entry_agent(self, *, entrypoint: SpecialistEntrypoint, runtime: dict[str, Any]) -> Any:
+    async def _build_entry_agent(
+        self,
+        *,
+        entrypoint: SpecialistEntrypoint,
+        runtime: dict[str, Any],
+        thread_id: str,
+    ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
         tools = self._specialist_tools(entrypoint)
         skills = self._virtual_skill_paths(entrypoint)
         kwargs: dict[str, Any] = {
             "model": build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])),
             "tools": tools,
-            "system_prompt": self._system_prompt(entrypoint),
+            "system_prompt": self._system_prompt(entrypoint, thread_id=thread_id),
             "middleware": self._build_default_middleware(),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
@@ -426,7 +560,7 @@ class SpecialistRunner:
 
     def _research_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
         SubAgent = self._load_subagent()
-        memory_middleware = [self._new_memory_middleware(backend=runtime["backend"])]
+        subagent_middleware = self._subagent_middleware(runtime=runtime)
         return [
             SubAgent(
                 name="experiment_specialist",
@@ -435,7 +569,7 @@ class SpecialistRunner:
                 model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
                 tools=self._specialist_tools("experiment"),
                 skills=self._virtual_skill_paths("experiment"),
-                middleware=memory_middleware,
+                middleware=subagent_middleware,
             ),
             SubAgent(
                 name="writing_specialist",
@@ -444,21 +578,21 @@ class SpecialistRunner:
                 model=build_chat_model(self.llm_profile.config_for_role("write_director")),
                 tools=self._specialist_tools("writing"),
                 skills=self._virtual_skill_paths("writing"),
-                middleware=memory_middleware,
+                middleware=subagent_middleware,
             ),
             SubAgent(
-                name="literature_agent",
-                description="Retrieve compact literature grounding, citations, benchmark conventions, and background evidence when external scholarly context is needed.",
-                system_prompt=self._literature_agent_prompt(),
+                name="litreview_agent",
+                description="Retrieve scholarly literature grounding, benchmark conventions, and representative citations when deeper review is needed.",
+                system_prompt=self._litreview_agent_prompt(),
                 model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-                tools=self._named_tools(_LITERATURE_AGENT_TOOL_ALLOWLIST),
-                middleware=memory_middleware,
+                tools=self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
+                middleware=self._litreview_middleware(runtime=runtime),
             ),
         ]
 
     def _experiment_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
         SubAgent = self._load_subagent()
-        memory_middleware = [self._new_memory_middleware(backend=runtime["backend"])]
+        subagent_middleware = self._subagent_middleware(runtime=runtime)
         return [
             SubAgent(
                 name="task_worker_agent",
@@ -467,21 +601,21 @@ class SpecialistRunner:
                 model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
                 tools=self._named_tools(_TASK_WORKER_TOOL_ALLOWLIST),
                 skills=self._virtual_skill_paths("experiment"),
-                middleware=memory_middleware,
+                middleware=subagent_middleware,
             ),
             SubAgent(
                 name="literature_agent",
-                description="Retrieve compact literature grounding, citations, benchmark conventions, and background evidence for experiment planning or interpretation.",
-                system_prompt=self._literature_agent_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-                tools=self._named_tools(_LITERATURE_AGENT_TOOL_ALLOWLIST),
-                middleware=memory_middleware,
+                description="Run lightweight Tavily-backed public-web search for quick background grounding and literature orientation.",
+                system_prompt=self._lightweight_literature_agent_prompt(),
+                model=build_chat_model(self.llm_profile.config_for_role("summary")),
+                tools=self._lightweight_literature_tools(),
+                middleware=subagent_middleware,
             ),
         ]
 
     def _writing_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
         SubAgent = self._load_subagent()
-        memory_middleware = [self._new_memory_middleware(backend=runtime["backend"])]
+        subagent_middleware = self._subagent_middleware(runtime=runtime)
         return [
             SubAgent(
                 name="writing_worker_agent",
@@ -490,17 +624,32 @@ class SpecialistRunner:
                 model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
                 tools=self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                 skills=self._virtual_skill_paths("writing"),
-                middleware=memory_middleware,
-            ),
-            SubAgent(
-                name="compile_agent",
-                description="Run compile or static compile-fix passes on TeX bundles and report only compile-facing issues and repaired artifact paths.",
-                system_prompt=self._compile_agent_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("tex_compile_fixer")),
-                tools=self._named_tools(_COMPILE_AGENT_TOOL_ALLOWLIST),
-                middleware=memory_middleware,
+                middleware=subagent_middleware,
             ),
         ]
+
+    def _subagent_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
+        return [
+            *self._build_default_middleware(),
+            self._new_memory_middleware(backend=runtime["backend"]),
+        ]
+
+    def _litreview_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
+        middleware = self._subagent_middleware(runtime=runtime)
+        try:
+            SummarizationMiddleware = self._load_summarization_middleware()
+            create_summarization_tool_middleware = self._load_create_summarization_tool_middleware()
+            summarizer = SummarizationMiddleware(
+                model=build_chat_model(self.llm_profile.config_for_role("summary")),
+                backend=runtime["backend"],
+                trigger=("tokens", _LITREVIEW_COMPACT_TRIGGER_TOKENS),
+                keep=("tokens", _LITREVIEW_COMPACT_KEEP_TOKENS),
+            )
+        except Exception as exc:
+            logger.warning("litreview compaction middleware unavailable; continuing without extra compaction: %s", exc)
+            return middleware
+        middleware.extend([summarizer, create_summarization_tool_middleware(summarizer)])
+        return middleware
 
     @asynccontextmanager
     async def _open_agent_runtime(self, *, files_root: Path):
@@ -584,10 +733,129 @@ class SpecialistRunner:
                 f"Missing registered tools: {', '.join(missing)}"
             )
         allowlist = sorted(requested_names)
-        return self.registry.as_langchain_tools(
+        tools = self.registry.as_langchain_tools(
             allowlist=allowlist,
             run_dir=str(self.run_context.run_dir),
             workspace=str(self.run_context.workspace),
+        )
+        return [self._wrap_nonfatal_tool(tool) for tool in tools]
+
+    def _lightweight_literature_tools(self) -> list[Any]:
+        def internet_search(
+            query: str,
+            max_results: int = 5,
+            topic: Literal["general", "news", "finance"] = "general",
+        ) -> tuple[str, dict[str, Any]]:
+            data: dict[str, Any]
+            try:
+                from catmaster.runtime.literature.online_search_adapter import OnlineSearchAdapter
+
+                adapter = OnlineSearchAdapter(topic=topic)
+                result = adapter.search_public_web(query, max_results=max_results)
+                data = {
+                    "status": "ok",
+                    "source": "tavily",
+                    "query": query,
+                    "topic": topic,
+                    "count": len(result.results),
+                    "results": [hit.model_dump() for hit in result.results],
+                }
+            except Exception as exc:
+                data = {
+                    "status": "error",
+                    "source": "tavily",
+                    "query": query,
+                    "topic": topic,
+                    "message": str(exc),
+                }
+            return json.dumps(data, ensure_ascii=False), {
+                "tool_name": "internet_search",
+                "data": data,
+            }
+
+        return [
+            StructuredTool.from_function(
+                func=internet_search,
+                name="internet_search",
+                description="Search the public web for targeted scientific background facts and literature orientation.",
+                args_schema=_InternetSearchInput,
+                infer_schema=False,
+                response_format="content_and_artifact",
+            )
+        ]
+
+    @staticmethod
+    def _nonfatal_tool_error_result(tool_name: str, exc: Exception, tool_args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        if isinstance(exc, CatMasterToolExecutionError):
+            message = str(exc.public_message or f"{tool_name} failed.").strip()
+            data = dict(exc.artifact.get("data") or {}) if isinstance(exc.artifact, dict) else {}
+            data.update(
+                {
+                    "status": "error",
+                    "tool_name": tool_name,
+                    "message": message,
+                    "retryable": bool(exc.retryable),
+                    "error_code": str(exc.error_code or ""),
+                    "tool_args": dict(tool_args or {}),
+                }
+            )
+            artifact = {"tool_name": tool_name, "data": data}
+            return content_to_text(message), artifact
+        message = f"{type(exc).__name__}: {exc}".strip()
+        artifact = {
+            "tool_name": tool_name,
+            "data": {
+                "status": "error",
+                "tool_name": tool_name,
+                "message": message,
+                "error_type": type(exc).__name__,
+                "tool_args": dict(tool_args or {}),
+            },
+        }
+        return content_to_text(message), artifact
+
+    def _wrap_nonfatal_tool(self, tool: Any) -> Any:
+        if not isinstance(tool, StructuredTool):
+            return tool
+        args_schema = getattr(tool, "args_schema", None)
+        if not isinstance(args_schema, type) or not issubclass(args_schema, BaseModel):
+            return tool
+        func = getattr(tool, "func", None)
+        coroutine = getattr(tool, "coroutine", None)
+        if func is None and coroutine is None:
+            return tool
+
+        def _wrapped(runtime=None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+            if func is None:
+                raise NotImplementedError(f"Tool {tool.name} does not support sync invocation.")
+            try:
+                return func(runtime=runtime, **kwargs)
+            except Exception as exc:
+                return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+
+        async def _awrapped(runtime=None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+            if coroutine is not None:
+                try:
+                    return await coroutine(runtime=runtime, **kwargs)
+                except Exception as exc:
+                    return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+            if func is None:
+                raise NotImplementedError(f"Tool {tool.name} does not support async invocation.")
+            try:
+                return func(runtime=runtime, **kwargs)
+            except Exception as exc:
+                return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+
+        _wrapped.__name__ = tool.name
+        _awrapped.__name__ = f"{tool.name}_async"
+        return StructuredTool.from_function(
+            func=_wrapped if func is not None else None,
+            coroutine=_awrapped,
+            name=tool.name,
+            description=str(getattr(tool, "description", "") or "").strip(),
+            args_schema=args_schema,
+            infer_schema=False,
+            response_format="content_and_artifact",
         )
 
     def _stage_deepagent_assets(self, files_root: Path) -> None:
@@ -630,8 +898,8 @@ class SpecialistRunner:
             return chat_session_id
         return self.run_context.run_id
 
-    def _system_prompt(self, entrypoint: SpecialistEntrypoint) -> str:
-        return self._base_system_prompt(entrypoint)
+    def _system_prompt(self, entrypoint: SpecialistEntrypoint, *, thread_id: str = "") -> str:
+        return self._base_system_prompt(entrypoint, thread_id=thread_id)
 
     def _memory_sources(self) -> list[str]:
         return ["/.deepagents/AGENTS.md", MEMORY_FILE_PATH]
@@ -664,15 +932,19 @@ class SpecialistRunner:
         return MemoryMiddleware(backend=backend, sources=self._memory_sources())
 
     @classmethod
-    def _base_system_prompt(cls, entrypoint: SpecialistEntrypoint) -> str:
+    def _base_system_prompt(cls, entrypoint: SpecialistEntrypoint, *, thread_id: str = "") -> str:
         if entrypoint == "research":
+            kernel_path = cls._research_kernel_virtual_path(thread_id)
             return (
                 "You are ResearchSpecialist, the only orchestration-capable specialist.\n"
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
-                "You may delegate only to `experiment_specialist`, `writing_specialist`, and `literature_agent`.\n"
-                "Use `literature_agent` whenever external literature grounding, benchmark conventions, or representative citations are needed.\n"
+                "You may delegate only to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.\n"
+                "Use `litreview_agent` whenever external scholarly grounding, benchmark conventions, or representative citations are needed.\n"
+                "If the user requests a report, manuscript, note, LaTeX document, or other substantial written artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
+                f"{cls._writing_handoff_policy()}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
+                f"{cls._research_kernel_contract(kernel_path)}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._soft_reporting_contract()}"
             )
@@ -680,15 +952,21 @@ class SpecialistRunner:
             return (
                 "You are WritingSpecialist.\n"
                 "Write from existing workspace evidence only. Do not initiate new computational experiments.\n"
-                "Use `writing_worker_agent` for context-heavy drafting or revision subtasks.\n"
-                "Use `compile_agent` for TeX compile/fix passes instead of handling compile details in the main thread.\n"
+                "Do not reopen literature review from the writing thread; if external grounding is still missing, report that research lane should gather it first.\n"
+                "Your default role is coordination, not long-form drafting in the main thread.\n"
+                "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
+                "Keep the main writing thread focused on planning, dispatch, evidence selection, and final reconciliation.\n"
+                "Do not handle TeX compile/fix passes in the main thread.\n"
+                "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
+                "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
+                f"{cls._writing_handoff_policy()}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._soft_reporting_contract()}"
             )
         return (
             "You are ExperimentSpecialist.\n"
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
-            "Use `task_worker_agent` for context-heavy isolated execution subtasks, and `literature_agent` for external literature/background grounding.\n"
+            "Use `task_worker_agent` for context-heavy isolated execution subtasks, and `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
             f"Do not orchestrate other specialists. {cls._memory_write_policy()}\n"
             f"{cls._soft_reporting_contract()}"
         )
@@ -703,6 +981,15 @@ class SpecialistRunner:
         )
 
     @staticmethod
+    def _writing_handoff_policy() -> str:
+        return (
+            "When handing off writing work, pass only a bounded brief containing the writing goal, target audience, exact evidence file paths or compact run-card facts to rely on, "
+            "the key facts that must be preserved, the requested output artifact path(s), the desired section structure, and any citation or style constraints. "
+            "For TeX deliverables, require a separate `.tex` file, a separate `.bib` file when citations are used, and at least one direct compile pass that should produce a `.pdf` when the environment supports compilation. "
+            "Do not paste long transcripts or ask the writing agent to rediscover evidence already available in the workspace."
+        )
+
+    @staticmethod
     def _soft_reporting_contract() -> str:
         return (
             "For multi-step work, use `write_todos` early to maintain a concise checklist and update it when the plan changes. "
@@ -711,6 +998,18 @@ class SpecialistRunner:
             "`Summary` should be a short user-facing wrap-up. "
             "`Facts` should be a flat bullet list of the few most important archival facts. "
             "`Files` should be a flat bullet list of relevant output paths, or `(none reported)` if there are none."
+        )
+
+    @classmethod
+    def _research_kernel_contract(cls, kernel_path: str) -> str:
+        return (
+            f"Maintain a lightweight Research Kernel in `{kernel_path}` as valid JSON. "
+            "It must contain exactly these top-level fields: `question`, `hypotheses`, `run_cards`, `frontier`, `conclusion_draft`. "
+            "Keep `hypotheses` to only the currently active 3-5 lines. "
+            "Every time a subagent returns, immediately update `run_cards` with one compact card containing only `source`, `summary`, `facts`, and `artifacts`. "
+            "Keep only the minimum decision-relevant facts needed for the next choice. "
+            "Use `frontier` for the next unresolved questions or actions to validate. "
+            "When delegating, write a clear bounded brief and explicitly require the subagent to answer with the compact `Summary` / `Facts` / `Files` contract so its result can be distilled into a run card."
         )
 
     @classmethod
@@ -725,34 +1024,95 @@ class SpecialistRunner:
         )
 
     @classmethod
-    def _literature_agent_prompt(cls) -> str:
+    def _litreview_agent_prompt(cls) -> str:
         return (
-            "You are literature_agent.\n"
-            "Use `run_literature_research` to gather compact external literature grounding, benchmark conventions, citations, or background evidence.\n"
+            "You are litreview_agent.\n"
+            "Use the scholarly literature tools directly to gather external literature grounding, benchmark conventions, citations, or background evidence.\n"
+            "Prefer OpenAlex and Semantic Scholar for exact metadata, DOI/year/venue/authors/citation details, and seed-based recommendation expansion.\n"
+            "Stay focused on representative, decision-relevant papers instead of broad browsing.\n"
+            "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, citation lists, or evidence summaries.\n"
             "Return concise findings with clear separation between retrieved facts and inference.\n"
-            "Do not perform local file manipulation or computational execution.\n"
+            "Do not perform computational execution.\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._soft_reporting_contract()}"
         )
+
+    @classmethod
+    def _lightweight_literature_agent_prompt(cls) -> str:
+        return (
+            "You are literature_agent.\n"
+            "Use the lightweight `internet_search` tool for quick public-web orientation when ExperimentSpecialist needs external background facts or literature hints.\n"
+            "Keep search narrow, prefer concise result sets, cite source URLs, and separate retrieved facts from your inference.\n"
+            "Do not attempt full citation curation or long-form literature review here.\n"
+            "Do not perform computational execution.\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._soft_reporting_contract()}"
+        )
+
+    @staticmethod
+    def _sanitize_kernel_component(text: str) -> str:
+        normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", str(text or "").strip())
+        normalized = normalized.strip("._") or "default"
+        return normalized[:80]
+
+    @classmethod
+    def _research_kernel_virtual_path(cls, thread_id: str) -> str:
+        safe_thread = cls._sanitize_kernel_component(thread_id)
+        return f"/{RESEARCH_KERNEL_DIR}/{safe_thread}/kernel.json"
+
+    @classmethod
+    def _research_kernel_fs_path(cls, files_root: Path, thread_id: str) -> Path:
+        safe_thread = cls._sanitize_kernel_component(thread_id)
+        return files_root / RESEARCH_KERNEL_DIR / safe_thread / "kernel.json"
+
+    def _ensure_research_kernel_seed(self, *, files_root: Path, thread_id: str, prompt: str) -> str:
+        path = self._research_kernel_fs_path(files_root, thread_id)
+        if path.exists():
+            return str(path.relative_to(files_root)).replace("\\", "/")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = ResearchKernel(question=str(prompt or "").strip())
+        path.write_text(payload.model_dump_json(indent=2), encoding="utf-8")
+        return str(path.relative_to(files_root)).replace("\\", "/")
+
+    def _load_research_kernel(self, *, files_root: Path, thread_id: str) -> dict[str, Any]:
+        path = self._research_kernel_fs_path(files_root, thread_id)
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        try:
+            kernel = ResearchKernel.model_validate(payload)
+        except Exception:
+            return {}
+        return kernel.model_dump()
+
+    def _research_kernel_state_fields(self, *, files_root: Path, thread_id: str, relpath: str = "") -> dict[str, Any]:
+        if not thread_id:
+            return {}
+        kernel = self._load_research_kernel(files_root=files_root, thread_id=thread_id)
+        if not kernel and not relpath:
+            return {}
+        result: dict[str, Any] = {}
+        if relpath:
+            result["research_kernel_path"] = relpath
+        if kernel:
+            result["research_kernel"] = kernel
+        return result
 
     @classmethod
     def _writing_worker_prompt(cls) -> str:
         return (
             "You are writing_worker_agent for WritingSpecialist.\n"
             "Draft, revise, or polish bounded writing subtasks from existing workspace evidence only.\n"
+            "Do not reopen broad research loops or re-read large unrelated workspace trees on your own.\n"
             "Return concise manuscript-ready output summaries and any output artifact paths.\n"
-            "Do not handle TeX compile/fix passes; that belongs to compile_agent.\n"
-            f"{cls._memory_write_policy()}\n"
-            f"{cls._soft_reporting_contract()}"
-        )
-
-    @classmethod
-    def _compile_agent_prompt(cls) -> str:
-        return (
-            "You are compile_agent for WritingSpecialist.\n"
-            "Use `agentic_compile_tex` to run compile or static compile-fix passes on TeX manuscript bundles.\n"
-            "Focus strictly on compile-facing issues, path/reference fixes, and repaired output paths.\n"
-            "Do not rewrite scientific content beyond what is necessary for compile correctness.\n"
+            "If the output is a TeX bundle, you must run `agentic_compile_tex` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
+            "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
+            f"{cls._writing_handoff_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._soft_reporting_contract()}"
         )
@@ -787,18 +1147,62 @@ class SpecialistRunner:
 
     @staticmethod
     def _build_default_middleware() -> list[Any]:
+        middleware: list[Any] = []
         try:
             from langchain.agents.middleware.model_call_limit import ModelCallLimitMiddleware
         except Exception:
-            return []
-        return [ModelCallLimitMiddleware(run_limit=40)]
+            pass
+        else:
+            middleware.append(ModelCallLimitMiddleware(run_limit=40))
+        try:
+            from langchain.agents.middleware import wrap_tool_call
+        except Exception:
+            return middleware
 
-    def _langchain_callbacks(self, *, usage_handler: SpecialistUsageCallbackHandler | None) -> list[Any]:
+        @wrap_tool_call(name="catmaster_nonfatal_tool_errors")
+        async def _handle_tool_errors(request: Any, handler: Any) -> Any:
+            try:
+                return await handler(request)
+            except Exception as exc:
+                tool_call = getattr(request, "tool_call", None)
+                if not isinstance(tool_call, dict):
+                    tool_call = {}
+                tool_name = str(tool_call.get("name") or getattr(request, "name", "") or "tool").strip() or "tool"
+                tool_call_id = str(tool_call.get("id") or "").strip() or f"{tool_name}_error"
+                content, artifact = SpecialistRunner._nonfatal_tool_error_result(
+                    tool_name,
+                    exc,
+                    tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {},
+                )
+                return ToolMessage(
+                    content=content,
+                    artifact=artifact,
+                    tool_call_id=tool_call_id,
+                    name=tool_name,
+                    status="error",
+                )
+
+        middleware.append(_handle_tool_errors)
+        return middleware
+
+    def _langchain_callbacks(
+        self,
+        *,
+        usage_handler: SpecialistUsageCallbackHandler | None,
+        default_agent_name: str = "",
+    ) -> list[Any]:
         callbacks: list[Any] = []
         if usage_handler is not None:
+            usage_handler.default_agent_name = str(default_agent_name or "").strip()
             callbacks.append(usage_handler)
         if not isinstance(self.reporter, NullReporter):
-            callbacks.append(UIEventHandler(self.reporter, run_id=self.run_context.run_id))
+            callbacks.append(
+                UIEventHandler(
+                    self.reporter,
+                    run_id=self.run_context.run_id,
+                    default_agent_name=default_agent_name,
+                )
+            )
         agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
         if bool(getattr(agent_runtime, "print_state_messages", False)):
             callbacks.append(LangChainStepLogger(run_id=self.run_context.run_id))
@@ -813,10 +1217,14 @@ class SpecialistRunner:
         if not isinstance(usage_metadata, dict) or not usage_metadata:
             return
         call_counts_by_model = getattr(usage_handler, "call_counts_by_model", None)
+        usage_metadata_by_role = getattr(usage_handler, "usage_metadata_by_role", None)
+        call_counts_by_role = getattr(usage_handler, "call_counts_by_role", None)
         write_usage_summary_from_metadata(
             self.run_context.run_dir,
             usage_metadata=usage_metadata,
             call_counts_by_model=call_counts_by_model if isinstance(call_counts_by_model, dict) else {},
+            usage_metadata_by_role=usage_metadata_by_role if isinstance(usage_metadata_by_role, dict) else {},
+            call_counts_by_role=call_counts_by_role if isinstance(call_counts_by_role, dict) else {},
             append=True,
         )
 
@@ -827,6 +1235,18 @@ class SpecialistRunner:
         summary, facts, files = self._parse_summary_and_files(text)
         return {
             "text": text,
+            "summary": summary,
+            "facts": facts,
+            "files": files,
+        }
+
+    def _finalize_report(self, parsed: dict[str, Any]) -> dict[str, Any]:
+        summary = str(parsed.get("summary") or "").strip()
+        facts = [str(item).strip() for item in list(parsed.get("facts") or []) if str(item).strip()]
+        files = [self._normalize_artifact_path(str(item).strip()) for item in list(parsed.get("files") or []) if str(item).strip()]
+        files, facts = self._ensure_tex_bundle_outputs(files=files, facts=facts)
+        return {
+            "text": self._render_compact_report(summary=summary, facts=facts, files=files),
             "summary": summary,
             "facts": facts,
             "files": files,
@@ -944,6 +1364,112 @@ class SpecialistRunner:
         chunks = [chunk.strip() for chunk in re.split(r"\n\s*\n", text) if chunk.strip()]
         return chunks[0] if chunks else text.strip()
 
+    @staticmethod
+    def _render_compact_report(*, summary: str, facts: list[str], files: list[str]) -> str:
+        fact_lines = [f"- {item}" for item in facts] or ["- (none reported)"]
+        file_lines = [f"- `{item}`" for item in files] or ["- `(none reported)`"]
+        return "\n".join(
+            [
+                "## Summary",
+                summary.strip() or "(no summary reported)",
+                "",
+                "## Facts",
+                *fact_lines,
+                "",
+                "## Files",
+                *file_lines,
+            ]
+        ).strip()
+
+    def _ensure_tex_bundle_outputs(self, *, files: list[str], facts: list[str]) -> tuple[list[str], list[str]]:
+        normalized_files: list[str] = []
+        seen_files: set[str] = set()
+        for item in files:
+            normalized = self._normalize_artifact_path(item)
+            if not normalized or normalized in seen_files:
+                continue
+            seen_files.add(normalized)
+            normalized_files.append(normalized)
+
+        tex_paths = [item for item in normalized_files if item.lower().endswith(".tex")]
+        if not tex_paths:
+            return normalized_files, facts
+
+        updated_facts = list(facts)
+        compile_tool = self.registry.get_tool_function("agentic_compile_tex")
+        for tex_path in tex_paths:
+            has_pdf = any(self._tex_bundle_matches(tex_path, item, suffix=".pdf") for item in normalized_files)
+            has_bib = any(self._tex_bundle_matches(tex_path, item, suffix=".bib") for item in normalized_files)
+            if has_pdf and has_bib:
+                continue
+            with workspace_scope(self.run_context.workspace):
+                try:
+                    _content, artifact = compile_tool({"source_path": tex_path})
+                except Exception as exc:
+                    _content, artifact = self._nonfatal_tool_error_result(
+                        "agentic_compile_tex",
+                        exc,
+                        {"source_path": tex_path},
+                    )
+            data = dict(artifact.get("data") or {}) if isinstance(artifact, dict) else {}
+            compiled_ok = bool(data.get("compiled_ok"))
+            pdf_path = self._normalize_artifact_path(str(data.get("pdf_path") or "").strip()) if data.get("pdf_path") else ""
+            touched = [
+                self._normalize_artifact_path(str(item).strip())
+                for item in list(data.get("rewritten_files") or [])
+                if str(item).strip()
+            ]
+            bib_paths = [
+                self._normalize_artifact_path(str(item).strip())
+                for item in list(data.get("bib_paths") or [])
+                if str(item).strip()
+            ]
+            inspected = [
+                self._normalize_artifact_path(str(item).strip())
+                for item in list(data.get("inspected_files") or [])
+                if str(item).strip()
+            ]
+            for candidate in [pdf_path, *bib_paths, *touched, *inspected]:
+                if not candidate:
+                    continue
+                if candidate.lower().endswith(".pdf") or candidate.lower().endswith(".bib"):
+                    if candidate not in seen_files:
+                        seen_files.add(candidate)
+                        normalized_files.append(candidate)
+            if compiled_ok and pdf_path:
+                updated_facts.append(f"Compile guard produced `{pdf_path}` from `{tex_path}`.")
+            else:
+                diagnostics = [str(item).strip() for item in list(data.get("remaining_diagnostics") or []) if str(item).strip()]
+                if diagnostics:
+                    updated_facts.append(f"Compile guard for `{tex_path}` reported: {diagnostics[0]}")
+                else:
+                    updated_facts.append(f"Compile guard ran for `{tex_path}` but no PDF was produced.")
+
+        deduped_facts: list[str] = []
+        seen_facts: set[str] = set()
+        for item in updated_facts:
+            normalized = str(item or "").strip()
+            if not normalized or normalized in seen_facts:
+                continue
+            seen_facts.add(normalized)
+            deduped_facts.append(normalized)
+        return normalized_files, deduped_facts
+
+    @staticmethod
+    def _tex_bundle_matches(tex_path: str, candidate: str, *, suffix: str) -> bool:
+        try:
+            tex = Path(str(tex_path))
+            other = Path(str(candidate))
+        except Exception:
+            return False
+        if other.suffix.lower() != suffix.lower():
+            return False
+        if other.parent != tex.parent:
+            return False
+        if suffix.lower() == ".bib":
+            return True
+        return other.stem == tex.stem
+
     def _artifact_rows(self, files: list[str]) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = []
         for raw_path in files:
@@ -1037,6 +1563,22 @@ class SpecialistRunner:
         except Exception as exc:
             raise RuntimeError("deepagents memory middleware is required.") from exc
         return MemoryMiddleware
+
+    @staticmethod
+    def _load_summarization_middleware():
+        try:
+            from deepagents.middleware.summarization import SummarizationMiddleware
+        except Exception as exc:
+            raise RuntimeError("deepagents summarization middleware is required.") from exc
+        return SummarizationMiddleware
+
+    @staticmethod
+    def _load_create_summarization_tool_middleware():
+        try:
+            from deepagents.middleware.summarization import create_summarization_tool_middleware
+        except Exception as exc:
+            raise RuntimeError("deepagents compact_conversation middleware is required.") from exc
+        return create_summarization_tool_middleware
 
 
 __all__ = ["BuiltSpecialistRunner", "RUN_STATE_FILE", "SpecialistRunner", "build_specialist_runner"]
