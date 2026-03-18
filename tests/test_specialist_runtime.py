@@ -15,16 +15,20 @@ from pydantic import BaseModel
 import catmaster.specialists.runtime as runtime_mod
 from catmaster.specialists.runtime import (
     RUN_STATE_FILE,
-    _EXPERIMENT_TOOL_ALLOWLIST,
+    _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST,
     _format_lightweight_internet_search_content,
     _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES,
+    _MATERIALS_WORKER_SELECTOR_ALWAYS_INCLUDE,
+    _MATERIALS_WORKER_SELECTOR_MAX_TOOLS,
+    _MATERIALS_WORKER_TOOL_ALLOWLIST,
     _METADATA_AGENT_TOOL_ALLOWLIST,
+    _ML_WORKER_TOOL_ALLOWLIST,
+    _PROJECT_MEMORY_READ_TOOL_NAMES,
     _PROJECT_MEMORY_TOOL_NAMES,
     _LITREVIEW_AGENT_TOOL_ALLOWLIST,
     _LITREVIEW_COMPACT_KEEP_TOKENS,
     _LITREVIEW_COMPACT_TRIGGER_TOKENS,
     _RESEARCH_TOOL_ALLOWLIST,
-    _TASK_WORKER_TOOL_ALLOWLIST,
     _WRITING_WORKER_TOOL_ALLOWLIST,
     _WRITING_TOOL_ALLOWLIST,
     build_specialist_runner,
@@ -66,6 +70,11 @@ class _FakeCompactConversationMiddleware:
 
 
 class _FakeMemoryMiddleware:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+
+
+class _FakeToolSelectorMiddleware:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
 
@@ -169,14 +178,14 @@ def test_real_registry_covers_specialist_allowlists() -> None:
     registered = set(registry.tools)
 
     assert "write_note" not in registered
-    assert _EXPERIMENT_TOOL_ALLOWLIST <= registered
+    assert _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST <= registered
     assert _RESEARCH_TOOL_ALLOWLIST <= registered
     assert _WRITING_TOOL_ALLOWLIST <= registered
-    assert _TASK_WORKER_TOOL_ALLOWLIST <= registered
+    assert _MATERIALS_WORKER_TOOL_ALLOWLIST <= registered
     assert _METADATA_AGENT_TOOL_ALLOWLIST <= registered
     assert _LITREVIEW_AGENT_TOOL_ALLOWLIST <= registered
     assert _WRITING_WORKER_TOOL_ALLOWLIST <= registered
-    assert "bash" not in _EXPERIMENT_TOOL_ALLOWLIST
+    assert "bash" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
     assert "bash" not in _RESEARCH_TOOL_ALLOWLIST
     assert "bash" not in _WRITING_TOOL_ALLOWLIST
     assert "run_literature_research" in registered
@@ -250,8 +259,8 @@ def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths
     assert "replace or delete stale incorrect reports/notes" in contract
 
 
-def test_task_worker_prompt_includes_workspace_path_discipline() -> None:
-    prompt = runtime_mod.SpecialistRunner._task_worker_prompt()
+def test_materials_worker_prompt_includes_workspace_path_discipline() -> None:
+    prompt = runtime_mod.SpecialistRunner._materials_worker_prompt()
     assert "Workspace path discipline" in prompt
     assert "Treat `/` only as the workspace virtual root" in prompt
     assert "Only persist key constraints, decisive results" in prompt
@@ -446,9 +455,9 @@ def test_finalize_report_runs_compile_guard_for_tex_outputs(
 @pytest.mark.parametrize(
     ("entrypoint", "expected_skills", "expected_subagent_names"),
     [
-        ("research", ["/.deepagents/skills/experiment", "/.deepagents/skills/writing"], ["experiment_specialist", "writing_specialist", "litreview_agent"]),
-        ("experiment", ["/.deepagents/skills/experiment"], ["task_worker_agent", "literature_agent"]),
-        ("writing", ["/.deepagents/skills/writing"], ["writing_worker_agent"]),
+        ("research", ["/.deepagents/skill_views/research_experiment", "/.deepagents/skill_views/research_writing"], ["experiment_specialist", "writing_specialist", "litreview_agent"]),
+        ("experiment", ["/.deepagents/skill_views/experiment_specialist"], ["materials_worker", "ml_worker", "literature_agent"]),
+        ("writing", ["/.deepagents/skill_views/writing_specialist"], ["writing_worker_agent"]),
     ],
 )
 def test_three_specialist_lanes_start_with_staged_skills(
@@ -492,6 +501,11 @@ def test_three_specialist_lanes_start_with_staged_skills(
         runtime_mod.SpecialistRunner,
         "_load_memory_middleware",
         staticmethod(lambda: _FakeMemoryMiddleware),
+    )
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_llm_tool_selector_middleware",
+        staticmethod(lambda: _FakeToolSelectorMiddleware),
     )
     monkeypatch.setattr(
         runtime_mod.SpecialistRunner,
@@ -548,16 +562,21 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "/research_kernels/" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "metadata_agent" in agent_kwargs["system_prompt"]
+        assert {tool.name for tool in subagents_by_name["experiment_specialist"]["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in subagents_by_name["writing_specialist"]["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["experiment_specialist"]["skills"] == ["/.deepagents/skill_views/experiment_specialist"]
+        assert subagents_by_name["writing_specialist"]["skills"] == ["/.deepagents/skill_views/writing_specialist"]
         litreview_compiled = subagents_by_name["litreview_agent"]
         assert "runnable" in litreview_compiled
         litreview_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "litreview_agent"]
         assert litreview_agents, "expected nested litreview agent to be created"
         litreview_agent_kwargs = litreview_agents[0]
+        assert {tool.name for tool in litreview_agent_kwargs["tools"]} == _PROJECT_MEMORY_READ_TOOL_NAMES
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
         nested_subagents = {subagent.kwargs["name"]: subagent.kwargs for subagent in litreview_agent_kwargs["subagents"]}
-        assert {tool.name for tool in nested_subagents["literature_agent"]["tools"]} == (_LITREVIEW_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in nested_subagents["literature_agent"]["tools"]} == (_LITREVIEW_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert nested_subagents["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
-        assert {tool.name for tool in nested_subagents["metadata_agent"]["tools"]} == (_METADATA_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in nested_subagents["metadata_agent"]["tools"]} == (_METADATA_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         metadata_middleware = nested_subagents["metadata_agent"]["middleware"]
         metadata_summarizer = next(item for item in metadata_middleware if isinstance(item, _FakeSummarizationMiddleware))
         compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
@@ -567,24 +586,60 @@ def test_three_specialist_lanes_start_with_staged_skills(
         literature_middleware = nested_subagents["literature_agent"]["middleware"]
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "experiment":
-        assert {tool.name for tool in subagents_by_name["task_worker_agent"]["tools"]} == (_TASK_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
-        assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in subagents_by_name["materials_worker"]["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["materials_worker"]["skills"] == ["/.deepagents/skill_views/materials_worker"]
+        assert {tool.name for tool in subagents_by_name["ml_worker"]["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["ml_worker"]["skills"] == ["/.deepagents/skill_views/ml_worker"]
+        assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
         assert "/notes/literature/" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "Only save a concise reusable markdown note" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "Web Evidence" in subagents_by_name["literature_agent"]["system_prompt"]
+        assert "You do not have permission to modify long-term project memory" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "default DeepAgent built-in tool surface" in subagents_by_name["ml_worker"]["system_prompt"]
+        materials_worker_selector = next(
+            item
+            for item in subagents_by_name["materials_worker"]["middleware"]
+            if isinstance(item, _FakeToolSelectorMiddleware)
+        )
+        assert materials_worker_selector.kwargs["model"] == {"model": "tool_selector-model"}
+        assert materials_worker_selector.kwargs["max_tools"] == _MATERIALS_WORKER_SELECTOR_MAX_TOOLS
+        assert set(materials_worker_selector.kwargs["always_include"]) == set(_MATERIALS_WORKER_SELECTOR_ALWAYS_INCLUDE)
+        assert not any(
+            isinstance(item, _FakeToolSelectorMiddleware)
+            for item in subagents_by_name["ml_worker"]["middleware"]
+        )
+        assert not any(
+            isinstance(item, _FakeToolSelectorMiddleware)
+            for item in subagents_by_name["literature_agent"]["middleware"]
+        )
     else:
         assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
-        assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skill_views/writing_worker_agent"]
         assert "literature_agent" not in subagents_by_name
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
     staged_experiment = workspace / "files" / ".deepagents" / "skills" / "experiment"
     staged_writing = workspace / "files" / ".deepagents" / "skills" / "writing"
+    staged_views = workspace / "files" / ".deepagents" / "skill_views"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
     assert staged_experiment.is_dir()
     assert staged_writing.is_dir()
+    assert staged_views.is_dir()
+    staged_machine_learning = workspace / "files" / ".deepagents" / "skills" / "machine_learning"
+    assert staged_machine_learning.is_dir()
+    experiment_view_names = {path.name for path in (staged_views / "experiment_specialist").iterdir() if path.is_dir()}
+    writing_view_names = {path.name for path in (staged_views / "writing_specialist").iterdir() if path.is_dir()}
+    materials_worker_view_names = {path.name for path in (staged_views / "materials_worker").iterdir() if path.is_dir()}
+    ml_worker_view_names = {path.name for path in (staged_views / "ml_worker").iterdir() if path.is_dir()}
+    assert "literature-grounding" not in experiment_view_names
+    assert "structure-visual-inspection" in experiment_view_names
+    assert "structure-visual-inspection" in materials_worker_view_names
+    assert not ml_worker_view_names
+    assert "achemso-latex-manuscript" not in writing_view_names
+    assert "scientific-writing" in writing_view_names
 
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint
@@ -640,6 +695,11 @@ def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, m
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_llm_tool_selector_middleware",
+        staticmethod(lambda: _FakeToolSelectorMiddleware),
+    )
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)

@@ -12,9 +12,9 @@ import re
 from dpdispatcher import Machine, Resources, Task, Submission
 from catmaster.tools.execution.machine_registry import MachineRegister
 
-STATUS_FILE_NAME = ".catmaster_status.json"
-STDOUT_FILE_NAME = ".catmaster_stdout.log"
-STDERR_FILE_NAME = ".catmaster_stderr.log"
+STATUS_FILE_NAME = "status.json"
+STDOUT_FILE_NAME = "stdout.log"
+STDERR_FILE_NAME = "stderr.log"
 
 _DP_PATTERNS = [
     re.compile(r"^[0-9a-f]{40}_task_tag_finished$"),

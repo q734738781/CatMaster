@@ -31,3 +31,13 @@ def test_registry_as_openai_tools() -> None:
     assert "parameters" in tool
     assert tool["parameters"]["type"] == "object"
     assert tool["parameters"].get("additionalProperties") is False
+
+
+def test_registered_tool_descriptions_use_scope_stage_prefix() -> None:
+    registry = ToolRegistry()
+
+    for name, info in registry.tools.items():
+        doc = str(getattr(info.get("input_model"), "__doc__", "") or "").strip()
+        first_line = doc.splitlines()[0].strip() if doc else ""
+        assert first_line.startswith("["), f"{name} is missing a leading [scope/stage] tag"
+        assert "]" in first_line, f"{name} is missing a closing ] in the first docstring line"

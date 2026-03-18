@@ -194,7 +194,7 @@ Priority rules:
 - For quantitative computations, do not silently rely on tool defaults for method-critical toggles (for example dispersion, spin, +U, dipole corrections, reference-state conventions, or relaxation mode). If such settings matter for comparability, ranking, or scientific validity, set them explicitly and keep them consistent across clean references, gas-phase references, adsorbed systems, and downstream refinement stages.
 - When a relevant skill is available, use it to determine method-critical defaults and evidence standards, then reflect those choices explicitly in tool arguments and outputs.
 - When a task result is research-grounded or cites prior work, preserve representative citations inline in the task handoff; artifact/offload paths are supplemental and must not replace citations.
-- `run_literature_research` may be called only when the current task packet explicitly requires literature grounding, benchmark conventions, or representative citations, or when `suggested_tools` explicitly includes `run_literature_research`. Do not initiate literature research just because you want extra reassurance.
+- `run_literature_research` may be called only when the current task packet explicitly requires literature grounding, benchmark conventions, or representative citations, or when `allowed_tools` explicitly includes `run_literature_research`. Do not initiate literature research just because you want extra reassurance.
 - Do not initiate file edits on your own. Only edit files when the current task packet explicitly requires editing/writing outputs for this task. For `MEMORY/**`, only update when scientific invariants, method definitions, or final reusable results changed.
 - If file editing is explicitly required by the task packet, prefer `apply_aider_edits` for deterministic edits (including memory files) over ad-hoc in-place shell edits.
 - When a registered domain tool covers the required capability, prefer the domain tool over re-implementing the same capability with ad-hoc Python or shell. Use ad-hoc code only for glue logic, parsing, summarization, or capabilities not covered by existing tools or skill assets.
@@ -364,8 +364,8 @@ Task detail:
 Expected outputs:
 {expected_outputs}
 
-Suggested tools:
-{suggested_tools}
+Allowed tools:
+{allowed_tools}
 
 Reference hint:
 {reference_hint}

@@ -7,13 +7,14 @@ from typing import Dict, Any, List, Optional
 import numpy as np
 from pydantic import BaseModel, Field
 from pymatgen.core import Structure
+from pymatgen.io.vasp import Poscar
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class SupercellInput(BaseModel):
-    """Create supercells from structure file(s). THIS WILL LOSE ALL SELECTIVE DYNAMICS INFORMATION.
+    """[structure/modeling] Create supercells from structure file(s) while preserving selective dynamics in POSCAR/VASP outputs.
     Provide exactly one of structure_file or structure_dir. When structure_dir is used, output_dir is required.
     Batch outputs are written to output_dir/<structure_id>.vasp and a summary JSON is written to
     output_dir/batch_supercell.json.
@@ -75,7 +76,15 @@ def _structure_id_from(rel_path: Path) -> str:
     return "__".join(rel_path.with_suffix("").parts)
 
 
+def _write_structure(path: Path, structure: Structure) -> None:
+    if path.suffix.lower() in {".vasp", ".poscar", ""}:
+        Poscar(structure).write_file(str(path))
+        return
+    structure.to(filename=str(path))
+
+
 def supercell(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[structure/modeling] Create supercells for one structure or a directory batch."""
     try:
         params = SupercellInput(**payload)
         if (params.structure_file is None) == (params.structure_dir is None):
@@ -137,7 +146,7 @@ def supercell(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                     structure = Structure.from_file(structure_path)
                     structure.make_supercell(matrix)
                     out_path.parent.mkdir(parents=True, exist_ok=True)
-                    structure.to(fmt="poscar", filename=str(out_path))
+                    _write_structure(out_path, structure)
                     results.append(
                         {
                             "input_rel": str(rel_path),
@@ -195,7 +204,7 @@ def supercell(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
         structure = Structure.from_file(structure_path)
         structure.make_supercell(matrix)
-        structure.to(fmt="poscar", filename=str(out_path))
+        _write_structure(out_path, structure)
 
         data = {
             "input_rel": workspace_relpath(structure_path),

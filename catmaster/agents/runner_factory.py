@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import warnings
 
 from catmaster.agents.graph import GraphRunPolicy, GraphRunner
 from catmaster.llm.config import LLMProfile
@@ -16,6 +17,12 @@ from catmaster.runtime.tool_executor import ToolExecutor
 from catmaster.runtime.trace_store import TraceStore
 from catmaster.tools.registry import ToolRegistry, get_tool_registry
 from catmaster.ui.reporters import NullReporter, Reporter
+
+LEGACY_GRAPH_DRIVER_KIND = "legacy_graph_deprecated"
+LEGACY_GRAPH_DEPRECATION_NOTICE = (
+    "build_graph_runner()/GraphRunner is legacy and deprecated. "
+    "Prefer build_specialist_runner()/SpecialistRunner for active development."
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +43,11 @@ def build_graph_runner(
     bind_run_control_id: bool = True,
     stream_debug_console: bool = False,
 ) -> BuiltGraphRunner:
+    warnings.warn(
+        LEGACY_GRAPH_DEPRECATION_NOTICE,
+        DeprecationWarning,
+        stacklevel=2,
+    )
     registry: ToolRegistry = get_tool_registry()
     run_ctx = RunContext.create(
         workspace=workspace,
@@ -44,6 +56,7 @@ def build_graph_runner(
         model_name=llm_profile.main.model,
         provider=llm_profile.main.provider,
         base_url=llm_profile.main.base_url,
+        driver_kind=LEGACY_GRAPH_DRIVER_KIND,
     )
     if run_control is not None and bind_run_control_id:
         run_control.run_id = run_ctx.run_id
@@ -85,4 +98,9 @@ def build_graph_runner(
     return BuiltGraphRunner(runner=runner, run_context=run_ctx)
 
 
-__all__ = ["BuiltGraphRunner", "build_graph_runner"]
+__all__ = [
+    "BuiltGraphRunner",
+    "build_graph_runner",
+    "LEGACY_GRAPH_DRIVER_KIND",
+    "LEGACY_GRAPH_DEPRECATION_NOTICE",
+]

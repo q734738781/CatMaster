@@ -109,7 +109,7 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
 
     rid = uuid.uuid4()
     handler.on_tool_start(
-        serialized={"name": "vasp_relax_prepare"},
+        serialized={"name": "vasp_prepare"},
         input_str=json.dumps({"input_path": "x.vasp"}),
         run_id=rid,
     )
@@ -118,7 +118,7 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
         ToolMessage(
             content="ValidationError: user_incar_settings invalid",
             tool_call_id="call_3",
-            name="vasp_relax_prepare",
+            name="vasp_prepare",
             status="error",
         ),
         run_id=rid,
@@ -130,7 +130,7 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
         if line.strip()
     ]
     assert records
-    assert records[0]["tool_name"] == "vasp_relax_prepare"
+    assert records[0]["tool_name"] == "vasp_prepare"
     assert records[0]["status"] == "error"
 
 

@@ -187,14 +187,14 @@ def _soft_external_error(tool_name: str, source: str, exc: Exception, *, extra: 
 
 
 class SearchOpenAlexInput(BaseModel):
-    """Search OpenAlex for exact scholarly metadata, not broad background search."""
+    """[literature/metadata] Search OpenAlex for exact scholarly metadata, not broad background search."""
 
     query: str = Field(..., description="Short paper-lookup query for OpenAlex.")
     limit: int = Field(10, ge=1, le=50, description="Maximum number of records to return.")
 
 
 class SearchSemanticScholarInput(BaseModel):
-    """Search Semantic Scholar for exact paper metadata, abstracts, or seed papers."""
+    """[literature/metadata] Search Semantic Scholar for exact paper metadata, abstracts, or seed papers."""
 
     query: str = Field(..., description="Short paper-lookup query for Semantic Scholar.")
     limit: int = Field(10, ge=1, le=50, description="Maximum number of records to return.")
@@ -203,19 +203,19 @@ class SearchSemanticScholarInput(BaseModel):
 
 
 class GetOpenAlexRecordInput(BaseModel):
-    """Fetch one OpenAlex work by OpenAlex id or DOI."""
+    """[literature/metadata] Fetch one OpenAlex work by OpenAlex id or DOI."""
 
     work_id_or_doi: str = Field(..., description="OpenAlex work id or DOI.")
 
 
 class GetSemanticScholarRecordInput(BaseModel):
-    """Fetch one Semantic Scholar paper by paper id or DOI."""
+    """[literature/metadata] Fetch one Semantic Scholar paper by paper id or DOI."""
 
     paper_id_or_doi: str = Field(..., description="Semantic Scholar paper id or DOI.")
 
 
 class RecommendSemanticScholarInput(BaseModel):
-    """Expand a small seed set with Semantic Scholar recommendations."""
+    """[literature/metadata] Expand a small seed set with Semantic Scholar recommendations."""
 
     seed_paper_ids: list[str] = Field(..., description="Seed Semantic Scholar paper ids.")
     limit: int = Field(6, ge=1, le=50, description="Maximum number of recommendations to return.")
@@ -224,21 +224,21 @@ class RecommendSemanticScholarInput(BaseModel):
 
 
 class SearchPublicWebInput(BaseModel):
-    """Search the public web for broad scientific background or landing-page summaries."""
+    """[web/search] Search the public web for broad scientific background or landing-page summaries."""
 
     query: str = Field(..., description="Public-web query.")
     max_results: int = Field(5, ge=1, le=20, description="Maximum number of results to return.")
 
 
 class OpenPublicPageInput(BaseModel):
-    """Open a public page and extract normalized visible text."""
+    """[web/read] Open a public page and extract normalized visible text."""
 
     url: str = Field(..., description="Public http(s) URL.")
     max_chars: int = Field(12000, ge=500, le=50000, description="Maximum number of normalized text characters to retain.")
 
 
 class FindInPageInput(BaseModel):
-    """Search normalized text within a previously identified public page."""
+    """[web/find] Search normalized text within a previously identified public page."""
 
     url: str = Field(..., description="Public http(s) URL.")
     pattern: str = Field(..., description="Pattern to search for.")
@@ -248,7 +248,7 @@ class FindInPageInput(BaseModel):
 
 
 class RunLiteratureResearchInput(BaseModel):
-    """Run a precise literature-grounding workflow and return a compact context pack."""
+    """[literature/review] Run a precise literature-grounding workflow and return a compact context pack."""
 
     query: str = Field(..., description="Literature question or retrieval topic to investigate.")
     depth: str = Field(
@@ -302,6 +302,7 @@ def _pack_summary_text(data: dict[str, Any]) -> str:
 
 
 def run_literature_research(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[literature/review] Run the literature grounding workflow and return a compact context pack."""
     tool_name = "run_literature_research"
     try:
         params = RunLiteratureResearchInput(**payload)
@@ -333,6 +334,7 @@ def run_literature_research(payload: dict[str, Any]) -> tuple[str, dict[str, Any
 
 
 def search_openalex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[literature/metadata] Search OpenAlex for paper metadata candidates."""
     tool_name = "search_openalex"
     try:
         params = SearchOpenAlexInput(**payload)
@@ -357,6 +359,7 @@ def search_openalex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def search_semantic_scholar(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[literature/metadata] Search Semantic Scholar for paper metadata candidates."""
     tool_name = "search_semantic_scholar"
     try:
         params = SearchSemanticScholarInput(**payload)
@@ -392,6 +395,7 @@ def search_semantic_scholar(payload: dict[str, Any]) -> tuple[str, dict[str, Any
 
 
 def get_openalex_record(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[literature/metadata] Fetch one OpenAlex record by DOI or OpenAlex id."""
     tool_name = "get_openalex_record"
     try:
         params = GetOpenAlexRecordInput(**payload)
@@ -414,6 +418,7 @@ def get_openalex_record(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def get_semantic_scholar_record(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[literature/metadata] Fetch one Semantic Scholar record by DOI or paper id."""
     tool_name = "get_semantic_scholar_record"
     try:
         params = GetSemanticScholarRecordInput(**payload)
@@ -442,6 +447,7 @@ def get_semantic_scholar_record(payload: dict[str, Any]) -> tuple[str, dict[str,
 
 
 def recommend_semantic_scholar(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[literature/metadata] Expand a seed set with Semantic Scholar recommendations."""
     tool_name = "recommend_semantic_scholar"
     try:
         params = RecommendSemanticScholarInput(**payload)
@@ -477,6 +483,7 @@ def recommend_semantic_scholar(payload: dict[str, Any]) -> tuple[str, dict[str, 
 
 
 def search_public_web(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[web/search] Search the public web for broad scientific context."""
     tool_name = "search_public_web"
     try:
         params = SearchPublicWebInput(**payload)
@@ -501,6 +508,7 @@ def search_public_web(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def open_public_page(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[web/read] Open a public page and return normalized visible text."""
     tool_name = "open_public_page"
     try:
         params = OpenPublicPageInput(**payload)
@@ -523,6 +531,7 @@ def open_public_page(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def find_in_page(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[web/find] Search a public page for pattern matches and snippets."""
     tool_name = "find_in_page"
     try:
         params = FindInPageInput(**payload)

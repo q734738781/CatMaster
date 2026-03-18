@@ -17,7 +17,7 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class SlabBuildInput(BaseModel):
-    """Build slabs for all terminations of a Miller index from bulk structure(s).
+    """[surface/modeling] Build slabs for all terminations of a Miller index from bulk structure(s).
 
     Provide exactly one of bulk_structure or bulk_dir. When bulk_dir is used, output_root is required.
     Batch outputs are written under output_root/<slab_id>/..., where slab_id encodes the relative input path
@@ -53,7 +53,7 @@ class SlabBuildInput(BaseModel):
 
 
 class FixAtomsByLayersInput(BaseModel):
-    """Fix (freeze) the bottom N atomic layers of slab structure(s).
+    """[surface/modeling] Fix (freeze) the bottom N atomic layers of slab structure(s).
 
     Provide exactly one of structure_ref or structure_dir. When structure_dir is used, output_dir is required.
     Batch outputs are written to output_dir/<slab_id>.vasp and a summary JSON is written to
@@ -93,7 +93,7 @@ class ZRange(BaseModel):
 
 
 class FixAtomsByHeightInput(BaseModel):
-    """Fix (freeze) atoms within specified z ranges of slab structure(s).
+    """[surface/modeling] Fix (freeze) atoms within specified z ranges of slab structure(s).
 
     Provide exactly one of structure_ref or structure_dir. When structure_dir is used, output_dir is required.
     Batch outputs are written to output_dir/<slab_id>.vasp and a summary JSON is written to
@@ -123,7 +123,7 @@ class FixAtomsByHeightInput(BaseModel):
 
 
 class FixAtomsByIndicesInput(BaseModel):
-    """Fix (freeze) atoms by explicit 0-based indices for one structure or a directory batch."""
+    """[surface/modeling] Fix (freeze) atoms by explicit 0-based indices for one structure or a directory batch."""
 
     structure_ref: Optional[str] = Field(None, description="Structure file to modify (POSCAR/CIF).")
     structure_dir: Optional[str] = Field(None, description="Directory containing structure files to modify.")
@@ -271,7 +271,7 @@ def _build_slab_single(
 
 def build_slab(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
     """
-    Build slabs for all terminations of a given Miller index. Each termination is written
+    [surface/modeling] Build slabs for all terminations of a given Miller index. Each termination is written
     as a separate POSCAR under output_root. Supercell expansion is applied to every termination.
     """
     params = SlabBuildInput(**payload)
@@ -553,6 +553,7 @@ def _fix_atoms_by_layers_single(
 
 
 def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze slab atoms by counted bottom layers for one structure or a batch."""
     params = FixAtomsByLayersInput(**payload)
     if (params.structure_ref is None) == (params.structure_dir is None):
         _failure(
@@ -719,6 +720,7 @@ def _fix_atoms_by_height_single(
 
 
 def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze slab atoms by Cartesian z ranges for one structure or a batch."""
     params = FixAtomsByHeightInput(**payload)
     if (params.structure_ref is None) == (params.structure_dir is None):
         _failure(
@@ -891,6 +893,7 @@ def _fix_atoms_by_indices_single(
 
 
 def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze atoms by explicit 0-based indices for one structure or a batch."""
     params = FixAtomsByIndicesInput(**payload)
     if (params.structure_ref is None) == (params.structure_dir is None):
         _failure(

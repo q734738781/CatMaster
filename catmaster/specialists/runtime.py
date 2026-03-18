@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
+import yaml
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
@@ -49,12 +50,11 @@ _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
     "writing": "write_director",
 }
 
-_EXPERIMENT_TOOL_ALLOWLIST = {
+_MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "create_molecule_from_smiles",
     "mace_relax_batch",
     "mace_sp_batch",
-    "vasp_relax_prepare",
-    "vasp_sp_prepare",
+    "vasp_prepare",
     "build_slab",
     "fix_atoms_by_layers",
     "fix_atoms_by_height",
@@ -64,7 +64,7 @@ _EXPERIMENT_TOOL_ALLOWLIST = {
     "place_adsorbate",
     "generate_batch_adsorption_structures",
     "make_neb_geometry",
-    "make_neb_incar",
+    "vasp_neb_prepare",
     "vasp_execute_batch",
     "mp_search_materials",
     "mp_download_structure",
@@ -74,6 +74,8 @@ _EXPERIMENT_TOOL_ALLOWLIST = {
     "vaspkit_adsorbate_thermo_correction",
     "vaspkit_gas_thermo_correction",
 }
+_ML_WORKER_TOOL_ALLOWLIST: set[str] = set()
+_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = set(_MATERIALS_WORKER_TOOL_ALLOWLIST) | set(_ML_WORKER_TOOL_ALLOWLIST)
 _WRITING_TOOL_ALLOWLIST = {
     "analyze_images",
     "render_structure_views",
@@ -85,7 +87,6 @@ _RESEARCH_TOOL_ALLOWLIST = {
     "mp_search_materials",
     "mp_download_structure",
 }
-_TASK_WORKER_TOOL_ALLOWLIST = set(_EXPERIMENT_TOOL_ALLOWLIST)
 _METADATA_AGENT_TOOL_ALLOWLIST = {
     "search_openalex",
     "search_semantic_scholar",
@@ -99,7 +100,23 @@ _LITREVIEW_AGENT_TOOL_ALLOWLIST = {
     "find_in_page",
 }
 _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES = {"internet_search"}
+_PROJECT_MEMORY_READ_TOOL_NAMES = {"search_memory"}
+_PROJECT_MEMORY_WRITE_TOOL_NAMES = {"manage_memory"}
 _PROJECT_MEMORY_TOOL_NAMES = {"manage_memory", "search_memory"}
+_DEEPAGENT_BUILTIN_TOOL_NAMES = {
+    "write_todos",
+    "ls",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "glob",
+    "grep",
+    "execute",
+}
+_MATERIALS_WORKER_SELECTOR_MAX_TOOLS = 8
+_MATERIALS_WORKER_SELECTOR_ALWAYS_INCLUDE = tuple(
+    sorted(_DEEPAGENT_BUILTIN_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+)
 _WRITING_WORKER_TOOL_ALLOWLIST = {
     "polish_academic_prose",
     "analyze_images",
@@ -119,6 +136,13 @@ _PROJECT_MEMORY_TOOL_INSTRUCTIONS = (
     "- Before updating or deleting an existing long-term memory, call `search_memory` first to find the correct MEMORY IDs.\n"
     "- Treat `/.deepagents/AGENTS.md` and `/memories/AGENTS.md` as instruction memory, not the project fact store."
 )
+_PROJECT_MEMORY_READONLY_INSTRUCTIONS = (
+    "Project long-term memory tools:\n"
+    "- You have `search_memory` access to the project-level LangMem store.\n"
+    "- Use it to retrieve durable project facts, validated reusable conclusions, and stable project conventions before starting or when you suspect prior relevant work exists.\n"
+    "- You do not have permission to modify long-term project memory from this subagent. If durable memory should be added, corrected, or deleted, report that explicitly so the parent specialist can decide whether to call `manage_memory`.\n"
+    "- Treat `/.deepagents/AGENTS.md` and `/memories/AGENTS.md` as instruction memory, not the project fact store."
+)
 _PROJECT_MANAGE_MEMORY_INSTRUCTIONS = (
     "Proactively call this tool when current work yields durable project memory. "
     "Store concise validated facts, reusable conclusions, stable project conventions, or durable project status. "
@@ -128,6 +152,16 @@ _PROJECT_MANAGE_MEMORY_INSTRUCTIONS = (
 _PROJECT_SEARCH_MEMORY_INSTRUCTIONS = (
     "Search project long-term memory before creating a similar memory, and always search before updating or deleting memories."
 )
+_SKILL_VIEW_ROOT = "/.deepagents/skill_views"
+_SPECIALIST_SKILL_VIEW_SPECS: dict[str, tuple[str, set[str]]] = {
+    "research_experiment": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _RESEARCH_TOOL_ALLOWLIST),
+    "research_writing": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _RESEARCH_TOOL_ALLOWLIST),
+    "experiment_specialist": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST),
+    "materials_worker": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _MATERIALS_WORKER_TOOL_ALLOWLIST),
+    "ml_worker": ("machine_learning", _DEEPAGENT_BUILTIN_TOOL_NAMES | _ML_WORKER_TOOL_ALLOWLIST),
+    "writing_specialist": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_TOOL_ALLOWLIST),
+    "writing_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
+}
 
 
 class _InternetSearchInput(BaseModel):
@@ -665,19 +699,19 @@ class SpecialistRunner:
             SubAgent(
                 name="experiment_specialist",
                 description="Run bounded computational experiment work and return compact evidence summaries.",
-                system_prompt=self._system_prompt("experiment"),
+                system_prompt=self._system_prompt("experiment", allow_manage_memory=False),
                 model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
-                tools=self._specialist_tools("experiment"),
-                skills=self._virtual_skill_paths("experiment"),
+                tools=self._specialist_subagent_tools("experiment"),
+                skills=[self._skill_view_virtual_path("experiment_specialist")],
                 middleware=subagent_middleware,
             ),
             SubAgent(
                 name="writing_specialist",
                 description="Turn existing evidence into reports, outlines, sections, or manuscript-ready outputs.",
-                system_prompt=self._system_prompt("writing"),
+                system_prompt=self._system_prompt("writing", allow_manage_memory=False),
                 model=build_chat_model(self.llm_profile.config_for_role("write_director")),
-                tools=self._specialist_tools("writing"),
-                skills=self._virtual_skill_paths("writing"),
+                tools=self._specialist_subagent_tools("writing"),
+                skills=[self._skill_view_virtual_path("writing_specialist")],
                 middleware=subagent_middleware,
             ),
             self._compiled_litreview_subagent(runtime=runtime),
@@ -686,14 +720,35 @@ class SpecialistRunner:
     def _experiment_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
         SubAgent = self._load_subagent()
         subagent_middleware = self._subagent_middleware(runtime=runtime)
+        materials_worker_middleware = self._subagent_middleware(
+            runtime=runtime,
+            enable_tool_selector=True,
+            selector_max_tools=_MATERIALS_WORKER_SELECTOR_MAX_TOOLS,
+            selector_always_include=_MATERIALS_WORKER_SELECTOR_ALWAYS_INCLUDE,
+        )
         return [
             SubAgent(
-                name="task_worker_agent",
-                description="Handle bounded, context-heavy execution subtasks in isolation and return concise results with artifact paths.",
-                system_prompt=self._task_worker_prompt(),
+                name="materials_worker",
+                description="Handle bounded, context-heavy materials execution subtasks in isolation and return concise results with artifact paths.",
+                system_prompt=self._materials_worker_prompt(),
                 model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
-                tools=self._augment_with_project_memory_tools(self._named_tools(_TASK_WORKER_TOOL_ALLOWLIST)),
-                skills=self._virtual_skill_paths("experiment"),
+                tools=self._augment_with_project_memory_tools(
+                    self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST),
+                    include_manage_memory=False,
+                ),
+                skills=[self._skill_view_virtual_path("materials_worker")],
+                middleware=materials_worker_middleware,
+            ),
+            SubAgent(
+                name="ml_worker",
+                description="Handle bounded machine-learning subtasks in isolation using the default DeepAgent tool surface until ML-specific tools are added.",
+                system_prompt=self._ml_worker_prompt(),
+                model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
+                tools=self._augment_with_project_memory_tools(
+                    self._named_tools(_ML_WORKER_TOOL_ALLOWLIST),
+                    include_manage_memory=False,
+                ),
+                skills=[self._skill_view_virtual_path("ml_worker")],
                 middleware=subagent_middleware,
             ),
             SubAgent(
@@ -715,19 +770,37 @@ class SpecialistRunner:
                 description="Draft or revise context-heavy sections in isolation and return compact manuscript-ready outputs.",
                 system_prompt=self._writing_worker_prompt(),
                 model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
-                tools=self._augment_with_project_memory_tools(self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST)),
-                skills=self._virtual_skill_paths("writing"),
+                tools=self._augment_with_project_memory_tools(
+                    self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
+                    include_manage_memory=False,
+                ),
+                skills=[self._skill_view_virtual_path("writing_worker_agent")],
                 middleware=subagent_middleware,
             ),
         ]
 
-    def _subagent_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
+    def _subagent_middleware(
+        self,
+        *,
+        runtime: dict[str, Any],
+        enable_tool_selector: bool = False,
+        selector_max_tools: int | None = None,
+        selector_always_include: tuple[str, ...] = (),
+    ) -> list[Any]:
         agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
         model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
-        return [
+        middleware = [
             *self._build_default_middleware(model_call_run_limit=model_call_run_limit),
             self._new_memory_middleware(backend=runtime["backend"]),
         ]
+        if enable_tool_selector:
+            middleware.append(
+                self._new_tool_selector_middleware(
+                    max_tools=selector_max_tools,
+                    always_include=selector_always_include,
+                )
+            )
+        return middleware
 
     def _metadata_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
         middleware = self._subagent_middleware(runtime=runtime)
@@ -759,7 +832,7 @@ class SpecialistRunner:
         SubAgent = self._load_subagent()
         return create_deep_agent(
             model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-            tools=self._augment_with_project_memory_tools([]),
+            tools=self._augment_with_project_memory_tools([], include_manage_memory=False),
             system_prompt=self._litreview_wrapper_prompt(),
             middleware=self._subagent_middleware(runtime=runtime),
             checkpointer=runtime["checkpointer"],
@@ -773,7 +846,10 @@ class SpecialistRunner:
                     description="Use Tavily-backed public web search and page reading for broader literature review, background grounding, and public-source synthesis.",
                     system_prompt=self._litreview_agent_prompt(),
                     model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
-                    tools=self._augment_with_project_memory_tools(self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST)),
+                    tools=self._augment_with_project_memory_tools(
+                        self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
+                        include_manage_memory=False,
+                    ),
                     middleware=self._subagent_middleware(runtime=runtime),
                 ),
                 SubAgent(
@@ -781,7 +857,10 @@ class SpecialistRunner:
                     description="Resolve exact paper metadata, DOI/year/venue/authors, and citation details from scholarly databases.",
                     system_prompt=self._metadata_agent_prompt(),
                     model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-                    tools=self._augment_with_project_memory_tools(self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST)),
+                    tools=self._augment_with_project_memory_tools(
+                        self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST),
+                        include_manage_memory=False,
+                    ),
                     middleware=self._metadata_middleware(runtime=runtime),
                 ),
             ],
@@ -857,8 +936,20 @@ class SpecialistRunner:
         elif entrypoint == "research":
             requested = _RESEARCH_TOOL_ALLOWLIST
         else:
-            requested = _EXPERIMENT_TOOL_ALLOWLIST
+            requested = _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
         return self._augment_with_project_memory_tools(self._named_tools(requested))
+
+    def _specialist_subagent_tools(self, entrypoint: SpecialistEntrypoint) -> list[Any]:
+        if entrypoint == "writing":
+            requested = _WRITING_TOOL_ALLOWLIST
+        elif entrypoint == "research":
+            requested = _RESEARCH_TOOL_ALLOWLIST
+        else:
+            requested = _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+        return self._augment_with_project_memory_tools(
+            self._named_tools(requested),
+            include_manage_memory=False,
+        )
 
     def _named_tools(self, requested: set[str] | list[str] | tuple[str, ...]) -> list[Any]:
         requested_names = {str(name).strip() for name in requested if str(name).strip()}
@@ -876,18 +967,22 @@ class SpecialistRunner:
         )
         return [self._wrap_nonfatal_tool(tool) for tool in tools]
 
-    def _augment_with_project_memory_tools(self, tools: list[Any]) -> list[Any]:
+    def _augment_with_project_memory_tools(
+        self,
+        tools: list[Any],
+        *,
+        include_manage_memory: bool = True,
+    ) -> list[Any]:
         existing = {str(getattr(tool, "name", "") or "").strip() for tool in tools}
         augmented = list(tools)
-        for tool in self._project_memory_tools():
+        for tool in self._project_memory_tools(include_manage_memory=include_manage_memory):
             name = str(getattr(tool, "name", "") or "").strip()
             if name and name not in existing:
                 augmented.append(tool)
                 existing.add(name)
         return augmented
 
-    def _project_memory_tools(self) -> list[Any]:
-        create_manage_memory_tool = self._load_create_manage_memory_tool()
+    def _project_memory_tools(self, *, include_manage_memory: bool = True) -> list[Any]:
         create_search_memory_tool = self._load_create_search_memory_tool()
         search_tool = create_search_memory_tool(
             namespace=_PROJECT_LONG_TERM_MEMORY_NAMESPACE,
@@ -895,16 +990,17 @@ class SpecialistRunner:
             response_format="content",
             name="search_memory",
         )
-        manage_tool = create_manage_memory_tool(
-            namespace=_PROJECT_LONG_TERM_MEMORY_NAMESPACE,
-            instructions=_PROJECT_MANAGE_MEMORY_INSTRUCTIONS,
-            actions_permitted=("create", "update", "delete"),
-            name="manage_memory",
-        )
-        return [
-            self._wrap_project_memory_tool(search_tool),
-            self._wrap_project_memory_tool(manage_tool),
-        ]
+        tools = [self._wrap_project_memory_tool(search_tool)]
+        if include_manage_memory:
+            create_manage_memory_tool = self._load_create_manage_memory_tool()
+            manage_tool = create_manage_memory_tool(
+                namespace=_PROJECT_LONG_TERM_MEMORY_NAMESPACE,
+                instructions=_PROJECT_MANAGE_MEMORY_INSTRUCTIONS,
+                actions_permitted=("create", "update", "delete"),
+                name="manage_memory",
+            )
+            tools.append(self._wrap_project_memory_tool(manage_tool))
+        return tools
 
     def _lightweight_literature_tools(self) -> list[Any]:
         def internet_search(
@@ -960,7 +1056,7 @@ class SpecialistRunner:
                 response_format="content_and_artifact",
             )
         ]
-        return self._augment_with_project_memory_tools(tools)
+        return self._augment_with_project_memory_tools(tools, include_manage_memory=False)
 
     @staticmethod
     def _nonfatal_tool_error_result(tool_name: str, exc: Exception, tool_args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -1098,6 +1194,7 @@ class SpecialistRunner:
         base = deepagents_root / "skills"
         layouts = {
             base / "experiment": repo_root / "skills" / "experiment",
+            base / "machine_learning": repo_root / "skills" / "machine_learning",
             base / "writing": repo_root / "skills" / "writing",
         }
         for target, source in layouts.items():
@@ -1105,6 +1202,10 @@ class SpecialistRunner:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(source, target, dirs_exist_ok=True)
+        self._stage_filtered_skill_views(
+            deepagents_root=deepagents_root,
+            repo_root=repo_root,
+        )
         staged_agents = deepagents_root / "AGENTS.md"
         if not staged_agents.exists():
             workspace_agents = Path(self.run_context.workspace) / "AGENTS.md"
@@ -1113,14 +1214,75 @@ class SpecialistRunner:
                 shutil.copyfile(workspace_agents, staged_agents)
 
     @staticmethod
+    def _skill_view_virtual_path(view_name: str) -> str:
+        return f"{_SKILL_VIEW_ROOT}/{str(view_name or '').strip()}"
+
+    @staticmethod
+    def _read_skill_allowed_tools(skill_md: Path) -> list[str]:
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+        except Exception:
+            return []
+        if not text.startswith("---\n"):
+            return []
+        end_idx = text.find("\n---\n", 4)
+        if end_idx < 0:
+            return []
+        try:
+            frontmatter = yaml.safe_load(text[4:end_idx]) or {}
+        except Exception:
+            return []
+        if not isinstance(frontmatter, dict):
+            return []
+        raw = frontmatter.get("allowed-tools")
+        if isinstance(raw, str):
+            tokens = [item.strip().strip(",") for item in raw.split()]
+        elif isinstance(raw, (list, tuple)):
+            tokens = [str(item).strip().strip(",") for item in raw]
+        else:
+            tokens = []
+        out: list[str] = []
+        seen: set[str] = set()
+        for token in tokens:
+            if not token:
+                continue
+            normalized = "bash" if token == "bash_exec" else token
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+        return out
+
+    def _stage_filtered_skill_views(self, *, deepagents_root: Path, repo_root: Path) -> None:
+        view_root = deepagents_root / "skill_views"
+        for view_name, (source_group, available_tools) in _SPECIALIST_SKILL_VIEW_SPECS.items():
+            source_root = repo_root / "skills" / source_group
+            if not source_root.is_dir():
+                continue
+            target_root = view_root / view_name
+            if target_root.exists():
+                shutil.rmtree(target_root)
+            target_root.mkdir(parents=True, exist_ok=True)
+            for skill_dir in sorted(source_root.iterdir(), key=lambda p: p.name):
+                if not skill_dir.is_dir():
+                    continue
+                skill_md = skill_dir / "SKILL.md"
+                if not skill_md.is_file():
+                    continue
+                declared_tools = self._read_skill_allowed_tools(skill_md)
+                if declared_tools and any(tool_name not in available_tools for tool_name in declared_tools):
+                    continue
+                shutil.copytree(skill_dir, target_root / skill_dir.name, dirs_exist_ok=True)
+
+    @staticmethod
     def _virtual_skill_paths(entrypoint: SpecialistEntrypoint) -> list[str]:
         if entrypoint == "experiment":
-            return ["/.deepagents/skills/experiment"]
+            return [SpecialistRunner._skill_view_virtual_path("experiment_specialist")]
         if entrypoint == "writing":
-            return ["/.deepagents/skills/writing"]
+            return [SpecialistRunner._skill_view_virtual_path("writing_specialist")]
         return [
-            "/.deepagents/skills/experiment",
-            "/.deepagents/skills/writing",
+            SpecialistRunner._skill_view_virtual_path("research_experiment"),
+            SpecialistRunner._skill_view_virtual_path("research_writing"),
         ]
 
     def _resolve_thread_id(self, payload: dict[str, Any]) -> str:
@@ -1132,8 +1294,18 @@ class SpecialistRunner:
             return chat_session_id
         return self.run_context.run_id
 
-    def _system_prompt(self, entrypoint: SpecialistEntrypoint, *, thread_id: str = "") -> str:
-        return self._base_system_prompt(entrypoint, thread_id=thread_id)
+    def _system_prompt(
+        self,
+        entrypoint: SpecialistEntrypoint,
+        *,
+        thread_id: str = "",
+        allow_manage_memory: bool = True,
+    ) -> str:
+        return self._base_system_prompt(
+            entrypoint,
+            thread_id=thread_id,
+            allow_manage_memory=allow_manage_memory,
+        )
 
     def _memory_sources(self) -> list[str]:
         return ["/.deepagents/AGENTS.md", MEMORY_FILE_PATH]
@@ -1166,8 +1338,34 @@ class SpecialistRunner:
         MemoryMiddleware = self._load_memory_middleware()
         return MemoryMiddleware(backend=backend, sources=self._memory_sources())
 
+    def _new_tool_selector_middleware(
+        self,
+        *,
+        max_tools: int | None,
+        always_include: tuple[str, ...] = (),
+    ) -> Any:
+        LLMToolSelectorMiddleware = self._load_llm_tool_selector_middleware()
+        selector_model = build_chat_model(self.llm_profile.config_for_role("tool_selector"))
+        # TODO: Revisit skill/tool coupling after the tool surface expansion stabilizes.
+        # Official LLMToolSelectorMiddleware does not enforce skill `allowed-tools`;
+        # it only sees the current candidate tool list plus the last human message.
+        # If we later want skill-aware hard routing, insert a matched-skill-based
+        # tool filter before this selector middleware runs.
+        return LLMToolSelectorMiddleware(
+            model=selector_model,
+            max_tools=max_tools,
+            always_include=list(always_include),
+        )
+
     @classmethod
-    def _base_system_prompt(cls, entrypoint: SpecialistEntrypoint, *, thread_id: str = "") -> str:
+    def _base_system_prompt(
+        cls,
+        entrypoint: SpecialistEntrypoint,
+        *,
+        thread_id: str = "",
+        allow_manage_memory: bool = True,
+    ) -> str:
+        memory_policy = cls._long_term_memory_policy(allow_manage_memory=allow_manage_memory)
         if entrypoint == "research":
             kernel_path = cls._research_kernel_virtual_path(thread_id)
             return (
@@ -1180,7 +1378,7 @@ class SpecialistRunner:
                 f"{cls._writing_handoff_policy()}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
-                f"{cls._long_term_memory_policy()}\n"
+                f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
                 f"{cls._soft_reporting_contract()}"
@@ -1197,7 +1395,7 @@ class SpecialistRunner:
                 "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
                 "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
                 f"{cls._writing_handoff_policy()}\n"
-                f"{cls._long_term_memory_policy()}\n"
+                f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
                 f"{cls._soft_reporting_contract()}"
@@ -1205,8 +1403,8 @@ class SpecialistRunner:
         return (
             "You are ExperimentSpecialist.\n"
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
-            "Use `task_worker_agent` for context-heavy isolated execution subtasks, and `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
-            f"Do not orchestrate other specialists. {cls._long_term_memory_policy()}\n"
+            "Use `materials_worker` for materials/computational subtasks, `ml_worker` for machine-learning subtasks, and `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
+            f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1249,8 +1447,10 @@ class SpecialistRunner:
         )
 
     @staticmethod
-    def _long_term_memory_policy() -> str:
-        return _PROJECT_MEMORY_TOOL_INSTRUCTIONS
+    def _long_term_memory_policy(*, allow_manage_memory: bool = True) -> str:
+        if allow_manage_memory:
+            return _PROJECT_MEMORY_TOOL_INSTRUCTIONS
+        return _PROJECT_MEMORY_READONLY_INSTRUCTIONS
 
     @staticmethod
     def _soft_reporting_contract() -> str:
@@ -1277,13 +1477,26 @@ class SpecialistRunner:
         )
 
     @classmethod
-    def _task_worker_prompt(cls) -> str:
+    def _materials_worker_prompt(cls) -> str:
         return (
-            "You are task_worker_agent for ExperimentSpecialist.\n"
-            "Handle a bounded execution subtask autonomously inside the workspace.\n"
+            "You are materials_worker for ExperimentSpecialist.\n"
+            "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform literature search; that belongs to literature_agent.\n"
-            f"{cls._long_term_memory_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            f"{cls._soft_reporting_contract()}"
+        )
+
+    @classmethod
+    def _ml_worker_prompt(cls) -> str:
+        return (
+            "You are ml_worker for ExperimentSpecialist.\n"
+            "Handle a bounded machine-learning subtask autonomously inside the workspace.\n"
+            "This worker currently exposes only the default DeepAgent built-in tool surface; rely on workspace files, code inspection, and concise reporting until dedicated ML tools are added.\n"
+            "Do not perform literature search; that belongs to literature_agent.\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1299,7 +1512,7 @@ class SpecialistRunner:
             "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, evidence summaries, source lists, or background briefs.\n"
             "Return concise findings with clear separation between retrieved facts and inference.\n"
             "Do not perform computational execution.\n"
-            f"{cls._long_term_memory_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             "Only save a reusable markdown note under `/notes/literature/` or another stable workspace path when the user asked for a saved artifact or when a durable handoff/writing reference is clearly worth the extra file.\n"
@@ -1320,7 +1533,7 @@ class SpecialistRunner:
             "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
             "Keep the final answer compact and decision-relevant. Save a reusable note under `/notes/literature/` or another stable workspace path only when the user asked for it or when a durable handoff artifact is clearly justified.\n"
             "Do not perform computational execution.\n"
-            f"{cls._long_term_memory_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1335,7 +1548,7 @@ class SpecialistRunner:
             "Prefer precision over breadth. When the query is ambiguous, narrow the candidate set and explicitly state uncertainty instead of guessing.\n"
             "You may write concise reusable citation notes or metadata tables into the workspace when helpful.\n"
             "Do not perform computational execution.\n"
-            f"{cls._long_term_memory_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             "Return a polished markdown answer with exactly these sections in order: `Metadata Answer`, `Candidate Records`, `Gaps`, and `Files`.\n"
@@ -1354,9 +1567,9 @@ class SpecialistRunner:
             "This agent is not limited to academic literature: it may answer with high-quality web evidence when the user asks for broader background, methods, safety notes, public documentation, or benchmark references.\n"
             "Use the standard DeepAgent workspace capabilities when helpful to save reusable notes or evidence summaries into the workspace.\n"
             "Only save a concise reusable markdown note under `/notes/literature/` or another stable workspace path when the user asked for a saved artifact or when a durable handoff/writing reference is clearly justified, and include that path in the final `Files` section.\n"
-            "Only write durable distilled facts into persistent memory when they are stable and likely to be reused across runs.\n"
+            "If a durable cross-run fact should be stored, report it explicitly so ExperimentSpecialist can decide whether to update project memory.\n"
             "Do not perform computational execution.\n"
-            f"{cls._long_term_memory_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             "Return a polished markdown answer with exactly these sections in order: `Answer`, `Web Evidence`, `Interpretation`, and `Files`.\n"
@@ -1430,7 +1643,7 @@ class SpecialistRunner:
             "If the output is a TeX bundle, you must run `compile_text` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
             f"{cls._writing_handoff_policy()}\n"
-            f"{cls._long_term_memory_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1892,6 +2105,16 @@ class SpecialistRunner:
         except Exception as exc:
             raise RuntimeError("deepagents memory middleware is required.") from exc
         return MemoryMiddleware
+
+    @staticmethod
+    def _load_llm_tool_selector_middleware():
+        try:
+            from langchain.agents.middleware.tool_selection import LLMToolSelectorMiddleware
+        except Exception as exc:
+            raise RuntimeError(
+                "LangChain LLMToolSelectorMiddleware is unavailable. Install 'langchain>=1.0'."
+            ) from exc
+        return LLMToolSelectorMiddleware
 
     @staticmethod
     def _load_create_manage_memory_tool():

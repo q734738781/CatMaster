@@ -11,7 +11,7 @@ def _write_skill(
     root: Path,
     name: str,
     description: str,
-    suggested_tools: str | None,
+    allowed_tools: str | None,
     body_lines: list[str] | None = None,
 ) -> None:
     skill_dir = root / "skills" / name
@@ -22,13 +22,8 @@ def _write_skill(
         f"description: {description}",
         "compatibility: local",
     ]
-    if suggested_tools is not None:
-        frontmatter.extend(
-            [
-                "metadata:",
-                f'  catmaster-suggested-tools: "{suggested_tools}"',
-            ]
-        )
+    if allowed_tools is not None:
+        frontmatter.append(f'allowed-tools: "{allowed_tools}"')
     frontmatter.extend(
         [
             "---",
@@ -49,7 +44,7 @@ def test_skill_catalog_parses_frontmatter_and_role_visibility(tmp_path: Path) ->
         root=tmp_path,
         name="skill-alpha",
         description="alpha skill",
-        suggested_tools="tool_a tool_b tool_a",
+        allowed_tools="tool_a tool_b tool_a",
     )
 
     mismatch_dir = tmp_path / "skills" / "mismatch"
@@ -75,7 +70,7 @@ def test_skill_catalog_parses_frontmatter_and_role_visibility(tmp_path: Path) ->
     meta = metas[0]
     assert meta.file_path == "skills/skill-alpha/SKILL.md"
     assert meta.mount_token == "@skills"
-    assert meta.suggested_tools == ["tool_a", "tool_b"]
+    assert meta.allowed_tools == ["tool_a", "tool_b"]
 
     runtime = CatMasterSkillsRuntime(
         catalog=catalog,
@@ -109,9 +104,9 @@ def test_default_catalog_discovers_writing_skills() -> None:
     assert "write_director" in metas["achemso-latex-manuscript"].roles
 
 
-def _body_suggested_tools(text: str) -> list[str]:
+def _body_allowed_tools(text: str) -> list[str]:
     match = re.search(
-        r"^## Suggested tools\s*$\n(?P<body>.*?)(?:^## |\Z)",
+        r"^## Allowed tools\s*$\n(?P<body>.*?)(?:^## |\Z)",
         text,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -129,7 +124,7 @@ def _body_suggested_tools(text: str) -> list[str]:
     return tools
 
 
-def test_starter_skills_use_standard_sections_and_consistent_suggested_tools() -> None:
+def test_starter_skills_use_standard_sections_and_consistent_allowed_tools() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     catalog = SkillCatalog.create_default(repo_root=repo_root)
     by_name = {item.name: item for item in catalog.refresh()}
@@ -137,7 +132,7 @@ def test_starter_skills_use_standard_sections_and_consistent_suggested_tools() -
     required_sections = [
         "## Overview",
         "## Quick Start",
-        "## Suggested tools",
+        "## Allowed tools",
         "## Workflow",
         "## Output Contract",
         "## References",
@@ -155,10 +150,10 @@ def test_starter_skills_use_standard_sections_and_consistent_suggested_tools() -
         for section in required_sections:
             assert section in text, f"{path} missing required section: {section}"
 
-        body_tools = _body_suggested_tools(text)
+        body_tools = _body_allowed_tools(text)
         assert name in by_name, f"{path} missing from skill catalog"
-        assert by_name[name].suggested_tools == body_tools, (
-            f"{path} has mismatched suggested tools between catalog/frontmatter and body"
+        assert by_name[name].allowed_tools == body_tools, (
+            f"{path} has mismatched allowed tools between catalog/frontmatter and body"
         )
 
 
@@ -177,17 +172,17 @@ def test_method_critical_defaults_sections_exist_for_targeted_skills() -> None:
         assert "## Method-critical defaults" in text, f"{path} missing method-critical defaults section"
 
 
-def test_skill_catalog_falls_back_to_suggested_tools_section(tmp_path: Path) -> None:
+def test_skill_catalog_falls_back_to_allowed_tools_section(tmp_path: Path) -> None:
     _write_skill(
         root=tmp_path,
         name="skill-beta",
         description="beta skill",
-        suggested_tools=None,
+        allowed_tools=None,
         body_lines=[
             "## Overview",
             "Example",
             "",
-            "## Suggested tools",
+            "## Allowed tools",
             "- `tool_x`",
             "- tool_y",
             "- (none specified)",
@@ -203,7 +198,7 @@ def test_skill_catalog_falls_back_to_suggested_tools_section(tmp_path: Path) -> 
     )
     metas = catalog.refresh()
     assert [item.name for item in metas] == ["skill-beta"]
-    assert metas[0].suggested_tools == ["tool_x", "tool_y"]
+    assert metas[0].allowed_tools == ["tool_x", "tool_y"]
 
 
 def test_skill_catalog_prefers_allowed_tools_frontmatter(tmp_path: Path) -> None:
@@ -216,13 +211,11 @@ def test_skill_catalog_prefers_allowed_tools_frontmatter(tmp_path: Path) -> None
                 "name: skill-delta",
                 "description: delta skill",
                 "allowed-tools: \"tool_a tool_b\"",
-                "metadata:",
-                "  catmaster-suggested-tools: \"tool_x tool_y\"",
                 "---",
                 "",
                 "# skill-delta",
                 "",
-                "## Suggested tools",
+                "## Allowed tools",
                 "- tool_x",
                 "- tool_y",
             ]
@@ -236,7 +229,14 @@ def test_skill_catalog_prefers_allowed_tools_frontmatter(tmp_path: Path) -> None
     )
     metas = catalog.refresh()
     assert [item.name for item in metas] == ["skill-delta"]
-    assert metas[0].suggested_tools == ["tool_a", "tool_b"]
+    assert metas[0].allowed_tools == ["tool_a", "tool_b"]
+
+
+def test_repo_skills_use_allowed_tools_frontmatter_only() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    for skill_md in sorted((repo_root / "skills").rglob("SKILL.md")):
+        text = skill_md.read_text(encoding="utf-8")
+        assert "catmaster-suggested-tools" not in text, f"{skill_md} still uses deprecated catmaster-suggested-tools"
 
 
 def test_skill_catalog_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path) -> None:
@@ -244,7 +244,7 @@ def test_skill_catalog_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path
         root=tmp_path,
         name="skill-gamma",
         description="gamma skill",
-        suggested_tools="bash_exec tool_x bash_exec",
+        allowed_tools="bash_exec tool_x bash_exec",
     )
 
     catalog = SkillCatalog(
@@ -253,4 +253,4 @@ def test_skill_catalog_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path
     )
     metas = catalog.refresh()
     assert [item.name for item in metas] == ["skill-gamma"]
-    assert metas[0].suggested_tools == ["bash", "tool_x"]
+    assert metas[0].allowed_tools == ["bash", "tool_x"]

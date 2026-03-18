@@ -54,7 +54,7 @@ def test_skills_middleware_refreshes_and_appends_addendum(tmp_path) -> None:
         source_root_name="skills",
         mount_token="@skills",
         compatibility="local",
-        suggested_tools=["demo_tool"],
+        allowed_tools=["demo_tool"],
     )
     runtime = _DummySkillsRuntime([skill])
     middleware = CatMasterSkillsMiddleware(
@@ -88,7 +88,7 @@ def test_skills_middleware_marks_unavailable_mount_when_absent(tmp_path) -> None
         source_root_name="skills",
         mount_token="@skills",
         compatibility="local",
-        suggested_tools=["demo_tool"],
+        allowed_tools=["demo_tool"],
     )
     runtime = _DummySkillsRuntime([skill])
     middleware = CatMasterSkillsMiddleware(
@@ -115,7 +115,7 @@ def test_skills_middleware_preserves_existing_system_message_blocks(tmp_path) ->
         source_root_name="skills",
         mount_token="@skills",
         compatibility="local",
-        suggested_tools=["demo_tool"],
+        allowed_tools=["demo_tool"],
     )
     runtime = _DummySkillsRuntime([skill])
     middleware = CatMasterSkillsMiddleware(

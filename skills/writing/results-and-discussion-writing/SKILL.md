@@ -8,7 +8,6 @@ metadata:
   catmaster-roles: "section_writer write_reviewer"
   catmaster-lanes: "writing"
   catmaster-tags: "writing results discussion"
-  catmaster-suggested-tools: "review_research_context read_research_pack execute"
 ---
 
 # results-and-discussion-writing
@@ -19,7 +18,7 @@ Organize numerical or computational findings into a Results/Discussion section t
 ## Quick Start
 Use when the section must explain computed structures, trends, figures, or comparisons without overclaiming.
 
-## Suggested tools
+## Allowed tools
 - `review_research_context`
 - `read_research_pack`
 - `execute`

@@ -15,7 +15,7 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class AnalyzeImagesInput(BaseModel):
-    """Analyze one or more local images with a multimodal model and return structured findings."""
+    """[vision/analysis] Analyze one or more local images with a multimodal model and return structured findings."""
 
     query: str = Field(..., description="Precise question to ask about the image set.")
     image_paths: list[str] = Field(..., min_length=1, description="Workspace-relative local image paths.")
@@ -95,6 +95,7 @@ def _build_query_text(
 
 
 def analyze_images(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[vision/analysis] Analyze local images with a multimodal model and return grounded findings."""
     tool_name = "analyze_images"
     try:
         params = AnalyzeImagesInput(**payload)

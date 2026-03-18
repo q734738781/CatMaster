@@ -3,9 +3,7 @@ name: structure-visual-inspection
 description: Use this skill when a task needs visual inspection of atomic structures, adsorption geometries, slab-site context, or image-based sanity checks before or alongside numerical analysis.
 license: project-local
 compatibility: local
-allowed-tools: "render_structure_views analyze_images read_text_file"
-metadata:
-  catmaster-suggested-tools: "render_structure_views analyze_images read_text_file"
+allowed-tools: "render_structure_views analyze_images read_file"
 ---
 
 # structure-visual-inspection
@@ -19,10 +17,10 @@ Use rendered structure views as auxiliary evidence for geometry sanity checks, v
 3. Treat visual findings as supporting evidence.
 4. Confirm critical geometric claims with numerical tools when available.
 
-## Suggested tools
+## Allowed tools
 - render_structure_views
 - analyze_images
-- read_text_file
+- read_file
 
 ## Workflow
 1. Render a default four-view panel first. Keep the first pass simple: default fit, default legend, no arbitrary camera tuning.

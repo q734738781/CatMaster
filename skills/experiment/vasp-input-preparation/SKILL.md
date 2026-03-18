@@ -1,11 +1,11 @@
 ---
 name: vasp-input-preparation
-description: Use this skill for preparing VASP relaxation and single-point input sets, choosing calc_type and key defaults correctly, handling INCAR override edge cases, explicit slab-frequency setup, and producing execution-ready folder layouts before dispatch.
+description: Use this skill for preparing canonical VASP relax/static/frequency/DOS/MD input sets, choosing the correct regime and preset, handling INCAR patch-policy edge cases, explicit slab-frequency setup, and producing execution-ready folder layouts before dispatch.
 license: project-local
 compatibility: local
-allowed-tools: "fix_atoms_by_indices vasp_relax_prepare vasp_sp_prepare"
+allowed-tools: "fix_atoms_by_indices vasp_prepare"
 metadata:
-  catmaster-suggested-tools: "fix_atoms_by_indices vasp_relax_prepare vasp_sp_prepare"
+  catmaster-suggested-tools: "fix_atoms_by_indices vasp_prepare"
 ---
 
 # vasp-input-preparation
@@ -14,24 +14,27 @@ metadata:
 Use this skill to produce execution-ready VASP input trees without fighting tool-enforced defaults.
 
 ## Quick Start
-1. Choose `vasp_relax_prepare` for ionic relaxation and `vasp_sp_prepare` for static calculations.
-2. Set `calc_type` correctly: `bulk`, `slab`, or `gas`.
+1. Use `vasp_prepare` with the right `preset`: `relax`, `static`, `freq`, `dos`, or `md`.
+2. Set `regime` correctly: `bulk`, `slab`, or `gas`.
 3. Put one preparation campaign under one clean `output_root`.
-4. Override INCAR only where the tool actually allows it.
+4. Use `patch_policy="safe"` by default.
+5. For `dos` and `md`, treat the preset as a starter template and do job-specific tuning through `user_incar_patch` in the same call.
 
 ## Suggested tools
 - `fix_atoms_by_indices`
-- vasp_relax_prepare
-- vasp_sp_prepare
+- `vasp_prepare`
 
 ## Workflow
 
-### 1. Pick the right preparation tool
-- `vasp_relax_prepare` is for relax jobs.
-- `vasp_sp_prepare` is for static jobs and already enforces `NSW=1`, `IBRION=-1`.
+### 1. Pick the right canonical preset
+- `vasp_prepare(preset="relax", ...)` is for ionic relaxation jobs.
+- `vasp_prepare(preset="static", ...)` is for static jobs and enforces `NSW=1`, `IBRION=-1`.
+- `vasp_prepare(preset="freq", ...)` is for finite-difference vibrational jobs and enforces the frequency-specific overrides.
+- `vasp_prepare(preset="dos", ...)` is for DOS/PDOS-style jobs. The tool starts from a tetrahedron-style template with `ISMEAR=-5`, `NEDOS=2001`, `LORBIT=11`, and if `dos_charge_density_path` is provided it copies `CHGCAR` and sets `ICHARG=11`.
+- `vasp_prepare(preset="md", ...)` is for molecular dynamics. The tool starts from a Nose-Hoover NVT-style template with `IBRION=0`, `MDALGO=2`, `NSW=1000`, `POTIM=1.0`, `TEBEG=300`, `TEEND=300`, and `SMASS=0`.
 
 ### 2. Choose the correct regime
-- `bulk`: periodic bulk models; `relax_cell=True` is allowed and switches `ISIF=3`.
+- `bulk`: periodic bulk models; `relax_cell=True` is allowed only with `preset="relax"` and switches `ISIF=3`.
 - `slab`: surface slabs; `ISIF=2`, KPOINTS z forced to 1, `relax_cell=True` is invalid.
 - `gas`: molecules or gas references; forced `1x1x1` KPOINTS and `relax_cell=True` is invalid.
 
@@ -39,11 +42,15 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - The tool already owns the main preset, including pseudopotential family, `ENCUT`, `EDIFF`, smearing defaults, and relax-vs-SP mode settings.
 - `compute_dos`, `use_d3`, `use_dft_plus_u`, and `enable_dipole` are the toggles worth surfacing when they matter.
 - Project house default for `k_product` is `35` for production slab work unless the task explicitly provides a convergence-backed value.
+- For DOS jobs, the preset is a recommended starting point, not a claim that one DOS INCAR works for every material class.
+- For MD jobs, the preset is a recommended thermostat/template start, not a full replacement for system-specific choices of timestep, temperature schedule, thermostat mass, or ensemble controls.
 
 ### 4. Override carefully
-- `user_incar_settings` is for targeted overrides, not replacing the preset.
+- `user_incar_patch` is for targeted overrides. For `dos` and `md`, it is also the preferred path for one-call tuning of method knobs.
 - `MAGMOM`, `LDAUU`, and `LDAUJ` must be element maps.
-- `null` can remove optional keys, but tool-required regime keys still win.
+- `patch_policy="safe"` rejects overrides only for the small protected set of preset/regime-bound keys. For `dos` and `md`, safe intentionally leaves most method controls overrideable so the model can change `NEDOS`, `ISMEAR`, `NSW`, `POTIM`, `TEBEG`, `TEEND`, `SMASS`, `MDALGO`, and similar knobs without switching to `force`.
+- `patch_policy="force"` applies the patch after canonical defaults, including explicit removal with `null`.
+- Only use `force` when you are intentionally breaking the preset identity itself, for example replacing `IBRION` with a non-matching job type or tearing down other protected invariants.
 
 ### 5. Keep output layout clean
 - Single structure input writes to `output_root/<stem>/`.
@@ -64,6 +71,8 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - For slab work, use `k*a ~= 35 Å` as the initial project default unless convergence evidence justifies something else.
 - Do not force bulk references to obey the slab default. Bulk `k_product` should be chosen from the bulk convergence requirement, not copied mechanically from slab policy.
 - For DOS / projected-DOS / finer electronic-structure jobs, it is acceptable to increase `k_product` to around `50` when the extra sampling is part of the stated objective.
+- For DOS, keep in mind the VASP-recommended pattern: relax first, then do a DOS-oriented static stage; if reusing a converged `CHGCAR`, surface that explicitly with `dos_charge_density_path`.
+- For MD, explicitly state whether you are keeping the default Nose-Hoover template or overriding thermostat/integration controls through `user_incar_patch`.
 - Always report any non-default toggles that materially affect interpretation.
 - When frequency-derived thermochemistry is the target, do not silently reuse generic relax or SP INCARs; surface the frequency-specific overrides explicitly.
 
@@ -71,7 +80,8 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 Return:
 - `output_root_rel`
 - representative prepared directory
-- processed structure count
+- selected `preset` and `regime`
+- generated `k_grid`
 - any non-default method toggles or overrides that materially affect execution
 
 ## References

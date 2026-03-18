@@ -49,7 +49,7 @@ _THERMO_PATTERNS = {
 
 
 class VaspkitAdsorbateThermoCorrectionInput(BaseModel):
-    """Run VASPKIT task 501 for adsorbate thermochemistry and return parsed corrections."""
+    """[thermo/adsorbate] Run VASPKIT task 501 for adsorbate thermochemistry and return parsed corrections."""
 
     calculation_dir: str = Field(
         ...,
@@ -71,7 +71,7 @@ class VaspkitAdsorbateThermoCorrectionInput(BaseModel):
 
 
 class VaspkitGasThermoCorrectionInput(BaseModel):
-    """Run VASPKIT task 502 for gas-phase thermochemistry and return parsed corrections."""
+    """[thermo/gas] Run VASPKIT task 502 for gas-phase thermochemistry and return parsed corrections."""
 
     calculation_dir: str = Field(
         ...,
@@ -587,6 +587,7 @@ def run_vaspkit_gas_thermo(
 
 
 def vaspkit_adsorbate_thermo_correction(payload: dict[str, object]) -> tuple[str, dict[str, Any]]:
+    """[thermo/adsorbate] Compute adsorbate thermochemical corrections from a VASP/OUTCAR directory."""
     params = VaspkitAdsorbateThermoCorrectionInput(**payload)
     resolved = _resolve_calculation_dir(params.calculation_dir, tool_name="vaspkit_adsorbate_thermo_correction")
     result = run_vaspkit_adsorbate_thermo(
@@ -612,6 +613,7 @@ def vaspkit_adsorbate_thermo_correction(payload: dict[str, object]) -> tuple[str
 
 
 def vaspkit_gas_thermo_correction(payload: dict[str, object]) -> tuple[str, dict[str, Any]]:
+    """[thermo/gas] Compute gas-phase thermochemical corrections from a VASP/OUTCAR directory."""
     params = VaspkitGasThermoCorrectionInput(**payload)
     resolved = _resolve_calculation_dir(params.calculation_dir, tool_name="vaspkit_gas_thermo_correction")
     result = run_vaspkit_gas_thermo(

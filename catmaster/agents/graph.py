@@ -222,10 +222,12 @@ def _load_tool_strategy():
 
 def _load_llm_tool_selector_middleware():
     try:
-        from catmaster.runtime.safe_tool_selector import SafeLLMToolSelectorMiddleware as _LLMToolSelectorMiddleware
+        from langchain.agents.middleware.tool_selection import (
+            LLMToolSelectorMiddleware as _LLMToolSelectorMiddleware,
+        )
     except Exception as exc:
         raise RuntimeError(
-            "SafeLLMToolSelectorMiddleware is unavailable. Verify the CatMaster runtime install."
+            "LangChain LLMToolSelectorMiddleware is unavailable. Install 'langchain>=1.0'."
         ) from exc
     return _LLMToolSelectorMiddleware
 
@@ -363,6 +365,10 @@ def _build_role_middleware(
 
     if enable_selector:
         LLMToolSelectorMiddleware = _load_llm_tool_selector_middleware()
+        # TODO: Revisit skill/tool coupling after the tool surface expansion stabilizes.
+        # Official LLMToolSelectorMiddleware currently selects from the active tool list
+        # independently of any matched skill `allowed_tools`. If we later want hard
+        # skill-aware routing, add a matched-skill tool filter before this middleware.
         middleware.append(
             LLMToolSelectorMiddleware(
                 model=selector_model,
@@ -1119,6 +1125,11 @@ class GraphRunner:
     """
 
     MAX_INTERRUPT_ROUNDS = 20
+    DEPRECATED = True
+    DEPRECATION_NOTICE = (
+        "GraphRunner is legacy and deprecated. "
+        "Prefer SpecialistRunner for active development."
+    )
 
     def __init__(
         self,
@@ -1168,6 +1179,8 @@ class GraphRunner:
         self.skills_runtime = skills_runtime
         self.tool_selector_model = tool_selector_model
         self.run_policy = run_policy or GraphRunPolicy()
+        self.is_deprecated = True
+        self.deprecation_notice = self.DEPRECATION_NOTICE
 
         self.memory_store.ensure_exists()
         self.artifact_store = ArtifactStore(run_context.run_dir)

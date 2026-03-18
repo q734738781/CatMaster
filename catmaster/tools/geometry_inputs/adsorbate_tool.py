@@ -62,7 +62,7 @@ def _fail(
 
 class EnumerateAdsorptionSitesInput(BaseModel):
     """
-    Enumerate adsorption sites on a slab using ASF. Use it only for small scale placement.
+    [adsorption/modeling] Enumerate adsorption sites on a slab using ASF. Use it only for small-scale placement.
 
     The tool writes a JSON list to output_json:
     [
@@ -78,7 +78,7 @@ class EnumerateAdsorptionSitesInput(BaseModel):
 
 
 class PlaceAdsorbateInput(BaseModel):
-    """Place an adsorbate molecule on a slab. Use it only if for small scale placement.
+    """[adsorption/modeling] Place an adsorbate molecule on a slab. Use it only for small-scale placement.
     This tool keeps selective dynamics of the original slab structure and allows adsorbate to move freely.
     It writes metadata sidecar <output>.meta.json and an ads_indices index JSON."""
 
@@ -125,7 +125,7 @@ class PlaceAdsorbateInput(BaseModel):
 
 class GenerateBatchAdsorptionStructuresInput(BaseModel):
     """
-    Generate multiple adsorbed structures up to max_structures. Suitable for large scale placement.
+    [adsorption/modeling] Generate multiple adsorbed structures up to max_structures. This is a convenience wrapper for large-scale placement.
     This tool keeps selective dynamics of the original slab structure and allows adsorbate to move freely.
     Input can be a single slab file (slab_file) or a directory of slab files (slab_dir).
     When slab_dir is used, each slab gets its own subdirectory under output_dir. Max_structures applies per slab.
@@ -421,6 +421,7 @@ def _write_ads_indices_index(index_path: Path, entries: List[Dict[str, Any]]) ->
 
 
 def enumerate_adsorption_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[adsorption/modeling] Enumerate ASF adsorption sites on a slab and persist them as JSON."""
     try:
         params = EnumerateAdsorptionSitesInput(**payload)
         slab_path = resolve_workspace_path(params.slab_file, must_exist=True)
@@ -487,6 +488,7 @@ def enumerate_adsorption_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, 
 
 
 def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[adsorption/modeling] Place one adsorbate on one slab and preserve inherited selective dynamics."""
     try:
         params = PlaceAdsorbateInput(**payload)
         slab_path = resolve_workspace_path(params.slab_file, must_exist=True)
@@ -600,6 +602,7 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[adsorption/modeling] Convenience wrapper to generate many adsorbed structures from ASF site candidates."""
     try:
         params = GenerateBatchAdsorptionStructuresInput(**payload)
         ads_path = resolve_workspace_path(params.adsorbate_file, must_exist=True)

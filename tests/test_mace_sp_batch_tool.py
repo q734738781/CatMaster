@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,3 +46,55 @@ def test_mace_sp_batch_requires_structure_files(tmp_path: Path) -> None:
                 }
             )
     assert "No structure files found" in str(excinfo.value)
+
+
+def test_mace_sp_batch_stages_local_model_directory_and_resolves_best_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_dispatch(req):
+        stage_root = Path(req.local_root) / req.work_base
+        staged_model = stage_root / "assets" / "models" / "trained-run" / "checkpoints" / "best.model"
+        staged_aux = stage_root / "assets" / "models" / "trained-run" / "config.json"
+        captured["command"] = req.tasks[0].command
+        captured["forward_files"] = list(req.tasks[0].forward_files)
+        captured["staged_model_exists"] = staged_model.is_file()
+        captured["staged_aux_exists"] = staged_aux.is_file()
+        return SimpleNamespace(
+            task_states=["5"],
+            submission_dir=str((Path(req.local_root) / "_fake_submission").resolve()),
+            work_base=req.work_base,
+            duration_s=0.01,
+        )
+
+    monkeypatch.setattr("catmaster.tools.execution.mace_dispatch._resolve_machine_for_resources", lambda _: "dummy")
+    monkeypatch.setattr("catmaster.tools.execution.mace_dispatch.dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        input_dir = files_root / "inputs"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        (input_dir / "POSCAR").write_text("dummy", encoding="utf-8")
+        model_dir = files_root / "trained-run"
+        (model_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (model_dir / "checkpoints" / "best.model").write_text("weights", encoding="utf-8")
+        (model_dir / "config.json").write_text("{}", encoding="utf-8")
+
+        _content, artifact = mace_sp_batch(
+            {
+                "input_dir": "inputs",
+                "output_root": "outputs",
+                "model": "trained-run",
+            }
+        )
+
+    data = artifact["data"]
+    assert captured["staged_model_exists"] is True
+    assert captured["staged_aux_exists"] is True
+    assert "assets" in captured["forward_files"]
+    assert "--model assets/models/trained-run/checkpoints/best.model" in str(captured["command"])
+    assert data["model_source_kind"] == "local_dir"
+    assert data["model_source_rel"] == "trained-run"
+    assert data["model_asset_rel"] == "assets/models/trained-run/checkpoints/best.model"

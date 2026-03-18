@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,3 +43,51 @@ def test_mace_relax_batch_accepts_relax_lattice_field(tmp_path: Path) -> None:
 def test_mace_relax_dir_task_command_has_relax_lattice_placeholder() -> None:
     cfg = TaskRegistry().get("mace_relax_dir")
     assert "--relax_lattice {relax_lattice}" in cfg.command
+
+
+def test_mace_relax_batch_stages_local_model_file_for_dpdispatcher(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_dispatch(req):
+        stage_root = Path(req.local_root) / req.work_base
+        staged_model = stage_root / "assets" / "models" / "my model.pt"
+        captured["command"] = req.tasks[0].command
+        captured["forward_files"] = list(req.tasks[0].forward_files)
+        captured["staged_model_exists"] = staged_model.is_file()
+        return SimpleNamespace(
+            task_states=["5"],
+            submission_dir=str((Path(req.local_root) / "_fake_submission").resolve()),
+            work_base=req.work_base,
+            duration_s=0.01,
+        )
+
+    monkeypatch.setattr("catmaster.tools.execution.mace_dispatch._resolve_machine_for_resources", lambda _: "dummy")
+    monkeypatch.setattr("catmaster.tools.execution.mace_dispatch.dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        input_dir = files_root / "inputs"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        (input_dir / "POSCAR").write_text("dummy", encoding="utf-8")
+        model_path = files_root / "models" / "my model.pt"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        model_path.write_text("weights", encoding="utf-8")
+
+        _content, artifact = mace_relax_batch(
+            {
+                "input_dir": "inputs",
+                "output_root": "outputs",
+                "model": "models/my model.pt",
+            }
+        )
+
+    data = artifact["data"]
+    assert captured["staged_model_exists"] is True
+    assert "assets" in captured["forward_files"]
+    assert "--model 'assets/models/my model.pt'" in str(captured["command"])
+    assert data["model_source_kind"] == "local_file"
+    assert data["model_source_rel"] == "models/my model.pt"
+    assert data["model_asset_rel"] == "assets/models/my model.pt"

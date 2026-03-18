@@ -54,7 +54,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "`task_detail`:" not in system_content
     assert "`expected_outputs`:" not in system_content
     assert "`reference_hint`:" not in system_content
-    assert "task_packet.suggested_tools" not in system_content
+    assert "task_packet.allowed_tools" not in system_content
     assert "Latest completed task outcome (authoritative-by-default evidence):" not in human_content
     assert "Recent task outcomes history (oldest -> newest, MarkdownKV records):" in human_content
     assert "AlreadyDone" in human_content

@@ -21,7 +21,7 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
   - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
 - `ExperimentSpecialist`
   - Bounded execution specialist.
-  - May delegate only to `task_worker_agent` and a lightweight `literature_agent`.
+  - May delegate only to `materials_worker`, `ml_worker`, and a lightweight `literature_agent`.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
@@ -136,11 +136,13 @@ Proposal review is the exception: proposal checkpoints still use a structured `P
 The active skill layout is:
 
 - `skills/experiment/*`
+- `skills/machine_learning/*`
 - `skills/writing/*`
 
 At runtime they are staged into:
 
 - `files/.deepagents/skills/experiment`
+- `files/.deepagents/skills/machine_learning`
 - `files/.deepagents/skills/writing`
 
 Specialists bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime.
@@ -176,6 +178,10 @@ Tool functions should:
 - validate inputs with a Pydantic model
 - return LangChain-native `(content, artifact)`
 - raise `CatMasterToolExecutionError` for business failures with a model-visible `public_message`
+- keep both the registered input-model docstring and the tool function docstring tagged on the first line with a short `[scope/stage]` label
+- use short, stable labels such as `[material/discovery]`, `[surface/modeling]`, `[vasp/prepare]`, `[vasp/execute]`, `[mace/execute]`, `[structure/viz]`, `[thermo/gas]`, or `[literature/metadata]`
+
+Because the active tool registry uses the input model docstring as the tool description, keep the first-line tag and summary synchronized between the input model docstring and the tool function docstring.
 
 ### Error behavior in the active path
 

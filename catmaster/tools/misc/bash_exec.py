@@ -23,7 +23,7 @@ TOOL_NAME = "bash"
 
 class BashExecInput(BaseModel):
     """
-    Execute a multi-line bash script inside the workspace (default) and return stdout/stderr.
+    [shell/execute] Execute a multi-line bash script inside the workspace and return stdout/stderr.
     Network access is disabled by default using Linux network namespaces (unshare).
     In environments where unshare is unavailable or permission-restricted, set no_network=false explicitly.
     Symbolic link operations are disabled; use copy/move operations instead.
@@ -215,6 +215,7 @@ def _inject_python_shim(script: str) -> str:
 
 
 def bash_exec(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[shell/execute] Run a shell script inside the workspace with CatMaster safety restrictions."""
     params = BashExecInput(**payload)
     t0 = time.perf_counter()
 

@@ -37,7 +37,7 @@ _BACKGROUND_RGB = {"white": (1.0, 1.0, 1.0)}
 
 
 class RenderStructureViewsInput(BaseModel):
-    """Render a structure into a stable four-view panel for visual inspection."""
+    """[structure/viz] Render a structure into a stable four-view panel for visual inspection."""
 
     structure_path: str = Field(..., description="Workspace-relative input structure path (POSCAR/CIF/XYZ/etc.).")
     output_path: str | None = Field(
@@ -563,6 +563,7 @@ def _child_process_failure_message(*, returncode: int, stderr: str) -> str:
 
 
 def render_structure_views(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[structure/viz] Render a stable four-view structure panel and return the saved artifact paths."""
     tool_name = "render_structure_views"
     try:
         project_space = project_space_root()

@@ -16,7 +16,7 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 class MoleculeFromSmilesInput(BaseModel):
     """
-    Build a 3D molecule from a SMILES string using RDKit. Specially, pay attention to the formal charge of the SMILES string, RDkit will check the charge and add Hs to the molecule to make it neutral.
+    [molecule/modeling] Build a 3D molecule from a SMILES string using RDKit. Pay attention to formal charge in the SMILES string; RDKit checks charge and adds H atoms as needed.
     """
 
     smiles: str = Field(..., description="SMILES string for the molecule.")
@@ -62,7 +62,7 @@ def _mol_to_ase(mol) -> Atoms:
 
 def create_molecule_from_smiles(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """
-    Create a molecule from SMILES, generate 3D coords, and write XYZ + (optional) POSCAR with padded box.
+    [molecule/modeling] Create a molecule from SMILES, generate 3D coords, and write XYZ plus optional POSCAR with a padded box.
 
     Returns: tool output with paths and basic metadata.
     """

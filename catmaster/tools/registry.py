@@ -30,8 +30,7 @@ class ToolRegistry:
         # Geometry/Input tools
         from catmaster.tools.geometry_inputs import (
             create_molecule_from_smiles,
-            vasp_relax_prepare,
-            vasp_sp_prepare,
+            vasp_prepare,
             build_slab,
             fix_atoms_by_layers,
             fix_atoms_by_height,
@@ -41,12 +40,11 @@ class ToolRegistry:
             place_adsorbate,
             generate_batch_adsorption_structures,
             make_neb_geometry,
-            make_neb_incar,
+            vasp_neb_prepare,
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
-            VaspRelaxPrepareInput,
-            VaspSPPrepareInput,
+            VaspPrepareInput,
             SlabBuildInput,
             FixAtomsByLayersInput,
             FixAtomsByHeightInput,
@@ -56,7 +54,7 @@ class ToolRegistry:
             PlaceAdsorbateInput,
             GenerateBatchAdsorptionStructuresInput,
             MakeNebGeometryInput,
-            MakeNebIncarInput,
+            VaspNebPrepareInput,
         )
         
         # Execution tools  
@@ -119,8 +117,7 @@ class ToolRegistry:
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
-        self.register_tool("vasp_relax_prepare", vasp_relax_prepare, VaspRelaxPrepareInput)
-        self.register_tool("vasp_sp_prepare", vasp_sp_prepare, VaspSPPrepareInput)
+        self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
         self.register_tool("fix_atoms_by_layers", fix_atoms_by_layers, FixAtomsByLayersInput)
         self.register_tool("fix_atoms_by_height", fix_atoms_by_height, FixAtomsByHeightInput)
@@ -130,7 +127,7 @@ class ToolRegistry:
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
         self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
         self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
-        self.register_tool("make_neb_incar", make_neb_incar, MakeNebIncarInput)
+        self.register_tool("vasp_neb_prepare", vasp_neb_prepare, VaspNebPrepareInput)
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)

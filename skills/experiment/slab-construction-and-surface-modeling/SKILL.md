@@ -4,8 +4,6 @@ description: Use this skill for slab construction, vacuum and layer choices, sur
 license: project-local
 compatibility: local
 allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell"
-metadata:
-  catmaster-suggested-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell"
 ---
 
 # slab-construction-and-surface-modeling
@@ -19,7 +17,7 @@ Use this skill to build slab models, choose a freezing strategy, and resize the 
 3. Apply layer-based, height-based, or explicit-index fixing deliberately.
 4. Use `supercell` only when coverage or lateral separation requires it.
 
-## Suggested tools
+## Allowed tools
 - build_slab
 - fix_atoms_by_layers
 - fix_atoms_by_height
@@ -42,14 +40,14 @@ Use this skill to build slab models, choose a freezing strategy, and resize the 
 
 ### 3. Expand cells only after fixing policy is understood
 - `supercell` supports single-file and batch directory mode.
-- It drops all selective-dynamics information, so do not call it after you have already finalized atom constraints unless you plan to rebuild them.
+- `supercell` preserves `selective_dynamics` in POSCAR/VASP outputs, so fixed/free masks can survive lateral expansion when the input already carries them.
 
 ## Output Contract
 Return:
 - slab structure path(s)
 - chosen termination or termination set
 - fixing strategy and key parameters
-- whether `supercell` invalidated previous selective-dynamics flags
+- whether inherited `selective_dynamics` was preserved through any supercell expansion
 
 ## References
 - If the task needs adsorption-ready slabs, hand off the post-fix structures to `adsorption-site-screening` instead of mixing slab generation and adsorption placement in one step.

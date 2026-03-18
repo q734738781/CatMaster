@@ -23,7 +23,7 @@ _MIME_TO_SUFFIX = {
 
 
 class GenerateSchematicFigureInput(BaseModel):
-    """Generate a schematic manuscript figure from text with OpenRouter image generation and save it under the writable workspace."""
+    """[figure/viz] Generate a schematic manuscript figure from text with OpenRouter image generation and save it under the writable workspace."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -153,6 +153,7 @@ def _build_generation_prompt(user_prompt: str) -> str:
 
 
 def generate_schematic_figure(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[figure/viz] Generate and save a schematic figure from a text prompt."""
     tool_name = "generate_schematic_figure"
     try:
         params = GenerateSchematicFigureInput(**payload)

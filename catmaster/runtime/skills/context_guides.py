@@ -19,7 +19,7 @@ def _render_skill_lines(
     skills: list[SkillMeta],
     *,
     header: str,
-    include_suggested_tools: bool,
+    include_allowed_tools: bool,
 ) -> str:
     if not skills:
         return f"{header}\n\n- (no role-visible skills)"
@@ -28,10 +28,10 @@ def _render_skill_lines(
     for skill in skills:
         lines.append(f"- {skill.name}:")
         lines.append(f"  {skill.description}")
-        if include_suggested_tools:
-            tools = _dedupe_tools(list(skill.suggested_tools or []))
+        if include_allowed_tools:
+            tools = _dedupe_tools(list(skill.allowed_tools or []))
             if tools:
-                lines.append(f"  Suggested tools: {', '.join(tools)}")
+                lines.append(f"  Allowed tools: {', '.join(tools)}")
     return "\n".join(lines)
 
 
@@ -42,7 +42,7 @@ def render_proposal_skill_guide(skills: list[SkillMeta]) -> str:
             "Execution planning is organized around the following role-visible skills. "
             "Focus on stage-level capabilities, scientific scope, and evidence contracts rather than raw tool-by-tool micro-details."
         ),
-        include_suggested_tools=False,
+        include_allowed_tools=False,
     )
 
 
@@ -51,9 +51,9 @@ def render_director_skill_guide(skills: list[SkillMeta]) -> str:
         skills,
         header=(
             "Task-runner execution should be delegated through the following role-visible skills. "
-            "Use suggested tools only as soft hints; encode method-critical requirements in the task packet."
+            "Use allowed tools only as soft hints; encode method-critical requirements in the task packet."
         ),
-        include_suggested_tools=True,
+        include_allowed_tools=True,
     )
 
 
@@ -63,9 +63,9 @@ def render_fast_director_skill_guide(skills: list[SkillMeta]) -> str:
         header=(
             "Fast-lane execution should be framed through the following role-visible skills. "
             "Prefer minimal stage-appropriate delegation over raw tool micro-planning. "
-            "Use suggested tools only as soft hints; encode method-critical requirements in the task packet."
+            "Use allowed tools only as soft hints; encode method-critical requirements in the task packet."
         ),
-        include_suggested_tools=True,
+        include_allowed_tools=True,
     )
 
 
@@ -76,7 +76,7 @@ def render_research_lead_skill_guide(skills: list[SkillMeta]) -> str:
             "Research-lane planning can rely on the following role-visible skills. "
             "Use them as campaign-level scientific guidance rather than tool encyclopedias."
         ),
-        include_suggested_tools=False,
+        include_allowed_tools=False,
     )
 
 
@@ -87,7 +87,7 @@ def render_write_director_skill_guide(skills: list[SkillMeta]) -> str:
             "Writing-plan decisions can rely on the following role-visible skills. "
             "Use them to shape section scope, figure intent, citation discipline, and manuscript structure."
         ),
-        include_suggested_tools=False,
+        include_allowed_tools=False,
     )
 
 
@@ -96,9 +96,9 @@ def render_section_writer_skill_guide(skills: list[SkillMeta]) -> str:
         skills,
         header=(
             "Section drafting can rely on the following role-visible skills. "
-            "Treat suggested tools as soft hints; keep claims grounded in retrieved evidence, artifacts, and figure outputs."
+            "Treat allowed tools as soft hints; keep claims grounded in retrieved evidence, artifacts, and figure outputs."
         ),
-        include_suggested_tools=True,
+        include_allowed_tools=True,
     )
 
 
@@ -109,7 +109,7 @@ def render_write_reviewer_skill_guide(skills: list[SkillMeta]) -> str:
             "Writing review can rely on the following role-visible skills. "
             "Focus on unsupported claims, citation gaps, structure, and evidence discipline."
         ),
-        include_suggested_tools=False,
+        include_allowed_tools=False,
     )
 
 

@@ -4,11 +4,11 @@ from .models import SkillMeta
 
 
 def _render_skill_line(skill: SkillMeta, *, mounted_skill_tokens: set[str]) -> list[str]:
-    suggested = ", ".join(f"`{name}`" for name in skill.suggested_tools) if skill.suggested_tools else "(none specified)"
+    allowed = ", ".join(f"`{name}`" for name in skill.allowed_tools) if skill.allowed_tools else "(none specified)"
     lines = [
         f"- `{skill.name}`:",
         f"  {skill.description}",
-        f"  Suggested tools: {suggested}",
+        f"  Allowed tools: {allowed}",
     ]
     if skill.mount_token in mounted_skill_tokens:
         lines.append(f"  File: `{skill.mount_token}/{skill.name}/SKILL.md`")
@@ -23,7 +23,7 @@ def render_skills_addendum(*, role: str, skills: list[SkillMeta], mounted_skill_
         "## Skills",
         "",
         "A skill is a set of local instructions stored in a `SKILL.md` file.",
-        "The available skills list includes the skill name, description, suggested tools, and file-access status so the source can be accessed when that skill is used.",
+        "The available skills list includes the skill name, description, allowed tools, and file-access status so the source can be accessed when that skill is used.",
         "",
         "## Available Skills",
         "",

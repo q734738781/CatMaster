@@ -30,5 +30,5 @@ def test_task_step_prompt_includes_no_symlink_rule() -> None:
     human_content = TASK_CONTEXT_TEMPLATE
     assert "Task detail:" in human_content
     assert "Expected outputs:" in human_content
-    assert "Suggested tools:" in human_content
+    assert "Allowed tools:" in human_content
     assert "Reference hint:" in human_content

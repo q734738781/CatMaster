@@ -27,7 +27,7 @@ def test_assert_remote_success_raises_for_nonzero_with_excerpt() -> None:
                 {
                     "task_index": 0,
                     "task_work_path": ".",
-                    "status_path": "/tmp/.catmaster_status.json",
+                    "status_path": "/tmp/status.json",
                     "status_missing_or_invalid": False,
                     "returncode": 1,
                     "cwd": "/remote/work",
@@ -47,7 +47,7 @@ def test_assert_remote_success_raises_for_missing_status() -> None:
                 {
                     "task_index": 0,
                     "task_work_path": ".",
-                    "status_path": "/tmp/.catmaster_status.json",
+                    "status_path": "/tmp/status.json",
                     "status_missing_or_invalid": True,
                 }
             ]

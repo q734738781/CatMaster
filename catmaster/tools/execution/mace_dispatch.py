@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 import os
 import shlex
 
@@ -27,6 +28,19 @@ import shutil
 from pydantic import BaseModel, Field
 
 BATCH_STATE_FILENAME = "_BATCH_STATE.json"
+_LOCAL_MODEL_FILE_SUFFIXES = {".model", ".pt", ".pth", ".ckpt"}
+_PREFERRED_MODEL_TOKENS = ("best", "final")
+
+
+@dataclass(frozen=True)
+class _ResolvedMaceModel:
+    requested: str
+    command_arg: str
+    source_kind: Literal["pretrained", "local_file", "local_dir"]
+    source_path: Path | None = None
+    source_rel: str | None = None
+    asset_dir_rel: str | None = None
+    asset_model_rel: str | None = None
 
 
 class MaceRelaxInput(BaseModel):
@@ -45,9 +59,11 @@ class MaceRelaxInput(BaseModel):
     model: str = Field(
         "mh-1",
         description=(
-            "MACE model name. Recommended options: "
+            "MACE model identifier or workspace-local trained-model path. "
+            "Recommended pretrained options: "
             "'mh-1' (slower, higher accuracy) or "
-            "'medium-mpa-0' (faster, lower accuracy)."
+            "'medium-mpa-0' (faster, lower accuracy). "
+            "Local paths may point to one model file or to a directory containing a unique preferred model artifact."
         ),
         examples=["mh-1", "medium-mpa-0"],
     )
@@ -63,7 +79,7 @@ class MaceRelaxInput(BaseModel):
 
 
 class MaceRelaxBatchInput(BaseModel):
-    """Submit multiple MACE relaxations in one DPDispatcher submission. Preferred tool for batch MACE relaxations."""
+    """[mace/execute] Submit multiple MACE relaxations in one DPDispatcher submission."""
 
     input_dir: str = Field(
         ...,
@@ -82,9 +98,11 @@ class MaceRelaxBatchInput(BaseModel):
     model: str = Field(
         "mh-1",
         description=(
-            "MACE model name. Recommended options: "
+            "MACE model identifier or workspace-local trained-model path. "
+            "Recommended pretrained options: "
             "'mh-1' (slower, higher accuracy) or "
-            "'medium-mpa-0' (faster, lower accuracy)."
+            "'medium-mpa-0' (faster, lower accuracy). "
+            "Local paths may point to one model file or to a directory containing a unique preferred model artifact."
         ),
         examples=["mh-1", "medium-mpa-0"],
     )
@@ -104,7 +122,7 @@ class MaceRelaxBatchInput(BaseModel):
 
 
 class MaceSPBatchInput(BaseModel):
-    """Run MACE single-point jobs for structures under one directory."""
+    """[mace/execute] Run MACE single-point jobs for structures under one directory."""
 
     input_dir: str = Field(
         ...,
@@ -116,7 +134,10 @@ class MaceSPBatchInput(BaseModel):
     )
     model: str = Field(
         "mh-1",
-        description="MACE model name (e.g., mh-1, medium-mpa-0).",
+        description=(
+            "MACE model identifier or workspace-local trained-model path "
+            "(e.g., mh-1, medium-mpa-0, models/best.model)."
+        ),
         examples=["mh-1", "medium-mpa-0"],
     )
     head: Optional[str] = Field(
@@ -143,6 +164,109 @@ def _resolve_mace_head(head_value: Any) -> Optional[str]:
     raw = "omat_pbe" if head_value is None else head_value
     head = str(raw).strip()
     return head or None
+
+
+def _is_likely_local_model_path(raw_model: str) -> bool:
+    text = str(raw_model or "").strip()
+    if not text:
+        return False
+    path = Path(text)
+    if path.is_absolute() or text.startswith(".") or path.suffix.lower() in _LOCAL_MODEL_FILE_SUFFIXES:
+        return True
+    if "/" in text or "\\" in text:
+        try:
+            candidate = resolve_workspace_path(text, must_exist=False)
+        except Exception:
+            return False
+        return candidate.parent.exists()
+    return False
+
+
+def _select_model_file_from_dir(model_dir: Path) -> Path:
+    all_files: list[Path] = []
+    model_like: list[Path] = []
+    preferred: list[Path] = []
+    for path in sorted(model_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        all_files.append(path)
+        if path.suffix.lower() not in _LOCAL_MODEL_FILE_SUFFIXES:
+            continue
+        model_like.append(path)
+        lower_name = path.name.lower()
+        if any(token in lower_name for token in _PREFERRED_MODEL_TOKENS):
+            preferred.append(path)
+
+    if len(preferred) == 1:
+        return preferred[0]
+    if len(model_like) == 1:
+        return model_like[0]
+    if not model_like and len(all_files) == 1:
+        return all_files[0]
+
+    candidates = preferred or model_like or all_files
+    preview = ", ".join(str(path.relative_to(model_dir)) for path in candidates[:5])
+    raise ValueError(
+        "model directory must contain exactly one usable model artifact, "
+        "or exactly one preferred artifact containing 'best'/'final'. "
+        f"Candidates: {preview or '(none)'}"
+    )
+
+
+def _stage_mace_model(model_value: Any, *, stage_root: Path) -> _ResolvedMaceModel:
+    requested = str(model_value or "").strip()
+    if not requested:
+        raise ValueError("model is required.")
+
+    local_path: Path | None = None
+    try:
+        local_path = resolve_workspace_path(requested, must_exist=True)
+    except (FileNotFoundError, ValueError):
+        local_path = None
+
+    if local_path is None:
+        if _is_likely_local_model_path(requested):
+            raise FileNotFoundError(
+                f"Local MACE model path does not exist inside project files root: {requested}"
+            )
+        return _ResolvedMaceModel(
+            requested=requested,
+            command_arg=requested,
+            source_kind="pretrained",
+        )
+
+    assets_root = stage_root / "assets" / "models"
+    assets_root.mkdir(parents=True, exist_ok=True)
+
+    if local_path.is_file():
+        dest = assets_root / local_path.name
+        shutil.copy2(local_path, dest)
+        return _ResolvedMaceModel(
+            requested=requested,
+            command_arg=dest.relative_to(stage_root).as_posix(),
+            source_kind="local_file",
+            source_path=local_path,
+            source_rel=workspace_relpath(local_path),
+            asset_dir_rel=(stage_root / "assets").relative_to(stage_root).as_posix(),
+            asset_model_rel=dest.relative_to(stage_root).as_posix(),
+        )
+
+    if not local_path.is_dir():
+        raise ValueError(f"Unsupported local model path type: {local_path}")
+
+    selected = _select_model_file_from_dir(local_path)
+    dest_root = assets_root / (local_path.name or "model_dir")
+    shutil.copytree(local_path, dest_root)
+    dest_model = dest_root / selected.relative_to(local_path)
+    return _ResolvedMaceModel(
+        requested=requested,
+        command_arg=dest_model.relative_to(stage_root).as_posix(),
+        source_kind="local_dir",
+        source_path=local_path,
+        source_rel=workspace_relpath(local_path),
+        asset_dir_rel=(stage_root / "assets").relative_to(stage_root).as_posix(),
+        asset_model_rel=dest_model.relative_to(stage_root).as_posix(),
+    )
 
 
 def _success(
@@ -300,6 +424,7 @@ def _collect_mace_outputs(stage_root: Path, stage_output: Path, output_root: Pat
 
 
 def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[mace/execute] Submit a directory batch of MACE relaxations through DPDispatcher."""
     params = MaceRelaxBatchInput(**payload)
     reg = TaskRegistry()
     cfg = reg.get("mace_relax_dir")
@@ -307,9 +432,6 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if not resources_key:
         raise KeyError("mace_relax_dir missing resources in task config")
     machine = _resolve_machine_for_resources(resources_key)
-    model = params.model
-    if not model:
-        raise ValueError("model is required.")
     head = _resolve_mace_head(params.head)
     head_arg = shlex.quote(head or "")
     dispersion = bool(params.dispersion)
@@ -365,6 +487,20 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     script_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(script_src, script_dst)
 
+    try:
+        model_spec = _stage_mace_model(params.model, stage_root=stage_root)
+    except Exception as exc:
+        _fail(
+            "mace_relax_batch",
+            message=f"Invalid model specification {params.model!r}: {exc}",
+            data={
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+            },
+            error_code="invalid_model",
+        )
+    model_arg = shlex.quote(model_spec.command_arg)
+
     cfg = reg.get("mace_relax_dir")
 
     ctx = {
@@ -373,12 +509,14 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "fmax": params.fmax,
         "maxsteps": params.maxsteps,
         "steps": params.maxsteps,
-        "model": model,
+        "model": model_arg,
         "head": head_arg,
         "dispersion": "true" if dispersion else "false",
         "relax_lattice": "true" if relax_lattice else "false",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
+    if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
+        rendered["forward_files"].append(model_spec.asset_dir_rel)
     task = TaskSpec(
         command=rendered["command"],
         task_work_path=".",
@@ -449,7 +587,11 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "output_root_rel": workspace_relpath(output_root),
         "batch_state_rel": workspace_relpath(state_path),
         "structures_found": len(structures),
-        "model": model,
+        "model": model_spec.requested,
+        "model_command_arg": model_spec.command_arg,
+        "model_source_kind": model_spec.source_kind,
+        "model_source_rel": model_spec.source_rel,
+        "model_asset_rel": model_spec.asset_model_rel,
         "head": head,
         "dispersion": dispersion,
         "relax_lattice": relax_lattice,
@@ -483,6 +625,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[mace/execute] Submit a directory batch of MACE single-point jobs through DPDispatcher."""
     params = MaceSPBatchInput(**payload)
     reg = TaskRegistry()
     cfg = reg.get("mace_sp_dir")
@@ -490,9 +633,6 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if not resources_key:
         raise KeyError("mace_sp_dir missing resources in task config")
     machine = _resolve_machine_for_resources(resources_key)
-    model = params.model
-    if not model:
-        raise ValueError("model is required.")
     head = _resolve_mace_head(params.head)
     head_arg = shlex.quote(head or "")
     dispersion = bool(params.dispersion)
@@ -541,14 +681,30 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     script_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(script_src, script_dst)
 
+    try:
+        model_spec = _stage_mace_model(params.model, stage_root=stage_root)
+    except Exception as exc:
+        _fail(
+            "mace_sp_batch",
+            message=f"Invalid model specification {params.model!r}: {exc}",
+            data={
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+            },
+            error_code="invalid_model",
+        )
+    model_arg = shlex.quote(model_spec.command_arg)
+
     ctx = {
         "input_path": "input",
         "output_root": "output",
-        "model": model,
+        "model": model_arg,
         "head": head_arg,
         "dispersion": "true" if dispersion else "false",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
+    if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
+        rendered["forward_files"].append(model_spec.asset_dir_rel)
     task = TaskSpec(
         command=rendered["command"],
         task_work_path=".",
@@ -619,7 +775,11 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "output_root_rel": workspace_relpath(output_root),
         "batch_state_rel": workspace_relpath(state_path),
         "structures_found": len(structures),
-        "model": model,
+        "model": model_spec.requested,
+        "model_command_arg": model_spec.command_arg,
+        "model_source_kind": model_spec.source_kind,
+        "model_source_rel": model_spec.source_rel,
+        "model_asset_rel": model_spec.asset_model_rel,
         "head": head,
         "dispersion": dispersion,
         **collect_info,
@@ -671,6 +831,7 @@ def _build_mace_relax_request(
 ):
     reg = registry or TaskRegistry()
     cfg = reg.get("mace_relax")
+    model_spec = _stage_mace_model(getattr(params, "model", None), stage_root=work_dir)
 
     work_base = work_dir.name if work_dir.name not in ("", ".") else make_work_base("mace")
     local_root = work_dir.parent
@@ -681,13 +842,15 @@ def _build_mace_relax_request(
         "fmax": params.fmax,
         "maxsteps": params.maxsteps,
         "steps": params.maxsteps,
-        "model": params.model,
+        "model": shlex.quote(model_spec.command_arg),
         "head": shlex.quote(_resolve_mace_head(getattr(params, "head", None)) or ""),
         "dispersion": "true" if bool(getattr(params, "dispersion", False)) else "false",
         "relax_lattice": "true" if bool(getattr(params, "relax_lattice", False)) else "false",
     }
 
     rendered = render_task_fields(cfg, ctx, work_dir)
+    if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
+        rendered["forward_files"].append(model_spec.asset_dir_rel)
 
     return DispatchRequest(
         machine=machine,

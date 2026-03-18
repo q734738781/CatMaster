@@ -68,10 +68,10 @@ def test_task_context_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path)
             "user_request": "Inspect workspace",
             "current_task_packet": {
                 "goal": "Inspect workspace",
-                "suggested_tools": ["bash_exec", "read_text_file"],
+                "allowed_tools": ["bash_exec", "read_file"],
             },
         }
 
         task_ctx = _build_task_context(state, store)
 
-        assert "Suggested tools:\nbash, read_text_file" in task_ctx
+        assert "Allowed tools:\nbash, read_file" in task_ctx

@@ -603,7 +603,7 @@ const LANE_GUIDE = {
   experiment: {
     title: "Experiment",
     summary: "Run bounded computational execution and return concise evidence with files.",
-    subagents: ["task_worker_agent", "literature_agent"],
+    subagents: ["materials_worker", "ml_worker", "literature_agent"],
   },
   research: {
     title: "Research",

@@ -14,7 +14,7 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class CompileTextInput(BaseModel):
-    """Compile or statically validate a manuscript bundle and return LaTeX diagnostics and artifacts."""
+    """[writing/compile] Compile or statically validate a manuscript bundle and return LaTeX diagnostics and artifacts."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -302,6 +302,7 @@ AgenticCompileTexInput = CompileTextInput
 
 
 def compile_text(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[writing/compile] Run static checks plus an optional TeX compile pass for a manuscript bundle."""
     tool_name = "compile_text"
     try:
         params = CompileTextInput(**payload)

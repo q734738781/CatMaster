@@ -16,7 +16,6 @@ except Exception:  # pragma: no cover
     yaml = None
 
 _FRONTMATTER_DELIMITER = "---"
-_SUGGESTED_TOOLS_KEY = "catmaster-suggested-tools"
 _ALLOWED_TOOLS_KEY = "allowed-tools"
 _ROLES_KEY = "catmaster-roles"
 _LANES_KEY = "catmaster-lanes"
@@ -78,7 +77,7 @@ def _parse_frontmatter(frontmatter_text: str) -> dict[str, Any]:
     return parsed
 
 
-def _split_suggested_tools(raw: Any) -> list[str]:
+def _split_allowed_tools(raw: Any) -> list[str]:
     if raw is None:
         return []
     if isinstance(raw, str):
@@ -137,7 +136,7 @@ def _normalize_tool_token(raw: str) -> str | None:
     return _TOOL_NAME_ALIASES.get(token, token)
 
 
-def _parse_suggested_tools_body_section(path: Path) -> list[str]:
+def _parse_allowed_tools_body_section(path: Path) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     in_section = False
@@ -148,7 +147,7 @@ def _parse_suggested_tools_body_section(path: Path) -> list[str]:
             stripped = raw.strip()
             lowered = stripped.lower()
 
-            if lowered == "## suggested tools":
+            if lowered == "## allowed tools":
                 in_section = True
                 continue
 
@@ -232,14 +231,12 @@ class SkillCatalog:
                         )
                     metadata = frontmatter.get("metadata")
                     metadata_dict = metadata if isinstance(metadata, dict) else {}
-                    suggested_tools = _split_suggested_tools(frontmatter.get(_ALLOWED_TOOLS_KEY))
-                    if not suggested_tools:
-                        suggested_tools = _split_suggested_tools(metadata_dict.get(_SUGGESTED_TOOLS_KEY))
+                    allowed_tools = _split_allowed_tools(frontmatter.get(_ALLOWED_TOOLS_KEY))
                     roles = _split_string_list(metadata_dict.get(_ROLES_KEY))
                     lanes = _split_string_list(metadata_dict.get(_LANES_KEY))
                     tags = _split_string_list(metadata_dict.get(_TAGS_KEY))
-                    if not suggested_tools:
-                        suggested_tools = _parse_suggested_tools_body_section(skill_md)
+                    if not allowed_tools:
+                        allowed_tools = _parse_allowed_tools_body_section(skill_md)
                     compatibility_raw = frontmatter.get("compatibility")
                     compatibility = str(compatibility_raw).strip() if compatibility_raw is not None else None
                     if compatibility == "":
@@ -266,7 +263,7 @@ class SkillCatalog:
                         source_root_name=source_root_name,
                         mount_token=mount_token,
                         compatibility=compatibility,
-                        suggested_tools=suggested_tools,
+                        allowed_tools=allowed_tools,
                         roles=roles,
                         lanes=lanes,
                         tags=tags,

@@ -186,7 +186,7 @@ def _build_task_context(
 
     task_detail = str(task_packet.get("task_detail") or "(none)").strip()
     expected_outputs = task_packet.get("expected_outputs")
-    suggested_tools = task_packet.get("suggested_tools")
+    allowed_tools = task_packet.get("allowed_tools")
     reference_hint = task_packet.get("reference_hint")
 
     def _normalize_tool_hint(value: Any) -> str:
@@ -224,7 +224,7 @@ def _build_task_context(
         goal=task_goal,
         task_detail=task_detail,
         expected_outputs=_bullet_lines(expected_outputs),
-        suggested_tools=_csv_items(suggested_tools),
+        allowed_tools=_csv_items(allowed_tools),
         reference_hint=_bullet_lines(reference_hint),
         workspace_policy=context_pack.get("workspace_policy", ""),
         workspace_root_abs_ref=context_pack.get("workspace_root_abs_ref", ""),

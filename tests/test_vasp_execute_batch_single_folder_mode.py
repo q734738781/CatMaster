@@ -23,25 +23,15 @@ def test_vasp_execute_batch_accepts_single_calc_folder(monkeypatch, tmp_path: Pa
         _touch_vasp_inputs(calc_dir)
 
         monkeypatch.setattr(vasp_dispatch, "_resolve_machine_for_resources", lambda _: "dummy_machine")
-        monkeypatch.setattr(
-            vasp_dispatch,
-            "render_task_fields",
-            lambda cfg, payload, stage_dir: {
-                "command": "echo run",
-                "forward_files": [],
-                "backward_files": ["*"],
-            },
-        )
-        monkeypatch.setattr(
-            vasp_dispatch,
-            "dispatch_submission",
-            lambda req: SimpleNamespace(
+        def _fake_dispatch(req):
+            return SimpleNamespace(
                 task_states=["5"],
                 submission_dir=str((files_root / "outs" / "_fake_submission").resolve()),
                 work_base=req.work_base,
                 duration_s=0.01,
-            ),
-        )
+            )
+
+        monkeypatch.setattr(vasp_dispatch, "dispatch_submission", _fake_dispatch)
 
         result = vasp_dispatch.vasp_execute_batch(
             {

@@ -74,7 +74,7 @@ class VaspExecuteInput(BaseModel):
 
 
 class VaspExecuteBatchInput(BaseModel):
-    """Submit VASP runs in one DPDispatcher submission (single-folder or recursive batch modes)."""
+    """[vasp/execute] Submit VASP runs in one DPDispatcher submission (single-folder or recursive batch modes)."""
 
     input_dir: str = Field(
         ...,
@@ -222,6 +222,7 @@ def vasp_execute(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[vasp/execute] Submit one VASP calc folder or a discovered batch of calc folders via DPDispatcher."""
     params = VaspExecuteBatchInput(**payload)
     reg = TaskRegistry()
     cfg = reg.get("vasp_execute")

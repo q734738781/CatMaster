@@ -4,8 +4,6 @@ description: Use this skill for MACE-based rapid screening and relaxation loops 
 license: project-local
 compatibility: local
 allowed-tools: "mace_relax_batch mace_sp_batch"
-metadata:
-  catmaster-suggested-tools: "mace_relax_batch mace_sp_batch"
 ---
 
 # mace-screening-and-relaxation
@@ -19,7 +17,7 @@ Use this skill to run cheap MACE screening on a structure batch before spending 
 3. Keep `output_root` outside `input_dir`.
 4. Use the collected outputs and batch-state files to decide which candidates advance to VASP.
 
-## Suggested tools
+## Allowed tools
 - mace_relax_batch
 - mace_sp_batch
 

@@ -3,10 +3,8 @@ from __future__ import annotations
 # Re-export tool functions and input models
 from catmaster.tools.geometry_inputs.molecule import MoleculeFromSmilesInput, create_molecule_from_smiles
 from catmaster.tools.geometry_inputs.vasp_prepare import (
-    VaspRelaxPrepareInput,
-    VaspSPPrepareInput,
-    vasp_relax_prepare,
-    vasp_sp_prepare,
+    VaspPrepareInput,
+    vasp_prepare,
 )
 from catmaster.tools.geometry_inputs.slab_tools import (
     SlabBuildInput,
@@ -29,16 +27,15 @@ from catmaster.tools.geometry_inputs.adsorbate_tool import (
 )
 from catmaster.tools.geometry_inputs.neb_tools import (
     MakeNebGeometryInput,
-    MakeNebIncarInput,
+    VaspNebPrepareInput,
     make_neb_geometry,
-    make_neb_incar,
+    vasp_neb_prepare,
 )
 
 __all__ = [
     "MoleculeFromSmilesInput",
     "create_molecule_from_smiles",
-    "VaspRelaxPrepareInput",
-    "VaspSPPrepareInput",
+    "VaspPrepareInput",
     "SlabBuildInput",
     "FixAtomsByLayersInput",
     "FixAtomsByHeightInput",
@@ -50,15 +47,14 @@ __all__ = [
     "fix_atoms_by_layers",
     "fix_atoms_by_height",
     "fix_atoms_by_indices",
-    "vasp_relax_prepare",
-    "vasp_sp_prepare",
+    "vasp_prepare",
     "SupercellInput",
     "supercell",
     "enumerate_adsorption_sites",
     "place_adsorbate",
     "generate_batch_adsorption_structures",
     "MakeNebGeometryInput",
-    "MakeNebIncarInput",
+    "VaspNebPrepareInput",
     "make_neb_geometry",
-    "make_neb_incar",
+    "vasp_neb_prepare",
 ]

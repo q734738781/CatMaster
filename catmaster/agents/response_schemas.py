@@ -65,7 +65,7 @@ class TaskPacket(BaseModel):
             "Do not use nested objects or tree-shaped payloads. Use [] only when truly none."
         ),
     )
-    suggested_tools: list[str] = Field(
+    allowed_tools: list[str] = Field(
         ...,
         description="Optional concise tool-name hints for worker; advisory only. Use [] when no hint is needed.",
     )
