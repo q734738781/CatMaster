@@ -19,3 +19,4 @@ POTCAR
 /files
 latest.log
 tmp*
+/catmaster/webui/static/vendor/

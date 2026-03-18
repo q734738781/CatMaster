@@ -863,18 +863,34 @@ class WebSession:
         db_path = system_root(workspace=workspace) / "deepagent_memory.sqlite"
         if not db_path.exists():
             return "No persistent memory recorded yet."
-        project_id = self._project_id_for_workspace(workspace)
-        prefix = ".".join(("catmaster", project_id, "filesystem"))
         try:
             conn = sqlite3.connect(str(db_path), timeout=5, check_same_thread=False)
             conn.row_factory = sqlite3.Row
         except Exception:
             return "Persistent memory database exists but could not be opened."
         try:
-            rows = conn.execute(
-                "SELECT key, value FROM store WHERE prefix = ? ORDER BY key ASC",
-                (prefix,),
-            ).fetchall()
+            available_prefixes = [
+                str(row["prefix"] or "").strip()
+                for row in conn.execute("SELECT DISTINCT prefix FROM store ORDER BY prefix ASC").fetchall()
+                if str(row["prefix"] or "").strip()
+            ]
+            selected_prefixes = self._memory_prefixes_for_workspace(
+                workspace,
+                available_prefixes=available_prefixes,
+            )
+            if not selected_prefixes:
+                rows = []
+            elif len(selected_prefixes) == 1:
+                rows = conn.execute(
+                    "SELECT prefix, key, value FROM store WHERE prefix = ? ORDER BY key ASC",
+                    (selected_prefixes[0],),
+                ).fetchall()
+            else:
+                placeholders = ", ".join("?" for _ in selected_prefixes)
+                rows = conn.execute(
+                    f"SELECT prefix, key, value FROM store WHERE prefix IN ({placeholders}) ORDER BY prefix ASC, key ASC",
+                    tuple(selected_prefixes),
+                ).fetchall()
         except Exception:
             return "Persistent memory database exists but could not be read."
         finally:
@@ -887,13 +903,21 @@ class WebSession:
         sections: List[str] = []
         sections.append(f"# Persistent Memory\n")
         sections.append(f"Workspace: `{workspace.name}`")
-        sections.append(f"Namespace: `{prefix}`")
+        sections.append("Namespace(s):")
+        for prefix in selected_prefixes:
+            sections.append(f"- `{prefix}`")
+        last_prefix = ""
         for row in rows:
+            prefix = str(row["prefix"] or "").strip()
+            if len(selected_prefixes) > 1 and prefix and prefix != last_prefix:
+                sections.append("")
+                sections.append(f"### Namespace `{prefix}`")
             key = str(row["key"] or "").strip() or "/unknown"
             content = self._decode_memory_store_value(row["value"])
             sections.append("")
             sections.append(f"## {key}")
             sections.append(content or "(empty)")
+            last_prefix = prefix
         return "\n".join(sections).strip()
 
     def read_artifacts(self):
@@ -1291,6 +1315,63 @@ class WebSession:
         resolved = Path(workspace).expanduser().resolve()
         digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:12]
         return f"project_ws_{digest}"
+
+    def _memory_prefixes_for_workspace(
+        self,
+        workspace: Path,
+        *,
+        available_prefixes: Optional[List[str]] = None,
+    ) -> List[str]:
+        candidates: List[str] = []
+        seen: set[str] = set()
+
+        def _append_project_id(project_id: str) -> None:
+            pid = str(project_id or "").strip()
+            if not pid:
+                return
+            for kind in ("filesystem", "long_term_memory"):
+                prefix = ".".join(("catmaster", pid, kind))
+                if prefix not in seen:
+                    candidates.append(prefix)
+                    seen.add(prefix)
+
+        with self._lock:
+            selected_run = self.selected_run_dir
+        selected_meta = self._read_run_meta_payload(selected_run)
+        _append_project_id(str(selected_meta.get("project_id") or ""))
+
+        runs_root = system_root(workspace=workspace) / "runs"
+        if runs_root.exists():
+            run_dirs = [p for p in runs_root.iterdir() if p.is_dir()]
+            for run_dir in sorted(run_dirs, key=lambda p: p.name, reverse=True):
+                meta = self._read_run_meta_payload(run_dir)
+                _append_project_id(str(meta.get("project_id") or ""))
+
+        _append_project_id(self._project_id_for_workspace(workspace))
+
+        available = [str(item or "").strip() for item in list(available_prefixes or []) if str(item or "").strip()]
+        if not available:
+            return candidates
+        available_set = set(available)
+        matched = [prefix for prefix in candidates if prefix in available_set]
+        if matched:
+            return matched
+        if len(available) == 1:
+            return available
+        return []
+
+    @staticmethod
+    def _read_run_meta_payload(run_dir: Optional[Path]) -> Dict[str, Any]:
+        if run_dir is None:
+            return {}
+        path = run_dir / "meta.json"
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     @staticmethod
     def _update_active_tool_elapsed(state: Dict[str, Any]) -> None:

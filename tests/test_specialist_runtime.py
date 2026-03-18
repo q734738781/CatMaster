@@ -19,6 +19,7 @@ from catmaster.specialists.runtime import (
     _format_lightweight_internet_search_content,
     _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES,
     _METADATA_AGENT_TOOL_ALLOWLIST,
+    _PROJECT_MEMORY_TOOL_NAMES,
     _LITREVIEW_AGENT_TOOL_ALLOWLIST,
     _LITREVIEW_COMPACT_KEEP_TOKENS,
     _LITREVIEW_COMPACT_TRIGGER_TOKENS,
@@ -69,6 +70,19 @@ class _FakeMemoryMiddleware:
         self.kwargs = kwargs
 
 
+class _FakeSearchMemoryInput(BaseModel):
+    query: str
+    limit: int = 10
+    offset: int = 0
+    filter: dict | None = None
+
+
+class _FakeManageMemoryInput(BaseModel):
+    content: str | None = None
+    action: str = "create"
+    id: str | None = None
+
+
 class _FakeDeepAgent:
     def __init__(self, *, kwargs: dict) -> None:
         self.kwargs = kwargs
@@ -84,6 +98,41 @@ class _FakeDeepAgent:
         else:
             content = "## Summary\nexperiment summary\n\n## Facts\n- bounded execution completed\n\n## Files\n- experiments/out.json"
         return {"messages": [AIMessage(content=content)]}
+
+
+def _fake_create_search_memory_tool(*, namespace, instructions="", response_format="content", name="search_memory", **kwargs):
+    _ = (namespace, instructions, response_format, kwargs)
+
+    def _search_memory(query: str, limit: int = 10, offset: int = 0, filter: dict | None = None):
+        _ = (limit, offset, filter)
+        return json.dumps([{"key": "mem-1", "value": {"content": f"memory about {query}"}}])
+
+    return StructuredTool.from_function(
+        func=_search_memory,
+        name=name,
+        description="fake search memory tool",
+        args_schema=_FakeSearchMemoryInput,
+        infer_schema=False,
+        response_format="content",
+    )
+
+
+def _fake_create_manage_memory_tool(*, namespace, instructions="", actions_permitted=("create", "update", "delete"), name="manage_memory", **kwargs):
+    _ = (namespace, instructions, actions_permitted, kwargs)
+
+    def _manage_memory(content: str | None = None, action: str = "create", *, id: str | None = None):
+        _ = content
+        target = id or "generated-id"
+        return f"{action}d memory {target}"
+
+    return StructuredTool.from_function(
+        func=_manage_memory,
+        name=name,
+        description="fake manage memory tool",
+        args_schema=_FakeManageMemoryInput,
+        infer_schema=False,
+        response_format="content",
+    )
 
 
 class _FakeUsageCallback:
@@ -205,6 +254,26 @@ def test_task_worker_prompt_includes_workspace_path_discipline() -> None:
     prompt = runtime_mod.SpecialistRunner._task_worker_prompt()
     assert "Workspace path discipline" in prompt
     assert "Treat `/` only as the workspace virtual root" in prompt
+    assert "Only persist key constraints, decisive results" in prompt
+    assert "literature/" in prompt
+    assert "structures/" in prompt
+    assert "calculations/" in prompt
+    assert "notes/" in prompt
+    assert "writing/" in prompt
+
+
+def test_writing_worker_and_proposal_prompts_include_workspace_layout_guidance() -> None:
+    writing_prompt = runtime_mod.SpecialistRunner._writing_worker_prompt()
+    proposal_prompt = runtime_mod.SpecialistRunner._proposal_system_prompt("experiment")
+    assert "Project long-term memory tools" in writing_prompt
+    assert "Only persist key constraints, decisive results" in writing_prompt
+    assert "structures/" in writing_prompt
+    assert "calculations/" in writing_prompt
+    assert "notes/" in writing_prompt
+    assert "writing/" in writing_prompt
+    assert "Workspace path discipline" in proposal_prompt
+    assert "literature/" in proposal_prompt
+    assert "writing/" in proposal_prompt
 
 
 def test_lightweight_internet_search_content_omits_raw_content() -> None:
@@ -424,6 +493,16 @@ def test_three_specialist_lanes_start_with_staged_skills(
         "_load_memory_middleware",
         staticmethod(lambda: _FakeMemoryMiddleware),
     )
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_create_search_memory_tool",
+        staticmethod(lambda: _fake_create_search_memory_tool),
+    )
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_create_manage_memory_tool",
+        staticmethod(lambda: _fake_create_manage_memory_tool),
+    )
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
 
@@ -450,6 +529,8 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert agent_kwargs["name"] == f"{entrypoint}_specialist"
     assert agent_kwargs["skills"] == expected_skills
     assert agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
+    assert _PROJECT_MEMORY_TOOL_NAMES <= {tool.name for tool in agent_kwargs["tools"]}
+    assert "Project long-term memory tools" in agent_kwargs["system_prompt"]
     assert "Never store transient task requests" in agent_kwargs["system_prompt"]
     assert all(getattr(tool, "name", None) != "bash" for tool in agent_kwargs["tools"])
     assert all(getattr(tool, "name", None) != "run_literature_research" for tool in agent_kwargs["tools"])
@@ -474,9 +555,9 @@ def test_three_specialist_lanes_start_with_staged_skills(
         litreview_agent_kwargs = litreview_agents[0]
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
         nested_subagents = {subagent.kwargs["name"]: subagent.kwargs for subagent in litreview_agent_kwargs["subagents"]}
-        assert {tool.name for tool in nested_subagents["literature_agent"]["tools"]} == _LITREVIEW_AGENT_TOOL_ALLOWLIST
+        assert {tool.name for tool in nested_subagents["literature_agent"]["tools"]} == (_LITREVIEW_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert nested_subagents["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
-        assert {tool.name for tool in nested_subagents["metadata_agent"]["tools"]} == _METADATA_AGENT_TOOL_ALLOWLIST
+        assert {tool.name for tool in nested_subagents["metadata_agent"]["tools"]} == (_METADATA_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         metadata_middleware = nested_subagents["metadata_agent"]["middleware"]
         metadata_summarizer = next(item for item in metadata_middleware if isinstance(item, _FakeSummarizationMiddleware))
         compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
@@ -486,15 +567,16 @@ def test_three_specialist_lanes_start_with_staged_skills(
         literature_middleware = nested_subagents["literature_agent"]["middleware"]
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "experiment":
-        assert {tool.name for tool in subagents_by_name["task_worker_agent"]["tools"]} == _TASK_WORKER_TOOL_ALLOWLIST
-        assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES
+        assert {tool.name for tool in subagents_by_name["task_worker_agent"]["tools"]} == (_TASK_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
         assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
         assert "/notes/literature/" in subagents_by_name["literature_agent"]["system_prompt"]
+        assert "Only save a concise reusable markdown note" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "Web Evidence" in subagents_by_name["literature_agent"]["system_prompt"]
     else:
-        assert {tool.name for tool in agent_kwargs["tools"]} == _WRITING_TOOL_ALLOWLIST
+        assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
-        assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == _WRITING_WORKER_TOOL_ALLOWLIST
+        assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "literature_agent" not in subagents_by_name
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
@@ -524,3 +606,65 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert usage_summary["calls"] == 2
     assert usage_summary["by_role"][0]["name"] == "experiment_specialist"
     assert usage_summary["by_role"][0]["calls"] == 1
+
+
+def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    captured: dict[str, object] = {}
+
+    class _CapturingAgent:
+        async def ainvoke(self, payload, config=None):
+            captured["payload"] = payload
+            captured["config"] = config
+            return {
+                "messages": [
+                    AIMessage(
+                        content="## Summary\nok\n\n## Facts\n- stored\n\n## Files\n- `(none reported)`"
+                    )
+                ]
+            }
+
+    def _fake_create_deep_agent(**kwargs):
+        captured["agent_kwargs"] = kwargs
+        return _CapturingAgent()
+
+    @asynccontextmanager
+    async def _fake_open_agent_runtime(self, *, files_root: Path):
+        _ = files_root
+        yield {"checkpointer": object(), "store": object(), "backend": object()}
+
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_tool_strategy", staticmethod(lambda: _FakeToolStrategy))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj_memory_ns",
+        preferred_entrypoint="experiment",
+    )
+
+    result = asyncio.run(
+        built.runner.arun(
+            "Remember durable project facts when justified.",
+            entrypoint="experiment",
+            proposal_review=False,
+            thread_id="thread-123",
+        )
+    )
+
+    assert result["status"] == "done"
+    config = captured["config"]
+    assert isinstance(config, dict)
+    assert config["configurable"]["thread_id"] == "thread-123"
+    assert config["configurable"]["project_id"] == "proj_memory_ns"

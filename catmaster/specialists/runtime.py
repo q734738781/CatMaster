@@ -99,6 +99,7 @@ _LITREVIEW_AGENT_TOOL_ALLOWLIST = {
     "find_in_page",
 }
 _LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES = {"internet_search"}
+_PROJECT_MEMORY_TOOL_NAMES = {"manage_memory", "search_memory"}
 _WRITING_WORKER_TOOL_ALLOWLIST = {
     "polish_academic_prose",
     "analyze_images",
@@ -108,6 +109,25 @@ _WRITING_WORKER_TOOL_ALLOWLIST = {
 }
 _LITREVIEW_COMPACT_TRIGGER_TOKENS = 65_000
 _LITREVIEW_COMPACT_KEEP_TOKENS = 6_500
+_PROJECT_LONG_TERM_MEMORY_NAMESPACE = ("catmaster", "{project_id}", "long_term_memory")
+_PROJECT_MEMORY_TOOL_INSTRUCTIONS = (
+    "Project long-term memory tools:\n"
+    "- `search_memory` and `manage_memory` target the project-level LangMem store.\n"
+    "- Use them for durable project facts, validated reusable conclusions, stable project state, "
+    "and correction or removal of stale incorrect memories.\n"
+    "- Do not use them for transient requests, step logs, one-off scratch paths, or unfinished speculation.\n"
+    "- Before updating or deleting an existing long-term memory, call `search_memory` first to find the correct MEMORY IDs.\n"
+    "- Treat `/.deepagents/AGENTS.md` and `/memories/AGENTS.md` as instruction memory, not the project fact store."
+)
+_PROJECT_MANAGE_MEMORY_INSTRUCTIONS = (
+    "Proactively call this tool when current work yields durable project memory. "
+    "Store concise validated facts, reusable conclusions, stable project conventions, or durable project status. "
+    "If a stored project memory is wrong, outdated, or superseded, update or delete it instead of creating duplicates. "
+    "Do not store transient prompts, scratch calculations, one-off file paths, or speculative unfinished findings."
+)
+_PROJECT_SEARCH_MEMORY_INSTRUCTIONS = (
+    "Search project long-term memory before creating a similar memory, and always search before updating or deleting memories."
+)
 
 
 class _InternetSearchInput(BaseModel):
@@ -507,7 +527,10 @@ class SpecialistRunner:
                 result = await agent.ainvoke(
                     {"messages": [{"role": "user", "content": message_text}]},
                     config={
-                        "configurable": {"thread_id": thread_id},
+                        "configurable": {
+                            "thread_id": thread_id,
+                            "project_id": str(self.run_context.project_id or "").strip(),
+                        },
                         "callbacks": self._langchain_callbacks(
                             usage_handler=usage_handler,
                             default_agent_name=f"{entrypoint}_specialist",
@@ -669,7 +692,7 @@ class SpecialistRunner:
                 description="Handle bounded, context-heavy execution subtasks in isolation and return concise results with artifact paths.",
                 system_prompt=self._task_worker_prompt(),
                 model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
-                tools=self._named_tools(_TASK_WORKER_TOOL_ALLOWLIST),
+                tools=self._augment_with_project_memory_tools(self._named_tools(_TASK_WORKER_TOOL_ALLOWLIST)),
                 skills=self._virtual_skill_paths("experiment"),
                 middleware=subagent_middleware,
             ),
@@ -692,7 +715,7 @@ class SpecialistRunner:
                 description="Draft or revise context-heavy sections in isolation and return compact manuscript-ready outputs.",
                 system_prompt=self._writing_worker_prompt(),
                 model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
-                tools=self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
+                tools=self._augment_with_project_memory_tools(self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST)),
                 skills=self._virtual_skill_paths("writing"),
                 middleware=subagent_middleware,
             ),
@@ -736,7 +759,7 @@ class SpecialistRunner:
         SubAgent = self._load_subagent()
         return create_deep_agent(
             model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-            tools=[],
+            tools=self._augment_with_project_memory_tools([]),
             system_prompt=self._litreview_wrapper_prompt(),
             middleware=self._subagent_middleware(runtime=runtime),
             checkpointer=runtime["checkpointer"],
@@ -750,7 +773,7 @@ class SpecialistRunner:
                     description="Use Tavily-backed public web search and page reading for broader literature review, background grounding, and public-source synthesis.",
                     system_prompt=self._litreview_agent_prompt(),
                     model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
-                    tools=self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
+                    tools=self._augment_with_project_memory_tools(self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST)),
                     middleware=self._subagent_middleware(runtime=runtime),
                 ),
                 SubAgent(
@@ -758,7 +781,7 @@ class SpecialistRunner:
                     description="Resolve exact paper metadata, DOI/year/venue/authors, and citation details from scholarly databases.",
                     system_prompt=self._metadata_agent_prompt(),
                     model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-                    tools=self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST),
+                    tools=self._augment_with_project_memory_tools(self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST)),
                     middleware=self._metadata_middleware(runtime=runtime),
                 ),
             ],
@@ -835,7 +858,7 @@ class SpecialistRunner:
             requested = _RESEARCH_TOOL_ALLOWLIST
         else:
             requested = _EXPERIMENT_TOOL_ALLOWLIST
-        return self._named_tools(requested)
+        return self._augment_with_project_memory_tools(self._named_tools(requested))
 
     def _named_tools(self, requested: set[str] | list[str] | tuple[str, ...]) -> list[Any]:
         requested_names = {str(name).strip() for name in requested if str(name).strip()}
@@ -852,6 +875,36 @@ class SpecialistRunner:
             workspace=str(self.run_context.workspace),
         )
         return [self._wrap_nonfatal_tool(tool) for tool in tools]
+
+    def _augment_with_project_memory_tools(self, tools: list[Any]) -> list[Any]:
+        existing = {str(getattr(tool, "name", "") or "").strip() for tool in tools}
+        augmented = list(tools)
+        for tool in self._project_memory_tools():
+            name = str(getattr(tool, "name", "") or "").strip()
+            if name and name not in existing:
+                augmented.append(tool)
+                existing.add(name)
+        return augmented
+
+    def _project_memory_tools(self) -> list[Any]:
+        create_manage_memory_tool = self._load_create_manage_memory_tool()
+        create_search_memory_tool = self._load_create_search_memory_tool()
+        search_tool = create_search_memory_tool(
+            namespace=_PROJECT_LONG_TERM_MEMORY_NAMESPACE,
+            instructions=_PROJECT_SEARCH_MEMORY_INSTRUCTIONS,
+            response_format="content",
+            name="search_memory",
+        )
+        manage_tool = create_manage_memory_tool(
+            namespace=_PROJECT_LONG_TERM_MEMORY_NAMESPACE,
+            instructions=_PROJECT_MANAGE_MEMORY_INSTRUCTIONS,
+            actions_permitted=("create", "update", "delete"),
+            name="manage_memory",
+        )
+        return [
+            self._wrap_project_memory_tool(search_tool),
+            self._wrap_project_memory_tool(manage_tool),
+        ]
 
     def _lightweight_literature_tools(self) -> list[Any]:
         def internet_search(
@@ -897,7 +950,7 @@ class SpecialistRunner:
                 "data": data,
             }
 
-        return [
+        tools = [
             StructuredTool.from_function(
                 func=internet_search,
                 name="internet_search",
@@ -907,6 +960,7 @@ class SpecialistRunner:
                 response_format="content_and_artifact",
             )
         ]
+        return self._augment_with_project_memory_tools(tools)
 
     @staticmethod
     def _nonfatal_tool_error_result(tool_name: str, exc: Exception, tool_args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -982,6 +1036,62 @@ class SpecialistRunner:
             response_format="content_and_artifact",
         )
 
+    def _wrap_project_memory_tool(self, tool: Any) -> Any:
+        if not isinstance(tool, StructuredTool):
+            return tool
+        args_schema = getattr(tool, "args_schema", None)
+        if not isinstance(args_schema, type) or not issubclass(args_schema, BaseModel):
+            return tool
+        func = getattr(tool, "func", None)
+        coroutine = getattr(tool, "coroutine", None)
+        if func is None and coroutine is None:
+            return tool
+
+        def _artifact(payload: Any, tool_args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+            text = content_to_text(payload)
+            return text, {
+                "tool_name": tool.name,
+                "data": {
+                    "status": "ok",
+                    "tool_name": tool.name,
+                    "message": text,
+                    "tool_args": dict(tool_args or {}),
+                },
+            }
+
+        def _wrapped(runtime=None, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+            _ = runtime
+            if func is None:
+                raise NotImplementedError(f"Tool {tool.name} does not support sync invocation.")
+            try:
+                return _artifact(func(**kwargs), kwargs)
+            except Exception as exc:
+                return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+
+        async def _awrapped(runtime=None, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+            _ = runtime
+            if coroutine is not None:
+                try:
+                    return _artifact(await coroutine(**kwargs), kwargs)
+                except Exception as exc:
+                    return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+            if func is None:
+                raise NotImplementedError(f"Tool {tool.name} does not support async invocation.")
+            try:
+                return _artifact(func(**kwargs), kwargs)
+            except Exception as exc:
+                return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+
+        return StructuredTool.from_function(
+            func=_wrapped if func is not None else None,
+            coroutine=_awrapped,
+            name=tool.name,
+            description=str(getattr(tool, "description", "") or "").strip(),
+            args_schema=args_schema,
+            infer_schema=False,
+            response_format="content_and_artifact",
+        )
+
     def _stage_deepagent_assets(self, files_root: Path) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         deepagents_root = files_root / ".deepagents"
@@ -1040,9 +1150,10 @@ class SpecialistRunner:
         from deepagents.backends.utils import create_file_data
 
         content = (
-            "# Persistent Project Memory\n\n"
-            "Use this file to store durable project conventions, user preferences, "
-            "validated scientific background, and stable workflow guidance that should persist across runs.\n\n"
+            "# Persistent Instruction Memory\n\n"
+            "Use this file only for durable user preferences, project conventions, and stable workflow guidance "
+            "that should be loaded into future prompts.\n\n"
+            "- Do not store project-state facts, experiment conclusions, or evolving status here; use long-term memory tools for those.\n"
             "- Do not store transient task requests.\n"
             "- Do not store step-by-step execution logs, temporary status notes, or intermediate tool outputs.\n"
             "- Do not store one-off artifact paths or run-specific scratch details unless they encode a stable convention.\n"
@@ -1069,6 +1180,7 @@ class SpecialistRunner:
                 f"{cls._writing_handoff_policy()}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
+                f"{cls._long_term_memory_policy()}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
                 f"{cls._soft_reporting_contract()}"
@@ -1085,6 +1197,7 @@ class SpecialistRunner:
                 "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
                 "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
                 f"{cls._writing_handoff_policy()}\n"
+                f"{cls._long_term_memory_policy()}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
                 f"{cls._soft_reporting_contract()}"
@@ -1093,7 +1206,8 @@ class SpecialistRunner:
             "You are ExperimentSpecialist.\n"
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
             "Use `task_worker_agent` for context-heavy isolated execution subtasks, and `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
-            f"Do not orchestrate other specialists. {cls._memory_write_policy()}\n"
+            f"Do not orchestrate other specialists. {cls._long_term_memory_policy()}\n"
+            f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
         )
@@ -1101,10 +1215,11 @@ class SpecialistRunner:
     @staticmethod
     def _memory_write_policy() -> str:
         return (
-            "If you update persistent memory, store only durable user preferences, project conventions, "
-            "validated reusable scientific knowledge, or stable workflow guidance. "
-            "Never store transient task requests, step-by-step execution history, intermediate tool output, "
-            "one-off file paths from a single run, temporary status notes, or speculative findings."
+            "Instruction memory files (`/.deepagents/AGENTS.md` and `/memories/AGENTS.md`) are for durable user preferences, "
+            "project conventions, and stable workflow guidance only. "
+            "Do not store project-state facts or run conclusions there. "
+            "Never store transient task requests, step-by-step execution history, "
+            "intermediate tool output, one-off file paths, temporary status notes, or speculative findings there."
         )
 
     @staticmethod
@@ -1122,8 +1237,20 @@ class SpecialistRunner:
             "Workspace path discipline: treat the project files root as your working directory. "
             "Prefer workspace-relative paths. Treat `/` only as the workspace virtual root, not as a host filesystem root. "
             "If you see a host absolute path like `/home/...`, convert it back to a workspace-relative path before using it, "
-            "and never recreate host absolute path segments inside the workspace."
+            "and never recreate host absolute path segments inside the workspace. "
+            "Do not proactively materialize every intermediate observation into files; default to keeping transient reasoning in the conversation/tool stream. "
+            "Only persist key constraints, decisive results, reusable handoff material, or user-requested deliverables. "
+            "Prefer a topic-centric layout for user-facing outputs: create one folder per user topic when the work naturally clusters that way. "
+            "Within a topic folder, place literature-grounding material under `literature/`, experiment geometry/setup artifacts under `structures/`, "
+            "and execution outputs under `calculations/`. "
+            "If a small saved note or compact report is actually needed, place it under `notes/` (either topic-local or shared when appropriate). "
+            "Keep manuscript drafting and writing-focused outputs under a dedicated `writing/` workspace area instead of scattering them across experiment folders. "
+            "If the workspace already has a clear established layout, extend that layout consistently instead of creating parallel folder schemes."
         )
+
+    @staticmethod
+    def _long_term_memory_policy() -> str:
+        return _PROJECT_MEMORY_TOOL_INSTRUCTIONS
 
     @staticmethod
     def _soft_reporting_contract() -> str:
@@ -1156,6 +1283,7 @@ class SpecialistRunner:
             "Handle a bounded execution subtask autonomously inside the workspace.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform literature search; that belongs to literature_agent.\n"
+            f"{cls._long_term_memory_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1171,9 +1299,10 @@ class SpecialistRunner:
             "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, evidence summaries, source lists, or background briefs.\n"
             "Return concise findings with clear separation between retrieved facts and inference.\n"
             "Do not perform computational execution.\n"
+            f"{cls._long_term_memory_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
-            "When findings are likely to matter later for writing, save a reusable markdown note under `/notes/literature/` or another stable workspace path and report that path.\n"
+            "Only save a reusable markdown note under `/notes/literature/` or another stable workspace path when the user asked for a saved artifact or when a durable handoff/writing reference is clearly worth the extra file.\n"
             "Return a polished markdown answer with exactly these sections in order: `Answer`, `Public Evidence`, `Interpretation`, and `Files`.\n"
             "`Answer` should synthesize the best available public evidence in a few compact paragraphs.\n"
             "`Public Evidence` should be a flat bullet list with source titles, concrete factual takeaways, and source URLs.\n"
@@ -1189,8 +1318,9 @@ class SpecialistRunner:
             "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`.\n"
             "Delegate exact DOI/year/venue/authors/citation verification and scholarly record disambiguation to `metadata_agent`.\n"
             "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
-            "Keep the final answer compact and decision-relevant. If the result is likely to matter later for writing, save a reusable note under `/notes/literature/` or another stable workspace path.\n"
+            "Keep the final answer compact and decision-relevant. Save a reusable note under `/notes/literature/` or another stable workspace path only when the user asked for it or when a durable handoff artifact is clearly justified.\n"
             "Do not perform computational execution.\n"
+            f"{cls._long_term_memory_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1205,6 +1335,7 @@ class SpecialistRunner:
             "Prefer precision over breadth. When the query is ambiguous, narrow the candidate set and explicitly state uncertainty instead of guessing.\n"
             "You may write concise reusable citation notes or metadata tables into the workspace when helpful.\n"
             "Do not perform computational execution.\n"
+            f"{cls._long_term_memory_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             "Return a polished markdown answer with exactly these sections in order: `Metadata Answer`, `Candidate Records`, `Gaps`, and `Files`.\n"
@@ -1222,9 +1353,10 @@ class SpecialistRunner:
             "Treat Tavily results as preprocessed web evidence. Prefer a few narrow searches over one vague broad search.\n"
             "This agent is not limited to academic literature: it may answer with high-quality web evidence when the user asks for broader background, methods, safety notes, public documentation, or benchmark references.\n"
             "Use the standard DeepAgent workspace capabilities when helpful to save reusable notes or evidence summaries into the workspace.\n"
-            "When findings are likely to matter later for writing or reporting, save a concise reusable markdown note under `/notes/literature/` or another stable workspace path, and include that path in the final `Files` section.\n"
+            "Only save a concise reusable markdown note under `/notes/literature/` or another stable workspace path when the user asked for a saved artifact or when a durable handoff/writing reference is clearly justified, and include that path in the final `Files` section.\n"
             "Only write durable distilled facts into persistent memory when they are stable and likely to be reused across runs.\n"
             "Do not perform computational execution.\n"
+            f"{cls._long_term_memory_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             "Return a polished markdown answer with exactly these sections in order: `Answer`, `Web Evidence`, `Interpretation`, and `Files`.\n"
@@ -1298,6 +1430,7 @@ class SpecialistRunner:
             "If the output is a TeX bundle, you must run `compile_text` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
             f"{cls._writing_handoff_policy()}\n"
+            f"{cls._long_term_memory_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1308,7 +1441,8 @@ class SpecialistRunner:
         return (
             f"You are {entrypoint.capitalize()}Specialist in proposal review mode.\n"
             "Produce a compact executable proposal only. Do not perform the work yet.\n"
-            "Return a ProposalCheckpoint with a markdown proposal, short todo list, and only blocking human questions."
+            "Return a ProposalCheckpoint with a markdown proposal, short todo list, and only blocking human questions.\n"
+            f"{SpecialistRunner._workspace_path_discipline()}"
         )
 
     def _workspace_agent_instructions(self) -> str:
@@ -1758,6 +1892,22 @@ class SpecialistRunner:
         except Exception as exc:
             raise RuntimeError("deepagents memory middleware is required.") from exc
         return MemoryMiddleware
+
+    @staticmethod
+    def _load_create_manage_memory_tool():
+        try:
+            from langmem import create_manage_memory_tool
+        except Exception as exc:
+            raise RuntimeError("langmem is required for project long-term memory tools.") from exc
+        return create_manage_memory_tool
+
+    @staticmethod
+    def _load_create_search_memory_tool():
+        try:
+            from langmem import create_search_memory_tool
+        except Exception as exc:
+            raise RuntimeError("langmem is required for project long-term memory tools.") from exc
+        return create_search_memory_tool
 
     @staticmethod
     def _load_summarization_middleware():

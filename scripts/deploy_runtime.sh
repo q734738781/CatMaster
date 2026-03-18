@@ -128,6 +128,9 @@ echo "Project space root for launcher: $PROJECT_SPACE_ROOT"
 echo
 
 if [[ $DRY_RUN -eq 0 && $SKIP_FRONTEND_BUILD -eq 0 ]]; then
+  if [[ -f "$REPO_ROOT/scripts/install_jsmol_assets.py" ]]; then
+    python3 "$REPO_ROOT/scripts/install_jsmol_assets.py" --quiet
+  fi
   FRONTEND_DIR="$REPO_ROOT/catmaster/webui/frontend"
   if [[ -f "$FRONTEND_DIR/package.json" ]]; then
     if ! command -v npm >/dev/null 2>&1; then

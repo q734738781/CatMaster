@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -284,6 +285,84 @@ def test_websession_reads_persistent_memory_index(tmp_path: Path) -> None:
     assert "Persistent Memory" in text
     assert "Prefer MACE screening before VASP" in text
     assert "catmaster." in text
+
+
+def test_websession_reads_langmem_long_term_memory_index(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+
+    db_path = system_root(workspace=ws) / "deepagent_memory.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE store (prefix TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL)")
+    project_id = session._project_id_for_workspace(ws)
+    prefix = ".".join(("catmaster", project_id, "long_term_memory"))
+    payload = {"content": "Pt(111) 1/4 ML benchmark was validated under a consistent slab setup."}
+    conn.execute(
+        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
+        (prefix, "memory-001", json.dumps(payload).encode("utf-8")),
+    )
+    conn.commit()
+    conn.close()
+
+    text = session.read_memory_index()
+    assert "long_term_memory" in text
+    assert "Pt(111) 1/4 ML benchmark was validated" in text
+
+
+def test_websession_reads_persistent_memory_index_when_workspace_path_changes(tmp_path: Path) -> None:
+    old_root = tmp_path / "old_root"
+    new_root = tmp_path / "new_root"
+    ws_old = old_root / "Pt_111"
+    ws_new = new_root / "Pt_111"
+    ensure_project_space_layout(ws_old, create=True)
+
+    run_dir = system_root(workspace=ws_old) / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    old_project_id = WebSession._project_id_for_workspace(ws_old)
+    (run_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "project_id": old_project_id,
+                "run_id": "run_001",
+                "workspace": str(ws_old),
+                "model_name": "test-model",
+                "start_time": "2026-03-17T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    db_path = system_root(workspace=ws_old) / "deepagent_memory.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE store (prefix TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL)")
+    payload = {
+        "content": [
+            "# Persistent Project Memory",
+            "",
+            "- Pt(111) 1/4 ML H adsorption benchmark is durable project context.",
+        ],
+    }
+    conn.execute(
+        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
+        (".".join(("catmaster", old_project_id, "filesystem")), "/AGENTS.md", json.dumps(payload).encode("utf-8")),
+    )
+    conn.commit()
+    conn.close()
+
+    shutil.copytree(ws_old, ws_new)
+
+    session = WebSession()
+    session.set_workspace_root(str(new_root))
+    ok, _ = session.open_workspace(str(ws_new), create=False)
+    assert ok
+    session.select_run("run_001")
+
+    text = session.read_memory_index()
+    assert "Persistent Memory" in text
+    assert "Pt(111) 1/4 ML H adsorption benchmark" in text
 
 
 def test_list_workspaces_includes_root_when_root_is_project_space(tmp_path: Path) -> None:

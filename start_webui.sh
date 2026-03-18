@@ -28,6 +28,10 @@ has_flag() {
 cd "$ROOT"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
+if [[ -f "$ROOT/scripts/install_jsmol_assets.py" ]]; then
+  python3 "$ROOT/scripts/install_jsmol_assets.py" --quiet
+fi
+
 CMD=(python -m catmaster.webui)
 
 if ! has_flag "--project-space-root" "$@"; then

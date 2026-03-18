@@ -36,6 +36,7 @@ langchain-mcp-adapters
 langchain-community
 langgraph
 deepagents
+langmem
 langgraph-checkpoint-sqlite>=3.0.3
 aiosqlite
 httpx

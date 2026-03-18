@@ -12,8 +12,9 @@ vasp_cpu:
 mace_gpu:
   machine: gpu_server
   number_node: 1
-  cpu_per_node: 8
+  cpu_per_node: 16
   gpu_per_node: 1
-  queue_name: ""
+  queue_name: main
   group_size: 1
-  custom_flags: []
+  custom_flags:
+    - "#SBATCH --export=ALL"
