@@ -64,6 +64,8 @@ These are for exact paper metadata, DOI/year/venue/authors/citation resolution, 
 
 The active runtime writes `run_state.json` in the run directory. This is the active run snapshot used by the WebUI and resume flow.
 
+Active multi-turn continuity for specialists comes from the DeepAgent `thread_id` bound to the chat session. Do not manually inject chat-history summaries or reconstructed transcript text into active specialist prompts unless you are explicitly maintaining legacy code or a separate non-specialist flow.
+
 Do not add new active-path features that depend on:
 
 - `task_state.json`
@@ -91,6 +93,21 @@ Long-term memory uses:
 - `/memories/AGENTS.md`
 
 Persistent memory is for durable project conventions, validated reusable knowledge, and stable workflow guidance only. Do not store transient task requests, scratch execution logs, speculative findings, or one-off run details.
+
+### Multimodal tool-content rules
+
+Active specialist threads may use multimodal model input in the current turn when the model and provider support it, but do not assume raw multimodal tool outputs are safe to replay indefinitely through every provider bridge or message role.
+
+Maintenance rules for active-path code:
+
+- Keep long-lived `tool` message history text-first. Prefer concise textual tool outputs plus workspace artifact paths over inline base64 image/file payloads.
+- If a tool naturally returns binary or multimodal content, persist the artifact as a file and keep only a short textual summary, file path, and MIME hint in model-visible history when possible.
+- Do not depend on LangChain-standard multimodal blocks like `{"type": "image", ...}` being replay-safe for provider-backed `tool` history. Provider wire formats may require provider-native blocks such as OpenAI-style `image_url`, and some bridges reject non-text `tool.content`.
+- When a later turn needs image or file understanding, re-open the artifact in that turn or use a dedicated analysis tool to turn it into textual findings. Do not rely on old inline image tool payloads surviving indefinitely inside the thread store.
+- Prefer attachments, file IDs, file paths, or generated artifact URLs over embedding large base64 blobs in multi-turn history.
+- If runtime compatibility is uncertain, sanitize non-text `tool` messages before model invocation instead of dropping the whole thread. Preserve only the minimum textual placeholder needed for continuity.
+
+This is a compatibility rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while avoiding provider/schema failures from replaying raw multimodal `tool` history across turns.
 
 ## 4) Research Kernel
 

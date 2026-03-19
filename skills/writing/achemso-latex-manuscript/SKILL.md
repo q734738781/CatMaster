@@ -18,6 +18,8 @@ Use the bundled `achemso` assets as the fixed manuscript shell when the writing 
 ## Quick Start
 Use when the section should be written against an ACS-style LaTeX template or when the output must stay close to `achemso` structure.
 
+For ACS-style manuscript drafting, default to a figure-aware deliverable: if the evidence supports it, complete the draft with the necessary figures, tables, and concise explanatory schematics rather than returning text alone. For short notes, status summaries, or compact internal writeups, clarity is the default and visuals are optional unless the user asks for them or they are clearly needed to avoid ambiguity.
+
 Read these assets first through the read-only skills mount:
 
 - `assets/achemso-demo.tex`
@@ -50,6 +52,8 @@ Read these assets first through the read-only skills mount:
 
 - Use comments to mark inserted section blocks only when that helps later assembly or review.
 - Keep figures and tables aligned with actual artifact paths and generated files.
+- When the manuscript needs a conceptual, mechanistic, or workflow figure, use `generate_schematic_figure` to create a concise publication-facing schematic and save it under the writing workspace.
+- When numerical evidence is better communicated as a table or plot than prose alone, add that artifact instead of forcing the explanation into dense text.
 - If you create a new `.tex` helper file, record the path in `latex_artifact_refs`.
 - If the template and the evidence disagree, preserve the evidence and adapt the prose, not the other way around.
 

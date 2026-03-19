@@ -598,10 +598,13 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "You do not have permission to modify long-term project memory" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "dataset/model lifecycle tasks" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
+        assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
         assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["ml_worker"]["system_prompt"]
         materials_worker_selector = next(
             item
@@ -624,6 +627,11 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skill_views/writing_worker_agent"]
+        assert "figures, tables, and concise explanatory schematics as part of the default deliverable" in agent_kwargs["system_prompt"]
+        assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
+        assert "For short notes or compact summaries, do not manufacture extra visuals" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "Use `generate_schematic_figure` for mechanism, workflow, or concept diagrams" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "literature_agent" not in subagents_by_name
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
@@ -671,6 +679,29 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert usage_summary["calls"] == 2
     assert usage_summary["by_role"][0]["name"] == "experiment_specialist"
     assert usage_summary["by_role"][0]["calls"] == 1
+
+
+def test_sanitize_model_request_messages_collapses_inline_image_tool_messages() -> None:
+    tool_message = ToolMessage(
+        content=[{"type": "image", "id": "img_1", "base64": "abc", "mime_type": "image/png"}],
+        tool_call_id="call_1",
+        name="read_file",
+        status="success",
+        additional_kwargs={
+            "read_file_path": "/writing/demo/figure.png",
+            "read_file_media_type": "image/png",
+        },
+    )
+    untouched = AIMessage(content="ok")
+
+    sanitized = runtime_mod.SpecialistRunner._sanitize_model_request_messages([untouched, tool_message])
+
+    assert sanitized[0] is untouched
+    assert isinstance(sanitized[1], ToolMessage)
+    assert isinstance(sanitized[1].content, str)
+    assert "inline image tool output omitted from model history" in sanitized[1].content
+    assert "source=/writing/demo/figure.png" in sanitized[1].content
+    assert "mime=image/png" in sanitized[1].content
 
 
 def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

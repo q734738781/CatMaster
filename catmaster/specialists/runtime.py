@@ -1392,6 +1392,7 @@ class SpecialistRunner:
                 "Use `litreview_agent` for all literature-review work. It can internally delegate to `literature_agent` for Tavily-backed public-web review and to `metadata_agent` for exact DOI/year/venue/authors/citation metadata.\n"
                 "If the user requests a report, manuscript, note, LaTeX document, or other substantial written artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
                 f"{cls._writing_handoff_policy()}\n"
+                f"{cls._multimodal_tool_history_policy()}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
                 f"{memory_policy}\n"
@@ -1406,11 +1407,14 @@ class SpecialistRunner:
                 "Do not reopen literature review from the writing thread; if external grounding is still missing, report that research lane should gather it first.\n"
                 "Your default role is coordination, not long-form drafting in the main thread.\n"
                 "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
+                "When the requested deliverable is a paper, manuscript, or journal-style draft, treat figures, tables, and concise explanatory schematics as part of the default deliverable when the workspace evidence supports them; do not return text-only manuscript output if key visual evidence is still missing.\n"
+                "When the requested deliverable is a short note, compact summary, or quick status writeup, prioritize clarity and sufficiency over making it figure-heavy unless the user explicitly asks for visuals.\n"
                 "Keep the main writing thread focused on planning, dispatch, evidence selection, and final reconciliation.\n"
                 "Do not handle TeX compile/fix passes in the main thread.\n"
                 "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
                 "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
                 f"{cls._writing_handoff_policy()}\n"
+                f"{cls._multimodal_tool_history_policy()}\n"
                 f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
@@ -1422,6 +1426,7 @@ class SpecialistRunner:
             "Route by the current working artifact: use `materials_worker` for structure/calc/result work, including MACE-based surrogate screening inside a materials workflow; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
+            f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1444,6 +1449,14 @@ class SpecialistRunner:
             "the key facts that must be preserved, the requested output artifact path(s), the desired section structure, and any citation or style constraints. "
             "For TeX deliverables, require a separate `.tex` file, a separate `.bib` file when citations are used, and at least one direct compile pass that should produce a `.pdf` when the environment supports compilation. "
             "Do not paste long transcripts or ask the writing agent to rediscover evidence already available in the workspace."
+        )
+
+    @staticmethod
+    def _multimodal_tool_history_policy() -> str:
+        return (
+            "Multimodal tool-content discipline: if a tool produces images, PDFs, or other non-text payloads, prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary. "
+            "Do not rely on raw inline multimodal tool outputs remaining replay-safe in long-lived thread history across provider bridges. "
+            "When later reasoning needs that visual or file content again, re-open the artifact in that turn or use a dedicated analysis tool to turn it into text."
         )
 
     @staticmethod
@@ -1504,6 +1517,7 @@ class SpecialistRunner:
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform literature search; that belongs to literature_agent.\n"
+            f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1520,6 +1534,7 @@ class SpecialistRunner:
             "When no dedicated tool covers a bounded ML task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
             "Do not perform literature search; that belongs to literature_agent.\n"
+            f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1663,10 +1678,14 @@ class SpecialistRunner:
             "You are writing_worker_agent for WritingSpecialist.\n"
             "Draft, revise, or polish bounded writing subtasks from existing workspace evidence only.\n"
             "Do not reopen broad research loops or re-read large unrelated workspace trees on your own.\n"
+            "For paper/manuscript/journal-style writing, complete the evidence presentation: add or update figures, tables, structure renders, and concise schematics when they materially improve the manuscript and the workspace contains enough evidence to support them.\n"
+            "Use `generate_schematic_figure` for mechanism, workflow, or concept diagrams when a manuscript needs a schematic and no better evidence-native visual already exists.\n"
+            "For short notes or compact summaries, do not manufacture extra visuals unless they are explicitly requested or clearly necessary for comprehension.\n"
             "Return concise manuscript-ready output summaries and any output artifact paths.\n"
             "If the output is a TeX bundle, you must run `compile_text` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
             f"{cls._writing_handoff_policy()}\n"
+            f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1713,6 +1732,25 @@ class SpecialistRunner:
             if int(model_call_run_limit) > 0:
                 middleware.append(ModelCallLimitMiddleware(run_limit=int(model_call_run_limit)))
         try:
+            from langchain.agents.middleware import AgentMiddleware
+        except Exception:
+            AgentMiddleware = None
+        if AgentMiddleware is not None:
+            class _ToolMessageHistorySanitizerMiddleware(AgentMiddleware):
+                def wrap_model_call(self, request: Any, handler: Any) -> Any:
+                    sanitized = SpecialistRunner._sanitize_model_request_messages(getattr(request, "messages", []))
+                    if sanitized is getattr(request, "messages", None):
+                        return handler(request)
+                    return handler(request.override(messages=sanitized))
+
+                async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+                    sanitized = SpecialistRunner._sanitize_model_request_messages(getattr(request, "messages", []))
+                    if sanitized is getattr(request, "messages", None):
+                        return await handler(request)
+                    return await handler(request.override(messages=sanitized))
+
+            middleware.append(_ToolMessageHistorySanitizerMiddleware())
+        try:
             from langchain.agents.middleware import wrap_tool_call
         except Exception:
             return middleware
@@ -1742,6 +1780,86 @@ class SpecialistRunner:
 
         middleware.append(_handle_tool_errors)
         return middleware
+
+    @staticmethod
+    def _sanitize_model_request_messages(messages: Any) -> Any:
+        if not isinstance(messages, list):
+            return messages
+        changed = False
+        sanitized: list[Any] = []
+        for message in messages:
+            normalized = SpecialistRunner._sanitize_model_request_message(message)
+            if normalized is not message:
+                changed = True
+            sanitized.append(normalized)
+        return sanitized if changed else messages
+
+    @staticmethod
+    def _sanitize_model_request_message(message: Any) -> Any:
+        if not isinstance(message, ToolMessage):
+            return message
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return message
+        replacement = SpecialistRunner._tool_message_content_placeholder(message)
+        if replacement == content:
+            return message
+        try:
+            return message.model_copy(update={"content": replacement})
+        except Exception:
+            return ToolMessage(
+                content=replacement,
+                artifact=getattr(message, "artifact", None),
+                tool_call_id=str(getattr(message, "tool_call_id", "") or ""),
+                name=str(getattr(message, "name", "") or None) or None,
+                status=str(getattr(message, "status", "success") or "success"),
+                additional_kwargs=dict(getattr(message, "additional_kwargs", {}) or {}),
+                response_metadata=dict(getattr(message, "response_metadata", {}) or {}),
+                id=getattr(message, "id", None),
+            )
+
+    @staticmethod
+    def _tool_message_content_placeholder(message: ToolMessage) -> str:
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content
+        additional = dict(getattr(message, "additional_kwargs", {}) or {})
+        path = str(additional.get("read_file_path") or "").strip()
+        media_type = str(additional.get("read_file_media_type") or "").strip()
+        if isinstance(content, list):
+            text_bits: list[str] = []
+            image_blocks = 0
+            for item in content:
+                if isinstance(item, str) and item.strip():
+                    text_bits.append(item.strip())
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type") or "").strip().lower()
+                if item_type == "text":
+                    text = str(item.get("text") or "").strip()
+                    if text:
+                        text_bits.append(text)
+                    continue
+                if item_type in {"image", "image_url"}:
+                    image_blocks += 1
+                    if not media_type:
+                        media_type = str(item.get("mime_type") or "").strip()
+            if image_blocks:
+                details: list[str] = []
+                if path:
+                    details.append(f"source={path}")
+                if media_type:
+                    details.append(f"mime={media_type}")
+                note = (
+                    f"[inline image tool output omitted from model history; "
+                    f"{' '.join(details) if details else f'images={image_blocks}'}]"
+                )
+                if text_bits:
+                    return "\n".join(text_bits + [note]).strip()
+                return note
+        text = content_to_text(content).strip()
+        return text or "[non-text tool output omitted from model history]"
 
     def _langchain_callbacks(
         self,
