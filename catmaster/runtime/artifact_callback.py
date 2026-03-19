@@ -1036,17 +1036,19 @@ class UIEventHandler(BaseCallbackHandler):
                 text=reasoning_delta,
                 agent_name=str(info.get("agent_name") or ""),
             )
-        self._emit(
-            "LLM_TOKEN_DELTA",
-            category="llm",
-            task_id=str(info.get("task_id") or "") or None,
-            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
-            model=str(info.get("model") or ""),
-            phase="react",
-            node=str(info.get("node") or ""),
-            text=str(token or ""),
-            agent_name=str(info.get("agent_name") or ""),
-        )
+        token_text = str(token or "")
+        if token_text:
+            self._emit(
+                "LLM_TOKEN_DELTA",
+                category="llm",
+                task_id=str(info.get("task_id") or "") or None,
+                step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+                model=str(info.get("model") or ""),
+                phase="react",
+                node=str(info.get("node") or ""),
+                text=token_text,
+                agent_name=str(info.get("agent_name") or ""),
+            )
 
     def on_llm_end(
         self,

@@ -263,6 +263,7 @@ def test_materials_worker_prompt_includes_workspace_path_discipline() -> None:
     prompt = runtime_mod.SpecialistRunner._materials_worker_prompt()
     assert "Workspace path discipline" in prompt
     assert "Treat `/` only as the workspace virtual root" in prompt
+    assert "never use leading-slash workspace paths like `/writing/...`" in prompt
     assert "Only persist key constraints, decisive results" in prompt
     assert "literature/" in prompt
     assert "structures/" in prompt
@@ -457,7 +458,7 @@ def test_finalize_report_runs_compile_guard_for_tex_outputs(
     [
         ("research", ["/.deepagents/skill_views/research_experiment", "/.deepagents/skill_views/research_writing"], ["experiment_specialist", "writing_specialist", "litreview_agent"]),
         ("experiment", ["/.deepagents/skill_views/experiment_specialist"], ["materials_worker", "ml_worker", "literature_agent"]),
-        ("writing", ["/.deepagents/skill_views/writing_specialist"], ["writing_worker_agent"]),
+        ("writing", ["/.deepagents/skill_views/writing_specialist"], ["literature_agent", "writing_worker_agent"]),
     ],
 )
 def test_three_specialist_lanes_start_with_staged_skills(
@@ -625,14 +626,19 @@ def test_three_specialist_lanes_start_with_staged_skills(
     else:
         assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
+        assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
+        assert "Use the lightweight `internet_search` tool only for tightly bounded writing-support lookups" in subagents_by_name["literature_agent"]["system_prompt"]
         assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skill_views/writing_worker_agent"]
+        assert "You may use `literature_agent` only for narrow background supplementation" in agent_kwargs["system_prompt"]
         assert "figures, tables, and concise explanatory schematics as part of the default deliverable" in agent_kwargs["system_prompt"]
+        assert "Do not mention the workspace, files, runs, prompts, tools, agents, interruptions" in agent_kwargs["system_prompt"]
         assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
         assert "For short notes or compact summaries, do not manufacture extra visuals" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "Use `generate_schematic_figure` for mechanism, workflow, or concept diagrams" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "For journal-facing citations and BibTeX, use publication-style metadata only" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "literature_agent" not in subagents_by_name
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
     staged_experiment = workspace / "files" / ".deepagents" / "skills" / "experiment"

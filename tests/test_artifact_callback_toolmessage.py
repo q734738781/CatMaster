@@ -222,3 +222,23 @@ def test_ui_event_handler_reasoning_delta_emits_only_new_suffix() -> None:
     assert len(reasoning_events) == 2
     assert reasoning_events[0].payload.get("text") == "Running batch process"
     assert reasoning_events[1].payload.get("text") == " on boxed O2"
+
+
+def test_ui_event_handler_skips_empty_token_delta() -> None:
+    reporter = _CollectReporter()
+    handler = UIEventHandler(reporter, run_id="run_x")
+
+    rid = uuid.uuid4()
+    handler.on_llm_start(
+        serialized={"kwargs": {"model_name": "gpt-5"}},
+        prompts=["prompt"],
+        run_id=rid,
+    )
+    handler.on_llm_new_token(
+        "",
+        run_id=rid,
+        chunk={"reasoning_details": [{"type": "reasoning.summary", "summary": "Thinking"}]},
+    )
+
+    assert [e for e in reporter.events if e.name == "LLM_REASONING_DELTA"]
+    assert not [e for e in reporter.events if e.name == "LLM_TOKEN_DELTA"]

@@ -39,6 +39,14 @@ Read these assets first through the read-only skills mount:
 5. Keep bibliography keys and citation commands consistent with the template's BibTeX usage.
 6. Treat `section_tex` and workspace `.tex` artifacts as the primary output; use `section_md` only as a concise reviewer shadow when useful.
 
+### Journal-facing prose discipline
+
+- For ACS-style manuscript output, write as an author of the scientific work, not as an agent narrating how the draft was assembled.
+- Do not mention the workspace, runs, files, tools, prompts, interruptions, or that no new calculations were run during the writing pass.
+- Keep internal provenance phrases such as `workspace evidence`, `accessible snippets`, `bundle`, `this draft`, or `assembled from existing results` out of the abstract and main text.
+- Scientific limitations are acceptable; workflow disclaimers are not. If an evidence boundary matters, express it in scientific language such as unresolved benchmark coverage or incomplete literature verification rather than as an internal-process note.
+- Do not use Acknowledgement or Supporting Information sections to apologize for process limitations or to explain the agent workflow.
+
 ### Template discipline
 
 - Preserve the documentclass, package imports, and global preamble unless the task explicitly requires a change.
@@ -56,6 +64,13 @@ Read these assets first through the read-only skills mount:
 - When numerical evidence is better communicated as a table or plot than prose alone, add that artifact instead of forcing the explanation into dense text.
 - If you create a new `.tex` helper file, record the path in `latex_artifact_refs`.
 - If the template and the evidence disagree, preserve the evidence and adapt the prose, not the other way around.
+
+### Citation hygiene
+
+- Final journal-facing `.bib` entries should look like publication metadata, not internal evidence memos.
+- Do not leave `note = {...}` fields that explain workspace snippets, internal benchmark notes, or how a citation was inferred unless the cited source is genuinely an unpublished note or communication.
+- If the citation metadata is incomplete, either resolve it properly, leave a clear pre-submission gap to fix, or remove the weak citation from the journal-facing draft.
+- Prefer fewer clean references over many questionable placeholder entries.
 
 ## Output Contract
 Return section-level `section_tex` as the primary output. If you create or edit a workspace `.tex` fragment directly, record it in `latex_artifact_refs`. The outer `achemso` manuscript wrapper is assembled by the system.

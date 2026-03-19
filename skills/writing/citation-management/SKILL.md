@@ -106,6 +106,14 @@ python scripts/search_google_scholar.py "machine learning protein folding" \
 - Check "Cited by" to find seminal papers
 - Export top results for further analysis
 
+## Journal-facing bibliography hygiene
+
+When the target output is a manuscript rather than an internal note:
+- Generate publication-style BibTeX only. Do not leave internal provenance notes such as "workspace snippet", "accessible note", or "used in benchmark notes" inside final reference entries.
+- Avoid padding weakly resolved sources with explanatory `note` fields just to justify a citation.
+- If metadata cannot be validated to publication standard, mark it as a gap for cleanup or omit it from the journal-facing bibliography.
+- Prefer a smaller clean bibliography over a larger one with questionable placeholder entries.
+
 #### PubMed Search
 
 PubMed specializes in biomedical and life sciences literature (35+ million citations).
@@ -1110,4 +1118,3 @@ The citation-management skill provides:
 7. **Reproducibility** through documented search and extraction methods
 
 Use this skill to maintain accurate, complete citations throughout your research and ensure publication-ready bibliographies.
-

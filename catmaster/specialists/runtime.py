@@ -782,6 +782,14 @@ class SpecialistRunner:
         subagent_middleware = self._subagent_middleware(runtime=runtime)
         return [
             SubAgent(
+                name="literature_agent",
+                description="Provide tightly bounded background/context lookups for writing tasks when introduction or discussion needs focused external grounding.",
+                system_prompt=self._writing_literature_agent_prompt(),
+                model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
+                tools=self._lightweight_literature_tools(),
+                middleware=subagent_middleware,
+            ),
+            SubAgent(
                 name="writing_worker_agent",
                 description="Draft or revise context-heavy sections in isolation and return compact manuscript-ready outputs.",
                 system_prompt=self._writing_worker_prompt(),
@@ -1404,7 +1412,9 @@ class SpecialistRunner:
             return (
                 "You are WritingSpecialist.\n"
                 "Write from existing workspace evidence only. Do not initiate new computational experiments.\n"
-                "Do not reopen literature review from the writing thread; if external grounding is still missing, report that research lane should gather it first.\n"
+                "Do not reopen broad literature review from the writing thread.\n"
+                "You may use `literature_agent` only for narrow background supplementation when the user explicitly asks to expand background/context, or when a paper/manuscript draft lacks the minimal external background needed for a credible introduction or discussion.\n"
+                "Keep such literature work tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
                 "Your default role is coordination, not long-form drafting in the main thread.\n"
                 "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
                 "When the requested deliverable is a paper, manuscript, or journal-style draft, treat figures, tables, and concise explanatory schematics as part of the default deliverable when the workspace evidence supports them; do not return text-only manuscript output if key visual evidence is still missing.\n"
@@ -1413,6 +1423,7 @@ class SpecialistRunner:
                 "Do not handle TeX compile/fix passes in the main thread.\n"
                 "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
                 "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
+                f"{cls._journal_manuscript_policy()}\n"
                 f"{cls._writing_handoff_policy()}\n"
                 f"{cls._multimodal_tool_history_policy()}\n"
                 f"{memory_policy}\n"
@@ -1460,12 +1471,24 @@ class SpecialistRunner:
         )
 
     @staticmethod
+    def _journal_manuscript_policy() -> str:
+        return (
+            "Journal-manuscript discipline: when the deliverable is a paper, manuscript, or journal-style draft, write as an author of the scientific work, not as an agent narrating the workflow. "
+            "Do not mention the workspace, files, runs, prompts, tools, agents, interruptions, or that the manuscript was assembled from existing workspace evidence. "
+            "Keep process provenance such as 'no new calculations were run in this writing pass', 'accessible snippets', or 'workspace notes' out of the title, abstract, main text, acknowledgements, and supporting-information prose unless the user explicitly asked for an internal note instead of a paper. "
+            "State scientific scope limits and evidence limits in field-appropriate prose, not as internal workflow disclaimers. "
+            "For journal-facing citations and BibTeX, use publication-style metadata only; do not leave internal snippet notes or workspace-provenance explanations in final reference entries. "
+            "If citation metadata is unresolved or only weak snippet evidence exists, prefer a cleaner uncited statement, a visible citation gap to be resolved before submission, or a request for literature cleanup rather than fabricating a journal-facing reference."
+        )
+
+    @staticmethod
     def _workspace_path_discipline() -> str:
         return (
             "Workspace path discipline: treat the project files root as your working directory. "
             "Prefer workspace-relative paths. Treat `/` only as the workspace virtual root, not as a host filesystem root. "
             "If you see a host absolute path like `/home/...`, convert it back to a workspace-relative path before using it, "
             "and never recreate host absolute path segments inside the workspace. "
+            "For shell or `execute` commands, never use leading-slash workspace paths like `/writing/...`; use workspace-relative paths such as `writing/...` instead. "
             "Do not proactively materialize every intermediate observation into files; default to keeping transient reasoning in the conversation/tool stream. "
             "Only persist key constraints, decisive results, reusable handoff material, or user-requested deliverables. "
             "Prefer a topic-centric layout for user-facing outputs: create one folder per user topic when the work naturally clusters that way. "
@@ -1618,6 +1641,27 @@ class SpecialistRunner:
             "`Files` should list any saved reusable note paths, or `(none reported)` if nothing was persisted."
         )
 
+    @classmethod
+    def _writing_literature_agent_prompt(cls) -> str:
+        return (
+            "You are literature_agent for WritingSpecialist.\n"
+            "Use the lightweight `internet_search` tool only for tightly bounded writing-support lookups: missing introduction background, a specific benchmark/context check, or a small citation-support query needed by the current manuscript draft.\n"
+            "Do not expand the task into a broad literature review, a new scientific campaign, or open-ended research planning.\n"
+            "Prioritize a few targeted, high-signal sources that directly support the current writing need.\n"
+            "Return concise findings with clear separation between retrieved facts and inference.\n"
+            "If the request really needs broad review or citation-grade metadata disambiguation beyond this narrow scope, say so explicitly so the user can switch to the research lane.\n"
+            "Do not perform computational execution.\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            "Only save a concise reusable markdown note under `/notes/literature/` or another stable workspace path when a durable writing handoff artifact is clearly justified.\n"
+            "Return a polished markdown answer with exactly these sections in order: `Answer`, `Web Evidence`, `Interpretation`, and `Files`.\n"
+            "`Answer` should directly address the bounded writing-context question in a few compact paragraphs.\n"
+            "`Web Evidence` should be a flat bullet list with source titles, concrete factual takeaways, and source URLs.\n"
+            "`Interpretation` should explain how the evidence should influence the manuscript wording and note uncertainty.\n"
+            "`Files` should list any saved reusable note paths, or `(none reported)` if nothing was persisted."
+        )
+
     @staticmethod
     def _sanitize_kernel_component(text: str) -> str:
         normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", str(text or "").strip())
@@ -1684,6 +1728,7 @@ class SpecialistRunner:
             "Return concise manuscript-ready output summaries and any output artifact paths.\n"
             "If the output is a TeX bundle, you must run `compile_text` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
+            f"{cls._journal_manuscript_policy()}\n"
             f"{cls._writing_handoff_policy()}\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"

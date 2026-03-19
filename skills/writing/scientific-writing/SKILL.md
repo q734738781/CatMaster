@@ -18,6 +18,15 @@ Scientific writing is a process for communicating research with precision and cl
 
 **Critical Principle: Always write in full paragraphs with flowing prose. Never submit bullet points in the final manuscript.** Use a two-stage process: first create section outlines with key points using research-lookup, then convert those outlines into complete paragraphs.
 
+## Journal-Facing Hygiene
+
+When the deliverable is a paper, manuscript, or submission-style draft:
+- Do not narrate the writing workflow in the manuscript itself.
+- Do not mention the workspace, files, tools, prompts, run state, interruptions, or that the current writing pass reused pre-existing results.
+- Keep abstracts, introductions, conclusions, acknowledgements, and supporting-information prose focused on scientific content, not internal process provenance.
+- If evidence is incomplete, express the limitation scientifically and narrowly. Do not write phrases like "accessible snippets in the workspace" or "no new calculations were run" in journal-facing prose.
+- Write as the paper's scientific authorial voice, not as an assistant explaining what it did.
+
 ## When to Use This Skill
 
 This skill should be used when:
@@ -171,6 +180,7 @@ Apply citation styles correctly across disciplines. For comprehensive style guid
 - Balance citation distribution across introduction and discussion
 - Verify all citations against original sources
 - Use reference management software (Zotero, Mendeley, EndNote)
+- Do not treat internal notes, snippet provenance, or draft-side evidentiary comments as final citation metadata in a manuscript bibliography
 
 ### 4. Figures and Tables
 

@@ -109,7 +109,7 @@ function toolStatusRank(status) {
 
 function shouldRecordEvent(event) {
   const name = String(event?.name || "");
-  return !["LLM_TOKEN_DELTA", "LLM_REASONING_DELTA"].includes(name);
+  return !["LLM_CALL_START", "LLM_TOKEN_DELTA", "LLM_REASONING_DELTA"].includes(name);
 }
 
 function getAgentExecutionState(agent) {
@@ -613,7 +613,7 @@ const LANE_GUIDE = {
   writing: {
     title: "Writing",
     summary: "Draft or revise deliverables from existing evidence and compile when needed.",
-    subagents: ["writing_worker_agent"],
+    subagents: ["writing_worker_agent", "literature_agent"],
   },
 };
 
@@ -696,6 +696,7 @@ function RunCard({ card, active, onSelect }) {
 
 function EventFeed({ events }) {
   const containerRef = useRef(null);
+  const hiddenNames = new Set(["LLM_CALL_START", "LLM_TOKEN_DELTA", "LLM_REASONING_DELTA"]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -708,6 +709,9 @@ function EventFeed({ events }) {
     <div ref={containerRef} className="feed-list">
       {(events || []).slice(-120).map((event) => {
         const payload = event.payload || {};
+        if (hiddenNames.has(String(event?.name || ""))) {
+          return null;
+        }
         const title = joinItems([event.category, event.name, payload.tool || payload.model || payload.node]);
         const body =
           payload.text ||
@@ -718,6 +722,9 @@ function EventFeed({ events }) {
           payload.goal ||
           payload.status ||
           "";
+        if (!body) {
+          return null;
+        }
         return (
           <article key={event.seq || `${event.name}-${event.ts}`} className="feed-item">
             <div className="feed-meta">

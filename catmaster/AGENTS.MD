@@ -31,6 +31,7 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
+  - May use the lightweight `literature_agent` only for tightly bounded background supplementation needed by the current manuscript or note.
 
 Do not design new features around the old `director -> task runner -> memory patch` stack unless you are explicitly maintaining legacy code. The active path is the DeepAgent specialist runtime.
 
@@ -46,6 +47,7 @@ Literature support is split into two forms:
     - `metadata_agent` for exact scholarly metadata
 - lightweight `literature_agent`
   - Used by `experiment`
+  - Also used by `writing` for narrow background/context supplementation only
   - Exposes only a lightweight Tavily-backed `internet_search` tool for quick external grounding
 
 The metadata side is intentionally separate from broad review:
