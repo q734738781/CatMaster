@@ -14,6 +14,7 @@ from pymatgen.core.surface import SlabGenerator
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.geometry_inputs.adsorbate_tool import propagate_adsorbate_metadata
 
 
 class SlabBuildInput(BaseModel):
@@ -595,6 +596,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
 
         results = []
         errors = []
+        warnings: list[str] = []
         for structure_path in structures:
             rel_path = structure_path.relative_to(structure_root)
             slab_id = _slab_id_from(rel_path)
@@ -608,6 +610,14 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                     layer_tol=layer_tol,
                     reverse=reverse,
                 )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_layers",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
                 results.append(
                     {
                         "input_rel": str(rel_path),
@@ -615,6 +625,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                         "output_rel": workspace_relpath(output_path),
                         "relaxed_atoms": result["relaxed_atoms"],
                         "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
                     }
                 )
             except Exception as exc:
@@ -652,7 +663,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
         if first_output:
             lines.append(f"first_output_rel={first_output}")
         content = "\n".join(lines)
-        return _success("fix_atoms_by_layers", content=content, data=data)
+        return _success("fix_atoms_by_layers", content=content, data=data, warnings=warnings)
 
     if params.output_path is None:
         _failure(
@@ -671,6 +682,13 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             layer_tol=layer_tol,
             reverse=reverse,
         )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_layers",
+        )
+        if propagated:
+            data.update(propagated)
     except Exception as exc:
         _failure(
             "fix_atoms_by_layers",
@@ -684,7 +702,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
         f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
         f"reverse={str(data['reverse']).lower()}"
     )
-    return _success("fix_atoms_by_layers", content=content, data=data)
+    return _success("fix_atoms_by_layers", content=content, data=data, warnings=warnings)
 
 
 def _fix_atoms_by_height_single(
@@ -774,6 +792,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
 
         results = []
         errors = []
+        warnings: list[str] = []
         for structure_path in structures:
             rel_path = structure_path.relative_to(structure_root)
             slab_id = _slab_id_from(rel_path)
@@ -786,6 +805,14 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                     centralize=centralize,
                     reverse=reverse,
                 )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_height",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
                 results.append(
                     {
                         "input_rel": str(rel_path),
@@ -793,6 +820,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                         "output_rel": workspace_relpath(output_path),
                         "relaxed_atoms": result["relaxed_atoms"],
                         "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
                     }
                 )
             except Exception as exc:
@@ -829,7 +857,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
         if first_output:
             lines.append(f"first_output_rel={first_output}")
         content = "\n".join(lines)
-        return _success("fix_atoms_by_height", content=content, data=data)
+        return _success("fix_atoms_by_height", content=content, data=data, warnings=warnings)
 
     if params.output_path is None:
         _failure(
@@ -847,6 +875,13 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             centralize=centralize,
             reverse=reverse,
         )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_height",
+        )
+        if propagated:
+            data.update(propagated)
     except Exception as exc:
         _failure(
             "fix_atoms_by_height",
@@ -860,7 +895,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
         f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
         f"reverse={str(data['reverse']).lower()}"
     )
-    return _success("fix_atoms_by_height", content=content, data=data)
+    return _success("fix_atoms_by_height", content=content, data=data, warnings=warnings)
 
 
 def _fix_atoms_by_indices_single(
@@ -933,6 +968,7 @@ def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, obj
 
         results = []
         errors = []
+        warnings: list[str] = []
         for structure_path in structures:
             rel_path = structure_path.relative_to(structure_root)
             structure_id = _slab_id_from(rel_path)
@@ -944,6 +980,14 @@ def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, obj
                     indices=indices,
                     reverse=reverse,
                 )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_indices",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
                 results.append(
                     {
                         "input_rel": str(rel_path),
@@ -951,6 +995,7 @@ def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, obj
                         "output_rel": workspace_relpath(output_path),
                         "relaxed_atoms": result["relaxed_atoms"],
                         "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
                     }
                 )
             except Exception as exc:
@@ -987,7 +1032,7 @@ def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, obj
         if first_output:
             lines.append(f"first_output_rel={first_output}")
         content = "\n".join(lines)
-        return _success("fix_atoms_by_indices", content=content, data=data)
+        return _success("fix_atoms_by_indices", content=content, data=data, warnings=warnings)
 
     if params.output_path is None:
         _failure(
@@ -1004,6 +1049,13 @@ def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, obj
             indices=indices,
             reverse=reverse,
         )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_indices",
+        )
+        if propagated:
+            data.update(propagated)
     except Exception as exc:
         _failure(
             "fix_atoms_by_indices",
@@ -1017,7 +1069,7 @@ def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, obj
         f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
         f"indices={data['indices']} index_base=0 reverse={str(data['reverse']).lower()}"
     )
-    return _success("fix_atoms_by_indices", content=content, data=data)
+    return _success("fix_atoms_by_indices", content=content, data=data, warnings=warnings)
 
 
 __all__ = [

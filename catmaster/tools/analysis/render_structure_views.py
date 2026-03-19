@@ -32,6 +32,7 @@ _SUPPORTED_LABEL_MODES = {"elements", "none"}
 _SUPPORTED_FIT_MODES = {"tight", "fit", "loose"}
 _SUPPORTED_VIEWS_PRESETS = {"catmaster_four_views_v1"}
 _SUPPORTED_STYLE_PRESETS = {"publication_atomistic_v1"}
+_SUPPORTED_BACKENDS = {"ase", "ovito", "auto"}
 _FIT_SCALE = {"tight": 0.88, "fit": 1.00, "loose": 1.15}
 _BACKGROUND_RGB = {"white": (1.0, 1.0, 1.0)}
 
@@ -74,6 +75,13 @@ class RenderStructureViewsInput(BaseModel):
     style_preset: str = Field(
         "publication_atomistic_v1",
         description="Atom rendering style preset. Only publication_atomistic_v1 is supported in V1.",
+    )
+    backend: Literal["ase", "ovito", "auto"] = Field(
+        "ase",
+        description=(
+            "Rendering backend. Use 'ase' for information-dense inspection panels, 'ovito' for publication-facing "
+            "atomistic figures, or 'auto' to prefer OVITO and fall back to ASE."
+        ),
     )
 
     @field_validator("supercell")
@@ -298,7 +306,6 @@ def _compose_panel(
     label_mode: str,
     legend_mapping: dict[str, str],
     tile_size: tuple[int, int],
-    backend_name: str,
 ) -> None:
     fig = plt.figure(
         figsize=((tile_size[0] * 2.5) / 150.0, (tile_size[1] * 2.0) / 150.0),
@@ -337,7 +344,6 @@ def _compose_panel(
             y -= 0.085
     else:
         legend_ax.text(0.02, 0.88, "Legend hidden", fontsize=10, va="top", ha="left")
-    legend_ax.text(0.0, 0.08, f"Backend: {backend_name}", fontsize=9, va="bottom", ha="left", color="#444444")
 
     panel_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(panel_path, dpi=150, bbox_inches="tight", pad_inches=0.04, facecolor=background)
@@ -439,6 +445,8 @@ def _render_structure_views_impl(payload: dict[str, Any]) -> tuple[str, dict[str
         raise ValueError(f"Unsupported style_preset: {params.style_preset}")
     if params.background not in _BACKGROUND_RGB:
         raise ValueError(f"Unsupported background: {params.background}")
+    if params.backend not in _SUPPORTED_BACKENDS:
+        raise ValueError(f"Unsupported backend: {params.backend}")
 
     structure_path = resolve_workspace_path(params.structure_path, must_exist=True)
     panel_path = (
@@ -453,18 +461,8 @@ def _render_structure_views_impl(payload: dict[str, Any]) -> tuple[str, dict[str
     legend_mapping = _legend_mapping(atoms.get_chemical_symbols())
     tile_paths = _tile_output_paths(panel_path)
 
-    backend_name = "OVITO TachyonRenderer"
-    ovito_ok = _try_render_with_ovito(
-        structure_path=structure_path,
-        tile_paths=tile_paths,
-        supercell=supercell,
-        fit_mode=params.fit_mode,
-        tile_size=tile_size,
-        background=params.background,
-        show_cell=params.show_cell,
-    )
-    if not ovito_ok:
-        backend_name = "ASE/Matplotlib fallback"
+    backend_used = params.backend
+    if params.backend == "ase":
         for view_name, tile_path in tile_paths.items():
             _render_matplotlib_view(
                 atoms=atoms,
@@ -476,6 +474,43 @@ def _render_structure_views_impl(payload: dict[str, Any]) -> tuple[str, dict[str
                 target_path=tile_path,
                 tile_size=tile_size,
             )
+    elif params.backend == "ovito":
+        ovito_ok = _try_render_with_ovito(
+            structure_path=structure_path,
+            tile_paths=tile_paths,
+            supercell=supercell,
+            fit_mode=params.fit_mode,
+            tile_size=tile_size,
+            background=params.background,
+            show_cell=params.show_cell,
+        )
+        if not ovito_ok:
+            raise RuntimeError("OVITO backend requested but unavailable or render failed")
+    else:
+        ovito_ok = _try_render_with_ovito(
+            structure_path=structure_path,
+            tile_paths=tile_paths,
+            supercell=supercell,
+            fit_mode=params.fit_mode,
+            tile_size=tile_size,
+            background=params.background,
+            show_cell=params.show_cell,
+        )
+        if ovito_ok:
+            backend_used = "ovito"
+        else:
+            backend_used = "ase"
+            for view_name, tile_path in tile_paths.items():
+                _render_matplotlib_view(
+                    atoms=atoms,
+                    view_name=view_name,
+                    fit_mode=params.fit_mode,
+                    background=params.background,
+                    show_cell=params.show_cell,
+                    legend_mapping=legend_mapping,
+                    target_path=tile_path,
+                    tile_size=tile_size,
+                )
 
     _compose_panel(
         tile_paths=tile_paths,
@@ -485,12 +520,13 @@ def _render_structure_views_impl(payload: dict[str, Any]) -> tuple[str, dict[str
         label_mode=params.label_mode,
         legend_mapping=legend_mapping,
         tile_size=tile_size,
-        backend_name=backend_name,
     )
 
     data = {
         "image_path": workspace_relpath(panel_path),
         "tile_paths": {name: workspace_relpath(path) for name, path in tile_paths.items()},
+        "backend_requested": params.backend,
+        "backend_used": backend_used,
         "legend_mapping": legend_mapping,
         "view_specs": {
             "preset": params.views_preset,
@@ -499,7 +535,7 @@ def _render_structure_views_impl(payload: dict[str, Any]) -> tuple[str, dict[str
         },
         "notes": [
             "simulation cell hidden" if not params.show_cell else "simulation cell shown",
-            f"rendered with {backend_name}",
+            f"rendered with backend={backend_used}",
             "label_mode=none only affects legend labels in V1",
         ],
     }
@@ -507,6 +543,7 @@ def _render_structure_views_impl(payload: dict[str, Any]) -> tuple[str, dict[str
         [
             "render_structure_views completed.",
             f"image_path={data['image_path']}",
+            f"backend={backend_used}",
             f"views={', '.join(tile_paths.keys())}",
             f"elements={', '.join(legend_mapping.keys()) or '(none)'}",
         ]

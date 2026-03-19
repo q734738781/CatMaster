@@ -60,6 +60,7 @@ Read these assets first through the read-only skills mount:
 
 - Use comments to mark inserted section blocks only when that helps later assembly or review.
 - Keep figures and tables aligned with actual artifact paths and generated files.
+- When the manuscript needs atomistic structure renders, prefer `render_structure_views(backend="ovito", ...)` for the journal-facing figure, and do not annotate the exported panel with renderer/backend labels.
 - When the manuscript needs a conceptual, mechanistic, or workflow figure, use `generate_schematic_figure` to create a concise publication-facing schematic and save it under the writing workspace.
 - When numerical evidence is better communicated as a table or plot than prose alone, add that artifact instead of forcing the explanation into dense text.
 - If you create a new `.tex` helper file, record the path in `latex_artifact_refs`.

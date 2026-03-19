@@ -601,12 +601,18 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
+        assert "prefer a quick built-in web check through the online model's native browsing capability" in agent_kwargs["system_prompt"]
+        assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
         assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "write a reusable workspace script under `scripts/`" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "write a reusable workspace script under `scripts/`" in subagents_by_name["ml_worker"]["system_prompt"]
         materials_worker_selector = next(
             item
             for item in subagents_by_name["materials_worker"]["middleware"]

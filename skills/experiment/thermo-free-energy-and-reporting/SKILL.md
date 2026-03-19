@@ -3,9 +3,9 @@ name: thermo-free-energy-and-reporting
 description: Use this skill for thermodynamic and free-energy post-processing, result normalization, explicit adsorbate-only frequency-job SOP, and concise reporting standards for catalyst comparison.
 license: project-local
 compatibility: local
-allowed-tools: "fix_atoms_by_indices vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
+allowed-tools: "fix_atoms_by_indices identify_structure_fragments vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
 metadata:
-  catmaster-suggested-tools: "fix_atoms_by_indices vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
+  catmaster-suggested-tools: "fix_atoms_by_indices identify_structure_fragments vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
 ---
 
 # thermo-free-energy-and-reporting
@@ -21,6 +21,7 @@ Use this skill to convert raw electronic-structure results into comparable therm
 
 ## Suggested tools
 - `fix_atoms_by_indices`
+- `identify_structure_fragments`
 - `vaspkit_adsorbate_thermo_correction`
 - `vaspkit_gas_thermo_correction`
 
@@ -41,6 +42,7 @@ Use this skill to convert raw electronic-structure results into comparable therm
 - For slab adsorbate thermochemistry, freeze the slab and keep only the adsorbate degrees of freedom active unless the task explicitly calls for a broader vibrational model.
 - Do not assume the relaxed adsorbate-slab `CONTCAR` already has the correct selective-dynamics mask for adsorbate-only thermochemistry. A relax-stage mask that still leaves surface atoms mobile is not acceptable for adsorbate-only vibrational treatment.
 - If the objective is adsorbate-only slab thermochemistry and `ads_indices` are known, explicitly refreeze the relaxed structure before writing the frequency job. Use `fix_atoms_by_indices(indices=ads_indices, reverse=true)` on the relaxed adsorbate-slab structure so only the adsorbate atoms remain `T T T` and every slab atom is `F F F`.
+- If the adsorbate may have detached into a weakly bound molecular fragment, probe the relaxed structure first with `identify_structure_fragments`. Prefer the default `jmolnn` probe and compare the fragment/reference-index overlap against existing `ads_indices`. Use this as a physisorption sanity check only; do not treat it as a robust chemisorption detector.
 - Treat this explicit refixing step as mandatory unless the task explicitly requests a broader vibrational model. Do not skip it merely because the bottom slab layers were already frozen during relaxation.
 - Preserve the same electronic-structure settings used for the associated energy campaign whenever they materially affect the comparison: `ENCUT`, `EDIFF`, smearing, spin treatment, `DFT+U`, `D3`, dipole correction, and related reference-sensitive toggles.
 - Keep the thermochemistry directory traceable to the relaxed structure and the exact reference-state convention used for the final table.

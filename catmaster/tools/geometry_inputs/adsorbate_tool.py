@@ -345,6 +345,71 @@ def _load_inherited_ads_indices(slab_path: Path) -> Tuple[List[int], List[str]]:
     return _merge_indices(from_meta, from_index), warnings
 
 
+def _load_existing_ads_meta(structure_path: Path, warnings: List[str]) -> Dict[str, Any]:
+    for meta_path in _meta_path_candidates(structure_path):
+        if not meta_path.exists():
+            continue
+        try:
+            raw = _load_json(meta_path)
+        except Exception as exc:
+            warnings.append(f"Failed to parse metadata {workspace_relpath(meta_path)}: {exc}")
+            continue
+        if isinstance(raw, dict):
+            return raw
+        warnings.append(f"Ignoring non-object metadata file: {workspace_relpath(meta_path)}")
+    return {}
+
+
+def propagate_adsorbate_metadata(
+    *,
+    input_structure_path: Path,
+    output_structure_path: Path,
+    tool_name: str,
+) -> tuple[Dict[str, Any] | None, List[str]]:
+    warnings: List[str] = []
+    ads_indices, inherited_warnings = _load_inherited_ads_indices(input_structure_path)
+    warnings.extend(inherited_warnings)
+    if not ads_indices:
+        return None, warnings
+
+    existing_meta = _load_existing_ads_meta(input_structure_path, warnings)
+    ads_indices_added = _normalize_indices(existing_meta.get("ads_indices_added"))
+    meta_payload: Dict[str, Any] = {
+        "schema": ADS_META_SCHEMA,
+        "source_tool": tool_name,
+        "parent_structure_rel": workspace_relpath(input_structure_path),
+        "output_structure_rel": workspace_relpath(output_structure_path),
+        "ads_indices": ads_indices,
+        "ads_count_total": len(ads_indices),
+        "propagated_from_rel": workspace_relpath(input_structure_path),
+    }
+    if ads_indices_added:
+        meta_payload["ads_indices_added"] = ads_indices_added
+        meta_payload["ads_count_added"] = len(ads_indices_added)
+    for key in ("adsorbate_file_rel", "site_label", "site_cart_coords", "site_input_mode"):
+        value = existing_meta.get(key)
+        if value not in (None, "", [], {}):
+            meta_payload[key] = value
+
+    meta_path = _meta_sidecar_path(output_structure_path)
+    meta_path.write_text(json.dumps(meta_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    entry: Dict[str, Any] = {
+        "output_poscar_rel": workspace_relpath(output_structure_path),
+        "metadata_rel": workspace_relpath(meta_path),
+        "ads_indices": ads_indices,
+        "ads_count_total": len(ads_indices),
+    }
+    if ads_indices_added:
+        entry["ads_indices_added"] = ads_indices_added
+        entry["ads_count_added"] = len(ads_indices_added)
+    ads_indices_json = _write_ads_indices_index(output_structure_path.parent / "ads_indices.json", [entry])
+    return {
+        "ads_indices": ads_indices,
+        "metadata_rel": workspace_relpath(meta_path),
+        "ads_indices_json_rel": workspace_relpath(ads_indices_json),
+    }, warnings
+
+
 def _write_adsorbate_meta(
     *,
     output_structure_path: Path,

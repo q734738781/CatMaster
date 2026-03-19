@@ -14,6 +14,7 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
+from .adsorbate_tool import propagate_adsorbate_metadata
 from .vasp_inputs import StructWriter
 
 SUPPORTED_EXTS = {".vasp", ".cif", ".xyz"}
@@ -324,6 +325,13 @@ def vasp_prepare(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
         "protected_incar_keys": list(plan.protected_keys),
         "user_patch_keys": sorted(dict(params.user_incar_patch).keys()),
     }
+    propagated, warnings = propagate_adsorbate_metadata(
+        input_structure_path=input_path,
+        output_structure_path=output_root / "POSCAR",
+        tool_name=tool_name,
+    )
+    if propagated:
+        data.update(propagated)
     lines = [
         f"{tool_name} completed.",
         f"preset={params.preset} regime={params.regime} k_grid={list(plan.k_grid)} patch_policy={params.patch_policy}",
@@ -347,7 +355,10 @@ def vasp_prepare(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
                 f"potim={data['md_timestep_fs']} smass={data['md_smass']}"
             ),
         )
-    return "\n".join(lines), {"tool_name": tool_name, "data": data}
+    artifact: dict[str, Any] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    return "\n".join(lines), artifact
 
 
 __all__ = [

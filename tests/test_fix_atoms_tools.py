@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 from pymatgen.core import Structure
 
 from catmaster.tools.base import workspace_scope
+from catmaster.tools.geometry_inputs.adsorbate_tool import _load_inherited_ads_indices, place_adsorbate
 from catmaster.tools.geometry_inputs.slab_tools import (
     fix_atoms_by_height,
     fix_atoms_by_indices,
@@ -131,3 +133,44 @@ def test_fix_atoms_by_height_reverse_complements_selection(tmp_path: Path) -> No
     assert artifact_a["data"]["reverse"] is False
     assert artifact_b["data"]["reverse"] is True
     assert all(a != b for a, b in zip(mask_normal, mask_reverse))
+
+
+def test_fix_atoms_by_indices_preserves_adsorbate_metadata_continuity(tmp_path: Path) -> None:
+    project = tmp_path / "project_space"
+    with workspace_scope(project):
+        pass
+    root = Path(__file__).resolve().parents[1]
+    slab_src = root / "tests" / "assets" / "Fe_hkl111_12A_15AVac_5ARelax.vasp"
+    ads_src = root / "tests" / "assets" / "CO.xyz"
+    slab_target = project / "files" / "inputs" / "slab.vasp"
+    ads_target = project / "files" / "inputs" / "CO.xyz"
+    slab_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(slab_src, slab_target)
+    shutil.copyfile(ads_src, ads_target)
+
+    with workspace_scope(project):
+        _, placed_artifact = place_adsorbate(
+            {
+                "slab_file": "inputs/slab.vasp",
+                "adsorbate_file": "inputs/CO.xyz",
+                "site": "ontop_0",
+                "distance": 2.0,
+                "output_poscar": "outputs/ads_placed.vasp",
+            }
+        )
+        ads_indices = placed_artifact["data"]["ads_indices"]
+        _, fixed_artifact = fix_atoms_by_indices(
+            {
+                "structure_ref": "outputs/ads_placed.vasp",
+                "output_path": "outputs/ads_fixed.vasp",
+                "indices": ads_indices,
+                "reverse": True,
+            }
+        )
+
+    propagated_indices, warnings = _load_inherited_ads_indices(project / "files" / "outputs" / "ads_fixed.vasp")
+    assert warnings == []
+    assert propagated_indices == ads_indices
+    assert fixed_artifact["data"]["metadata_rel"].endswith("ads_fixed.meta.json")
+    meta = json.loads((project / "files" / fixed_artifact["data"]["metadata_rel"]).read_text(encoding="utf-8"))
+    assert meta["ads_indices"] == ads_indices

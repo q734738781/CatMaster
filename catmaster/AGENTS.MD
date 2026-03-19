@@ -28,10 +28,17 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
 - `ExperimentSpecialist`
   - Bounded execution specialist.
   - May delegate only to `materials_worker`, `ml_worker`, and a lightweight `literature_agent`.
+  - For narrow best-practice checks during implementation, may rely on the online model's built-in web-browsing capability instead of waiting for a dedicated search tool. Keep this limited to official docs / primary-source verification, not broad review.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
   - May use the lightweight `literature_agent` only for tightly bounded background supplementation needed by the current manuscript or note.
+
+Execution guidance for the active experiment path:
+
+- If a dedicated tool does not cover a bounded execution task, prefer implementing the missing step with `execute`, Python, and mature third-party libraries inside the workspace over stopping at the tool boundary.
+- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow built-in web check through the online model to align with current official documentation or primary sources before improvising. Do not turn that into a broad literature campaign.
+- If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
 
 Do not design new features around the old `director -> task runner -> memory patch` stack unless you are explicitly maintaining legacy code. The active path is the DeepAgent specialist runtime.
 
@@ -95,6 +102,15 @@ Long-term memory uses:
 - `/memories/AGENTS.md`
 
 Persistent memory is for durable project conventions, validated reusable knowledge, and stable workflow guidance only. Do not store transient task requests, scratch execution logs, speculative findings, or one-off run details.
+
+### Workspace layout reminder
+
+For active-path generated artifacts inside the workspace `files/` tree:
+
+- keep user-facing topic outputs grouped by topic
+- keep writing outputs under `writing/`
+- keep reusable generated helper code and heavy deterministic execution logic under `scripts/`
+- especially prefer `scripts/` for high-throughput screening helpers, large batch post-processing, and other multi-run reproducible pipelines
 
 ### Multimodal tool-content rules
 

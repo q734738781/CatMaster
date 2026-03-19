@@ -83,6 +83,7 @@ class ToolRegistry:
             analyze_trajectory,
             analyze_vasp_results,
             generate_schematic_figure,
+            identify_structure_fragments,
             polish_academic_prose,
             render_structure_views,
             vaspkit_adsorbate_thermo_correction,
@@ -93,6 +94,7 @@ class ToolRegistry:
             AnalyzeTrajectoryInput,
             AnalyzeVaspResultsInput,
             GenerateSchematicFigureInput,
+            IdentifyStructureFragmentsInput,
             PolishAcademicProseInput,
             RenderStructureViewsInput,
             VaspkitAdsorbateThermoCorrectionInput,
@@ -173,6 +175,7 @@ class ToolRegistry:
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
         self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
+        self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
         self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
         self.register_tool("analyze_neb_results", analyze_neb_results, AnalyzeNebResultsInput)
         self.register_tool("analyze_trajectory", analyze_trajectory, AnalyzeTrajectoryInput)

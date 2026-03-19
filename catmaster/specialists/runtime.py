@@ -78,6 +78,7 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "mp_download_structure",
     "render_structure_views",
     "analyze_images",
+    "identify_structure_fragments",
     "analyze_vasp_results",
     "analyze_neb_results",
     "analyze_trajectory",
@@ -1436,6 +1437,8 @@ class SpecialistRunner:
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
             "Route by the current working artifact: use `materials_worker` for structure/calc/result work, including MACE-based surrogate screening inside a materials workflow; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
+            "When method settings, software behavior, or scientific best practice are uncertain, prefer a quick built-in web check through the online model's native browsing capability to align with current official or primary-source guidance before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
+            "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._memory_write_policy()}\n"
@@ -1494,6 +1497,7 @@ class SpecialistRunner:
             "Prefer a topic-centric layout for user-facing outputs: create one folder per user topic when the work naturally clusters that way. "
             "Within a topic folder, place literature-grounding material under `literature/`, experiment geometry/setup artifacts under `structures/`, "
             "and execution outputs under `calculations/`. "
+            "Place reusable generated helper code and heavier deterministic execution logic under `scripts/`, especially for high-throughput screening, batch analysis, or multi-step reproducible pipelines. "
             "If a small saved note or compact report is actually needed, place it under `notes/` (either topic-local or shared when appropriate). "
             "Keep manuscript drafting and writing-focused outputs under a dedicated `writing/` workspace area instead of scattering them across experiment folders. "
             "If the workspace already has a clear established layout, extend that layout consistently instead of creating parallel folder schemes."
@@ -1537,9 +1541,11 @@ class SpecialistRunner:
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
             "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis when those steps serve one materials workflow.\n"
             "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "When configuration details, package behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
+            "For heavier custom logic such as high-throughput screening helpers, large batch post-processing, or multi-step deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
-            "Do not perform literature search; that belongs to literature_agent.\n"
+            "Do not perform broad literature review; that belongs to literature_agent.\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
@@ -1555,8 +1561,10 @@ class SpecialistRunner:
             "This worker owns dataset/model lifecycle tasks: dataset building, model training, benchmark evaluation, and active-learning candidate selection.\n"
             "Start here when the primary artifact is a curated dataset, a training/evaluation run, a model checkpoint, or an active-learning selection ledger.\n"
             "When no dedicated tool covers a bounded ML task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before locking the workflow; do not wait for a dedicated search tool.\n"
+            "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
-            "Do not perform literature search; that belongs to literature_agent.\n"
+            "Do not perform broad literature review; that belongs to literature_agent.\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"

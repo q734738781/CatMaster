@@ -7,6 +7,10 @@ from catmaster.tools.analysis.agentic_compile_tex import (
     compile_text,
 )
 from catmaster.tools.analysis.analyze_images import AnalyzeImagesInput, analyze_images
+from catmaster.tools.analysis.fragment_probe import (
+    IdentifyStructureFragmentsInput,
+    identify_structure_fragments,
+)
 from catmaster.tools.analysis.generate_schematic_figure import (
     GenerateSchematicFigureInput,
     generate_schematic_figure,
@@ -38,6 +42,8 @@ __all__ = [
     "agentic_compile_tex",
     "AnalyzeImagesInput",
     "analyze_images",
+    "IdentifyStructureFragmentsInput",
+    "identify_structure_fragments",
     "GenerateSchematicFigureInput",
     "generate_schematic_figure",
     "PolishAcademicProseInput",
