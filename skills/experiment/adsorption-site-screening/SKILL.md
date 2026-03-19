@@ -4,6 +4,8 @@ description: Use this skill for adsorption-site enumeration and adsorbate placem
 license: project-local
 compatibility: local
 allowed-tools: "enumerate_adsorption_sites place_adsorbate generate_batch_adsorption_structures"
+metadata:
+  catmaster-suggested-tools: "enumerate_adsorption_sites place_adsorbate generate_batch_adsorption_structures"
 ---
 
 # adsorption-site-screening
@@ -17,10 +19,10 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 3. Use `place_adsorbate` for one chosen site or `generate_batch_adsorption_structures` for a screening set.
 4. Preserve the returned `ads_indices` metadata for downstream relaxations and thermochemistry.
 
-## Allowed tools
-- enumerate_adsorption_sites
-- place_adsorbate
-- generate_batch_adsorption_structures
+## Suggested tools
+- `enumerate_adsorption_sites`
+- `place_adsorbate`
+- `generate_batch_adsorption_structures`
 
 ## Workflow
 
@@ -56,3 +58,4 @@ Return:
 
 ## References
 - When the slab already carries adsorbate metadata, rely on the merged `ads_indices` returned by the tool instead of recomputing adsorbate atom indices.
+- For the full screening workflow, hand off to `adsorption-screening` after the primitive site list is established.

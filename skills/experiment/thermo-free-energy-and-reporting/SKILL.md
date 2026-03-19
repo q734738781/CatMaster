@@ -4,6 +4,8 @@ description: Use this skill for thermodynamic and free-energy post-processing, r
 license: project-local
 compatibility: local
 allowed-tools: "fix_atoms_by_indices vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
+metadata:
+  catmaster-suggested-tools: "fix_atoms_by_indices vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
 ---
 
 # thermo-free-energy-and-reporting
@@ -17,7 +19,7 @@ Use this skill to convert raw electronic-structure results into comparable therm
 3. Keep units and correction assumptions explicit.
 4. Report both the final ranking and the assumptions that could change it.
 
-## Allowed tools
+## Suggested tools
 - `fix_atoms_by_indices`
 - `vaspkit_adsorbate_thermo_correction`
 - `vaspkit_gas_thermo_correction`
@@ -63,3 +65,4 @@ Return:
 
 ## References
 - If correction details become nontrivial, load the relevant stage outputs and compute them explicitly rather than summarizing from memory.
+- For band/DOS, NEB, and MD-derived tables, use `band-and-dos-analysis`, `reaction-neb-analysis`, or `md-diffusion-analysis` as the upstream workflow skill before final thermochemistry reporting.

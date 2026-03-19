@@ -173,14 +173,14 @@ models:
         extra_body:
           prompt_cache_retention: 24h
     
-  "openai/gpt-5-mini:online":
+  "openai/gpt-5.4-mini":
     provider: openrouter
-    model: openai/gpt-5-mini:online
+    model: openai/gpt-5.4-mini
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
     reasoning:
-      effort: minimal
+      effort: medium
     provider_options:
       openrouter:
         extra_body:
@@ -236,7 +236,7 @@ agents:
   literature_synthesizer: "openai/gpt-5.4:medium"
   literature_deep_research: "openai/gpt-5.4:online-high"
   memory_patch: "openai/gpt-5.4:online-medium"
-  tool_selector: "openai/gpt-5.4:online-minimal"
+  tool_selector: "openai/gpt-5.4-mini"
   summary: "google/gemini-3-flash-preview"
 
 image_generation:

@@ -27,3 +27,25 @@ mace_sp_dir:
   backward_files:
     - "output"
   task_work_path: "."
+
+mace_train_dir:
+  resources: mace_gpu
+  command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  forward_files:
+    - "dataset"
+    - "params"
+    - "task_script/mace_train.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+mace_eval_dir:
+  resources: mace_gpu
+  command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  forward_files:
+    - "dataset"
+    - "params"
+    - "task_script/mace_evaluate.py"
+  backward_files:
+    - "output"
+  task_work_path: "."

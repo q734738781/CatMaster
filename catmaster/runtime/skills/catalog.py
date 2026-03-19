@@ -199,6 +199,7 @@ class SkillCatalog:
         resolved_repo_root = (repo_root or Path.cwd()).expanduser().resolve()
         roots = [
             resolved_repo_root / "skills" / "experiment",
+            resolved_repo_root / "skills" / "machine_learning",
             resolved_repo_root / "skills" / "writing",
         ]
         return cls(
@@ -250,6 +251,20 @@ class SkillCatalog:
                             roles = ["write_director", "section_writer", "write_reviewer"]
                         if not tags:
                             tags = ["writing"]
+                    elif source_root_name in {"experiment", "machine_learning"}:
+                        if not lanes:
+                            lanes = ["all"]
+                        if not roles:
+                            roles = [
+                                "proposal",
+                                "director",
+                                "fast_director",
+                                "task_runner",
+                                "research_lead",
+                                "research_state_updater",
+                            ]
+                        if not tags:
+                            tags = [source_root_name]
                     meta = SkillMeta(
                         name=name,
                         description=description,
@@ -332,7 +347,7 @@ class CatMasterSkillsRuntime:
             if skill.roles or skill.lanes:
                 if skill.roles and role_text not in skill.roles:
                     continue
-                if skill.lanes and lane_text and lane_text not in skill.lanes:
+                if skill.lanes and lane_text and lane_text not in skill.lanes and "all" not in skill.lanes:
                     continue
                 if skill.lanes and not lane_text and "all" not in skill.lanes:
                     continue

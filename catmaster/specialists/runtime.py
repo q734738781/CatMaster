@@ -55,26 +55,42 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "mace_relax_batch",
     "mace_sp_batch",
     "vasp_prepare",
+    "vasp_band_prepare",
     "build_slab",
     "fix_atoms_by_layers",
     "fix_atoms_by_height",
     "fix_atoms_by_indices",
     "supercell",
+    "enumerate_unique_sites",
+    "create_vacancy",
+    "substitute_species",
+    "insert_interstitial_at_coords",
     "enumerate_adsorption_sites",
     "place_adsorbate",
     "generate_batch_adsorption_structures",
     "make_neb_geometry",
+    "generate_strained_structures",
+    "generate_kpath",
+    "generate_phonon_displacements",
     "vasp_neb_prepare",
     "vasp_execute_batch",
     "mp_search_materials",
     "mp_download_structure",
     "render_structure_views",
     "analyze_images",
+    "analyze_vasp_results",
+    "analyze_neb_results",
+    "analyze_trajectory",
     "generate_schematic_figure",
     "vaspkit_adsorbate_thermo_correction",
     "vaspkit_gas_thermo_correction",
 }
-_ML_WORKER_TOOL_ALLOWLIST: set[str] = set()
+_ML_WORKER_TOOL_ALLOWLIST: set[str] = {
+    "build_dataset_from_runs",
+    "mace_train",
+    "mace_evaluate",
+    "calculate_al_candidates",
+}
 _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = set(_MATERIALS_WORKER_TOOL_ALLOWLIST) | set(_ML_WORKER_TOOL_ALLOWLIST)
 _WRITING_TOOL_ALLOWLIST = {
     "analyze_images",
@@ -1403,7 +1419,8 @@ class SpecialistRunner:
         return (
             "You are ExperimentSpecialist.\n"
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
-            "Use `materials_worker` for materials/computational subtasks, `ml_worker` for machine-learning subtasks, and `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
+            "Route by the current working artifact: use `materials_worker` for structure/calc/result work, including MACE-based surrogate screening inside a materials workflow; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
+            "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1481,6 +1498,10 @@ class SpecialistRunner:
         return (
             "You are materials_worker for ExperimentSpecialist.\n"
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
+            "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
+            "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis when those steps serve one materials workflow.\n"
+            "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform literature search; that belongs to literature_agent.\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
@@ -1494,7 +1515,10 @@ class SpecialistRunner:
         return (
             "You are ml_worker for ExperimentSpecialist.\n"
             "Handle a bounded machine-learning subtask autonomously inside the workspace.\n"
-            "This worker currently exposes only the default DeepAgent built-in tool surface; rely on workspace files, code inspection, and concise reporting until dedicated ML tools are added.\n"
+            "This worker owns dataset/model lifecycle tasks: dataset building, model training, benchmark evaluation, and active-learning candidate selection.\n"
+            "Start here when the primary artifact is a curated dataset, a training/evaluation run, a model checkpoint, or an active-learning selection ledger.\n"
+            "When no dedicated tool covers a bounded ML task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
             "Do not perform literature search; that belongs to literature_agent.\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"

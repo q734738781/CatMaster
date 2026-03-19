@@ -6,6 +6,10 @@ from catmaster.tools.geometry_inputs.vasp_prepare import (
     VaspPrepareInput,
     vasp_prepare,
 )
+from catmaster.tools.geometry_inputs.vasp_band_prepare import (
+    VaspBandPrepareInput,
+    vasp_band_prepare,
+)
 from catmaster.tools.geometry_inputs.slab_tools import (
     SlabBuildInput,
     FixAtomsByLayersInput,
@@ -16,7 +20,24 @@ from catmaster.tools.geometry_inputs.slab_tools import (
     fix_atoms_by_height,
     fix_atoms_by_indices,
 )
-from catmaster.tools.geometry_inputs.crystal_tool import SupercellInput, supercell
+from catmaster.tools.geometry_inputs.crystal_tool import (
+    CreateVacancyInput,
+    EnumerateUniqueSitesInput,
+    GenerateKpathInput,
+    GeneratePhononDisplacementsInput,
+    GenerateStrainedStructuresInput,
+    InsertInterstitialAtCoordsInput,
+    SubstituteSpeciesInput,
+    SupercellInput,
+    create_vacancy,
+    enumerate_unique_sites,
+    generate_kpath,
+    generate_phonon_displacements,
+    generate_strained_structures,
+    insert_interstitial_at_coords,
+    substitute_species,
+    supercell,
+)
 from catmaster.tools.geometry_inputs.adsorbate_tool import (
     EnumerateAdsorptionSitesInput,
     PlaceAdsorbateInput,
@@ -36,6 +57,7 @@ __all__ = [
     "MoleculeFromSmilesInput",
     "create_molecule_from_smiles",
     "VaspPrepareInput",
+    "VaspBandPrepareInput",
     "SlabBuildInput",
     "FixAtomsByLayersInput",
     "FixAtomsByHeightInput",
@@ -48,8 +70,23 @@ __all__ = [
     "fix_atoms_by_height",
     "fix_atoms_by_indices",
     "vasp_prepare",
+    "vasp_band_prepare",
     "SupercellInput",
+    "EnumerateUniqueSitesInput",
+    "CreateVacancyInput",
+    "SubstituteSpeciesInput",
+    "InsertInterstitialAtCoordsInput",
+    "GenerateStrainedStructuresInput",
+    "GenerateKpathInput",
+    "GeneratePhononDisplacementsInput",
     "supercell",
+    "enumerate_unique_sites",
+    "create_vacancy",
+    "substitute_species",
+    "insert_interstitial_at_coords",
+    "generate_strained_structures",
+    "generate_kpath",
+    "generate_phonon_displacements",
     "enumerate_adsorption_sites",
     "place_adsorbate",
     "generate_batch_adsorption_structures",

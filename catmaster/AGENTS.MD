@@ -2,6 +2,12 @@
 
 This repository now uses a DeepAgent-native specialist runtime as the active path. Treat the current implementation under `catmaster/specialists/` as the source of truth.
 
+Legacy note:
+
+- Older orchestrator / director-style code under `catmaster/agents/` is deprecated but still present in the repo.
+- Unless you are explicitly maintaining that legacy stack, do not use it as the source of truth for current prompts, routing, tool policy, or runtime behavior.
+- When active-path behavior and legacy code disagree, follow `catmaster/specialists/runtime.py` and the active specialist tests.
+
 ## 1) Active architecture
 
 ### Public entrypoints
@@ -179,7 +185,7 @@ Tool functions should:
 - return LangChain-native `(content, artifact)`
 - raise `CatMasterToolExecutionError` for business failures with a model-visible `public_message`
 - keep both the registered input-model docstring and the tool function docstring tagged on the first line with a short `[scope/stage]` label
-- use short, stable labels such as `[material/discovery]`, `[surface/modeling]`, `[vasp/prepare]`, `[vasp/execute]`, `[mace/execute]`, `[structure/viz]`, `[thermo/gas]`, or `[literature/metadata]`
+- use short, stable labels such as `[structure/discovery]`, `[bulk/modeling]`, `[defect/modeling]`, `[electronic/prepare]`, `[phonon/modeling]`, `[vasp/prepare]`, `[vasp/analysis]`, `[md/analysis]`, `[mace/execute]`, `[ml/prepare]`, `[ml/analysis]`, `[structure/viz]`, `[thermo/gas]`, or `[literature/metadata]`
 
 Because the active tool registry uses the input model docstring as the tool description, keep the first-line tag and summary synchronized between the input model docstring and the tool function docstring.
 

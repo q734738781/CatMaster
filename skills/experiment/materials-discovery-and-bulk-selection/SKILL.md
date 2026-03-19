@@ -4,6 +4,8 @@ description: Use this skill for materials discovery and bulk structure selection
 license: project-local
 compatibility: local
 allowed-tools: "mp_search_materials mp_download_structure"
+metadata:
+  catmaster-suggested-tools: "mp_search_materials mp_download_structure"
 ---
 
 # materials-discovery-and-bulk-selection
@@ -17,9 +19,9 @@ Use this skill to turn an open-ended catalyst search into a shortlist of downloa
 3. Prune the candidate table before downloading structures.
 4. Use `mp_download_structure` only for the shortlisted `mp_id` values.
 
-## Allowed tools
-- mp_search_materials
-- mp_download_structure
+## Suggested tools
+- `mp_search_materials`
+- `mp_download_structure`
 
 ## Workflow
 
@@ -37,6 +39,13 @@ Use this skill to turn an open-ended catalyst search into a shortlist of downloa
 - It supports partial success: some `mp_id` values can fail while others download cleanly.
 - Use the returned `results` and `errors` rather than assuming every requested ID resolved.
 
+### 4. Hand off the shortlist
+- Once the bulk shortlist is stable, hand it to `bulk-relax-and-reference` for relaxation and reference-state cleanup.
+
+## Method-critical defaults
+- Keep the search criteria, requested fields, and shortlist filter fixed while you compare candidates.
+- Do not treat a candidate table built with a different field set as interchangeable with the current shortlist.
+
 ## Output Contract
 Return:
 - search CSV path
@@ -46,3 +55,4 @@ Return:
 
 ## References
 - If a task needs advanced MP field selection, inspect the tool schema before broadening the search request.
+- Use `bulk-relax-and-reference` when the discovery phase is finished and you need a real reference structure.

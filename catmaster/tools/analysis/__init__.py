@@ -16,6 +16,14 @@ from catmaster.tools.analysis.polish_academic_prose import (
     polish_academic_prose,
 )
 from catmaster.tools.analysis.render_structure_views import RenderStructureViewsInput, render_structure_views
+from catmaster.tools.analysis.results_analysis import (
+    AnalyzeNebResultsInput,
+    AnalyzeTrajectoryInput,
+    AnalyzeVaspResultsInput,
+    analyze_neb_results,
+    analyze_trajectory,
+    analyze_vasp_results,
+)
 from catmaster.tools.analysis.vaspkit_thermo import (
     VaspkitAdsorbateThermoCorrectionInput,
     VaspkitGasThermoCorrectionInput,
@@ -36,6 +44,12 @@ __all__ = [
     "polish_academic_prose",
     "RenderStructureViewsInput",
     "render_structure_views",
+    "AnalyzeVaspResultsInput",
+    "AnalyzeNebResultsInput",
+    "AnalyzeTrajectoryInput",
+    "analyze_vasp_results",
+    "analyze_neb_results",
+    "analyze_trajectory",
     "VaspkitAdsorbateThermoCorrectionInput",
     "VaspkitGasThermoCorrectionInput",
     "vaspkit_adsorbate_thermo_correction",

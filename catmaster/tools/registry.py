@@ -31,29 +31,45 @@ class ToolRegistry:
         from catmaster.tools.geometry_inputs import (
             create_molecule_from_smiles,
             vasp_prepare,
+            vasp_band_prepare,
             build_slab,
             fix_atoms_by_layers,
             fix_atoms_by_height,
             fix_atoms_by_indices,
             supercell,
+            enumerate_unique_sites,
+            create_vacancy,
+            substitute_species,
+            insert_interstitial_at_coords,
             enumerate_adsorption_sites,
             place_adsorbate,
             generate_batch_adsorption_structures,
             make_neb_geometry,
+            generate_strained_structures,
+            generate_kpath,
+            generate_phonon_displacements,
             vasp_neb_prepare,
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
             VaspPrepareInput,
+            VaspBandPrepareInput,
             SlabBuildInput,
             FixAtomsByLayersInput,
             FixAtomsByHeightInput,
             FixAtomsByIndicesInput,
             SupercellInput,
+            EnumerateUniqueSitesInput,
+            CreateVacancyInput,
+            SubstituteSpeciesInput,
+            InsertInterstitialAtCoordsInput,
             EnumerateAdsorptionSitesInput,
             PlaceAdsorbateInput,
             GenerateBatchAdsorptionStructuresInput,
             MakeNebGeometryInput,
+            GenerateStrainedStructuresInput,
+            GenerateKpathInput,
+            GeneratePhononDisplacementsInput,
             VaspNebPrepareInput,
         )
         
@@ -63,6 +79,9 @@ class ToolRegistry:
         from catmaster.tools.analysis import (
             compile_text,
             analyze_images,
+            analyze_neb_results,
+            analyze_trajectory,
+            analyze_vasp_results,
             generate_schematic_figure,
             polish_academic_prose,
             render_structure_views,
@@ -70,11 +89,24 @@ class ToolRegistry:
             vaspkit_gas_thermo_correction,
             CompileTextInput,
             AnalyzeImagesInput,
+            AnalyzeNebResultsInput,
+            AnalyzeTrajectoryInput,
+            AnalyzeVaspResultsInput,
             GenerateSchematicFigureInput,
             PolishAcademicProseInput,
             RenderStructureViewsInput,
             VaspkitAdsorbateThermoCorrectionInput,
             VaspkitGasThermoCorrectionInput,
+        )
+        from catmaster.tools.machine_learning import (
+            BuildDatasetFromRunsInput,
+            CalculateALCandidatesInput,
+            MaceEvaluateInput,
+            MaceTrainInput,
+            build_dataset_from_runs,
+            calculate_al_candidates,
+            mace_evaluate,
+            mace_train,
         )
         from catmaster.runtime.literature import (
             FindInPageInput,
@@ -118,21 +150,32 @@ class ToolRegistry:
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
         self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
+        self.register_tool("vasp_band_prepare", vasp_band_prepare, VaspBandPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
         self.register_tool("fix_atoms_by_layers", fix_atoms_by_layers, FixAtomsByLayersInput)
         self.register_tool("fix_atoms_by_height", fix_atoms_by_height, FixAtomsByHeightInput)
         self.register_tool("fix_atoms_by_indices", fix_atoms_by_indices, FixAtomsByIndicesInput)
         self.register_tool("supercell", supercell, SupercellInput)
+        self.register_tool("enumerate_unique_sites", enumerate_unique_sites, EnumerateUniqueSitesInput)
+        self.register_tool("create_vacancy", create_vacancy, CreateVacancyInput)
+        self.register_tool("substitute_species", substitute_species, SubstituteSpeciesInput)
+        self.register_tool("insert_interstitial_at_coords", insert_interstitial_at_coords, InsertInterstitialAtCoordsInput)
         self.register_tool("enumerate_adsorption_sites", enumerate_adsorption_sites, EnumerateAdsorptionSitesInput)
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
         self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
         self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
+        self.register_tool("generate_strained_structures", generate_strained_structures, GenerateStrainedStructuresInput)
+        self.register_tool("generate_kpath", generate_kpath, GenerateKpathInput)
+        self.register_tool("generate_phonon_displacements", generate_phonon_displacements, GeneratePhononDisplacementsInput)
         self.register_tool("vasp_neb_prepare", vasp_neb_prepare, VaspNebPrepareInput)
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
         self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
+        self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
+        self.register_tool("analyze_neb_results", analyze_neb_results, AnalyzeNebResultsInput)
+        self.register_tool("analyze_trajectory", analyze_trajectory, AnalyzeTrajectoryInput)
         self.register_tool("generate_schematic_figure", generate_schematic_figure, GenerateSchematicFigureInput)
         self.register_tool("compile_text", compile_text, CompileTextInput)
         self.register_alias("agentic_compile_tex", "compile_text")
@@ -159,6 +202,10 @@ class ToolRegistry:
         self.register_tool("bash", bash_exec, BashExecInput)
         self.register_alias("bash_exec", "bash")
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
+        self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
+        self.register_tool("mace_train", mace_train, MaceTrainInput)
+        self.register_tool("mace_evaluate", mace_evaluate, MaceEvaluateInput)
+        self.register_tool("calculate_al_candidates", calculate_al_candidates, CalculateALCandidatesInput)
     
     def register_tool(
         self, 

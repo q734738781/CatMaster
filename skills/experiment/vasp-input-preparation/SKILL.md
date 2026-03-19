@@ -3,9 +3,9 @@ name: vasp-input-preparation
 description: Use this skill for preparing canonical VASP relax/static/frequency/DOS/MD input sets, choosing the correct regime and preset, handling INCAR patch-policy edge cases, explicit slab-frequency setup, and producing execution-ready folder layouts before dispatch.
 license: project-local
 compatibility: local
-allowed-tools: "fix_atoms_by_indices vasp_prepare"
+allowed-tools: "fix_atoms_by_indices vasp_prepare vasp_band_prepare generate_kpath"
 metadata:
-  catmaster-suggested-tools: "fix_atoms_by_indices vasp_prepare"
+  catmaster-suggested-tools: "fix_atoms_by_indices vasp_prepare generate_kpath"
 ---
 
 # vasp-input-preparation
@@ -19,10 +19,13 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 3. Put one preparation campaign under one clean `output_root`.
 4. Use `patch_policy="safe"` by default.
 5. For `dos` and `md`, treat the preset as a starter template and do job-specific tuning through `user_incar_patch` in the same call.
+6. Use `vasp_band_prepare` instead of `vasp_prepare` when the job is a line-mode band-structure calculation with an explicit band `KPOINTS`.
 
 ## Suggested tools
 - `fix_atoms_by_indices`
 - `vasp_prepare`
+- `vasp_band_prepare`
+- `generate_kpath`
 
 ## Workflow
 
@@ -57,7 +60,12 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - Directory input preserves relative layout and appends `<stem>/` per structure.
 - Do not mix unrelated relax and SP campaigns in the same ambiguous tree.
 
-### 6. Prepare frequency jobs explicitly if requested
+### 6. Add explicit band-path or phonon handoffs
+- Use `generate_kpath` only after a relaxed bulk baseline is accepted; it emits the band-path `KPOINTS`, not a full calc directory.
+- Use `vasp_band_prepare` when that line-mode `KPOINTS` should become a dedicated band-structure job root.
+- For phonon workflows, keep displacement generation outside `vasp_prepare`; the prepare tool should only own the force-job input deck after the displacement set already exists.
+
+### 7. Prepare frequency jobs explicitly if requested
 - Do not treat vibrational thermochemistry jobs as ordinary relax or SP jobs. Prepare them as a separate stage after the relevant relaxed structure is finalized.
 - For finite-difference frequency runs, use `IBRION=5`, `POTIM=0.015`, `NFREE=2`, and `ISYM=0`.
 - For slab adsorbate frequency jobs, do not blindly preserve the relax-stage selective-dynamics mask. A relaxed adsorbate-slab structure may still have mobile surface atoms, which is not acceptable for adsorbate-only vibrational thermochemistry. If the target is adsorbate-only slab thermochemistry and `ads_indices` are available, explicitly run `fix_atoms_by_indices(indices=ads_indices, reverse=true)` on the relaxed adsorbate-slab structure before writing the frequency input.
@@ -86,3 +94,5 @@ Return:
 
 ## References
 - Inspect the tool schema/source when edge cases around `k_product`, DFT+U, or INCAR normalization matter.
+- Use `band-and-dos-analysis` or `phonon-displacement-workflow` when the task goes beyond pure input preparation.
+- Hand off band/DOS follow-up to `band-and-dos-analysis`, strain grids to `elastic-property-workup`, displacement sets to `phonon-displacement-workflow`, and MD trajectories to `md-diffusion-analysis`.

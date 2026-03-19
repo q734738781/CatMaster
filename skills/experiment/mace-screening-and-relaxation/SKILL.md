@@ -4,6 +4,8 @@ description: Use this skill for MACE-based rapid screening and relaxation loops 
 license: project-local
 compatibility: local
 allowed-tools: "mace_relax_batch mace_sp_batch"
+metadata:
+  catmaster-suggested-tools: "mace_relax_batch mace_sp_batch"
 ---
 
 # mace-screening-and-relaxation
@@ -17,9 +19,9 @@ Use this skill to run cheap MACE screening on a structure batch before spending 
 3. Keep `output_root` outside `input_dir`.
 4. Use the collected outputs and batch-state files to decide which candidates advance to VASP.
 
-## Allowed tools
-- mace_relax_batch
-- mace_sp_batch
+## Suggested tools
+- `mace_relax_batch`
+- `mace_sp_batch`
 
 ## Workflow
 
@@ -35,6 +37,10 @@ Use this skill to run cheap MACE screening on a structure batch before spending 
 ### 3. Use collected evidence, not launch success alone
 - Returned metadata includes `batch_state_rel`, collected stdout/stderr/status files, and any `batch_summary_rel`.
 - On dispatch failure, the tool still tries to collect partial outputs; inspect those before deciding to rerun.
+
+### 4. Use this skill while the workflow artifact is still materials-side
+- Use this skill for structure batches, candidate ranking, geometry cleanup, and materials-side post-analysis before expensive reference calculations.
+- If the screening run produces a shortlist that should become a training dataset or an active-learning update, hand off that artifact to the ML skills as the next step.
 
 ## Method-critical defaults
 - For adsorption-energy screening on slabs, do not silently inherit the tool default for `dispersion`; choose it explicitly.
@@ -52,3 +58,4 @@ Return:
 
 ## References
 - Use `vasp-input-preparation` only after a MACE shortlist exists; do not send the whole raw candidate pool forward by default.
+- When the loop is ready for dataset building or retraining, hand off to `mace-dataset-curation` and `active-learning-relabel-loop`.

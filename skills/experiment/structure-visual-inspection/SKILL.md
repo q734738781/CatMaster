@@ -17,7 +17,7 @@ Use rendered structure views as auxiliary evidence for geometry sanity checks, v
 3. Treat visual findings as supporting evidence.
 4. Confirm critical geometric claims with numerical tools when available.
 
-## Allowed tools
+## Suggested tools
 - render_structure_views
 - analyze_images
 - read_file

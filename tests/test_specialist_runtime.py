@@ -596,7 +596,13 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "Only save a concise reusable markdown note" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "Web Evidence" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "You do not have permission to modify long-term project memory" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "default DeepAgent built-in tool surface" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "dataset/model lifecycle tasks" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
+        assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
+        assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "Start here when the primary artifact is a curated dataset" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["ml_worker"]["system_prompt"]
         materials_worker_selector = next(
             item
             for item in subagents_by_name["materials_worker"]["middleware"]
@@ -637,7 +643,11 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert "literature-grounding" not in experiment_view_names
     assert "structure-visual-inspection" in experiment_view_names
     assert "structure-visual-inspection" in materials_worker_view_names
-    assert not ml_worker_view_names
+    assert {
+        "mace-dataset-curation",
+        "mace-finetuning-and-benchmark",
+        "active-learning-relabel-loop",
+    } <= ml_worker_view_names
     assert "achemso-latex-manuscript" not in writing_view_names
     assert "scientific-writing" in writing_view_names
 

@@ -104,6 +104,15 @@ def test_default_catalog_discovers_writing_skills() -> None:
     assert "write_director" in metas["achemso-latex-manuscript"].roles
 
 
+def test_default_catalog_assigns_nonwriting_visibility_for_experiment_and_ml_skills() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    runtime = CatMasterSkillsRuntime.create_default(repo_root=repo_root)
+    runtime.refresh_catalog()
+    visible = {item.name for item in runtime.visible_skills("task_runner", "standard")}
+    assert "bulk-relax-and-reference" in visible
+    assert "mace-dataset-curation" in visible
+
+
 def _body_allowed_tools(text: str) -> list[str]:
     match = re.search(
         r"^## Allowed tools\s*$\n(?P<body>.*?)(?:^## |\Z)",

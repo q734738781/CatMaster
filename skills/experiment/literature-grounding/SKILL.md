@@ -21,7 +21,7 @@ Use this skill to run the smallest literature-grounding workflow that can answer
 - Use `depth=focused` for narrow method disputes, conflicting conventions, or targeted evidence checks.
 - Use `depth=deep_report` only for explicit deep-review or survey-style requests.
 
-## Allowed tools
+## Suggested tools
 - run_literature_research
 
 ## Workflow

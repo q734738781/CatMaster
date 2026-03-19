@@ -4,6 +4,8 @@ description: Use this skill for generating adsorbates and reaction intermediates
 license: project-local
 compatibility: local
 allowed-tools: "create_molecule_from_smiles"
+metadata:
+  catmaster-suggested-tools: "create_molecule_from_smiles"
 ---
 
 # adsorbate-and-intermediate-generation
@@ -17,8 +19,8 @@ Use this skill to turn SMILES-level adsorbate requests into stable 3D molecule f
 3. Set `output_path` as a path prefix, not a final filename.
 4. Carry forward the returned `xyz_file_rel` or `poscar_file_rel` instead of reconstructing paths by hand.
 
-## Allowed tools
-- create_molecule_from_smiles
+## Suggested tools
+- `create_molecule_from_smiles`
 
 ## Workflow
 
@@ -35,6 +37,10 @@ Use this skill to turn SMILES-level adsorbate requests into stable 3D molecule f
 - The tool returns `formula`, `natoms`, `xyz_file_rel`, `poscar_file_rel`, and `box_size`.
 - Downstream adsorption workflows should use the returned molecule path directly.
 
+## Method-critical defaults
+- Keep protonation, charge, and radical assumptions explicit because they change the generated molecule, not just the file name.
+- Use the same `fmt` convention across a comparison set so the downstream placement workflow sees a consistent input type.
+
 ## Output Contract
 Return:
 - canonical molecule file path(s)
@@ -42,4 +48,4 @@ Return:
 - any charge or species assumptions that remain unresolved
 
 ## References
-- For slab placement, hand off the returned molecule file to `adsorption-site-screening` instead of rewriting it manually.
+- For slab placement, hand off the returned molecule file to `adsorption-site-screening` first, then promote the screening set to `adsorption-screening`.
