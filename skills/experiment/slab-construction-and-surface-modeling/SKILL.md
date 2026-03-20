@@ -4,8 +4,6 @@ description: Use this skill for slab construction, vacuum and layer choices, sur
 license: project-local
 compatibility: local
 allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell"
-metadata:
-  catmaster-suggested-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell"
 ---
 
 # slab-construction-and-surface-modeling
@@ -19,7 +17,7 @@ Use this skill to build slab models, choose a freezing strategy, and resize the 
 3. Apply layer-based, height-based, or explicit-index fixing deliberately.
 4. Use `supercell` only when coverage or lateral separation requires it.
 
-## Suggested tools
+## Allowed tools
 - `build_slab`
 - `fix_atoms_by_layers`
 - `fix_atoms_by_height`

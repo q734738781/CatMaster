@@ -4,8 +4,6 @@ description: Use this skill for post-relax bulk electronic-structure workflows w
 license: project-local
 compatibility: local
 allowed-tools: "generate_kpath vasp_prepare vasp_band_prepare vasp_execute_batch analyze_vasp_results render_structure_views"
-metadata:
-  catmaster-suggested-tools: "generate_kpath vasp_prepare vasp_execute_batch analyze_vasp_results render_structure_views"
 ---
 
 # band-and-dos-analysis
@@ -20,7 +18,7 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 4. Dispatch the resulting VASP jobs with `vasp_execute_batch`.
 5. Use `analyze_vasp_results` to summarize convergence and parsed bandgap evidence.
 
-## Suggested tools
+## Allowed tools
 - `generate_kpath`
 - `vasp_prepare`
 - `vasp_band_prepare`

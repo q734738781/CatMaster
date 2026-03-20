@@ -4,8 +4,6 @@ description: Use this skill for end-to-end NEB pathway setup, execution, and pos
 license: project-local
 compatibility: local
 allowed-tools: "make_neb_geometry vasp_neb_prepare vasp_execute_batch analyze_neb_results"
-metadata:
-  catmaster-suggested-tools: "make_neb_geometry vasp_neb_prepare vasp_execute_batch analyze_neb_results"
 ---
 
 # reaction-neb-analysis
@@ -20,7 +18,7 @@ Use this skill to convert a validated endpoint pair into a dispatched NEB campai
 4. Dispatch with `vasp_execute_batch`.
 5. Summarize the finished run with `analyze_neb_results`.
 
-## Suggested tools
+## Allowed tools
 - `make_neb_geometry`
 - `vasp_neb_prepare`
 - `vasp_execute_batch`

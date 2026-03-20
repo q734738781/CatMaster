@@ -4,8 +4,6 @@ description: Use this skill for first-pass vacancy, substitution, and explicit i
 license: project-local
 compatibility: local
 allowed-tools: "enumerate_unique_sites create_vacancy substitute_species insert_interstitial_at_coords supercell vasp_prepare vasp_execute_batch analyze_vasp_results"
-metadata:
-  catmaster-suggested-tools: "enumerate_unique_sites create_vacancy substitute_species insert_interstitial_at_coords supercell vasp_prepare vasp_execute_batch analyze_vasp_results"
 ---
 
 # defect-and-dopant-screening
@@ -20,7 +18,7 @@ Use this skill to generate primitive defect/dopant candidates and screen them co
 4. Expand to a supercell only when the defect model actually requires it.
 5. Run one standardized VASP screen and summarize with `analyze_vasp_results`.
 
-## Suggested tools
+## Allowed tools
 - `enumerate_unique_sites`
 - `create_vacancy`
 - `substitute_species`

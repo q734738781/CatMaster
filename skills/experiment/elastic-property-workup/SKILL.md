@@ -4,8 +4,6 @@ description: Use this skill for finite-strain elastic workflows when the immedia
 license: project-local
 compatibility: local
 allowed-tools: "generate_strained_structures vasp_prepare vasp_execute_batch analyze_vasp_results"
-metadata:
-  catmaster-suggested-tools: "generate_strained_structures vasp_prepare vasp_execute_batch analyze_vasp_results"
 ---
 
 # elastic-property-workup
@@ -19,7 +17,7 @@ Use this skill to build a finite-strain screening set and collect the calculatio
 3. Prepare one consistent VASP stage across the whole strain set.
 4. Dispatch as a batch and summarize with `analyze_vasp_results`.
 
-## Suggested tools
+## Allowed tools
 - `generate_strained_structures`
 - `vasp_prepare`
 - `vasp_execute_batch`

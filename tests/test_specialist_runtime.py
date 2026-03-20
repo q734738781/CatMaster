@@ -35,6 +35,7 @@ from catmaster.specialists.runtime import (
 )
 from catmaster.runtime.usage_stats import load_usage_summary
 from catmaster.runtime.artifact_callback import UIEventHandler
+from catmaster.specialists.schemas import ProposalCheckpoint
 from catmaster.tools.registry import get_tool_registry
 
 
@@ -496,7 +497,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
     monkeypatch.setattr(
         runtime_mod.SpecialistRunner,
         "_load_create_summarization_tool_middleware",
-        staticmethod(lambda: (lambda summarizer: _FakeCompactConversationMiddleware(summarizer))),
+        staticmethod(lambda: (lambda model, backend: _FakeCompactConversationMiddleware({"model": model, "backend": backend}))),
     )
     monkeypatch.setattr(
         runtime_mod.SpecialistRunner,
@@ -579,11 +580,10 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert nested_subagents["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
         assert {tool.name for tool in nested_subagents["metadata_agent"]["tools"]} == (_METADATA_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         metadata_middleware = nested_subagents["metadata_agent"]["middleware"]
-        metadata_summarizer = next(item for item in metadata_middleware if isinstance(item, _FakeSummarizationMiddleware))
         compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
-        assert metadata_summarizer.kwargs["trigger"] == ("tokens", _LITREVIEW_COMPACT_TRIGGER_TOKENS)
-        assert metadata_summarizer.kwargs["keep"] == ("tokens", _LITREVIEW_COMPACT_KEEP_TOKENS)
-        assert compact_tool.summarizer is metadata_summarizer
+        assert compact_tool.summarizer["model"] == {"model": "literature_deep_research-model"}
+        assert compact_tool.summarizer["backend"] is not None
+        assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in metadata_middleware)
         literature_middleware = nested_subagents["literature_agent"]["middleware"]
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "experiment":
@@ -599,6 +599,8 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "You do not have permission to modify long-term project memory" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "dataset/model lifecycle tasks" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
+        assert "Each worker should receive only one bounded execution episode around one primary artifact" in agent_kwargs["system_prompt"]
+        assert "Do not hand an entire high-throughput campaign to one worker" in agent_kwargs["system_prompt"]
         assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
         assert "prefer a quick built-in web check through the online model's native browsing capability" in agent_kwargs["system_prompt"]
@@ -609,8 +611,15 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Assume most ML work here will be done by writing reusable Python scripts under `scripts/`" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Prefer using libraries already available in the environment and reusable workspace code" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, and `joblib`" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "If the ML logic is longer than a short throwaway snippet, materialize it as a script" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in subagents_by_name["ml_worker"]["system_prompt"]
         materials_worker_selector = next(
@@ -638,9 +647,11 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skill_views/writing_worker_agent"]
         assert "You may use `literature_agent` only for narrow background supplementation" in agent_kwargs["system_prompt"]
+        assert "Each writing-worker handoff should cover only one section or one bounded organization/integration task" in agent_kwargs["system_prompt"]
         assert "figures, tables, and concise explanatory schematics as part of the default deliverable" in agent_kwargs["system_prompt"]
         assert "Do not mention the workspace, files, runs, prompts, tools, agents, interruptions" in agent_kwargs["system_prompt"]
         assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
+        assert "Handle only one section or one bounded organization/integration task at a time" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "For short notes or compact summaries, do not manufacture extra visuals" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "Use `generate_schematic_figure` for mechanism, workflow, or concept diagrams" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "For journal-facing citations and BibTeX, use publication-style metadata only" in subagents_by_name["writing_worker_agent"]["system_prompt"]
@@ -691,7 +702,6 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert usage_summary["calls"] == 2
     assert usage_summary["by_role"][0]["name"] == "experiment_specialist"
     assert usage_summary["by_role"][0]["calls"] == 1
-
 
 def test_sanitize_model_request_messages_collapses_inline_image_tool_messages() -> None:
     tool_message = ToolMessage(
@@ -781,3 +791,123 @@ def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, m
     assert isinstance(config, dict)
     assert config["configurable"]["thread_id"] == "thread-123"
     assert config["configurable"]["project_id"] == "proj_memory_ns"
+
+
+def test_proposal_review_requires_explicit_approve_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    captured: dict[str, object] = {"proposal_calls": []}
+    proposal_versions = [
+        ProposalCheckpoint(
+            proposal_md="# Proposal v1\n\nInitial plan.",
+            todo_items=["draft plan"],
+            questions_for_human=["Approve or revise?"],
+        ),
+        ProposalCheckpoint(
+            proposal_md="# Proposal v2\n\nRevised plan.",
+            todo_items=["revised draft plan"],
+            questions_for_human=["Approve now?"],
+        ),
+    ]
+
+    class _CapturingAgent:
+        async def ainvoke(self, payload, config=None):
+            captured["payload"] = payload
+            captured["config"] = config
+            return {
+                "messages": [
+                    AIMessage(
+                        content="## Summary\nok\n\n## Facts\n- proposal approved\n\n## Files\n- `(none reported)`"
+                    )
+                ]
+            }
+
+    def _fake_create_deep_agent(**kwargs):
+        captured["agent_kwargs"] = kwargs
+        return _CapturingAgent()
+
+    async def _fake_build_proposal_checkpoint(
+        self,
+        *,
+        entrypoint: str,
+        prompt: str,
+        usage_handler,
+        current_proposal: str = "",
+        review_feedback: str = "",
+        revision_index: int = 0,
+    ) -> ProposalCheckpoint:
+        _ = usage_handler
+        call = {
+            "entrypoint": entrypoint,
+            "prompt": prompt,
+            "current_proposal": current_proposal,
+            "review_feedback": review_feedback,
+            "revision_index": revision_index,
+        }
+        proposal_calls = captured["proposal_calls"]
+        assert isinstance(proposal_calls, list)
+        proposal_calls.append(call)
+        return proposal_versions[len(proposal_calls) - 1]
+
+    @asynccontextmanager
+    async def _fake_open_agent_runtime(self, *, files_root: Path):
+        _ = files_root
+        yield {"checkpointer": object(), "store": object(), "backend": object()}
+
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_llm_tool_selector_middleware",
+        staticmethod(lambda: _FakeToolSelectorMiddleware),
+    )
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_build_proposal_checkpoint", _fake_build_proposal_checkpoint)
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj_proposal_gate",
+        preferred_entrypoint="experiment",
+    )
+
+    waiting = asyncio.run(
+        built.runner.arun(
+            "Run the experiment lane only after proposal approval.",
+            entrypoint="experiment",
+            proposal_review=True,
+        )
+    )
+    assert waiting["status"] == "awaiting_human_feedback"
+    assert (built.run_context.run_dir / "proposal.md").read_text(encoding="utf-8") == proposal_versions[0].proposal_md
+
+    revised = asyncio.run(built.runner.aresume("needs a more concrete execution plan"))
+    assert revised["status"] == "awaiting_human_feedback"
+    assert (built.run_context.run_dir / "proposal.md").read_text(encoding="utf-8") == proposal_versions[1].proposal_md
+
+    result = asyncio.run(built.runner.aresume("approve"))
+
+    assert result["status"] == "done"
+    proposal_calls = captured["proposal_calls"]
+    assert isinstance(proposal_calls, list)
+    assert len(proposal_calls) == 2
+    assert proposal_calls[1]["current_proposal"] == proposal_versions[0].proposal_md
+    assert proposal_calls[1]["review_feedback"] == "needs a more concrete execution plan"
+    assert proposal_calls[1]["revision_index"] == 1
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["messages"][0]["content"] == "Run the experiment lane only after proposal approval."
+    assert "Human review feedback" not in payload["messages"][0]["content"]
+    run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+    assert run_state["status"] == "done"
+    assert run_state["proposal_revision_count"] == 1

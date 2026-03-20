@@ -4,8 +4,6 @@ description: Use this skill for turning one relaxed bulk reference into a contro
 license: project-local
 compatibility: local
 allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell vasp_prepare vasp_execute_batch analyze_vasp_results render_structure_views"
-metadata:
-  catmaster-suggested-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell vasp_prepare vasp_execute_batch analyze_vasp_results render_structure_views"
 ---
 
 # surface-and-termination-screening
@@ -20,7 +18,7 @@ Use this skill to screen surface terminations without quietly changing slab geom
 4. Prepare one uniform slab relax or static batch.
 5. Rank with `analyze_vasp_results`; only then hand off winning slabs to adsorption work.
 
-## Suggested tools
+## Allowed tools
 - `build_slab`
 - `fix_atoms_by_layers`
 - `fix_atoms_by_height`

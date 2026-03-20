@@ -10,6 +10,8 @@
 numpy
 scipy
 pandas
+joblib
+seaborn
 
 # Atomistic modeling / materials
 ase
@@ -17,6 +19,14 @@ pymatgen
 ovito
 matplotlib
 phonopy
+dscribe
+mendeleev
+
+# Machine learning
+scikit-learn
+xgboost
+umap-learn
+optuna
 
 # YAML parsing (PyYAML) and round-trip editing (ruamel.yaml)
 pyyaml
@@ -28,7 +38,6 @@ paramiko
 
 # LLM agent system
 openai
-aider-chat
 langchain
 langchain-core
 langchain-openai

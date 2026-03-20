@@ -4,8 +4,6 @@ description: Use this skill for MD execution and post-analysis when the goal is 
 license: project-local
 compatibility: local
 allowed-tools: "vasp_prepare vasp_execute_batch analyze_trajectory"
-metadata:
-  catmaster-suggested-tools: "vasp_prepare vasp_execute_batch analyze_trajectory"
 ---
 
 # md-diffusion-analysis
@@ -19,7 +17,7 @@ Use this skill to prepare an MD stage, dispatch it, and summarize the resulting 
 3. Dispatch with `vasp_execute_batch`.
 4. Analyze the collected trajectory with `analyze_trajectory`.
 
-## Suggested tools
+## Allowed tools
 - `vasp_prepare`
 - `vasp_execute_batch`
 - `analyze_trajectory`

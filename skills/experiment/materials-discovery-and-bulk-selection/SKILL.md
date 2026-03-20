@@ -4,8 +4,6 @@ description: Use this skill for materials discovery and bulk structure selection
 license: project-local
 compatibility: local
 allowed-tools: "mp_search_materials mp_download_structure"
-metadata:
-  catmaster-suggested-tools: "mp_search_materials mp_download_structure"
 ---
 
 # materials-discovery-and-bulk-selection
@@ -19,7 +17,7 @@ Use this skill to turn an open-ended catalyst search into a shortlist of downloa
 3. Prune the candidate table before downloading structures.
 4. Use `mp_download_structure` only for the shortlisted `mp_id` values.
 
-## Suggested tools
+## Allowed tools
 - `mp_search_materials`
 - `mp_download_structure`
 

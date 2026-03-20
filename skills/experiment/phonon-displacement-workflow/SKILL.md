@@ -4,8 +4,6 @@ description: Use this skill for finite-displacement phonon force-collection setu
 license: project-local
 compatibility: local
 allowed-tools: "generate_phonon_displacements vasp_prepare vasp_execute_batch analyze_vasp_results"
-metadata:
-  catmaster-suggested-tools: "generate_phonon_displacements vasp_prepare vasp_execute_batch analyze_vasp_results"
 ---
 
 # phonon-displacement-workflow
@@ -19,7 +17,7 @@ Use this skill to generate finite-displacement supercells and collect force calc
 3. Prepare one consistent force-calculation stage for all displacements.
 4. Dispatch the displacement batch and summarize completion with `analyze_vasp_results`.
 
-## Suggested tools
+## Allowed tools
 - `generate_phonon_displacements`
 - `vasp_prepare`
 - `vasp_execute_batch`

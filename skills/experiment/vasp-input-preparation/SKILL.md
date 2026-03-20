@@ -4,8 +4,6 @@ description: Use this skill for preparing canonical VASP relax/static/frequency/
 license: project-local
 compatibility: local
 allowed-tools: "fix_atoms_by_indices vasp_prepare vasp_band_prepare generate_kpath"
-metadata:
-  catmaster-suggested-tools: "fix_atoms_by_indices vasp_prepare generate_kpath"
 ---
 
 # vasp-input-preparation
@@ -21,7 +19,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 5. For `dos` and `md`, treat the preset as a starter template and do job-specific tuning through `user_incar_patch` in the same call.
 6. Use `vasp_band_prepare` instead of `vasp_prepare` when the job is a line-mode band-structure calculation with an explicit band `KPOINTS`.
 
-## Suggested tools
+## Allowed tools
 - `fix_atoms_by_indices`
 - `vasp_prepare`
 - `vasp_band_prepare`

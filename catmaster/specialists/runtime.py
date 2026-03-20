@@ -503,59 +503,117 @@ class SpecialistRunner:
             usage_flushed = True
             self._write_usage_summary(usage_handler)
         try:
-            if resume_feedback is None and bool(payload.get("proposal_review", False)):
-                checkpoint = await self._build_proposal_checkpoint(
-                    entrypoint=entrypoint,
-                    prompt=prompt,
-                    usage_handler=usage_handler,
-                )
-                proposal_path = self.run_context.run_dir / PROPOSAL_FILE
-                proposal_path.write_text(checkpoint.proposal_md, encoding="utf-8")
+            proposal_review_enabled = bool(payload.get("proposal_review", False))
+            proposal_revision_count = max(0, int(payload.get("proposal_revision_count") or 0))
+
+            if proposal_review_enabled:
+                checkpoint: ProposalCheckpoint | None = None
+                if resume_feedback is None:
+                    checkpoint = await self._build_proposal_checkpoint(
+                        entrypoint=entrypoint,
+                        prompt=prompt,
+                        usage_handler=usage_handler,
+                    )
+                else:
+                    feedback_text = str(resume_feedback or "").strip()
+                    if not self._is_proposal_approval(feedback_text):
+                        proposal_revision_count += 1
+                        checkpoint = await self._build_proposal_checkpoint(
+                            entrypoint=entrypoint,
+                            prompt=prompt,
+                            usage_handler=usage_handler,
+                            current_proposal=self._read_current_proposal_text(),
+                            review_feedback=feedback_text,
+                            revision_index=proposal_revision_count,
+                        )
+                    else:
+                        resume_feedback = None
+
+                while checkpoint is not None:
+                    self._persist_proposal_review_state(
+                        entrypoint=entrypoint,
+                        prompt=prompt,
+                        checkpoint=checkpoint,
+                        thread_id=thread_id,
+                        chat_session_id=str(payload.get("chat_session_id") or ""),
+                        files_root=files_root,
+                        research_kernel_relpath=research_kernel_relpath,
+                        revision_count=proposal_revision_count,
+                    )
+                    self._emit(
+                        "RUN_WAITING_INPUT",
+                        payload={
+                            "interrupt_type": "proposal_review",
+                            "message": (
+                                "Proposal review is required before execution continues. "
+                                "Type `approve` to continue; any other input requests a revised proposal."
+                            ),
+                            "approval_token": self._proposal_approval_token(),
+                            "revision_count": proposal_revision_count,
+                        },
+                    )
+                    if not self.reporter.is_live():
+                        self._write_usage_summary(usage_handler)
+                        return {
+                            "run_id": self.run_context.run_id,
+                            "run_dir": str(self.run_context.run_dir),
+                            "status": "awaiting_human_feedback",
+                            "summary": (
+                                "Proposal review is waiting for explicit `approve`. "
+                                "Any other feedback will request a revised proposal."
+                            ),
+                            "facts": [],
+                            "final_answer": "",
+                            "artifacts": [],
+                            "delegation_log": [],
+                        }
+
+                    feedback = self.reporter.prompt_proposal_feedback(
+                        todo=list(checkpoint.todo_items),
+                        proposal_description=checkpoint.proposal_md,
+                    )
+                    self._emit(
+                        "RUN_INPUT_RECEIVED",
+                        payload={"interrupt_type": "proposal_review", "feedback_len": len(str(feedback or ""))},
+                    )
+                    feedback_text = str(feedback or "").strip()
+                    if self._is_proposal_approval(feedback_text):
+                        checkpoint = None
+                        resume_feedback = None
+                        break
+                    proposal_revision_count += 1
+                    checkpoint = await self._build_proposal_checkpoint(
+                        entrypoint=entrypoint,
+                        prompt=prompt,
+                        usage_handler=usage_handler,
+                        current_proposal=self._read_current_proposal_text(),
+                        review_feedback=feedback_text,
+                        revision_index=proposal_revision_count,
+                    )
+
                 self._write_run_state(
                     {
+                        **(self._read_run_state() or payload),
                         "schema_version": 1,
                         "entrypoint": entrypoint,
-                        "status": "awaiting_human_feedback",
-                        "phase": "proposal_review",
+                        "status": "running",
+                        "phase": "executing",
                         "active_specialist": entrypoint,
                         "thread_id": thread_id,
                         "proposal_review": True,
-                        "pending_human_input": {
-                            "kind": "proposal_review",
-                            "questions_for_human": list(checkpoint.questions_for_human),
-                            "todo_items": list(checkpoint.todo_items),
-                        },
-                        "todo_items": list(checkpoint.todo_items),
+                        "proposal_revision_count": proposal_revision_count,
+                        "pending_human_input": None,
+                        "todo_items": [],
                         "artifacts": [],
                         "delegation_log": [],
-                        "text_preview": checkpoint.proposal_md[:280],
+                        "text_preview": prompt[:280],
                         "user_prompt": prompt,
                         "chat_session_id": str(payload.get("chat_session_id") or ""),
                         **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
                     }
                 )
-                self._emit(
-                    "RUN_WAITING_INPUT",
-                    payload={
-                        "interrupt_type": "proposal_review",
-                        "message": "Proposal review is required before execution continues.",
-                    },
-                )
-                _flush_usage()
-                feedback = self.reporter.prompt_proposal_feedback(
-                    todo=list(checkpoint.todo_items),
-                    proposal_description=checkpoint.proposal_md,
-                )
-                self._emit(
-                    "RUN_INPUT_RECEIVED",
-                    payload={"interrupt_type": "proposal_review", "feedback_len": len(str(feedback or ""))},
-                )
-                return await self._run_impl(
-                    payload=self._read_run_state() or payload,
-                    resume_feedback=str(feedback or "").strip(),
-                )
 
-            if resume_feedback is not None:
+            elif resume_feedback is not None:
                 self._write_run_state(
                     {
                         **payload,
@@ -602,6 +660,7 @@ class SpecialistRunner:
                     "active_specialist": entrypoint,
                     "thread_id": thread_id,
                     "proposal_review": bool(payload.get("proposal_review", False)),
+                    "proposal_revision_count": proposal_revision_count,
                     "pending_human_input": None,
                     "todo_items": [],
                     "artifacts": artifacts,
@@ -636,6 +695,9 @@ class SpecialistRunner:
         entrypoint: SpecialistEntrypoint,
         prompt: str,
         usage_handler: SpecialistUsageCallbackHandler,
+        current_proposal: str = "",
+        review_feedback: str = "",
+        revision_index: int = 0,
     ) -> ProposalCheckpoint:
         create_agent = self._load_create_agent()
         ToolStrategy = self._load_tool_strategy()
@@ -652,7 +714,12 @@ class SpecialistRunner:
                 "messages": [
                     {
                         "role": "user",
-                        "content": prompt,
+                        "content": self._proposal_request_text(
+                            prompt=prompt,
+                            current_proposal=current_proposal,
+                            review_feedback=review_feedback,
+                            revision_index=revision_index,
+                        ),
                     }
                 ]
             },
@@ -671,6 +738,86 @@ class SpecialistRunner:
             return ProposalCheckpoint.model_validate(raw)
         raise RuntimeError("Proposal checkpoint generation failed.")
 
+    @classmethod
+    def _proposal_approval_token(cls) -> str:
+        return "approve"
+
+    @classmethod
+    def _is_proposal_approval(cls, text: str) -> bool:
+        return str(text or "").strip().lower() == cls._proposal_approval_token()
+
+    @staticmethod
+    def _proposal_request_text(
+        *,
+        prompt: str,
+        current_proposal: str = "",
+        review_feedback: str = "",
+        revision_index: int = 0,
+    ) -> str:
+        base_prompt = str(prompt or "").strip()
+        proposal_text = str(current_proposal or "").strip()
+        feedback_text = str(review_feedback or "").strip()
+        if not proposal_text or not feedback_text:
+            return base_prompt
+        return (
+            f"Original user request:\n{base_prompt}\n\n"
+            f"Current proposal:\n{proposal_text}\n\n"
+            f"Human review feedback:\n{feedback_text}\n\n"
+            f"Revise the proposal from scratch to address the feedback. "
+            f"This is revision {max(1, int(revision_index or 1))}. "
+            "Do not start execution. Return the full revised ProposalCheckpoint only."
+        )
+
+    def _read_current_proposal_text(self) -> str:
+        proposal_path = self.run_context.run_dir / PROPOSAL_FILE
+        if not proposal_path.exists():
+            return ""
+        try:
+            return proposal_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+
+    def _persist_proposal_review_state(
+        self,
+        *,
+        entrypoint: str,
+        prompt: str,
+        checkpoint: ProposalCheckpoint,
+        thread_id: str,
+        chat_session_id: str,
+        files_root: Path,
+        research_kernel_relpath: str,
+        revision_count: int,
+    ) -> None:
+        proposal_path = self.run_context.run_dir / PROPOSAL_FILE
+        proposal_path.write_text(checkpoint.proposal_md, encoding="utf-8")
+        self._write_run_state(
+            {
+                "schema_version": 1,
+                "entrypoint": entrypoint,
+                "status": "awaiting_human_feedback",
+                "phase": "proposal_review",
+                "active_specialist": entrypoint,
+                "thread_id": thread_id,
+                "proposal_review": True,
+                "proposal_revision_count": max(0, int(revision_count or 0)),
+                "pending_human_input": {
+                    "kind": "proposal_review",
+                    "questions_for_human": list(checkpoint.questions_for_human),
+                    "todo_items": list(checkpoint.todo_items),
+                    "revision_count": max(0, int(revision_count or 0)),
+                    "approval_token": self._proposal_approval_token(),
+                },
+                "todo_items": list(checkpoint.todo_items),
+                "artifacts": [],
+                "delegation_log": [],
+                "text_preview": checkpoint.proposal_md[:280],
+                "user_prompt": prompt,
+                "chat_session_id": chat_session_id,
+                **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+            }
+        )
+
     async def _build_entry_agent(
         self,
         *,
@@ -683,6 +830,8 @@ class SpecialistRunner:
         skills = self._virtual_skill_paths(entrypoint)
         agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
         model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
+        # TODO: Revisit explicit summarization tuning for OpenRouter-backed specialists
+        # via an official config path instead of patching model.profile at runtime.
         kwargs: dict[str, Any] = {
             "model": build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])),
             "tools": tools,
@@ -830,18 +979,15 @@ class SpecialistRunner:
     def _metadata_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
         middleware = self._subagent_middleware(runtime=runtime)
         try:
-            SummarizationMiddleware = self._load_summarization_middleware()
             create_summarization_tool_middleware = self._load_create_summarization_tool_middleware()
-            summarizer = SummarizationMiddleware(
-                model=build_chat_model(self.llm_profile.config_for_role("summary")),
-                backend=runtime["backend"],
-                trigger=("tokens", _LITREVIEW_COMPACT_TRIGGER_TOKENS),
-                keep=("tokens", _LITREVIEW_COMPACT_KEEP_TOKENS),
+            compact_tool_middleware = create_summarization_tool_middleware(
+                build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
+                runtime["backend"],
             )
         except Exception as exc:
             logger.warning("litreview compaction middleware unavailable; continuing without extra compaction: %s", exc)
             return middleware
-        middleware.extend([summarizer, create_summarization_tool_middleware(summarizer)])
+        middleware.append(compact_tool_middleware)
         return middleware
 
     def _compiled_litreview_subagent(self, *, runtime: dict[str, Any]) -> Any:
@@ -1418,6 +1564,9 @@ class SpecialistRunner:
                 "Keep such literature work tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
                 "Your default role is coordination, not long-form drafting in the main thread.\n"
                 "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
+                "Each writing-worker handoff should cover only one section or one bounded organization/integration task. "
+                "Give it one primary goal and one completion criterion. "
+                "If the next step still requires deciding what to write next, how to restructure the manuscript, or whether to change direction, bring that decision back to WritingSpecialist instead of letting the worker continue to expand.\n"
                 "When the requested deliverable is a paper, manuscript, or journal-style draft, treat figures, tables, and concise explanatory schematics as part of the default deliverable when the workspace evidence supports them; do not return text-only manuscript output if key visual evidence is still missing.\n"
                 "When the requested deliverable is a short note, compact summary, or quick status writeup, prioritize clarity and sufficiency over making it figure-heavy unless the user explicitly asks for visuals.\n"
                 "Keep the main writing thread focused on planning, dispatch, evidence selection, and final reconciliation.\n"
@@ -1436,6 +1585,10 @@ class SpecialistRunner:
             "You are ExperimentSpecialist.\n"
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
             "Route by the current working artifact: use `materials_worker` for structure/calc/result work, including MACE-based surrogate screening inside a materials workflow; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
+            "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
+            "Each brief should contain one primary goal and one completion criterion. "
+            "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
+            "Do not hand an entire high-throughput campaign to one worker; split it into episodes and decide the next episode yourself after each return.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
             "When method settings, software behavior, or scientific best practice are uncertain, prefer a quick built-in web check through the online model's native browsing capability to align with current official or primary-source guidance before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
@@ -1560,7 +1713,14 @@ class SpecialistRunner:
             "Handle a bounded machine-learning subtask autonomously inside the workspace.\n"
             "This worker owns dataset/model lifecycle tasks: dataset building, model training, benchmark evaluation, and active-learning candidate selection.\n"
             "Start here when the primary artifact is a curated dataset, a training/evaluation run, a model checkpoint, or an active-learning selection ledger.\n"
+            "Assume most ML work here will be done by writing reusable Python scripts under `scripts/` and running them, not by waiting for dedicated narrow ML tools to exist.\n"
+            "Prefer using libraries already available in the environment and reusable workspace code before introducing new dependencies or parallel implementations.\n"
+            "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, and `joblib`; prefer them first unless the task clearly needs something else.\n"
+            "If the ML logic is longer than a short throwaway snippet, materialize it as a script instead of keeping it inline in the conversation or a one-off command.\n"
+            "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`, and use shared `scripts/` only for genuinely cross-topic utilities.\n"
             "When no dedicated tool covers a bounded ML task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts rather than burying them in one-off shell snippets.\n"
+            "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; otherwise keep the script local and lightweight.\n"
             "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before locking the workflow; do not wait for a dedicated search tool.\n"
             "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
@@ -1729,6 +1889,7 @@ class SpecialistRunner:
         return (
             "You are writing_worker_agent for WritingSpecialist.\n"
             "Draft, revise, or polish bounded writing subtasks from existing workspace evidence only.\n"
+            "Handle only one section or one bounded organization/integration task at a time.\n"
             "Do not reopen broad research loops or re-read large unrelated workspace trees on your own.\n"
             "For paper/manuscript/journal-style writing, complete the evidence presentation: add or update figures, tables, structure renders, and concise schematics when they materially improve the manuscript and the workspace contains enough evidence to support them.\n"
             "Use `generate_schematic_figure` for mechanism, workflow, or concept diagrams when a manuscript needs a schematic and no better evidence-native visual already exists.\n"

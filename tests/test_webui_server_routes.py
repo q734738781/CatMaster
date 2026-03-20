@@ -365,6 +365,71 @@ def test_active_run_name_falls_back_to_run_info_when_runtime_has_no_run_name() -
     assert server._active_run_name(_DummySession(), {"run_name": ""}) == "run_new"
 
 
+def test_merge_usage_summary_preserves_cost_fields_for_active_runs() -> None:
+    merged = server._merge_usage_summary(
+        {"output_tokens": 42, "reasoning_tokens": 5, "total_tokens": 142},
+        {
+            "cost_usd": 0.1234,
+            "exact_cost_usd": 0.1,
+            "estimated_cost_usd": 0.0234,
+            "cost_source": "mixed",
+            "missing_cost_calls": 0,
+            "output_tokens": 30,
+        },
+    )
+
+    assert merged["cost_usd"] == 0.1234
+    assert merged["cost_source"] == "mixed"
+    assert merged["output_tokens"] == 42
+    assert merged["reasoning_tokens"] == 5
+
+
+def test_runtime_snapshot_annotates_live_prompt_payload() -> None:
+    class _DummyReporter:
+        @staticmethod
+        def get_snapshot():
+            return {
+                "run_name": "run_live",
+                "seq": 7,
+                "live_state": {},
+                "llm": {},
+                "graph": {},
+                "prompt": {
+                    "prompt_id": "prompt_live",
+                    "kind": "proposal_review",
+                    "payload": {"proposal_description": "# live proposal"},
+                },
+                "usage_totals": {},
+                "recent_events": [],
+            }
+
+    class _DummyRunDir:
+        name = "run_live"
+
+    class _DummySession:
+        reporter = _DummyReporter()
+
+        @staticmethod
+        def get_selected_run_dir():
+            return _DummyRunDir()
+
+        @staticmethod
+        def _annotate_prompt_payload(run_dir, pending):
+            assert run_dir.name == "run_live"
+            return {
+                **pending,
+                "payload": {
+                    **dict(pending.get("payload") or {}),
+                    "guidance": 'Type "approve" to continue. Any other input requests a revised proposal.',
+                },
+            }
+
+    snapshot = server._runtime_snapshot(_DummySession())
+    prompt = snapshot["prompt"]
+    assert isinstance(prompt, dict)
+    assert prompt["payload"]["guidance"] == 'Type "approve" to continue. Any other input requests a revised proposal.'
+
+
 def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path) -> None:
     ws = tmp_path / "demo"
     runs_root = ws / "metadata" / "runs"

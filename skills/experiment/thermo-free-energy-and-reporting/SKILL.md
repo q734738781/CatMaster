@@ -4,8 +4,6 @@ description: Use this skill for thermodynamic and free-energy post-processing, r
 license: project-local
 compatibility: local
 allowed-tools: "fix_atoms_by_indices identify_structure_fragments vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
-metadata:
-  catmaster-suggested-tools: "fix_atoms_by_indices identify_structure_fragments vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
 ---
 
 # thermo-free-energy-and-reporting
@@ -19,7 +17,7 @@ Use this skill to convert raw electronic-structure results into comparable therm
 3. Keep units and correction assumptions explicit.
 4. Report both the final ranking and the assumptions that could change it.
 
-## Suggested tools
+## Allowed tools
 - `fix_atoms_by_indices`
 - `identify_structure_fragments`
 - `vaspkit_adsorbate_thermo_correction`

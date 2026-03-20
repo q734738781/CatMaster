@@ -486,18 +486,23 @@ def unpack_prompt(pending: Optional[Dict[str, Any]]) -> PromptDisplay:
     prompt_id_text = str(payload.get("prompt_id") or prompt_id or "")
     if kind == "proposal_review":
         is_revised = bool(payload.get("is_revised"))
+        approval_token = str(payload.get("approval_token") or "approve").strip() or "approve"
+        revision_count = max(0, int(payload.get("revision_count") or 0))
         title = "Revised Proposal Review" if is_revised else "Proposal Review"
         body = payload.get("proposal_description", "") or ""
         todo = payload.get("todo", []) or []
         if is_revised:
             if run_id:
                 meta_lines.append(f"same run: `{run_id}`")
+            if revision_count > 0:
+                meta_lines.append(f"revision: {revision_count}")
             reason = str(payload.get("reason") or "replanning after HITL")
             meta_lines.append(f"reason: {reason}")
         elif run_id:
             meta_lines.append(f"run: `{run_id}`")
         if prompt_id_text:
             meta_lines.append(f"prompt id: `{prompt_id_text}`")
+        meta_lines.append(f"reply: type `{approval_token}` to continue; any other input requests a revised proposal")
         if isinstance(todo, list) and todo:
             meta_lines.append("Work packages:")
             meta_lines.extend(

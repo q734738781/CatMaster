@@ -231,6 +231,9 @@ function formatPromptContent(prompt) {
   const payload = prompt.payload || {};
   const todo = Array.isArray(payload.todo) ? payload.todo.filter(Boolean) : [];
   const parts = [];
+  if (prompt.kind === "proposal_review" && Number(payload.revision_count || 0) > 0) {
+    parts.push(`Revised proposal ${Number(payload.revision_count)}`);
+  }
   if (payload.proposal_description) {
     parts.push(String(payload.proposal_description).trim());
   }
@@ -250,11 +253,12 @@ function buildProposalMessage(snapshot) {
     if (!content) {
       return null;
     }
+    const revisionCount = Number(prompt?.payload?.revision_count || 0);
     return {
       role: "assistant",
       kind: "proposal",
-      badge: "proposal",
-      status: "awaiting review",
+      badge: revisionCount > 0 ? "revised proposal" : "proposal",
+      status: revisionCount > 0 ? `revision ${revisionCount} awaiting approval` : "awaiting approval",
       content,
     };
   }
@@ -626,6 +630,29 @@ function formatCount(value) {
     return String(value);
   }
   return numeric.toLocaleString();
+}
+
+function formatCost(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  return `$${numeric.toFixed(4)}`;
+}
+
+function formatCostNote(summary) {
+  if (!summary || typeof summary !== "object") {
+    return "";
+  }
+  const source = String(summary.cost_source || "").trim();
+  const missing = Number(summary.missing_cost_calls || 0);
+  if (source && missing > 0) {
+    return `${source} · ${missing} missing`;
+  }
+  return source;
 }
 
 function formatBytes(value) {
@@ -1360,7 +1387,13 @@ function PromptPanel({ prompt, value, onChange, onSubmit, disabled }) {
     return null;
   }
   const payload = prompt.payload || {};
+  const isProposalReview = prompt.kind === "proposal_review";
+  const revisionCount = Number(payload.revision_count || 0);
+  const placeholder = isProposalReview
+    ? 'Type "approve" to continue, or enter feedback to request a revised proposal.'
+    : "Provide feedback, approval, or revised guidance.";
   const body = [
+    isProposalReview && revisionCount > 0 ? `Revised proposal ${revisionCount}` : "",
     payload.proposal_description,
     payload.report_text,
     payload.guidance,
@@ -1372,14 +1405,14 @@ function PromptPanel({ prompt, value, onChange, onSubmit, disabled }) {
     .filter(Boolean)
     .join("\n\n");
   return (
-    <section className="prompt-panel">
-      <div className="section-label">Human Input Required</div>
+    <section className={`prompt-panel ${isProposalReview ? "proposal-review" : ""}`}>
+      <div className="section-label">{isProposalReview ? "Proposal Review Required" : "Human Input Required"}</div>
       <div className="prompt-meta">{joinItems([prompt.kind, payload.run_id, payload.prompt_id || prompt.prompt_id])}</div>
       <pre className="code-pane">{body || "(empty prompt payload)"}</pre>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Provide feedback, approval, or revised guidance."
+        placeholder={placeholder}
         disabled={disabled}
       />
       <button type="button" onClick={onSubmit} disabled={disabled}>
@@ -3192,6 +3225,7 @@ function App({ boot }) {
                     <MetricCard label="Graph node" value={graph.node || live.current_node} />
                     <MetricCard label="Task" value={live.current_task_goal || live.current_task_id} />
                     <MetricCard label="Tool" value={live.active_toolcall?.tool || "-"} note={live.active_toolcall?.status || ""} />
+                    <MetricCard label="Cost" value={formatCost(usage.cost_usd)} note={formatCostNote(usage)} />
                     <MetricCard label="Output tokens" value={usage.output_tokens || usage.outputTokens || llm.usage?.output_tokens} />
                     <MetricCard label="Reasoning tokens" value={usage.reasoning_tokens || llm.usage?.reasoning_tokens || "-"} />
                   </div>

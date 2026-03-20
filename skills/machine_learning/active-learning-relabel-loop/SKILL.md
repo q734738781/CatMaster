@@ -4,8 +4,6 @@ description: Use this skill for candidate ranking and relabel-loop bookkeeping w
 license: project-local
 compatibility: local
 allowed-tools: "calculate_al_candidates build_dataset_from_runs mace_train mace_evaluate"
-metadata:
-  catmaster-suggested-tools: "calculate_al_candidates build_dataset_from_runs mace_train mace_evaluate"
 ---
 
 # active-learning-relabel-loop
@@ -19,7 +17,7 @@ Use this skill to rank candidate structures for the next relabel round and maint
 3. After new reference calculations are collected, rebuild the dataset with `build_dataset_from_runs`.
 4. Retrain and benchmark with `mace_train` and `mace_evaluate`.
 
-## Suggested tools
+## Allowed tools
 - `calculate_al_candidates`
 - `build_dataset_from_runs`
 - `mace_train`

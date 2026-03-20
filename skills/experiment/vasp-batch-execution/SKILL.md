@@ -4,8 +4,6 @@ description: Use this skill for dispatching prepared VASP jobs with vasp_execute
 license: project-local
 compatibility: local
 allowed-tools: "vasp_execute_batch analyze_vasp_results execute"
-metadata:
-  catmaster-suggested-tools: "vasp_execute_batch analyze_vasp_results execute"
 ---
 
 # vasp-batch-execution
@@ -19,7 +17,7 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 3. Do not make the input root both a calc folder and a parent of nested calc folders.
 4. After submission or failure, check `_BATCH_STATE.json` first.
 
-## Suggested tools
+## Allowed tools
 - `vasp_execute_batch`
 - `analyze_vasp_results`
 - `execute`

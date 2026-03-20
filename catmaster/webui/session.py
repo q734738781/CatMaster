@@ -1485,6 +1485,15 @@ class WebSession:
             payload = {
                 "todo": list(state.get("todo_items") or []),
                 "proposal_description": self.read_proposal(run_dir),
+                "approval_token": str(pending_input.get("approval_token") or "approve"),
+                "revision_count": max(
+                    0,
+                    int(
+                        pending_input.get("revision_count")
+                        or state.get("proposal_revision_count")
+                        or 0
+                    ),
+                ),
             }
         else:
             payload = {
@@ -1532,13 +1541,40 @@ class WebSession:
 
         if str(pending.get("kind") or "") == "proposal_review":
             state = self._read_task_state_payload(run_dir)
+            pending_input = state.get("pending_human_input") if isinstance(state.get("pending_human_input"), dict) else {}
+            approval_token = str(
+                payload.get("approval_token")
+                or pending_input.get("approval_token")
+                or "approve"
+            ).strip() or "approve"
+            revision_count = max(
+                0,
+                int(
+                    payload.get("revision_count")
+                    or pending_input.get("revision_count")
+                    or state.get("proposal_revision_count")
+                    or 0
+                ),
+            )
+            payload["approval_token"] = approval_token
+            payload["revision_count"] = revision_count
+            payload.setdefault(
+                "guidance",
+                f'Type "{approval_token}" to continue. Any other input requests a revised proposal.',
+            )
+            if revision_count > 0:
+                payload["is_revised"] = True
+                payload.setdefault(
+                    "reason",
+                    "human review revision" if revision_count == 1 else f"human review revision {revision_count}",
+                )
             history = list(state.get("hitl_history") or [])
             had_task_intervention = any(
                 isinstance(item, dict)
                 and (str(item.get("interrupt_type") or "") == "task_intervention" or bool(item.get("task_id")))
                 for item in history
             )
-            if had_task_intervention:
+            if had_task_intervention and not payload.get("is_revised"):
                 payload["is_revised"] = True
                 payload.setdefault("reason", "replanning after HITL")
 

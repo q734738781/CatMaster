@@ -5,8 +5,6 @@ ase
 numpy
 pandas
 scikit-learn
-umap-learn
-dscribe
 nvidia-ml-py3  # For GPU detection via NVML
 filelock
 tqdm

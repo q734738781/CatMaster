@@ -4,8 +4,6 @@ description: Use this skill for turning VASP result trees into extxyz training d
 license: project-local
 compatibility: local
 allowed-tools: "build_dataset_from_runs"
-metadata:
-  catmaster-suggested-tools: "build_dataset_from_runs"
 ---
 
 # mace-dataset-curation
@@ -21,7 +19,7 @@ Use this skill to convert collected VASP runs into a reusable extxyz dataset dir
 5. Leave `require_converged=false` unless you are intentionally building a guessed-converged subset.
 6. Carry forward the emitted summary JSON and split file paths.
 
-## Suggested tools
+## Allowed tools
 - `build_dataset_from_runs`
 
 ## Workflow

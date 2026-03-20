@@ -4,8 +4,6 @@ description: Use this skill for generating adsorbates and reaction intermediates
 license: project-local
 compatibility: local
 allowed-tools: "create_molecule_from_smiles"
-metadata:
-  catmaster-suggested-tools: "create_molecule_from_smiles"
 ---
 
 # adsorbate-and-intermediate-generation
@@ -19,7 +17,7 @@ Use this skill to turn SMILES-level adsorbate requests into stable 3D molecule f
 3. Set `output_path` as a path prefix, not a final filename.
 4. Carry forward the returned `xyz_file_rel` or `poscar_file_rel` instead of reconstructing paths by hand.
 
-## Suggested tools
+## Allowed tools
 - `create_molecule_from_smiles`
 
 ## Workflow

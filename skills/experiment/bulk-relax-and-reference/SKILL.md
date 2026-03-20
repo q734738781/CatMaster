@@ -4,8 +4,6 @@ description: Use this skill for bulk-reference preparation and analysis when a w
 license: project-local
 compatibility: local
 allowed-tools: "enumerate_unique_sites vasp_prepare vasp_execute_batch analyze_vasp_results generate_kpath"
-metadata:
-  catmaster-suggested-tools: "enumerate_unique_sites vasp_prepare vasp_execute_batch analyze_vasp_results generate_kpath"
 ---
 
 # bulk-relax-and-reference
@@ -20,7 +18,7 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 4. Dispatch with `vasp_execute_batch`, then summarize with `analyze_vasp_results`.
 5. Only after the relaxed bulk is accepted should you branch into `generate_kpath` or downstream surface/defect workflows.
 
-## Suggested tools
+## Allowed tools
 - `enumerate_unique_sites`
 - `vasp_prepare`
 - `vasp_execute_batch`

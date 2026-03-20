@@ -494,6 +494,12 @@ def _runtime_snapshot(session) -> dict[str, Any]:
             "recent_events": [],
         }
     snapshot = reporter.get_snapshot()
+    prompt = snapshot.get("prompt") if isinstance(snapshot.get("prompt"), dict) else None
+    if prompt is not None:
+        try:
+            prompt = session._annotate_prompt_payload(session.get_selected_run_dir(), prompt)
+        except Exception:
+            prompt = prompt
     return {
         "active": True,
         "run_name": str(snapshot.get("run_name") or ""),
@@ -501,7 +507,7 @@ def _runtime_snapshot(session) -> dict[str, Any]:
         "live_state": snapshot.get("live_state") if isinstance(snapshot.get("live_state"), dict) else {},
         "llm": snapshot.get("llm") if isinstance(snapshot.get("llm"), dict) else {},
         "graph": snapshot.get("graph") if isinstance(snapshot.get("graph"), dict) else {},
-        "prompt": snapshot.get("prompt") if isinstance(snapshot.get("prompt"), dict) else None,
+        "prompt": prompt,
         "usage_totals": snapshot.get("usage_totals") if isinstance(snapshot.get("usage_totals"), dict) else {},
         "recent_events": snapshot.get("recent_events") if isinstance(snapshot.get("recent_events"), list) else [],
     }
@@ -520,6 +526,40 @@ def _active_run_name(session, runtime: dict[str, Any] | None = None) -> str:
     return ""
 
 
+def _merge_usage_summary(runtime_usage: dict[str, Any] | None, persisted_usage: dict[str, Any] | None) -> dict[str, Any]:
+    runtime = dict(runtime_usage or {})
+    persisted = dict(persisted_usage or {})
+    if not runtime:
+        return persisted
+    if not persisted:
+        return runtime
+
+    merged = dict(persisted)
+    count_keys = {
+        "calls",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "input_cached_tokens",
+        "input_cache_write_tokens",
+        "reasoning_tokens",
+    }
+    for key in count_keys:
+        runtime_value = runtime.get(key)
+        persisted_value = persisted.get(key)
+        if isinstance(runtime_value, (int, float)) and isinstance(persisted_value, (int, float)):
+            merged[key] = max(runtime_value, persisted_value)
+        elif runtime_value is not None:
+            merged[key] = runtime_value
+
+    for key, value in runtime.items():
+        if key in count_keys:
+            continue
+        if key not in merged or merged.get(key) in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
 def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
     run_name = str(runtime.get("run_name") or "").strip()
     active_run = _active_run_name(session, runtime)
@@ -533,9 +573,8 @@ def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
     if run_dir is None:
         run_dir = session.get_selected_run_dir()
         selected_run = run_dir.name if run_dir is not None else selected_run
-    usage_summary = dict(runtime.get("usage_totals") or {})
-    if not usage_summary and run_dir is not None:
-        usage_summary = session.read_usage_summary(run_dir)
+    persisted_usage = session.read_usage_summary(run_dir) if run_dir is not None else {}
+    usage_summary = _merge_usage_summary(runtime.get("usage_totals"), persisted_usage)
     return {
         "active_run": active_run,
         "selected_run": selected_run,
@@ -585,7 +624,7 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         live_state = dict(runtime.get("live_state") or {})
         prompt = runtime.get("prompt")
         events = list(runtime.get("recent_events") or [])
-        usage_summary = dict(runtime.get("usage_totals") or {})
+        usage_summary = _merge_usage_summary(runtime.get("usage_totals"), session.read_usage_summary(run_dir))
         llm = dict(runtime.get("llm") or {})
         graph = dict(runtime.get("graph") or {})
     else:

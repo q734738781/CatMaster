@@ -4,8 +4,6 @@ description: Use this skill for remote MACE fine-tuning/training plus held-out e
 license: project-local
 compatibility: local
 allowed-tools: "mace_train mace_evaluate"
-metadata:
-  catmaster-suggested-tools: "mace_train mace_evaluate"
 ---
 
 # mace-finetuning-and-benchmark
@@ -19,7 +17,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 3. Launch training with `mace_train`, choosing `e0s="estimated"` or a fixed E0 JSON path explicitly.
 4. Use `mace_evaluate` only when you need an extra post-training benchmark pass; the training run itself may already include `test.extxyz`.
 
-## Suggested tools
+## Allowed tools
 - `mace_train`
 - `mace_evaluate`
 

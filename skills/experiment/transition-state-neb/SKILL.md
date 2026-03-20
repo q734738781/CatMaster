@@ -4,8 +4,6 @@ description: Use this skill for transition-state and NEB workflows, including im
 license: project-local
 compatibility: local
 allowed-tools: "make_neb_geometry vasp_neb_prepare vasp_execute_batch analyze_neb_results"
-metadata:
-  catmaster-suggested-tools: "make_neb_geometry vasp_neb_prepare vasp_execute_batch analyze_neb_results"
 ---
 
 # transition-state-neb
@@ -19,7 +17,7 @@ Use this skill to generate NEB image directories, prepare a NEB-ready VASP input
 3. Use `vasp_neb_prepare` to assemble the NEB root with canonical support files and NEB-critical INCAR settings.
 4. Run the resulting NEB folders through the standard VASP batch execution path.
 
-## Suggested tools
+## Allowed tools
 - `make_neb_geometry`
 - `vasp_neb_prepare`
 - `vasp_execute_batch`
