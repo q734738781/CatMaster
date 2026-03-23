@@ -404,7 +404,7 @@ function messageMatchesResult(message, resultText) {
 
 function decoratePersistedMessages(snapshot, persistedMessages) {
   const rows = Array.isArray(persistedMessages) ? persistedMessages.map((message) => ({ ...message })) : [];
-  const resultText = compactText(snapshot?.result_text || "", 1800);
+  const resultText = String(snapshot?.result_text || "").trim();
   if (!resultText) {
     return rows;
   }
@@ -428,7 +428,7 @@ function decoratePersistedMessages(snapshot, persistedMessages) {
 }
 
 function buildResultFallbackMessage(snapshot, persistedMessages) {
-  const resultText = compactText(snapshot?.result_text || "", 1800);
+  const resultText = String(snapshot?.result_text || "").trim();
   if (!resultText) {
     return null;
   }
@@ -611,13 +611,18 @@ const LANE_GUIDE = {
   },
   research: {
     title: "Research",
-    summary: "Coordinate broader investigation and delegate only when experiment or writing work is needed.",
-    subagents: ["experiment_specialist", "writing_specialist", "litreview_agent"],
+    summary: "Coordinate broader investigation and delegate experiment, writing, literature, or publication-grade peer review only when needed.",
+    subagents: ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"],
   },
   writing: {
     title: "Writing",
     summary: "Draft or revise deliverables from existing evidence and compile when needed.",
     subagents: ["writing_worker_agent", "literature_agent"],
+  },
+  peer_review: {
+    title: "Peer Review",
+    summary: "Act like a journal editor: locate the manuscript PDF, collect reviewer-style reports, and return an editor decision plus raw reviewer comments.",
+    subagents: [],
   },
 };
 
@@ -2437,7 +2442,7 @@ function ToolTracePanel({ activeToolcall, recentToolcalls }) {
   );
 }
 
-function MemoryDrawer({ open, workspaceName, loading, error, text, onRefresh, onClose }) {
+function MemoryDrawer({ open, workspaceName, loading, error, text, source, onSourceChange, onRefresh, onClose }) {
   if (!open) {
     return null;
   }
@@ -2451,6 +2456,15 @@ function MemoryDrawer({ open, workspaceName, loading, error, text, onRefresh, on
             <h3>{workspaceName ? `${workspaceName} memory` : "Project memory"}</h3>
           </div>
           <div className="inline-actions">
+            <button type="button" className={`ghost-btn ${source === "all" ? "active" : ""}`} onClick={() => onSourceChange("all")} disabled={loading}>
+              All
+            </button>
+            <button type="button" className={`ghost-btn ${source === "langmem" ? "active" : ""}`} onClick={() => onSourceChange("langmem")} disabled={loading}>
+              LangMem
+            </button>
+            <button type="button" className={`ghost-btn ${source === "instruction" ? "active" : ""}`} onClick={() => onSourceChange("instruction")} disabled={loading}>
+              AGENTS
+            </button>
             <button type="button" className="ghost-btn" onClick={onRefresh} disabled={loading}>
               Refresh
             </button>
@@ -2489,6 +2503,7 @@ function App({ boot }) {
     error: "",
     loading: false,
     workspace: "",
+    source: "all",
   });
   const [treeNodes, setTreeNodes] = useState({});
   const [treeLoading, setTreeLoading] = useState({});
@@ -2658,6 +2673,7 @@ function App({ boot }) {
     }
     let cancelled = false;
     const workspaceLabel = String(snapshot?.workspace_name || "");
+    const memorySource = String(memoryPanel.source || "all");
     startTransition(() => {
       setMemoryPanel((prev) => ({
         ...prev,
@@ -2665,7 +2681,7 @@ function App({ boot }) {
         error: "",
       }));
     });
-    apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}`)
+    apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}`)
       .then((data) => {
         if (cancelled) {
           return;
@@ -2676,6 +2692,7 @@ function App({ boot }) {
             error: "",
             loading: false,
             workspace: workspaceLabel,
+            source: String(data.source || memorySource || "all"),
           });
         });
       })
@@ -2695,7 +2712,7 @@ function App({ boot }) {
     return () => {
       cancelled = true;
     };
-  }, [ctx, memoryOpen, selectedRun, snapshot?.workspace_name, view]);
+  }, [ctx, memoryOpen, selectedRun, snapshot?.workspace_name, view, memoryPanel.source]);
 
   useEffect(() => {
     if (view !== "files" || !ctx) {
@@ -2764,6 +2781,7 @@ function App({ boot }) {
     if (!ctx) {
       return;
     }
+    const memorySource = String(memoryPanel.source || "all");
     startTransition(() => {
       setMemoryPanel((prev) => ({
         ...prev,
@@ -2772,13 +2790,14 @@ function App({ boot }) {
       }));
     });
     try {
-      const data = await apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}`);
+      const data = await apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}`);
       startTransition(() => {
         setMemoryPanel({
           text: String(data.memory || "").trim(),
           error: "",
           loading: false,
           workspace: String(snapshot?.workspace_name || ""),
+          source: String(data.source || memorySource || "all"),
         });
       });
     } catch (error) {
@@ -3258,7 +3277,7 @@ function App({ boot }) {
                     <label>
                       <span>Lane</span>
                       <select value={lane} onChange={(event) => setLane(event.target.value)}>
-                        {["experiment", "research", "writing"].map((item) => (
+                        {["experiment", "research", "writing", "peer_review"].map((item) => (
                           <option key={item} value={item}>{item}</option>
                         ))}
                       </select>
@@ -3379,6 +3398,8 @@ function App({ boot }) {
           loading={memoryPanel.loading}
           error={memoryPanel.error}
           text={memoryPanel.text}
+          source={memoryPanel.source}
+          onSourceChange={(source) => setMemoryPanel((prev) => ({ ...prev, source }))}
           onRefresh={refreshMemoryPanel}
           onClose={() => setMemoryOpen(false)}
         />

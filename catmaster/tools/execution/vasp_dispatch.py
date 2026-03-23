@@ -94,6 +94,13 @@ class VaspExecuteBatchInput(BaseModel):
         ),
     )
     check_interval: int = Field(30, description="Polling interval seconds")
+    task_name: str = Field(
+        "vasp_execute",
+        description=(
+            "DPDispatcher task template name. Use `vasp_execute` for general VASP runs or a dedicated preset such as "
+            "`vasp_execute_neb` when a workflow should use separate submission resources/config."
+        ),
+    )
 
 
 def _resolve_machine_for_resources(resources_key: str) -> str:
@@ -225,10 +232,11 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[vasp/execute] Submit one VASP calc folder or a discovered batch of calc folders via DPDispatcher."""
     params = VaspExecuteBatchInput(**payload)
     reg = TaskRegistry()
-    cfg = reg.get("vasp_execute")
+    task_name = str(params.task_name or "vasp_execute").strip() or "vasp_execute"
+    cfg = reg.get(task_name)
     resources_key = cfg.resources
     if not resources_key:
-        raise KeyError("vasp_execute missing resources in task config")
+        raise KeyError(f"{task_name} missing resources in task config")
     machine = _resolve_machine_for_resources(resources_key)
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
@@ -273,6 +281,28 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "vasp_execute_batch",
             message="No VASP calc folders found (expected directories containing both POTCAR and INCAR).",
             error_code="no_calc_dirs",
+        )
+    nested_examples: list[str] = []
+    for inp in input_dirs:
+        if not _has_nested_vasp_input_dirs(inp):
+            continue
+        nested_examples.append(workspace_relpath(inp))
+        if len(nested_examples) >= 3:
+            break
+    if nested_examples:
+        examples = "; ".join(nested_examples)
+        _fail(
+            "vasp_execute_batch",
+            message=(
+                "Nested calc folders are not allowed inside submitted calc directories. "
+                f"Examples: {examples}. Split or relocate descendant calc folders before submission."
+            ),
+            data={
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "nested_calc_dirs": nested_examples,
+            },
+            error_code="nested_calc_forbidden",
         )
 
     overlap_examples: list[str] = []
@@ -322,7 +352,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         script_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(script_src, script_dst)
 
-        rendered = render_task_fields(cfg, {}, stage_dir)
+        rendered = render_task_fields(cfg, {"task_name": task_name}, stage_dir)
         backward_files = list(rendered["backward_files"])
         if "*" not in backward_files and STATUS_FILE_NAME not in backward_files:
             backward_files.append(STATUS_FILE_NAME)
@@ -408,11 +438,13 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "output_root_rel": workspace_relpath(output_root),
         "outputs": outputs,
         "batch_state_rel": workspace_relpath(state_path),
+        "task_name": task_name,
+        "resources_key": resources_key,
     }
     first_output = outputs[0]["output_dir_rel"] if outputs else ""
     lines = [
         "vasp_execute_batch completed.",
-        f"calc_dirs={len(input_dirs)} outputs_collected={len(outputs)} task_states={len(data['task_states'])}",
+        f"task_name={task_name} calc_dirs={len(input_dirs)} outputs_collected={len(outputs)} task_states={len(data['task_states'])}",
         f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
     ]
     if data["submission_dir"]:

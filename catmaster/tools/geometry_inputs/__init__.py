@@ -52,6 +52,14 @@ from catmaster.tools.geometry_inputs.neb_tools import (
     make_neb_geometry,
     vasp_neb_prepare,
 )
+from catmaster.tools.geometry_inputs.dimer_tools import (
+    DimerModeFromMaceInput,
+    DimerModeFromNebInput,
+    VaspDimerPrepareInput,
+    make_dimer_mode_from_mace,
+    make_dimer_mode_from_neb,
+    vasp_dimer_prepare,
+)
 
 __all__ = [
     "MoleculeFromSmilesInput",
@@ -92,6 +100,12 @@ __all__ = [
     "generate_batch_adsorption_structures",
     "MakeNebGeometryInput",
     "VaspNebPrepareInput",
+    "VaspDimerPrepareInput",
+    "DimerModeFromNebInput",
+    "DimerModeFromMaceInput",
     "make_neb_geometry",
     "vasp_neb_prepare",
+    "vasp_dimer_prepare",
+    "make_dimer_mode_from_neb",
+    "make_dimer_mode_from_mace",
 ]

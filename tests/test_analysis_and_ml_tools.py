@@ -60,6 +60,39 @@ def test_analyze_vasp_results_with_fake_vasprun(monkeypatch, tmp_path: Path) -> 
     assert data["failed_or_incomplete"] == 1
 
 
+def test_analyze_vasp_results_excludes_frozen_atom_forces(monkeypatch, tmp_path: Path) -> None:
+    class _FakeVasprun:
+        def __init__(self, path: str, parse_projected_eigen: bool = False):
+            _ = (path, parse_projected_eigen)
+            self.converged_electronic = True
+            self.converged_ionic = True
+            self.final_energy = -10.0
+            self.eigenvalue_band_properties = (0.8, 0.0, 0.0)
+            self.ionic_steps = [{"forces": [[0.0, 0.0, 0.55], [0.02, 0.0, 0.0]]}]
+
+    class _FakePoscar:
+        @staticmethod
+        def from_file(path: str):
+            _ = path
+            return SimpleNamespace(selective_dynamics=[[False, False, False], [True, True, True]])
+
+    monkeypatch.setattr(results_analysis, "Vasprun", _FakeVasprun)
+    monkeypatch.setattr(results_analysis, "Poscar", _FakePoscar)
+    monkeypatch.setattr(results_analysis, "Oszicar", lambda path: SimpleNamespace(final_energy=-10.0))
+    monkeypatch.setattr(results_analysis, "Outcar", lambda path: SimpleNamespace(total_mag=0.0))
+
+    with workspace_scope(tmp_path):
+        run_dir = tmp_path / "files" / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "vasprun.xml").write_text("<xml />", encoding="utf-8")
+        (run_dir / "CONTCAR").write_text("dummy\n", encoding="utf-8")
+        _, artifact = results_analysis.analyze_vasp_results({"result_root": "run"})
+
+    data = artifact["data"]
+    summary = json.loads((tmp_path / "files" / data["summary_json_rel"]).read_text(encoding="utf-8"))
+    assert summary["records"][0]["max_force_ev_per_a"] == pytest.approx(0.02)
+
+
 def test_analyze_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         results_analysis,
@@ -438,4 +471,44 @@ def test_analyze_neb_results_rejects_partial_profiles(tmp_path: Path, monkeypatc
         neb_dir = tmp_path / "files" / "neb"
         neb_dir.mkdir(parents=True, exist_ok=True)
         with pytest.raises(CatMasterToolExecutionError, match="Incomplete NEB image energies"):
+            results_analysis.analyze_neb_results({"result_dir": "neb"})
+
+
+def test_scan_neb_images_parses_outcar_toten_only(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        neb_dir = tmp_path / "files" / "neb"
+        for idx, energy in enumerate((-20.0, -19.2, -19.8)):
+            image_dir = neb_dir / f"{idx:02d}"
+            image_dir.mkdir(parents=True, exist_ok=True)
+            (image_dir / "OUTCAR").write_text(
+                "\n".join(
+                    [
+                        " some header",
+                        f"  free energy    TOTEN  =      {energy - 0.1: .8f} eV",
+                        f"  free  energy   TOTEN  =      {energy: .8f} eV",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (image_dir / "OSZICAR").write_text(" 1 F= 999.0 E0= 999.0\n", encoding="utf-8")
+        records, issues = results_analysis._scan_neb_images(neb_dir)
+    assert issues == []
+    assert [record["image"] for record in records] == [0, 1, 2]
+    assert [record["energy_ev"] for record in records] == [-20.0, -19.2, -19.8]
+
+
+def test_analyze_neb_results_requires_endpoint_outcar(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        neb_dir = tmp_path / "files" / "neb"
+        for idx, energy in ((1, -19.2), (2, -19.8), (3, -19.5)):
+            image_dir = neb_dir / f"{idx:02d}"
+            image_dir.mkdir(parents=True, exist_ok=True)
+            (image_dir / "OUTCAR").write_text(
+                f"  free  energy   TOTEN  =      {energy: .8f} eV\n",
+                encoding="utf-8",
+            )
+        for idx in (0, 4):
+            (neb_dir / f"{idx:02d}").mkdir(parents=True, exist_ok=True)
+        with pytest.raises(CatMasterToolExecutionError, match="image 00: no energy parsed from OUTCAR"):
             results_analysis.analyze_neb_results({"result_dir": "neb"})

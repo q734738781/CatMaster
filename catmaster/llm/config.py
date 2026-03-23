@@ -488,6 +488,7 @@ class LLMProfile:
 
     models: Dict[str, LLMConfig] = field(default_factory=dict)
     agents: Dict[str, str] = field(default_factory=dict)
+    peer_review_models: list[str] = field(default_factory=list)
     agent_policies: AgentPoliciesConfig = field(default_factory=AgentPoliciesConfig)
     agent_runtime: AgentRuntimeConfig = field(default_factory=AgentRuntimeConfig)
     literature: LiteratureRuntimeConfig = field(default_factory=LiteratureRuntimeConfig)
@@ -601,6 +602,7 @@ class LLMProfile:
         return LLMProfile(
             models={label: main},
             agents={role: label for role in AGENT_ROLES},
+            peer_review_models=[label],
             agent_policies=AgentPoliciesConfig(),
             agent_runtime=AgentRuntimeConfig(
                 recursion_limit=recursion_limit,
@@ -633,6 +635,7 @@ class LLMProfile:
 
                 models_raw = raw.get("models")
                 agents_raw = raw.get("agents")
+                peer_review_models_raw = raw.get("peer_review_models")
                 agent_policies_raw = raw.get("agent_policies")
                 agent_runtime_raw = raw.get("agent_runtime")
                 literature_raw = raw.get("literature")
@@ -687,6 +690,24 @@ class LLMProfile:
                         raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
                     agents[role] = bound
 
+                peer_review_models: list[str] = []
+                if isinstance(peer_review_models_raw, (list, tuple)):
+                    for item in peer_review_models_raw:
+                        token = str(item or "").strip()
+                        if token:
+                            peer_review_models.append(token)
+                elif isinstance(peer_review_models_raw, str) and peer_review_models_raw.strip():
+                    peer_review_models.append(peer_review_models_raw.strip())
+                if not peer_review_models:
+                    peer_review_models = [agents["academic_polisher"]]
+                unknown_peer_review_labels = [label for label in peer_review_models if label not in models]
+                if unknown_peer_review_labels:
+                    joined = ", ".join(unknown_peer_review_labels)
+                    raise ValueError(
+                        "peer_review_models references unknown model label(s): "
+                        f"{joined}"
+                    )
+
                 image_generation_cfg = ImageGenerationConfig.from_dict(
                     image_generation_raw if isinstance(image_generation_raw, dict) else {}
                 )
@@ -707,6 +728,7 @@ class LLMProfile:
                 return LLMProfile(
                     models=models,
                     agents=agents,
+                    peer_review_models=peer_review_models,
                     agent_policies=AgentPoliciesConfig.from_dict(agent_policies_raw if isinstance(agent_policies_raw, dict) else {}),
                     agent_runtime=agent_runtime_cfg,
                     literature=LiteratureRuntimeConfig.from_dict(

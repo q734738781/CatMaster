@@ -207,6 +207,7 @@ Recommended frontmatter fields:
 `allowed-tools` is a skill-level recommendation list. It does not define the runtime-visible tool surface. Visible tools are determined by the specialist/subagent `tools=[...]` binding.
 
 When a tool surface changes, update the relevant skills in the same change.
+When adding or changing remote/managed execution tools, also update the relevant specialist or worker prompts in `catmaster/specialists/runtime.py` so they describe the new capability contract correctly. In particular, keep local interactive availability separate from managed execution availability, and do not leave agents inferring platform capability from local shell probing alone.
 
 ## 7) Tool conventions
 
@@ -234,6 +235,16 @@ This applies to both:
 - subagents
 
 Do not design active-path workflows that depend on tool exceptions terminating the run.
+
+### Managed execution
+
+Remote or managed execution tools are part of the platform capability surface, even when the corresponding executables are not visible in the local interactive shell.
+
+When developing or expanding DPDispatcher-backed or other managed execution tools:
+
+- update the relevant specialist/worker prompts in `catmaster/specialists/runtime.py` in the same change
+- state clearly when a capability should be treated as available through registered tools rather than local shell binaries
+- for heterogeneous ML tasks, prefer managed tools when they fit, but do not let missing tool coverage block local script-based execution
 
 ### Paths
 

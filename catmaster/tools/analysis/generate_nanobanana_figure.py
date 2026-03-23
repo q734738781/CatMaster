@@ -22,8 +22,8 @@ _MIME_TO_SUFFIX = {
 }
 
 
-class GenerateSchematicFigureInput(BaseModel):
-    """[figure/viz] Generate a schematic manuscript figure from text with OpenRouter image generation and save it under the writable workspace."""
+class GenerateNanoBananaFigureInput(BaseModel):
+    """[figure/viz] Generate a Nano Banana conceptual/manuscript figure from text and save it under the writable workspace."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -152,11 +152,11 @@ def _build_generation_prompt(user_prompt: str) -> str:
     ).strip()
 
 
-def generate_schematic_figure(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """[figure/viz] Generate and save a schematic figure from a text prompt."""
-    tool_name = "generate_schematic_figure"
+def generate_nanobanana_figure(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[figure/viz] Generate and save a Nano Banana figure from a text prompt."""
+    tool_name = "generate_nanobanana_figure"
     try:
-        params = GenerateSchematicFigureInput(**payload)
+        params = GenerateNanoBananaFigureInput(**payload)
         cfg, image_config = _resolve_generation_profile()
         api_key_env = str(cfg.api_key_env or "OPENROUTER_API_KEY").strip() or "OPENROUTER_API_KEY"
         api_key = str(cfg.api_key or os.getenv(api_key_env) or "").strip()
@@ -192,7 +192,7 @@ def generate_schematic_figure(payload: dict[str, Any]) -> tuple[str, dict[str, A
         output_ref = workspace_relpath(output_path)
 
         content_lines = [
-            f"Generated schematic figure: {output_ref}",
+            f"Generated Nano Banana figure: {output_ref}",
             f"Model: {cfg.model}",
             f"MIME: {mime}",
         ]
@@ -222,8 +222,8 @@ def generate_schematic_figure(payload: dict[str, Any]) -> tuple[str, dict[str, A
                     "output_path": payload.get("output_path"),
                 },
             },
-            error_code="generate_schematic_figure_failed",
+            error_code="generate_nanobanana_figure_failed",
         ) from exc
 
 
-__all__ = ["GenerateSchematicFigureInput", "generate_schematic_figure"]
+__all__ = ["GenerateNanoBananaFigureInput", "generate_nanobanana_figure"]

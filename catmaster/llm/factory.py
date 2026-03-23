@@ -5,10 +5,80 @@ import os
 import logging
 import json
 import re
+import warnings
 
 from catmaster.llm.config import LLMConfig
 
 _logger = logging.getLogger(__name__)
+
+
+def _patch_langchain_openrouter_file_wrapper() -> None:
+    """Patch langchain_openrouter so file-block messages retain `role`.
+
+    langchain_openrouter currently wraps file-block messages with SDK Pydantic
+    models via `model_construct(**fields)` after removing the `role` key. The
+    resulting serialized payload omits `role`, which OpenRouter rejects with
+    "Could not find discriminator field role". Keep the full dict so the SDK
+    models still dump `role` correctly.
+    """
+    try:
+        from langchain_openrouter import chat_models as chat_models_mod  # type: ignore
+    except Exception:
+        return
+
+    if getattr(chat_models_mod, "_catmaster_file_wrapper_patched", False):
+        return
+
+    original = getattr(chat_models_mod, "_wrap_messages_for_sdk", None)
+    has_file_blocks = getattr(chat_models_mod, "_has_file_content_blocks", None)
+    if not callable(original) or not callable(has_file_blocks):
+        return
+
+    def _fixed_wrap_messages_for_sdk(message_dicts: list[dict[str, Any]]) -> list[dict[str, Any]] | list[Any]:
+        if not has_file_blocks(message_dicts):
+            return message_dicts
+
+        try:
+            from openrouter import components  # type: ignore  # noqa: PLC0415
+        except Exception:
+            return message_dicts
+
+        role_to_model: dict[str, Any] = {
+            "user": components.UserMessage,
+            "system": components.SystemMessage,
+            "assistant": components.AssistantMessage,
+            "tool": components.ToolResponseMessage,
+            "developer": components.DeveloperMessage,
+        }
+
+        wrapped: list[Any] = []
+        for msg in message_dicts:
+            model_cls = role_to_model.get(str(msg.get("role", "") or ""))
+            if model_cls is None:
+                wrapped.append(msg)
+                continue
+            wrapped.append(model_cls.model_construct(**dict(msg)))
+        return wrapped
+
+    chat_models_mod._wrap_messages_for_sdk = _fixed_wrap_messages_for_sdk
+    chat_models_mod._catmaster_file_wrapper_patched = True
+
+
+def _suppress_openrouter_file_block_serializer_warnings() -> None:
+    """Silence known SDK/Pydantic warnings for OpenRouter file-block payloads.
+
+    The OpenRouter API accepts file content blocks, but the current SDK type
+    declarations lag behind and emit noisy `Pydantic serializer warnings`
+    during request serialization. These are not actionable for callers once the
+    payload is patched to include `role` correctly, so suppress this specific
+    warning family while leaving real API failures untouched.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Pydantic serializer warnings:.*",
+        category=UserWarning,
+        module=r"pydantic\.functional_validators|openrouter\.components\.chatgenerationparams",
+    )
 
 
 def _normalize_http_log_body(text: str) -> str:
@@ -292,6 +362,8 @@ def build_chat_model(cfg: LLMConfig) -> Any:
     if cfg.provider == "openrouter":
         from langchain_openrouter import ChatOpenRouter
 
+        _patch_langchain_openrouter_file_wrapper()
+        _suppress_openrouter_file_block_serializer_warnings()
         api_key = _require_api_key(cfg)
         kwargs = _resolve_openrouter_request_kwargs(cfg)
         reasoning_config = _resolve_reasoning_config(cfg)

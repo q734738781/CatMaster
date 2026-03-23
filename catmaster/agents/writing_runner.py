@@ -153,7 +153,7 @@ class WritingRunner:
                 "apply_aider_edits",
                 "render_structure_views",
                 "analyze_images",
-                "generate_schematic_figure",
+                "generate_nanobanana_figure",
                 "compile_text",
                 "polish_academic_prose",
                 "run_literature_research",

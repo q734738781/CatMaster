@@ -11,13 +11,25 @@ from catmaster.tools.analysis.fragment_probe import (
     IdentifyStructureFragmentsInput,
     identify_structure_fragments,
 )
-from catmaster.tools.analysis.generate_schematic_figure import (
-    GenerateSchematicFigureInput,
-    generate_schematic_figure,
+from catmaster.tools.analysis.generate_nanobanana_figure import (
+    GenerateNanoBananaFigureInput,
+    generate_nanobanana_figure,
 )
 from catmaster.tools.analysis.polish_academic_prose import (
     PolishAcademicProseInput,
     polish_academic_prose,
+)
+from catmaster.tools.analysis.peer_review_pdf_manuscript import (
+    PeerReviewPdfManuscriptInput,
+    peer_review_pdf_manuscript,
+)
+from catmaster.tools.analysis.peer_review_request import (
+    PeerReviewRequestInput,
+    peer_review_request,
+)
+from catmaster.tools.analysis.review_pdf_manuscript import (
+    ReviewPdfManuscriptInput,
+    review_pdf_manuscript,
 )
 from catmaster.tools.analysis.render_structure_views import RenderStructureViewsInput, render_structure_views
 from catmaster.tools.analysis.results_analysis import (
@@ -44,10 +56,16 @@ __all__ = [
     "analyze_images",
     "IdentifyStructureFragmentsInput",
     "identify_structure_fragments",
-    "GenerateSchematicFigureInput",
-    "generate_schematic_figure",
+    "GenerateNanoBananaFigureInput",
+    "generate_nanobanana_figure",
     "PolishAcademicProseInput",
     "polish_academic_prose",
+    "PeerReviewPdfManuscriptInput",
+    "peer_review_pdf_manuscript",
+    "PeerReviewRequestInput",
+    "peer_review_request",
+    "ReviewPdfManuscriptInput",
+    "review_pdf_manuscript",
     "RenderStructureViewsInput",
     "render_structure_views",
     "AnalyzeVaspResultsInput",

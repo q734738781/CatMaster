@@ -1,7 +1,7 @@
 ---
 name: results-and-discussion-writing
 description: Write Results and Discussion sections that separate observations from interpretation and preserve uncertainty.
-allowed-tools: "review_research_context read_research_pack execute"
+allowed-tools: "read_file execute"
 license: project-local
 compatibility: local
 metadata:
@@ -19,8 +19,7 @@ Organize numerical or computational findings into a Results/Discussion section t
 Use when the section must explain computed structures, trends, figures, or comparisons without overclaiming.
 
 ## Allowed tools
-- `review_research_context`
-- `read_research_pack`
+- `read_file`
 - `execute`
 
 ## Workflow

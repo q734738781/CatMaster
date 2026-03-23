@@ -188,7 +188,7 @@ models:
   
   "google/gemini-3-flash-preview":
     provider: openrouter
-    model: google/gemini-3-flash-preview
+    model: google/gemini-3-flash-preview:online
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
@@ -197,7 +197,7 @@ models:
 
   "google/gemini-3.1-pro-preview":
     provider: openrouter
-    model: google/gemini-3.1-pro-preview
+    model: google/gemini-3.1-pro-preview:online
     temperature: 0.2
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
@@ -238,6 +238,9 @@ agents:
   memory_patch: "openai/gpt-5.4:online-medium"
   tool_selector: "openai/gpt-5.4-mini"
   summary: "google/gemini-3-flash-preview"
+
+peer_review_models:
+  - "google/gemini-3.1-pro-preview"
 
 image_generation:
   model_label: "google/nanobanana_2"

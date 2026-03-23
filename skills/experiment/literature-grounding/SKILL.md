@@ -3,7 +3,7 @@ name: literature-grounding
 description: Use this skill when the user asks for papers, prior work, benchmark conventions, prior-art mapping, or other explicit evidence grounding from published work, including heterogeneous-catalysis method benchmarks.
 license: project-local
 compatibility: local
-allowed-tools: "run_literature_research"
+allowed-tools: "execute"
 ---
 
 # literature-grounding
@@ -13,8 +13,8 @@ Use this skill to run the smallest literature-grounding workflow that can answer
 
 ## Quick Start
 - For broad public-background exploration or quick web context, ordinary online/web search is often enough.
-- If the user asks for papers, prior work, representative literature, supporting evidence, benchmark conventions, prior-art mapping, or a reusable citation pack, call `run_literature_research`.
-- When calling `run_literature_research`, keep `query` as the literature question and provide a short domain phrase in `topic` when possible; scholarly databases should not receive the full reporting instruction text.
+- If the user asks for papers, prior work, representative literature, supporting evidence, benchmark conventions, prior-art mapping, or a reusable citation pack, route the request to the runtime's literature-review path instead of improvising an ad hoc search plan.
+- When staging a literature request for that path, keep the main `query` focused on the literature question and provide a short domain/topic phrase when possible; scholarly metadata lookups should not receive the full reporting instruction text.
 - Within literature research itself, default to web-first orientation. Only escalate to OpenAlex / Semantic Scholar when paper metadata, citations, DOI/year/venue details, or explicit literature grounding are actually needed.
 - Default to `depth=quick` for representative-paper requests.
 - Use `depth=standard` for method conventions, benchmark framing, catalyst-system prior art, or comparative evidence.
@@ -22,7 +22,7 @@ Use this skill to run the smallest literature-grounding workflow that can answer
 - Use `depth=deep_report` only for explicit deep-review or survey-style requests.
 
 ## Allowed tools
-- run_literature_research
+- `execute`
 
 ## Workflow
 ### 1. Decide whether literature is actually needed
@@ -43,7 +43,7 @@ Use the returned literature context pack as the planning/evidence object. Do not
 
 ## Method-critical defaults
 - Literature grounding is not a default-on behavior. It should be explicitly requested by the user or justified by the planning need.
-- Treat `run_literature_research` as a precise grounding path, not the default replacement for ordinary web search.
+- Treat the runtime's dedicated literature-review path as a precise grounding mechanism, not the default replacement for ordinary web search.
 - Quick paper-finding requests should not silently escalate into deep literature reviews.
 - When literature is used to justify quantitative settings, benchmark conventions, adsorption/reference-state policy, or dispersion treatment, carry those conclusions forward explicitly into proposal text or task packets.
 - Do not mix literature-derived benchmark expectations with current-run numerical results; keep literature priors and project outputs separated.

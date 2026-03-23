@@ -578,7 +578,7 @@ def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
     return {
         "active_run": active_run,
         "selected_run": selected_run,
-        "chat_messages": session.get_chat_messages(limit=40),
+        "chat_messages": session.get_chat_messages(),
         "cards": _serialize_cards(session.list_run_cards()),
         "usage_summary": usage_summary,
         "proposal": session.read_proposal(run_dir),
@@ -661,7 +661,7 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         "proposal": session.read_proposal(run_dir),
         "todo_items": session.read_todo_items(run_dir),
         "result_text": session.read_result_text(run_dir),
-        "chat_messages": session.get_chat_messages(limit=40),
+        "chat_messages": session.get_chat_messages(),
         "entry_context_status": session.entry_context_status_text(lane=lane),
         "runtime": runtime,
         "can_submit_prompt": bool(runtime_matches_selection and prompt_payload),
@@ -707,12 +707,13 @@ def _build_details(*, registry: SessionRegistry, ctx: str, run_name: str) -> dic
     }
 
 
-def _build_memory(*, registry: SessionRegistry, ctx: str, run_name: str = "") -> dict[str, Any]:
+def _build_memory(*, registry: SessionRegistry, ctx: str, run_name: str = "", source: str = "all") -> dict[str, Any]:
     session = registry.get_session(ctx)
     _run_dir, selected_run = _run_dir_for_name(session, run_name)
     return {
         "selected_run": selected_run,
-        "memory": session.read_memory_index(),
+        "source": str(source or "all").strip().lower() or "all",
+        "memory": session.read_memory_index(source=source),
     }
 
 
@@ -844,8 +845,12 @@ def create_app(*, project_space_root: str) -> FastAPI:
         return JSONResponse(_build_details(registry=registry, ctx=ctx, run_name=run))
 
     @app.get("/api/session/{ctx}/memory")
-    def _session_memory(ctx: str, run: str = ""):
-        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run))
+    def _session_memory(ctx: str, run: str = "", source: str = "all"):
+        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source=source))
+
+    @app.get("/api/session/{ctx}/langmem")
+    def _session_langmem(ctx: str, run: str = ""):
+        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source="langmem"))
 
     @app.get("/api/session/{ctx}/files/tree")
     def _session_files_tree(ctx: str, path: str = ""):

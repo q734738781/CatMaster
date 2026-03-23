@@ -19,6 +19,7 @@ from .vasp_inputs import StructWriter
 _CELL_TOL = 1e-5
 _ELEMENT_MAP_INCAR_KEYS = {"MAGMOM", "LDAUU", "LDAUJ"}
 _NEB_PROTECTED_KEYS_BASE = {"IBRION", "POTIM", "ICHAIN", "IMAGES", "IOPT", "ISYM", "LCLIMB"}
+_STRUCTURE_FILE_SUFFIXES = {"", ".vasp", ".cif", ".xyz", ".poscar", ".contcar"}
 
 
 def _element_map_error_message(key: str) -> str:
@@ -57,11 +58,24 @@ def _normalize_incar_patch(value: Dict[str, Any]) -> Dict[str, Any]:
 class MakeNebGeometryInput(BaseModel):
     """[neb/modeling] Generate NEB interpolation geometries in nebmake.pl style."""
 
-    initial_path: str = Field(..., description="Initial structure file (POSCAR/CONTCAR/.vasp/.cif).")
-    final_path: str = Field(..., description="Final structure file (POSCAR/CONTCAR/.vasp/.cif).")
+    initial_path: str | None = Field(None, description="Initial structure file (POSCAR/CONTCAR/.vasp/.cif).")
+    final_path: str | None = Field(None, description="Final structure file (POSCAR/CONTCAR/.vasp/.cif).")
+    input_root: str | None = Field(
+        None,
+        description=(
+            "Optional batch root containing task subdirectories. Each task directory must contain one initial-state "
+            "structure file named IS(.vasp/.cif/...) and one final-state file named FS(.vasp/.cif/...)."
+        ),
+    )
+    output_root: str | None = Field(
+        None,
+        description="Batch output root used only with input_root. Outputs are written to output_root/<task_id>/00.vasp...",
+    )
     n_images: int = Field(..., ge=1, description="Number of intermediate images (NI).")
-    output_dir: str = Field("neb_images", description="Output directory for image folders (workspace-relative).")
-    output_filename: str = Field("POSCAR", description="Filename for each image output.")
+    output_dir: str = Field(
+        "neb_images",
+        description="Single-case output directory for a flat numbered image-file tree such as 00.vasp, 01.vasp, ... (workspace-relative).",
+    )
     interp_mode: str = Field(
         "direct",
         description="Output coordinate style when writing POSCAR: direct or cartesian.",
@@ -78,15 +92,42 @@ class MakeNebGeometryInput(BaseModel):
     )
     overwrite: bool = Field(False, description="If true, overwrite output_dir if it exists.")
 
+    @model_validator(mode="after")
+    def _validate_mode(self) -> "MakeNebGeometryInput":
+        has_batch = bool(self.input_root)
+        has_initial = bool(self.initial_path)
+        has_final = bool(self.final_path)
+        if has_batch:
+            if has_initial or has_final:
+                raise ValueError("Provide either initial_path+final_path or input_root, not both.")
+            if not self.output_root:
+                raise ValueError("Batch mode requires output_root.")
+        else:
+            if not (has_initial and has_final):
+                raise ValueError("Single-case mode requires both initial_path and final_path.")
+        return self
+
 
 class VaspNebPrepareInput(BaseModel):
     """[neb/prepare] Prepare a canonical NEB VASP input tree from endpoint structures or an existing image tree."""
 
     initial_path: str | None = Field(None, description="Initial endpoint structure path.")
     final_path: str | None = Field(None, description="Final endpoint structure path.")
+    input_root: str | None = Field(
+        None,
+        description=(
+            "Optional batch root containing task subdirectories. Each task directory must contain one image tree "
+            "using flat image files 00.vasp, 01.vasp, ... or legacy 00/POSCAR, 01/POSCAR, ... . "
+            "Each task directory must also contain endpoint OUTCAR files named IS_OUTCAR and FS_OUTCAR."
+        ),
+    )
     images_root: str | None = Field(
         None,
-        description="Existing image-tree root containing numbered directories such as 00/01/... with POSCAR or CONTCAR.",
+        description=(
+            "Existing image-tree root. Preferred form is a flat numbered file tree such as 00.vasp, 01.vasp, ... . "
+            "Legacy numbered directories such as 00/POSCAR, 01/POSCAR, ... are also accepted. "
+            "The same directory must also contain IS_OUTCAR and FS_OUTCAR."
+        ),
     )
     output_root: str = Field(..., description="Target NEB job root. Image directories and root VASP files are written here.")
     n_images: int = Field(5, ge=1, description="Number of intermediate images when generating from endpoints.")
@@ -135,10 +176,13 @@ class VaspNebPrepareInput(BaseModel):
     def _validate_source_mode(self) -> "VaspNebPrepareInput":
         has_initial = bool(self.initial_path)
         has_final = bool(self.final_path)
+        has_batch = bool(self.input_root)
         has_tree = bool(self.images_root)
-        if has_tree and (has_initial or has_final):
-            raise ValueError("Provide exactly one NEB source mode: either initial_path+final_path or images_root.")
-        if not has_tree and not (has_initial and has_final):
+        if sum(bool(flag) for flag in (has_batch, has_tree, has_initial or has_final)) != 1:
+            raise ValueError(
+                "Provide exactly one NEB source mode: either initial_path+final_path, images_root, or input_root."
+            )
+        if not has_batch and not has_tree and not (has_initial and has_final):
             raise ValueError("Endpoint mode requires both initial_path and final_path.")
         if self.iopt not in {7, 2, 1}:
             raise ValueError("iopt must be one of 7, 2, 1.")
@@ -166,6 +210,26 @@ def _validate_structures(initial, final) -> Optional[str]:
     if not np.allclose(initial.cell.array, final.cell.array, rtol=_CELL_TOL, atol=_CELL_TOL):
         return "Initial and final lattices differ beyond tolerance."
     return None
+
+
+def _find_named_structure_file(task_dir: Path, label: str) -> Path:
+    target = str(label).strip().upper()
+    matches: list[Path] = []
+    for candidate in sorted(task_dir.iterdir()):
+        if not candidate.is_file():
+            continue
+        suffix = candidate.suffix.lower()
+        if suffix not in _STRUCTURE_FILE_SUFFIXES:
+            continue
+        stem = candidate.stem.upper() if suffix else candidate.name.upper()
+        if stem != target:
+            continue
+        matches.append(candidate)
+    if not matches:
+        raise FileNotFoundError(f"No {target} structure file found in {workspace_relpath(task_dir)}")
+    if len(matches) > 1:
+        raise ValueError(f"Multiple {target} structure files found in {workspace_relpath(task_dir)}")
+    return matches[0]
 
 
 def _build_images(
@@ -242,6 +306,8 @@ def _fail(
 def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[neb/modeling] Generate interpolated NEB image geometries from initial and final structures."""
     params = MakeNebGeometryInput(**payload)
+    if params.input_root:
+        return _make_neb_geometry_batch(params)
     init_path = resolve_workspace_path(params.initial_path, must_exist=True)
     final_path = resolve_workspace_path(params.final_path, must_exist=True)
     output_root = resolve_workspace_path(params.output_dir)
@@ -297,11 +363,9 @@ def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     )
     warnings.extend(interp_warnings)
 
-    image_dirs: List[str] = []
+    image_files: List[str] = []
     for idx, atoms in enumerate(images):
-        img_dir = output_root / f"{idx:02d}"
-        img_dir.mkdir(parents=True, exist_ok=True)
-        out_path = img_dir / params.output_filename
+        out_path = output_root / f"{idx:02d}.vasp"
         ase_write(
             str(out_path),
             atoms,
@@ -309,23 +373,85 @@ def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             direct=(params.interp_mode == "direct"),
             vasp5=True,
         )
-        image_dirs.append(workspace_relpath(img_dir))
+        image_files.append(workspace_relpath(out_path))
 
     data = {
         "output_dir": workspace_relpath(output_root),
         "num_intermediate_images": params.n_images,
         "num_total_images": params.n_images + 2,
-        "image_dirs": image_dirs,
+        "image_files": image_files,
     }
     lines = [
         "make_neb_geometry completed.",
         f"num_total_images={data['num_total_images']} num_intermediate_images={params.n_images}",
         f"output_dir={data['output_dir']}",
     ]
-    if image_dirs:
-        lines.append(f"first_image_dir={image_dirs[0]}")
-        lines.append(f"last_image_dir={image_dirs[-1]}")
+    if image_files:
+        lines.append(f"first_image_file={image_files[0]}")
+        lines.append(f"last_image_file={image_files[-1]}")
     return _success("make_neb_geometry", content="\n".join(lines), data=data, warnings=warnings)
+
+
+def _make_neb_geometry_batch(params: MakeNebGeometryInput) -> tuple[str, dict[str, Any]]:
+    input_root = resolve_workspace_path(str(params.input_root), must_exist=True)
+    output_root = resolve_workspace_path(str(params.output_root))
+    if not input_root.is_dir():
+        _fail("make_neb_geometry", message=f"input_root is not a directory: {input_root}", error_code="invalid_input_root")
+    if output_root.exists():
+        if output_root.is_file():
+            _fail("make_neb_geometry", message=f"output_root is a file: {output_root}", error_code="invalid_output_root")
+        if not params.overwrite:
+            _fail("make_neb_geometry", message=f"output_root already exists: {output_root}. Set overwrite=true to replace.", error_code="output_root_exists")
+        shutil.rmtree(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    task_dirs = sorted(path for path in input_root.iterdir() if path.is_dir())
+    stray_files = sorted(path.name for path in input_root.iterdir() if path.is_file())
+    if stray_files:
+        _fail(
+            "make_neb_geometry",
+            message=f"Batch input_root must contain only task directories. Unexpected files: {', '.join(stray_files[:5])}",
+            data={"output_root_rel": workspace_relpath(output_root)},
+            error_code="invalid_batch_root",
+        )
+    if not task_dirs:
+        _fail("make_neb_geometry", message="Batch input_root contains no task directories.", error_code="invalid_batch_root")
+
+    task_results: list[dict[str, Any]] = []
+    for task_dir in task_dirs:
+        if any(path.is_dir() for path in task_dir.iterdir()):
+            _fail(
+                "make_neb_geometry",
+                message=f"Nested directories are forbidden inside batch NEB geometry task dirs: {workspace_relpath(task_dir)}",
+                error_code="nested_task_forbidden",
+            )
+        init_path = _find_named_structure_file(task_dir, "IS")
+        final_path = _find_named_structure_file(task_dir, "FS")
+        task_output_root = output_root / task_dir.name
+        task_params = params.model_copy(update={"initial_path": workspace_relpath(init_path), "final_path": workspace_relpath(final_path), "input_root": None, "output_root": None, "output_dir": workspace_relpath(task_output_root)})
+        _content, artifact = make_neb_geometry(task_params.model_dump(exclude_none=True))
+        task_results.append({"task_id": task_dir.name, **artifact["data"]})
+
+    batch_summary_path = output_root / "batch_summary.json"
+    batch_summary = {
+        "input_root_rel": workspace_relpath(input_root),
+        "output_root_rel": workspace_relpath(output_root),
+        "task_count": len(task_results),
+        "tasks": task_results,
+    }
+    batch_summary_path.write_text(json.dumps(batch_summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    data = {
+        "input_root_rel": workspace_relpath(input_root),
+        "output_root_rel": workspace_relpath(output_root),
+        "task_count": len(task_results),
+        "batch_summary_rel": workspace_relpath(batch_summary_path),
+    }
+    content = (
+        "make_neb_geometry completed.\n"
+        f"task_count={len(task_results)} output_root_rel={data['output_root_rel']} "
+        f"batch_summary_rel={data['batch_summary_rel']}"
+    )
+    return _success("make_neb_geometry", content=content, data=data)
 
 
 def _strip_incar_comment(line: str) -> str:
@@ -382,6 +508,68 @@ def _find_image_structure_file(image_dir: Path) -> Path:
     raise FileNotFoundError(f"No structure file found in {image_dir}")
 
 
+def _parse_flat_image_file_name(path: Path) -> int | None:
+    if not path.is_file():
+        return None
+    stem = path.stem
+    if not stem.isdigit():
+        return None
+    if path.suffix.lower() not in {".vasp", ".cif", ".xyz", ".poscar"}:
+        return None
+    return int(stem)
+
+
+def _classify_single_image_tree(path: Path) -> tuple[list[tuple[int, Path]], str] | None:
+    if not path.is_dir():
+        return None
+    numbered_dirs = sorted(
+        [child for child in path.iterdir() if child.is_dir() and child.name.isdigit()],
+        key=lambda child: int(child.name),
+    )
+    numbered_files = sorted(
+        [(idx, child) for child in path.iterdir() if (idx := _parse_flat_image_file_name(child)) is not None],
+        key=lambda item: item[0],
+    )
+    if numbered_dirs and numbered_files:
+        return None
+    if not numbered_dirs and not numbered_files:
+        return None
+    image_sources = [(int(child.name), child) for child in numbered_dirs] if numbered_dirs else numbered_files
+    found = [idx for idx, _ in image_sources]
+    expected = list(range(found[0], found[-1] + 1))
+    if found != expected or found[0] != 0:
+        return None
+    return image_sources, ("legacy_dir" if numbered_dirs else "flat_file")
+
+
+def _discover_image_tree_tasks(input_root: Path) -> tuple[list[Path], bool]:
+    single = _classify_single_image_tree(input_root)
+    if single is not None:
+        return [input_root], True
+    child_dirs = sorted(path for path in input_root.iterdir() if path.is_dir())
+    stray_files = sorted(path.name for path in input_root.iterdir() if path.is_file())
+    if stray_files:
+        raise ValueError(
+            f"Batch NEB input_root must contain only task directories. Unexpected files: {', '.join(stray_files[:5])}"
+        )
+    if not child_dirs:
+        raise ValueError("input_root is neither a NEB image tree nor a batch directory of NEB tasks.")
+    for child in child_dirs:
+        if _classify_single_image_tree(child) is None:
+            raise ValueError(
+                f"Each child of batch input_root must be one NEB image tree with flat files or legacy image dirs: {workspace_relpath(child)}"
+            )
+    return child_dirs, False
+
+
+def _copy_if_exists(src: Path, dst: Path) -> bool:
+    if not src.is_file():
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return True
+
+
 class VaspNebWriter:
     """Prepare a NEB job root while keeping geometry generation as a separate reusable primitive."""
 
@@ -389,6 +577,8 @@ class VaspNebWriter:
         self._vasp_writer = StructWriter()
 
     def prepare(self, params: VaspNebPrepareInput) -> tuple[str, dict[str, Any]]:
+        if params.input_root:
+            return self._prepare_batch(params)
         output_root = resolve_workspace_path(params.output_root)
         self._prepare_output_root(output_root=output_root, overwrite=params.overwrite)
 
@@ -431,6 +621,50 @@ class VaspNebWriter:
             data=data,
             warnings=image_set.warnings,
         )
+
+    def _prepare_batch(self, params: VaspNebPrepareInput) -> tuple[str, dict[str, Any]]:
+        input_root = resolve_workspace_path(str(params.input_root), must_exist=True)
+        output_root = resolve_workspace_path(params.output_root)
+        if not input_root.is_dir():
+            _fail("vasp_neb_prepare", message=f"input_root is not a directory: {input_root}", error_code="invalid_input_root")
+        self._prepare_output_root(output_root=output_root, overwrite=params.overwrite)
+        try:
+            task_dirs, _single_task_mode = _discover_image_tree_tasks(input_root)
+        except Exception as exc:
+            _fail(
+                "vasp_neb_prepare",
+                message=str(exc),
+                data={"output_root_rel": workspace_relpath(output_root)},
+                error_code="invalid_batch_root",
+            )
+        task_results: list[dict[str, Any]] = []
+        for task_dir in task_dirs:
+            task_payload = params.model_dump(exclude_none=True)
+            task_payload.pop("input_root", None)
+            task_payload["images_root"] = workspace_relpath(task_dir)
+            task_payload["output_root"] = workspace_relpath(output_root / task_dir.name)
+            _content, artifact = self.prepare(VaspNebPrepareInput(**task_payload))
+            task_results.append({"task_id": task_dir.name, **artifact["data"]})
+        batch_summary_path = output_root / "batch_summary.json"
+        batch_summary = {
+            "input_root_rel": workspace_relpath(input_root),
+            "output_root_rel": workspace_relpath(output_root),
+            "task_count": len(task_results),
+            "tasks": task_results,
+        }
+        batch_summary_path.write_text(json.dumps(batch_summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        data = {
+            "input_root_rel": workspace_relpath(input_root),
+            "output_root_rel": workspace_relpath(output_root),
+            "task_count": len(task_results),
+            "batch_summary_rel": workspace_relpath(batch_summary_path),
+        }
+        content = (
+            "vasp_neb_prepare completed.\n"
+            f"task_count={len(task_results)} output_root_rel={data['output_root_rel']} "
+            f"batch_summary_rel={data['batch_summary_rel']}"
+        )
+        return _success("vasp_neb_prepare", content=content, data=data)
 
     @staticmethod
     def _prepare_output_root(*, output_root: Path, overwrite: bool) -> None:
@@ -494,6 +728,14 @@ class VaspNebWriter:
             output_filename=params.output_filename,
             interp_mode=params.interp_mode,
         )
+        warnings.extend(
+            self._copy_endpoint_support_files(
+                init_path=init_path,
+                final_path=final_path,
+                output_root=output_root,
+                total_images=len(images),
+            )
+        )
         return NebImageSet(
             representative_atoms=images[0],
             image_dirs_rel=image_dirs,
@@ -514,14 +756,22 @@ class VaspNebWriter:
                 },
                 error_code="invalid_images_root",
             )
-        image_dirs_src = sorted(
-            [path for path in images_root.iterdir() if path.is_dir() and path.name.isdigit()],
-            key=lambda path: int(path.name),
-        )
-        if len(image_dirs_src) < 2:
+        classified = _classify_single_image_tree(images_root)
+        if classified is None:
             _fail(
                 "vasp_neb_prepare",
-                message="images_root must contain at least endpoint directories such as 00 and 01.",
+                message="images_root must be one image tree with contiguous numbering from 00 using either flat image files or legacy image directories.",
+                data={
+                    "images_root_rel": workspace_relpath(images_root),
+                    "output_root_rel": workspace_relpath(output_root),
+                },
+                error_code="invalid_image_tree",
+            )
+        image_sources, _layout = classified
+        if len(image_sources) < 2:
+            _fail(
+                "vasp_neb_prepare",
+                message="images_root must contain at least endpoint images such as 00/01 or 00.vasp/01.vasp.",
                 data={
                     "images_root_rel": workspace_relpath(images_root),
                     "output_root_rel": workspace_relpath(output_root),
@@ -532,15 +782,15 @@ class VaspNebWriter:
         image_dirs_rel: list[str] = []
         representative_atoms = None
         warnings: list[str] = []
-        for src_dir in image_dirs_src:
-            dst_dir = output_root / src_dir.name
+        for idx, src in image_sources:
+            dst_dir = output_root / f"{idx:02d}"
             dst_dir.mkdir(parents=True, exist_ok=True)
             try:
-                struct_path = _find_image_structure_file(src_dir)
+                struct_path = _find_image_structure_file(src) if src.is_dir() else src
             except Exception as exc:
                 _fail(
                     "vasp_neb_prepare",
-                    message=f"Failed to locate image structure under {workspace_relpath(src_dir)}: {exc}",
+                    message=f"Failed to locate image structure under {workspace_relpath(src)}: {exc}",
                     data={
                         "images_root_rel": workspace_relpath(images_root),
                         "output_root_rel": workspace_relpath(output_root),
@@ -559,6 +809,8 @@ class VaspNebWriter:
                 vasp5=True,
             )
             image_dirs_rel.append(workspace_relpath(dst_dir))
+
+        warnings.extend(self._copy_required_image_tree_outcars(images_root=images_root, output_root=output_root, total_images=len(image_dirs_rel)))
 
         if representative_atoms is None:  # pragma: no cover
             raise AssertionError("representative_atoms should have been set")
@@ -592,6 +844,60 @@ class VaspNebWriter:
             )
             image_dirs_rel.append(workspace_relpath(img_dir))
         return image_dirs_rel
+
+    @staticmethod
+    def _copy_endpoint_support_files(
+        *,
+        init_path: Path,
+        final_path: Path,
+        output_root: Path,
+        total_images: int,
+    ) -> list[str]:
+        warnings: list[str] = []
+        first_dir = output_root / "00"
+        last_dir = output_root / f"{max(0, total_images - 1):02d}"
+        initial_outcar = init_path.parent / "OUTCAR"
+        final_outcar = final_path.parent / "OUTCAR"
+        if not _copy_if_exists(initial_outcar, first_dir / "OUTCAR"):
+            warnings.append(
+                f"endpoint support file not found for initial image: {workspace_relpath(initial_outcar)}"
+            )
+        if not _copy_if_exists(final_outcar, last_dir / "OUTCAR"):
+            warnings.append(
+                f"endpoint support file not found for final image: {workspace_relpath(final_outcar)}"
+            )
+        return warnings
+
+    @staticmethod
+    def _copy_required_image_tree_outcars(
+        *,
+        images_root: Path,
+        output_root: Path,
+        total_images: int,
+    ) -> list[str]:
+        if total_images < 2:
+            return []
+        initial_outcar = images_root / "IS_OUTCAR"
+        final_outcar = images_root / "FS_OUTCAR"
+        if not initial_outcar.is_file():
+            _fail(
+                "vasp_neb_prepare",
+                message=f"images_root is missing required endpoint OUTCAR file: {workspace_relpath(initial_outcar)}",
+                data={"images_root_rel": workspace_relpath(images_root), "output_root_rel": workspace_relpath(output_root)},
+                error_code="missing_image_tree_outcar",
+            )
+        if not final_outcar.is_file():
+            _fail(
+                "vasp_neb_prepare",
+                message=f"images_root is missing required endpoint OUTCAR file: {workspace_relpath(final_outcar)}",
+                data={"images_root_rel": workspace_relpath(images_root), "output_root_rel": workspace_relpath(output_root)},
+                error_code="missing_image_tree_outcar",
+            )
+        first_dir = output_root / "00"
+        last_dir = output_root / f"{max(0, total_images - 1):02d}"
+        shutil.copy2(initial_outcar, first_dir / "OUTCAR")
+        shutil.copy2(final_outcar, last_dir / "OUTCAR")
+        return []
 
     def _write_neb_support_files(
         self,

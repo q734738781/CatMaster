@@ -66,9 +66,9 @@ class _FakeProfile:
         )
 
 
-def test_generate_schematic_figure_writes_workspace_image(tmp_path: Path, monkeypatch) -> None:
+def test_generate_nanobanana_figure_writes_workspace_image(tmp_path: Path, monkeypatch) -> None:
     ensure_project_space_layout(tmp_path, create=True)
-    tool_module = importlib.import_module("catmaster.tools.analysis.generate_schematic_figure")
+    tool_module = importlib.import_module("catmaster.tools.analysis.generate_nanobanana_figure")
     fake_client = _FakeClient()
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
@@ -76,7 +76,7 @@ def test_generate_schematic_figure_writes_workspace_image(tmp_path: Path, monkey
     monkeypatch.setattr(tool_module.LLMProfile, "from_env_or_file", staticmethod(lambda: _FakeProfile()))
 
     with workspace_scope(tmp_path):
-        content, artifact = tool_module.generate_schematic_figure(
+        content, artifact = tool_module.generate_nanobanana_figure(
             {
                 "prompt": "Schematic of CO approaching Fe(110) with an adsorption arrow and site labels.",
                 "output_path": "writing/write_001/figures/adsorption-schematic",
@@ -86,7 +86,7 @@ def test_generate_schematic_figure_writes_workspace_image(tmp_path: Path, monkey
     output_path = tmp_path / "files" / "writing" / "write_001" / "figures" / "adsorption-schematic.png"
     assert output_path.exists()
     assert output_path.read_bytes()
-    assert "Generated schematic figure:" in content
+    assert "Generated Nano Banana figure:" in content
     assert artifact["data"]["output_path"] == "writing/write_001/figures/adsorption-schematic.png"
     assert artifact["data"]["mime_type"] == "image/png"
     assert artifact["data"]["image_config"] == {"aspect_ratio": "4:3"}

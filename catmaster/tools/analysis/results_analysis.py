@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional
 
@@ -11,6 +12,7 @@ import numpy as np
 from ase import Atoms
 from ase.io import read as ase_read
 from pydantic import BaseModel, Field
+from pymatgen.io.vasp.inputs import Poscar
 from pymatgen.io.vasp.outputs import Oszicar, Outcar, Vasprun
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
@@ -109,6 +111,41 @@ def _outcar_total_mag(path: Path) -> float | None:
         return None
 
 
+_OUTCAR_TOTEN_RE = re.compile(r"free\s+energy\s+TOTEN\s*=\s*([-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?)")
+
+
+def _outcar_last_toten(path: Path) -> float | None:
+    if not path.is_file():
+        return None
+    energy: float | None = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = _OUTCAR_TOTEN_RE.search(line)
+        if match is None:
+            continue
+        try:
+            energy = float(match.group(1))
+        except Exception:
+            continue
+    return energy
+
+
+def _load_selective_dynamics_mask(run_dir: Path, natoms: int) -> np.ndarray | None:
+    for candidate in (run_dir / "CONTCAR", run_dir / "POSCAR"):
+        if not candidate.is_file():
+            continue
+        try:
+            poscar = Poscar.from_file(str(candidate))
+        except Exception:
+            continue
+        selective_dynamics = getattr(poscar, "selective_dynamics", None)
+        if selective_dynamics is None:
+            continue
+        mask = np.asarray(selective_dynamics, dtype=bool)
+        if mask.shape == (natoms, 3):
+            return mask
+    return None
+
+
 def _parse_vasp_run(run_dir: Path) -> dict[str, Any]:
     vasprun_path = run_dir / "vasprun.xml"
     oszicar_path = run_dir / "OSZICAR"
@@ -141,7 +178,11 @@ def _parse_vasp_run(run_dir: Path) -> dict[str, Any]:
             if vasprun.ionic_steps:
                 forces = vasprun.ionic_steps[-1].get("forces")
                 if forces is not None:
-                    norms = np.linalg.norm(np.asarray(forces, dtype=float), axis=1)
+                    forces_arr = np.asarray(forces, dtype=float)
+                    selective_mask = _load_selective_dynamics_mask(run_dir, natoms=int(forces_arr.shape[0]))
+                    if selective_mask is not None:
+                        forces_arr = np.where(selective_mask, forces_arr, 0.0)
+                    norms = np.linalg.norm(forces_arr, axis=1)
                     summary["max_force_ev_per_a"] = float(np.max(norms))
             if summary["electronic_converged"] and summary["ionic_converged"]:
                 summary["state"] = "completed"
@@ -196,15 +237,7 @@ def _parse_neb_energies(result_dir: Path) -> list[dict[str, Any]]:
         return []
     records: list[dict[str, Any]] = []
     for path in image_dirs:
-        energy = None
-        vasprun_path = path / "vasprun.xml"
-        if vasprun_path.is_file():
-            try:
-                energy = float(Vasprun(str(vasprun_path), parse_projected_eigen=False).final_energy)
-            except Exception:
-                energy = None
-        if energy is None:
-            energy = _oszicar_last_energy(path / "OSZICAR")
+        energy = _outcar_last_toten(path / "OUTCAR")
         if energy is None:
             continue
         records.append(
@@ -236,19 +269,9 @@ def _scan_neb_images(result_dir: Path) -> tuple[list[dict[str, Any]], list[str]]
 
     records: list[dict[str, Any]] = []
     for path in image_dirs:
-        energy = None
-        parse_errors: list[str] = []
-        vasprun_path = path / "vasprun.xml"
-        if vasprun_path.is_file():
-            try:
-                energy = float(Vasprun(str(vasprun_path), parse_projected_eigen=False).final_energy)
-            except Exception as exc:
-                parse_errors.append(f"vasprun_parse_failed: {exc}")
+        energy = _outcar_last_toten(path / "OUTCAR")
         if energy is None:
-            energy = _oszicar_last_energy(path / "OSZICAR")
-        if energy is None:
-            detail = "; ".join(parse_errors) if parse_errors else "no energy parsed from vasprun.xml or OSZICAR"
-            issues.append(f"image {path.name}: {detail}")
+            issues.append(f"image {path.name}: no energy parsed from OUTCAR")
             continue
         records.append(
             {

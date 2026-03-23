@@ -25,6 +25,8 @@ from catmaster.runtime.run_control import RunControl
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError, content_to_text
 from catmaster.runtime.usage_stats import write_usage_summary_from_metadata
 from catmaster.tools.base import system_root, workspace_root, workspace_scope
+from catmaster.tools.execution.machine_registry import MachineRegister
+from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.registry import get_tool_registry
 from catmaster.ui import make_event
 from catmaster.ui.reporters import NullReporter, Reporter
@@ -48,10 +50,12 @@ _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
     "research": "research_lead",
     "experiment": "task_runner",
     "writing": "write_director",
+    "peer_review": "write_reviewer",
 }
 
 _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "create_molecule_from_smiles",
+    "mace_neb_batch",
     "mace_relax_batch",
     "mace_sp_batch",
     "vasp_prepare",
@@ -69,10 +73,13 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "place_adsorbate",
     "generate_batch_adsorption_structures",
     "make_neb_geometry",
+    "make_dimer_mode_from_neb",
+    "make_dimer_mode_from_mace",
     "generate_strained_structures",
     "generate_kpath",
     "generate_phonon_displacements",
     "vasp_neb_prepare",
+    "vasp_dimer_prepare",
     "vasp_execute_batch",
     "mp_search_materials",
     "mp_download_structure",
@@ -82,7 +89,7 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "analyze_vasp_results",
     "analyze_neb_results",
     "analyze_trajectory",
-    "generate_schematic_figure",
+    "generate_nanobanana_figure",
     "vaspkit_adsorbate_thermo_correction",
     "vaspkit_gas_thermo_correction",
 }
@@ -96,7 +103,8 @@ _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = set(_MATERIALS_WORKER_TOOL_ALLOWLIST) | 
 _WRITING_TOOL_ALLOWLIST = {
     "analyze_images",
     "render_structure_views",
-    "generate_schematic_figure",
+    "generate_nanobanana_figure",
+    "review_pdf_manuscript",
 }
 _RESEARCH_TOOL_ALLOWLIST = {
     "analyze_images",
@@ -104,6 +112,7 @@ _RESEARCH_TOOL_ALLOWLIST = {
     "mp_search_materials",
     "mp_download_structure",
 }
+_PEER_REVIEW_TOOL_ALLOWLIST = {"peer_review_request"}
 _METADATA_AGENT_TOOL_ALLOWLIST = {
     "search_openalex",
     "search_semantic_scholar",
@@ -138,7 +147,7 @@ _WRITING_WORKER_TOOL_ALLOWLIST = {
     "polish_academic_prose",
     "analyze_images",
     "render_structure_views",
-    "generate_schematic_figure",
+    "generate_nanobanana_figure",
     "compile_text",
 }
 _LITREVIEW_COMPACT_TRIGGER_TOKENS = 65_000
@@ -176,8 +185,11 @@ _SPECIALIST_SKILL_VIEW_SPECS: dict[str, tuple[str, set[str]]] = {
     "experiment_specialist": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST),
     "materials_worker": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _MATERIALS_WORKER_TOOL_ALLOWLIST),
     "ml_worker": ("machine_learning", _DEEPAGENT_BUILTIN_TOOL_NAMES | _ML_WORKER_TOOL_ALLOWLIST),
+    "report_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
     "writing_specialist": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_TOOL_ALLOWLIST),
     "writing_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
+    "writing_polisher_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
+    "peer_review_specialist": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _PEER_REVIEW_TOOL_ALLOWLIST),
 }
 
 
@@ -428,6 +440,13 @@ class SpecialistRunner:
         self.run_control = run_control
         self.registry = get_tool_registry()
 
+    def _raise_if_interrupt_requested(self, *, phase: str, details: dict[str, Any] | None = None) -> None:
+        control = self.run_control
+        if control is None or not control.is_interrupt_requested():
+            return
+        control.ack_interrupt(phase=phase, details=dict(details or {}))
+        raise asyncio.CancelledError(f"Interrupted during {phase}")
+
     def run(
         self,
         prompt: str,
@@ -478,7 +497,7 @@ class SpecialistRunner:
 
     async def _run_impl(self, *, payload: dict[str, Any], resume_feedback: str | None) -> dict[str, Any]:
         entrypoint = str(payload.get("entrypoint") or "research").strip() or "research"
-        if entrypoint not in {"research", "experiment", "writing"}:
+        if entrypoint not in {"research", "experiment", "writing", "peer_review"}:
             raise ValueError(f"Unsupported specialist entrypoint: {entrypoint}")
 
         prompt = str(payload.get("user_prompt") or "").strip()
@@ -503,6 +522,7 @@ class SpecialistRunner:
             usage_flushed = True
             self._write_usage_summary(usage_handler)
         try:
+            self._raise_if_interrupt_requested(phase="run_start", details={"entrypoint": entrypoint})
             proposal_review_enabled = bool(payload.get("proposal_review", False))
             proposal_revision_count = max(0, int(payload.get("proposal_revision_count") or 0))
 
@@ -624,68 +644,104 @@ class SpecialistRunner:
                     }
                 )
 
-            async with self._open_agent_runtime(files_root=files_root) as runtime:
-                agent = await self._build_entry_agent(
-                    entrypoint=entrypoint,
-                    runtime=runtime,
-                    thread_id=thread_id,
-                )
-                message_text = prompt if resume_feedback in (None, "") else (
-                    f"{prompt}\n\nHuman review feedback:\n{resume_feedback}"
-                )
-                result = await agent.ainvoke(
-                    {"messages": [{"role": "user", "content": message_text}]},
-                    config={
-                        "configurable": {
-                            "thread_id": thread_id,
-                            "project_id": str(self.run_context.project_id or "").strip(),
+            while True:
+                self._raise_if_interrupt_requested(phase="before_agent_invoke", details={"entrypoint": entrypoint})
+                async with self._open_agent_runtime(files_root=files_root) as runtime:
+                    agent = await self._build_entry_agent(
+                        entrypoint=entrypoint,
+                        runtime=runtime,
+                        thread_id=thread_id,
+                    )
+                    message_text = prompt if resume_feedback in (None, "") else (
+                        f"{prompt}\n\nHuman review feedback:\n{resume_feedback}"
+                    )
+                    result = await agent.ainvoke(
+                        {"messages": [{"role": "user", "content": message_text}]},
+                        config={
+                            "configurable": {
+                                "thread_id": thread_id,
+                                "project_id": str(self.run_context.project_id or "").strip(),
+                            },
+                            "callbacks": self._langchain_callbacks(
+                                usage_handler=usage_handler,
+                                default_agent_name=f"{entrypoint}_specialist",
+                            ),
+                            "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
                         },
-                        "callbacks": self._langchain_callbacks(
-                            usage_handler=usage_handler,
-                            default_agent_name=f"{entrypoint}_specialist",
-                        ),
-                        "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
-                    },
+                    )
+                parsed = self._finalize_report(self._coerce_report(raw=result))
+                artifacts = self._artifact_rows(parsed["files"])
+
+                final_answer = parsed["text"]
+                status = "done"
+                self._write_run_state(
+                    {
+                        "schema_version": 1,
+                        "entrypoint": entrypoint,
+                        "status": status,
+                        "phase": "finalized",
+                        "active_specialist": entrypoint,
+                        "thread_id": thread_id,
+                        "proposal_review": bool(payload.get("proposal_review", False)),
+                        "proposal_revision_count": proposal_revision_count,
+                        "pending_human_input": None,
+                        "todo_items": [],
+                        "artifacts": artifacts,
+                        "delegation_log": [],
+                        "text_preview": final_answer[:280],
+                        "user_prompt": prompt,
+                        "chat_session_id": str(payload.get("chat_session_id") or ""),
+                        "final_answer": final_answer,
+                        "summary": parsed["summary"],
+                        "facts": list(parsed["facts"]),
+                        "review_target": str(parsed.get("review_target") or "").strip(),
+                        **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                    }
                 )
-            parsed = self._finalize_report(self._coerce_report(raw=result))
-            final_answer = parsed["text"]
-            artifacts = self._artifact_rows(parsed["files"])
-            status = "done"
-            self._write_run_state(
-                {
-                    "schema_version": 1,
-                    "entrypoint": entrypoint,
+                self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": status})
+                _flush_usage()
+                return {
+                    "run_id": self.run_context.run_id,
+                    "run_dir": str(self.run_context.run_dir),
                     "status": status,
-                    "phase": "finalized",
-                    "active_specialist": entrypoint,
-                    "thread_id": thread_id,
-                    "proposal_review": bool(payload.get("proposal_review", False)),
-                    "proposal_revision_count": proposal_revision_count,
-                    "pending_human_input": None,
-                    "todo_items": [],
-                    "artifacts": artifacts,
-                    "delegation_log": [],
-                    "text_preview": final_answer[:280],
-                    "user_prompt": prompt,
-                    "chat_session_id": str(payload.get("chat_session_id") or ""),
-                    "final_answer": final_answer,
                     "summary": parsed["summary"],
                     "facts": list(parsed["facts"]),
-                    **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                    "final_answer": final_answer,
+                    "artifacts": artifacts,
+                    "delegation_log": [],
                 }
-            )
-            self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": status})
-            _flush_usage()
-            return {
-                "run_id": self.run_context.run_id,
-                "run_dir": str(self.run_context.run_dir),
-                "status": status,
-                "summary": parsed["summary"],
-                "facts": list(parsed["facts"]),
-                "final_answer": final_answer,
-                "artifacts": artifacts,
-                "delegation_log": [],
+        except asyncio.CancelledError:
+            if self.run_control is None or not self.run_control.is_interrupt_requested():
+                raise
+            self.run_control.ack_interrupt(phase="specialist_runtime", details={"entrypoint": entrypoint})
+            interrupted_state = {
+                "schema_version": 1,
+                "entrypoint": entrypoint,
+                "status": "interrupted_paused",
+                "phase": "interrupted",
+                "active_specialist": entrypoint,
+                "thread_id": thread_id,
+                "proposal_review": bool(payload.get("proposal_review", False)),
+                "proposal_revision_count": max(0, int(payload.get("proposal_revision_count") or 0)),
+                "pending_human_input": None,
+                "todo_items": [],
+                "artifacts": list(payload.get("artifacts") or []),
+                "delegation_log": list(payload.get("delegation_log") or []),
+                "text_preview": "Run interrupted by user.",
+                "user_prompt": prompt,
+                "chat_session_id": str(payload.get("chat_session_id") or ""),
+                "final_answer": "",
+                "summary": "Run interrupted by user.",
+                "facts": [],
+                **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
             }
+            self._write_run_state(interrupted_state)
+            self._emit(
+                "RUN_PAUSED",
+                payload={"entrypoint": entrypoint, "status": "interrupted_paused", "phase": "specialist_runtime"},
+            )
+            _flush_usage()
+            return self._final_response_from_state(interrupted_state)
         finally:
             _flush_usage()
 
@@ -818,6 +874,19 @@ class SpecialistRunner:
             }
         )
 
+    def _final_response_from_state(self, payload: dict[str, Any]) -> dict[str, Any]:
+        artifacts = list(payload.get("artifacts") or [])
+        return {
+            "run_id": self.run_context.run_id,
+            "run_dir": str(self.run_context.run_dir),
+            "status": str(payload.get("status") or "done"),
+            "summary": str(payload.get("summary") or "").strip(),
+            "facts": [str(item).strip() for item in list(payload.get("facts") or []) if str(item).strip()],
+            "final_answer": str(payload.get("final_answer") or "").strip(),
+            "artifacts": artifacts,
+            "delegation_log": list(payload.get("delegation_log") or []),
+        }
+
     async def _build_entry_agent(
         self,
         *,
@@ -880,6 +949,15 @@ class SpecialistRunner:
                 skills=[self._skill_view_virtual_path("writing_specialist")],
                 middleware=subagent_middleware,
             ),
+            SubAgent(
+                name="peer_review_specialist",
+                description="Act like a journal editor: inspect the manuscript PDF, request reviewer-style reports, and return an editor decision with raw reviewer comments.",
+                system_prompt=self._system_prompt("peer_review", allow_manage_memory=False),
+                model=build_chat_model(self.llm_profile.config_for_role("write_reviewer")),
+                tools=self._specialist_subagent_tools("peer_review"),
+                skills=[self._skill_view_virtual_path("peer_review_specialist")],
+                middleware=subagent_middleware,
+            ),
             self._compiled_litreview_subagent(runtime=runtime),
         ]
 
@@ -896,7 +974,9 @@ class SpecialistRunner:
             SubAgent(
                 name="materials_worker",
                 description="Handle bounded, context-heavy materials execution subtasks in isolation and return concise results with artifact paths.",
-                system_prompt=self._materials_worker_prompt(),
+                system_prompt=self._materials_worker_prompt(
+                    execution_contract=self._execution_capability_contract(audience="materials_worker")
+                ),
                 model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST),
@@ -908,7 +988,9 @@ class SpecialistRunner:
             SubAgent(
                 name="ml_worker",
                 description="Handle bounded machine-learning subtasks in isolation using the default DeepAgent tool surface until ML-specific tools are added.",
-                system_prompt=self._ml_worker_prompt(),
+                system_prompt=self._ml_worker_prompt(
+                    execution_contract=self._execution_capability_contract(audience="ml_worker")
+                ),
                 model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_ML_WORKER_TOOL_ALLOWLIST),
@@ -923,6 +1005,18 @@ class SpecialistRunner:
                 system_prompt=self._lightweight_literature_agent_prompt(),
                 model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
                 tools=self._lightweight_literature_tools(),
+                middleware=subagent_middleware,
+            ),
+            SubAgent(
+                name="report_worker_agent",
+                description="Write bounded experiment-facing reports, validation summaries, or QC notes from existing workspace evidence.",
+                system_prompt=self._report_worker_prompt(),
+                model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
+                tools=self._augment_with_project_memory_tools(
+                    self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
+                    include_manage_memory=False,
+                ),
+                skills=[self._skill_view_virtual_path("report_worker_agent")],
                 middleware=subagent_middleware,
             ),
         ]
@@ -951,12 +1045,25 @@ class SpecialistRunner:
                 skills=[self._skill_view_virtual_path("writing_worker_agent")],
                 middleware=subagent_middleware,
             ),
+            SubAgent(
+                name="writing_polisher_agent",
+                description="Apply conservative section-level prose polish without changing the manuscript's scientific stance or structure.",
+                system_prompt=self._writing_polisher_prompt(),
+                model=build_chat_model(self.llm_profile.config_for_role("academic_polisher")),
+                tools=self._augment_with_project_memory_tools(
+                    self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
+                    include_manage_memory=False,
+                ),
+                skills=[self._skill_view_virtual_path("writing_polisher_agent")],
+                middleware=subagent_middleware,
+            ),
         ]
 
     def _subagent_middleware(
         self,
         *,
         runtime: dict[str, Any],
+        include_memory_middleware: bool = True,
         enable_tool_selector: bool = False,
         selector_max_tools: int | None = None,
         selector_always_include: tuple[str, ...] = (),
@@ -965,8 +1072,9 @@ class SpecialistRunner:
         model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
         middleware = [
             *self._build_default_middleware(model_call_run_limit=model_call_run_limit),
-            self._new_memory_middleware(backend=runtime["backend"]),
         ]
+        if include_memory_middleware:
+            middleware.append(self._new_memory_middleware(backend=runtime["backend"]))
         if enable_tool_selector:
             middleware.append(
                 self._new_tool_selector_middleware(
@@ -1005,7 +1113,7 @@ class SpecialistRunner:
             model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
             tools=self._augment_with_project_memory_tools([], include_manage_memory=False),
             system_prompt=self._litreview_wrapper_prompt(),
-            middleware=self._subagent_middleware(runtime=runtime),
+            middleware=self._subagent_middleware(runtime=runtime, include_memory_middleware=False),
             checkpointer=runtime["checkpointer"],
             store=runtime["store"],
             backend=runtime["backend"],
@@ -1104,6 +1212,8 @@ class SpecialistRunner:
     def _specialist_tools(self, entrypoint: SpecialistEntrypoint) -> list[Any]:
         if entrypoint == "writing":
             requested = _WRITING_TOOL_ALLOWLIST
+        elif entrypoint == "peer_review":
+            requested = _PEER_REVIEW_TOOL_ALLOWLIST
         elif entrypoint == "research":
             requested = _RESEARCH_TOOL_ALLOWLIST
         else:
@@ -1113,6 +1223,8 @@ class SpecialistRunner:
     def _specialist_subagent_tools(self, entrypoint: SpecialistEntrypoint) -> list[Any]:
         if entrypoint == "writing":
             requested = _WRITING_TOOL_ALLOWLIST
+        elif entrypoint == "peer_review":
+            requested = _PEER_REVIEW_TOOL_ALLOWLIST
         elif entrypoint == "research":
             requested = _RESEARCH_TOOL_ALLOWLIST
         else:
@@ -1273,21 +1385,29 @@ class SpecialistRunner:
         def _wrapped(runtime=None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
             if func is None:
                 raise NotImplementedError(f"Tool {tool.name} does not support sync invocation.")
+            self._raise_if_interrupt_requested(phase="before_tool_call", details={"tool": tool.name})
             try:
-                return func(runtime=runtime, **kwargs)
+                result = func(runtime=runtime, **kwargs)
+                self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
+                return result
             except Exception as exc:
                 return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
 
         async def _awrapped(runtime=None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+            self._raise_if_interrupt_requested(phase="before_tool_call", details={"tool": tool.name})
             if coroutine is not None:
                 try:
-                    return await coroutine(runtime=runtime, **kwargs)
+                    result = await coroutine(runtime=runtime, **kwargs)
+                    self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
+                    return result
                 except Exception as exc:
                     return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
             if func is None:
                 raise NotImplementedError(f"Tool {tool.name} does not support async invocation.")
             try:
-                return func(runtime=runtime, **kwargs)
+                result = func(runtime=runtime, **kwargs)
+                self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
+                return result
             except Exception as exc:
                 return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
 
@@ -1330,22 +1450,30 @@ class SpecialistRunner:
             _ = runtime
             if func is None:
                 raise NotImplementedError(f"Tool {tool.name} does not support sync invocation.")
+            self._raise_if_interrupt_requested(phase="before_tool_call", details={"tool": tool.name})
             try:
-                return _artifact(func(**kwargs), kwargs)
+                result = _artifact(func(**kwargs), kwargs)
+                self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
+                return result
             except Exception as exc:
                 return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
 
         async def _awrapped(runtime=None, **kwargs: Any) -> tuple[str, dict[str, Any]]:
             _ = runtime
+            self._raise_if_interrupt_requested(phase="before_tool_call", details={"tool": tool.name})
             if coroutine is not None:
                 try:
-                    return _artifact(await coroutine(**kwargs), kwargs)
+                    result = _artifact(await coroutine(**kwargs), kwargs)
+                    self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
+                    return result
                 except Exception as exc:
                     return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
             if func is None:
                 raise NotImplementedError(f"Tool {tool.name} does not support async invocation.")
             try:
-                return _artifact(func(**kwargs), kwargs)
+                result = _artifact(func(**kwargs), kwargs)
+                self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
+                return result
             except Exception as exc:
                 return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
 
@@ -1390,6 +1518,13 @@ class SpecialistRunner:
 
     @staticmethod
     def _read_skill_allowed_tools(skill_md: Path) -> list[str]:
+        aliases = {
+            "bash_exec": "bash",
+            "apply_aider_edits": "edit_file",
+            "read_research_pack": "read_file",
+            "review_research_context": "read_file",
+            "run_literature_research": "execute",
+        }
         try:
             text = skill_md.read_text(encoding="utf-8")
         except Exception:
@@ -1417,7 +1552,7 @@ class SpecialistRunner:
         for token in tokens:
             if not token:
                 continue
-            normalized = "bash" if token == "bash_exec" else token
+            normalized = aliases.get(token, token)
             if normalized in seen:
                 continue
             seen.add(normalized)
@@ -1451,6 +1586,8 @@ class SpecialistRunner:
             return [SpecialistRunner._skill_view_virtual_path("experiment_specialist")]
         if entrypoint == "writing":
             return [SpecialistRunner._skill_view_virtual_path("writing_specialist")]
+        if entrypoint == "peer_review":
+            return [SpecialistRunner._skill_view_virtual_path("peer_review_specialist")]
         return [
             SpecialistRunner._skill_view_virtual_path("research_experiment"),
             SpecialistRunner._skill_view_virtual_path("research_writing"),
@@ -1472,11 +1609,90 @@ class SpecialistRunner:
         thread_id: str = "",
         allow_manage_memory: bool = True,
     ) -> str:
+        execution_contract = ""
+        if entrypoint in {"research", "experiment"}:
+            execution_contract = self._execution_capability_contract(audience=entrypoint)
         return self._base_system_prompt(
             entrypoint,
             thread_id=thread_id,
             allow_manage_memory=allow_manage_memory,
+            execution_contract=execution_contract,
         )
+
+    def _execution_capability_contract(
+        self,
+        *,
+        audience: Literal["research", "experiment", "materials_worker", "ml_worker"],
+    ) -> str:
+        available = set(self.registry.tools.keys())
+        managed_tools = [
+            name
+            for name in ("vasp_execute_batch", "mace_neb_batch", "mace_relax_batch", "mace_sp_batch", "mace_train", "mace_evaluate")
+            if name in available
+        ]
+        prepare_tools = [
+            name
+            for name in ("vasp_prepare", "vasp_band_prepare", "vasp_neb_prepare", "build_dataset_from_runs")
+            if name in available
+        ]
+        machine_names: list[str] = []
+        resource_names: list[str] = []
+        task_names: list[str] = []
+        try:
+            machine_register = MachineRegister()
+            machine_names = sorted(machine_register.list_machines().keys())
+            resource_names = sorted(machine_register.list_resources().keys())
+        except Exception:
+            machine_names = []
+            resource_names = []
+        try:
+            task_registry = TaskRegistry()
+            task_names = sorted(task_registry.list_tasks().keys())
+        except Exception:
+            task_names = []
+
+        lines = [
+            "Execution capability contract: distinguish local interactive availability from managed execution availability.",
+            "Do not infer managed-execution availability from local shell probing alone. If a registered submission tool exists, treat that capability as available through the platform unless the tool itself fails at runtime.",
+        ]
+        if audience == "research":
+            lines.append(
+                "When a bounded experiment stage needs periodic DFT or other managed compute, route it to ExperimentSpecialist instead of downgrading it to literature-only validation just because no local executable is visible in the shell."
+            )
+        else:
+            lines.append(
+                "Treat local shell checks as relevant only for local interactive steps; use the registered remote-execution tools for managed runs instead of concluding the capability is unavailable."
+            )
+        if prepare_tools:
+            lines.append(f"Local preparation/analysis tools currently available here: {', '.join(f'`{name}`' for name in prepare_tools)}.")
+        if managed_tools:
+            lines.append(f"Managed execution tools currently available here: {', '.join(f'`{name}`' for name in managed_tools)}.")
+        if machine_names or resource_names or task_names:
+            facts: list[str] = []
+            if machine_names:
+                facts.append(f"machines={', '.join(f'`{name}`' for name in machine_names)}")
+            if resource_names:
+                facts.append(f"resources={', '.join(f'`{name}`' for name in resource_names)}")
+            if task_names:
+                facts.append(f"tasks={', '.join(f'`{name}`' for name in task_names)}")
+            lines.append("DPDispatcher runtime config visible in this workspace: " + "; ".join(facts) + ".")
+        if audience in {"experiment", "materials_worker"} and "vasp_execute_batch" in available:
+            lines.append(
+                "For periodic DFT, the intended path is to prepare inputs locally, submit via `vasp_execute_batch`, then analyze the returned results; do not require a local periodic DFT engine to be directly runnable first."
+            )
+        if audience in {"experiment", "materials_worker"} and any(name in available for name in ("mace_neb_batch", "mace_relax_batch", "mace_sp_batch")):
+            lines.append(
+                "For surrogate screening or MACE-based materials workflows, prefer the registered batch execution tools over ad hoc shell probing of remote resources."
+            )
+        if audience in {"experiment", "ml_worker"} and any(name in available for name in ("mace_train", "mace_evaluate")):
+            lines.append(
+                "For heavy ML training or evaluation, use the registered managed-execution path when the run is long, batch-oriented, or compute-intensive."
+            )
+        if audience in {"experiment", "ml_worker"}:
+            lines.append(
+                "ML work is especially heterogeneous: prefer the registered managed tools when they fit the task, but if no managed tool covers the needed code path, continue by writing and running local workspace scripts instead of blocking on tool coverage."
+            )
+        return "\n".join(lines)
 
     def _memory_sources(self) -> list[str]:
         return ["/.deepagents/AGENTS.md", MEMORY_FILE_PATH]
@@ -1535,6 +1751,7 @@ class SpecialistRunner:
         *,
         thread_id: str = "",
         allow_manage_memory: bool = True,
+        execution_contract: str = "",
     ) -> str:
         memory_policy = cls._long_term_memory_policy(allow_manage_memory=allow_manage_memory)
         if entrypoint == "research":
@@ -1543,11 +1760,23 @@ class SpecialistRunner:
                 "You are ResearchSpecialist, the only orchestration-capable specialist.\n"
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
-                "You may delegate only to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.\n"
+                "You may delegate only to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
                 "Use `litreview_agent` for all literature-review work. It can internally delegate to `literature_agent` for Tavily-backed public-web review and to `metadata_agent` for exact DOI/year/venue/authors/citation metadata.\n"
-                "If the user requests a report, manuscript, note, LaTeX document, or other substantial written artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
-                f"{cls._writing_handoff_policy()}\n"
+                "If the user requests a paper, manuscript, journal-style LaTeX draft, cover letter, rebuttal-style response, or other author-facing publication artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
+                "If the user requests an experiment report, validation summary, QC note, execution-facing memo, or other report-style artifact grounded in completed workspace evidence, delegate that work to `experiment_specialist` and have it use `report_worker_agent` when the writing task is substantial.\n"
+                "Default to not launching `peer_review_specialist`.\n"
+                "Launch `peer_review_specialist` only when the user explicitly asks for publication-level paper quality, submission-ready or peer-review-ready manuscript quality, formal submission requirements, journal submission standards, or another equivalent formal publication bar.\n"
+                "When you do launch it, treat it as an editor-style review process over the manuscript PDF, not as the primary scientific decision-maker.\n"
+                "When delegating to `peer_review_specialist`, explicitly hand it the canonical workspace-relative manuscript PDF path; if one PDF is the review target, state that path clearly in the handoff instead of making the reviewer infer it.\n"
+                "When `peer_review_specialist` returns, treat its returned markdown or saved review memo as the authoritative revision brief. Do not rely on the Research Kernel to preserve full editor/reviewer comment text.\n"
+                "If `peer_review_specialist` gives you a saved review memo path, read that memo directly before deciding the next revision or experiment step.\n"
+                "You remain the sole coordinator and final decision-maker for the run.\n"
+                "If peer-review or revision comments show that additional experiments are needed, you may relaunch `experiment_specialist` for bounded follow-up work as long as that work still respects the user's stated scope, budget, evidence limits, and time constraints.\n"
+                "If peer review indicates the work cannot reach the requested publication bar within the user's stated scope, budget, evidence limits, or time constraints, stop and tell the user that directly instead of looping.\n"
+                f"{cls._author_packet_policy()}\n"
+                f"{cls._report_packet_policy()}\n"
                 f"{cls._multimodal_tool_history_policy()}\n"
+                f"{execution_contract}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
                 f"{memory_policy}\n"
@@ -1555,44 +1784,79 @@ class SpecialistRunner:
                 f"{cls._workspace_path_discipline()}\n"
                 f"{cls._soft_reporting_contract()}"
             )
+        if entrypoint == "peer_review":
+            return (
+                "You are PeerReviewSpecialist.\n"
+                "Act like a journal editor coordinating external peer review for one manuscript PDF.\n"
+                "If the parent or user gives you an explicit `ReviewTarget` or manuscript PDF path, treat that as the canonical review target.\n"
+                "Use DeepAgent file tools to locate the manuscript PDF only when that path is missing, ambiguous, or invalid.\n"
+                "Once you have identified the canonical manuscript PDF, call `peer_review_request` on that PDF exactly once per review episode.\n"
+                "The tool will collect raw reviewer-style reports from the configured peer-review models.\n"
+                "Do not run experiments, do not rewrite the manuscript, and do not take over research planning.\n"
+                "Your job is to synthesize an editor decision and editor comment from the reviewer reports, then include the raw reviewer comments for ResearchSpecialist or the user.\n"
+                "Use decision language such as reject, major revision, minor revision, or conditionally acceptable only when supported by the reviewer comments and the manuscript evidence.\n"
+                "Keep the review grounded in ACS-style expectations: scientific soundness, evidence-claim fit, controls, validation quality, novelty positioning, comparison quality, figure logic, and publication readiness.\n"
+                "Return the full review markdown directly to the parent; do not compress away the editor comment or reviewer comment sections.\n"
+                "Also save the full review as one durable workspace markdown memo under `notes/peer_review/` or another stable path, and include that memo path in `Files`, so the parent can reuse the exact text without depending on kernel summaries.\n"
+                f"{memory_policy}\n"
+                f"{cls._memory_write_policy()}\n"
+                f"{cls._workspace_path_discipline()}\n"
+                "When you finish, return a concise markdown report with sections `Summary`, `Facts`, `Files`, `Editor Decision`, `Editor Comment`, and `Reviewer Comments`.\n"
+                "In `Files`, include the reviewed manuscript PDF path.\n"
+                "In `Reviewer Comments`, preserve each reviewer's raw comments with clear reviewer labels."
+            )
         if entrypoint == "writing":
             return (
                 "You are WritingSpecialist.\n"
                 "Write from existing workspace evidence only. Do not initiate new computational experiments.\n"
                 "Do not reopen broad literature review from the writing thread.\n"
+                "This lane owns paper, manuscript, and author-facing scientific writing. It is not the default lane for experiment reports, QC summaries, or execution-facing internal reports.\n"
                 "You may use `literature_agent` only for narrow background supplementation when the user explicitly asks to expand background/context, or when a paper/manuscript draft lacks the minimal external background needed for a credible introduction or discussion.\n"
                 "Keep such literature work tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
                 "Your default role is coordination, not long-form drafting in the main thread.\n"
                 "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
+                "Before a substantial paper/manuscript rewrite, first condense the task into one compact inline author packet, then dispatch the section or integration brief from that packet instead of forwarding raw run logs.\n"
                 "Each writing-worker handoff should cover only one section or one bounded organization/integration task. "
                 "Give it one primary goal and one completion criterion. "
                 "If the next step still requires deciding what to write next, how to restructure the manuscript, or whether to change direction, bring that decision back to WritingSpecialist instead of letting the worker continue to expand.\n"
+                "For paper/manuscript titles, require a journal-style title centered on the chemical system and principal scientific finding. Avoid workflow-led or meta titles such as 'same-template comparison', 'unified screen', 'evidence hierarchy', or sentence-like conclusion titles unless that framing is scientifically essential.\n"
                 "When the requested deliverable is a paper, manuscript, or journal-style draft, treat figures, tables, and concise explanatory schematics as part of the default deliverable when the workspace evidence supports them; do not return text-only manuscript output if key visual evidence is still missing.\n"
+                "When the requested deliverable is a paper, manuscript, or journal-style draft, also plan the Supporting Information / Supporting Data package from the existing workspace evidence. Keep claim-critical figures, tables, and arguments in the main text; move extended methods, robustness checks, exhaustive tables, extra figures, structure lists, and machine-readable data exports into supporting content when that organization improves publication readiness.\n"
+                "For the current implementation, keep Supporting Information in the same manuscript file rather than a separate SI manuscript: place it after the references as a clear supporting-information section or appendix so compilation and downstream PDF review operate on one manuscript PDF. Supporting data files may still live in separate workspace folders.\n"
+                "For LaTeX manuscripts, require figures to be inserted near their first substantive discussion rather than batched at the end. If float drift appears after compilation, require the worker to repair placement by moving the figure block closer to first mention and using conservative float controls such as `[htbp]` or `\\FloatBarrier` when the template permits.\n"
+                "Use `writing_polisher_agent` only for local prose cleanup on already drafted sections. It must not change claim strength, scientific scope, section logic, figure order, or evidence selection.\n"
+                "When a full paper/manuscript draft has been assembled and a compiled PDF is available, run `review_pdf_manuscript` once on that PDF for comment-only publication-readiness review before final reconciliation.\n"
+                "After that review returns, reconcile the manuscript against the accepted suggestions and run one more bounded polishing/revision pass before treating the manuscript as final.\n"
+                "If an external-model peer review is requested from the parent, make sure the canonical manuscript PDF is clearly exposed as `ReviewTarget` in your closeout so downstream review uses the right artifact.\n"
                 "When the requested deliverable is a short note, compact summary, or quick status writeup, prioritize clarity and sufficiency over making it figure-heavy unless the user explicitly asks for visuals.\n"
                 "Keep the main writing thread focused on planning, dispatch, evidence selection, and final reconciliation.\n"
                 "Do not handle TeX compile/fix passes in the main thread.\n"
                 "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
                 "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
+                f"{cls._peer_review_ready_paper_policy()}\n"
                 f"{cls._journal_manuscript_policy()}\n"
-                f"{cls._writing_handoff_policy()}\n"
+                f"{cls._author_packet_policy()}\n"
                 f"{cls._multimodal_tool_history_policy()}\n"
                 f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
-                f"{cls._soft_reporting_contract()}"
+                f"{cls._writing_reporting_contract()}"
             )
         return (
             "You are ExperimentSpecialist.\n"
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
-            "Route by the current working artifact: use `materials_worker` for structure/calc/result work, including MACE-based surrogate screening inside a materials workflow; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
+            "Route by the current working artifact: use `materials_worker` for structure/calc/result work, including MACE-based surrogate screening inside a materials workflow; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed; use `report_worker_agent` for experiment reports, validation summaries, QC notes, and other execution-facing written artifacts drawn from existing workspace evidence.\n"
             "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
             "Each brief should contain one primary goal and one completion criterion. "
             "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
             "Do not hand an entire high-throughput campaign to one worker; split it into episodes and decide the next episode yourself after each return.\n"
+            "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
             "When method settings, software behavior, or scientific best practice are uncertain, prefer a quick built-in web check through the online model's native browsing capability to align with current official or primary-source guidance before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
+            f"{execution_contract}\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
+            f"{cls._report_packet_policy()}\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1610,12 +1874,31 @@ class SpecialistRunner:
         )
 
     @staticmethod
-    def _writing_handoff_policy() -> str:
+    def _author_packet_policy() -> str:
         return (
-            "When handing off writing work, pass only a bounded brief containing the writing goal, target audience, exact evidence file paths or compact run-card facts to rely on, "
-            "the key facts that must be preserved, the requested output artifact path(s), the desired section structure, and any citation or style constraints. "
+            "For paper/manuscript handoffs, pass one compact inline author packet rather than raw run history. "
+            "Keep it minimal and decision-relevant with exactly these fields: `thesis`, `novelty`, `core_claims` (2-4 bullets), `evidence_refs`, `main_text_keep`, `supporting_only`, and `target_outputs`. "
+            "Then issue a bounded writing brief containing the specific section goal, target audience, requested output path(s), desired local section structure, and any citation or style constraints. "
             "For TeX deliverables, require a separate `.tex` file, a separate `.bib` file when citations are used, and at least one direct compile pass that should produce a `.pdf` when the environment supports compilation. "
             "Do not paste long transcripts or ask the writing agent to rediscover evidence already available in the workspace."
+        )
+
+    @staticmethod
+    def _report_packet_policy() -> str:
+        return (
+            "For experiment-report handoffs, pass one compact inline report packet with exactly these fields: "
+            "`objective`, `executed_scope`, `key_methods`, `key_results`, `failures_or_qc`, and `target_outputs`. "
+            "Keep it terse, execution-facing, and grounded in completed workspace evidence. "
+            "Do not pad it with paper-style novelty framing or raw transcript excerpts."
+        )
+
+    @staticmethod
+    def _peer_review_ready_paper_policy() -> str:
+        return (
+            "Peer-review-ready paper standard: the final manuscript should read like a publishable paper ready to enter peer review from the existing evidence. "
+            "State the strongest evidence-supported scientific claim in a direct scientific voice. "
+            "Do not reflexively underclaim, and do not weaken the main result with self-cancelling hedge sentences. "
+            "Do not ask for new experiments inside the manuscript body; mention limitations only when they materially affect interpretation, scope, or reviewer confidence, and keep those notes brief."
         )
 
     @staticmethod
@@ -1671,7 +1954,19 @@ class SpecialistRunner:
             "`Summary` must directly answer the user's actual question with the key result, key numbers/conditions when available, and the main conclusion; do not say only that a report was written. "
             "`Facts` should be a flat bullet list of the few most important archival facts. "
             "`Files` should be a flat bullet list of relevant workspace-relative output paths with enough directory context to be unambiguous; do not return bare filenames, and use `(none reported)` if there are none. "
+            "If one manuscript PDF is the canonical downstream review target, you may add an optional `ReviewTarget` section with exactly one workspace-relative PDF path. "
             "If you are correcting a previously wrong result after the user pointed out an error, replace or delete stale incorrect reports/notes when feasible and do not leave superseded wrong paths in `Files`."
+        )
+
+    @staticmethod
+    def _writing_reporting_contract() -> str:
+        return (
+            "For multi-step work, use `write_todos` early to maintain a concise checklist and update it when the plan changes. "
+            "When you finish, reply with a concise markdown report whose required section is `Summary`. "
+            "`Summary` must directly answer the user's current writing request by stating what was drafted, revised, or recommended and the current manuscript status. "
+            "Include a `Files` section only when you created or materially updated durable workspace artifacts that the parent should inspect. "
+            "If one manuscript PDF is the canonical downstream review target, add an optional `ReviewTarget` section with exactly one workspace-relative PDF path. "
+            "Do not add a placeholder `Facts` section for writing-only closeout."
         )
 
     @classmethod
@@ -1681,13 +1976,14 @@ class SpecialistRunner:
             "It must contain exactly these top-level fields: `question`, `hypotheses`, `run_cards`, `frontier`, `conclusion_draft`. "
             "Keep `hypotheses` to only the currently active 3-5 lines. "
             "Every time a subagent returns, immediately update `run_cards` with one compact card containing only `source`, `summary`, `facts`, and `artifacts`. "
+            "Do not inline long editor comments, reviewer comments, or other bulky source text into the kernel; keep only a short summary plus artifact paths pointing to any saved full memo. "
             "Keep only the minimum decision-relevant facts needed for the next choice. "
             "Use `frontier` for the next unresolved questions or actions to validate. "
-            "When delegating, write a clear bounded brief and explicitly require the subagent to answer with the compact `Summary` / `Facts` / `Files` contract so its result can be distilled into a run card."
+            "When delegating, write a clear bounded brief. For normal execution lanes, prefer the compact `Summary` / `Facts` / `Files` contract so the result can be distilled into a run card. For `peer_review_specialist`, keep the full editor/reviewer markdown in the returned text or saved memo instead of forcing it into the compact kernel shape."
         )
 
     @classmethod
-    def _materials_worker_prompt(cls) -> str:
+    def _materials_worker_prompt(cls, *, execution_contract: str = "") -> str:
         return (
             "You are materials_worker for ExperimentSpecialist.\n"
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
@@ -1699,6 +1995,7 @@ class SpecialistRunner:
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to literature_agent.\n"
+            f"{execution_contract}\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
@@ -1707,7 +2004,7 @@ class SpecialistRunner:
         )
 
     @classmethod
-    def _ml_worker_prompt(cls) -> str:
+    def _ml_worker_prompt(cls, *, execution_contract: str = "") -> str:
         return (
             "You are ml_worker for ExperimentSpecialist.\n"
             "Handle a bounded machine-learning subtask autonomously inside the workspace.\n"
@@ -1721,10 +2018,12 @@ class SpecialistRunner:
             "When no dedicated tool covers a bounded ML task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts rather than burying them in one-off shell snippets.\n"
             "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; otherwise keep the script local and lightweight.\n"
+            "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate. If the current ML task is not covered by those managed tools, keep going locally with reusable scripts under `scripts/` instead of stopping.\n"
             "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before locking the workflow; do not wait for a dedicated search tool.\n"
             "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
             "Do not perform broad literature review; that belongs to literature_agent.\n"
+            f"{execution_contract}\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
@@ -1890,20 +2189,64 @@ class SpecialistRunner:
             "You are writing_worker_agent for WritingSpecialist.\n"
             "Draft, revise, or polish bounded writing subtasks from existing workspace evidence only.\n"
             "Handle only one section or one bounded organization/integration task at a time.\n"
+            "Assume the parent has already reduced the task into a compact author packet. Follow that packet instead of rediscovering the paper story from raw run logs.\n"
             "Do not reopen broad research loops or re-read large unrelated workspace trees on your own.\n"
             "For paper/manuscript/journal-style writing, complete the evidence presentation: add or update figures, tables, structure renders, and concise schematics when they materially improve the manuscript and the workspace contains enough evidence to support them.\n"
-            "Use `generate_schematic_figure` for mechanism, workflow, or concept diagrams when a manuscript needs a schematic and no better evidence-native visual already exists.\n"
+            "For paper/manuscript/journal-style writing, explicitly organize what belongs in the main text versus Supporting Information / Supporting Data. Keep claim-critical evidence in the main manuscript; move extended methods, exhaustive tables, auxiliary figures, coordinate inventories, and machine-readable exports into supporting content when that makes the package cleaner and more submission-ready.\n"
+            "For the current implementation, keep Supporting Information in the same manuscript file rather than a separate SI manuscript: place it after the references as a clear supporting-information section or appendix. Supporting data files may still live in separate workspace folders.\n"
+            "Use `generate_nanobanana_figure` for conceptual, mechanistic, or workflow figures. Prefer it over hand-built matplotlib diagrams for those figure types, and reserve plotting libraries for quantitative or data-native visualizations.\n"
             "For short notes or compact summaries, do not manufacture extra visuals unless they are explicitly requested or clearly necessary for comprehension.\n"
+            "When writing a paper/manuscript title, produce a compact journal-style title that foregrounds the material system and the main scientific result. Avoid titles that read like project summaries, workflow descriptions, or sentence-length claims.\n"
+            "For LaTeX manuscripts, do not batch figures into a later block. Insert each figure environment close to the paragraph that first discusses it, prefer conservative placement controls such as `[htbp]`, and if compilation still pushes a figure too far away, repair it by moving the float closer to first mention or inserting `\\FloatBarrier` when the template already supports it.\n"
             "Return concise manuscript-ready output summaries and any output artifact paths.\n"
             "If the output is a TeX bundle, you must run `compile_text` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
+            "Do not treat a successful TeX compile as sufficient if the PDF still has obviously misplaced figures or a weak title.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
+            f"{cls._peer_review_ready_paper_policy()}\n"
             f"{cls._journal_manuscript_policy()}\n"
-            f"{cls._writing_handoff_policy()}\n"
+            f"{cls._author_packet_policy()}\n"
             f"{cls._multimodal_tool_history_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
-            f"{cls._soft_reporting_contract()}"
+            f"{cls._writing_reporting_contract()}"
+        )
+
+    @classmethod
+    def _writing_polisher_prompt(cls) -> str:
+        return (
+            "You are writing_polisher_agent for WritingSpecialist.\n"
+            "Perform conservative section-level prose polish on already drafted manuscript text.\n"
+            "Improve sentence flow, readability, local transitions, and journal-style phrasing without changing claim strength, scientific scope, evidence selection, paragraph order, figure order, numbers, units, citations, labels, or notation.\n"
+            "Do not delete or add substantive scientific content on your own. If a needed change is structural, evidentiary, or argumentative rather than local prose polish, report that in the summary instead of rewriting around it.\n"
+            "Do not introduce new experiments, new references, or new limitations.\n"
+            "When polishing TeX, preserve commands, labels, citation keys, math, and float structure unless the parent explicitly asks for a local TeX fix.\n"
+            f"{cls._peer_review_ready_paper_policy()}\n"
+            f"{cls._journal_manuscript_policy()}\n"
+            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            f"{cls._writing_reporting_contract()}"
+        )
+
+    @classmethod
+    def _report_worker_prompt(cls) -> str:
+        return (
+            "You are report_worker_agent for ExperimentSpecialist.\n"
+            "Write bounded experiment-facing reports from existing workspace evidence only.\n"
+            "This lane is for experiment reports, validation summaries, QC notes, execution memos, and other report-style artifacts; it is not a paper/manuscript lane.\n"
+            "Assume the parent has already reduced the task into a compact report packet. Follow that packet instead of replaying raw run history.\n"
+            "Do not restart calculations, broaden the scientific scope, or convert the report into a manuscript-style narrative.\n"
+            "Prioritize reproducibility, executed scope, method specificity, key results, and unresolved execution/QC items. Preserve failed attempts or QC caveats when they are material to interpreting the result.\n"
+            "If visuals are explicitly requested and the evidence supports them, include only the visuals that help an experiment-facing reader understand the result. Prefer `generate_nanobanana_figure` for concise workflow or mechanism sketches, and keep matplotlib-style plotting for quantitative figures.\n"
+            "If the output is a TeX bundle, run `compile_text` yourself before returning and fix compile-facing issues from the diagnostics.\n"
+            f"{cls._report_packet_policy()}\n"
+            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            f"{cls._writing_reporting_contract()}"
         )
 
     @staticmethod
@@ -2122,24 +2465,27 @@ class SpecialistRunner:
         text = self._extract_final_text(raw)
         if not text:
             raise RuntimeError("specialist failed to return a final text report.")
-        summary, facts, files = self._parse_summary_and_files(text)
+        summary, facts, files, review_target = self._parse_summary_and_files(text)
         return {
             "text": text,
             "summary": summary,
             "facts": facts,
             "files": files,
+            "review_target": review_target,
         }
 
     def _finalize_report(self, parsed: dict[str, Any]) -> dict[str, Any]:
         summary = str(parsed.get("summary") or "").strip()
         facts = [str(item).strip() for item in list(parsed.get("facts") or []) if str(item).strip()]
         files = [self._normalize_artifact_path(str(item).strip()) for item in list(parsed.get("files") or []) if str(item).strip()]
+        review_target = self._normalize_artifact_path(str(parsed.get("review_target") or "").strip()) if parsed.get("review_target") else ""
         files, facts = self._ensure_tex_bundle_outputs(files=files, facts=facts)
         return {
-            "text": self._render_compact_report(summary=summary, facts=facts, files=files),
+            "text": self._render_compact_report(summary=summary, facts=facts, files=files, review_target=review_target),
             "summary": summary,
             "facts": facts,
             "files": files,
+            "review_target": review_target,
         }
 
     def _extract_final_text(self, raw: dict[str, Any] | Any) -> str:
@@ -2175,10 +2521,11 @@ class SpecialistRunner:
             return "\n".join(chunks).strip()
         return str(content or "").strip()
 
-    def _parse_summary_and_files(self, text: str) -> tuple[str, list[str], list[str]]:
+    def _parse_summary_and_files(self, text: str) -> tuple[str, list[str], list[str], str]:
         summary_lines: list[str] = []
         facts: list[str] = []
         files: list[str] = []
+        review_target = ""
         current_section: str | None = None
         for raw_line in text.splitlines():
             line = raw_line.rstrip()
@@ -2199,6 +2546,11 @@ class SpecialistRunner:
                 path = self._extract_reported_file(line)
                 if path:
                     files.append(path)
+                continue
+            if current_section == "review_target":
+                path = self._extract_reported_file(line)
+                if path and not review_target:
+                    review_target = path
         summary = "\n".join(summary_lines).strip()
         if not summary:
             summary = self._fallback_summary(text)
@@ -2218,7 +2570,7 @@ class SpecialistRunner:
                 continue
             seen.add(normalized)
             deduped_files.append(normalized)
-        return summary, deduped_facts, deduped_files
+        return summary, deduped_facts, deduped_files, self._normalize_artifact_path(review_target) if review_target else ""
 
     @staticmethod
     def _match_report_heading(line: str) -> str | None:
@@ -2229,6 +2581,8 @@ class SpecialistRunner:
             return "facts"
         if normalized == "files":
             return "files"
+        if normalized in {"reviewtarget", "review target"}:
+            return "review_target"
         return None
 
     @staticmethod
@@ -2255,21 +2609,36 @@ class SpecialistRunner:
         return chunks[0] if chunks else text.strip()
 
     @staticmethod
-    def _render_compact_report(*, summary: str, facts: list[str], files: list[str]) -> str:
-        fact_lines = [f"- {item}" for item in facts] or ["- (none reported)"]
-        file_lines = [f"- `{item}`" for item in files] or ["- `(none reported)`"]
-        return "\n".join(
-            [
-                "## Summary",
-                summary.strip() or "(no summary reported)",
-                "",
-                "## Facts",
-                *fact_lines,
-                "",
-                "## Files",
-                *file_lines,
-            ]
-        ).strip()
+    def _render_compact_report(*, summary: str, facts: list[str], files: list[str], review_target: str = "") -> str:
+        lines = [
+            "## Summary",
+            summary.strip() or "(no summary reported)",
+        ]
+        if facts:
+            lines.extend(
+                [
+                    "",
+                    "## Facts",
+                    *[f"- {item}" for item in facts],
+                ]
+            )
+        if files:
+            lines.extend(
+                [
+                    "",
+                    "## Files",
+                    *[f"- `{item}`" for item in files],
+                ]
+            )
+        if review_target:
+            lines.extend(
+                [
+                    "",
+                    "## ReviewTarget",
+                    f"- `{review_target}`",
+                ]
+            )
+        return "\n".join(lines).strip()
 
     def _ensure_tex_bundle_outputs(self, *, files: list[str], facts: list[str]) -> tuple[list[str], list[str]]:
         normalized_files: list[str] = []

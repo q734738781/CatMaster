@@ -1,7 +1,7 @@
 ---
 name: achemso-latex-manuscript
 description: Write ACS-style manuscript sections against the local achemso LaTeX template, using deterministic template edits and preserving BibTeX structure.
-allowed-tools: "apply_aider_edits read_research_pack review_research_context execute"
+allowed-tools: "edit_file read_file execute"
 license: project-local
 compatibility: local
 metadata:
@@ -26,16 +26,15 @@ Read these assets first through the read-only skills mount:
 - `assets/achemso-demo.bib`
 
 ## Allowed tools
-- `apply_aider_edits`
-- `read_research_pack`
-- `review_research_context`
+- `edit_file`
+- `read_file`
 - `execute`
 
 ## Workflow
 1. Read the `SKILL.md` and the two asset files before drafting the section.
 2. Treat the mounted asset as the canonical outer shell and bibliography reference; do not try to edit the read-only mounted asset directly.
 3. Write or update section-level `.tex` fragments under the writable run workspace instead of regenerating the entire manuscript wrapper.
-4. Use `apply_aider_edits` for deterministic SEARCH/REPLACE edits to the working TeX file.
+4. Use `edit_file` for deterministic SEARCH/REPLACE edits to the working TeX file.
 5. Keep bibliography keys and citation commands consistent with the template's BibTeX usage.
 6. Treat `section_tex` and workspace `.tex` artifacts as the primary output; use `section_md` only as a concise reviewer shadow when useful.
 
@@ -44,6 +43,7 @@ Read these assets first through the read-only skills mount:
 - For ACS-style manuscript output, write as an author of the scientific work, not as an agent narrating how the draft was assembled.
 - Do not mention the workspace, runs, files, tools, prompts, interruptions, or that no new calculations were run during the writing pass.
 - Keep internal provenance phrases such as `workspace evidence`, `accessible snippets`, `bundle`, `this draft`, or `assembled from existing results` out of the abstract and main text.
+- Write titles as journal titles, not as project labels or workflow summaries. Center the title on the material system and principal scientific result; avoid meta phrases such as `same-template comparison`, `workflow`, `screening hierarchy`, or sentence-length takeaway titles unless scientifically unavoidable.
 - Scientific limitations are acceptable; workflow disclaimers are not. If an evidence boundary matters, express it in scientific language such as unresolved benchmark coverage or incomplete literature verification rather than as an internal-process note.
 - Do not use Acknowledgement or Supporting Information sections to apologize for process limitations or to explain the agent workflow.
 
@@ -60,8 +60,11 @@ Read these assets first through the read-only skills mount:
 
 - Use comments to mark inserted section blocks only when that helps later assembly or review.
 - Keep figures and tables aligned with actual artifact paths and generated files.
+- In ACS-style TeX, place each figure close to the first substantive paragraph that discusses it; do not accumulate figure environments in a later block after the surrounding argument is already complete.
+- Prefer conservative float placement such as `[htbp]` for ordinary figures. If the template already includes `placeins`, use `\FloatBarrier` sparingly to stop obvious float drift across subsection boundaries.
+- After compilation, inspect whether figures appear near their first callout in the PDF and repair placement if they do not; compile success alone is not enough.
 - When the manuscript needs atomistic structure renders, prefer `render_structure_views(backend="ovito", ...)` for the journal-facing figure, and do not annotate the exported panel with renderer/backend labels.
-- When the manuscript needs a conceptual, mechanistic, or workflow figure, use `generate_schematic_figure` to create a concise publication-facing schematic and save it under the writing workspace.
+- When the manuscript needs a conceptual, mechanistic, or workflow figure, use `generate_nanobanana_figure` to create a concise publication-facing schematic and save it under the writing workspace.
 - When numerical evidence is better communicated as a table or plot than prose alone, add that artifact instead of forcing the explanation into dense text.
 - If you create a new `.tex` helper file, record the path in `latex_artifact_refs`.
 - If the template and the evidence disagree, preserve the evidence and adapt the prose, not the other way around.

@@ -35,6 +35,7 @@ from catmaster.specialists.runtime import (
 )
 from catmaster.runtime.usage_stats import load_usage_summary
 from catmaster.runtime.artifact_callback import UIEventHandler
+from catmaster.runtime.run_control import RunControl
 from catmaster.specialists.schemas import ProposalCheckpoint
 from catmaster.tools.registry import get_tool_registry
 
@@ -257,7 +258,32 @@ def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths
     contract = runtime_mod.SpecialistRunner._soft_reporting_contract()
     assert "directly answer the user's actual question" in contract
     assert "workspace-relative output paths" in contract
+    assert "optional `ReviewTarget` section" in contract
     assert "replace or delete stale incorrect reports/notes" in contract
+
+
+def test_writing_reporting_contract_allows_summary_first_closeout() -> None:
+    contract = runtime_mod.SpecialistRunner._writing_reporting_contract()
+    assert "required section is `Summary`" in contract
+    assert "Include a `Files` section only when" in contract
+    assert "optional `ReviewTarget` section" in contract
+    assert "Do not add a placeholder `Facts` section" in contract
+
+
+def test_report_parser_supports_review_target() -> None:
+    runner = runtime_mod.SpecialistRunner(
+        llm_profile=_FakeProfile(),
+        run_context=SimpleNamespace(workspace=Path("/tmp"), run_dir=Path("/tmp"), run_id="r1", project_id="proj"),
+        reporter=None,
+        run_control=None,
+    )
+    summary, facts, files, review_target = runner._parse_summary_and_files(
+        "## Summary\nok\n\n## Facts\n- a\n\n## Files\n- `manuscript/paper.pdf`\n\n## ReviewTarget\n- `manuscript/paper.pdf`"
+    )
+    assert summary == "ok"
+    assert facts == ["a"]
+    assert files == ["manuscript/paper.pdf"]
+    assert review_target == "manuscript/paper.pdf"
 
 
 def test_materials_worker_prompt_includes_workspace_path_discipline() -> None:
@@ -271,6 +297,33 @@ def test_materials_worker_prompt_includes_workspace_path_discipline() -> None:
     assert "calculations/" in prompt
     assert "notes/" in prompt
     assert "writing/" in prompt
+
+
+def test_execution_capability_contract_distinguishes_local_and_managed_runtime(tmp_path: Path) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="research",
+    )
+
+    research_contract = built.runner._execution_capability_contract(audience="research")
+    materials_contract = built.runner._execution_capability_contract(audience="materials_worker")
+    ml_contract = built.runner._execution_capability_contract(audience="ml_worker")
+
+    assert "Do not infer managed-execution availability from local shell probing alone." in research_contract
+    assert "downgrading it to literature-only validation" in research_contract
+    assert "`vasp_execute_batch`" in materials_contract
+    assert "do not require a local periodic DFT engine to be directly runnable first" in materials_contract
+    assert "`mace_train`" in ml_contract
+    assert "registered managed-execution path" in ml_contract
+    assert "prefer the registered managed tools when they fit the task" in ml_contract
+    assert "continue by writing and running local workspace scripts instead of blocking on tool coverage" in ml_contract
 
 
 def test_writing_worker_and_proposal_prompts_include_workspace_layout_guidance() -> None:
@@ -454,12 +507,23 @@ def test_finalize_report_runs_compile_guard_for_tex_outputs(
     assert "`writeup/references.bib`" in finalized["text"]
 
 
+def test_render_compact_report_omits_empty_sections() -> None:
+    rendered = runtime_mod.SpecialistRunner._render_compact_report(
+        summary="draft revised",
+        facts=[],
+        files=[],
+    )
+
+    assert rendered == "## Summary\ndraft revised"
+
+
 @pytest.mark.parametrize(
     ("entrypoint", "expected_skills", "expected_subagent_names"),
     [
-        ("research", ["/.deepagents/skill_views/research_experiment", "/.deepagents/skill_views/research_writing"], ["experiment_specialist", "writing_specialist", "litreview_agent"]),
-        ("experiment", ["/.deepagents/skill_views/experiment_specialist"], ["materials_worker", "ml_worker", "literature_agent"]),
-        ("writing", ["/.deepagents/skill_views/writing_specialist"], ["literature_agent", "writing_worker_agent"]),
+        ("research", ["/.deepagents/skill_views/research_experiment", "/.deepagents/skill_views/research_writing"], ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
+        ("experiment", ["/.deepagents/skill_views/experiment_specialist"], ["materials_worker", "ml_worker", "literature_agent", "report_worker_agent"]),
+        ("writing", ["/.deepagents/skill_views/writing_specialist"], ["literature_agent", "writing_worker_agent", "writing_polisher_agent"]),
+        ("peer_review", ["/.deepagents/skill_views/peer_review_specialist"], []),
     ],
 )
 def test_three_specialist_lanes_start_with_staged_skills(
@@ -550,30 +614,53 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert "Never store transient task requests" in agent_kwargs["system_prompt"]
     assert all(getattr(tool, "name", None) != "bash" for tool in agent_kwargs["tools"])
     assert all(getattr(tool, "name", None) != "run_literature_research" for tool in agent_kwargs["tools"])
-    assert [subagent.kwargs["name"] for subagent in agent_kwargs["subagents"]] == expected_subagent_names
-    for subagent in agent_kwargs["subagents"]:
+    top_subagents = list(agent_kwargs.get("subagents") or [])
+    assert [subagent.kwargs["name"] for subagent in top_subagents] == expected_subagent_names
+    for subagent in top_subagents:
         if "tools" in subagent.kwargs:
             assert all(getattr(tool, "name", None) != "bash" for tool in subagent.kwargs["tools"])
         if "middleware" in subagent.kwargs:
             middleware_names = {type(item).__name__ for item in (subagent.kwargs.get("middleware") or [])}
             assert any(name == "catmaster_nonfatal_tool_errors" for name in middleware_names)
 
-    subagents_by_name = {subagent.kwargs["name"]: subagent.kwargs for subagent in agent_kwargs["subagents"]}
+    subagents_by_name = {subagent.kwargs["name"]: subagent.kwargs for subagent in top_subagents}
     if entrypoint == "research":
         assert "Maintain a lightweight Research Kernel" in agent_kwargs["system_prompt"]
         assert "/research_kernels/" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "metadata_agent" in agent_kwargs["system_prompt"]
+        assert "paper, manuscript, journal-style LaTeX draft" in agent_kwargs["system_prompt"]
+        assert "experiment report, validation summary, QC note" in agent_kwargs["system_prompt"]
+        assert "compact inline author packet" in agent_kwargs["system_prompt"]
+        assert "compact inline report packet" in agent_kwargs["system_prompt"]
+        assert "Default to not launching `peer_review_specialist`" in agent_kwargs["system_prompt"]
+        assert "publication-level paper quality" in agent_kwargs["system_prompt"]
+        assert "formal submission requirements" in agent_kwargs["system_prompt"]
+        assert "explicitly hand it the canonical workspace-relative manuscript PDF path" in agent_kwargs["system_prompt"]
+        assert "Do not rely on the Research Kernel to preserve full editor/reviewer comment text" in agent_kwargs["system_prompt"]
+        assert "If `peer_review_specialist` gives you a saved review memo path, read that memo directly" in agent_kwargs["system_prompt"]
+        assert "You remain the sole coordinator and final decision-maker" in agent_kwargs["system_prompt"]
+        assert "you may relaunch `experiment_specialist` for bounded follow-up work" in agent_kwargs["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in agent_kwargs["system_prompt"]
+        assert "downgrading it to literature-only validation" in agent_kwargs["system_prompt"]
+        assert "mace_neb_batch" in {tool.name for tool in subagents_by_name["experiment_specialist"]["tools"]}
         assert {tool.name for tool in subagents_by_name["experiment_specialist"]["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert {tool.name for tool in subagents_by_name["writing_specialist"]["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in subagents_by_name["peer_review_specialist"]["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["experiment_specialist"]["skills"] == ["/.deepagents/skill_views/experiment_specialist"]
         assert subagents_by_name["writing_specialist"]["skills"] == ["/.deepagents/skill_views/writing_specialist"]
+        assert subagents_by_name["peer_review_specialist"]["skills"] == ["/.deepagents/skill_views/peer_review_specialist"]
+        assert "Act like a journal editor coordinating external peer review" in subagents_by_name["peer_review_specialist"]["system_prompt"]
+        assert "explicit `ReviewTarget` or manuscript PDF path" in subagents_by_name["peer_review_specialist"]["system_prompt"]
+        assert "call `peer_review_request` on that PDF exactly once per review episode" in subagents_by_name["peer_review_specialist"]["system_prompt"]
         litreview_compiled = subagents_by_name["litreview_agent"]
         assert "runnable" in litreview_compiled
         litreview_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "litreview_agent"]
         assert litreview_agents, "expected nested litreview agent to be created"
         litreview_agent_kwargs = litreview_agents[0]
         assert {tool.name for tool in litreview_agent_kwargs["tools"]} == _PROJECT_MEMORY_READ_TOOL_NAMES
+        assert litreview_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
+        assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
         nested_subagents = {subagent.kwargs["name"]: subagent.kwargs for subagent in litreview_agent_kwargs["subagents"]}
         assert {tool.name for tool in nested_subagents["literature_agent"]["tools"]} == (_LITREVIEW_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
@@ -585,6 +672,8 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert compact_tool.summarizer["backend"] is not None
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in metadata_middleware)
         literature_middleware = nested_subagents["literature_agent"]["middleware"]
+        assert any(isinstance(item, _FakeMemoryMiddleware) for item in literature_middleware)
+        assert any(isinstance(item, _FakeMemoryMiddleware) for item in metadata_middleware)
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "experiment":
         assert {tool.name for tool in subagents_by_name["materials_worker"]["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
@@ -593,23 +682,32 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert subagents_by_name["ml_worker"]["skills"] == ["/.deepagents/skill_views/ml_worker"]
         assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
+        assert {tool.name for tool in subagents_by_name["report_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["report_worker_agent"]["skills"] == ["/.deepagents/skill_views/report_worker_agent"]
         assert "/notes/literature/" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "Only save a concise reusable markdown note" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "Web Evidence" in subagents_by_name["literature_agent"]["system_prompt"]
         assert "You do not have permission to modify long-term project memory" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "dataset/model lifecycle tasks" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
+        assert "use `report_worker_agent` for experiment reports, validation summaries, QC notes" in agent_kwargs["system_prompt"]
+        assert "purely report writing from already completed evidence" in agent_kwargs["system_prompt"]
         assert "Each worker should receive only one bounded execution episode around one primary artifact" in agent_kwargs["system_prompt"]
         assert "Do not hand an entire high-throughput campaign to one worker" in agent_kwargs["system_prompt"]
         assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
         assert "prefer a quick built-in web check through the online model's native browsing capability" in agent_kwargs["system_prompt"]
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in agent_kwargs["system_prompt"]
+        assert "For periodic DFT, the intended path is to prepare inputs locally, submit via `vasp_execute_batch`" in agent_kwargs["system_prompt"]
+        assert "mace_neb_batch" in {tool.name for tool in subagents_by_name["materials_worker"]["tools"]}
         assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "do not require a local periodic DFT engine to be directly runnable first" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Assume most ML work here will be done by writing reusable Python scripts under `scripts/`" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in subagents_by_name["ml_worker"]["system_prompt"]
@@ -620,8 +718,15 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "keep going locally with reusable scripts under `scripts/` instead of stopping" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "registered managed-execution path" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "compact report packet" in subagents_by_name["report_worker_agent"]["system_prompt"]
+        assert "it is not a paper/manuscript lane" in subagents_by_name["report_worker_agent"]["system_prompt"]
+        assert "Do not restart calculations" in subagents_by_name["report_worker_agent"]["system_prompt"]
         materials_worker_selector = next(
             item
             for item in subagents_by_name["materials_worker"]["middleware"]
@@ -638,7 +743,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
             isinstance(item, _FakeToolSelectorMiddleware)
             for item in subagents_by_name["literature_agent"]["middleware"]
         )
-    else:
+    elif entrypoint == "writing":
         assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
@@ -646,16 +751,46 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "Use the lightweight `internet_search` tool only for tightly bounded writing-support lookups" in subagents_by_name["literature_agent"]["system_prompt"]
         assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skill_views/writing_worker_agent"]
+        assert {tool.name for tool in subagents_by_name["writing_polisher_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["writing_polisher_agent"]["skills"] == ["/.deepagents/skill_views/writing_polisher_agent"]
+        assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
+        assert "compact inline author packet" in agent_kwargs["system_prompt"]
+        assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
         assert "You may use `literature_agent` only for narrow background supplementation" in agent_kwargs["system_prompt"]
         assert "Each writing-worker handoff should cover only one section or one bounded organization/integration task" in agent_kwargs["system_prompt"]
         assert "figures, tables, and concise explanatory schematics as part of the default deliverable" in agent_kwargs["system_prompt"]
+        assert "Supporting Information / Supporting Data package" in agent_kwargs["system_prompt"]
+        assert "keep Supporting Information in the same manuscript file" in agent_kwargs["system_prompt"]
+        assert "place it after the references" in agent_kwargs["system_prompt"]
+        assert "journal-style title centered on the chemical system and principal scientific finding" in agent_kwargs["system_prompt"]
+        assert "figures to be inserted near their first substantive discussion rather than batched at the end" in agent_kwargs["system_prompt"]
+        assert "run `review_pdf_manuscript` once on that PDF for comment-only publication-readiness review" in agent_kwargs["system_prompt"]
+        assert "reconcile the manuscript against the accepted suggestions and run one more bounded polishing/revision pass" in agent_kwargs["system_prompt"]
+        assert "clearly exposed as `ReviewTarget`" in agent_kwargs["system_prompt"]
+        assert "publishable paper ready to enter peer review" in agent_kwargs["system_prompt"]
         assert "Do not mention the workspace, files, runs, prompts, tools, agents, interruptions" in agent_kwargs["system_prompt"]
         assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
         assert "Handle only one section or one bounded organization/integration task at a time" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "compact author packet" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "organize what belongs in the main text versus Supporting Information / Supporting Data" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "keep Supporting Information in the same manuscript file" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "For short notes or compact summaries, do not manufacture extra visuals" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "Use `generate_schematic_figure` for mechanism, workflow, or concept diagrams" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "Use `generate_nanobanana_figure` for conceptual, mechanistic, or workflow figures" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "produce a compact journal-style title" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "do not batch figures into a later block" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "Do not treat a successful TeX compile as sufficient" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "publishable paper ready to enter peer review" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "Perform conservative section-level prose polish" in subagents_by_name["writing_polisher_agent"]["system_prompt"]
+        assert "without changing claim strength, scientific scope, evidence selection" in subagents_by_name["writing_polisher_agent"]["system_prompt"]
         assert "For journal-facing citations and BibTeX, use publication-style metadata only" in subagents_by_name["writing_worker_agent"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+    else:
+        assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_TOOL_NAMES)
+        assert "Act like a journal editor coordinating external peer review" in agent_kwargs["system_prompt"]
+        assert "Reviewer Comments" in agent_kwargs["system_prompt"]
+        assert "peer_review_request" in agent_kwargs["system_prompt"]
+        assert "save the full review as one durable workspace markdown memo" in agent_kwargs["system_prompt"]
+        assert "do not compress away the editor comment or reviewer comment sections" in agent_kwargs["system_prompt"]
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
     staged_experiment = workspace / "files" / ".deepagents" / "skills" / "experiment"
@@ -671,7 +806,11 @@ def test_three_specialist_lanes_start_with_staged_skills(
     writing_view_names = {path.name for path in (staged_views / "writing_specialist").iterdir() if path.is_dir()}
     materials_worker_view_names = {path.name for path in (staged_views / "materials_worker").iterdir() if path.is_dir()}
     ml_worker_view_names = {path.name for path in (staged_views / "ml_worker").iterdir() if path.is_dir()}
-    assert "literature-grounding" not in experiment_view_names
+    report_worker_view_names = {path.name for path in (staged_views / "report_worker_agent").iterdir() if path.is_dir()}
+    writing_worker_view_names = {path.name for path in (staged_views / "writing_worker_agent").iterdir() if path.is_dir()}
+    writing_polisher_view_names = {path.name for path in (staged_views / "writing_polisher_agent").iterdir() if path.is_dir()}
+    peer_review_view_names = {path.name for path in (staged_views / "peer_review_specialist").iterdir() if path.is_dir()}
+    assert "literature-grounding" in experiment_view_names
     assert "structure-visual-inspection" in experiment_view_names
     assert "structure-visual-inspection" in materials_worker_view_names
     assert {
@@ -679,8 +818,13 @@ def test_three_specialist_lanes_start_with_staged_skills(
         "mace-finetuning-and-benchmark",
         "active-learning-relabel-loop",
     } <= ml_worker_view_names
-    assert "achemso-latex-manuscript" not in writing_view_names
+    assert "achemso-latex-manuscript" in writing_view_names
+    assert "results-and-discussion-writing" in writing_view_names
     assert "scientific-writing" in writing_view_names
+    assert "scientific-writing" in report_worker_view_names
+    assert "achemso-latex-manuscript" in writing_worker_view_names
+    assert "scientific-writing" in writing_polisher_view_names
+    assert "scientific-writing" in peer_review_view_names
 
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint
@@ -859,6 +1003,7 @@ def test_proposal_review_requires_explicit_approve_before_execution(
 
     monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
     monkeypatch.setattr(
@@ -911,3 +1056,34 @@ def test_proposal_review_requires_explicit_approve_before_execution(
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["status"] == "done"
     assert run_state["proposal_revision_count"] == 1
+
+
+def test_specialist_runner_returns_interrupted_paused_when_interrupt_requested_before_start(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    run_control = RunControl(run_id="run_interrupt")
+    run_control.request_interrupt(source="ui", note="stop")
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=run_control,
+        project_id="proj_interrupt_before_start",
+        preferred_entrypoint="research",
+    )
+
+    result = asyncio.run(
+        built.runner.arun(
+            "Stop before any deepagent work starts.",
+            entrypoint="research",
+            proposal_review=False,
+        )
+    )
+
+    assert result["status"] == "interrupted_paused"
+    run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+    assert run_state["status"] == "interrupted_paused"
+    assert run_state["summary"] == "Run interrupted by user."

@@ -55,10 +55,7 @@ If a graphical abstract is explicitly requested, it should be a visual summary o
 - Is suitable for journal table of contents display
 - Uses landscape orientation (typically 1200x600px)
 
-If a graphical abstract is explicitly requested:
-```bash
-python scripts/generate_schematic.py "Graphical abstract for [paper title]: [brief description showing workflow from input → methods → key findings → conclusions]" -o figures/graphical_abstract.png
-```
+If a graphical abstract is explicitly requested, prefer `generate_nanobanana_figure` to create it.
 
 **Graphical Abstract Requirements:**
 - **Content**: Visual summary showing workflow, key methods, main findings, and conclusions
@@ -72,10 +69,7 @@ python scripts/generate_schematic.py "Graphical abstract for [paper title]: [bri
 Generate figures conservatively. Add a figure only when it improves the scientific argument, comparison, or interpretability.
 Do not add visuals just to satisfy a quota.
 
-Use scientific schematics for technical diagrams when a compact visual would genuinely clarify the text:
-```bash
-python scripts/generate_schematic.py "your diagram description" -o figures/output.png
-```
+Use `generate_nanobanana_figure` for conceptual, mechanistic, and workflow diagrams when a compact visual would genuinely clarify the text.
 
 - Study design and methodology flowcharts (CONSORT, PRISMA, STROBE)
 - Conceptual framework diagrams
@@ -104,6 +98,7 @@ python scripts/generate_image.py "your image description" -o figures/output.png
 
 When deciding whether to create a figure:
 - complex concept with strong spatial/process logic -> consider a schematic
+- if it is a conceptual/mechanistic/workflow figure -> prefer `generate_nanobanana_figure`
 - comparison or ranking that is clearer visually -> consider a plot or compact summary figure
 - if the point is mostly textual explanation -> keep it in prose or caption instead
 - do not use matplotlib or other plotting tools to render long prose, long bullet lists, or caption-like explanation inside the image

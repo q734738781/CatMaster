@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import shutil
 import sys
+import time
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,6 +42,7 @@ def _write_completed_run(
     entrypoint: str = "research",
     final_answer: str = "Agent answer.",
     summary: str = "Run finished.",
+    chat_session_id: str = "",
 ) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / RUN_STATE_FILE).write_text(
@@ -52,6 +55,7 @@ def _write_completed_run(
                 "text_preview": final_answer,
                 "facts": ["fact one"],
                 "artifacts": [{"path": "outputs/result.txt", "kind": "file", "description": "reported file"}],
+                "chat_session_id": chat_session_id,
             }
         ),
         encoding="utf-8",
@@ -141,7 +145,12 @@ def test_websession_binds_chat_session_as_deepagent_thread_for_experiment_lane(t
             captured["entrypoint"] = str(kwargs.get("entrypoint") or "")
             captured["chat_session_id"] = str(kwargs.get("chat_session_id") or "")
             captured["thread_id"] = str(kwargs.get("thread_id") or "")
-            _write_completed_run(run_dir, entrypoint="experiment", final_answer="Agent answer.")
+            _write_completed_run(
+                run_dir,
+                entrypoint="experiment",
+                final_answer="Agent answer.",
+                chat_session_id=captured["chat_session_id"],
+            )
             return {"status": "done"}
 
     def fake_build_specialist_runner(**kwargs):
@@ -169,6 +178,10 @@ def test_websession_binds_chat_session_as_deepagent_thread_for_experiment_lane(t
     assert "Current request." in captured["prompt"]
     assert captured["chat_session_id"] == session.current_chat_session_id()
     assert captured["thread_id"] == session.current_chat_session_id()
+    chat_messages = session.get_chat_messages()
+    assert [item["role"] for item in chat_messages[-2:]] == ["user", "assistant"]
+    assert [item["kind"] for item in chat_messages[-2:]] == ["chat", "run_result"]
+    assert str(chat_messages[-1]["source_run_id"]) == "run_test"
 
 
 def test_websession_builds_thread_binding_for_research_lane(tmp_path: Path) -> None:
@@ -200,6 +213,99 @@ def test_websession_entry_context_status_reports_deepagent_thread(tmp_path: Path
     current_session = session.current_chat_session_id()
     assert f"Session `{current_session}`" in status
     assert f"deepagent thread `{current_session}`" in status
+
+
+def test_websession_backfills_missing_run_results_from_run_state(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+
+    active_session_id = session.current_chat_session_id()
+    session._append_chat_message(role="user", content="Prompt one.", session_id=active_session_id)
+    session._append_chat_message(role="user", content="Prompt two.", session_id=active_session_id)
+
+    runs_root = system_root(workspace=ws) / "runs"
+    _write_completed_run(
+        runs_root / "run_20260321_120000_abcd12",
+        entrypoint="research",
+        final_answer="Recovered result one.",
+        chat_session_id=active_session_id,
+    )
+    _write_completed_run(
+        runs_root / "run_20260321_120100_efgh34",
+        entrypoint="research",
+        final_answer="Recovered result two.",
+        chat_session_id=active_session_id,
+    )
+
+    chat_messages = session.get_chat_messages()
+    assert [item["content"] for item in chat_messages] == [
+        "Prompt one.",
+        "Prompt two.",
+        "Recovered result one.",
+        "Recovered result two.",
+    ]
+    assert [item["kind"] for item in chat_messages] == ["chat", "chat", "run_result", "run_result"]
+
+
+def test_websession_interrupt_cancels_active_async_run(tmp_path: Path, monkeypatch) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+    _install_dummy_llm_profile(monkeypatch)
+
+    run_dir = system_root(workspace=ws) / "runs" / "run_interrupt"
+    started: dict[str, bool] = {"value": False}
+
+    class DummyRunner:
+        async def arun(self, prompt: str, **kwargs):
+            _ = (prompt, kwargs)
+            started["value"] = True
+            await asyncio.sleep(60)
+            return {"status": "done"}
+
+    def fake_build_specialist_runner(**kwargs):
+        _ = kwargs
+        return SimpleNamespace(
+            runner=DummyRunner(),
+            run_context=SimpleNamespace(run_id="run_interrupt", run_dir=run_dir, model_name="task-model"),
+        )
+
+    monkeypatch.setattr(specialists_mod, "build_specialist_runner", fake_build_specialist_runner)
+
+    msg = session.start_run(
+        prompt="long running task",
+        lane="research",
+        run_mode="new_run",
+        resume_run_name="",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    )
+    assert msg == "Run started."
+    assert session.run_thread is not None
+
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        if started["value"]:
+            break
+        time.sleep(0.05)
+    assert started["value"] is True
+
+    interrupt_msg = session.request_interrupt_current_run(note="stop now")
+    assert interrupt_msg == "Interrupt requested."
+
+    session.run_thread.join(timeout=5)
+    assert session.run_thread is not None
+    assert not session.run_thread.is_alive()
+    assert session.run_status == "interrupted_paused"
+    interrupt = session.interrupt_status()["interrupt"]
+    assert interrupt.get("requested") is True
+    assert interrupt.get("acked") is True
 
 
 def test_websession_lists_and_switches_chat_sessions(tmp_path: Path) -> None:
@@ -283,6 +389,7 @@ def test_websession_reads_persistent_memory_index(tmp_path: Path) -> None:
 
     text = session.read_memory_index()
     assert "Persistent Memory" in text
+    assert "Source: `all`" in text
     assert "Prefer MACE screening before VASP" in text
     assert "catmaster." in text
 
@@ -307,9 +414,46 @@ def test_websession_reads_langmem_long_term_memory_index(tmp_path: Path) -> None
     conn.commit()
     conn.close()
 
-    text = session.read_memory_index()
+    text = session.read_memory_index(source="langmem")
     assert "long_term_memory" in text
+    assert "Source: `langmem`" in text
     assert "Pt(111) 1/4 ML benchmark was validated" in text
+
+
+def test_websession_reads_instruction_memory_only_when_requested(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+
+    db_path = system_root(workspace=ws) / "deepagent_memory.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE store (prefix TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL)")
+    project_id = session._project_id_for_workspace(ws)
+    conn.execute(
+        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
+        (
+            ".".join(("catmaster", project_id, "filesystem")),
+            "/AGENTS.md",
+            json.dumps({"content": "Use MACE before VASP when screening."}).encode("utf-8"),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
+        (
+            ".".join(("catmaster", project_id, "long_term_memory")),
+            "memory-001",
+            json.dumps({"content": "Durable benchmark fact."}).encode("utf-8"),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    text = session.read_memory_index(source="instruction")
+    assert "Source: `instruction`" in text
+    assert "Use MACE before VASP when screening." in text
+    assert "Durable benchmark fact." not in text
 
 
 def test_websession_reads_persistent_memory_index_when_workspace_path_changes(tmp_path: Path) -> None:

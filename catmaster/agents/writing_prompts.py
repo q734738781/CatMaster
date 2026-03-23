@@ -79,6 +79,8 @@ Figure discipline is strict:
 - Do not create a new figure file that is materially the same as an already-realized figure for the same planned figure id.
 - If you generate or cite a figure, make sure the section body references it using syntax appropriate for the requested output format.
 - If you cannot generate a figure file in this step, do not imply the figure already exists.
+- For conceptual, mechanistic, or workflow figures, prefer `generate_nanobanana_figure` over hand-built matplotlib diagrams.
+- Reserve matplotlib/seaborn/plotly for quantitative plots, statistical graphics, and other data-native visualizations.
 - Do not use matplotlib or any plotting library to render long prose, paragraph annotations, bullet lists, or caption-like explanation inside the figure canvas.
 - Keep in-figure text minimal: short axis labels, short legends, short panel labels, short callouts, and concise identifiers only.
 - If a label or annotation would exceed a short phrase, move that explanation into the manuscript body or caption instead of plotting it.

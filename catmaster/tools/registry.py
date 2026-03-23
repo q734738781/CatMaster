@@ -49,6 +49,9 @@ class ToolRegistry:
             generate_kpath,
             generate_phonon_displacements,
             vasp_neb_prepare,
+            vasp_dimer_prepare,
+            make_dimer_mode_from_neb,
+            make_dimer_mode_from_mace,
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
@@ -71,20 +74,26 @@ class ToolRegistry:
             GenerateKpathInput,
             GeneratePhononDisplacementsInput,
             VaspNebPrepareInput,
+            VaspDimerPrepareInput,
+            DimerModeFromNebInput,
+            DimerModeFromMaceInput,
         )
         
         # Execution tools  
-        from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, vasp_execute_batch
-        from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, VaspExecuteBatchInput
+        from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, mace_neb_batch, vasp_execute_batch
+        from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, MaceNebBatchInput, VaspExecuteBatchInput
         from catmaster.tools.analysis import (
             compile_text,
             analyze_images,
             analyze_neb_results,
             analyze_trajectory,
             analyze_vasp_results,
-            generate_schematic_figure,
+            generate_nanobanana_figure,
             identify_structure_fragments,
+            peer_review_pdf_manuscript,
+            peer_review_request,
             polish_academic_prose,
+            review_pdf_manuscript,
             render_structure_views,
             vaspkit_adsorbate_thermo_correction,
             vaspkit_gas_thermo_correction,
@@ -93,9 +102,12 @@ class ToolRegistry:
             AnalyzeNebResultsInput,
             AnalyzeTrajectoryInput,
             AnalyzeVaspResultsInput,
-            GenerateSchematicFigureInput,
+            GenerateNanoBananaFigureInput,
             IdentifyStructureFragmentsInput,
+            PeerReviewPdfManuscriptInput,
+            PeerReviewRequestInput,
             PolishAcademicProseInput,
+            ReviewPdfManuscriptInput,
             RenderStructureViewsInput,
             VaspkitAdsorbateThermoCorrectionInput,
             VaspkitGasThermoCorrectionInput,
@@ -151,6 +163,7 @@ class ToolRegistry:
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
+        self.register_tool("mace_neb_batch", mace_neb_batch, MaceNebBatchInput)
         self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
         self.register_tool("vasp_band_prepare", vasp_band_prepare, VaspBandPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
@@ -170,6 +183,9 @@ class ToolRegistry:
         self.register_tool("generate_kpath", generate_kpath, GenerateKpathInput)
         self.register_tool("generate_phonon_displacements", generate_phonon_displacements, GeneratePhononDisplacementsInput)
         self.register_tool("vasp_neb_prepare", vasp_neb_prepare, VaspNebPrepareInput)
+        self.register_tool("vasp_dimer_prepare", vasp_dimer_prepare, VaspDimerPrepareInput)
+        self.register_tool("make_dimer_mode_from_neb", make_dimer_mode_from_neb, DimerModeFromNebInput)
+        self.register_tool("make_dimer_mode_from_mace", make_dimer_mode_from_mace, DimerModeFromMaceInput)
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
@@ -179,10 +195,13 @@ class ToolRegistry:
         self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
         self.register_tool("analyze_neb_results", analyze_neb_results, AnalyzeNebResultsInput)
         self.register_tool("analyze_trajectory", analyze_trajectory, AnalyzeTrajectoryInput)
-        self.register_tool("generate_schematic_figure", generate_schematic_figure, GenerateSchematicFigureInput)
+        self.register_tool("generate_nanobanana_figure", generate_nanobanana_figure, GenerateNanoBananaFigureInput)
         self.register_tool("compile_text", compile_text, CompileTextInput)
         self.register_alias("agentic_compile_tex", "compile_text")
+        self.register_tool("peer_review_pdf_manuscript", peer_review_pdf_manuscript, PeerReviewPdfManuscriptInput)
+        self.register_tool("peer_review_request", peer_review_request, PeerReviewRequestInput)
         self.register_tool("polish_academic_prose", polish_academic_prose, PolishAcademicProseInput)
+        self.register_tool("review_pdf_manuscript", review_pdf_manuscript, ReviewPdfManuscriptInput)
         self.register_tool(
             "vaspkit_adsorbate_thermo_correction",
             vaspkit_adsorbate_thermo_correction,

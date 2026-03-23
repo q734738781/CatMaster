@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SpecialistEntrypoint = Literal["research", "experiment", "writing"]
+SpecialistEntrypoint = Literal["research", "experiment", "writing", "peer_review"]
 
 
 class ProposalCheckpoint(BaseModel):

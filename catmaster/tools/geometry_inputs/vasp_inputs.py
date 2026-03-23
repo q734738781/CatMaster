@@ -14,7 +14,7 @@ from pymatgen.io.vasp.sets import MPRelaxSet
 
 from catmaster.tools.base import resolve_workspace_path
 
-VaspPreset = Literal["relax", "static", "freq", "dos", "md"]
+VaspPreset = Literal["relax", "static", "freq", "dos", "md", "dimer"]
 VaspRegime = Literal["bulk", "slab", "gas"]
 PatchPolicy = Literal["safe", "force"]
 
@@ -269,6 +269,14 @@ class StructWriter:
                     "ISYM": 0,
                 }
             )
+        elif preset == "dimer":
+            settings.update(
+                {
+                    "IBRION": 44,
+                    "NSW": 500,
+                    "EDIFFG": -0.02,
+                }
+            )
         else:  # pragma: no cover
             raise ValueError(f"Unsupported preset: {preset}")
 
@@ -320,7 +328,7 @@ class StructWriter:
         dos_use_chgcar: bool,
     ) -> set[str]:
         protected = {"IBRION"}
-        if preset in {"relax", "static", "freq"}:
+        if preset in {"relax", "static", "freq", "dimer"}:
             protected.update({"ISIF", "NSW"})
         if regime == "gas" or preset == "freq":
             protected.add("ISYM")

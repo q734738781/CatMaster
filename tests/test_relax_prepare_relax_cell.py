@@ -257,6 +257,20 @@ def test_struct_writer_md_defaults_use_nose_hoover() -> None:
     assert settings["ISYM"] == 0
 
 
+def test_struct_writer_dimer_defaults_follow_relax_with_ibrion_44() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    settings = writer.plan_vasp_inputs(
+        structure=structure,
+        output_dir=Path("unused"),
+        preset="dimer",
+        regime="slab",
+    ).user_incar_settings
+    assert settings["IBRION"] == 44
+    assert settings["NSW"] == 500
+    assert settings["EDIFFG"] == pytest.approx(-0.02)
+
+
 def test_struct_writer_gas_defaults_keep_isym_zero_and_1x1x1() -> None:
     writer = StructWriter()
     structure = Structure(

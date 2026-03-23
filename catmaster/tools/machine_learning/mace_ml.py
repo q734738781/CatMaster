@@ -262,7 +262,7 @@ class MaceTrainInput(BaseModel):
     forces_weight: float = Field(100.0, ge=0.0, description="Forces loss weight.")
     stress_weight: float = Field(1.0, ge=0.0, description="Stress loss weight.")
     max_num_epochs: int = Field(25, ge=1, description="Maximum training epochs passed to the MACE training CLI.")
-    batch_size: int = Field(12, ge=1, description="Batch size passed to the MACE training CLI.")
+    batch_size: int = Field(4, ge=1, description="Batch size passed to the MACE training CLI.")
     learning_rate: float = Field(1e-4, gt=0.0, description="Learning rate passed to the MACE training CLI.")
     default_dtype: Literal["float32", "float64"] = Field("float32", description="Torch dtype used for training.")
     device: str = Field("cuda", description="Training device passed to the MACE CLI, typically cuda.")

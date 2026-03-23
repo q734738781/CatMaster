@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from typing import TextIO
 
 
 def _is_gamma_only(kpoints_path: Path) -> bool:
@@ -48,6 +49,33 @@ def _is_gamma_only(kpoints_path: Path) -> bool:
 
 
 _INCAR_KEY_RE = re.compile(r"(?i)^\s*(NCORE|NPAR)\b")
+_INCAR_IMAGES_RE = re.compile(r"(?i)^\s*IMAGES\s*=\s*([0-9]+)\b")
+
+
+def _strip_incar_comment(line: str) -> str:
+    return line.split("!")[0].split("#")[0].strip()
+
+
+def _read_incar_lines(incar_path: Path) -> list[str]:
+    return incar_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+
+def _read_neb_images(incar_path: Path) -> int | None:
+    if not incar_path.is_file():
+        return None
+    try:
+        for raw_line in _read_incar_lines(incar_path):
+            line = _strip_incar_comment(raw_line)
+            if not line:
+                continue
+            match = _INCAR_IMAGES_RE.match(line)
+            if not match:
+                continue
+            parsed = int(match.group(1))
+            return parsed if parsed > 0 else None
+    except Exception:
+        return None
+    return None
 
 
 def _infer_cpu_per_node(args: argparse.Namespace, log_file) -> int | None:
@@ -66,16 +94,63 @@ def _infer_cpu_per_node(args: argparse.Namespace, log_file) -> int | None:
     return None
 
 
-def _choose_ncore(cpu_per_node: int) -> int:
-    target = cpu_per_node ** 0.5
-    factors = [f for f in range(1, cpu_per_node + 1) if cpu_per_node % f == 0]
-    higher_or_equal = [f for f in factors if f >= target]
-    if higher_or_equal:
-        return min(higher_or_equal)
-    return max(factors)
+def _choose_ncore(total_ranks: int) -> int:
+    target = total_ranks ** 0.5
+    factors = [f for f in range(1, total_ranks + 1) if total_ranks % f == 0]
+    return min(factors, key=lambda factor: (abs(factor - target), factor))
 
 
-def _maybe_set_ncore(args: argparse.Namespace, log_file) -> None:
+def _choose_effective_neb_ranks(requested: int, neb_images: int) -> tuple[int, int, str]:
+    divisible = [candidate for candidate in range(requested, neb_images - 1, -1) if candidate % neb_images == 0]
+    if not divisible:
+        raise ValueError(
+            f"After NEB divisibility adjustment, no valid ranks remain: requested={requested}, IMAGES={neb_images}"
+        )
+    for candidate in divisible:
+        ranks_per_image = candidate // neb_images
+        chosen_ncore = _choose_ncore(ranks_per_image)
+        if chosen_ncore > 1:
+            return candidate, ranks_per_image, "prefer_ncore_gt_1"
+    fallback = divisible[0]
+    return fallback, fallback // neb_images, "fallback_max_divisible"
+
+
+def _resolve_effective_nprocs(
+    args: argparse.Namespace,
+    log_file: TextIO,
+) -> tuple[int, int | None]:
+    requested = _resolve_nprocs(args.nprocs)
+    neb_images = _read_neb_images(Path(args.incar))
+    if not neb_images:
+        log_file.write(f"[vasp_boot] parallel: ranks={requested} (non-NEB or IMAGES absent)\n")
+        log_file.flush()
+        return requested, None
+    if requested < neb_images:
+        raise ValueError(
+            f"Requested MPI ranks ({requested}) are fewer than IMAGES ({neb_images}); "
+            "NEB requires at least one rank per image."
+        )
+    adjusted, ranks_per_image, reason = _choose_effective_neb_ranks(requested, neb_images)
+    if adjusted == requested:
+        log_file.write(
+            f"[vasp_boot] parallel: NEB detected IMAGES={neb_images}, ranks={requested}, ranks/image={ranks_per_image}\n"
+        )
+        log_file.flush()
+        return requested, neb_images
+    reason_msg = (
+        "preferring a divisible layout with NCORE>1"
+        if reason == "prefer_ncore_gt_1"
+        else "so ranks are divisible by IMAGES"
+    )
+    log_file.write(
+        f"[vasp_boot] parallel: NEB detected IMAGES={neb_images}, reducing ranks from {requested} to {adjusted} "
+        f"{reason_msg}; ranks/image={ranks_per_image}\n"
+    )
+    log_file.flush()
+    return adjusted, neb_images
+
+
+def _maybe_set_ncore(args: argparse.Namespace, log_file: TextIO, *, nprocs: int, neb_images: int | None) -> None:
     if not args.auto_ncore:
         return
     incar_path = Path(args.incar)
@@ -88,19 +163,28 @@ def _maybe_set_ncore(args: argparse.Namespace, log_file) -> None:
         log_file.write("[vasp_boot] auto-ncore: cpu_per_node unavailable, skip\n")
         log_file.flush()
         return
-    lines = incar_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    lines = _read_incar_lines(incar_path)
     for ln in lines:
-        head = ln.split("!")[0].split("#")[0].strip()
+        head = _strip_incar_comment(ln)
         if not head:
             continue
         if _INCAR_KEY_RE.match(head):
             log_file.write("[vasp_boot] auto-ncore: NCORE/NPAR already set, skip\n")
             log_file.flush()
             return
-    ncore = _choose_ncore(cpu_per_node)
+    ncore_basis = cpu_per_node
+    if neb_images:
+        ncore_basis = max(1, nprocs // neb_images)
+    ncore = _choose_ncore(ncore_basis)
     lines.append(f"NCORE = {ncore}")
     incar_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    log_file.write(f"[vasp_boot] auto-ncore: cpu_per_node={cpu_per_node}, ncore={ncore}\n")
+    if neb_images:
+        log_file.write(
+            f"[vasp_boot] auto-ncore: cpu_per_node={cpu_per_node}, IMAGES={neb_images}, ranks={nprocs}, "
+            f"ranks/image={ncore_basis}, ncore={ncore}\n"
+        )
+    else:
+        log_file.write(f"[vasp_boot] auto-ncore: cpu_per_node={cpu_per_node}, ncore={ncore}\n")
     log_file.flush()
 
 
@@ -121,11 +205,10 @@ def _resolve_nprocs(nprocs: int | None) -> int:
     return parsed
 
 
-def _build_command(args: argparse.Namespace) -> tuple[list[str], str]:
+def _build_command(args: argparse.Namespace, *, nprocs: int) -> tuple[list[str], str]:
     vasp_bin = args.vasp
     if args.auto_gamma and _is_gamma_only(Path(args.kpoints)):
         vasp_bin = args.gamma_vasp
-    nprocs = _resolve_nprocs(args.nprocs)
     return [args.launcher, "-n", str(nprocs), vasp_bin], vasp_bin
 
 
@@ -144,12 +227,6 @@ def main() -> int:
     parser.add_argument("--incar", default="INCAR", help="INCAR file path")
     args = parser.parse_args()
 
-    try:
-        cmd, vasp_bin = _build_command(args)
-    except Exception as exc:
-        sys.stderr.write(f"[vasp_boot] {exc}\n")
-        return 2
-
     with open(args.log, "w", encoding="utf-8") as log_file:
         log_file.write(f"[vasp_boot] cwd={Path.cwd()}\n")
         for key in (
@@ -163,10 +240,19 @@ def main() -> int:
             "I_MPI_HYDRA_BOOTSTRAP",
         ):
             log_file.write(f"[vasp_boot] env {key}={os.environ.get(key, '')}\n")
+        log_file.flush()
+        try:
+            nprocs, neb_images = _resolve_effective_nprocs(args, log_file)
+            _maybe_set_ncore(args, log_file, nprocs=nprocs, neb_images=neb_images)
+            cmd, vasp_bin = _build_command(args, nprocs=nprocs)
+        except Exception as exc:
+            log_file.write(f"[vasp_boot] setup failed: {exc}\n")
+            log_file.flush()
+            sys.stderr.write(f"[vasp_boot] {exc}\n")
+            return 2
         log_file.write(f"[vasp_boot] vasp_bin={vasp_bin}\n")
         log_file.write(f"[vasp_boot] command: {' '.join(cmd)}\n")
         log_file.flush()
-        _maybe_set_ncore(args, log_file)
         proc = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, check=False)
 
     try:

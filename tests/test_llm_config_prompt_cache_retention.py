@@ -96,6 +96,65 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
     assert profile.writing.author_name == "CatMaster"
+    assert profile.peer_review_models == ["openai/gpt-5-nano"]
+
+
+def test_llm_profile_peer_review_models_must_reference_explicit_model_labels(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'peer-a':",
+                "    provider: openrouter",
+                "    model: google/gemini-3.1-pro",
+                "  'peer-b':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.4:online",
+                "agents:",
+                "  proposal: 'peer-a'",
+                "  director: 'peer-a'",
+                "  task_runner: 'peer-a'",
+                "  memory_patch: 'peer-a'",
+                "  summary: 'peer-b'",
+                "peer_review_models:",
+                "  - 'peer-a'",
+                "  - 'peer-b'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.peer_review_models == ["peer-a", "peer-b"]
+
+
+def test_llm_profile_rejects_unknown_peer_review_model_labels(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'peer-a':",
+                "    provider: openrouter",
+                "    model: google/gemini-3.1-pro",
+                "agents:",
+                "  proposal: 'peer-a'",
+                "  director: 'peer-a'",
+                "  task_runner: 'peer-a'",
+                "  memory_patch: 'peer-a'",
+                "  summary: 'peer-a'",
+                "peer_review_models:",
+                "  - 'peer-a'",
+                "  - 'missing-peer'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="peer_review_models references unknown model label"):
+        LLMProfile.from_env_or_file(str(cfg))
 
 
 def test_llm_profile_tool_selector_fallbacks_to_task_runner(tmp_path: Path) -> None:
