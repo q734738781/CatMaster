@@ -8,6 +8,7 @@ from typing import Any, Dict, Literal, Optional
 
 import numpy as np
 from ase import Atoms
+from ase.io import iread as ase_iread
 from ase.io import read as ase_read
 from ase.io import write as ase_write
 from pydantic import BaseModel, Field, model_validator
@@ -111,6 +112,23 @@ def _read_dataset_frames(path: Path) -> list[Atoms]:
             raise FileNotFoundError(f"No extxyz dataset file found under {path}")
         path = dataset_file
     return list(ase_read(str(path), index=":"))
+
+
+def _collect_dataset_atomic_numbers(dataset_dir: Path, split_files: list[str | None]) -> list[int]:
+    atomic_numbers: set[int] = set()
+    for filename in split_files:
+        text = str(filename or "").strip()
+        if not text:
+            continue
+        dataset_path = dataset_dir / text
+        if not dataset_path.exists():
+            continue
+        try:
+            for atoms in ase_iread(str(dataset_path), index=":"):
+                atomic_numbers.update(int(number) for number in atoms.numbers)
+        except Exception:
+            continue
+    return sorted(atomic_numbers)
 
 
 def _feature_vector(atoms: Atoms, *, species_order: list[str], bins: int = 80, r_max: float = 6.0) -> np.ndarray:
@@ -221,9 +239,16 @@ class MaceTrainInput(BaseModel):
     valid_file: Optional[str] = Field("valid.extxyz", description="Validation dataset filename relative to dataset_dir.")
     test_file: Optional[str] = Field("test.extxyz", description="Optional test dataset filename relative to dataset_dir.")
     model_name: str = Field("mace_finetune", description="Short run name used in training output artifacts.")
-    foundation_model: Optional[str] = Field(
+    name: Optional[str] = Field(
         None,
-        description="Pretrained model name or workspace-local model path used as the MACE foundation model.",
+        description="Official-CLI alias for model_name.",
+    )
+    foundation_model: Optional[str] = Field(
+        "mh-1",
+        description=(
+            "Pretrained model name or workspace-local model path used as the MACE foundation model. "
+            "Defaults to the validated repo baseline `mh-1`."
+        ),
     )
     base_model: Optional[str] = Field(
         None,
@@ -240,6 +265,10 @@ class MaceTrainInput(BaseModel):
     e0s: str = Field(
         "estimated",
         description="E0s mode or JSON path. Use 'estimated' or a workspace-local E0 JSON file.",
+    )
+    E0s: Optional[str] = Field(
+        None,
+        description="Official-CLI alias for e0s.",
     )
     multiheads_finetuning: bool = Field(
         True,
@@ -264,22 +293,50 @@ class MaceTrainInput(BaseModel):
     max_num_epochs: int = Field(25, ge=1, description="Maximum training epochs passed to the MACE training CLI.")
     batch_size: int = Field(4, ge=1, description="Batch size passed to the MACE training CLI.")
     learning_rate: float = Field(1e-4, gt=0.0, description="Learning rate passed to the MACE training CLI.")
+    lr: Optional[float] = Field(
+        None,
+        gt=0.0,
+        description="Official-CLI alias for learning_rate.",
+    )
     default_dtype: Literal["float32", "float64"] = Field("float32", description="Torch dtype used for training.")
     device: str = Field("cuda", description="Training device passed to the MACE CLI, typically cuda.")
     seed: int = Field(42, description="Random seed passed to the MACE CLI.")
     restart_latest: bool = Field(True, description="Whether to pass --restart_latest for resumable training runs.")
+    weight_decay: float | None = Field(None, ge=0.0, description="Optional official MACE CLI optimizer weight decay.")
+    scheduler: str | None = Field(None, description="Optional official MACE CLI scheduler name.")
+    patience: int | None = Field(None, ge=0, description="Optional official MACE CLI early-stopping patience.")
+    eval_interval: int | None = Field(None, ge=1, description="Optional official MACE CLI eval interval.")
+    valid_batch_size: int | None = Field(None, ge=1, description="Optional official MACE CLI validation batch size.")
+    save_all_checkpoints: bool | None = Field(None, description="Optional official MACE CLI save_all_checkpoints flag.")
+    keep_checkpoints: bool | None = Field(None, description="Optional official MACE CLI keep_checkpoints flag.")
     extra_cli_args: dict[str, Any] = Field(
         default_factory=dict,
-        description="Additional MACE CLI flags rendered into the training command, e.g. {'energy_weight': 1.0}.",
+        description="Backward-compatible alias for cli_args.",
+    )
+    cli_args: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Additional official MACE CLI flags rendered into the training command. "
+            "Workspace-local file/dir values are automatically staged and rewritten for the remote job."
+        ),
     )
     check_interval: int = Field(30, description="Polling interval in seconds while waiting for DPDispatcher.")
 
     @model_validator(mode="after")
     def _normalize_aliases(self) -> "MaceTrainInput":
+        if self.name:
+            self.model_name = self.name
         if self.foundation_model is None and self.base_model is not None:
             self.foundation_model = self.base_model
         if self.foundation_head is None and self.head is not None:
             self.foundation_head = self.head
+        if self.E0s is not None:
+            self.e0s = self.E0s
+        if self.lr is not None:
+            self.learning_rate = self.lr
+        merged_cli_args = dict(self.extra_cli_args or {})
+        merged_cli_args.update(self.cli_args or {})
+        self.cli_args = merged_cli_args
         return self
 
 
@@ -350,6 +407,42 @@ def _stage_optional_input_file(raw_value: str | None, *, stage_root: Path, subdi
     return dest.relative_to(stage_root).as_posix()
 
 
+def _stage_optional_input_value(raw_value: Any, *, stage_root: Path, subdir: str) -> Any:
+    if isinstance(raw_value, dict):
+        return {
+            str(key): _stage_optional_input_value(value, stage_root=stage_root, subdir=subdir)
+            for key, value in raw_value.items()
+        }
+    if isinstance(raw_value, tuple):
+        return [_stage_optional_input_value(value, stage_root=stage_root, subdir=subdir) for value in raw_value]
+    if isinstance(raw_value, list):
+        return [_stage_optional_input_value(value, stage_root=stage_root, subdir=subdir) for value in raw_value]
+    if raw_value is None or isinstance(raw_value, (bool, int, float)):
+        return raw_value
+
+    text = str(raw_value).strip()
+    if not text:
+        return raw_value
+    try:
+        src = resolve_workspace_path(text, must_exist=True)
+    except Exception:
+        return raw_value
+
+    rel_src = Path(workspace_relpath(src))
+    dest_root = stage_root / "assets" / subdir
+    dest = dest_root / rel_src
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if src.is_file():
+        shutil.copy2(src, dest)
+    elif src.is_dir():
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
+    else:
+        raise ValueError(f"Unsupported staged input path type: {src}")
+    return dest.relative_to(stage_root).as_posix()
+
+
 def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[ml/execute] Submit a MACE training or fine-tuning job through DPDispatcher."""
     params = MaceTrainInput(**payload)
@@ -381,7 +474,10 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if params.foundation_model:
         model_spec = _stage_mace_model(params.foundation_model, stage_root=stage_root)
         foundation_model = model_spec.command_arg
-    e0s_arg = _stage_optional_input_file(params.e0s, stage_root=stage_root, subdir="e0s")
+    e0s_arg = _stage_optional_input_value(params.e0s, stage_root=stage_root, subdir="e0s")
+    pt_train_file_arg = _stage_optional_input_value(params.pt_train_file, stage_root=stage_root, subdir="replay")
+    cli_args = _stage_optional_input_value(params.cli_args, stage_root=stage_root, subdir="cli_args")
+    atomic_numbers = list(params.atomic_numbers or [])
 
     for filename in [params.train_file, params.valid_file, params.test_file]:
         if filename and not (stage_dataset / filename).exists():
@@ -394,6 +490,26 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 message=f"Dataset split file missing under dataset_dir: {filename}",
                 data={"dataset_dir_rel": workspace_relpath(dataset_dir)},
                 error_code="missing_dataset_split",
+            )
+
+    if (
+        params.multiheads_finetuning
+        and str(params.filter_type_pt or "").strip().lower() not in {"", "none"}
+        and not atomic_numbers
+    ):
+        atomic_numbers = _collect_dataset_atomic_numbers(
+            stage_dataset,
+            [params.train_file, params.valid_file, params.test_file],
+        )
+        if not atomic_numbers:
+            _fail(
+                "mace_train",
+                message=(
+                    "Replay finetuning with filter_type_pt requires atomic_numbers, "
+                    "and none could be inferred from the dataset extxyz splits."
+                ),
+                data={"dataset_dir_rel": workspace_relpath(dataset_dir)},
+                error_code="missing_atomic_numbers",
             )
 
     params_dir = stage_root / "params"
@@ -410,12 +526,12 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "foundation_head": foundation_head,
             "e0s": e0s_arg,
             "multiheads_finetuning": params.multiheads_finetuning,
-            "pt_train_file": params.pt_train_file,
+            "pt_train_file": pt_train_file_arg,
             "num_samples_pt": params.num_samples_pt,
             "filter_type_pt": params.filter_type_pt,
             "subselect_pt": params.subselect_pt,
             "weight_pt": params.weight_pt,
-            "atomic_numbers": params.atomic_numbers,
+            "atomic_numbers": atomic_numbers,
             "compute_stress": params.compute_stress,
             "energy_weight": params.energy_weight,
             "forces_weight": params.forces_weight,
@@ -423,11 +539,19 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "max_num_epochs": params.max_num_epochs,
             "batch_size": params.batch_size,
             "learning_rate": params.learning_rate,
+            "weight_decay": params.weight_decay,
+            "scheduler": params.scheduler,
+            "patience": params.patience,
+            "eval_interval": params.eval_interval,
+            "valid_batch_size": params.valid_batch_size,
+            "save_all_checkpoints": params.save_all_checkpoints,
+            "keep_checkpoints": params.keep_checkpoints,
             "default_dtype": params.default_dtype,
             "device": params.device,
             "seed": params.seed,
             "restart_latest": params.restart_latest,
-            "extra_cli_args": params.extra_cli_args,
+            "cli_args": cli_args,
+            "extra_cli_args": cli_args,
         },
     )
     ctx = {
@@ -438,7 +562,11 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     rendered = render_task_fields(cfg, ctx, stage_root)
     if model_spec and model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
         rendered["forward_files"].append(model_spec.asset_dir_rel)
-    if e0s_arg and e0s_arg.startswith("assets/") and "assets" not in rendered["forward_files"]:
+    if (
+        (isinstance(e0s_arg, str) and e0s_arg.startswith("assets/"))
+        or (isinstance(pt_train_file_arg, str) and pt_train_file_arg.startswith("assets/"))
+        or ("assets/" in json.dumps(cli_args, ensure_ascii=False))
+    ) and "assets" not in rendered["forward_files"]:
         rendered["forward_files"].append("assets")
     task = TaskSpec(
         command=rendered["command"],
@@ -502,6 +630,7 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "foundation_head": foundation_head,
         "e0s": params.e0s,
         "multiheads_finetuning": params.multiheads_finetuning,
+        "atomic_numbers": atomic_numbers,
         "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         **collect_info,

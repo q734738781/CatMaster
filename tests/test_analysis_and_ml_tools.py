@@ -279,11 +279,22 @@ def test_mace_train_and_evaluate_stage_and_collect(monkeypatch, tmp_path: Path) 
         if train_params.exists():
             payload = json.loads(train_params.read_text(encoding="utf-8"))
             assert payload["foundation_head"] == "omat_pbe"
-            assert payload["e0s"] == "estimated"
+            assert payload["e0s"] == "assets/e0s/e0s/e0s.json"
             assert payload["multiheads_finetuning"] is True
-            assert payload["pt_train_file"] == "omat"
+            assert payload["pt_train_file"] == "assets/replay/replay/replay.pt"
             assert payload["forces_weight"] == 100.0
             assert payload["restart_latest"] is True
+            assert payload["weight_decay"] == pytest.approx(1.0e-6)
+            assert payload["scheduler"] == "ReduceLROnPlateau"
+            assert payload["patience"] == 5
+            assert payload["eval_interval"] == 2
+            assert payload["valid_batch_size"] == 8
+            assert payload["save_all_checkpoints"] is True
+            assert payload["keep_checkpoints"] is True
+            assert payload["foundation_model"] == "assets/models/finetune-model/checkpoints/best.model"
+            assert payload["cli_args"]["statistics_file"] == "assets/cli_args/stats/train.json"
+            assert payload["cli_args"]["energy_key"] == "REF_energy"
+            assert payload["cli_args"]["stage_two"] is False
         eval_params = stage_root / "params" / "eval_params.json"
         if eval_params.exists():
             payload = json.loads(eval_params.read_text(encoding="utf-8"))
@@ -305,14 +316,40 @@ def test_mace_train_and_evaluate_stage_and_collect(monkeypatch, tmp_path: Path) 
         dataset_dir.mkdir(parents=True, exist_ok=True)
         for name in ("train.extxyz", "valid.extxyz", "test.extxyz"):
             (dataset_dir / name).write_text("", encoding="utf-8")
+        model_dir = tmp_path / "files" / "finetune-model"
+        (model_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (model_dir / "checkpoints" / "best.model").write_text("weights", encoding="utf-8")
+        e0_dir = tmp_path / "files" / "e0s"
+        e0_dir.mkdir(parents=True, exist_ok=True)
+        (e0_dir / "e0s.json").write_text("{}", encoding="utf-8")
+        replay_dir = tmp_path / "files" / "replay"
+        replay_dir.mkdir(parents=True, exist_ok=True)
+        (replay_dir / "replay.pt").write_text("replay", encoding="utf-8")
+        stats_dir = tmp_path / "files" / "stats"
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        (stats_dir / "train.json").write_text("{}", encoding="utf-8")
 
         _, train_artifact = mace_train(
             {
                 "dataset_dir": "dataset",
                 "output_root": "train_out",
-                "foundation_model": "mh-1",
+                "foundation_model": "finetune-model",
                 "foundation_head": "omat_pbe",
-                "e0s": "estimated",
+                "e0s": "e0s/e0s.json",
+                "pt_train_file": "replay/replay.pt",
+                "weight_decay": 1.0e-6,
+                "scheduler": "ReduceLROnPlateau",
+                "patience": 5,
+                "eval_interval": 2,
+                "valid_batch_size": 8,
+                "save_all_checkpoints": True,
+                "keep_checkpoints": True,
+                "atomic_numbers": [1, 8, 26],
+                "cli_args": {
+                    "statistics_file": "stats/train.json",
+                    "energy_key": "REF_energy",
+                    "stage_two": False,
+                },
             }
         )
         assert train_artifact["data"]["batch_summary_rel"]
@@ -365,11 +402,18 @@ def test_remote_mace_train_resolves_staged_paths(tmp_path: Path, monkeypatch) ->
                 "max_num_epochs": 1,
                 "batch_size": 1,
                 "learning_rate": 1e-4,
+                "weight_decay": 1.0e-6,
+                "scheduler": "ReduceLROnPlateau",
+                "patience": 5,
+                "eval_interval": 2,
+                "valid_batch_size": 8,
+                "save_all_checkpoints": True,
+                "keep_checkpoints": True,
                 "default_dtype": "float32",
                 "device": "cpu",
                 "seed": 1,
                 "restart_latest": False,
-                "extra_cli_args": {},
+                "cli_args": {"statistics_file": "assets/e0s/e0s.json", "stage_two": False},
             }
         ),
         encoding="utf-8",
@@ -390,10 +434,74 @@ def test_remote_mace_train_resolves_staged_paths(tmp_path: Path, monkeypatch) ->
     remote_train.run_training(Path("dataset"), Path("output"), Path("params/train_params.json"))
     cmd = list(seen["cmd"])
     assert seen["cwd"] == str(output_root)
-    foundation_idx = cmd.index("--foundation-model") + 1
+    foundation_idx = cmd.index("--foundation_model") + 1
     e0_idx = cmd.index("--E0s") + 1
+    statistics_idx = cmd.index("--statistics_file") + 1
     assert cmd[foundation_idx] == str((assets_root / "best.model").resolve())
     assert cmd[e0_idx] == str((e0_root / "e0s.json").resolve())
+    assert cmd[statistics_idx] == str((e0_root / "e0s.json").resolve())
+    assert "--weight_decay" in cmd
+    assert "--scheduler" in cmd
+    assert "--patience" in cmd
+    assert "--eval_interval" in cmd
+    assert "--valid_batch_size" in cmd
+    assert "--save_all_checkpoints" in cmd
+    assert "--keep_checkpoints" in cmd
+
+
+def test_mace_train_auto_infers_atomic_numbers_for_replay(monkeypatch, tmp_path: Path) -> None:
+    import catmaster.tools.machine_learning.mace_ml as mace_ml
+
+    monkeypatch.setattr(mace_ml, "_resolve_machine_for_resources", lambda _: "dummy_machine")
+
+    seen: dict[str, object] = {}
+
+    def _fake_dispatch(req):
+        stage_root = Path(req.local_root) / req.work_base
+        payload = json.loads((stage_root / "params" / "train_params.json").read_text(encoding="utf-8"))
+        seen["atomic_numbers"] = payload["atomic_numbers"]
+        output = stage_root / "output"
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "batch_summary.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str((Path(req.local_root) / "_submission").resolve()),
+            work_base=req.work_base,
+            duration_s=0.01,
+        )
+
+    monkeypatch.setattr(mace_ml, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        dataset_dir = tmp_path / "files" / "dataset"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        frames = []
+        for symbols in ("CH", "FeO"):
+            atoms = Atoms(symbols)
+            atoms.positions = np.zeros((len(atoms), 3))
+            atoms.calc = SinglePointCalculator(
+                atoms,
+                energy=-1.0,
+                forces=np.zeros((len(atoms), 3)),
+                stress=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            )
+            frames.append(atoms)
+        ase_write(str(dataset_dir / "train.extxyz"), frames, format="extxyz")
+
+        _, artifact = mace_train(
+            {
+                "dataset_dir": "dataset",
+                "output_root": "train_out",
+                "valid_file": None,
+                "test_file": None,
+                "foundation_model": "mh-1",
+                "foundation_head": "omat_pbe",
+                "atomic_numbers": [],
+            }
+        )
+
+    assert artifact["data"]["atomic_numbers"] == [1, 6, 8, 26]
+    assert seen["atomic_numbers"] == [1, 6, 8, 26]
 
 
 def test_remote_mace_evaluate_reports_stress_metrics(monkeypatch, tmp_path: Path) -> None:

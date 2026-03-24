@@ -63,6 +63,7 @@ def _fail(
 class EnumerateAdsorptionSitesInput(BaseModel):
     """
     [adsorption/modeling] Enumerate adsorption sites on a slab using ASF. Use it only for small-scale placement.
+    The returned site list is the deduplicated representative-site result from ASF, not a symmetry-expanded list of every equivalent site.
 
     The tool writes a JSON list to output_json:
     [
@@ -486,7 +487,7 @@ def _write_ads_indices_index(index_path: Path, entries: List[Dict[str, Any]]) ->
 
 
 def enumerate_adsorption_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """[adsorption/modeling] Enumerate ASF adsorption sites on a slab and persist them as JSON."""
+    """[adsorption/modeling] Enumerate deduplicated representative ASF adsorption sites on a slab and persist them as JSON."""
     try:
         params = EnumerateAdsorptionSitesInput(**payload)
         slab_path = resolve_workspace_path(params.slab_file, must_exist=True)

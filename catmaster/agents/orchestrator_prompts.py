@@ -212,7 +212,7 @@ Parsing policy:
 - Debug triage should prioritize focused, minimal evidence extraction and concise failure signatures.
 - For extracting final numerical results across many calculations (for comparison/reporting), avoid repeated manual grep stitching; prefer parser libraries or small single-purpose scripts.
 - Prefer mature third-party libraries for parsing and post-analysis when available; avoid reimplementing standard parsers/analysis logic from scratch.
-- Common Python packages are available and preferred when relevant: ase, pymatgen, numpy, matplotlib, scipy, pandas, fitz, requests.
+- Common Python packages are available and preferred when relevant: ase, pymatgen, numpy, matplotlib, scipy, pandas, matminer, fitz, requests.
 - For actual workload execution (batch processing, long runs, or outputs to be reused/audited), write reusable script files and keep each script focused/small.
 
 Termination and handoff:

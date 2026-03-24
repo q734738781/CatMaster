@@ -27,6 +27,7 @@ scikit-learn
 xgboost
 umap-learn
 optuna
+matminer
 
 # YAML parsing (PyYAML) and round-trip editing (ruamel.yaml)
 pyyaml

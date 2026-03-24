@@ -27,7 +27,10 @@ def _cli_runner() -> list[str]:
 def _append_flag(cmd: list[str], key: str, value: Any) -> None:
     if value in (None, "", [], {}):
         return
-    flag = "--" + str(key).replace("_", "-")
+    flag = "--" + str(key).strip().lstrip("-").replace("-", "_")
+    if isinstance(value, dict):
+        cmd.extend([flag, json.dumps(value)])
+        return
     if isinstance(value, (list, tuple)):
         cmd.extend([flag, json.dumps(list(value))])
         return
@@ -50,6 +53,19 @@ def _resolve_stage_path(stage_root: Path, raw: str | None, *, must_exist: bool =
     if resolved.exists():
         return str(resolved)
     return None
+
+
+def _resolve_stage_value(stage_root: Path, raw: Any, *, must_exist: bool = False) -> Any:
+    if isinstance(raw, dict):
+        return {key: _resolve_stage_value(stage_root, value, must_exist=must_exist) for key, value in raw.items()}
+    if isinstance(raw, list):
+        return [_resolve_stage_value(stage_root, value, must_exist=must_exist) for value in raw]
+    if isinstance(raw, tuple):
+        return [_resolve_stage_value(stage_root, value, must_exist=must_exist) for value in raw]
+    if raw is None or isinstance(raw, (bool, int, float)):
+        return raw
+    resolved = _resolve_stage_path(stage_root, str(raw), must_exist=must_exist)
+    return resolved or raw
 
 
 def _collect_model_artifacts(root: Path) -> list[str]:
@@ -92,11 +108,11 @@ def run_training(dataset_root: Path, output_root: Path, params_path: Path) -> di
     _append_flag(cmd, "train_file", train_file)
     _append_flag(cmd, "valid_file", valid_file if valid_file and valid_file.exists() else None)
     _append_flag(cmd, "test_file", test_file if test_file and test_file.exists() else None)
-    _append_flag(cmd, "foundation_model", _resolve_stage_path(stage_root, params.get("foundation_model")))
+    _append_flag(cmd, "foundation_model", _resolve_stage_value(stage_root, params.get("foundation_model")))
     _append_flag(cmd, "foundation_head", params.get("foundation_head"))
-    _append_flag(cmd, "E0s", _resolve_stage_path(stage_root, params.get("e0s")) or params.get("e0s"))
+    _append_flag(cmd, "E0s", _resolve_stage_value(stage_root, params.get("e0s")))
     _append_flag(cmd, "multiheads_finetuning", params.get("multiheads_finetuning"))
-    _append_flag(cmd, "pt_train_file", _resolve_stage_path(stage_root, params.get("pt_train_file")) or params.get("pt_train_file"))
+    _append_flag(cmd, "pt_train_file", _resolve_stage_value(stage_root, params.get("pt_train_file")))
     _append_flag(cmd, "num_samples_pt", params.get("num_samples_pt"))
     _append_flag(cmd, "filter_type_pt", params.get("filter_type_pt"))
     _append_flag(cmd, "subselect_pt", params.get("subselect_pt"))
@@ -109,6 +125,13 @@ def run_training(dataset_root: Path, output_root: Path, params_path: Path) -> di
     _append_flag(cmd, "max_num_epochs", params.get("max_num_epochs"))
     _append_flag(cmd, "batch_size", params.get("batch_size"))
     _append_flag(cmd, "lr", params.get("learning_rate"))
+    _append_flag(cmd, "weight_decay", params.get("weight_decay"))
+    _append_flag(cmd, "scheduler", params.get("scheduler"))
+    _append_flag(cmd, "patience", params.get("patience"))
+    _append_flag(cmd, "eval_interval", params.get("eval_interval"))
+    _append_flag(cmd, "valid_batch_size", params.get("valid_batch_size"))
+    _append_flag(cmd, "save_all_checkpoints", params.get("save_all_checkpoints"))
+    _append_flag(cmd, "keep_checkpoints", params.get("keep_checkpoints"))
     _append_flag(cmd, "default_dtype", params.get("default_dtype"))
     _append_flag(cmd, "device", params.get("device"))
     _append_flag(cmd, "seed", params.get("seed"))
@@ -119,8 +142,11 @@ def run_training(dataset_root: Path, output_root: Path, params_path: Path) -> di
     if params.get("restart_latest"):
         cmd.append("--restart_latest")
 
-    for key, value in (params.get("extra_cli_args") or {}).items():
-        _append_flag(cmd, str(key), value)
+    cli_args = params.get("cli_args")
+    if not isinstance(cli_args, dict):
+        cli_args = params.get("extra_cli_args") or {}
+    for key, value in cli_args.items():
+        _append_flag(cmd, str(key), _resolve_stage_value(stage_root, value))
 
     completed = subprocess.run(cmd, check=True, cwd=str(output_root))
     model_artifacts = _collect_model_artifacts(output_root)
