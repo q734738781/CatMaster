@@ -16,6 +16,7 @@ seaborn
 # Atomistic modeling / materials
 ase
 pymatgen
+cclib
 ovito
 matplotlib
 phonopy

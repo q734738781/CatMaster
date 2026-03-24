@@ -99,7 +99,30 @@ _ML_WORKER_TOOL_ALLOWLIST: set[str] = {
     "mace_evaluate",
     "calculate_al_candidates",
 }
-_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = set(_MATERIALS_WORKER_TOOL_ALLOWLIST) | set(_ML_WORKER_TOOL_ALLOWLIST)
+_ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
+    "create_molecule_from_smiles",
+    "enumerate_molecular_conformers",
+    "filter_conformer_ensemble",
+    "extract_optimized_molecules",
+    "render_structure_views",
+    "analyze_images",
+    "identify_structure_fragments",
+    "crest_conformer_search",
+    "xtb_run_batch",
+    "analyze_xtb_results",
+    "orca_prepare",
+    "orca_scan_prepare",
+    "orca_optts_prepare",
+    "orca_nebts_prepare",
+    "orca_irc_prepare",
+    "orca_execute_batch",
+    "analyze_orca_results",
+}
+_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = (
+    set(_MATERIALS_WORKER_TOOL_ALLOWLIST)
+    | set(_ML_WORKER_TOOL_ALLOWLIST)
+    | set(_ORCA_XTB_WORKER_TOOL_ALLOWLIST)
+)
 _WRITING_TOOL_ALLOWLIST = {
     "analyze_images",
     "render_structure_views",
@@ -185,6 +208,7 @@ _SPECIALIST_SKILL_VIEW_SPECS: dict[str, tuple[str, set[str]]] = {
     "experiment_specialist": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST),
     "materials_worker": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _MATERIALS_WORKER_TOOL_ALLOWLIST),
     "ml_worker": ("machine_learning", _DEEPAGENT_BUILTIN_TOOL_NAMES | _ML_WORKER_TOOL_ALLOWLIST),
+    "orca_xtb_worker": ("quantum_chemistry", _DEEPAGENT_BUILTIN_TOOL_NAMES | _ORCA_XTB_WORKER_TOOL_ALLOWLIST),
     "report_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
     "writing_specialist": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_TOOL_ALLOWLIST),
     "writing_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
@@ -1000,6 +1024,20 @@ class SpecialistRunner:
                 middleware=subagent_middleware,
             ),
             SubAgent(
+                name="orca_xtb_worker",
+                description="Handle bounded molecular quantum-chemistry subtasks, including conformer search, xTB screening, and ORCA preparation/execution/analysis.",
+                system_prompt=self._orca_xtb_worker_prompt(
+                    execution_contract=self._execution_capability_contract(audience="orca_xtb_worker")
+                ),
+                model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
+                tools=self._augment_with_project_memory_tools(
+                    self._named_tools(_ORCA_XTB_WORKER_TOOL_ALLOWLIST),
+                    include_manage_memory=False,
+                ),
+                skills=[self._skill_view_virtual_path("orca_xtb_worker")],
+                middleware=subagent_middleware,
+            ),
+            SubAgent(
                 name="literature_agent",
                 description="Run lightweight Tavily-backed public-web search for quick background grounding and literature orientation.",
                 system_prompt=self._lightweight_literature_agent_prompt(),
@@ -1494,6 +1532,7 @@ class SpecialistRunner:
         layouts = {
             base / "experiment": repo_root / "skills" / "experiment",
             base / "machine_learning": repo_root / "skills" / "machine_learning",
+            base / "quantum_chemistry": repo_root / "skills" / "quantum_chemistry",
             base / "writing": repo_root / "skills" / "writing",
         }
         for target, source in layouts.items():
@@ -1622,17 +1661,37 @@ class SpecialistRunner:
     def _execution_capability_contract(
         self,
         *,
-        audience: Literal["research", "experiment", "materials_worker", "ml_worker"],
+        audience: Literal["research", "experiment", "materials_worker", "ml_worker", "orca_xtb_worker"],
     ) -> str:
         available = set(self.registry.tools.keys())
         managed_tools = [
             name
-            for name in ("vasp_execute_batch", "mace_neb_batch", "mace_relax_batch", "mace_sp_batch", "mace_train", "mace_evaluate")
+            for name in (
+                "vasp_execute_batch",
+                "mace_neb_batch",
+                "mace_relax_batch",
+                "mace_sp_batch",
+                "mace_train",
+                "mace_evaluate",
+                "xtb_run_batch",
+                "crest_conformer_search",
+                "orca_execute_batch",
+            )
             if name in available
         ]
         prepare_tools = [
             name
-            for name in ("vasp_prepare", "vasp_band_prepare", "vasp_neb_prepare", "build_dataset_from_runs")
+            for name in (
+                "vasp_prepare",
+                "vasp_band_prepare",
+                "vasp_neb_prepare",
+                "build_dataset_from_runs",
+                "orca_prepare",
+                "orca_scan_prepare",
+                "orca_optts_prepare",
+                "orca_nebts_prepare",
+                "orca_irc_prepare",
+            )
             if name in available
         ]
         machine_names: list[str] = []
@@ -1679,6 +1738,18 @@ class SpecialistRunner:
         if audience in {"experiment", "materials_worker"} and "vasp_execute_batch" in available:
             lines.append(
                 "For periodic DFT, the intended path is to prepare inputs locally, submit via `vasp_execute_batch`, then analyze the returned results; do not require a local periodic DFT engine to be directly runnable first."
+            )
+        if audience in {"experiment", "orca_xtb_worker"} and "xtb_run_batch" in available:
+            lines.append(
+                "For molecular preoptimization, quick screening, or conformer refinement, the intended managed path is `xtb_run_batch`; do not block on local xTB visibility when the registered submission tool is available."
+            )
+        if audience in {"experiment", "orca_xtb_worker"} and "crest_conformer_search" in available:
+            lines.append(
+                "For broad conformer/rotamer exploration, prefer `crest_conformer_search` over ad hoc shell wrappers when the task is naturally a CREST batch."
+            )
+        if audience in {"experiment", "orca_xtb_worker"} and "orca_execute_batch" in available:
+            lines.append(
+                "For serious molecular quantum-chemistry runs, the intended managed path is to prepare jobs locally with the ORCA preparation tools, submit them with `orca_execute_batch`, then close the loop with `analyze_orca_results`."
             )
         if audience in {"experiment", "materials_worker"} and any(name in available for name in ("mace_neb_batch", "mace_relax_batch", "mace_sp_batch")):
             lines.append(
@@ -1845,7 +1916,7 @@ class SpecialistRunner:
         return (
             "You are ExperimentSpecialist.\n"
             "Perform bounded computational execution in the current workspace using available tools and skills.\n"
-            "Route by the current working artifact: use `materials_worker` for structure/calc/result work, including MACE-based surrogate screening inside a materials workflow; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed; use `report_worker_agent` for experiment reports, validation summaries, QC notes, and other execution-facing written artifacts drawn from existing workspace evidence.\n"
+            "Route by the current working artifact: use `materials_worker` for periodic materials structure/calc/result work, including VASP and MACE-based surrogate screening inside a materials workflow; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use `ml_worker` for dataset/model lifecycle work such as dataset curation, training, benchmark evaluation, and active-learning selection; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed; use `report_worker_agent` for experiment reports, validation summaries, QC notes, and other execution-facing written artifacts drawn from existing workspace evidence.\n"
             "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
             "Each brief should contain one primary goal and one completion criterion. "
             "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
@@ -2024,6 +2095,28 @@ class SpecialistRunner:
             "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before locking the workflow; do not wait for a dedicated search tool.\n"
             "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
+            "Do not perform broad literature review; that belongs to literature_agent.\n"
+            f"{execution_contract}\n"
+            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
+            f"{cls._memory_write_policy()}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            f"{cls._soft_reporting_contract()}"
+        )
+
+    @classmethod
+    def _orca_xtb_worker_prompt(cls, *, execution_contract: str = "") -> str:
+        return (
+            "You are orca_xtb_worker for ExperimentSpecialist.\n"
+            "Handle a bounded molecular quantum-chemistry subtask autonomously inside the workspace.\n"
+            "This worker owns molecule/cluster workflows: SMILES-to-3D conversion, conformer generation and pruning, xTB or CREST preoptimization/screening, ORCA preparation/execution, and molecular post-analysis for optimization, frequencies, scans, TS/IRC, TDDFT, or NMR-style jobs.\n"
+            "Prefer the dedicated managed tools when they fit: `enumerate_molecular_conformers`, `filter_conformer_ensemble`, `crest_conformer_search`, `xtb_run_batch`, `orca_prepare`, `orca_scan_prepare`, `orca_optts_prepare`, `orca_nebts_prepare`, `orca_irc_prepare`, `orca_execute_batch`, `analyze_xtb_results`, and `analyze_orca_results`.\n"
+            "Treat xTB/CREST as the fast exploration layer and ORCA as the higher-fidelity molecular quantum layer unless the task explicitly calls for a different partition.\n"
+            "When the request is about one mechanistic step or one catalyst-side molecular episode, keep the run on the molecular lane instead of trying to translate it into a periodic workflow.\n"
+            "When no dedicated tool covers a bounded molecular task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "For heavier custom logic such as ensemble post-processing, Boltzmann aggregation, or multi-step deterministic screening helpers, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
+            "When configuration details, software behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
+            "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to literature_agent.\n"
             f"{execution_contract}\n"
             f"{cls._multimodal_tool_history_policy()}\n"

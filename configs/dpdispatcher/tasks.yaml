@@ -69,3 +69,33 @@ mace_eval_dir:
   backward_files:
     - "output"
   task_work_path: "."
+
+xtb_run:
+  resources: xtb_cpu
+  command: "python task_script/xtb_boot.py --input {input_name} --mode {mode} --gfn {gfn} --solvent-model {solvent_model} --solvent {solvent} --charge {charge} --uhf {uhf} --opt-level {opt_level} --temperature {temperature} --md-time-ps {md_time_ps} --timestep-fs {timestep_fs} --md-dump-fs {md_dump_fs}"
+  forward_files:
+    - "*"
+    - "task_script/xtb_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+crest_run:
+  resources: crest_cpu
+  command: "python task_script/crest_boot.py --input {input_name} --mode {mode} --method {method} --ewin {ewin} --rthr {rthr} --ethr {ethr} --bthr {bthr} --charge {charge} --uhf {uhf} --solvent {solvent} --constraint-file {constraint_file}"
+  forward_files:
+    - "*"
+    - "task_script/crest_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+orca_execute:
+  resources: orca_cpu
+  command: "python task_script/orca_boot.py --input job.inp"
+  forward_files:
+    - "*"
+    - "task_script/orca_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."

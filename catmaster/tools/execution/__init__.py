@@ -16,6 +16,16 @@ from catmaster.tools.execution.vasp_dispatch import (
     VaspExecuteBatchInput,
     vasp_execute_batch,
 )
+from catmaster.tools.execution.xtb_dispatch import (
+    CrestConformerSearchInput,
+    XtbRunBatchInput,
+    crest_conformer_search,
+    xtb_run_batch,
+)
+from catmaster.tools.execution.orca_dispatch import (
+    OrcaExecuteBatchInput,
+    orca_execute_batch,
+)
 
 __all__ = [
     "MaceRelaxInput",
@@ -28,4 +38,10 @@ __all__ = [
     "VaspExecuteInput",
     "VaspExecuteBatchInput",
     "vasp_execute_batch",
+    "XtbRunBatchInput",
+    "CrestConformerSearchInput",
+    "xtb_run_batch",
+    "crest_conformer_search",
+    "OrcaExecuteBatchInput",
+    "orca_execute_batch",
 ]

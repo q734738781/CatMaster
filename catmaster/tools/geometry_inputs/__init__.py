@@ -2,6 +2,26 @@ from __future__ import annotations
 
 # Re-export tool functions and input models
 from catmaster.tools.geometry_inputs.molecule import MoleculeFromSmilesInput, create_molecule_from_smiles
+from catmaster.tools.geometry_inputs.molecular_qchem import (
+    EnumerateMolecularConformersInput,
+    FilterConformerEnsembleInput,
+    ExtractOptimizedMoleculesInput,
+    enumerate_molecular_conformers,
+    filter_conformer_ensemble,
+    extract_optimized_molecules,
+)
+from catmaster.tools.geometry_inputs.orca_prepare import (
+    OrcaPrepareInput,
+    OrcaScanPrepareInput,
+    OrcaOptTSPrepareInput,
+    OrcaNebTSPrepareInput,
+    OrcaIRCPrepareInput,
+    orca_prepare,
+    orca_scan_prepare,
+    orca_optts_prepare,
+    orca_nebts_prepare,
+    orca_irc_prepare,
+)
 from catmaster.tools.geometry_inputs.vasp_prepare import (
     VaspPrepareInput,
     vasp_prepare,
@@ -64,6 +84,22 @@ from catmaster.tools.geometry_inputs.dimer_tools import (
 __all__ = [
     "MoleculeFromSmilesInput",
     "create_molecule_from_smiles",
+    "EnumerateMolecularConformersInput",
+    "FilterConformerEnsembleInput",
+    "ExtractOptimizedMoleculesInput",
+    "enumerate_molecular_conformers",
+    "filter_conformer_ensemble",
+    "extract_optimized_molecules",
+    "OrcaPrepareInput",
+    "OrcaScanPrepareInput",
+    "OrcaOptTSPrepareInput",
+    "OrcaNebTSPrepareInput",
+    "OrcaIRCPrepareInput",
+    "orca_prepare",
+    "orca_scan_prepare",
+    "orca_optts_prepare",
+    "orca_nebts_prepare",
+    "orca_irc_prepare",
     "VaspPrepareInput",
     "VaspBandPrepareInput",
     "SlabBuildInput",

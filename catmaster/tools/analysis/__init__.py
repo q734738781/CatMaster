@@ -40,6 +40,12 @@ from catmaster.tools.analysis.results_analysis import (
     analyze_trajectory,
     analyze_vasp_results,
 )
+from catmaster.tools.analysis.qchem_analysis import (
+    AnalyzeOrcaResultsInput,
+    AnalyzeXtbResultsInput,
+    analyze_orca_results,
+    analyze_xtb_results,
+)
 from catmaster.tools.analysis.vaspkit_thermo import (
     VaspkitAdsorbateThermoCorrectionInput,
     VaspkitGasThermoCorrectionInput,
@@ -71,9 +77,13 @@ __all__ = [
     "AnalyzeVaspResultsInput",
     "AnalyzeNebResultsInput",
     "AnalyzeTrajectoryInput",
+    "AnalyzeOrcaResultsInput",
+    "AnalyzeXtbResultsInput",
     "analyze_vasp_results",
     "analyze_neb_results",
     "analyze_trajectory",
+    "analyze_orca_results",
+    "analyze_xtb_results",
     "VaspkitAdsorbateThermoCorrectionInput",
     "VaspkitGasThermoCorrectionInput",
     "vaspkit_adsorbate_thermo_correction",

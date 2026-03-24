@@ -23,6 +23,7 @@ from catmaster.specialists.runtime import (
     _MATERIALS_WORKER_TOOL_ALLOWLIST,
     _METADATA_AGENT_TOOL_ALLOWLIST,
     _ML_WORKER_TOOL_ALLOWLIST,
+    _ORCA_XTB_WORKER_TOOL_ALLOWLIST,
     _PROJECT_MEMORY_READ_TOOL_NAMES,
     _PROJECT_MEMORY_TOOL_NAMES,
     _LITREVIEW_AGENT_TOOL_ALLOWLIST,
@@ -299,6 +300,15 @@ def test_materials_worker_prompt_includes_workspace_path_discipline() -> None:
     assert "writing/" in prompt
 
 
+def test_orca_xtb_worker_prompt_includes_workspace_path_discipline() -> None:
+    prompt = runtime_mod.SpecialistRunner._orca_xtb_worker_prompt()
+    assert "Workspace path discipline" in prompt
+    assert "Treat `/` only as the workspace virtual root" in prompt
+    assert "molecular quantum-chemistry subtask" in prompt
+    assert "`xtb_run_batch`" in prompt
+    assert "`orca_execute_batch`" in prompt
+
+
 def test_execution_capability_contract_distinguishes_local_and_managed_runtime(tmp_path: Path) -> None:
     workspace = tmp_path / "project_space"
     workspace.mkdir(parents=True)
@@ -315,6 +325,7 @@ def test_execution_capability_contract_distinguishes_local_and_managed_runtime(t
     research_contract = built.runner._execution_capability_contract(audience="research")
     materials_contract = built.runner._execution_capability_contract(audience="materials_worker")
     ml_contract = built.runner._execution_capability_contract(audience="ml_worker")
+    orca_contract = built.runner._execution_capability_contract(audience="orca_xtb_worker")
 
     assert "Do not infer managed-execution availability from local shell probing alone." in research_contract
     assert "downgrading it to literature-only validation" in research_contract
@@ -324,6 +335,9 @@ def test_execution_capability_contract_distinguishes_local_and_managed_runtime(t
     assert "registered managed-execution path" in ml_contract
     assert "prefer the registered managed tools when they fit the task" in ml_contract
     assert "continue by writing and running local workspace scripts instead of blocking on tool coverage" in ml_contract
+    assert "`xtb_run_batch`" in orca_contract
+    assert "`orca_execute_batch`" in orca_contract
+    assert "serious molecular quantum-chemistry runs" in orca_contract
 
 
 def test_writing_worker_and_proposal_prompts_include_workspace_layout_guidance() -> None:
@@ -521,7 +535,7 @@ def test_render_compact_report_omits_empty_sections() -> None:
     ("entrypoint", "expected_skills", "expected_subagent_names"),
     [
         ("research", ["/.deepagents/skill_views/research_experiment", "/.deepagents/skill_views/research_writing"], ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
-        ("experiment", ["/.deepagents/skill_views/experiment_specialist"], ["materials_worker", "ml_worker", "literature_agent", "report_worker_agent"]),
+        ("experiment", ["/.deepagents/skill_views/experiment_specialist"], ["materials_worker", "ml_worker", "orca_xtb_worker", "literature_agent", "report_worker_agent"]),
         ("writing", ["/.deepagents/skill_views/writing_specialist"], ["literature_agent", "writing_worker_agent", "writing_polisher_agent"]),
         ("peer_review", ["/.deepagents/skill_views/peer_review_specialist"], []),
     ],
@@ -680,6 +694,8 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert subagents_by_name["materials_worker"]["skills"] == ["/.deepagents/skill_views/materials_worker"]
         assert {tool.name for tool in subagents_by_name["ml_worker"]["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["ml_worker"]["skills"] == ["/.deepagents/skill_views/ml_worker"]
+        assert {tool.name for tool in subagents_by_name["orca_xtb_worker"]["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert subagents_by_name["orca_xtb_worker"]["skills"] == ["/.deepagents/skill_views/orca_xtb_worker"]
         assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
         assert {tool.name for tool in subagents_by_name["report_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
@@ -691,6 +707,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "dataset/model lifecycle tasks" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "use `report_worker_agent` for experiment reports, validation summaries, QC notes" in agent_kwargs["system_prompt"]
+        assert "use `orca_xtb_worker` for molecular or cluster quantum-chemistry work" in agent_kwargs["system_prompt"]
         assert "purely report writing from already completed evidence" in agent_kwargs["system_prompt"]
         assert "Each worker should receive only one bounded execution episode around one primary artifact" in agent_kwargs["system_prompt"]
         assert "Do not hand an entire high-throughput campaign to one worker" in agent_kwargs["system_prompt"]
@@ -713,7 +730,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "prefer `build_dataset_from_runs`, `mace_train`, and `mace_evaluate` over ad hoc local wrapper scripts" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, and `joblib`" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "If the ML logic is longer than a short throwaway snippet and no managed tool covers it" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["ml_worker"]["system_prompt"]
@@ -726,6 +743,11 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "registered managed-execution path" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "molecular quantum-chemistry subtask" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
+        assert "`enumerate_molecular_conformers`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
+        assert "`orca_execute_batch`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
+        assert "Treat xTB/CREST as the fast exploration layer" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["orca_xtb_worker"]["system_prompt"]
         assert "compact report packet" in subagents_by_name["report_worker_agent"]["system_prompt"]
         assert "it is not a paper/manuscript lane" in subagents_by_name["report_worker_agent"]["system_prompt"]
         assert "Do not restart calculations" in subagents_by_name["report_worker_agent"]["system_prompt"]
@@ -797,10 +819,12 @@ def test_three_specialist_lanes_start_with_staged_skills(
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
     staged_experiment = workspace / "files" / ".deepagents" / "skills" / "experiment"
     staged_writing = workspace / "files" / ".deepagents" / "skills" / "writing"
+    staged_quantum_chemistry = workspace / "files" / ".deepagents" / "skills" / "quantum_chemistry"
     staged_views = workspace / "files" / ".deepagents" / "skill_views"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
     assert staged_experiment.is_dir()
     assert staged_writing.is_dir()
+    assert staged_quantum_chemistry.is_dir()
     assert staged_views.is_dir()
     staged_machine_learning = workspace / "files" / ".deepagents" / "skills" / "machine_learning"
     assert staged_machine_learning.is_dir()
@@ -808,6 +832,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
     writing_view_names = {path.name for path in (staged_views / "writing_specialist").iterdir() if path.is_dir()}
     materials_worker_view_names = {path.name for path in (staged_views / "materials_worker").iterdir() if path.is_dir()}
     ml_worker_view_names = {path.name for path in (staged_views / "ml_worker").iterdir() if path.is_dir()}
+    orca_xtb_worker_view_names = {path.name for path in (staged_views / "orca_xtb_worker").iterdir() if path.is_dir()}
     report_worker_view_names = {path.name for path in (staged_views / "report_worker_agent").iterdir() if path.is_dir()}
     writing_worker_view_names = {path.name for path in (staged_views / "writing_worker_agent").iterdir() if path.is_dir()}
     writing_polisher_view_names = {path.name for path in (staged_views / "writing_polisher_agent").iterdir() if path.is_dir()}
@@ -820,6 +845,14 @@ def test_three_specialist_lanes_start_with_staged_skills(
         "mace-finetuning-and-benchmark",
         "active-learning-relabel-loop",
     } <= ml_worker_view_names
+    assert {
+        "conformer-search-and-preopt",
+        "xtb-screen-and-prune",
+        "orca-optfreq-thermochemistry",
+        "scan-to-ts",
+        "nebts-and-irc",
+        "nmr-ensemble-workup",
+    } <= orca_xtb_worker_view_names
     assert "achemso-latex-manuscript" in writing_view_names
     assert "results-and-discussion-writing" in writing_view_names
     assert "scientific-writing" in writing_view_names

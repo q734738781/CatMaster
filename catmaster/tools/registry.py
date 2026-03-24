@@ -30,6 +30,14 @@ class ToolRegistry:
         # Geometry/Input tools
         from catmaster.tools.geometry_inputs import (
             create_molecule_from_smiles,
+            enumerate_molecular_conformers,
+            filter_conformer_ensemble,
+            extract_optimized_molecules,
+            orca_prepare,
+            orca_scan_prepare,
+            orca_optts_prepare,
+            orca_nebts_prepare,
+            orca_irc_prepare,
             vasp_prepare,
             vasp_band_prepare,
             build_slab,
@@ -55,6 +63,14 @@ class ToolRegistry:
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
+            EnumerateMolecularConformersInput,
+            FilterConformerEnsembleInput,
+            ExtractOptimizedMoleculesInput,
+            OrcaPrepareInput,
+            OrcaScanPrepareInput,
+            OrcaOptTSPrepareInput,
+            OrcaNebTSPrepareInput,
+            OrcaIRCPrepareInput,
             VaspPrepareInput,
             VaspBandPrepareInput,
             SlabBuildInput,
@@ -80,14 +96,32 @@ class ToolRegistry:
         )
         
         # Execution tools  
-        from catmaster.tools.execution import mace_relax_batch, mace_sp_batch, mace_neb_batch, vasp_execute_batch
-        from catmaster.tools.execution import MaceRelaxBatchInput, MaceSPBatchInput, MaceNebBatchInput, VaspExecuteBatchInput
+        from catmaster.tools.execution import (
+            mace_relax_batch,
+            mace_sp_batch,
+            mace_neb_batch,
+            vasp_execute_batch,
+            xtb_run_batch,
+            crest_conformer_search,
+            orca_execute_batch,
+        )
+        from catmaster.tools.execution import (
+            MaceRelaxBatchInput,
+            MaceSPBatchInput,
+            MaceNebBatchInput,
+            VaspExecuteBatchInput,
+            XtbRunBatchInput,
+            CrestConformerSearchInput,
+            OrcaExecuteBatchInput,
+        )
         from catmaster.tools.analysis import (
             compile_text,
             analyze_images,
             analyze_neb_results,
+            analyze_orca_results,
             analyze_trajectory,
             analyze_vasp_results,
+            analyze_xtb_results,
             generate_nanobanana_figure,
             identify_structure_fragments,
             peer_review_pdf_manuscript,
@@ -100,8 +134,10 @@ class ToolRegistry:
             CompileTextInput,
             AnalyzeImagesInput,
             AnalyzeNebResultsInput,
+            AnalyzeOrcaResultsInput,
             AnalyzeTrajectoryInput,
             AnalyzeVaspResultsInput,
+            AnalyzeXtbResultsInput,
             GenerateNanoBananaFigureInput,
             IdentifyStructureFragmentsInput,
             PeerReviewPdfManuscriptInput,
@@ -161,6 +197,14 @@ class ToolRegistry:
         )
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
+        self.register_tool("enumerate_molecular_conformers", enumerate_molecular_conformers, EnumerateMolecularConformersInput)
+        self.register_tool("filter_conformer_ensemble", filter_conformer_ensemble, FilterConformerEnsembleInput)
+        self.register_tool("extract_optimized_molecules", extract_optimized_molecules, ExtractOptimizedMoleculesInput)
+        self.register_tool("orca_prepare", orca_prepare, OrcaPrepareInput)
+        self.register_tool("orca_scan_prepare", orca_scan_prepare, OrcaScanPrepareInput)
+        self.register_tool("orca_optts_prepare", orca_optts_prepare, OrcaOptTSPrepareInput)
+        self.register_tool("orca_nebts_prepare", orca_nebts_prepare, OrcaNebTSPrepareInput)
+        self.register_tool("orca_irc_prepare", orca_irc_prepare, OrcaIRCPrepareInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
         self.register_tool("mace_neb_batch", mace_neb_batch, MaceNebBatchInput)
@@ -187,6 +231,9 @@ class ToolRegistry:
         self.register_tool("make_dimer_mode_from_neb", make_dimer_mode_from_neb, DimerModeFromNebInput)
         self.register_tool("make_dimer_mode_from_mace", make_dimer_mode_from_mace, DimerModeFromMaceInput)
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
+        self.register_tool("xtb_run_batch", xtb_run_batch, XtbRunBatchInput)
+        self.register_tool("crest_conformer_search", crest_conformer_search, CrestConformerSearchInput)
+        self.register_tool("orca_execute_batch", orca_execute_batch, OrcaExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
@@ -195,6 +242,8 @@ class ToolRegistry:
         self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
         self.register_tool("analyze_neb_results", analyze_neb_results, AnalyzeNebResultsInput)
         self.register_tool("analyze_trajectory", analyze_trajectory, AnalyzeTrajectoryInput)
+        self.register_tool("analyze_xtb_results", analyze_xtb_results, AnalyzeXtbResultsInput)
+        self.register_tool("analyze_orca_results", analyze_orca_results, AnalyzeOrcaResultsInput)
         self.register_tool("generate_nanobanana_figure", generate_nanobanana_figure, GenerateNanoBananaFigureInput)
         self.register_tool("compile_text", compile_text, CompileTextInput)
         self.register_alias("agentic_compile_tex", "compile_text")

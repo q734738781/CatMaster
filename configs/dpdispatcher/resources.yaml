@@ -29,3 +29,36 @@ mace_gpu:
   group_size: 1
   custom_flags:
     - "#SBATCH --export=ALL"
+
+xtb_cpu:
+  machine: cpu_server_2
+  number_node: 1
+  cpu_per_node: 32
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 2-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
+
+crest_cpu:
+  machine: cpu_server_2
+  number_node: 1
+  cpu_per_node: 32
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 2-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
+
+orca_cpu:
+  machine: cpu_server_2
+  number_node: 1
+  cpu_per_node: 32
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 4-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_orca.sh"]
