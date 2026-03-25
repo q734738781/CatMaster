@@ -75,6 +75,7 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "make_neb_geometry",
     "make_dimer_mode_from_neb",
     "make_dimer_mode_from_mace",
+    "mace_analyze_frequencies",
     "generate_strained_structures",
     "generate_kpath",
     "generate_phonon_displacements",
@@ -87,7 +88,7 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "analyze_images",
     "identify_structure_fragments",
     "analyze_vasp_results",
-    "analyze_neb_results",
+    "analyze_vasp_neb_results",
     "analyze_trajectory",
     "generate_nanobanana_figure",
     "vaspkit_adsorbate_thermo_correction",
@@ -1998,6 +1999,7 @@ class SpecialistRunner:
             "Prefer workspace-relative paths. Treat `/` only as the workspace virtual root, not as a host filesystem root. "
             "If you see a host absolute path like `/home/...`, convert it back to a workspace-relative path before using it, "
             "and never recreate host absolute path segments inside the workspace. "
+            "Do not pass guessed input paths into tools: if a structure or dataset does not already exist under the workspace files root, create or fetch it first, then reuse that exact returned path. "
             "For shell or `execute` commands, never use leading-slash workspace paths like `/writing/...`; use workspace-relative paths such as `writing/...` instead. "
             "Do not proactively materialize every intermediate observation into files; default to keeping transient reasoning in the conversation/tool stream. "
             "Only persist key constraints, decisive results, reusable handoff material, or user-requested deliverables. "
@@ -2110,7 +2112,9 @@ class SpecialistRunner:
             "You are orca_xtb_worker for ExperimentSpecialist.\n"
             "Handle a bounded molecular quantum-chemistry subtask autonomously inside the workspace.\n"
             "This worker owns molecule/cluster workflows: SMILES-to-3D conversion, conformer generation and pruning, xTB or CREST preoptimization/screening, ORCA preparation/execution, and molecular post-analysis for optimization, frequencies, scans, TS/IRC, TDDFT, or NMR-style jobs.\n"
-            "Prefer the dedicated managed tools when they fit: `enumerate_molecular_conformers`, `filter_conformer_ensemble`, `crest_conformer_search`, `xtb_run_batch`, `orca_prepare`, `orca_scan_prepare`, `orca_optts_prepare`, `orca_nebts_prepare`, `orca_irc_prepare`, `orca_execute_batch`, `analyze_xtb_results`, and `analyze_orca_results`.\n"
+            "Prefer the dedicated managed tools when they fit: `create_molecule_from_smiles`, `enumerate_molecular_conformers`, `filter_conformer_ensemble`, `crest_conformer_search`, `xtb_run_batch`, `orca_prepare`, `orca_scan_prepare`, `orca_optts_prepare`, `orca_nebts_prepare`, `orca_irc_prepare`, `orca_execute_batch`, `analyze_xtb_results`, and `analyze_orca_results`.\n"
+            "If the user names a small molecule or cluster but does not provide a structure file, first create the structure under `<topic>/structures/` and only then launch xTB/CREST/ORCA tools against that exact workspace-relative path.\n"
+            "Do not guess that a path like `<topic>/structures/<name>.xyz` already exists; verify it exists or create it before calling `xtb_run_batch`, `crest_conformer_search`, or any ORCA preparation tool.\n"
             "Treat xTB/CREST as the fast exploration layer and ORCA as the higher-fidelity molecular quantum layer unless the task explicitly calls for a different partition.\n"
             "When the request is about one mechanistic step or one catalyst-side molecular episode, keep the run on the molecular lane instead of trying to translate it into a periodic workflow.\n"
             "When no dedicated tool covers a bounded molecular task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"

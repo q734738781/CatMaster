@@ -291,6 +291,7 @@ def test_materials_worker_prompt_includes_workspace_path_discipline() -> None:
     prompt = runtime_mod.SpecialistRunner._materials_worker_prompt()
     assert "Workspace path discipline" in prompt
     assert "Treat `/` only as the workspace virtual root" in prompt
+    assert "Do not pass guessed input paths into tools" in prompt
     assert "never use leading-slash workspace paths like `/writing/...`" in prompt
     assert "Only persist key constraints, decisive results" in prompt
     assert "literature/" in prompt
@@ -305,8 +306,11 @@ def test_orca_xtb_worker_prompt_includes_workspace_path_discipline() -> None:
     assert "Workspace path discipline" in prompt
     assert "Treat `/` only as the workspace virtual root" in prompt
     assert "molecular quantum-chemistry subtask" in prompt
+    assert "`create_molecule_from_smiles`" in prompt
     assert "`xtb_run_batch`" in prompt
     assert "`orca_execute_batch`" in prompt
+    assert "first create the structure under `<topic>/structures/`" in prompt
+    assert "Do not guess that a path like `<topic>/structures/<name>.xyz` already exists" in prompt
 
 
 def test_execution_capability_contract_distinguishes_local_and_managed_runtime(tmp_path: Path) -> None:

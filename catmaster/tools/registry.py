@@ -60,6 +60,7 @@ class ToolRegistry:
             vasp_dimer_prepare,
             make_dimer_mode_from_neb,
             make_dimer_mode_from_mace,
+            mace_analyze_frequencies,
         )
         from catmaster.tools.geometry_inputs import (
             MoleculeFromSmilesInput,
@@ -93,6 +94,7 @@ class ToolRegistry:
             VaspDimerPrepareInput,
             DimerModeFromNebInput,
             DimerModeFromMaceInput,
+            MaceAnalyzeFrequenciesInput,
         )
         
         # Execution tools  
@@ -117,7 +119,7 @@ class ToolRegistry:
         from catmaster.tools.analysis import (
             compile_text,
             analyze_images,
-            analyze_neb_results,
+            analyze_vasp_neb_results,
             analyze_orca_results,
             analyze_trajectory,
             analyze_vasp_results,
@@ -133,7 +135,7 @@ class ToolRegistry:
             vaspkit_gas_thermo_correction,
             CompileTextInput,
             AnalyzeImagesInput,
-            AnalyzeNebResultsInput,
+            AnalyzeVaspNebResultsInput,
             AnalyzeOrcaResultsInput,
             AnalyzeTrajectoryInput,
             AnalyzeVaspResultsInput,
@@ -230,6 +232,7 @@ class ToolRegistry:
         self.register_tool("vasp_dimer_prepare", vasp_dimer_prepare, VaspDimerPrepareInput)
         self.register_tool("make_dimer_mode_from_neb", make_dimer_mode_from_neb, DimerModeFromNebInput)
         self.register_tool("make_dimer_mode_from_mace", make_dimer_mode_from_mace, DimerModeFromMaceInput)
+        self.register_tool("mace_analyze_frequencies", mace_analyze_frequencies, MaceAnalyzeFrequenciesInput)
         self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
         self.register_tool("xtb_run_batch", xtb_run_batch, XtbRunBatchInput)
         self.register_tool("crest_conformer_search", crest_conformer_search, CrestConformerSearchInput)
@@ -240,7 +243,7 @@ class ToolRegistry:
         self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
         self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
         self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
-        self.register_tool("analyze_neb_results", analyze_neb_results, AnalyzeNebResultsInput)
+        self.register_tool("analyze_vasp_neb_results", analyze_vasp_neb_results, AnalyzeVaspNebResultsInput)
         self.register_tool("analyze_trajectory", analyze_trajectory, AnalyzeTrajectoryInput)
         self.register_tool("analyze_xtb_results", analyze_xtb_results, AnalyzeXtbResultsInput)
         self.register_tool("analyze_orca_results", analyze_orca_results, AnalyzeOrcaResultsInput)

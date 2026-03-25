@@ -397,7 +397,7 @@ def _parse_oszicar_series(path: Path) -> tuple[list[float], list[float]]:
 
 
 class AnalyzeVaspResultsInput(BaseModel):
-    """[vasp/analysis] Summarize one VASP result directory or a batch of result directories into JSON and CSV artifacts."""
+    """[vasp/analysis] Summarize one VASP result directory or a batch of result directories into JSON and CSV artifacts. final_energy_ev uses VASP e_0_energy."""
 
     result_root: str = Field(..., description="Single VASP result directory or batch root directory.")
     output_dir: Optional[str] = Field(
@@ -406,10 +406,10 @@ class AnalyzeVaspResultsInput(BaseModel):
     )
 
 
-class AnalyzeNebResultsInput(BaseModel):
-    """[vasp/analysis] Summarize a completed NEB result directory into barrier, profile CSV, and profile plot artifacts."""
+class AnalyzeVaspNebResultsInput(BaseModel):
+    """[vasp/analysis] Summarize a completed VASP NEB result directory into barrier, profile CSV, and profile plot artifacts."""
 
-    result_dir: str = Field(..., description="NEB result directory containing image folders like 00/01/02/...")
+    result_dir: str = Field(..., description="VASP NEB result directory containing image folders like 00/01/02/...")
     output_dir: Optional[str] = Field(
         None,
         description="Directory to write summary artifacts. Defaults to <result_dir>_analysis next to the input.",
@@ -446,7 +446,7 @@ class AnalyzeTrajectoryInput(BaseModel):
 
 
 def analyze_vasp_results(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """[vasp/analysis] Analyze one VASP result directory or a batch of VASP result directories."""
+    """[vasp/analysis] Analyze one VASP result directory or a batch of VASP result directories. final_energy_ev uses VASP e_0_energy."""
     try:
         params = AnalyzeVaspResultsInput(**payload)
         result_root = resolve_workspace_path(params.result_root, must_exist=True)
@@ -494,13 +494,17 @@ def analyze_vasp_results(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         _error("analyze_vasp_results", f"analyze_vasp_results failed: {exc}", error_code="analyze_vasp_results_failed")
 
 
-def analyze_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """[vasp/analysis] Analyze a completed NEB result directory and export barrier/profile artifacts."""
+def analyze_vasp_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[vasp/analysis] Analyze a completed VASP NEB result directory and export barrier/profile artifacts."""
     try:
-        params = AnalyzeNebResultsInput(**payload)
+        params = AnalyzeVaspNebResultsInput(**payload)
         result_dir = resolve_workspace_path(params.result_dir, must_exist=True)
         if not result_dir.is_dir():
-            _error("analyze_neb_results", f"result_dir is not a directory: {result_dir}", error_code="invalid_result_dir")
+            _error(
+                "analyze_vasp_neb_results",
+                f"result_dir is not a directory: {result_dir}",
+                error_code="invalid_result_dir",
+            )
         output_dir = resolve_workspace_path(params.output_dir) if params.output_dir else (
             result_dir.parent / f"{result_dir.name}_analysis"
         )
@@ -508,14 +512,14 @@ def analyze_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         records, issues = _scan_neb_images(result_dir)
         if issues:
             _error(
-                "analyze_neb_results",
+                "analyze_vasp_neb_results",
                 "Incomplete NEB image energies; refusing to report a barrier.\nissues=" + "; ".join(issues),
                 data={"result_dir_rel": workspace_relpath(result_dir)},
                 error_code="incomplete_neb_profile",
             )
         if len(records) < 2:
             _error(
-                "analyze_neb_results",
+                "analyze_vasp_neb_results",
                 "Could not parse enough NEB image energies.",
                 data={"result_dir_rel": workspace_relpath(result_dir)},
                 error_code="missing_neb_energies",
@@ -565,15 +569,19 @@ def analyze_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "reverse_barrier_ev": reverse_barrier,
         }
         content = (
-            "analyze_neb_results completed.\n"
+            "analyze_vasp_neb_results completed.\n"
             f"result_dir_rel={data['result_dir_rel']} ts_image={data['ts_image']} "
             f"forward_barrier_ev={forward_barrier:.6f} png_rel={data['png_rel']}"
         )
-        return content, {"tool_name": "analyze_neb_results", "data": data}
+        return content, {"tool_name": "analyze_vasp_neb_results", "data": data}
     except CatMasterToolExecutionError:
         raise
     except Exception as exc:
-        _error("analyze_neb_results", f"analyze_neb_results failed: {exc}", error_code="analyze_neb_results_failed")
+        _error(
+            "analyze_vasp_neb_results",
+            f"analyze_vasp_neb_results failed: {exc}",
+            error_code="analyze_vasp_neb_results_failed",
+        )
 
 
 def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -726,9 +734,9 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 __all__ = [
     "AnalyzeVaspResultsInput",
-    "AnalyzeNebResultsInput",
+    "AnalyzeVaspNebResultsInput",
     "AnalyzeTrajectoryInput",
     "analyze_vasp_results",
-    "analyze_neb_results",
+    "analyze_vasp_neb_results",
     "analyze_trajectory",
 ]

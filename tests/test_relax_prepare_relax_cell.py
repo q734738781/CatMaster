@@ -238,6 +238,33 @@ def test_struct_writer_dos_with_chgcar_sets_icharg() -> None:
     assert settings["ICHARG"] == 11
 
 
+def test_struct_writer_fixed_density_defaults_add_lmaxmix_for_d_block_systems() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    settings = writer.plan_vasp_inputs(
+        structure=structure,
+        output_dir=Path("unused"),
+        preset="dos",
+        regime="bulk",
+        dos_use_chgcar=True,
+    ).user_incar_settings
+    assert settings["LMAXMIX"] == 4
+
+
+def test_struct_writer_fixed_density_respects_explicit_lmaxmix_override() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    settings = writer.plan_vasp_inputs(
+        structure=structure,
+        output_dir=Path("unused"),
+        preset="dos",
+        regime="bulk",
+        dos_use_chgcar=True,
+        user_incar_patch={"LMAXMIX": 6},
+    ).user_incar_settings
+    assert settings["LMAXMIX"] == 6
+
+
 def test_struct_writer_md_defaults_use_nose_hoover() -> None:
     writer = StructWriter()
     structure = Structure.from_file("tests/assets/Fe.cif")

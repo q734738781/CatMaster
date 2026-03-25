@@ -17,6 +17,7 @@ seaborn
 ase
 pymatgen
 cclib
+beautifulsoup4
 ovito
 matplotlib
 phonopy

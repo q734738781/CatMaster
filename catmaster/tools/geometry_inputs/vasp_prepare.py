@@ -102,7 +102,8 @@ class VaspPrepareInput(BaseModel):
         None,
         description=(
             "Only used when preset='dos'. Optional CHGCAR path for a non-self-consistent DOS run. "
-            "When provided, the tool copies it into output_root/CHGCAR and sets ICHARG=11."
+            "When provided, the tool copies it into output_root/CHGCAR, sets ICHARG=11, "
+            "and applies a recommended LMAXMIX baseline when absent."
         ),
     )
     user_incar_patch: Dict[str, Any] = Field(

@@ -3,20 +3,21 @@ name: transition-state-neb
 description: Use this skill for transition-state and NEB workflows, including image generation, NEB VASP input setup, official VASP improved-dimer preparation, reaction-mode guessing, and execution/evidence checks for pathway calculations.
 license: project-local
 compatibility: local
-allowed-tools: "make_neb_geometry vasp_neb_prepare vasp_dimer_prepare make_dimer_mode_from_neb make_dimer_mode_from_mace vasp_execute_batch mace_neb_batch analyze_neb_results"
+allowed-tools: "make_neb_geometry vasp_neb_prepare vasp_dimer_prepare make_dimer_mode_from_neb make_dimer_mode_from_mace vasp_execute_batch mace_neb_batch analyze_vasp_neb_results"
 ---
 
 # transition-state-neb
 
 ## Overview
-Use this skill to generate NEB image directories, prepare NEB-ready and dimer-ready VASP roots, derive reaction-direction guesses, and hand off a valid pathway batch for execution.
+Use this skill to generate NEB image directories, prepare NEB-ready and dimer-ready VASP roots, derive reaction-direction guesses, and hand off a valid pathway batch for execution. Use it for setup-focused NEB work, dimer refinement, or custom mode-generation branches. Do not use it when a standard endpoint-pair-to-barrier workflow is enough; prefer `reaction-neb-analysis` for that narrower path.
 
 ## Quick Start
-1. Validate the initial and final structures before generating images.
-2. Use `make_neb_geometry` to create the flat numbered image-file tree.
-3. Use `vasp_neb_prepare` to assemble the NEB root with canonical support files and NEB-critical INCAR settings.
-4. If switching from NEB to an official VASP improved dimer refinement, derive a raw reaction-direction text block first, then feed it into `vasp_dimer_prepare`.
-5. Run the resulting NEB or dimer folders through the standard VASP batch execution path.
+1. First choose the narrow branch: standard NEB barrier workflow, setup-only NEB, dimer-from-NEB, or dimer-from-mode.
+2. Validate the initial and final structures before generating images.
+3. Use `make_neb_geometry` to create the flat numbered image-file tree.
+4. Use `vasp_neb_prepare` to assemble the NEB root with canonical support files and NEB-critical INCAR settings.
+5. If switching from NEB to an official VASP improved dimer refinement, derive a raw reaction-direction text block first, then feed it into `vasp_dimer_prepare`.
+6. Run the resulting NEB or dimer folders through the standard VASP batch execution path.
 
 ## Allowed tools
 - `make_neb_geometry`
@@ -26,9 +27,14 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 - `make_dimer_mode_from_mace`
 - `vasp_execute_batch`
 - `mace_neb_batch`
-- `analyze_neb_results`
+- `analyze_vasp_neb_results`
 
 ## Workflow
+
+### 0. Choose the narrowest branch before doing setup
+- Use `reaction-neb-analysis` when the task is simply “endpoint pair -> NEB dispatch -> barrier summary”.
+- Use this skill when you need one of the wider branches: primitive NEB setup without full barrier reporting, official VASP improved-dimer preparation, dimer-mode extraction from NEB, or dimer-mode extraction from MACE finite differences.
+- Do not mix NEB and dimer outputs inside one ambiguous run root; keep the branch identity explicit.
 
 ### 1. Build the image set from a valid endpoint pair
 - `make_neb_geometry` validates the endpoint pair before interpolation.
@@ -50,9 +56,10 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 - When NEB/TS should use a separate submission preset, call `vasp_execute_batch` with `task_name="vasp_execute_neb"` so it routes through the dedicated DPDispatcher task/resources config instead of the generic VASP preset.
 - Prefer `task_name="vasp_execute_neb"` by default for NEB/TS runs: the generic `vasp_execute` path can still run, but it will use the generic VASP resource preset rather than the NEB-specific submission configuration.
 - Report image count, INCAR patch path, and execution status together; launch status alone is not enough.
+- If the task is only setup or mode preparation, say that explicitly instead of implying the barrier-analysis branch was also completed.
 
 ### 4. Close the loop with barrier extraction
-- Use `analyze_neb_results` after collection to produce the barrier summary, profile CSV, and profile plot.
+- Use `analyze_vasp_neb_results` after collection to produce the barrier summary, profile CSV, and profile plot.
 - If image energies are incomplete, report partial collection rather than inferring a barrier.
 
 ### 5. Prepare official VASP improved-dimer jobs with a raw reaction-direction text block
@@ -89,6 +96,7 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 ## Method-critical defaults
 - Keep endpoint preparation, image generation, and execution settings scientifically consistent across the whole pathway calculation.
 - Do not treat launch success as pathway validity; evidence must include image count, INCAR patch, and outcome diagnostics.
+- If the workflow does not require dimer refinement or custom mode logic, do not use this broader skill by default; the narrower `reaction-neb-analysis` route is easier to audit.
 - When choosing NEB interpolation counts for routine runs, prefer small image counts such as `3`, `4`, `5`, or `6` unless the pathway is clearly too sharp for that range.
 - For `CI-NEB` / climbing-image runs, prefer an odd number of intermediate images so there is a natural central image to climb.
 - For plain `NEB` without climbing image, prefer an even number of intermediate images when the path is otherwise symmetric and no single central climbing image is needed.
@@ -98,6 +106,7 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 
 ## Output Contract
 Return:
+- branch label (`neb_setup`, `neb_run`, `dimer_from_neb`, `dimer_from_mace`, or similar)
 - NEB image root
 - image count
 - INCAR path and patch JSON path

@@ -9,7 +9,7 @@ allowed-tools: "execute"
 # literature-grounding
 
 ## Overview
-Use this skill to run the smallest literature-grounding workflow that can answer a paper, benchmark, or prior-art question with reusable evidence.
+Use this skill to run the smallest literature-grounding workflow that can answer a paper, benchmark, or prior-art question with reusable evidence. Do not use it when ordinary web context is enough, when the question is mainly about current non-paper facts, or when the task is actually about local project artifacts rather than published work.
 
 ## Quick Start
 - For broad public-background exploration or quick web context, ordinary online/web search is often enough.
@@ -28,17 +28,29 @@ Use this skill to run the smallest literature-grounding workflow that can answer
 ### 1. Decide whether literature is actually needed
 Only trigger literature work when the user explicitly asks for papers, prior work, supporting evidence, benchmark context, prior-art mapping, or literature-grounded method conventions.
 Use normal web/online search first when the need is broad background, public-page summaries, or lightweight orientation rather than paper-level grounding.
+Do not route current product facts, software usage questions, or repository-local evidence into this skill just because they mention “references”.
 
 ### 2. Choose the smallest useful depth
 Use `quick` for representative papers and fast grounding. Use `standard` for conventions, benchmark framing, catalyst-system prior art, or related-work summaries. Use `focused` when a narrow scientific question needs targeted evidence or when the literature disagrees on a method choice. Reserve `deep_report` for explicit deep-review requests.
 
 ### 3. Frame the literature question around the scientific decision
 Ask for the literature object you actually need: representative papers, benchmark systems, reference-state conventions, dispersion policy, model chemistry, or open methodological disagreement. A good pack should extract conventions and decision-relevant comparisons, not just titles.
+When staging the request for the runtime literature path, keep the packet compact and decision-shaped. At minimum, surface:
+- `query`: the scientific question in one sentence
+- `topic`: short domain phrase
+- `depth`: `quick`, `standard`, `focused`, or `deep_report`
+- `objective`: what downstream decision this evidence should inform
+- `must_answer`: a short list of concrete method or prior-art questions
+- `exclusions`: any out-of-scope systems, methods, or date windows
 
 ### 4. Route sources conservatively
 Do not automatically hit both scholarly metadata APIs and public web in the same first pass. Start with public web when the request is broad, contextual, or public-summary-friendly. Use OpenAlex / Semantic Scholar when the user clearly needs paper-level grounding or when the web pass is too weak.
 
-### 5. Keep the pack clean
+### 5. Report disagreement explicitly
+If papers disagree on a benchmark convention, reference state, dispersion treatment, or reported trend, keep the disagreement visible.
+Do not flatten a split literature into one fake consensus. Report which convention is dominant, which is contested, and what that means for the downstream workflow choice.
+
+### 6. Keep the pack clean
 Use the returned literature context pack as the planning/evidence object. Do not surface the raw retrieval process, intermediate search noise, or browser-style exploration steps to the main agent context.
 
 ## Method-critical defaults
@@ -47,9 +59,16 @@ Use the returned literature context pack as the planning/evidence object. Do not
 - Quick paper-finding requests should not silently escalate into deep literature reviews.
 - When literature is used to justify quantitative settings, benchmark conventions, adsorption/reference-state policy, or dispersion treatment, carry those conclusions forward explicitly into proposal text or task packets.
 - Do not mix literature-derived benchmark expectations with current-run numerical results; keep literature priors and project outputs separated.
+- When the literature is split, return the split explicitly rather than forcing a single recommendation without caveat.
 
 ## Output Contract
-Return a compact literature pack with a short summary, a small key-paper set, citations/links, a concise convention-or-benchmark summary when relevant, confidence, and follow-up questions when uncertainty remains.
+Return:
+- the normalized literature question and chosen `depth`
+- a short summary tied to the downstream scientific decision
+- a small key-paper set with links/DOI/year when available
+- a concise convention-or-benchmark summary when relevant
+- any explicit literature disagreement or uncertainty that affects planning
+- confidence and follow-up questions when uncertainty remains
 
 ## References
 - Pair with the active execution-stage skill after grounding the question; literature should refine planning defaults and evidence standards, not replace downstream structure or execution tools.

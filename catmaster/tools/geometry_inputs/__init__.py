@@ -74,8 +74,10 @@ from catmaster.tools.geometry_inputs.neb_tools import (
 )
 from catmaster.tools.geometry_inputs.dimer_tools import (
     DimerModeFromMaceInput,
+    MaceAnalyzeFrequenciesInput,
     DimerModeFromNebInput,
     VaspDimerPrepareInput,
+    mace_analyze_frequencies,
     make_dimer_mode_from_mace,
     make_dimer_mode_from_neb,
     vasp_dimer_prepare,
@@ -139,9 +141,11 @@ __all__ = [
     "VaspDimerPrepareInput",
     "DimerModeFromNebInput",
     "DimerModeFromMaceInput",
+    "MaceAnalyzeFrequenciesInput",
     "make_neb_geometry",
     "vasp_neb_prepare",
     "vasp_dimer_prepare",
+    "mace_analyze_frequencies",
     "make_dimer_mode_from_neb",
     "make_dimer_mode_from_mace",
 ]

@@ -33,10 +33,10 @@ from catmaster.tools.analysis.review_pdf_manuscript import (
 )
 from catmaster.tools.analysis.render_structure_views import RenderStructureViewsInput, render_structure_views
 from catmaster.tools.analysis.results_analysis import (
-    AnalyzeNebResultsInput,
+    AnalyzeVaspNebResultsInput,
     AnalyzeTrajectoryInput,
     AnalyzeVaspResultsInput,
-    analyze_neb_results,
+    analyze_vasp_neb_results,
     analyze_trajectory,
     analyze_vasp_results,
 )
@@ -75,12 +75,12 @@ __all__ = [
     "RenderStructureViewsInput",
     "render_structure_views",
     "AnalyzeVaspResultsInput",
-    "AnalyzeNebResultsInput",
+    "AnalyzeVaspNebResultsInput",
     "AnalyzeTrajectoryInput",
     "AnalyzeOrcaResultsInput",
     "AnalyzeXtbResultsInput",
     "analyze_vasp_results",
-    "analyze_neb_results",
+    "analyze_vasp_neb_results",
     "analyze_trajectory",
     "analyze_orca_results",
     "analyze_xtb_results",

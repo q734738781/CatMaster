@@ -79,6 +79,7 @@ class StructWriter:
             patch_policy=patch_policy,
             protected_keys=protected_keys,
         )
+        self._apply_fixed_charge_density_defaults(structure=structure, settings=merged_settings)
         k_grid = self._generate_kgrid(regime, k_product, structure)
         return VaspWritePlan(
             output_dir=output_dir,
@@ -347,6 +348,29 @@ class StructWriter:
             raise ValueError("Cannot compute DIPOL center of mass: total atomic mass is non-positive.")
         center_of_mass = np.average(structure.frac_coords, weights=weights, axis=0).tolist()
         return [float(v - math.floor(float(v))) for v in center_of_mass]
+
+    @staticmethod
+    def _apply_fixed_charge_density_defaults(*, structure: Structure, settings: Dict[str, Any]) -> None:
+        try:
+            icharg = int(settings.get("ICHARG"))
+        except (TypeError, ValueError):
+            return
+        if icharg not in {11, 12} or "LMAXMIX" in settings:
+            return
+        settings["LMAXMIX"] = StructWriter._recommended_lmaxmix(structure)
+
+    @staticmethod
+    def _recommended_lmaxmix(structure: Structure) -> int:
+        max_l = 1
+        for element in structure.composition.elements:
+            block = str(getattr(element, "block", "") or "").lower()
+            if block == "f":
+                max_l = max(max_l, 3)
+            elif block == "d":
+                max_l = max(max_l, 2)
+            else:
+                max_l = max(max_l, 1)
+        return 2 * max_l
 
     @staticmethod
     def _generate_kgrid(regime: VaspRegime, k_product: int, structure: Structure) -> Tuple[int, int, int]:

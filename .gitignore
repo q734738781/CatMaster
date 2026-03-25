@@ -20,3 +20,4 @@ POTCAR
 latest.log
 tmp*
 /catmaster/webui/static/vendor/
+benchmark*

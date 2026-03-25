@@ -71,7 +71,10 @@ class VaspBandPrepareInput(BaseModel):
     )
     charge_density_path: str | None = Field(
         None,
-        description="Optional CHGCAR path for a non-self-consistent band run. When provided, the tool copies it to output_root/CHGCAR and sets ICHARG=11.",
+        description=(
+            "Optional CHGCAR path for a non-self-consistent band run. When provided, the tool copies it to output_root/CHGCAR, "
+            "sets ICHARG=11, and applies a recommended LMAXMIX baseline when absent."
+        ),
     )
     use_d3: bool = Field(False, description="Carry a DFT-D3(BJ) baseline toggle into the generated INCAR.")
     use_dft_plus_u: bool = Field(False, description="Carry a DFT+U baseline toggle into the generated INCAR.")

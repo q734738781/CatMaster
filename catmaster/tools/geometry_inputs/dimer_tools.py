@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import shutil
@@ -132,8 +133,10 @@ class DimerModeFromMaceInput(BaseModel):
     active_atom_indices: list[int] | None = Field(
         None,
         description=(
-            "Optional explicit atom indices for the finite-difference region. "
-            "Atoms outside this set remain zero in the reported mode."
+            "Optional explicit 0-based atom indices for the finite-difference region. "
+            "Default: use structurally free atoms from selective dynamics / FixAtoms. "
+            "Set active_atom_indices as a shortcut to vibrationally analyze only those atoms. "
+            "If unavailable, fall back to all atoms."
         ),
     )
     delta: float = Field(0.01, gt=0, description="Finite-displacement step in Angstrom.")
@@ -144,6 +147,43 @@ class DimerModeFromMaceInput(BaseModel):
             "Explicit mode index to export. If omitted, the tool selects the most negative/most imaginary frequency."
         ),
     )
+    overwrite: bool = Field(False, description="If true, replace output_root if it already exists.")
+
+
+class MaceAnalyzeFrequenciesInput(BaseModel):
+    """[mace/analysis] Compute MACE vibrational frequencies and export all mode records."""
+
+    input_path: str = Field(..., description="Structure file path for MACE vibrational analysis.")
+    output_root: str = Field(..., description="Directory for frequency summary artifacts and per-mode vectors.")
+    model: str = Field(
+        "mh-1",
+        description=(
+            "MACE model identifier or workspace-local trained-model path. "
+            "Local paths may point to one model file or a directory containing a unique preferred model artifact."
+        ),
+    )
+    head: Optional[str] = Field("omat_pbe", description="Model head for multi-head models; use empty string to disable.")
+    dispersion: bool = Field(False, description="Enable dispersion correction when supported by the calculator.")
+    device_preference: Literal["auto", "cuda", "cpu"] = Field("auto", description="Preferred execution device.")
+    default_dtype: Literal["float32", "float64"] = Field("float64", description="Default dtype for local-file models.")
+    active_atom_indices: list[int] | None = Field(
+        None,
+        description=(
+            "Optional explicit 0-based atom indices for the vibrational region. "
+            "Default: use structurally free atoms from selective dynamics / FixAtoms. "
+            "Set active_atom_indices as a shortcut to vibrationally analyze only those atoms. "
+            "If unavailable, fall back to all atoms."
+        ),
+    )
+    method: Literal["auto", "hessian", "finite_difference"] = Field(
+        "auto",
+        description=(
+            "Vibrational backend choice. auto prefers analytic Hessian when supported by the installed MACE calculator "
+            "and falls back to ASE finite differences otherwise."
+        ),
+    )
+    delta: float = Field(0.01, gt=0, description="Finite-displacement step in Angstrom when finite differences are used.")
+    nfree: Literal[2, 4] = Field(2, description="Finite-difference stencil width for ASE Vibrations.")
     overwrite: bool = Field(False, description="If true, replace output_root if it already exists.")
 
 
@@ -201,6 +241,15 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def _write_mode_vectors(path: Path, vectors: np.ndarray) -> None:
     lines = [f"{float(row[0]): .16e} {float(row[1]): .16e} {float(row[2]): .16e}" for row in vectors]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
 
 
 def _parse_mode_text(path: Path, *, atom_count: int) -> np.ndarray:
@@ -289,6 +338,67 @@ def _resolve_active_indices(atom_count: int, active_atom_indices: list[int] | No
     return sorted(indices)
 
 
+def _infer_active_indices_from_structure(input_path: Path, atoms: Any) -> tuple[list[int] | None, str | None]:
+    atom_count = int(len(atoms))
+
+    try:
+        poscar = Poscar.from_file(str(input_path))
+    except Exception:
+        poscar = None
+    if poscar is not None:
+        selective_dynamics = getattr(poscar, "selective_dynamics", None)
+        if selective_dynamics is not None:
+            mask = np.asarray(selective_dynamics, dtype=bool)
+            if mask.shape == (atom_count, 3):
+                active = [idx for idx, row in enumerate(mask) if bool(np.any(row))]
+                return active, "selective_dynamics"
+
+    raw_constraints = getattr(atoms, "constraints", None)
+    if raw_constraints:
+        constraints = raw_constraints if isinstance(raw_constraints, (list, tuple)) else [raw_constraints]
+        fixed: set[int] = set()
+        for constraint in constraints:
+            if type(constraint).__name__ != "FixAtoms":
+                continue
+            indices = getattr(constraint, "index", None)
+            if indices is None:
+                continue
+            fixed.update(int(idx) for idx in np.asarray(indices, dtype=int).reshape(-1))
+        if fixed:
+            active = [idx for idx in range(atom_count) if idx not in fixed]
+            return active, "fixatoms_constraint"
+
+    return None, None
+
+
+def _resolve_active_indices_and_source(
+    atom_count: int,
+    active_atom_indices: list[int] | None,
+    *,
+    input_path: Path | None = None,
+    atoms: Any | None = None,
+) -> tuple[list[int], str]:
+    if active_atom_indices is None:
+        inferred: list[int] | None = None
+        source: str | None = None
+        if input_path is not None and atoms is not None:
+            inferred, source = _infer_active_indices_from_structure(input_path, atoms)
+        if inferred is None:
+            inferred = list(range(atom_count))
+            source = "all_atoms"
+        if not inferred:
+            raise ValueError(
+                "No active atoms were resolved for vibrational analysis. "
+                "Provide active_atom_indices explicitly or ensure the structure has mobile atoms in selective dynamics."
+            )
+        return sorted(int(idx) for idx in inferred), str(source or "all_atoms")
+
+    indices = _resolve_active_indices(atom_count, active_atom_indices)
+    if not indices:
+        raise ValueError("active_atom_indices resolved to an empty set.")
+    return indices, "explicit"
+
+
 def _resolve_local_model(model_value: str) -> tuple[str, str, str]:
     from catmaster.tools.execution.mace_dispatch import _is_likely_local_model_path, _select_model_file_from_dir
 
@@ -352,28 +462,79 @@ def _build_local_mace_calculator(*, model: str, head: Optional[str], dispersion:
     return mace_mp(**kwargs), {"device": device, "source_kind": source_kind, "source_ref": source_ref}
 
 
-def _compute_mace_vibrational_modes(
+def _active_cartesian_indices(active_indices: list[int]) -> np.ndarray:
+    cart_indices: list[int] = []
+    for atom_index in active_indices:
+        cart_indices.extend((3 * atom_index, 3 * atom_index + 1, 3 * atom_index + 2))
+    return np.asarray(cart_indices, dtype=int)
+
+
+def _normalize_hessian_2d(raw_hessian: Any, *, atom_count: int, active_indices: list[int]) -> np.ndarray:
+    hessian = np.asarray(raw_hessian, dtype=float)
+    if hessian.shape == (atom_count, 3, atom_count, 3):
+        hessian = hessian.reshape(atom_count * 3, atom_count * 3)
+    elif hessian.shape != (atom_count * 3, atom_count * 3):
+        raise ValueError(
+            f"Unsupported Hessian shape {hessian.shape}; expected {(atom_count * 3, atom_count * 3)} "
+            f"or {(atom_count, 3, atom_count, 3)}."
+        )
+    cart_indices = _active_cartesian_indices(active_indices)
+    return np.asarray(hessian[np.ix_(cart_indices, cart_indices)], dtype=float)
+
+
+def _vibrational_records_from_data(*, vib_data, atoms) -> tuple[list[dict[str, Any]], list[np.ndarray]]:
+    frequencies = list(vib_data.get_frequencies())
+    raw_modes = np.asarray(vib_data.get_modes(all_atoms=True), dtype=float)
+    modes: list[np.ndarray] = []
+    records: list[dict[str, Any]] = []
+    for mode_index, frequency in enumerate(frequencies):
+        signed_cm1 = _signed_frequency_cm1(frequency)
+        mode = _validate_mode_shape(raw_modes[mode_index], len(atoms))
+        modes.append(mode)
+        records.append(
+            {
+                "mode_index": mode_index,
+                "frequency_cm1": signed_cm1,
+                "imaginary": bool(signed_cm1 < 0),
+            }
+        )
+    return records, modes
+
+
+def _compute_mace_vibrational_modes_via_hessian(
+    *,
+    atoms,
+    calc,
+    active_indices: list[int],
+) -> tuple[list[dict[str, Any]], list[np.ndarray]]:
+    from ase.vibrations.data import VibrationsData
+
+    getter = getattr(calc, "get_hessian", None)
+    if getter is None:
+        raise AttributeError("Installed MACE calculator does not expose get_hessian().")
+    try:
+        raw_hessian = getter(atoms=atoms)
+    except TypeError:
+        try:
+            raw_hessian = getter(atoms)
+        except TypeError:
+            raw_hessian = getter()
+    hessian_2d = _normalize_hessian_2d(raw_hessian, atom_count=len(atoms), active_indices=active_indices)
+    vib_data = VibrationsData.from_2d(atoms, hessian_2d=hessian_2d, indices=active_indices)
+    return _vibrational_records_from_data(vib_data=vib_data, atoms=atoms)
+
+
+def _compute_mace_vibrational_modes_via_finite_difference(
     *,
     atoms,
     output_root: Path,
-    model: str,
-    head: Optional[str],
-    dispersion: bool,
-    device_preference: str,
-    default_dtype: str,
+    calc,
     active_indices: list[int],
     delta: float,
     nfree: int,
-) -> tuple[list[dict[str, Any]], list[np.ndarray], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[np.ndarray]]:
     from ase.vibrations import Vibrations
 
-    calc, calc_info = _build_local_mace_calculator(
-        model=model,
-        head=head,
-        dispersion=dispersion,
-        device_preference=device_preference,
-        default_dtype=default_dtype,
-    )
     vib_root = output_root / "ase_vibrations"
     vib_root.mkdir(parents=True, exist_ok=True)
     atoms = atoms.copy()
@@ -402,7 +563,84 @@ def _compute_mace_vibrational_modes(
                 "imaginary": bool(signed_cm1 < 0),
             }
         )
-    return records, modes, {"calculator": calc_info, "active_atom_indices": active_indices}
+    return records, modes
+
+
+def _compute_mace_vibrational_modes(
+    *,
+    atoms,
+    output_root: Path,
+    model: str,
+    head: Optional[str],
+    dispersion: bool,
+    device_preference: str,
+    default_dtype: str,
+    active_indices: list[int],
+    method: Literal["auto", "hessian", "finite_difference"] = "auto",
+    delta: float,
+    nfree: int,
+) -> tuple[list[dict[str, Any]], list[np.ndarray], dict[str, Any]]:
+    calc, calc_info = _build_local_mace_calculator(
+        model=model,
+        head=head,
+        dispersion=dispersion,
+        device_preference=device_preference,
+        default_dtype=default_dtype,
+    )
+    atoms = atoms.copy()
+    attempts: list[str] = []
+    if method == "auto":
+        # MACE's public get_hessian() computes the full-system Hessian and only later
+        # can we slice to an active subspace. For subset analyses, finite differences
+        # scale with the active region and are therefore the safer default.
+        backend_order = ["hessian", "finite_difference"] if len(active_indices) == len(atoms) else ["finite_difference", "hessian"]
+    elif method == "hessian":
+        backend_order = ["hessian"]
+    else:
+        backend_order = ["finite_difference"]
+
+    for backend in backend_order:
+        if backend == "hessian":
+            try:
+                records, modes = _compute_mace_vibrational_modes_via_hessian(
+                    atoms=atoms,
+                    calc=calc,
+                    active_indices=active_indices,
+                )
+                return records, modes, {
+                    "calculator": calc_info,
+                    "active_atom_indices": active_indices,
+                    "method_used": "hessian",
+                    "fallback_notes": attempts,
+                }
+            except Exception as exc:
+                if method == "hessian":
+                    raise
+                attempts.append(f"hessian_failed={exc}")
+            continue
+
+        try:
+            records, modes = _compute_mace_vibrational_modes_via_finite_difference(
+                atoms=atoms,
+                output_root=output_root,
+                calc=calc,
+                active_indices=active_indices,
+                delta=delta,
+                nfree=nfree,
+            )
+            return records, modes, {
+                "calculator": calc_info,
+                "active_atom_indices": active_indices,
+                "method_used": "finite_difference",
+                "fallback_notes": attempts,
+            }
+        except Exception as exc:
+            if method == "finite_difference":
+                raise
+            attempts.append(f"finite_difference_failed={exc}")
+    raise RuntimeError(
+        "Failed to compute MACE vibrational modes via all available methods. " + "; ".join(attempts or ["no_backend_attempted"])
+    )
 
 
 def vasp_dimer_prepare(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -627,7 +865,12 @@ def make_dimer_mode_from_mace(payload: Dict[str, Any]) -> tuple[str, dict[str, A
 
     try:
         atoms = ase_read(str(input_path))
-        active_indices = _resolve_active_indices(len(atoms), params.active_atom_indices)
+        active_indices, active_source = _resolve_active_indices_and_source(
+            len(atoms),
+            params.active_atom_indices,
+            input_path=input_path,
+            atoms=atoms,
+        )
         records, modes, calc_info = _compute_mace_vibrational_modes(
             atoms=atoms,
             output_root=output_root,
@@ -637,6 +880,7 @@ def make_dimer_mode_from_mace(payload: Dict[str, Any]) -> tuple[str, dict[str, A
             device_preference=params.device_preference,
             default_dtype=params.default_dtype,
             active_indices=active_indices,
+            method="auto",
             delta=params.delta,
             nfree=params.nfree,
         )
@@ -681,6 +925,7 @@ def make_dimer_mode_from_mace(payload: Dict[str, Any]) -> tuple[str, dict[str, A
             "selected_frequency_cm1": float(records[selected_index]["frequency_cm1"]),
             "imaginary_mode_count": imaginary_count,
             "active_atom_indices": active_indices,
+            "active_atom_indices_source": active_source,
             "calculator": calc_info["calculator"],
             "modes": records,
         },
@@ -704,6 +949,9 @@ def make_dimer_mode_from_mace(payload: Dict[str, Any]) -> tuple[str, dict[str, A
         "selected_mode_index": selected_index,
         "selected_frequency_cm1": float(records[selected_index]["frequency_cm1"]),
         "imaginary_mode_count": imaginary_count,
+        "active_atom_indices": active_indices,
+        "active_atom_indices_source": active_source,
+        "method_used": calc_info.get("method_used"),
     }
     lines = [
         "make_dimer_mode_from_mace completed.",
@@ -714,10 +962,131 @@ def make_dimer_mode_from_mace(payload: Dict[str, Any]) -> tuple[str, dict[str, A
     return _success(tool_name, content="\n".join(lines), data=data, warnings=warnings)
 
 
+def mace_analyze_frequencies(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[mace/analysis] Compute and export all MACE vibrational frequencies and mode vectors."""
+    params = MaceAnalyzeFrequenciesInput(**payload)
+    tool_name = "mace_analyze_frequencies"
+    input_path = resolve_workspace_path(params.input_path, must_exist=True)
+    output_root = resolve_workspace_path(params.output_root)
+    if not input_path.is_file():
+        _fail(tool_name, message=f"input_path is not a file: {workspace_relpath(input_path)}", error_code="invalid_input")
+    _prepare_output_root(tool_name, output_root=output_root, overwrite=params.overwrite)
+
+    try:
+        atoms = ase_read(str(input_path))
+        active_indices, active_source = _resolve_active_indices_and_source(
+            len(atoms),
+            params.active_atom_indices,
+            input_path=input_path,
+            atoms=atoms,
+        )
+        records, modes, calc_info = _compute_mace_vibrational_modes(
+            atoms=atoms,
+            output_root=output_root,
+            model=params.model,
+            head=(str(params.head).strip() or None) if params.head is not None else None,
+            dispersion=params.dispersion,
+            device_preference=params.device_preference,
+            default_dtype=params.default_dtype,
+            active_indices=active_indices,
+            method=params.method,
+            delta=params.delta,
+            nfree=params.nfree,
+        )
+    except Exception as exc:
+        _fail(
+            tool_name,
+            message=f"Failed to compute MACE frequencies: {exc}",
+            data={"input_path_rel": workspace_relpath(input_path), "output_root_rel": workspace_relpath(output_root)},
+            error_code="mace_frequency_failed",
+        )
+
+    if not records:
+        _fail(tool_name, message="No vibrational modes were produced.", error_code="no_modes")
+
+    modes_dir = output_root / "modes"
+    modes_dir.mkdir(parents=True, exist_ok=True)
+    csv_rows: list[dict[str, Any]] = []
+    summary_modes: list[dict[str, Any]] = []
+    for record, mode in zip(records, modes):
+        mode_index = int(record["mode_index"])
+        mode_path = modes_dir / f"mode_{mode_index:04d}.txt"
+        _write_mode_vectors(mode_path, mode)
+        row = {
+            "mode_index": mode_index,
+            "frequency_cm1": float(record["frequency_cm1"]),
+            "imaginary": bool(record["imaginary"]),
+            "mode_vector_rel": workspace_relpath(mode_path),
+        }
+        csv_rows.append(row)
+        summary_modes.append(row)
+
+    frequencies_csv = output_root / "frequencies.csv"
+    _write_csv(
+        frequencies_csv,
+        csv_rows,
+        fieldnames=["mode_index", "frequency_cm1", "imaginary", "mode_vector_rel"],
+    )
+    summary_path = output_root / "summary.json"
+    imaginary_count = sum(1 for record in records if bool(record["imaginary"]))
+    lowest_frequency_cm1 = min(float(record["frequency_cm1"]) for record in records)
+    highest_frequency_cm1 = max(float(record["frequency_cm1"]) for record in records)
+    _write_json(
+        summary_path,
+        {
+            "input_path_rel": workspace_relpath(input_path),
+            "output_root_rel": workspace_relpath(output_root),
+            "frequencies_csv_rel": workspace_relpath(frequencies_csv),
+            "modes_dir_rel": workspace_relpath(modes_dir),
+            "method_requested": params.method,
+            "method_used": calc_info.get("method_used"),
+            "active_atom_indices": active_indices,
+            "active_atom_indices_source": active_source,
+            "calculator": calc_info["calculator"],
+            "mode_count": len(records),
+            "imaginary_mode_count": imaginary_count,
+            "lowest_frequency_cm1": lowest_frequency_cm1,
+            "highest_frequency_cm1": highest_frequency_cm1,
+            "modes": summary_modes,
+            "fallback_notes": calc_info.get("fallback_notes") or [],
+        },
+    )
+
+    warnings: list[str] = []
+    if imaginary_count > 1:
+        warnings.append("Multiple imaginary modes were detected; mode assignment may need manual chemical validation.")
+    data = {
+        "input_path_rel": workspace_relpath(input_path),
+        "output_root_rel": workspace_relpath(output_root),
+        "summary_rel": workspace_relpath(summary_path),
+        "frequencies_csv_rel": workspace_relpath(frequencies_csv),
+        "modes_dir_rel": workspace_relpath(modes_dir),
+        "method_requested": params.method,
+        "method_used": calc_info.get("method_used"),
+        "active_atom_indices": active_indices,
+        "active_atom_indices_source": active_source,
+        "mode_count": len(records),
+        "imaginary_mode_count": imaginary_count,
+        "lowest_frequency_cm1": lowest_frequency_cm1,
+        "highest_frequency_cm1": highest_frequency_cm1,
+        "modes": summary_modes,
+    }
+    lines = [
+        "mace_analyze_frequencies completed.",
+        f"method_used={data['method_used']} mode_count={data['mode_count']} imaginary_mode_count={data['imaginary_mode_count']}",
+        f"lowest_frequency_cm1={data['lowest_frequency_cm1']:.6f} highest_frequency_cm1={data['highest_frequency_cm1']:.6f}",
+        f"frequencies_csv_rel={data['frequencies_csv_rel']}",
+        f"summary_rel={data['summary_rel']}",
+    ]
+    return _success(tool_name, content="\n".join(lines), data=data, warnings=warnings)
+
+
 __all__ = [
+    "MaceAnalyzeFrequenciesInput",
     "DimerModeFromMaceInput",
     "DimerModeFromNebInput",
     "VaspDimerPrepareInput",
+    "mace_analyze_frequencies",
     "make_dimer_mode_from_mace",
     "make_dimer_mode_from_neb",
     "vasp_dimer_prepare",

@@ -138,4 +138,5 @@ def test_vasp_band_prepare_preserves_line_mode_kpoints_and_chgcar(tmp_path: Path
         incar_text = (tmp_path / "files" / data["output_root_rel"] / "INCAR").read_text(encoding="utf-8")
         assert kpoints.style == Kpoints.supported_modes.Line_mode
         assert "ICHARG = 11" in incar_text
+        assert "LMAXMIX = 2" in incar_text
         assert (tmp_path / "files" / data["output_root_rel"] / "CHGCAR").is_file()

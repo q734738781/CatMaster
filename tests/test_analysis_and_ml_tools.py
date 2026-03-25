@@ -93,7 +93,7 @@ def test_analyze_vasp_results_excludes_frozen_atom_forces(monkeypatch, tmp_path:
     assert summary["records"][0]["max_force_ev_per_a"] == pytest.approx(0.02)
 
 
-def test_analyze_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
+def test_analyze_vasp_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         results_analysis,
         "_scan_neb_images",
@@ -106,7 +106,7 @@ def test_analyze_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
     with workspace_scope(tmp_path):
         neb_dir = tmp_path / "files" / "neb"
         neb_dir.mkdir(parents=True, exist_ok=True)
-        _, neb_artifact = results_analysis.analyze_neb_results({"result_dir": "neb"})
+        _, neb_artifact = results_analysis.analyze_vasp_neb_results({"result_dir": "neb"})
         assert neb_artifact["data"]["ts_image"] == 1
 
         traj_dir = tmp_path / "files" / "md"
@@ -569,7 +569,7 @@ def test_remote_mace_evaluate_reports_stress_metrics(monkeypatch, tmp_path: Path
     assert metrics["stress_mae_eVA3"] is not None
 
 
-def test_analyze_neb_results_rejects_partial_profiles(tmp_path: Path, monkeypatch) -> None:
+def test_analyze_vasp_neb_results_rejects_partial_profiles(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         results_analysis,
         "_scan_neb_images",
@@ -579,7 +579,7 @@ def test_analyze_neb_results_rejects_partial_profiles(tmp_path: Path, monkeypatc
         neb_dir = tmp_path / "files" / "neb"
         neb_dir.mkdir(parents=True, exist_ok=True)
         with pytest.raises(CatMasterToolExecutionError, match="Incomplete NEB image energies"):
-            results_analysis.analyze_neb_results({"result_dir": "neb"})
+            results_analysis.analyze_vasp_neb_results({"result_dir": "neb"})
 
 
 def test_scan_neb_images_parses_outcar_toten_only(tmp_path: Path) -> None:
@@ -606,7 +606,7 @@ def test_scan_neb_images_parses_outcar_toten_only(tmp_path: Path) -> None:
     assert [record["energy_ev"] for record in records] == [-20.0, -19.2, -19.8]
 
 
-def test_analyze_neb_results_requires_endpoint_outcar(tmp_path: Path) -> None:
+def test_analyze_vasp_neb_results_requires_endpoint_outcar(tmp_path: Path) -> None:
     with workspace_scope(tmp_path):
         neb_dir = tmp_path / "files" / "neb"
         for idx, energy in ((1, -19.2), (2, -19.8), (3, -19.5)):
@@ -619,4 +619,4 @@ def test_analyze_neb_results_requires_endpoint_outcar(tmp_path: Path) -> None:
         for idx in (0, 4):
             (neb_dir / f"{idx:02d}").mkdir(parents=True, exist_ok=True)
         with pytest.raises(CatMasterToolExecutionError, match="image 00: no energy parsed from OUTCAR"):
-            results_analysis.analyze_neb_results({"result_dir": "neb"})
+            results_analysis.analyze_vasp_neb_results({"result_dir": "neb"})

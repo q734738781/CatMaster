@@ -17,7 +17,8 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 3. Put one preparation campaign under one clean `output_root`.
 4. Use `patch_policy="safe"` by default.
 5. For `dos` and `md`, treat the preset as a starter template and do job-specific tuning through `user_incar_patch` in the same call.
-6. Use `vasp_band_prepare` instead of `vasp_prepare` when the job is a line-mode band-structure calculation with an explicit band `KPOINTS`.
+6. If a later DOS/band branch should reuse `CHGCAR`, make that an explicit upstream requirement and preserve the file in the self-consistent stage.
+7. Use `vasp_band_prepare` instead of `vasp_prepare` when the job is a line-mode band-structure calculation with an explicit band `KPOINTS`.
 
 ## Allowed tools
 - `fix_atoms_by_indices`
@@ -31,7 +32,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - `vasp_prepare(preset="relax", ...)` is for ionic relaxation jobs.
 - `vasp_prepare(preset="static", ...)` is for static jobs and enforces `NSW=1`, `IBRION=-1`.
 - `vasp_prepare(preset="freq", ...)` is for finite-difference vibrational jobs and enforces the frequency-specific overrides.
-- `vasp_prepare(preset="dos", ...)` is for DOS/PDOS-style jobs. The tool starts from a tetrahedron-style template with `ISMEAR=-5`, `NEDOS=2001`, `LORBIT=11`, and if `dos_charge_density_path` is provided it copies `CHGCAR` and sets `ICHARG=11`.
+- `vasp_prepare(preset="dos", ...)` is for DOS/PDOS-style jobs. The tool starts from a bulk-leaning tetrahedron-style template with `ISMEAR=-5`, `NEDOS=2001`, `LORBIT=11`, and if `dos_charge_density_path` is provided it copies `CHGCAR`, sets `ICHARG=11`, and auto-fills a recommended `LMAXMIX` baseline when absent.
 - `vasp_prepare(preset="md", ...)` is for molecular dynamics. The tool starts from a Nose-Hoover NVT-style template with `IBRION=0`, `MDALGO=2`, `NSW=1000`, `POTIM=1.0`, `TEBEG=300`, `TEEND=300`, and `SMASS=0`.
 
 ### 2. Choose the correct regime
@@ -46,24 +47,34 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - For DOS jobs, the preset is a recommended starting point, not a claim that one DOS INCAR works for every material class.
 - For MD jobs, the preset is a recommended thermostat/template start, not a full replacement for system-specific choices of timestep, temperature schedule, thermostat mass, or ensemble controls.
 
-### 4. Override carefully
+### 4. Add a system-aware starting point
+- The tool's canonical defaults are safe starters, but VASP Wiki guidance is more system-aware than a single global default. If the material class is known, surface the system-specific occupancy choice explicitly through `user_incar_patch`.
+- Good start for unknown / high-throughput / gap-uncertain systems: `ISMEAR=0`, `SIGMA=0.05-0.1`; for clearly gapped or unknown-gap cases, consider `EFERMI=MIDGAP`.
+- Good start for metallic relaxations or metallic force-sensitive work: `ISMEAR=1` or `2`, with `SIGMA≈0.2` as a practical first pass; check that the entropy term is acceptably small before treating the setup as converged.
+- Good start for semiconductors or insulators in bulk static or DOS-like post-processing: `ISMEAR=-5` on a sufficiently dense `Gamma`-centered mesh.
+- Good start for slab/gas/low-dimensional or tetrahedron-ineligible DOS work: do not assume tetrahedron is safe; fall back to `ISMEAR=0` with small `SIGMA`, typically `0.03-0.1`.
+- Good start for gas references: keep `ISYM=0`, `ISMEAR=0`, `SIGMA=0.01`, and `1x1x1` KPOINTS.
+- Treat these as explicit starting recipes, not convergence proofs. Once the system class is known, the starting recipe should be stated in the task packet instead of left implicit.
+
+### 5. Override carefully
 - `user_incar_patch` is for targeted overrides. For `dos` and `md`, it is also the preferred path for one-call tuning of method knobs.
+- For DOS tuning, the common explicit overrides are `ISMEAR`, `SIGMA`, `EFERMI`, `NEDOS`, `EMIN`, `EMAX`, and occasionally `LMAXMIX`.
 - `MAGMOM`, `LDAUU`, and `LDAUJ` must be element maps.
 - `patch_policy="safe"` rejects overrides only for the small protected set of preset/regime-bound keys. For `dos` and `md`, safe intentionally leaves most method controls overrideable so the model can change `NEDOS`, `ISMEAR`, `NSW`, `POTIM`, `TEBEG`, `TEEND`, `SMASS`, `MDALGO`, and similar knobs without switching to `force`.
 - `patch_policy="force"` applies the patch after canonical defaults, including explicit removal with `null`.
 - Only use `force` when you are intentionally breaking the preset identity itself, for example replacing `IBRION` with a non-matching job type or tearing down other protected invariants.
 
-### 5. Keep output layout clean
+### 6. Keep output layout clean
 - Single structure input writes to `output_root/<stem>/`.
 - Directory input preserves relative layout and appends `<stem>/` per structure.
 - Do not mix unrelated relax and SP campaigns in the same ambiguous tree.
 
-### 6. Add explicit band-path or phonon handoffs
+### 7. Add explicit band-path or phonon handoffs
 - Use `generate_kpath` only after a relaxed bulk baseline is accepted; it emits the band-path `KPOINTS`, not a full calc directory.
 - Use `vasp_band_prepare` when that line-mode `KPOINTS` should become a dedicated band-structure job root.
 - For phonon workflows, keep displacement generation outside `vasp_prepare`; the prepare tool should only own the force-job input deck after the displacement set already exists.
 
-### 7. Prepare frequency jobs explicitly if requested
+### 8. Prepare frequency jobs explicitly if requested
 - Do not treat vibrational thermochemistry jobs as ordinary relax or SP jobs. Prepare them as a separate stage after the relevant relaxed structure is finalized.
 - For finite-difference frequency runs, use `IBRION=5`, `POTIM=0.015`, `NFREE=2`, and `ISYM=0`.
 - For slab adsorbate frequency jobs, do not blindly preserve the relax-stage selective-dynamics mask. A relaxed adsorbate-slab structure may still have mobile surface atoms, which is not acceptable for adsorbate-only vibrational thermochemistry. If the target is adsorbate-only slab thermochemistry and `ads_indices` are available, explicitly run `fix_atoms_by_indices(indices=ads_indices, reverse=true)` on the relaxed adsorbate-slab structure before writing the frequency input.
@@ -73,11 +84,21 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 ## Method-critical defaults
 - Do not silently rely on defaults for `use_d3`, `use_dft_plus_u`, `enable_dipole`, spin treatment, or reference-state-sensitive INCAR toggles when they affect comparison.
 - Keep clean slab, gas-phase reference, adsorbed structures, and downstream static calculations scientifically comparable.
+- When the system class is known, prefer a VASP-Wiki-style explicit smearing recipe over silent inheritance of the tool baseline.
+- For unknown systems, `ISMEAR=0` with small `SIGMA` is the safer generic starting point than jumping directly to Methfessel-Paxton.
+- For metallic relaxations, a practical first explicit recipe is `ISMEAR=1`, `SIGMA=0.2`, then check the entropy term before treating it as production-worthy.
 - For slab adsorption studies, do not set `relax_cell=true` unless the task explicitly requires a variable-cell study and the system is not in slab mode.
 - For slab work, use `k*a ~= 35 Å` as the initial project default unless convergence evidence justifies something else.
 - Do not force bulk references to obey the slab default. Bulk `k_product` should be chosen from the bulk convergence requirement, not copied mechanically from slab policy.
 - For DOS / projected-DOS / finer electronic-structure jobs, it is acceptable to increase `k_product` to around `50` when the extra sampling is part of the stated objective.
-- For DOS, keep in mind the VASP-recommended pattern: relax first, then do a DOS-oriented static stage; if reusing a converged `CHGCAR`, surface that explicitly with `dos_charge_density_path`.
+- For DOS, keep in mind the VASP-recommended pattern: relax first, then do a DOS-oriented static stage; do not rely on relax-stage `DOSCAR` as the final result.
+- The default DOS preset is VASP-Wiki-aligned for bulk tetrahedron DOS, not a universal recommendation for slab/gas/low-dimensional meshes. If the mesh cannot support tetrahedra or the system class is uncertain, override to `ISMEAR=0` with small `SIGMA` (`0.03-0.1`).
+- For semiconducting or insulating bulk post-processing, `ISMEAR=-5` is a good explicit start only when the mesh is dense enough and `Gamma`-centered.
+- For clearly gapped or unknown-gap systems using Gaussian fallback, consider surfacing `EFERMI=MIDGAP`.
+- For tetrahedron DOS, keep the mesh Gamma-centered and dense enough to justify interpolation.
+- If reusing a converged `CHGCAR`, surface that explicitly with `dos_charge_density_path`, and make sure the upstream self-consistent stage actually kept `CHGCAR` (for example by setting `LCHARG=True` there).
+- For fixed-density DOS/band reuse (`ICHARG=11`), VASP Wiki recommends `LMAXMIX=2/4/6` for s,p / d / f dominated systems; the tool now auto-fills a baseline when absent, but deliberate overrides should still be reported.
+- Tune `NEDOS` together with `EMIN/EMAX` when narrow peaks or edge resolution matter; VASP Wiki recommends checking the integrated DOS to confirm the grid is fine enough.
 - For MD, explicitly state whether you are keeping the default Nose-Hoover template or overriding thermostat/integration controls through `user_incar_patch`.
 - Always report any non-default toggles that materially affect interpretation.
 - When frequency-derived thermochemistry is the target, do not silently reuse generic relax or SP INCARs; surface the frequency-specific overrides explicitly.
