@@ -31,7 +31,8 @@ def test_build_chat_model_passes_provider_bound_extra_body(monkeypatch) -> None:
     build_chat_model(cfg)
 
     assert captured.get("model_kwargs") in (None, {})
-    assert captured.get("streaming") is True
+    assert captured.get("streaming") is False
+    assert captured.get("content_cache_control") is None
 
 
 def test_build_chat_model_passes_provider_openrouter_extra_body(monkeypatch) -> None:
@@ -59,6 +60,35 @@ def test_build_chat_model_passes_provider_openrouter_extra_body(monkeypatch) -> 
 
     assert captured.get("openrouter_provider") == {"order": ["openai"]}
     assert captured.get("model_kwargs") == {"x": 2}
+
+
+def test_build_chat_model_maps_openrouter_cache_control_to_content_breakpoints(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatOpenRouter:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "langchain_openrouter", types.SimpleNamespace(ChatOpenRouter=FakeChatOpenRouter))
+
+    cfg = LLMConfig(
+        provider="openrouter",
+        model="anthropic/claude-sonnet-4.6:online",
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        provider_options={
+            "openrouter": {
+                "extra_body": {
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                }
+            }
+        },
+    )
+
+    build_chat_model(cfg)
+
+    assert captured.get("content_cache_control") == {"type": "ephemeral", "ttl": "1h"}
+    assert captured.get("model_kwargs") in (None, {})
 
 
 def test_build_chat_model_passes_reasoning_object(monkeypatch) -> None:
@@ -102,6 +132,9 @@ def test_build_chat_model_passes_reasoning_summary_config(monkeypatch) -> None:
     build_chat_model(cfg)
 
     assert captured.get("reasoning") == {"effort": "medium", "summary": "auto"}
+    assert captured.get("streaming") is False
+    assert captured.get("disable_streaming") is True
+    assert captured.get("use_responses_api") is True
 
 
 def test_build_chat_model_maps_openai_request_options(monkeypatch) -> None:

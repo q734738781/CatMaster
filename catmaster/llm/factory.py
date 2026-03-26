@@ -226,6 +226,61 @@ def _resolve_extra_body(cfg: LLMConfig) -> Dict[str, Any]:
     return {}
 
 
+def _resolve_openrouter_cache_control(cfg: LLMConfig) -> Dict[str, Any] | None:
+    extra_body = _resolve_extra_body(cfg)
+    cache_control = extra_body.get("cache_control")
+    return dict(cache_control) if isinstance(cache_control, dict) and cache_control else None
+
+
+def _attach_openrouter_cache_control(
+    message_dicts: list[dict[str, Any]],
+    cache_control: Dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(cache_control, dict) or not cache_control:
+        return message_dicts
+
+    def _cacheify_content(content: Any) -> Any:
+        if isinstance(content, str):
+            if not content.strip():
+                return content
+            return [{"type": "text", "text": content, "cache_control": dict(cache_control)}]
+        if not isinstance(content, list):
+            return content
+        last_text_idx: int | None = None
+        updated: list[Any] = []
+        for idx, block in enumerate(content):
+            if isinstance(block, dict):
+                cloned = dict(block)
+                if str(cloned.get("type") or "").strip().lower() == "text" and isinstance(cloned.get("text"), str):
+                    last_text_idx = idx
+                updated.append(cloned)
+            else:
+                updated.append(block)
+        if last_text_idx is None:
+            return content
+        block = updated[last_text_idx]
+        if isinstance(block, dict):
+            block["cache_control"] = dict(cache_control)
+        return updated
+
+    updated_messages = list(message_dicts)
+
+    def _annotate_first(role_names: set[str]) -> None:
+        for idx, message in enumerate(updated_messages):
+            role = str(message.get("role") or "").strip().lower()
+            if role not in role_names:
+                continue
+            new_content = _cacheify_content(message.get("content"))
+            if new_content is message.get("content"):
+                return
+            updated_messages[idx] = {**message, "content": new_content}
+            return
+
+    _annotate_first({"system", "developer"})
+    _annotate_first({"user"})
+    return updated_messages
+
+
 def _resolve_reasoning_config(cfg: LLMConfig) -> Dict[str, Any] | None:
     reasoning = cfg.reasoning if isinstance(cfg.reasoning, dict) else {}
     cleaned: Dict[str, Any] = {}
@@ -296,6 +351,7 @@ def _resolve_openrouter_request_kwargs(cfg: LLMConfig) -> dict[str, Any]:
     route = extra_body.pop("route", None)
     plugins = extra_body.pop("plugins", None)
     prompt_cache_retention = extra_body.pop("prompt_cache_retention", None)
+    extra_body.pop("cache_control", None)
 
     if isinstance(provider_config, dict) and provider_config:
         kwargs["openrouter_provider"] = provider_config
@@ -361,11 +417,13 @@ def build_chat_model(cfg: LLMConfig) -> Any:
     """Build a LangChain ChatModel from an LLMConfig."""
     if cfg.provider == "openrouter":
         from langchain_openrouter import ChatOpenRouter
+        from langchain_core.messages import BaseMessage
 
         _patch_langchain_openrouter_file_wrapper()
         _suppress_openrouter_file_block_serializer_warnings()
         api_key = _require_api_key(cfg)
         kwargs = _resolve_openrouter_request_kwargs(cfg)
+        cache_control_config = _resolve_openrouter_cache_control(cfg)
         reasoning_config = _resolve_reasoning_config(cfg)
 
         if cfg.timeout_s is not None:
@@ -381,13 +439,29 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         if max_tokens is None and cfg.max_output_tokens is not None:
             max_tokens = cfg.max_output_tokens
 
-        return ChatOpenRouter(
+        class CatMasterChatOpenRouter(ChatOpenRouter):
+            content_cache_control: dict[str, Any] | None = None
+
+            def _create_message_dicts(
+                self,
+                messages: list[BaseMessage],
+                stop: list[str] | None,
+            ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+                message_dicts, params = super()._create_message_dicts(messages, stop)
+                message_dicts = _attach_openrouter_cache_control(
+                    message_dicts,
+                    self.content_cache_control,
+                )
+                return message_dicts, params
+
+        return CatMasterChatOpenRouter(
             model=cfg.model,
             api_key=api_key,
             temperature=cfg.temperature,
             reasoning=reasoning_config,
-            streaming=True,
+            streaming=False,
             max_tokens=max_tokens,
+            content_cache_control=cache_control_config,
             **kwargs,
         )
 
@@ -437,7 +511,9 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             temperature=cfg.temperature,
             reasoning=reasoning_config,
             model_kwargs=model_kwargs,
-            streaming=True,
+            streaming=False,
+            disable_streaming=True,
+            use_responses_api=True,
             **kwargs,
         )
 

@@ -104,7 +104,7 @@ def test_apply_events_tracks_llm_stream_and_graph_node() -> None:
     assert changed is True
     assert state["current_node"] == "director"
     assert state["llm"]["status"] == "completed"
-    assert state["llm"]["text"] == "Hello world"
+    assert state["llm"]["text"] == ""
     assert state["llm"]["reasoning_text"] == "Check spin state."
 
 

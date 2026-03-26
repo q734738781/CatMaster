@@ -1347,7 +1347,7 @@ class GraphRunner:
         graph_input: Any,
         config: Dict[str, Any],
     ) -> Dict[str, Any]:
-        live_stream = self.reporter.is_live()
+        live_stream = bool(getattr(self.reporter, "wants_graph_streaming", lambda: False)())
         if not (live_stream or self.stream_debug_console or self.print_state_messages):
             return await compiled.ainvoke(graph_input, config=config)
 

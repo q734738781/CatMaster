@@ -140,6 +140,9 @@ class WebReporter(Reporter):
     def is_live(self) -> bool:
         return True
 
+    def wants_graph_streaming(self) -> bool:
+        return False
+
     def set_run_dir(self, run_dir: Path) -> None:
         resolved = Path(run_dir).expanduser().resolve()
         with self._cond:
@@ -165,6 +168,8 @@ class WebReporter(Reporter):
                 "task_id": getattr(event, "task_id", None),
                 "step_id": getattr(event, "step_id", None),
             }
+        if str(payload.get("name") or "") in {"LLM_REASONING_DELTA", "LLM_TOKEN_DELTA"}:
+            return
         with self._cond:
             self._seq += 1
             payload["seq"] = self._seq
@@ -328,24 +333,10 @@ class WebReporter(Reporter):
                     "last_updated_ts": now_ts,
                 }
             )
-        elif name == "LLM_REASONING_DELTA":
-            self._llm_state["status"] = "running"
-            self._llm_state["model"] = str(payload.get("model") or self._llm_state.get("model") or "")
-            self._llm_state["phase"] = str(payload.get("phase") or self._llm_state.get("phase") or "")
-            self._llm_state["reasoning_text"] = str(self._llm_state.get("reasoning_text") or "") + str(payload.get("text") or "")
-            self._llm_state["last_updated_ts"] = now_ts
-        elif name == "LLM_TOKEN_DELTA":
-            self._llm_state["status"] = "running"
-            self._llm_state["model"] = str(payload.get("model") or self._llm_state.get("model") or "")
-            self._llm_state["phase"] = str(payload.get("phase") or self._llm_state.get("phase") or "")
-            self._llm_state["text"] = str(self._llm_state.get("text") or "") + str(payload.get("text") or "")
-            self._llm_state["last_updated_ts"] = now_ts
         elif name == "LLM_CALL_END":
             usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
             compact_usage = _copy_usage(usage)
-            final_text = str(self._llm_state.get("text") or "").strip()
-            if not final_text:
-                final_text = str(payload.get("text_preview") or "").strip()
+            final_text = str(payload.get("text_preview") or "").strip()
             self._llm_state.update(
                 {
                     "model": str(payload.get("model") or self._llm_state.get("model") or ""),

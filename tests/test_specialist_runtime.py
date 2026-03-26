@@ -248,11 +248,33 @@ def test_specialist_tool_wrapper_returns_nonfatal_error_payload(tmp_path: Path, 
 
     wrapped = built.runner._named_tools({"polish_academic_prose"})
     content, artifact = wrapped[0].func(value="x")
-
     assert "simulated failure" in content
     assert artifact["tool_name"] == "polish_academic_prose"
     assert artifact["data"]["status"] == "error"
     assert artifact["data"]["tool_name"] == "polish_academic_prose"
+
+
+def test_sanitize_model_request_messages_collapses_inline_image_tool_messages() -> None:
+    tool_message = ToolMessage(
+        content=[{"type": "image", "id": "img_1", "base64": "abc", "mime_type": "image/png"}],
+        tool_call_id="call_1",
+        name="read_file",
+        status="success",
+        additional_kwargs={
+            "read_file_path": "/writing/demo/figure.png",
+            "read_file_media_type": "image/png",
+        },
+    )
+    untouched = AIMessage(content="ok")
+
+    sanitized = runtime_mod.SpecialistRunner._sanitize_model_request_messages([untouched, tool_message])
+
+    assert sanitized[0] is untouched
+    assert isinstance(sanitized[1], ToolMessage)
+    assert isinstance(sanitized[1].content, str)
+    assert "inline image tool output omitted from model history" in sanitized[1].content
+    assert "source=/writing/demo/figure.png" in sanitized[1].content
+    assert "mime=image/png" in sanitized[1].content
 
 
 def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths() -> None:
@@ -885,29 +907,6 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert usage_summary["calls"] == 2
     assert usage_summary["by_role"][0]["name"] == "experiment_specialist"
     assert usage_summary["by_role"][0]["calls"] == 1
-
-def test_sanitize_model_request_messages_collapses_inline_image_tool_messages() -> None:
-    tool_message = ToolMessage(
-        content=[{"type": "image", "id": "img_1", "base64": "abc", "mime_type": "image/png"}],
-        tool_call_id="call_1",
-        name="read_file",
-        status="success",
-        additional_kwargs={
-            "read_file_path": "/writing/demo/figure.png",
-            "read_file_media_type": "image/png",
-        },
-    )
-    untouched = AIMessage(content="ok")
-
-    sanitized = runtime_mod.SpecialistRunner._sanitize_model_request_messages([untouched, tool_message])
-
-    assert sanitized[0] is untouched
-    assert isinstance(sanitized[1], ToolMessage)
-    assert isinstance(sanitized[1].content, str)
-    assert "inline image tool output omitted from model history" in sanitized[1].content
-    assert "source=/writing/demo/figure.png" in sanitized[1].content
-    assert "mime=image/png" in sanitized[1].content
-
 
 def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = tmp_path / "project_space"

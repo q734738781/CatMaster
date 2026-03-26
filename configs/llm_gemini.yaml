@@ -20,10 +20,7 @@ models:
 
     default_headers: {}
 
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:xhigh":
     provider: openrouter
@@ -42,10 +39,7 @@ models:
 
     default_headers: {}
 
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-high":
     provider: openrouter
@@ -68,10 +62,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-xhigh":
     provider: openrouter
@@ -94,10 +85,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.3-codex:online-high":
     provider: openrouter
@@ -120,10 +108,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-medium":
     provider: openrouter
@@ -146,10 +131,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-minimal":
     provider: openrouter
@@ -168,10 +150,7 @@ models:
 
     default_headers: {}
 
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
     
   "openai/gpt-5.4-mini":
     provider: openrouter
@@ -181,10 +160,7 @@ models:
     base_url: "https://openrouter.ai/api/v1"
     reasoning:
       effort: medium
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
   
   "google/gemini-3-flash-preview":
     provider: openrouter
@@ -197,12 +173,18 @@ models:
 
   "google/gemini-3.1-pro-preview":
     provider: openrouter
-    model: google/gemini-3.1-pro-preview:online
+    model: google/gemini-3.1-pro-preview
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
     reasoning:
-      effort: medium
+      effort: high
+    provider_options:
+      openrouter:
+        extra_body:
+          provider:
+            order: [google-vertex]
+            allow_fallbacks: false
 
   "google/gemini-3.1-pro-preview-customtools:high":
     provider: openrouter
@@ -219,20 +201,17 @@ models:
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
 agents:
   # Main Track Agents
-  proposal: "google/gemini-3.1-pro-preview-customtools:high"
-  director: "google/gemini-3.1-pro-preview-customtools:high"
-  task_runner: "google/gemini-3.1-pro-preview-customtools:high"
+  proposal: "google/gemini-3.1-pro-preview"
+  director: "google/gemini-3.1-pro-preview"
+  task_runner: "google/gemini-3.1-pro-preview"
   research_lead: "openai/gpt-5.4:online-high"
   research_state_updater: "openai/gpt-5.4:online-high"
   write_director: "openai/gpt-5.4:online-high"
-  section_writer: "google/gemini-3.1-pro-preview-customtools:high"
+  section_writer: "google/gemini-3.1-pro-preview"
   write_reviewer: "openai/gpt-5.4:online-medium"
   academic_polisher: "google/gemini-3.1-pro-preview"
   tex_compile_fixer: "openai/gpt-5.4:online-medium"

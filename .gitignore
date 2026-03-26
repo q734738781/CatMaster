@@ -21,3 +21,4 @@ latest.log
 tmp*
 /catmaster/webui/static/vendor/
 benchmark*
+fix_sonnet*

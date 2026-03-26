@@ -301,11 +301,15 @@ function eventToChatMessage(event) {
   }
   if (name === "LLM_CALL_END") {
     const preview = compactText(payload.text_preview || "", 900);
+    const reasoning = compactText(payload.reasoning_text || "", 2400);
     const tools = Array.isArray(payload.tool_calls) ? payload.tool_calls.filter(Boolean) : [];
-    if (!preview && !tools.length) {
+    if (!reasoning && !preview && !tools.length) {
       return null;
     }
     const parts = [];
+    if (reasoning) {
+      parts.push(reasoning);
+    }
     if (preview) {
       parts.push(preview);
     }

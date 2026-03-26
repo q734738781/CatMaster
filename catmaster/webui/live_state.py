@@ -212,31 +212,9 @@ def apply_event(
         changed = True
         if agent_name:
             _agent_apply_llm_start(state, agent_name=agent_name, ts=ts, payload=payload)
-    elif name == "LLM_REASONING_DELTA":
-        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
-        llm["status"] = "running"
-        llm["model"] = str(payload.get("model") or llm.get("model") or "")
-        llm["phase"] = str(payload.get("phase") or llm.get("phase") or "")
-        llm["reasoning_text"] = str(llm.get("reasoning_text") or "") + str(payload.get("text") or "")
-        state["llm"] = llm
-        changed = True
-        if agent_name:
-            _agent_apply_llm_delta(state, agent_name=agent_name, ts=ts, payload=payload, field="reasoning_text")
-    elif name == "LLM_TOKEN_DELTA":
-        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
-        llm["status"] = "running"
-        llm["model"] = str(payload.get("model") or llm.get("model") or "")
-        llm["phase"] = str(payload.get("phase") or llm.get("phase") or "")
-        llm["text"] = str(llm.get("text") or "") + str(payload.get("text") or "")
-        state["llm"] = llm
-        changed = True
-        if agent_name:
-            _agent_apply_llm_delta(state, agent_name=agent_name, ts=ts, payload=payload, field="text")
     elif name == "LLM_CALL_END":
         llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
-        final_text = str(llm.get("text") or "").strip()
-        if not final_text:
-            final_text = str(payload.get("text_preview") or "").strip()
+        final_text = str(payload.get("text_preview") or "").strip()
         llm.update(
             {
                 "model": str(payload.get("model") or llm.get("model") or ""),
@@ -490,9 +468,7 @@ def _agent_apply_llm_delta(
 def _agent_apply_llm_end(state: Dict[str, Any], *, agent_name: str, ts: float, payload: dict[str, Any]) -> None:
     agent = _ensure_agent_state(state, agent_name)
     llm = agent.get("llm") if isinstance(agent.get("llm"), dict) else {}
-    final_text = str(llm.get("text") or "").strip()
-    if not final_text:
-        final_text = str(payload.get("text_preview") or "").strip()
+    final_text = str(payload.get("text_preview") or "").strip()
     llm.update(
         {
             "model": str(payload.get("model") or llm.get("model") or ""),
