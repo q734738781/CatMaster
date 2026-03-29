@@ -121,6 +121,7 @@ def test_mace_neb_batch_dispatches_single_task_via_dpdispatcher(
     assert captured["resources"] == "mace_gpu"
     assert captured["forward_files"] == ["input", "task_script/mace_neb.py"]
     assert "task_script/mace_neb.py" in str(captured["command"])
+    assert "--climb false" in str(captured["command"])
     assert "--model mh-1" in str(captured["command"])
     assert data["single_task_mode"] is True
     assert data["task_count"] == 1
@@ -178,6 +179,46 @@ def test_mace_neb_batch_stages_local_model_asset(monkeypatch: pytest.MonkeyPatch
     assert data["model_source_kind"] == "local_file"
     assert data["model_source_rel"] == "models/best.model"
     assert data["model_asset_rel"] == "assets/models/best.model"
+
+
+def test_mace_neb_batch_can_enable_ci_neb(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_resolve_machine(_resources_key: str) -> str:
+        return "fake-machine"
+
+    def _fake_dispatch(req) -> DispatchResult:
+        captured["command"] = req.tasks[0].command
+        stage_root = Path(req.local_root) / req.work_base
+        (stage_root / "output").mkdir(parents=True, exist_ok=True)
+        (stage_root / "output" / "batch_summary.json").write_text(json.dumps({"task_count": 0}), encoding="utf-8")
+        for name in ("status.json", "stdout.log", "stderr.log"):
+            (stage_root / name).write_text("ok\n", encoding="utf-8")
+        return DispatchResult(
+            work_base=req.work_base,
+            local_root=req.local_root,
+            output_dir=str(stage_root / "output"),
+            task_states=["finished"],
+            submission_dir="/remote/fake",
+            duration_s=0.5,
+        )
+
+    monkeypatch.setattr("catmaster.tools.execution.mace_neb._resolve_machine_for_resources", _fake_resolve_machine)
+    monkeypatch.setattr("catmaster.tools.execution.mace_neb.dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        _write_neb_task(files_root / "neb_case")
+
+        mace_neb_batch(
+            {
+                "input_root": "neb_case",
+                "output_root": "outputs",
+                "climb": True,
+            }
+        )
+
+    assert "--climb true" in str(captured["command"])
 
 
 def test_mace_neb_batch_rejects_nested_task_content(tmp_path: Path) -> None:

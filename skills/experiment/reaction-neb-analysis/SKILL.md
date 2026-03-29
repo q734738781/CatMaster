@@ -35,6 +35,8 @@ Use this skill to convert a validated endpoint pair into a dispatched NEB campai
 - Keep endpoint method settings compatible with the pathway run.
 - Do not mix image-count changes and INCAR changes inside the same comparison.
 - Keep the chosen image count and climbing-image policy explicit in the run record.
+- Prefer a two-stage NEB contract by default: first run plain `NEB` with climbing image disabled for coarse convergence, then rerun from the coarse-converged images with `CI-NEB` enabled for barrier refinement.
+- If the workflow intentionally skips the coarse plain-`NEB` stage, say so explicitly instead of implying the standard two-stage pattern was followed.
 
 ### 3. Require barrier evidence
 - After dispatch, the workflow is not complete until `analyze_vasp_neb_results` exports the barrier summary, CSV profile, and profile plot.
@@ -48,6 +50,7 @@ Use this skill to convert a validated endpoint pair into a dispatched NEB campai
 ## Method-critical defaults
 - Treat endpoint validation as part of the barrier contract; a bad endpoint pair gives a bad pathway no matter how clean the dispatch is.
 - NEB-critical INCAR keys should stay under the wrapper unless the task explicitly needs a controlled override.
+- Default to `plain-NEB -> CI-NEB` rather than starting directly from `CI-NEB`; direct climbing-image starts need an explicit reason because they are often harder to converge robustly.
 - Do not present a barrier as final if image energies are partial, the climbing-image logic is unclear, or the image set never produced a credible saddle region.
 - Keep the barrier convention explicit in the final answer; “the barrier” is ambiguous otherwise.
 

@@ -419,7 +419,7 @@ def _cli() -> None:
     parser.add_argument("--output_root", required=True, help="Output root directory")
     parser.add_argument("--fmax", type=float, default=0.05)
     parser.add_argument("--steps", type=int, default=300)
-    parser.add_argument("--climb", type=_parse_bool, default=True)
+    parser.add_argument("--climb", type=_parse_bool, default=False)
     parser.add_argument("--model", default="mh-1")
     parser.add_argument("--head", default="omat_pbe")
     parser.add_argument("--dispersion", type=_parse_bool, default=False)

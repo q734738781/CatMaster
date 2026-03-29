@@ -10,6 +10,7 @@ allowed-tools: "fix_atoms_by_indices identify_structure_fragments vaspkit_adsorb
 
 ## Overview
 Use this skill to convert raw electronic-structure results into comparable thermodynamic conclusions.
+For MACE-derived vibrational post-processing, treat frequencies as the vibrational-analysis stage only, then evaluate thermodynamics with ASE `HarmonicThermo` for adsorbates/slabs or `IdealGasThermo` for gas molecules. The local implementation reference is `references/ase_vibrational_thermo_reference.md`.
 
 ## Quick Start
 1. Gather only validated energies and corrections.
@@ -37,6 +38,7 @@ Use this skill to convert raw electronic-structure results into comparable therm
 ### 3. Frequency-job preparation requirements
 - For VASP finite-difference frequency jobs, use `IBRION=5`, `POTIM=0.015`, `NFREE=2`, and `ISYM=0`.
 - Treat `ISYM=0` as mandatory for these jobs; leaving symmetry on can conflict with parallel settings such as `NCORE` and fail before frequencies are evaluated.
+- For MACE-derived frequencies, treat `mace_analyze_frequencies` as the vibrational-analysis stage only, then follow the ASE thermochemistry implementation pattern in `references/ase_vibrational_thermo_reference.md`.
 - For slab adsorbate thermochemistry, freeze the slab and keep only the adsorbate degrees of freedom active unless the task explicitly calls for a broader vibrational model.
 - Do not assume the relaxed adsorbate-slab `CONTCAR` already has the correct selective-dynamics mask for adsorbate-only thermochemistry. A relax-stage mask that still leaves surface atoms mobile is not acceptable for adsorbate-only vibrational treatment.
 - If the objective is adsorbate-only slab thermochemistry and `ads_indices` are known, explicitly refreeze the relaxed structure before writing the frequency job. Use `fix_atoms_by_indices(indices=ads_indices, reverse=true)` on the relaxed adsorbate-slab structure so only the adsorbate atoms remain `T T T` and every slab atom is `F F F`.
@@ -65,4 +67,5 @@ Return:
 
 ## References
 - If correction details become nontrivial, load the relevant stage outputs and compute them explicitly rather than summarizing from memory.
+- For the local ASE thermochemistry implementation pattern, including reusable code snippets for MACE-frequency post-processing, see `references/ase_vibrational_thermo_reference.md`.
 - For band/DOS, NEB, and MD-derived tables, use `band-and-dos-analysis`, `reaction-neb-analysis`, or `md-diffusion-analysis` as the upstream workflow skill before final thermochemistry reporting.

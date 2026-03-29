@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
+from ase.io import read as ase_read
 from pydantic import ValidationError
 from pymatgen.core import Lattice, Structure
 
@@ -198,6 +200,52 @@ def test_make_neb_geometry_writes_flat_vasp_image_tree(tmp_path: Path) -> None:
     assert data["image_files"][-1] == "neb_images/04.vasp"
     for idx in range(5):
         assert (output_root / f"{idx:02d}.vasp").is_file()
+
+
+def test_make_neb_geometry_uses_minimum_image_when_mic_enabled(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        _write_poscar(tmp_path / "files" / "inputs" / "IS.vasp", 0.9)
+        _write_poscar(tmp_path / "files" / "inputs" / "FS.vasp", 0.1)
+
+        make_neb_geometry(
+            {
+                "initial_path": "inputs/IS.vasp",
+                "final_path": "inputs/FS.vasp",
+                "output_dir": "neb_images_mic",
+                "n_images": 3,
+                "mic": True,
+            }
+        )
+
+    output_root = tmp_path / "files" / "neb_images_mic"
+    scaled = []
+    for idx in range(5):
+        atoms = ase_read(output_root / f"{idx:02d}.vasp")
+        scaled.append(float(atoms.get_scaled_positions(wrap=False)[0, 0]))
+    assert np.allclose(scaled, [0.9, 0.95, 1.0, 1.05, 0.1])
+
+
+def test_make_neb_geometry_uses_in_cell_path_when_mic_disabled(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        _write_poscar(tmp_path / "files" / "inputs" / "IS.vasp", 0.9)
+        _write_poscar(tmp_path / "files" / "inputs" / "FS.vasp", 0.1)
+
+        make_neb_geometry(
+            {
+                "initial_path": "inputs/IS.vasp",
+                "final_path": "inputs/FS.vasp",
+                "output_dir": "neb_images_nomic",
+                "n_images": 3,
+                "mic": False,
+            }
+        )
+
+    output_root = tmp_path / "files" / "neb_images_nomic"
+    scaled = []
+    for idx in range(5):
+        atoms = ase_read(output_root / f"{idx:02d}.vasp")
+        scaled.append(float(atoms.get_scaled_positions(wrap=False)[0, 0]))
+    assert np.allclose(scaled, [0.9, 0.7, 0.5, 0.3, 0.1])
 
 
 def test_make_neb_geometry_batch_from_task_root(tmp_path: Path) -> None:

@@ -53,6 +53,8 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 
 ### 3. Hand off to execution as a VASP batch
 - Treat the NEB image tree as a prepared VASP input set.
+- Prefer a two-stage pathway run when the saddle is not already well localized: first run plain `NEB` with climbing image disabled to coarse-converge the band, then restart from those images with `CI-NEB` enabled for saddle refinement.
+- Do not enable climbing image in the first rough-convergence stage unless the task has a strong reason to skip directly to refinement.
 - When NEB/TS should use a separate submission preset, call `vasp_execute_batch` with `task_name="vasp_execute_neb"` so it routes through the dedicated DPDispatcher task/resources config instead of the generic VASP preset.
 - Prefer `task_name="vasp_execute_neb"` by default for NEB/TS runs: the generic `vasp_execute` path can still run, but it will use the generic VASP resource preset rather than the NEB-specific submission configuration.
 - Report image count, INCAR patch path, and execution status together; launch status alone is not enough.
@@ -97,6 +99,7 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 - Keep endpoint preparation, image generation, and execution settings scientifically consistent across the whole pathway calculation.
 - Do not treat launch success as pathway validity; evidence must include image count, INCAR patch, and outcome diagnostics.
 - If the workflow does not require dimer refinement or custom mode logic, do not use this broader skill by default; the narrower `reaction-neb-analysis` route is easier to audit.
+- Treat `plain-NEB -> CI-NEB` as the default convergence pattern for pathway searches: coarse-converge the band without climbing image first, then refine the saddle with climbing image enabled.
 - When choosing NEB interpolation counts for routine runs, prefer small image counts such as `3`, `4`, `5`, or `6` unless the pathway is clearly too sharp for that range.
 - For `CI-NEB` / climbing-image runs, prefer an odd number of intermediate images so there is a natural central image to climb.
 - For plain `NEB` without climbing image, prefer an even number of intermediate images when the path is otherwise symmetric and no single central climbing image is needed.

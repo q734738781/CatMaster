@@ -52,7 +52,10 @@ class MaceNebBatchInput(BaseModel):
     )
     fmax: float = Field(0.05, gt=0, description="NEB optimizer force threshold in eV/Angstrom.")
     steps: int = Field(300, ge=1, description="Maximum FIRE optimization steps.")
-    climb: bool = Field(True, description="Enable climbing-image NEB.")
+    climb: bool = Field(
+        False,
+        description="Enable climbing-image NEB. Defaults to plain NEB for coarse convergence; set true for CI-NEB refinement.",
+    )
     model: str = Field(
         "mh-1",
         description=(

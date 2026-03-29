@@ -86,9 +86,9 @@ class MakeNebGeometryInput(BaseModel):
         description="Interpolation method: linear or idpp.",
         pattern="^(linear|idpp)$",
     )
-    vtst_wrap: bool = Field(
+    mic: bool = Field(
         True,
-        description="If true, wrap fractional coordinates into [0,1) before interpolation.",
+        description="If true, interpolate using the periodic minimum image convention for endpoint displacements.",
     )
     overwrite: bool = Field(False, description="If true, overwrite output_dir if it exists.")
 
@@ -142,7 +142,10 @@ class VaspNebPrepareInput(BaseModel):
         description="Interpolation method for endpoint mode: linear or idpp.",
         pattern="^(linear|idpp)$",
     )
-    vtst_wrap: bool = Field(True, description="If true, wrap fractional coordinates before interpolation.")
+    mic: bool = Field(
+        True,
+        description="If true, interpolate endpoint displacements with the periodic minimum image convention.",
+    )
     overwrite: bool = Field(False, description="If true, replace output_root if it already exists.")
     regime: Literal["bulk", "slab", "gas"] = Field(
         "slab",
@@ -238,7 +241,7 @@ def _build_images(
     n_images: int,
     *,
     interp_method: str,
-    vtst_wrap: bool,
+    mic: bool,
 ) -> Tuple[List[Any], List[str]]:
     try:
         from ase.mep import NEB
@@ -248,15 +251,13 @@ def _build_images(
     warnings: List[str] = []
     init_use = initial.copy()
     final_use = final.copy()
-    mic = bool(vtst_wrap)
-
     images_atoms = [init_use]
     for _ in range(n_images):
         images_atoms.append(init_use.copy())
     images_atoms.append(final_use)
 
     neb = NEB(images_atoms)
-    neb.interpolate(method=interp_method, mic=mic)
+    neb.interpolate(method=interp_method, mic=bool(mic))
     return list(images_atoms), warnings
 
 
@@ -359,7 +360,7 @@ def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         final,
         params.n_images,
         interp_method=params.interp_method,
-        vtst_wrap=params.vtst_wrap,
+        mic=params.mic,
     )
     warnings.extend(interp_warnings)
 
@@ -720,7 +721,7 @@ class VaspNebWriter:
             final,
             params.n_images,
             interp_method=params.interp_method,
-            vtst_wrap=params.vtst_wrap,
+            mic=params.mic,
         )
         image_dirs = self._write_images(
             output_root=output_root,
