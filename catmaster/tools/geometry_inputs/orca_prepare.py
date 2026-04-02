@@ -209,7 +209,6 @@ class OrcaPrepareInput(BaseModel):
     solvent: str | None = Field(None, description="Solvent name for CPCM/SMD.")
     charge: int = Field(0, description="Total molecular charge.")
     multiplicity: int = Field(1, ge=1, description="Spin multiplicity.")
-    nprocs: int = Field(8, ge=1, description="Requested CPU processes for %pal.")
     maxcore_mb: int = Field(2000, ge=1, description="ORCA %maxcore value in MB.")
     tightness: Literal["loose", "normal", "tight"] = Field("normal", description="Optimization/SCF tightness preset.")
     safe_patch: dict[str, Any] = Field(default_factory=dict, description="Restricted patch map for a small whitelist of ORCA settings.")
@@ -257,7 +256,6 @@ class OrcaNebTSPrepareInput(BaseModel):
     solvent: str | None = Field(None, description="Solvent name for CPCM/SMD.")
     charge: int = Field(0, description="Total molecular charge.")
     multiplicity: int = Field(1, ge=1, description="Spin multiplicity.")
-    nprocs: int = Field(8, ge=1, description="Requested CPU processes for %pal.")
     maxcore_mb: int = Field(2000, ge=1, description="ORCA %maxcore value in MB.")
     tightness: Literal["loose", "normal", "tight"] = Field("normal", description="SCF/optimization tightness.")
     nimages: int = Field(8, ge=2, description="Number of interpolated NEB images.")
@@ -314,7 +312,6 @@ def _render_orca_input(
     solvent: str | None,
     charge: int,
     multiplicity: int,
-    nprocs: int,
     maxcore_mb: int,
     tightness: str,
     safe_patch: dict[str, Any],
@@ -334,9 +331,6 @@ def _render_orca_input(
     )
     lines = [
         "! " + " ".join(simple_keywords),
-        "%pal",
-        f"  nprocs {int(nprocs)}",
-        "end",
         f"%maxcore {int(maxcore_mb)}",
     ]
     lines.extend(blocks)
@@ -384,7 +378,6 @@ def orca_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             solvent=params.solvent,
             charge=params.charge,
             multiplicity=params.multiplicity,
-            nprocs=params.nprocs,
             maxcore_mb=params.maxcore_mb,
             tightness=params.tightness,
             safe_patch=params.safe_patch,
@@ -450,7 +443,6 @@ def orca_scan_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         solvent=params.solvent,
         charge=params.charge,
         multiplicity=params.multiplicity,
-        nprocs=params.nprocs,
         maxcore_mb=params.maxcore_mb,
         tightness=params.tightness,
         safe_patch=params.safe_patch,
@@ -509,7 +501,6 @@ def orca_optts_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         solvent=params.solvent,
         charge=params.charge,
         multiplicity=params.multiplicity,
-        nprocs=params.nprocs,
         maxcore_mb=params.maxcore_mb,
         tightness=params.tightness,
         safe_patch=params.safe_patch,
@@ -570,7 +561,6 @@ def orca_nebts_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         solvent=params.solvent,
         charge=params.charge,
         multiplicity=params.multiplicity,
-        nprocs=params.nprocs,
         maxcore_mb=params.maxcore_mb,
         tightness=params.tightness,
         safe_patch=params.safe_patch,
@@ -626,7 +616,6 @@ def orca_irc_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         solvent=params.solvent,
         charge=params.charge,
         multiplicity=params.multiplicity,
-        nprocs=params.nprocs,
         maxcore_mb=params.maxcore_mb,
         tightness=params.tightness,
         safe_patch=params.safe_patch,

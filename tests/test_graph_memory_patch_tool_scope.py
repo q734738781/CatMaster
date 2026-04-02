@@ -58,7 +58,7 @@ def test_memory_scoped_apply_tool_is_noop_for_other_tools() -> None:
 
     base = StructuredTool.from_function(
         func=_base_tool,
-        name="bash",
+        name="execute",
         description="test",
         args_schema={
             "type": "object",

@@ -59,13 +59,13 @@ def test_builders_use_create_agent_and_system_prompt(monkeypatch: pytest.MonkeyP
     )
 
     model = _DummyModel()
-    bash = _DummyTool("bash")
+    execute = _DummyTool("execute")
 
-    graph._build_proposal_agent(model, [bash])
-    graph._build_director_agent(model, [bash])
-    graph._build_fast_director_agent(model, [bash])
-    graph._build_task_runner_agent(model, [bash], _memory_store(tmp_path))
-    graph._build_memory_patcher_agent(model, [bash])
+    graph._build_proposal_agent(model, [execute])
+    graph._build_director_agent(model, [execute])
+    graph._build_fast_director_agent(model, [execute])
+    graph._build_task_runner_agent(model, [execute], _memory_store(tmp_path))
+    graph._build_memory_patcher_agent(model, [execute])
 
     assert len(captured) == 5
 

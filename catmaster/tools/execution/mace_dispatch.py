@@ -48,7 +48,7 @@ class MaceRelaxInput(BaseModel):
 
     structure_file: str = Field(
         ...,
-        description="Input structure file with lattice information (Supports POSCAR/CIF, xyz files are NOT supported).",
+        description="Input periodic structure file with lattice information (supports POSCAR/CONTCAR/.vasp/.poscar/.cif; xyz files are NOT supported).",
     )
     output_root: Optional[str] = Field(
         None,
@@ -83,7 +83,7 @@ class MaceRelaxBatchInput(BaseModel):
 
     input_dir: str = Field(
         ...,
-        description="Root directory containing structure files with lattice (POSCAR/CIF).",
+        description="Root directory containing periodic structure files with lattice (POSCAR/CONTCAR/.vasp/.poscar/.cif).",
     )
     output_root: str = Field(
         ...,
@@ -114,6 +114,10 @@ class MaceRelaxBatchInput(BaseModel):
         False,
         description="Enable dispersion correction in mace_mp. Default: false.",
     )
+    default_dtype: Literal["float32", "float64"] = Field(
+        "float64",
+        description="Floating-point precision passed to the MACE calculator. Keep the default float64 for geometry optimization unless a cheaper float32 screening pass is explicitly intended.",
+    )
     relax_lattice: bool = Field(
         False,
         description="Whether to relax lattice/cell together with atomic positions via ASE FrechetCellFilter.",
@@ -126,7 +130,7 @@ class MaceSPBatchInput(BaseModel):
 
     input_dir: str = Field(
         ...,
-        description="Input directory containing structures (POSCAR/CONTCAR/CIF/VASP).",
+        description="Input directory containing periodic structures (POSCAR/CONTCAR/.vasp/.poscar/.cif).",
     )
     output_root: str = Field(
         ...,
@@ -147,6 +151,10 @@ class MaceSPBatchInput(BaseModel):
     dispersion: bool = Field(
         False,
         description="Enable dispersion correction.",
+    )
+    default_dtype: Literal["float32", "float64"] = Field(
+        "float64",
+        description="Floating-point precision passed to the MACE calculator. float64 is the default conservative choice; use float32 only when a cheaper screening pass is acceptable.",
     )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 
@@ -468,7 +476,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if not structures:
         _fail(
             "mace_relax_batch",
-            message="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+            message="No structure files found in input_dir (expected POSCAR/CONTCAR/.vasp/.poscar/.cif files).",
             error_code="no_structures",
         )
 
@@ -512,6 +520,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "model": model_arg,
         "head": head_arg,
         "dispersion": "true" if dispersion else "false",
+        "default_dtype": params.default_dtype,
         "relax_lattice": "true" if relax_lattice else "false",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
@@ -594,6 +603,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "model_asset_rel": model_spec.asset_model_rel,
         "head": head,
         "dispersion": dispersion,
+        "default_dtype": params.default_dtype,
         "relax_lattice": relax_lattice,
         **collect_info,
     }
@@ -662,7 +672,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if not structures:
         _fail(
             "mace_sp_batch",
-            message="No structure files found in input_dir (expected POSCAR/CONTCAR/CIF/VASP files).",
+            message="No structure files found in input_dir (expected POSCAR/CONTCAR/.vasp/.poscar/.cif files).",
             error_code="no_structures",
         )
 
@@ -701,6 +711,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "model": model_arg,
         "head": head_arg,
         "dispersion": "true" if dispersion else "false",
+        "default_dtype": params.default_dtype,
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
@@ -782,6 +793,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "model_asset_rel": model_spec.asset_model_rel,
         "head": head,
         "dispersion": dispersion,
+        "default_dtype": params.default_dtype,
         **collect_info,
     }
     lines = [

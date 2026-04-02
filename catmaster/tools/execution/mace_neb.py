@@ -31,6 +31,31 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 _IMAGE_FILE_RE = re.compile(r"^(?P<idx>\d{2})(?P<ext>\.(vasp|poscar|cif))$", re.IGNORECASE)
 
 
+class AutoNebOptions(BaseModel):
+    """Optional AutoNEB tuning knobs kept under one nested field to keep the top-level schema compact."""
+
+    target_images: Optional[int] = Field(
+        None,
+        ge=3,
+        description="Optional AutoNEB total-image target including endpoints. Omit to use the built-in heuristic.",
+    )
+    n_simul: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Optional AutoNEB sub-NEB window size. Omit to use the built-in heuristic.",
+    )
+    space_energy_ratio: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description="AutoNEB image-insertion balance between spacing and energy resolution.",
+    )
+    interpolate_method: Literal["idpp", "linear"] = Field(
+        "idpp",
+        description="Interpolation method used by AutoNEB when inserting new images.",
+    )
+
+
 class MaceNebBatchInput(BaseModel):
     """[mace/execute] Submit MACE NEB jobs through DPDispatcher from explicit image-tree task directories."""
 
@@ -40,7 +65,8 @@ class MaceNebBatchInput(BaseModel):
             "Task root for MACE NEB image trees. Two modes are supported: "
             "(1) single-task mode: input_root itself contains numbered image files such as 00.vasp, 01.vasp, ...; "
             "(2) batch mode: input_root contains task subdirectories, each with numbered image files. "
-            "Nested task directories deeper than one level are forbidden."
+            "Nested task directories deeper than one level are forbidden. "
+            "In batch mode, loose root-level files such as batch summaries or notes are ignored."
         ),
     )
     output_root: str = Field(
@@ -52,9 +78,22 @@ class MaceNebBatchInput(BaseModel):
     )
     fmax: float = Field(0.05, gt=0, description="NEB optimizer force threshold in eV/Angstrom.")
     steps: int = Field(300, ge=1, description="Maximum FIRE optimization steps.")
+    mode: Literal["plain", "autoneb"] = Field(
+        "plain",
+        description=(
+            "Path optimization mode. plain runs one standard NEB over the supplied image tree; "
+            "autoneb runs ASE AutoNEB and may insert extra images automatically."
+        ),
+    )
+    autoneb: AutoNebOptions = Field(
+        default_factory=AutoNebOptions,
+        description="Optional AutoNEB tuning block. Used only when mode='autoneb'.",
+    )
     climb: bool = Field(
         False,
-        description="Enable climbing-image NEB. Defaults to plain NEB for coarse convergence; set true for CI-NEB refinement.",
+        description=(
+            "Enable climbing-image refinement. In plain mode this runs CI-NEB; in autoneb mode this enables the final CI-NEB stage."
+        ),
     )
     model: str = Field(
         "mh-1",
@@ -66,6 +105,10 @@ class MaceNebBatchInput(BaseModel):
     )
     head: Optional[str] = Field("omat_pbe", description="Model head for multi-head models; use empty string to disable.")
     dispersion: bool = Field(False, description="Enable dispersion correction when supported by the underlying calculator.")
+    default_dtype: Literal["float32", "float64"] = Field(
+        "float64",
+        description="Floating-point precision passed to the MACE calculator. Keep the default float64 for NEB/path optimization unless a throughput-oriented float32 run is explicitly acceptable.",
+    )
     overwrite: bool = Field(False, description="If true, overwrite existing per-task output directories.")
 
 
@@ -138,14 +181,15 @@ def _discover_task_dirs(input_root: Path) -> tuple[list[Path], bool]:
     if _is_task_dir(input_root):
         return [input_root], True
     child_dirs = sorted(path for path in input_root.iterdir() if path.is_dir())
+    root_indexed_images = [path.name for path in sorted(input_root.iterdir()) if _parse_image_file(path) is not None]
+    if child_dirs and root_indexed_images:
+        raise ValueError(
+            "input_root mixes batch task subdirectories with root-level numbered image files. "
+            "Choose exactly one layout: either a single flat image tree or a batch root containing only task directories."
+        )
     if not child_dirs:
         raise ValueError(
             "input_root is neither a MACE NEB task directory nor a directory of task subdirectories."
-        )
-    stray_files = sorted(path.name for path in input_root.iterdir() if path.is_file())
-    if stray_files:
-        raise ValueError(
-            f"Batch MACE NEB input_root must contain only task directories. Unexpected files: {', '.join(stray_files[:5])}"
         )
     task_dirs: list[Path] = []
     for child in child_dirs:
@@ -263,10 +307,16 @@ def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "output_root": "output",
         "fmax": params.fmax,
         "steps": params.steps,
+        "mode": params.mode,
+        "autoneb_target_images": params.autoneb.target_images or 0,
+        "autoneb_n_simul": params.autoneb.n_simul or 0,
+        "autoneb_space_energy_ratio": params.autoneb.space_energy_ratio,
+        "autoneb_interpolate_method": params.autoneb.interpolate_method,
         "climb": "true" if params.climb else "false",
         "model": shlex.quote(model_spec.command_arg),
         "head": shlex.quote(head or ""),
         "dispersion": "true" if params.dispersion else "false",
+        "default_dtype": params.default_dtype,
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
@@ -343,6 +393,10 @@ def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "model_source_rel": model_spec.source_rel,
         "model_asset_rel": model_spec.asset_model_rel,
         "head": head,
+        "dispersion": bool(params.dispersion),
+        "default_dtype": params.default_dtype,
+        "mode": params.mode,
+        "autoneb": params.autoneb.model_dump(),
         "climb": params.climb,
         "fmax": params.fmax,
         "steps": params.steps,
@@ -364,4 +418,4 @@ def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     }
 
 
-__all__ = ["MaceNebBatchInput", "mace_neb_batch", "_resolve_local_model"]
+__all__ = ["AutoNebOptions", "MaceNebBatchInput", "mace_neb_batch", "_resolve_local_model"]

@@ -6,11 +6,12 @@ import csv
 import json
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 
 _IMAGE_SUFFIXES = {".vasp", ".poscar", ".cif"}
+_AUTONEB_TARGET_TOTAL_IMAGES = 7
 
 
 def _json_ready(value: Any) -> Any:
@@ -74,10 +75,11 @@ def _list_task_image_files(task_dir: Path) -> list[Path]:
 
 def _discover_task_dirs(input_root: Path) -> list[Path]:
     child_dirs = sorted(path for path in input_root.iterdir() if path.is_dir())
-    stray_files = sorted(path.name for path in input_root.iterdir() if path.is_file())
-    if stray_files:
+    root_indexed_images = [path.name for path in sorted(input_root.iterdir()) if _parse_image_file(path) is not None]
+    if child_dirs and root_indexed_images:
         raise ValueError(
-            f"Batch MACE NEB input root must contain only task directories. Unexpected files: {', '.join(stray_files[:5])}"
+            "input root mixes batch task subdirectories with root-level numbered image files. "
+            "Choose exactly one layout: either a single flat image tree or a batch root containing only task directories."
         )
     if not child_dirs:
         raise ValueError("input root contains no task directories")
@@ -158,10 +160,169 @@ def _make_calculator(*, model: str, head: Optional[str], dispersion: bool, devic
     return mace_mp(**kwargs), "pretrained", model_text
 
 
-def _run_task(
+def _freeze_single_point_results(atoms, *, energy: float, forces: np.ndarray) -> None:
+    from ase.calculators.singlepoint import SinglePointCalculator
+
+    atoms.calc = SinglePointCalculator(atoms, energy=energy, forces=forces)
+
+
+def _downgrade_runtime_calculator(atoms) -> None:
+    calc = getattr(atoms, "calc", None)
+    if calc is None:
+        return
+    if type(calc).__name__ == "SinglePointCalculator":
+        return
+    results = getattr(calc, "results", {}) or {}
+    energy = results.get("energy")
+    forces = results.get("forces")
+    if energy is not None and forces is not None:
+        _freeze_single_point_results(atoms, energy=float(energy), forces=np.asarray(forces, dtype=float))
+        return
+    atoms.calc = None
+
+
+def _evaluate_endpoint_single_points(images: list[Any], *, calc_factory) -> None:
+    for idx in (0, len(images) - 1):
+        atoms = images[idx]
+        calc = calc_factory()
+        atoms.calc = calc
+        energy = float(atoms.get_potential_energy())
+        forces = np.asarray(atoms.get_forces(), dtype=float)
+        _freeze_single_point_results(atoms, energy=energy, forces=forces)
+
+
+def _write_final_image_files(images: list[Any], *, output_dir: Path) -> list[str]:
+    from ase.io import write
+
+    final_image_files: list[str] = []
+    for idx, atoms in enumerate(images):
+        final_path = output_dir / f"{idx:02d}.vasp"
+        write(str(final_path), atoms, format="vasp", direct=False, vasp5=True)
+        final_image_files.append(final_path.name)
+    return final_image_files
+
+
+def _collect_profile_rows(images: list[Any]) -> tuple[Any, list[dict[str, Any]]]:
+    from ase.utils.forcecurve import fit_images
+
+    forcefit = fit_images(images)
+    rows: list[dict[str, Any]] = []
+    for idx, atoms in enumerate(images):
+        forces = np.asarray(atoms.get_forces(), dtype=float)
+        norms = np.linalg.norm(forces, axis=1)
+        rows.append(
+            {
+                "image_index": idx,
+                "path_A": float(forcefit.path[idx]),
+                "energy_eV": float(atoms.get_potential_energy()),
+                "max_force_eV_per_A": float(norms.max()) if norms.size else 0.0,
+                "rms_force_eV_per_A": float(np.sqrt(np.mean(norms**2))) if norms.size else 0.0,
+            }
+        )
+    reference = rows[0]["energy_eV"]
+    for row in rows:
+        row["relative_energy_eV"] = row["energy_eV"] - reference
+    return forcefit, rows
+
+
+def _write_profile_outputs(*, rows: list[dict[str, Any]], forcefit: Any, energies_csv: Path, profile_png: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    with energies_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "image_index",
+                "path_A",
+                "energy_eV",
+                "relative_energy_eV",
+                "max_force_eV_per_A",
+                "rms_force_eV_per_A",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
+    forcefit.plot(ax=ax)
+    fig.tight_layout()
+    fig.savefig(profile_png)
+    plt.close(fig)
+
+
+def _compute_projected_neb_force(images: list[Any], *, climb: bool) -> float | None:
+    try:
+        from ase.mep import NEB
+
+        neb = NEB(images, climb=climb, allow_shared_calculator=True)
+        neb_forces = neb.get_forces()
+        if neb_forces.size:
+            return float(np.linalg.norm(neb_forces, axis=1).max())
+    except Exception:
+        return None
+    return 0.0
+
+
+def _summarize_run(
     *,
-    task_dir: Path,
+    images: list[Any],
     output_dir: Path,
+    summary: dict[str, Any],
+    climb: bool,
+    artifact_extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from ase.mep import NEBTools
+
+    energies_csv = output_dir / "image_energies.csv"
+    profile_png = output_dir / "profile.png"
+    final_image_files = _write_final_image_files(images, output_dir=output_dir)
+    forcefit, rows = _collect_profile_rows(images)
+    _write_profile_outputs(rows=rows, forcefit=forcefit, energies_csv=energies_csv, profile_png=profile_png)
+
+    tools = NEBTools(images)
+    fit_barrier, endpoint_delta = tools.get_barrier(fit=True, raw=False)
+    raw_barrier, _ = tools.get_barrier(fit=False, raw=False)
+    max_image = max(rows, key=lambda row: row["energy_eV"])
+    max_neb_force = _compute_projected_neb_force(images, climb=climb)
+    if max_neb_force is None:
+        max_neb_force = max((row["max_force_eV_per_A"] for row in rows), default=0.0)
+
+    artifacts = {
+        "summary_rel": "summary.json",
+        "energies_csv_rel": "image_energies.csv",
+        "profile_png_rel": "profile.png",
+        "final_image_files": final_image_files,
+    }
+    if artifact_extras:
+        artifacts.update(artifact_extras)
+
+    summary.update(
+        {
+            "status": "completed",
+            "results": {
+                "barrier_eV": float(fit_barrier),
+                "barrier_raw_image_eV": float(raw_barrier),
+                "endpoint_energy_difference_eV": float(endpoint_delta),
+                "highest_energy_image_index": int(max_image["image_index"]),
+                "highest_energy_eV": float(max_image["energy_eV"]),
+                "number_of_images_total": len(images),
+                "number_of_intermediate_images": max(0, len(images) - 2),
+                "converged": bool(summary.get("results", {}).get("converged", True)),
+                "max_neb_force_eV_per_A": float(max_neb_force),
+            },
+            "artifacts": artifacts,
+        }
+    )
+    _write_json(output_dir / "summary.json", summary)
+    return summary
+
+
+def _run_plain_neb(
+    *,
+    images: list[Any],
+    summary: dict[str, Any],
+    optimizer_log: Path,
+    optimizer_traj: Path,
     model: str,
     head: Optional[str],
     dispersion: bool,
@@ -170,17 +331,210 @@ def _run_task(
     fmax: float,
     steps: int,
     climb: bool,
+) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
+    import torch
+    from ase.mep import NEB
+    from ase.optimize import FIRE
+
+    device = _resolve_device(device_preference)
+    calc, model_source_kind, model_source_ref = _make_calculator(
+        model=model,
+        head=head,
+        dispersion=dispersion,
+        device=device,
+        default_dtype=default_dtype,
+    )
+    summary["environment"] = {
+        "device": device,
+        "torch_version": torch.__version__,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    }
+    summary["method"]["model_source_kind"] = model_source_kind
+    summary["method"]["model_source_ref"] = model_source_ref
+
+    neb = NEB(images, climb=climb, allow_shared_calculator=True)
+    for atoms in images:
+        atoms.set_constraint(copy.deepcopy(images[0].constraints))
+        atoms.calc = calc
+
+    optimizer = FIRE(
+        neb,
+        trajectory=str(optimizer_traj),
+        logfile=str(optimizer_log),
+        dt=0.1,
+        maxstep=0.2,
+    )
+    converged = optimizer.run(fmax=fmax, steps=steps)
+    summary["results"] = {"converged": bool(converged)}
+    artifact_extras = {
+        "optimizer_log_rel": optimizer_log.name,
+        "optimizer_traj_rel": optimizer_traj.name,
+    }
+    return images, summary, artifact_extras
+
+
+def _autoneb_defaults(initial_total_images: int) -> tuple[int, int]:
+    target_total = max(int(initial_total_images), _AUTONEB_TARGET_TOTAL_IMAGES)
+    initial_window = max(1, initial_total_images - 2)
+    n_simul = max(1, min(4, target_total - 2, initial_window))
+    return target_total, n_simul
+
+
+def _resolve_autoneb_settings(
+    *,
+    initial_total_images: int,
+    target_total_images: int,
+    n_simul: int,
+    space_energy_ratio: float,
+) -> tuple[int, int, float]:
+    auto_target, auto_n_simul = _autoneb_defaults(initial_total_images)
+    resolved_target = auto_target if target_total_images <= 0 else int(target_total_images)
+    if resolved_target < initial_total_images:
+        raise ValueError(
+            f"AutoNEB target_images ({resolved_target}) cannot be smaller than the supplied image count ({initial_total_images})."
+        )
+    resolved_n_simul = auto_n_simul if n_simul <= 0 else int(n_simul)
+    max_window = max(1, resolved_target - 2)
+    if resolved_n_simul > max_window:
+        raise ValueError(
+            f"AutoNEB n_simul ({resolved_n_simul}) cannot exceed target_images-2 ({max_window})."
+        )
+    resolved_ratio = float(space_energy_ratio)
+    if not 0.0 <= resolved_ratio <= 1.0:
+        raise ValueError(f"AutoNEB space_energy_ratio must be within [0, 1]. Got {resolved_ratio}.")
+    return resolved_target, resolved_n_simul, resolved_ratio
+
+
+def _run_autoneb(
+    *,
+    images: list[Any],
+    output_dir: Path,
+    summary: dict[str, Any],
+    model: str,
+    head: Optional[str],
+    dispersion: bool,
+    device_preference: str,
+    default_dtype: str,
+    fmax: float,
+    steps: int,
+    climb: bool,
+    target_total_images: int,
+    n_simul: int,
+    space_energy_ratio: float,
+    interpolate_method: Literal["idpp", "linear"],
+) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
+    import torch
+    from ase.io import write
+    from ase.mep.autoneb import AutoNEB
+    from ase.optimize import FIRE
+
+    device = _resolve_device(device_preference)
+    probe_calc, model_source_kind, model_source_ref = _make_calculator(
+        model=model,
+        head=head,
+        dispersion=dispersion,
+        device=device,
+        default_dtype=default_dtype,
+    )
+    _ = probe_calc
+    summary["environment"] = {
+        "device": device,
+        "torch_version": torch.__version__,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    }
+    summary["method"]["model_source_kind"] = model_source_kind
+    summary["method"]["model_source_ref"] = model_source_ref
+
+    calc_pool: list[Any] = []
+    controller_ref: dict[str, Any] = {}
+
+    def _calc_factory():
+        calc, _kind, _ref = _make_calculator(
+            model=model,
+            head=head,
+            dispersion=dispersion,
+            device=device,
+            default_dtype=default_dtype,
+        )
+        return calc
+
+    def _attach_calculators(target_images: list[Any]) -> None:
+        controller = controller_ref.get("controller")
+        if controller is not None:
+            for atoms in controller.all_images:
+                _downgrade_runtime_calculator(atoms)
+        while len(calc_pool) < len(target_images):
+            calc_pool.append(_calc_factory())
+        for atoms, calc in zip(target_images, calc_pool):
+            atoms.calc = calc
+
+    _evaluate_endpoint_single_points(images, calc_factory=_calc_factory)
+
+    autoneb_root = output_dir / "autoneb"
+    autoneb_root.mkdir(parents=True, exist_ok=True)
+    prefix = autoneb_root / "image-"
+    for idx, atoms in enumerate(images):
+        write(str(autoneb_root / f"image-{idx:03d}.traj"), atoms)
+
+    target_total_images, n_simul, space_energy_ratio = _resolve_autoneb_settings(
+        initial_total_images=len(images),
+        target_total_images=target_total_images,
+        n_simul=n_simul,
+        space_energy_ratio=space_energy_ratio,
+    )
+    summary["method"]["autoneb_n_simul"] = n_simul
+    summary["method"]["autoneb_target_total_images"] = target_total_images
+    summary["method"]["autoneb_space_energy_ratio"] = float(space_energy_ratio)
+    summary["method"]["autoneb_interpolate_method"] = interpolate_method
+
+    autoneb = AutoNEB(
+        attach_calculators=_attach_calculators,
+        prefix=str(prefix),
+        n_simul=n_simul,
+        n_max=target_total_images,
+        fmax=fmax,
+        maxsteps=steps,
+        climb=climb,
+        optimizer=FIRE,
+        parallel=False,
+        space_energy_ratio=space_energy_ratio,
+        interpolate_method=interpolate_method,
+    )
+    controller_ref["controller"] = autoneb
+    final_images = autoneb.run()
+    summary["results"] = {"converged": True}
+    artifact_extras = {
+        "autoneb_prefix_rel": str(prefix.relative_to(output_dir)),
+        "autoneb_iter_dir_rel": str((autoneb_root / "AutoNEB_iter").relative_to(output_dir)),
+    }
+    return final_images, summary, artifact_extras
+
+
+def _run_task(
+    *,
+    task_dir: Path,
+    output_dir: Path,
+    mode: Literal["plain", "autoneb"],
+    model: str,
+    head: Optional[str],
+    dispersion: bool,
+    device_preference: str,
+    default_dtype: str,
+    fmax: float,
+    steps: int,
+    climb: bool,
+    autoneb_target_images: int,
+    autoneb_n_simul: int,
+    autoneb_space_energy_ratio: float,
+    autoneb_interpolate_method: Literal["idpp", "linear"],
 ) -> dict[str, Any]:
     import matplotlib
 
     matplotlib.use("Agg")
 
-    import matplotlib.pyplot as plt
-    import torch
-    from ase.io import read, write
-    from ase.mep import NEB, NEBTools
-    from ase.optimize import FIRE
-    from ase.utils.forcecurve import fit_images
+    from ase.io import read
 
     image_paths = _list_task_image_files(task_dir)
     images = [read(str(path)) for path in image_paths]
@@ -190,14 +544,13 @@ def _run_task(
     summary_path = output_dir / "summary.json"
     optimizer_log = output_dir / "optimizer.log"
     optimizer_traj = output_dir / "neb.traj"
-    energies_csv = output_dir / "image_energies.csv"
-    profile_png = output_dir / "profile.png"
-
     summary: dict[str, Any] = {
         "status": "started",
         "input_task": str(task_dir),
         "method": {
+            "mode": mode,
             "optimizer": "FIRE",
+            "controller": ("AutoNEB" if mode == "autoneb" else "NEB"),
             "climbing_image": climb,
             "optimizer_fmax_eV_per_A": fmax,
             "optimizer_steps": steps,
@@ -205,123 +558,53 @@ def _run_task(
             "head": head,
             "model_request": model,
             "default_dtype": default_dtype,
-            "number_of_images_total": len(images),
-            "number_of_intermediate_images": max(0, len(images) - 2),
+            "number_of_input_images_total": len(images),
+            "number_of_input_intermediate_images": max(0, len(images) - 2),
         },
     }
     _write_json(summary_path, summary)
 
     try:
-        device = _resolve_device(device_preference)
-        calc, model_source_kind, model_source_ref = _make_calculator(
-            model=model,
-            head=head,
-            dispersion=dispersion,
-            device=device,
-            default_dtype=default_dtype,
-        )
-        summary["environment"] = {
-            "device": device,
-            "torch_version": torch.__version__,
-            "cuda_available": bool(torch.cuda.is_available()),
-            "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-        }
-        summary["method"]["model_source_kind"] = model_source_kind
-        summary["method"]["model_source_ref"] = model_source_ref
-
-        neb = NEB(images, climb=climb, allow_shared_calculator=True)
-
-        for atoms in images:
-            atoms.set_constraint(copy.deepcopy(images[0].constraints))
-            atoms.calc = calc
-
-        optimizer = FIRE(
-            neb,
-            trajectory=str(optimizer_traj),
-            logfile=str(optimizer_log),
-            dt=0.1,
-            maxstep=0.2,
-        )
-        converged = optimizer.run(fmax=fmax, steps=steps)
-
-        final_image_files: list[str] = []
-        for idx, atoms in enumerate(images):
-            final_path = output_dir / f"{idx:02d}.vasp"
-            write(str(final_path), atoms, format="vasp", direct=False, vasp5=True)
-            final_image_files.append(str(final_path.name))
-
-        forcefit = fit_images(images)
-        rows: list[dict[str, Any]] = []
-        for idx, atoms in enumerate(images):
-            forces = atoms.get_forces()
-            norms = np.linalg.norm(forces, axis=1)
-            rows.append(
-                {
-                    "image_index": idx,
-                    "path_A": float(forcefit.path[idx]),
-                    "energy_eV": float(atoms.get_potential_energy()),
-                    "max_force_eV_per_A": float(norms.max()),
-                    "rms_force_eV_per_A": float(np.sqrt(np.mean(norms**2))),
-                }
+        if mode == "autoneb":
+            final_images, summary, artifact_extras = _run_autoneb(
+                images=images,
+                output_dir=output_dir,
+                summary=summary,
+                model=model,
+                head=head,
+                dispersion=dispersion,
+                device_preference=device_preference,
+                default_dtype=default_dtype,
+                fmax=fmax,
+                steps=steps,
+                climb=climb,
+                target_total_images=autoneb_target_images,
+                n_simul=autoneb_n_simul,
+                space_energy_ratio=autoneb_space_energy_ratio,
+                interpolate_method=autoneb_interpolate_method,
             )
-        reference = rows[0]["energy_eV"]
-        for row in rows:
-            row["relative_energy_eV"] = row["energy_eV"] - reference
-
-        with energies_csv.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=[
-                    "image_index",
-                    "path_A",
-                    "energy_eV",
-                    "relative_energy_eV",
-                    "max_force_eV_per_A",
-                    "rms_force_eV_per_A",
-                ],
+        else:
+            final_images, summary, artifact_extras = _run_plain_neb(
+                images=images,
+                summary=summary,
+                optimizer_log=optimizer_log,
+                optimizer_traj=optimizer_traj,
+                model=model,
+                head=head,
+                dispersion=dispersion,
+                device_preference=device_preference,
+                default_dtype=default_dtype,
+                fmax=fmax,
+                steps=steps,
+                climb=climb,
             )
-            writer.writeheader()
-            writer.writerows(rows)
-
-        fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
-        forcefit.plot(ax=ax)
-        fig.tight_layout()
-        fig.savefig(profile_png)
-        plt.close(fig)
-
-        tools = NEBTools(images)
-        fit_barrier, endpoint_delta = tools.get_barrier(fit=True, raw=False)
-        raw_barrier, _ = tools.get_barrier(fit=False, raw=False)
-        max_image = max(rows, key=lambda row: row["energy_eV"])
-        neb_forces = neb.get_forces()
-        max_neb_force = float(np.linalg.norm(neb_forces, axis=1).max()) if neb_forces.size else 0.0
-
-        summary.update(
-            {
-                "status": "completed",
-                "results": {
-                    "barrier_eV": float(fit_barrier),
-                    "barrier_raw_image_eV": float(raw_barrier),
-                    "endpoint_energy_difference_eV": float(endpoint_delta),
-                    "highest_energy_image_index": int(max_image["image_index"]),
-                    "highest_energy_eV": float(max_image["energy_eV"]),
-                    "number_of_images_total": len(images),
-                    "number_of_intermediate_images": max(0, len(images) - 2),
-                    "converged": bool(converged),
-                    "max_neb_force_eV_per_A": max_neb_force,
-                },
-                "artifacts": {
-                    "summary_rel": "summary.json",
-                    "optimizer_log_rel": "optimizer.log",
-                    "optimizer_traj_rel": "neb.traj",
-                    "energies_csv_rel": "image_energies.csv",
-                    "profile_png_rel": "profile.png",
-                    "final_image_files": final_image_files,
-                },
-            }
+        return _summarize_run(
+            images=final_images,
+            output_dir=output_dir,
+            summary=summary,
+            climb=climb,
+            artifact_extras=artifact_extras,
         )
-        _write_json(summary_path, summary)
-        return summary
     except Exception as exc:
         summary.update(
             {
@@ -343,6 +626,11 @@ def run_mace_neb_batch(
     output_root: str,
     fmax: float,
     steps: int,
+    mode: Literal["plain", "autoneb"],
+    autoneb_target_images: int,
+    autoneb_n_simul: int,
+    autoneb_space_energy_ratio: float,
+    autoneb_interpolate_method: Literal["idpp", "linear"],
     climb: bool,
     model: str,
     head: Optional[str],
@@ -365,6 +653,7 @@ def run_mace_neb_batch(
             summary = _run_task(
                 task_dir=task_dir,
                 output_dir=task_output,
+                mode=mode,
                 model=model,
                 head=head,
                 dispersion=dispersion,
@@ -372,6 +661,10 @@ def run_mace_neb_batch(
                 default_dtype=default_dtype,
                 fmax=fmax,
                 steps=steps,
+                autoneb_target_images=autoneb_target_images,
+                autoneb_n_simul=autoneb_n_simul,
+                autoneb_space_energy_ratio=autoneb_space_energy_ratio,
+                autoneb_interpolate_method=autoneb_interpolate_method,
                 climb=climb,
             )
             task_results.append(
@@ -401,6 +694,12 @@ def run_mace_neb_batch(
         "output_root": str(output_root_path),
         "task_count": len(task_dirs),
         "optimizer": "FIRE",
+        "mode": mode,
+        "climb": climb,
+        "autoneb_target_images": autoneb_target_images,
+        "autoneb_n_simul": autoneb_n_simul,
+        "autoneb_space_energy_ratio": autoneb_space_energy_ratio,
+        "autoneb_interpolate_method": autoneb_interpolate_method,
         "model": model,
         "head": head,
         "dispersion": dispersion,
@@ -419,10 +718,16 @@ def _cli() -> None:
     parser.add_argument("--output_root", required=True, help="Output root directory")
     parser.add_argument("--fmax", type=float, default=0.05)
     parser.add_argument("--steps", type=int, default=300)
+    parser.add_argument("--mode", choices=("plain", "autoneb"), default="plain")
+    parser.add_argument("--autoneb_target_images", type=int, default=0)
+    parser.add_argument("--autoneb_n_simul", type=int, default=0)
+    parser.add_argument("--autoneb_space_energy_ratio", type=float, default=0.5)
+    parser.add_argument("--autoneb_interpolate_method", choices=("idpp", "linear"), default="idpp")
     parser.add_argument("--climb", type=_parse_bool, default=False)
     parser.add_argument("--model", default="mh-1")
     parser.add_argument("--head", default="omat_pbe")
     parser.add_argument("--dispersion", type=_parse_bool, default=False)
+    parser.add_argument("--default_dtype", default="float64", choices=("float32", "float64"))
     args = parser.parse_args()
     head = args.head.strip() or None
     summary = run_mace_neb_batch(
@@ -430,10 +735,16 @@ def _cli() -> None:
         output_root=args.output_root,
         fmax=args.fmax,
         steps=args.steps,
+        mode=args.mode,
+        autoneb_target_images=args.autoneb_target_images,
+        autoneb_n_simul=args.autoneb_n_simul,
+        autoneb_space_energy_ratio=args.autoneb_space_energy_ratio,
+        autoneb_interpolate_method=args.autoneb_interpolate_method,
         climb=args.climb,
         model=args.model,
         head=head,
         dispersion=args.dispersion,
+        default_dtype=args.default_dtype,
     )
     print(json.dumps(summary, indent=2))
 

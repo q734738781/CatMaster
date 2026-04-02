@@ -3,7 +3,7 @@ name: transition-state-neb
 description: Use this skill for transition-state and NEB workflows, including image generation, NEB VASP input setup, official VASP improved-dimer preparation, reaction-mode guessing, and execution/evidence checks for pathway calculations.
 license: project-local
 compatibility: local
-allowed-tools: "make_neb_geometry vasp_neb_prepare vasp_dimer_prepare make_dimer_mode_from_neb make_dimer_mode_from_mace vasp_execute_batch mace_neb_batch analyze_vasp_neb_results"
+allowed-tools: "estimate_neb_image_count make_neb_geometry vasp_neb_prepare vasp_dimer_prepare make_dimer_mode_from_neb make_dimer_mode_from_mace vasp_execute_batch mace_neb_batch analyze_vasp_neb_results"
 ---
 
 # transition-state-neb
@@ -13,13 +13,15 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 
 ## Quick Start
 1. First choose the narrow branch: standard NEB barrier workflow, setup-only NEB, dimer-from-NEB, or dimer-from-mode.
-2. Validate the initial and final structures before generating images.
-3. Use `make_neb_geometry` to create the flat numbered image-file tree.
-4. Use `vasp_neb_prepare` to assemble the NEB root with canonical support files and NEB-critical INCAR settings.
-5. If switching from NEB to an official VASP improved dimer refinement, derive a raw reaction-direction text block first, then feed it into `vasp_dimer_prepare`.
-6. Run the resulting NEB or dimer folders through the standard VASP batch execution path.
+2. Validate the initial and final structures before generating images, including atom-order consistency and whether the path is really one local elementary step.
+3. Estimate a reasonable intermediate-image count before dispatch instead of defaulting blindly, preferably with `estimate_neb_image_count`.
+4. Use `make_neb_geometry` to create the flat numbered image-file tree.
+5. Use `vasp_neb_prepare` to assemble the NEB root with canonical support files and NEB-critical INCAR settings.
+6. If switching from NEB to an official VASP improved dimer refinement, derive a raw reaction-direction text block first, then feed it into `vasp_dimer_prepare`.
+7. Run the resulting NEB or dimer folders through the standard VASP batch execution path.
 
 ## Allowed tools
+- `estimate_neb_image_count`
 - `make_neb_geometry`
 - `vasp_neb_prepare`
 - `vasp_dimer_prepare`
@@ -38,6 +40,16 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 
 ### 1. Build the image set from a valid endpoint pair
 - `make_neb_geometry` validates the endpoint pair before interpolation.
+- Prefer `estimate_neb_image_count` before choosing `n_images` so the count is tied to the actual periodic endpoint displacement rather than visual guesswork.
+- The initial and final endpoints must use the same atom ordering. Do not assume the interpolator will repair reordered atoms for you.
+- Check whether the pathway is one local elementary step or an artificially long migration. A single NEB is usually the wrong contract for long-range diffusion or transport across several equivalent sites.
+- If the start and end structures differ by a long migration, remodel the final state onto the nearest symmetry-equivalent destination and compute that primitive hop first instead of forcing one very long band.
+- When no better prior estimate exists, use this practical first guess for the intermediate-image count:
+  `n_images ≈ ceil(sqrt(sum_i ||Δr_i||^2) / 0.8 Å)`, where `Δr_i` is the per-atom displacement after the intended endpoint matching/PBC convention is fixed.
+- Under periodic boundary conditions, compute `Δr_i` with the same minimum-image convention (`mic=true`) you intend to use for interpolation. Do not estimate from wrapped fractional coordinates by eye.
+- For routine local events, prefer about 4-8 intermediate images unless the displacement heuristic gives a stronger reason.
+- If that estimate asks for more than about 8 intermediate images, stop and re-check whether the task is really one local event or an unrelated long migration that should be decomposed.
+- If the periodic root-sum-squared displacement exceeds about 6 Å, treat that as a warning that the path is probably too long for one primitive NEB.
 - It writes a flat numbered image-file tree (`00.vasp`, `01.vasp`, ...) under `output_dir`. This is the preferred shared geometry format because it can be consumed directly by `mace_neb_batch`.
 - For high-throughput work, `make_neb_geometry` also supports `input_root/output_root` batch mode: `input_root/task0/IS.vasp + FS.vasp -> output_root/task0/00.vasp...`.
 - If `output_dir` already exists, `overwrite=true` is required to replace it.
@@ -63,6 +75,8 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 ### 4. Close the loop with barrier extraction
 - Use `analyze_vasp_neb_results` after collection to produce the barrier summary, profile CSV, and profile plot.
 - If image energies are incomplete, report partial collection rather than inferring a barrier.
+- If the energy profile shows wave-like multiple up/down oscillations instead of one localized saddle region, treat that as evidence that the band may contain one or more previously unrecognized metastable intermediates.
+- In that case, inspect the suspect images as candidate intermediate states and consider splitting the long path into shorter primitive hops through those states rather than forcing one overextended NEB.
 
 ### 5. Prepare official VASP improved-dimer jobs with a raw reaction-direction text block
 - Use `vasp_dimer_prepare` for the official VASP improved dimer method (`IBRION=44`).
@@ -94,6 +108,7 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 - The expected input contract is explicit task directories: either one task directory directly, or a batch root containing `task0/`, `task1/`, ... where each task directory contains flat numbered image files such as `00.vasp`, `01.vasp`, ...
 - Do not create deeper nested task trees under a task directory.
 - `mace_neb_batch` writes one task-level output directory per task, with final converged images as top-level `00.vasp`, `01.vasp`, ... plus a `summary.json` and shared artifacts like `image_energies.csv`, `profile.png`, and `neb.traj`.
+- For MACE-driven path optimization, keep `default_dtype=float64` by default. Only drop to `float32` when the task is explicitly a cheaper exploratory run and the reduced numerical rigor is acceptable.
 
 ## Method-critical defaults
 - Keep endpoint preparation, image generation, and execution settings scientifically consistent across the whole pathway calculation.
@@ -101,6 +116,10 @@ Use this skill to generate NEB image directories, prepare NEB-ready and dimer-re
 - If the workflow does not require dimer refinement or custom mode logic, do not use this broader skill by default; the narrower `reaction-neb-analysis` route is easier to audit.
 - Treat `plain-NEB -> CI-NEB` as the default convergence pattern for pathway searches: coarse-converge the band without climbing image first, then refine the saddle with climbing image enabled.
 - When choosing NEB interpolation counts for routine runs, prefer small image counts such as `3`, `4`, `5`, or `6` unless the pathway is clearly too sharp for that range.
+- Use the displacement-norm heuristic above when the correct image count is not obvious, rather than guessing from cell size or visual intuition alone.
+- If the heuristic suggests `>8` intermediate images, treat that as a warning sign for a non-primitive long migration and reconsider the endpoint modeling before dispatch.
+- If a computed band still develops a wave-like profile with several local minima/maxima, interpret that as a search hint for hidden intermediates and a cue to decompose the pathway.
+- Treat `default_dtype=float64` as the default for MACE geometry/path optimization. If a run intentionally uses `float32` for throughput, report that choice explicitly with the execution evidence.
 - For `CI-NEB` / climbing-image runs, prefer an odd number of intermediate images so there is a natural central image to climb.
 - For plain `NEB` without climbing image, prefer an even number of intermediate images when the path is otherwise symmetric and no single central climbing image is needed.
 - For official VASP dimer jobs, keep the electronic-structure footing aligned with the relax campaign and treat the appended dimer direction as the only special input.

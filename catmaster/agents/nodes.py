@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
 
 
 _TOOL_NAME_ALIASES = {
-    "bash_exec": "bash",
+    "bash": "execute",
+    "bash_exec": "execute",
 }
 
 

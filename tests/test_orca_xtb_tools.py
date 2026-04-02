@@ -36,7 +36,6 @@ def test_orca_prepare_single_structure_creates_input(tmp_path: Path) -> None:
                 "basis": "def2-SVP",
                 "charge": 0,
                 "multiplicity": 1,
-                "nprocs": 4,
                 "maxcore_mb": 512,
             }
         )
@@ -46,6 +45,7 @@ def test_orca_prepare_single_structure_creates_input(tmp_path: Path) -> None:
         assert "B3LYP" in inp_text
         assert "Opt" in inp_text
         assert "Freq" in inp_text
+        assert "%pal" not in inp_text
         assert "* xyzfile 0 1 input.xyz" in inp_text
 
 
@@ -66,7 +66,6 @@ def test_orca_prepare_td_uses_tddft_block_without_simple_keyword(tmp_path: Path)
                 "task": "td",
                 "method": "B3LYP",
                 "basis": "def2-SVP",
-                "nprocs": 4,
                 "maxcore_mb": 512,
                 "safe_patch": {"nroots": 3},
             }

@@ -52,6 +52,7 @@ class ToolRegistry:
             enumerate_adsorption_sites,
             place_adsorbate,
             generate_batch_adsorption_structures,
+            estimate_neb_image_count,
             make_neb_geometry,
             generate_strained_structures,
             generate_kpath,
@@ -86,6 +87,7 @@ class ToolRegistry:
             EnumerateAdsorptionSitesInput,
             PlaceAdsorbateInput,
             GenerateBatchAdsorptionStructuresInput,
+            EstimateNebImageCountInput,
             MakeNebGeometryInput,
             GenerateStrainedStructuresInput,
             GenerateKpathInput,
@@ -181,9 +183,6 @@ class ToolRegistry:
             SearchSemanticScholarInput,
         )
 
-        # File management tools
-        from catmaster.tools.misc.bash_exec import bash_exec, BashExecInput
-
         # Retrieval tools
         from catmaster.tools.retrieval.matdb import (
             mp_search_materials,
@@ -224,6 +223,7 @@ class ToolRegistry:
         self.register_tool("enumerate_adsorption_sites", enumerate_adsorption_sites, EnumerateAdsorptionSitesInput)
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
         self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
+        self.register_tool("estimate_neb_image_count", estimate_neb_image_count, EstimateNebImageCountInput)
         self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
         self.register_tool("generate_strained_structures", generate_strained_structures, GenerateStrainedStructuresInput)
         self.register_tool("generate_kpath", generate_kpath, GenerateKpathInput)
@@ -273,8 +273,6 @@ class ToolRegistry:
         self.register_tool("search_public_web", search_public_web, SearchPublicWebInput)
         self.register_tool("open_public_page", open_public_page, OpenPublicPageInput)
         self.register_tool("find_in_page", find_in_page, FindInPageInput)
-        self.register_tool("bash", bash_exec, BashExecInput)
-        self.register_alias("bash_exec", "bash")
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
         self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
         self.register_tool("mace_train", mace_train, MaceTrainInput)

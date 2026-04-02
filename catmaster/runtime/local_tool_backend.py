@@ -171,14 +171,6 @@ class LocalToolBackend(ToolBackend):
             active = dict(self._active_calls.get(toolcall_key) or {})
         if not active:
             return False
-        tool_name = str(active.get("tool_name") or "")
-        if tool_name in {"bash", "bash_exec"}:
-            try:
-                from catmaster.tools.misc.bash_exec import cancel_bash_exec_toolcall
-
-                return bool(cancel_bash_exec_toolcall(toolcall_key))
-            except Exception:
-                return False
         return False
 
     def _set_active_call(

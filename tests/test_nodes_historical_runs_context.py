@@ -74,4 +74,4 @@ def test_task_context_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path)
 
         task_ctx = _build_task_context(state, store)
 
-        assert "Allowed tools:\nbash, read_file" in task_ctx
+        assert "Allowed tools:\nexecute, read_file" in task_ctx

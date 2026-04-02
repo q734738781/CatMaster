@@ -21,7 +21,8 @@ _ROLES_KEY = "catmaster-roles"
 _LANES_KEY = "catmaster-lanes"
 _TAGS_KEY = "catmaster-tags"
 _TOOL_NAME_ALIASES = {
-    "bash_exec": "bash",
+    "bash": "execute",
+    "bash_exec": "execute",
 }
 
 

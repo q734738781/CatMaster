@@ -426,9 +426,8 @@ def _resolve_local_model(model_value: str) -> tuple[str, str, str]:
 
 
 def _build_local_mace_calculator(*, model: str, head: Optional[str], dispersion: bool, device_preference: str, default_dtype: str):
-    from huggingface_hub import hf_hub_download
     import torch
-    from mace.calculators import MACECalculator, mace_mp
+    from mace.calculators import mace_mp
 
     def _resolve_device(preference: str) -> str:
         if preference == "cpu":
@@ -441,21 +440,6 @@ def _build_local_mace_calculator(*, model: str, head: Optional[str], dispersion:
 
     device = _resolve_device(device_preference)
     model_arg, source_kind, source_ref = _resolve_local_model(model)
-    if source_kind in {"local_file", "local_dir"}:
-        if dispersion:
-            raise NotImplementedError("dispersion=True with local MACE model files/directories is not supported.")
-        kwargs: dict[str, Any] = {"model_paths": model_arg, "device": device, "default_dtype": default_dtype}
-        if head:
-            kwargs["head"] = head
-        return MACECalculator(**kwargs), {"device": device, "source_kind": source_kind, "source_ref": source_ref}
-    if model_arg == "mh-1":
-        if dispersion:
-            raise NotImplementedError("dispersion=True with mh-1 is not supported.")
-        resolved = hf_hub_download(repo_id="mace-foundations/mace-mh-1", filename="mace-mh-1.model")
-        kwargs = {"model_paths": resolved, "device": device, "default_dtype": default_dtype}
-        if head:
-            kwargs["head"] = head
-        return MACECalculator(**kwargs), {"device": device, "source_kind": "hf_mh1", "source_ref": resolved}
     kwargs = {"model": model_arg, "dispersion": dispersion, "device": device, "default_dtype": default_dtype}
     if head:
         kwargs["head"] = head

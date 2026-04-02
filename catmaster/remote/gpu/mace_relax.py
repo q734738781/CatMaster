@@ -95,6 +95,7 @@ def _run_mace_single(
     dispersion: bool,
     relax_lattice: bool,
     device: str,
+    default_dtype: str,
     calc=None,
 ) -> Dict[str, object]:
     from ase.io import read, write
@@ -112,7 +113,7 @@ def _run_mace_single(
 
     atoms = read(str(structure_path))
     if calc is None:
-        kwargs = {"model": model, "dispersion": dispersion, "device": device}
+        kwargs = {"model": model, "dispersion": dispersion, "device": device, "default_dtype": default_dtype}
         if head:
             kwargs["head"] = head
         calc = mace_mp(**kwargs)
@@ -149,6 +150,7 @@ def _run_mace_single(
         "model": model,
         "head": head,
         "dispersion": dispersion,
+        "default_dtype": default_dtype,
         "relax_lattice": relax_lattice,
         "final_energy_eV": final_energy,
         "fmax": fmax,
@@ -176,6 +178,7 @@ def run_mace_path(
     dispersion: bool = False,
     relax_lattice: bool = False,
     device: str = "auto",
+    default_dtype: str = "float64",
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
     """
@@ -204,7 +207,7 @@ def run_mace_path(
     import torch
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    kwargs = {"model": model, "dispersion": dispersion, "device": device}
+    kwargs = {"model": model, "dispersion": dispersion, "device": device, "default_dtype": default_dtype}
     if head:
         kwargs["head"] = head
     calc = mace_mp(**kwargs)
@@ -226,6 +229,7 @@ def run_mace_path(
                 dispersion=dispersion,
                 relax_lattice=relax_lattice,
                 device=device,
+                default_dtype=default_dtype,
                 calc=calc,
             )
             results.append(
@@ -244,6 +248,7 @@ def run_mace_path(
         "model": model,
         "head": head,
         "dispersion": dispersion,
+        "default_dtype": default_dtype,
         "relax_lattice": relax_lattice,
         "device": device,
         "fmax": fmax,
@@ -293,6 +298,12 @@ def _cli() -> None:
         default=False,
         help="Relax lattice/cell together with atomic positions (true|false). Default: false.",
     )
+    parser.add_argument(
+        "--default_dtype",
+        default="float64",
+        choices=("float32", "float64"),
+        help="Floating-point precision for the MACE calculator.",
+    )
     parser.add_argument("--device", default="auto", help="Device to use: auto|cpu|cuda|cuda:0")
     parser.add_argument("--output_root", required=True, help="Output root directory")
     args = parser.parse_args()
@@ -310,6 +321,7 @@ def _cli() -> None:
         dispersion=args.dispersion,
         relax_lattice=args.relax_lattice,
         device=args.device,
+        default_dtype=args.default_dtype,
         output_root=args.output_root,
     )
     print(json.dumps(result, indent=2))

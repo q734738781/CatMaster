@@ -67,8 +67,10 @@ from catmaster.tools.geometry_inputs.adsorbate_tool import (
     generate_batch_adsorption_structures,
 )
 from catmaster.tools.geometry_inputs.neb_tools import (
+    EstimateNebImageCountInput,
     MakeNebGeometryInput,
     VaspNebPrepareInput,
+    estimate_neb_image_count,
     make_neb_geometry,
     vasp_neb_prepare,
 )
@@ -111,6 +113,7 @@ __all__ = [
     "EnumerateAdsorptionSitesInput",
     "PlaceAdsorbateInput",
     "GenerateBatchAdsorptionStructuresInput",
+    "EstimateNebImageCountInput",
     "build_slab",
     "fix_atoms_by_layers",
     "fix_atoms_by_height",
@@ -136,6 +139,7 @@ __all__ = [
     "enumerate_adsorption_sites",
     "place_adsorbate",
     "generate_batch_adsorption_structures",
+    "estimate_neb_image_count",
     "MakeNebGeometryInput",
     "VaspNebPrepareInput",
     "VaspDimerPrepareInput",

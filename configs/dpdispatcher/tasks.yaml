@@ -20,7 +20,7 @@ vasp_execute_neb:
 
 mace_relax_dir:
   resources: mace_gpu
-  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice}"
+  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype}"
   forward_files:
     - "input"
     - "task_script/mace_relax.py"
@@ -30,7 +30,7 @@ mace_relax_dir:
 
 mace_sp_dir:
   resources: mace_gpu
-  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion}"
+  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
   forward_files:
     - "input"
     - "task_script/mace_sp.py"
@@ -40,7 +40,7 @@ mace_sp_dir:
 
 mace_neb_dir:
   resources: mace_gpu
-  command: "python task_script/mace_neb.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {steps} --climb {climb} --model {model} --head {head} --dispersion {dispersion}"
+  command: "python task_script/mace_neb.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
   forward_files:
     - "input"
     - "task_script/mace_neb.py"

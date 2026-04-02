@@ -262,4 +262,4 @@ def test_skill_catalog_normalizes_legacy_bash_exec_suggested_tool(tmp_path: Path
     )
     metas = catalog.refresh()
     assert [item.name for item in metas] == ["skill-gamma"]
-    assert metas[0].allowed_tools == ["bash", "tool_x"]
+    assert metas[0].allowed_tools == ["execute", "tool_x"]

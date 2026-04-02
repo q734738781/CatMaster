@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +14,7 @@ from pymatgen.io.vasp.inputs import Poscar
 
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.geometry_inputs.dimer_tools import (
+    _build_local_mace_calculator,
     _compute_mace_vibrational_modes,
     _normalize_hessian_2d,
     mace_analyze_frequencies,
@@ -352,6 +355,41 @@ def test_compute_mace_vibrational_modes_auto_prefers_hessian_for_full_system(
     assert info["method_used"] == "hessian"
     assert len(records) == 1
     assert len(modes) == 1
+
+
+def test_build_local_mace_calculator_routes_mh1_and_dispersion_through_mace_mp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    fake_calculators = types.ModuleType("mace.calculators")
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+
+    def _fake_mace_mp(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    fake_calculators.mace_mp = _fake_mace_mp
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "mace.calculators", fake_calculators)
+
+    calc, info = _build_local_mace_calculator(
+        model="mh-1",
+        head="omat_pbe",
+        dispersion=True,
+        device_preference="cpu",
+        default_dtype="float64",
+    )
+
+    assert calc is not None
+    assert captured["model"] == "mh-1"
+    assert captured["dispersion"] is True
+    assert captured["device"] == "cpu"
+    assert captured["default_dtype"] == "float64"
+    assert captured["head"] == "omat_pbe"
+    assert info["source_kind"] == "pretrained"
+    assert info["source_ref"] == "mh-1"
 
 
 def test_normalize_hessian_2d_is_consistent_between_2d_and_4d_inputs() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -28,30 +29,58 @@ def _resolve_orca_binary(requested: str) -> str:
 
 
 _NPROCS_RE = re.compile(r"^\s*nprocs\s+([0-9]+)\s*$", re.IGNORECASE)
+_SLURM_CPU_COUNT_RE = re.compile(r"^\s*([0-9]+)")
 
 
-def _requested_nprocs(input_path: Path) -> int:
-    text = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
+def _parse_cpu_count(raw: str) -> int | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    match = _SLURM_CPU_COUNT_RE.match(text)
+    if not match:
+        return None
+    try:
+        parsed = int(match.group(1))
+    except Exception:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _resolve_nprocs() -> int:
+    for key in ("SLURM_NTASKS", "SLURM_CPUS_ON_NODE", "SLURM_JOB_CPUS_PER_NODE", "OMP_NUM_THREADS"):
+        parsed = _parse_cpu_count(os.environ.get(key, ""))
+        if parsed:
+            return parsed
+    return 1
+
+
+def _upsert_pal_nprocs(input_path: Path, nprocs: int) -> str:
+    lines = input_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    filtered: list[str] = []
     inside_pal = False
-    for raw in text:
+    had_pal_block = False
+    for raw in lines:
         stripped = raw.strip()
         lower = stripped.lower()
-        if lower == "%pal":
+        if not inside_pal and lower == "%pal":
             inside_pal = True
+            had_pal_block = True
             continue
-        if inside_pal and lower == "end":
-            inside_pal = False
+        if inside_pal:
+            if lower == "end":
+                inside_pal = False
             continue
-        if not inside_pal:
-            continue
-        match = _NPROCS_RE.match(stripped)
-        if not match:
-            continue
-        try:
-            return max(1, int(match.group(1)))
-        except Exception:
-            return 1
-    return 1
+        filtered.append(raw)
+
+    pal_block = ["%pal", f"  nprocs {int(nprocs)}", "end"]
+    insert_at = 0
+    if filtered and filtered[0].strip().startswith("!"):
+        insert_at = 1
+    updated = [*filtered[:insert_at], *pal_block, *filtered[insert_at:]]
+    input_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    return "replaced" if had_pal_block else "inserted"
 
 
 def _collect_outputs() -> dict[str, str]:
@@ -98,19 +127,31 @@ def main() -> int:
         return 2
 
     orca_bin = _resolve_orca_binary(args.orca_bin)
-    requested_nprocs = _requested_nprocs(input_path)
-    if requested_nprocs > 1 and shutil.which("mpirun") is None:
+    nprocs = _resolve_nprocs()
+    pal_status = _upsert_pal_nprocs(input_path, nprocs)
+    if nprocs > 1 and shutil.which("mpirun") is None:
         sys.stderr.write(
-            "[orca_boot] ORCA input requests parallel execution "
-            f"(nprocs={requested_nprocs}) but `mpirun` is not available in the current environment. "
-            "Use nprocs=1 or load an OpenMPI/MPI-enabled ORCA environment.\n"
+            "[orca_boot] inferred parallel execution "
+            f"(nprocs={nprocs}) but `mpirun` is not available in the current environment. "
+            "Provide an OpenMPI/MPI-enabled ORCA environment or reduce the allocated ranks to 1.\n"
         )
         return 2
     output_path = Path("job.out")
     started = time.time()
     with open(args.log, "w", encoding="utf-8") as log_handle:
         log_handle.write(f"[orca_boot] cwd={Path.cwd()}\n")
+        for key in (
+            "SLURM_JOB_ID",
+            "SLURM_NTASKS",
+            "SLURM_NNODES",
+            "SLURM_CPUS_PER_TASK",
+            "SLURM_CPUS_ON_NODE",
+            "SLURM_JOB_CPUS_PER_NODE",
+            "OMP_NUM_THREADS",
+        ):
+            log_handle.write(f"[orca_boot] env {key}={os.environ.get(key, '')}\n")
         log_handle.write(f"[orca_boot] orca_bin={orca_bin}\n")
+        log_handle.write(f"[orca_boot] parallel: nprocs={nprocs} pal_block={pal_status}\n")
         log_handle.flush()
         with output_path.open("w", encoding="utf-8") as out_handle:
             proc = subprocess.run([orca_bin, input_path.name], stdout=out_handle, stderr=subprocess.STDOUT, check=False)

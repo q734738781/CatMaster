@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
+from ase.geometry import find_mic
 from ase.io import read as ase_read, write as ase_write
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pymatgen.io.ase import AseAtomsAdaptor
@@ -71,7 +73,17 @@ class MakeNebGeometryInput(BaseModel):
         None,
         description="Batch output root used only with input_root. Outputs are written to output_root/<task_id>/00.vasp...",
     )
-    n_images: int = Field(..., ge=1, description="Number of intermediate images (NI).")
+    n_images: int = Field(
+        ...,
+        ge=1,
+        description=(
+            "Number of intermediate images (NI). For routine local events, prefer about 4-8 intermediate images. "
+            "If no better prior exists, estimate with ceil(sqrt(sum_i ||Δr_i||^2) / 0.8 Å) after fixing atom "
+            "matching and periodic minimum-image displacements. If that path-scale estimate exceeds about 6 Å or "
+            "suggests more than about 8 intermediate images, reconsider whether the endpoints describe an overlong "
+            "non-primitive migration."
+        ),
+    )
     output_dir: str = Field(
         "neb_images",
         description="Single-case output directory for a flat numbered image-file tree such as 00.vasp, 01.vasp, ... (workspace-relative).",
@@ -130,7 +142,17 @@ class VaspNebPrepareInput(BaseModel):
         ),
     )
     output_root: str = Field(..., description="Target NEB job root. Image directories and root VASP files are written here.")
-    n_images: int = Field(5, ge=1, description="Number of intermediate images when generating from endpoints.")
+    n_images: int = Field(
+        5,
+        ge=1,
+        description=(
+            "Number of intermediate images when generating from endpoints. For routine local events, prefer about "
+            "4-8 intermediate images. If no better prior exists, estimate with ceil(sqrt(sum_i ||Δr_i||^2) / 0.8 Å) "
+            "after fixing atom matching and periodic minimum-image displacements. If that path-scale estimate "
+            "exceeds about 6 Å or suggests more than about 8 intermediate images, reconsider whether the endpoints "
+            "describe an overlong non-primitive migration."
+        ),
+    )
     output_filename: str = Field("POSCAR", description="Filename for generated/copied image structures.")
     interp_mode: str = Field(
         "direct",
@@ -201,6 +223,25 @@ class NebImageSet:
     warnings: list[str]
 
 
+class EstimateNebImageCountInput(BaseModel):
+    """[neb/modeling] Estimate NEB image count from endpoint displacements under periodic MIC."""
+
+    initial_path: str = Field(..., description="Initial structure file path (POSCAR/CONTCAR/.vasp/.cif).")
+    final_path: str = Field(..., description="Final structure file path (POSCAR/CONTCAR/.vasp/.cif).")
+    mic: bool = Field(
+        True,
+        description="If true, compute endpoint displacements with the periodic minimum image convention.",
+    )
+    target_spacing_angstrom: float = Field(
+        0.8,
+        gt=0.0,
+        description=(
+            "Target path spacing in angstrom used for the practical heuristic "
+            "ceil(sqrt(sum_i ||Δr_i||^2) / target_spacing_angstrom)."
+        ),
+    )
+
+
 def _read_atoms(path: Path):
     return ase_read(str(path))
 
@@ -213,6 +254,101 @@ def _validate_structures(initial, final) -> Optional[str]:
     if not np.allclose(initial.cell.array, final.cell.array, rtol=_CELL_TOL, atol=_CELL_TOL):
         return "Initial and final lattices differ beyond tolerance."
     return None
+
+
+def _compute_endpoint_displacements(initial, final, *, mic: bool) -> tuple[np.ndarray, np.ndarray]:
+    deltas = np.asarray(final.get_positions() - initial.get_positions(), dtype=float)
+    if mic:
+        mic_vectors, mic_lengths = find_mic(deltas, cell=initial.cell, pbc=initial.pbc)
+        return np.asarray(mic_vectors, dtype=float), np.asarray(mic_lengths, dtype=float)
+    lengths = np.linalg.norm(deltas, axis=1)
+    return deltas, lengths
+
+
+def _build_neb_image_count_guidance(
+    *,
+    rss_displacement_angstrom: float,
+    recommended_intermediate_images: int,
+) -> list[str]:
+    warnings: list[str] = []
+    if recommended_intermediate_images < 4:
+        warnings.append(
+            "The displacement heuristic suggests fewer than 4 intermediate images. This may still be fine for a very "
+            "local event, but 4-8 intermediate images is the usual practical range for routine NEB setup."
+        )
+    if rss_displacement_angstrom > 6.0:
+        warnings.append(
+            "The periodic path-scale estimate exceeds about 6 Å. Recheck whether the endpoints describe an overlong "
+            "migration that should be remodeled into a shorter primitive hop."
+        )
+    if recommended_intermediate_images > 8:
+        warnings.append(
+            "The displacement heuristic suggests more than about 8 intermediate images. Reconsider whether this is "
+            "one local elementary event or a longer path that should be decomposed."
+        )
+    return warnings
+
+
+def estimate_neb_image_count(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[neb/modeling] Estimate a practical NEB image count from two endpoint structures under periodic MIC."""
+    params = EstimateNebImageCountInput(**payload)
+    init_path = resolve_workspace_path(params.initial_path, must_exist=True)
+    final_path = resolve_workspace_path(params.final_path, must_exist=True)
+
+    try:
+        initial = _read_atoms(init_path)
+        final = _read_atoms(final_path)
+    except Exception as exc:
+        _fail(
+            "estimate_neb_image_count",
+            message=f"Failed to read initial/final structures: {exc}",
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+            },
+            error_code="read_failed",
+        )
+
+    error = _validate_structures(initial, final)
+    if error:
+        _fail(
+            "estimate_neb_image_count",
+            message=error,
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+            },
+            error_code="invalid_neb_pair",
+        )
+
+    displacement_vectors, displacement_norms = _compute_endpoint_displacements(initial, final, mic=params.mic)
+    rss_displacement = float(np.linalg.norm(displacement_vectors.reshape(-1)))
+    recommended_images = max(1, int(math.ceil(rss_displacement / float(params.target_spacing_angstrom))))
+    warnings = _build_neb_image_count_guidance(
+        rss_displacement_angstrom=rss_displacement,
+        recommended_intermediate_images=recommended_images,
+    )
+    data = {
+        "initial_rel": workspace_relpath(init_path),
+        "final_rel": workspace_relpath(final_path),
+        "mic": bool(params.mic),
+        "target_spacing_angstrom": float(params.target_spacing_angstrom),
+        "atom_count": int(len(initial)),
+        "rss_displacement_angstrom": rss_displacement,
+        "max_atom_displacement_angstrom": float(np.max(displacement_norms)) if len(displacement_norms) else 0.0,
+        "recommended_intermediate_images": recommended_images,
+        "typical_intermediate_image_range": "4-8",
+        "per_atom_displacements_angstrom": [float(value) for value in displacement_norms.tolist()],
+    }
+    lines = [
+        "estimate_neb_image_count completed.",
+        f"recommended_intermediate_images={recommended_images}",
+        f"rss_displacement_angstrom={rss_displacement:.6f}",
+        f"max_atom_displacement_angstrom={data['max_atom_displacement_angstrom']:.6f}",
+        f"mic={str(bool(params.mic)).lower()} target_spacing_angstrom={float(params.target_spacing_angstrom):.3f}",
+        "practical_guideline=Prefer about 4-8 intermediate images for routine local events.",
+    ]
+    return _success("estimate_neb_image_count", content="\n".join(lines), data=data, warnings=warnings)
 
 
 def _find_named_structure_file(task_dir: Path, label: str) -> Path:
@@ -1039,8 +1175,10 @@ def vasp_neb_prepare(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 __all__ = [
+    "EstimateNebImageCountInput",
     "MakeNebGeometryInput",
     "VaspNebPrepareInput",
+    "estimate_neb_image_count",
     "make_neb_geometry",
     "vasp_neb_prepare",
 ]

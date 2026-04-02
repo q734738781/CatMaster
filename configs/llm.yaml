@@ -159,7 +159,7 @@ models:
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
     reasoning:
-      effort: medium
+      effort: high
 
   
   "google/gemini-3-flash-preview":

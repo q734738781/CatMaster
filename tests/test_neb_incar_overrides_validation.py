@@ -13,7 +13,14 @@ pytest.importorskip("pymatgen")
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import workspace_scope
-from catmaster.tools.geometry_inputs.neb_tools import MakeNebGeometryInput, VaspNebPrepareInput, make_neb_geometry, vasp_neb_prepare
+from catmaster.tools.geometry_inputs.neb_tools import (
+    EstimateNebImageCountInput,
+    MakeNebGeometryInput,
+    VaspNebPrepareInput,
+    estimate_neb_image_count,
+    make_neb_geometry,
+    vasp_neb_prepare,
+)
 from catmaster.tools.geometry_inputs.vasp_inputs import StructWriter
 
 
@@ -22,6 +29,16 @@ def _write_poscar(path: Path, frac_x: float) -> None:
         lattice=Lattice.cubic(5.0),
         species=["H"],
         coords=[[frac_x, 0.0, 0.0]],
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    structure.to(filename=str(path), fmt="poscar")
+
+
+def _write_two_atom_poscar(path: Path, species: list[str], frac_xs: list[float]) -> None:
+    structure = Structure(
+        lattice=Lattice.cubic(5.0),
+        species=species,
+        coords=[[frac_xs[0], 0.0, 0.0], [frac_xs[1], 0.5, 0.5]],
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     structure.to(filename=str(path), fmt="poscar")
@@ -102,6 +119,15 @@ def test_endpoint_mode_requires_both_initial_and_final_paths() -> None:
             initial_path="tests/assets/Fe.cif",
             output_root="tests/test_output/neb_prepare",
         )
+
+
+def test_estimate_neb_image_count_input_accepts_positive_spacing() -> None:
+    params = EstimateNebImageCountInput(
+        initial_path="tests/assets/Fe.cif",
+        final_path="tests/assets/Fe.cif",
+        target_spacing_angstrom=0.8,
+    )
+    assert params.target_spacing_angstrom == 0.8
 
 
 def test_source_mode_rejects_mixing_endpoint_and_image_tree_inputs() -> None:
@@ -246,6 +272,63 @@ def test_make_neb_geometry_uses_in_cell_path_when_mic_disabled(tmp_path: Path) -
         atoms = ase_read(output_root / f"{idx:02d}.vasp")
         scaled.append(float(atoms.get_scaled_positions(wrap=False)[0, 0]))
     assert np.allclose(scaled, [0.9, 0.7, 0.5, 0.3, 0.1])
+
+
+def test_estimate_neb_image_count_uses_periodic_minimum_image_when_enabled(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        _write_poscar(tmp_path / "files" / "inputs" / "IS.vasp", 0.9)
+        _write_poscar(tmp_path / "files" / "inputs" / "FS.vasp", 0.1)
+
+        _content, artifact = estimate_neb_image_count(
+            {
+                "initial_path": "inputs/IS.vasp",
+                "final_path": "inputs/FS.vasp",
+                "mic": True,
+            }
+        )
+
+    data = artifact["data"]
+    assert data["mic"] is True
+    assert data["recommended_intermediate_images"] == 2
+    assert data["rss_displacement_angstrom"] == pytest.approx(1.0)
+    assert data["max_atom_displacement_angstrom"] == pytest.approx(1.0)
+    assert data["per_atom_displacements_angstrom"] == pytest.approx([1.0])
+    assert "4-8" in data["typical_intermediate_image_range"]
+
+
+def test_estimate_neb_image_count_uses_in_cell_distance_when_mic_disabled(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        _write_poscar(tmp_path / "files" / "inputs" / "IS.vasp", 0.9)
+        _write_poscar(tmp_path / "files" / "inputs" / "FS.vasp", 0.1)
+
+        _content, artifact = estimate_neb_image_count(
+            {
+                "initial_path": "inputs/IS.vasp",
+                "final_path": "inputs/FS.vasp",
+                "mic": False,
+            }
+        )
+
+    data = artifact["data"]
+    assert data["mic"] is False
+    assert data["recommended_intermediate_images"] == 5
+    assert data["rss_displacement_angstrom"] == pytest.approx(4.0)
+    assert data["max_atom_displacement_angstrom"] == pytest.approx(4.0)
+    assert data["per_atom_displacements_angstrom"] == pytest.approx([4.0])
+
+
+def test_estimate_neb_image_count_rejects_element_sequence_mismatch(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        _write_two_atom_poscar(tmp_path / "files" / "inputs" / "IS.vasp", ["H", "O"], [0.0, 0.2])
+        _write_two_atom_poscar(tmp_path / "files" / "inputs" / "FS.vasp", ["O", "H"], [0.1, 0.3])
+
+        with pytest.raises(CatMasterToolExecutionError, match="different element sequences"):
+            estimate_neb_image_count(
+                {
+                    "initial_path": "inputs/IS.vasp",
+                    "final_path": "inputs/FS.vasp",
+                }
+            )
 
 
 def test_make_neb_geometry_batch_from_task_root(tmp_path: Path) -> None:

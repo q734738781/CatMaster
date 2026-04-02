@@ -27,6 +27,7 @@ Use this skill to run cheap MACE screening on a structure batch before spending 
 - `mace_relax_batch` needs a `model`; it can also toggle `head`, `dispersion`, and `relax_lattice`.
 - `mace_sp_batch` is for energy evaluation only and does not relax geometry.
 - Do not compare relax and SP outputs as if they were the same screening stage.
+- For geometry optimization with `mace_relax_batch`, keep `default_dtype=float64` by default. Only switch to `float32` when the user explicitly wants a cheaper, lower-rigor screening pass and the numerical looseness is acceptable.
 
 ### 2. Keep input and output trees separate
 - Both tools reject `output_root` inside `input_dir`.
@@ -46,6 +47,7 @@ Use this skill to run cheap MACE screening on a structure batch before spending 
 - Unless the user explicitly asks for a no-dispersion baseline, prefer enabling dispersion when surface-adsorbate interactions or ranking sensitivity may depend on it.
 - Always report whether dispersion was enabled.
 - If a screening stage is intended only as a cheap geometry triage rather than an energy-ranking stage, say so explicitly.
+- Treat `default_dtype=float64` as the conservative default for geometry relaxation. If you deliberately downgrade to `float32` for speed, say so explicitly in the run summary.
 
 ## Output Contract
 Return:

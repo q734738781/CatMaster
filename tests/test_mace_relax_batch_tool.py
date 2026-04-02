@@ -14,13 +14,16 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 def test_mace_relax_batch_input_relax_lattice_default_and_override() -> None:
     default_params = MaceRelaxBatchInput(input_dir="inputs", output_root="outputs")
     assert default_params.relax_lattice is False
+    assert default_params.default_dtype == "float64"
 
     override_params = MaceRelaxBatchInput(
         input_dir="inputs",
         output_root="outputs",
         relax_lattice=True,
+        default_dtype="float32",
     )
     assert override_params.relax_lattice is True
+    assert override_params.default_dtype == "float32"
 
 
 def test_mace_relax_batch_accepts_relax_lattice_field(tmp_path: Path) -> None:
@@ -43,6 +46,7 @@ def test_mace_relax_batch_accepts_relax_lattice_field(tmp_path: Path) -> None:
 def test_mace_relax_dir_task_command_has_relax_lattice_placeholder() -> None:
     cfg = TaskRegistry().get("mace_relax_dir")
     assert "--relax_lattice {relax_lattice}" in cfg.command
+    assert "--default_dtype {default_dtype}" in cfg.command
 
 
 def test_mace_relax_batch_stages_local_model_file_for_dpdispatcher(
@@ -81,6 +85,7 @@ def test_mace_relax_batch_stages_local_model_file_for_dpdispatcher(
                 "input_dir": "inputs",
                 "output_root": "outputs",
                 "model": "models/my model.pt",
+                "default_dtype": "float32",
             }
         )
 
@@ -88,6 +93,8 @@ def test_mace_relax_batch_stages_local_model_file_for_dpdispatcher(
     assert captured["staged_model_exists"] is True
     assert "assets" in captured["forward_files"]
     assert "--model 'assets/models/my model.pt'" in str(captured["command"])
+    assert "--default_dtype float32" in str(captured["command"])
     assert data["model_source_kind"] == "local_file"
     assert data["model_source_rel"] == "models/my model.pt"
     assert data["model_asset_rel"] == "assets/models/my model.pt"
+    assert data["default_dtype"] == "float32"

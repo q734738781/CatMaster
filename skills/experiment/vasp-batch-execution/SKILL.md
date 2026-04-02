@@ -61,5 +61,5 @@ Return:
 - whether the batch finished as `collected_complete` or only `collected_partial`
 
 ## References
-- Use `bash` only for focused follow-up reads after the batch state points to a concrete failure target.
+- Use `execute` only for focused follow-up reads after the batch state points to a concrete failure target.
 - Hand off finished NEB or MD batches to `reaction-neb-analysis` or `md-diffusion-analysis` rather than reusing this skill as an analysis layer.

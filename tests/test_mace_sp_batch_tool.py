@@ -7,7 +7,7 @@ import pytest
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import workspace_scope
-from catmaster.tools.execution.mace_dispatch import mace_sp_batch
+from catmaster.tools.execution.mace_dispatch import MaceSPBatchInput, mace_sp_batch
 from catmaster.tools.registry import ToolRegistry
 
 
@@ -15,6 +15,14 @@ def test_registry_contains_mace_sp_batch() -> None:
     pytest.importorskip("pymatgen")
     registry = ToolRegistry()
     assert "mace_sp_batch" in registry.list_tools()
+
+
+def test_mace_sp_batch_input_default_dtype_default_and_override() -> None:
+    default_params = MaceSPBatchInput(input_dir="inputs", output_root="outputs")
+    assert default_params.default_dtype == "float64"
+
+    override_params = MaceSPBatchInput(input_dir="inputs", output_root="outputs", default_dtype="float32")
+    assert override_params.default_dtype == "float32"
 
 
 def test_mace_sp_batch_rejects_output_inside_input(tmp_path: Path) -> None:
@@ -87,6 +95,7 @@ def test_mace_sp_batch_stages_local_model_directory_and_resolves_best_model(
                 "input_dir": "inputs",
                 "output_root": "outputs",
                 "model": "trained-run",
+                "default_dtype": "float32",
             }
         )
 
@@ -95,6 +104,8 @@ def test_mace_sp_batch_stages_local_model_directory_and_resolves_best_model(
     assert captured["staged_aux_exists"] is True
     assert "assets" in captured["forward_files"]
     assert "--model assets/models/trained-run/checkpoints/best.model" in str(captured["command"])
+    assert "--default_dtype float32" in str(captured["command"])
     assert data["model_source_kind"] == "local_dir"
     assert data["model_source_rel"] == "trained-run"
     assert data["model_asset_rel"] == "assets/models/trained-run/checkpoints/best.model"
+    assert data["default_dtype"] == "float32"
