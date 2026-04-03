@@ -1,6 +1,7 @@
 ---
 name: adsorbate-and-intermediate-generation
-description: Use this skill for generating adsorbates and reaction intermediates, standardizing molecular inputs, and preparing structures for adsorption placement.
+description: >-
+  Generate adsorbates and reaction intermediates from SMILES strings, standardize molecular inputs, and prepare surface adsorption structures. Use when the user asks to create an adsorbate, generate reaction intermediates, convert SMILES to 3D structures, place molecules on catalyst surfaces, or prepare inputs for adsorption calculations.
 compatibility: Designed for CatMaster local tools and project-space relative-path execution.
 metadata:
   catmaster-suggested-tools: "create_molecule_from_smiles"
