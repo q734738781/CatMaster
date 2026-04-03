@@ -115,7 +115,7 @@ class LocalToolBackend(ToolBackend):
                         raw_output.close()
                     raise RuntimeError(
                         f"Tool {name} returned an awaitable, but LocalToolBackend is sync-only. "
-                        "Use GraphRunner.arun()/agent ainvoke path or provide a sync tool function."
+                        "Use the async specialist runtime/agent ainvoke path or provide a sync tool function."
                     )
                 content, artifact = adapt_tool_return(
                     tool_name=name,

@@ -2521,7 +2521,6 @@ function App({ boot }) {
     prompt: "",
     run_mode: "new_run",
     resume_run_name: "",
-    proposal_review: false,
   });
   const deferredSearch = useDeferredValue(search);
   const eventSourceRef = useRef(null);
@@ -3314,14 +3313,6 @@ function App({ boot }) {
                           <option key={item.value} value={item.value}>{item.label}</option>
                         ))}
                       </select>
-                    </label>
-                    <label className="toggle-line">
-                      <input
-                        type="checkbox"
-                        checked={form.proposal_review}
-                        onChange={(event) => setForm((prev) => ({ ...prev, proposal_review: event.target.checked }))}
-                      />
-                      <span>Review proposal before execution</span>
                     </label>
                   </div>
                   <div className="btn-row">

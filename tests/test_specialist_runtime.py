@@ -35,7 +35,6 @@ from catmaster.specialists.runtime import (
 from catmaster.runtime.usage_stats import load_usage_summary
 from catmaster.runtime.artifact_callback import UIEventHandler
 from catmaster.runtime.run_control import RunControl
-from catmaster.specialists.schemas import ProposalCheckpoint
 from catmaster.tools.registry import get_tool_registry
 
 
@@ -1045,25 +1044,13 @@ def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, m
     assert config["configurable"]["project_id"] == "proj_memory_ns"
 
 
-def test_proposal_review_requires_explicit_approve_before_execution(
+def test_proposal_review_flag_is_ignored_and_run_executes_immediately(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "project_space"
     workspace.mkdir(parents=True)
-    captured: dict[str, object] = {"proposal_calls": []}
-    proposal_versions = [
-        ProposalCheckpoint(
-            proposal_md="# Proposal v1\n\nInitial plan.",
-            todo_items=["draft plan"],
-            questions_for_human=["Approve or revise?"],
-        ),
-        ProposalCheckpoint(
-            proposal_md="# Proposal v2\n\nRevised plan.",
-            todo_items=["revised draft plan"],
-            questions_for_human=["Approve now?"],
-        ),
-    ]
+    captured: dict[str, object] = {}
 
     class _CapturingAgent:
         async def ainvoke(self, payload, config=None):
@@ -1072,7 +1059,7 @@ def test_proposal_review_requires_explicit_approve_before_execution(
             return {
                 "messages": [
                     AIMessage(
-                        content="## Summary\nok\n\n## Facts\n- proposal approved\n\n## Files\n- `(none reported)`"
+                        content="## Summary\nok\n\n## Facts\n- executed directly\n\n## Files\n- `(none reported)`"
                     )
                 ]
             }
@@ -1080,29 +1067,6 @@ def test_proposal_review_requires_explicit_approve_before_execution(
     def _fake_create_deep_agent(**kwargs):
         captured["agent_kwargs"] = kwargs
         return _CapturingAgent()
-
-    async def _fake_build_proposal_checkpoint(
-        self,
-        *,
-        entrypoint: str,
-        prompt: str,
-        usage_handler,
-        current_proposal: str = "",
-        review_feedback: str = "",
-        revision_index: int = 0,
-    ) -> ProposalCheckpoint:
-        _ = usage_handler
-        call = {
-            "entrypoint": entrypoint,
-            "prompt": prompt,
-            "current_proposal": current_proposal,
-            "review_feedback": review_feedback,
-            "revision_index": revision_index,
-        }
-        proposal_calls = captured["proposal_calls"]
-        assert isinstance(proposal_calls, list)
-        proposal_calls.append(call)
-        return proposal_versions[len(proposal_calls) - 1]
 
     @asynccontextmanager
     async def _fake_open_agent_runtime(self, *, files_root: Path):
@@ -1118,7 +1082,6 @@ def test_proposal_review_requires_explicit_approve_before_execution(
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_build_proposal_checkpoint", _fake_build_proposal_checkpoint)
 
     built = build_specialist_runner(
         workspace=workspace,
@@ -1129,36 +1092,109 @@ def test_proposal_review_requires_explicit_approve_before_execution(
         preferred_entrypoint="experiment",
     )
 
-    waiting = asyncio.run(
+    result = asyncio.run(
         built.runner.arun(
-            "Run the experiment lane only after proposal approval.",
+            "Run the experiment lane directly.",
             entrypoint="experiment",
             proposal_review=True,
         )
     )
-    assert waiting["status"] == "awaiting_human_feedback"
-    assert (built.run_context.run_dir / "proposal.md").read_text(encoding="utf-8") == proposal_versions[0].proposal_md
 
-    revised = asyncio.run(built.runner.aresume("needs a more concrete execution plan"))
-    assert revised["status"] == "awaiting_human_feedback"
-    assert (built.run_context.run_dir / "proposal.md").read_text(encoding="utf-8") == proposal_versions[1].proposal_md
+    assert result["status"] == "done"
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["messages"][0]["content"] == "Run the experiment lane directly."
+    assert "Human review feedback" not in payload["messages"][0]["content"]
+    run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+    assert run_state["status"] == "done"
+    assert run_state["proposal_review"] is False
+    assert run_state["proposal_revision_count"] == 0
+
+
+def test_legacy_proposal_wait_state_can_resume_into_normal_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    captured: dict[str, object] = {}
+
+    class _CapturingAgent:
+        async def ainvoke(self, payload, config=None):
+            captured["payload"] = payload
+            captured["config"] = config
+            return {
+                "messages": [
+                    AIMessage(
+                        content="## Summary\nok\n\n## Facts\n- resumed legacy proposal run\n\n## Files\n- `(none reported)`"
+                    )
+                ]
+            }
+
+    def _fake_create_deep_agent(**kwargs):
+        captured["agent_kwargs"] = kwargs
+        return _CapturingAgent()
+
+    @asynccontextmanager
+    async def _fake_open_agent_runtime(self, *, files_root: Path):
+        _ = files_root
+        yield {"checkpointer": object(), "store": object(), "backend": object()}
+
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj_resume_legacy_proposal",
+        preferred_entrypoint="experiment",
+    )
+    (built.run_context.run_dir / RUN_STATE_FILE).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "entrypoint": "experiment",
+                "status": "awaiting_human_feedback",
+                "phase": "proposal_review",
+                "active_specialist": "experiment",
+                "thread_id": "thread-legacy",
+                "proposal_review": True,
+                "proposal_revision_count": 2,
+                "pending_human_input": {
+                    "kind": "proposal_review",
+                    "approval_token": "approve",
+                },
+                "todo_items": [],
+                "artifacts": [],
+                "delegation_log": [],
+                "user_prompt": "Resume this old stuck run.",
+                "chat_session_id": "chat-legacy",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     result = asyncio.run(built.runner.aresume("approve"))
 
     assert result["status"] == "done"
-    proposal_calls = captured["proposal_calls"]
-    assert isinstance(proposal_calls, list)
-    assert len(proposal_calls) == 2
-    assert proposal_calls[1]["current_proposal"] == proposal_versions[0].proposal_md
-    assert proposal_calls[1]["review_feedback"] == "needs a more concrete execution plan"
-    assert proposal_calls[1]["revision_index"] == 1
     payload = captured["payload"]
     assert isinstance(payload, dict)
-    assert payload["messages"][0]["content"] == "Run the experiment lane only after proposal approval."
-    assert "Human review feedback" not in payload["messages"][0]["content"]
+    assert payload["messages"][0]["content"] == "Resume this old stuck run."
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["status"] == "done"
-    assert run_state["proposal_revision_count"] == 1
+    assert run_state["proposal_review"] is False
+    assert run_state["proposal_revision_count"] == 0
 
 
 def test_specialist_runner_returns_interrupted_paused_when_interrupt_requested_before_start(

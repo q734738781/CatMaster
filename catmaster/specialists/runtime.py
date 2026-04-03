@@ -31,11 +31,7 @@ from catmaster.tools.registry import get_tool_registry
 from catmaster.ui import make_event
 from catmaster.ui.reporters import NullReporter, Reporter
 
-from .schemas import (
-    ProposalCheckpoint,
-    ResearchKernel,
-    SpecialistEntrypoint,
-)
+from .schemas import ProposalCheckpoint, ResearchKernel, SpecialistEntrypoint
 
 logger = logging.getLogger(__name__)
 
@@ -511,9 +507,20 @@ class SpecialistRunner:
         run_state = self._read_run_state()
         if not run_state:
             raise ValueError("Cannot resume run without run_state.json")
-        if str(run_state.get("status") or "").strip() != "awaiting_human_feedback":
+        status = str(run_state.get("status") or "").strip()
+        if status != "awaiting_human_feedback":
             raise ValueError("Selected run is not waiting for human feedback.")
-        return await self._run_impl(payload=run_state, resume_feedback=str(human_feedback or "").strip())
+        pending = run_state.get("pending_human_input") if isinstance(run_state.get("pending_human_input"), dict) else {}
+        kind = str(pending.get("kind") or "").strip()
+        feedback = str(human_feedback or "").strip()
+        if kind == "proposal_review":
+            if feedback.lower() == "approve":
+                feedback = ""
+            run_state["status"] = "running"
+            run_state["phase"] = "executing"
+            run_state["pending_human_input"] = None
+            run_state["proposal_review"] = False
+        return await self._run_impl(payload=run_state, resume_feedback=feedback)
 
     async def _run_impl(self, *, payload: dict[str, Any], resume_feedback: str | None) -> dict[str, Any]:
         entrypoint = str(payload.get("entrypoint") or "research").strip() or "research"
@@ -543,123 +550,17 @@ class SpecialistRunner:
             self._write_usage_summary(usage_handler)
         try:
             self._raise_if_interrupt_requested(phase="run_start", details={"entrypoint": entrypoint})
-            proposal_review_enabled = bool(payload.get("proposal_review", False))
-            proposal_revision_count = max(0, int(payload.get("proposal_revision_count") or 0))
+            proposal_revision_count = 0
 
-            if proposal_review_enabled:
-                checkpoint: ProposalCheckpoint | None = None
-                if resume_feedback is None:
-                    checkpoint = await self._build_proposal_checkpoint(
-                        entrypoint=entrypoint,
-                        prompt=prompt,
-                        usage_handler=usage_handler,
-                    )
-                else:
-                    feedback_text = str(resume_feedback or "").strip()
-                    if not self._is_proposal_approval(feedback_text):
-                        proposal_revision_count += 1
-                        checkpoint = await self._build_proposal_checkpoint(
-                            entrypoint=entrypoint,
-                            prompt=prompt,
-                            usage_handler=usage_handler,
-                            current_proposal=self._read_current_proposal_text(),
-                            review_feedback=feedback_text,
-                            revision_index=proposal_revision_count,
-                        )
-                    else:
-                        resume_feedback = None
-
-                while checkpoint is not None:
-                    self._persist_proposal_review_state(
-                        entrypoint=entrypoint,
-                        prompt=prompt,
-                        checkpoint=checkpoint,
-                        thread_id=thread_id,
-                        chat_session_id=str(payload.get("chat_session_id") or ""),
-                        files_root=files_root,
-                        research_kernel_relpath=research_kernel_relpath,
-                        revision_count=proposal_revision_count,
-                    )
-                    self._emit(
-                        "RUN_WAITING_INPUT",
-                        payload={
-                            "interrupt_type": "proposal_review",
-                            "message": (
-                                "Proposal review is required before execution continues. "
-                                "Type `approve` to continue; any other input requests a revised proposal."
-                            ),
-                            "approval_token": self._proposal_approval_token(),
-                            "revision_count": proposal_revision_count,
-                        },
-                    )
-                    if not self.reporter.is_live():
-                        self._write_usage_summary(usage_handler)
-                        return {
-                            "run_id": self.run_context.run_id,
-                            "run_dir": str(self.run_context.run_dir),
-                            "status": "awaiting_human_feedback",
-                            "summary": (
-                                "Proposal review is waiting for explicit `approve`. "
-                                "Any other feedback will request a revised proposal."
-                            ),
-                            "facts": [],
-                            "final_answer": "",
-                            "artifacts": [],
-                            "delegation_log": [],
-                        }
-
-                    feedback = self.reporter.prompt_proposal_feedback(
-                        todo=list(checkpoint.todo_items),
-                        proposal_description=checkpoint.proposal_md,
-                    )
-                    self._emit(
-                        "RUN_INPUT_RECEIVED",
-                        payload={"interrupt_type": "proposal_review", "feedback_len": len(str(feedback or ""))},
-                    )
-                    feedback_text = str(feedback or "").strip()
-                    if self._is_proposal_approval(feedback_text):
-                        checkpoint = None
-                        resume_feedback = None
-                        break
-                    proposal_revision_count += 1
-                    checkpoint = await self._build_proposal_checkpoint(
-                        entrypoint=entrypoint,
-                        prompt=prompt,
-                        usage_handler=usage_handler,
-                        current_proposal=self._read_current_proposal_text(),
-                        review_feedback=feedback_text,
-                        revision_index=proposal_revision_count,
-                    )
-
-                self._write_run_state(
-                    {
-                        **(self._read_run_state() or payload),
-                        "schema_version": 1,
-                        "entrypoint": entrypoint,
-                        "status": "running",
-                        "phase": "executing",
-                        "active_specialist": entrypoint,
-                        "thread_id": thread_id,
-                        "proposal_review": True,
-                        "proposal_revision_count": proposal_revision_count,
-                        "pending_human_input": None,
-                        "todo_items": [],
-                        "artifacts": [],
-                        "delegation_log": [],
-                        "text_preview": prompt[:280],
-                        "user_prompt": prompt,
-                        "chat_session_id": str(payload.get("chat_session_id") or ""),
-                        **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
-                    }
-                )
-
-            elif resume_feedback is not None:
+            if resume_feedback is not None:
                 self._write_run_state(
                     {
                         **payload,
                         "status": "running",
                         "phase": "executing",
                         "pending_human_input": None,
+                        "proposal_review": False,
+                        "proposal_revision_count": 0,
                         "text_preview": str(resume_feedback or "")[:280],
                     }
                 )
@@ -702,8 +603,8 @@ class SpecialistRunner:
                         "phase": "finalized",
                         "active_specialist": entrypoint,
                         "thread_id": thread_id,
-                        "proposal_review": bool(payload.get("proposal_review", False)),
-                        "proposal_revision_count": proposal_revision_count,
+                        "proposal_review": False,
+                        "proposal_revision_count": 0,
                         "pending_human_input": None,
                         "todo_items": [],
                         "artifacts": artifacts,
@@ -741,8 +642,8 @@ class SpecialistRunner:
                 "phase": "interrupted",
                 "active_specialist": entrypoint,
                 "thread_id": thread_id,
-                "proposal_review": bool(payload.get("proposal_review", False)),
-                "proposal_revision_count": max(0, int(payload.get("proposal_revision_count") or 0)),
+                "proposal_review": False,
+                "proposal_revision_count": 0,
                 "pending_human_input": None,
                 "todo_items": [],
                 "artifacts": list(payload.get("artifacts") or []),
