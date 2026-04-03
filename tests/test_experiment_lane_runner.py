@@ -14,9 +14,9 @@ async def test_experiment_lane_runner_numbers_experiments_globally(monkeypatch: 
     captured: dict[str, object] = {}
 
     class _FakeRunner:
-        async def arun(self, user_request: str, *, lane: str, proposal_review: bool):
+        async def arun(self, user_request: str, *, entrypoint: str, proposal_review: bool):
             captured["user_request"] = user_request
-            captured["lane"] = lane
+            captured["entrypoint"] = entrypoint
             captured["proposal_review"] = proposal_review
             return {
                 "status": "done",
@@ -27,14 +27,17 @@ async def test_experiment_lane_runner_numbers_experiments_globally(monkeypatch: 
                 "pending_memory_updates": [],
             }
 
-    def fake_build_graph_runner(**kwargs):
+    def fake_build_specialist_runner(**kwargs):
         captured["factory_kwargs"] = kwargs
         return SimpleNamespace(
             runner=_FakeRunner(),
             run_context=SimpleNamespace(run_id="child_run", run_dir=tmp_path / "metadata" / "runs" / "child_run"),
         )
 
-    monkeypatch.setattr("catmaster.runtime.research.experiment_runner.build_graph_runner", fake_build_graph_runner)
+    monkeypatch.setattr(
+        "catmaster.runtime.research.experiment_runner.build_specialist_runner",
+        fake_build_specialist_runner,
+    )
 
     runner = ExperimentLaneRunner(workspace=tmp_path, llm_profile=object(), project_id="proj")
     board = ResearchBoard(
@@ -69,5 +72,6 @@ async def test_experiment_lane_runner_numbers_experiments_globally(monkeypatch: 
 
     assert pack.experiment_id == "exp_003"
     assert captured["factory_kwargs"]["reporter"] is runner.reporter
-    run_policy = captured["factory_kwargs"]["run_policy"]
-    assert run_policy.allow_memory_patch is True
+    assert captured["factory_kwargs"]["preferred_entrypoint"] == "experiment"
+    assert captured["entrypoint"] == "experiment"
+    assert "Execution lane preference:\nstandard" in str(captured["user_request"])

@@ -20,6 +20,9 @@ class Reporter:
     def is_live(self) -> bool:
         return False
 
+    def wants_graph_streaming(self) -> bool:
+        return False
+
     def pause(self) -> None:
         pass
 

@@ -5,10 +5,80 @@ import os
 import logging
 import json
 import re
+import warnings
 
 from catmaster.llm.config import LLMConfig
 
 _logger = logging.getLogger(__name__)
+
+
+def _patch_langchain_openrouter_file_wrapper() -> None:
+    """Patch langchain_openrouter so file-block messages retain `role`.
+
+    langchain_openrouter currently wraps file-block messages with SDK Pydantic
+    models via `model_construct(**fields)` after removing the `role` key. The
+    resulting serialized payload omits `role`, which OpenRouter rejects with
+    "Could not find discriminator field role". Keep the full dict so the SDK
+    models still dump `role` correctly.
+    """
+    try:
+        from langchain_openrouter import chat_models as chat_models_mod  # type: ignore
+    except Exception:
+        return
+
+    if getattr(chat_models_mod, "_catmaster_file_wrapper_patched", False):
+        return
+
+    original = getattr(chat_models_mod, "_wrap_messages_for_sdk", None)
+    has_file_blocks = getattr(chat_models_mod, "_has_file_content_blocks", None)
+    if not callable(original) or not callable(has_file_blocks):
+        return
+
+    def _fixed_wrap_messages_for_sdk(message_dicts: list[dict[str, Any]]) -> list[dict[str, Any]] | list[Any]:
+        if not has_file_blocks(message_dicts):
+            return message_dicts
+
+        try:
+            from openrouter import components  # type: ignore  # noqa: PLC0415
+        except Exception:
+            return message_dicts
+
+        role_to_model: dict[str, Any] = {
+            "user": components.UserMessage,
+            "system": components.SystemMessage,
+            "assistant": components.AssistantMessage,
+            "tool": components.ToolResponseMessage,
+            "developer": components.DeveloperMessage,
+        }
+
+        wrapped: list[Any] = []
+        for msg in message_dicts:
+            model_cls = role_to_model.get(str(msg.get("role", "") or ""))
+            if model_cls is None:
+                wrapped.append(msg)
+                continue
+            wrapped.append(model_cls.model_construct(**dict(msg)))
+        return wrapped
+
+    chat_models_mod._wrap_messages_for_sdk = _fixed_wrap_messages_for_sdk
+    chat_models_mod._catmaster_file_wrapper_patched = True
+
+
+def _suppress_openrouter_file_block_serializer_warnings() -> None:
+    """Silence known SDK/Pydantic warnings for OpenRouter file-block payloads.
+
+    The OpenRouter API accepts file content blocks, but the current SDK type
+    declarations lag behind and emit noisy `Pydantic serializer warnings`
+    during request serialization. These are not actionable for callers once the
+    payload is patched to include `role` correctly, so suppress this specific
+    warning family while leaving real API failures untouched.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Pydantic serializer warnings:.*",
+        category=UserWarning,
+        module=r"pydantic\.functional_validators|openrouter\.components\.chatgenerationparams",
+    )
 
 
 def _normalize_http_log_body(text: str) -> str:
@@ -156,6 +226,61 @@ def _resolve_extra_body(cfg: LLMConfig) -> Dict[str, Any]:
     return {}
 
 
+def _resolve_openrouter_cache_control(cfg: LLMConfig) -> Dict[str, Any] | None:
+    extra_body = _resolve_extra_body(cfg)
+    cache_control = extra_body.get("cache_control")
+    return dict(cache_control) if isinstance(cache_control, dict) and cache_control else None
+
+
+def _attach_openrouter_cache_control(
+    message_dicts: list[dict[str, Any]],
+    cache_control: Dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(cache_control, dict) or not cache_control:
+        return message_dicts
+
+    def _cacheify_content(content: Any) -> Any:
+        if isinstance(content, str):
+            if not content.strip():
+                return content
+            return [{"type": "text", "text": content, "cache_control": dict(cache_control)}]
+        if not isinstance(content, list):
+            return content
+        last_text_idx: int | None = None
+        updated: list[Any] = []
+        for idx, block in enumerate(content):
+            if isinstance(block, dict):
+                cloned = dict(block)
+                if str(cloned.get("type") or "").strip().lower() == "text" and isinstance(cloned.get("text"), str):
+                    last_text_idx = idx
+                updated.append(cloned)
+            else:
+                updated.append(block)
+        if last_text_idx is None:
+            return content
+        block = updated[last_text_idx]
+        if isinstance(block, dict):
+            block["cache_control"] = dict(cache_control)
+        return updated
+
+    updated_messages = list(message_dicts)
+
+    def _annotate_first(role_names: set[str]) -> None:
+        for idx, message in enumerate(updated_messages):
+            role = str(message.get("role") or "").strip().lower()
+            if role not in role_names:
+                continue
+            new_content = _cacheify_content(message.get("content"))
+            if new_content is message.get("content"):
+                return
+            updated_messages[idx] = {**message, "content": new_content}
+            return
+
+    _annotate_first({"system", "developer"})
+    _annotate_first({"user"})
+    return updated_messages
+
+
 def _resolve_reasoning_config(cfg: LLMConfig) -> Dict[str, Any] | None:
     reasoning = cfg.reasoning if isinstance(cfg.reasoning, dict) else {}
     cleaned: Dict[str, Any] = {}
@@ -226,6 +351,7 @@ def _resolve_openrouter_request_kwargs(cfg: LLMConfig) -> dict[str, Any]:
     route = extra_body.pop("route", None)
     plugins = extra_body.pop("plugins", None)
     prompt_cache_retention = extra_body.pop("prompt_cache_retention", None)
+    extra_body.pop("cache_control", None)
 
     if isinstance(provider_config, dict) and provider_config:
         kwargs["openrouter_provider"] = provider_config
@@ -291,9 +417,13 @@ def build_chat_model(cfg: LLMConfig) -> Any:
     """Build a LangChain ChatModel from an LLMConfig."""
     if cfg.provider == "openrouter":
         from langchain_openrouter import ChatOpenRouter
+        from langchain_core.messages import BaseMessage
 
+        _patch_langchain_openrouter_file_wrapper()
+        _suppress_openrouter_file_block_serializer_warnings()
         api_key = _require_api_key(cfg)
         kwargs = _resolve_openrouter_request_kwargs(cfg)
+        cache_control_config = _resolve_openrouter_cache_control(cfg)
         reasoning_config = _resolve_reasoning_config(cfg)
 
         if cfg.timeout_s is not None:
@@ -309,13 +439,29 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         if max_tokens is None and cfg.max_output_tokens is not None:
             max_tokens = cfg.max_output_tokens
 
-        return ChatOpenRouter(
+        class CatMasterChatOpenRouter(ChatOpenRouter):
+            content_cache_control: dict[str, Any] | None = None
+
+            def _create_message_dicts(
+                self,
+                messages: list[BaseMessage],
+                stop: list[str] | None,
+            ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+                message_dicts, params = super()._create_message_dicts(messages, stop)
+                message_dicts = _attach_openrouter_cache_control(
+                    message_dicts,
+                    self.content_cache_control,
+                )
+                return message_dicts, params
+
+        return CatMasterChatOpenRouter(
             model=cfg.model,
             api_key=api_key,
             temperature=cfg.temperature,
             reasoning=reasoning_config,
-            streaming=True,
+            streaming=False,
             max_tokens=max_tokens,
+            content_cache_control=cache_control_config,
             **kwargs,
         )
 
@@ -365,7 +511,9 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             temperature=cfg.temperature,
             reasoning=reasoning_config,
             model_kwargs=model_kwargs,
-            streaming=True,
+            streaming=False,
+            disable_streaming=True,
+            use_responses_api=True,
             **kwargs,
         )
 

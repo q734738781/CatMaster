@@ -69,6 +69,7 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
                 "agent_runtime:",
                 "  recursion_limit: 512",
                 "  max_tool_calls: 72",
+                "  max_model_calls: 144",
                 "  print_state_messages: true",
                 "  print_http_raw_post: true",
                 "writing:",
@@ -91,9 +92,69 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert profile.agent_policies.proposal.browse_tools_enabled is False
     assert profile.agent_runtime.recursion_limit == 512
     assert profile.agent_runtime.max_tool_calls == 72
+    assert profile.agent_runtime.max_model_calls == 144
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
     assert profile.writing.author_name == "CatMaster"
+    assert profile.peer_review_models == ["openai/gpt-5-nano"]
+
+
+def test_llm_profile_peer_review_models_must_reference_explicit_model_labels(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'peer-a':",
+                "    provider: openrouter",
+                "    model: google/gemini-3.1-pro",
+                "  'peer-b':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.4:online",
+                "agents:",
+                "  proposal: 'peer-a'",
+                "  director: 'peer-a'",
+                "  task_runner: 'peer-a'",
+                "  memory_patch: 'peer-a'",
+                "  summary: 'peer-b'",
+                "peer_review_models:",
+                "  - 'peer-a'",
+                "  - 'peer-b'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.peer_review_models == ["peer-a", "peer-b"]
+
+
+def test_llm_profile_rejects_unknown_peer_review_model_labels(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'peer-a':",
+                "    provider: openrouter",
+                "    model: google/gemini-3.1-pro",
+                "agents:",
+                "  proposal: 'peer-a'",
+                "  director: 'peer-a'",
+                "  task_runner: 'peer-a'",
+                "  memory_patch: 'peer-a'",
+                "  summary: 'peer-a'",
+                "peer_review_models:",
+                "  - 'peer-a'",
+                "  - 'missing-peer'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="peer_review_models references unknown model label"):
+        LLMProfile.from_env_or_file(str(cfg))
 
 
 def test_llm_profile_tool_selector_fallbacks_to_task_runner(tmp_path: Path) -> None:
@@ -378,7 +439,8 @@ def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) 
 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.agent_runtime.recursion_limit == 1_000_000
-    assert profile.agent_runtime.max_tool_calls == 60
+    assert profile.agent_runtime.max_tool_calls == 120
+    assert profile.agent_runtime.max_model_calls == 120
     assert profile.agent_runtime.print_state_messages is False
     assert profile.agent_runtime.print_http_raw_post is False
 
@@ -390,12 +452,14 @@ def test_llm_profile_from_env_ignores_legacy_runtime_env(monkeypatch: pytest.Mon
     monkeypatch.setenv("CATMASTER_STRICT_CONTROL_CONTRACT", "false")
     monkeypatch.setenv("CATMASTER_RECURSION_LIMIT", "256")
     monkeypatch.setenv("CATMASTER_MAX_TOOL_CALLS", "66")
+    monkeypatch.setenv("CATMASTER_MAX_MODEL_CALLS", "132")
     monkeypatch.setenv("CATMASTER_PRINT_HTTP_RAW_POST", "true")
 
     profile = LLMProfile.from_env()
 
     assert profile.agent_runtime.recursion_limit == 256
     assert profile.agent_runtime.max_tool_calls == 66
+    assert profile.agent_runtime.max_model_calls == 132
     assert profile.agent_runtime.print_http_raw_post is True
 
 

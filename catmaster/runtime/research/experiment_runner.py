@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from catmaster.agents.graph import GraphRunPolicy
-from catmaster.agents.runner_factory import build_graph_runner
+from catmaster.specialists import build_specialist_runner
 from catmaster.tools.base import system_root
 from catmaster.ui.reporters import NullReporter, Reporter
 
@@ -39,6 +38,8 @@ def build_experiment_child_request(
             "",
             f"Experiment title:\n{brief.title}",
             "",
+            f"Execution lane preference:\n{brief.lane}",
+            "",
             f"Goal:\n{brief.goal}",
             "",
             f"Detailed instructions:\n{brief.task_detail}",
@@ -70,13 +71,6 @@ def build_experiment_child_request(
 
 
 class ExperimentLaneRunner:
-    CHILD_RUN_POLICY = GraphRunPolicy(
-        allow_memory_patch=True,
-        allow_human_intervention=False,
-        enable_literature_tool=False,
-        enable_history_prefetch=True,
-    )
-
     def __init__(
         self,
         *,
@@ -100,14 +94,13 @@ class ExperimentLaneRunner:
         brief_model = ExperimentBriefModel.model_validate(
             brief.model_dump() if hasattr(brief, "model_dump") else brief
         )
-        built = build_graph_runner(
+        built = build_specialist_runner(
             workspace=self.workspace,
             llm_profile=self.llm_profile,
             reporter=self.reporter,
             run_control=None,
             project_id=self.project_id,
-            run_policy=self.CHILD_RUN_POLICY,
-            bind_run_control_id=False,
+            preferred_entrypoint="experiment",
         )
         child_request = build_experiment_child_request(
             brief=brief_model,
@@ -116,7 +109,7 @@ class ExperimentLaneRunner:
         )
         result = await built.runner.arun(
             child_request,
-            lane=brief_model.lane,
+            entrypoint="experiment",
             proposal_review=False,
         )
         observations = list(result.get("observations") or [])
@@ -136,6 +129,21 @@ class ExperimentLaneRunner:
                 if text and text not in open_questions:
                     open_questions.append(text)
             for artifact in list(item.get("key_artifacts") or []):
+                if not isinstance(artifact, dict):
+                    continue
+                path = str(artifact.get("path") or "").strip()
+                if not path or path in seen_paths:
+                    continue
+                seen_paths.add(path)
+                key_artifacts.append(
+                    ResearchArtifactRef(
+                        path=path,
+                        description=str(artifact.get("description") or ""),
+                        kind=str(artifact.get("kind") or "output"),
+                    )
+                )
+        if not key_artifacts:
+            for artifact in list(result.get("artifacts") or []):
                 if not isinstance(artifact, dict):
                     continue
                 path = str(artifact.get("path") or "").strip()

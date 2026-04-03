@@ -20,10 +20,7 @@ models:
 
     default_headers: {}
 
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:xhigh":
     provider: openrouter
@@ -42,10 +39,7 @@ models:
 
     default_headers: {}
 
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-high":
     provider: openrouter
@@ -68,10 +62,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-xhigh":
     provider: openrouter
@@ -94,10 +85,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.3-codex:online-high":
     provider: openrouter
@@ -120,10 +108,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-medium":
     provider: openrouter
@@ -146,10 +131,7 @@ models:
     default_headers: {}
 
     # Provider-bound options
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "openai/gpt-5.4:online-minimal":
     provider: openrouter
@@ -168,27 +150,21 @@ models:
 
     default_headers: {}
 
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
     
-  "openai/gpt-5-mini:online":
+  "openai/gpt-5.4-mini":
     provider: openrouter
-    model: openai/gpt-5-mini:online
+    model: openai/gpt-5.4-mini
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
     reasoning:
-      effort: minimal
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+      effort: high
+
   
   "google/gemini-3-flash-preview":
     provider: openrouter
-    model: google/gemini-3-flash-preview
+    model: google/gemini-3-flash-preview:online
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
@@ -197,16 +173,13 @@ models:
 
   "google/gemini-3.1-pro-preview":
     provider: openrouter
-    model: google/gemini-3.1-pro-preview
+    model: google/gemini-3.1-pro-preview:online
     temperature: 0.2
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
     reasoning:
       effort: medium
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
   "google/nanobanana_2":
     provider: openrouter
@@ -214,16 +187,13 @@ models:
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
-    provider_options:
-      openrouter:
-        extra_body:
-          prompt_cache_retention: 24h
+
 
 agents:
   # Main Track Agents
   proposal: "openai/gpt-5.4:online-high"
   director: "openai/gpt-5.4:online-high"
-  task_runner: "openai/gpt-5.4:online-medium"
+  task_runner: "openai/gpt-5.4:online-high"
   research_lead: "openai/gpt-5.4:online-high"
   research_state_updater: "openai/gpt-5.4:online-high"
   write_director: "openai/gpt-5.4:online-high"
@@ -234,10 +204,13 @@ agents:
   # Tool Agent Models
   image_analyzer: "openai/gpt-5.4:online-medium"
   literature_synthesizer: "openai/gpt-5.4:medium"
-  literature_deep_research: "openai/gpt-5.4:xhigh"
+  literature_deep_research: "openai/gpt-5.4:online-high"
   memory_patch: "openai/gpt-5.4:online-medium"
-  tool_selector: "openai/gpt-5.4:online-minimal"
+  tool_selector: "openai/gpt-5.4-mini"
   summary: "google/gemini-3-flash-preview"
+
+peer_review_models:
+  - "google/gemini-3.1-pro-preview"
 
 image_generation:
   model_label: "google/nanobanana_2"
@@ -249,7 +222,8 @@ writing:
 
 agent_runtime:
   recursion_limit: 9999
-  max_tool_calls: 60
+  max_tool_calls: 120
+  max_model_calls: 120
   print_state_messages: true
   print_http_raw_post: false
 
@@ -271,7 +245,7 @@ literature:
     write_reviewer: none
   public_web_on_search_failure: true
   summary_key_paper_count: 5
-  semantic_scholar_retry_429_attempts: 3
+  semantic_scholar_retry_429_attempts: 5
   semantic_scholar_retry_429_wait_seconds: 15.0
   budgets:
     none:

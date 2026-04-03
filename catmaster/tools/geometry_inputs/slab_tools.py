@@ -14,10 +14,11 @@ from pymatgen.core.surface import SlabGenerator
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.geometry_inputs.adsorbate_tool import propagate_adsorbate_metadata
 
 
 class SlabBuildInput(BaseModel):
-    """Build slabs for all terminations of a Miller index from bulk structure(s).
+    """[surface/modeling] Build slabs for all terminations of a Miller index from bulk structure(s).
 
     Provide exactly one of bulk_structure or bulk_dir. When bulk_dir is used, output_root is required.
     Batch outputs are written under output_root/<slab_id>/..., where slab_id encodes the relative input path
@@ -53,7 +54,7 @@ class SlabBuildInput(BaseModel):
 
 
 class FixAtomsByLayersInput(BaseModel):
-    """Fix (freeze) the bottom N atomic layers of slab structure(s).
+    """[surface/modeling] Fix (freeze) the bottom N atomic layers of slab structure(s).
 
     Provide exactly one of structure_ref or structure_dir. When structure_dir is used, output_dir is required.
     Batch outputs are written to output_dir/<slab_id>.vasp and a summary JSON is written to
@@ -81,6 +82,10 @@ class FixAtomsByLayersInput(BaseModel):
         gt=0.0,
         description="Layer grouping tolerance in Å. 0.2 is suitable for most cases except for highly tilted slabs.",
     )
+    reverse: bool = Field(
+        False,
+        description="If false, freeze the selected layers. If true, keep the selected layers free and freeze all other atoms.",
+    )
 
 
 class ZRange(BaseModel):
@@ -89,7 +94,7 @@ class ZRange(BaseModel):
 
 
 class FixAtomsByHeightInput(BaseModel):
-    """Fix (freeze) atoms within specified z ranges of slab structure(s).
+    """[surface/modeling] Fix (freeze) atoms within specified z ranges of slab structure(s).
 
     Provide exactly one of structure_ref or structure_dir. When structure_dir is used, output_dir is required.
     Batch outputs are written to output_dir/<slab_id>.vasp and a summary JSON is written to
@@ -112,6 +117,34 @@ class FixAtomsByHeightInput(BaseModel):
         description="Ranges in Å in Cartesian coordinates; atoms in these z ranges are frozen.",
     )
     centralize: bool = Field(False, description="Recentre slab along c after applying constraints.")
+    reverse: bool = Field(
+        False,
+        description="If false, freeze atoms inside z_ranges. If true, keep atoms inside z_ranges free and freeze all other atoms.",
+    )
+
+
+class FixAtomsByIndicesInput(BaseModel):
+    """[surface/modeling] Fix (freeze) atoms by explicit 0-based indices for one structure or a directory batch."""
+
+    structure_ref: Optional[str] = Field(None, description="Structure file to modify (POSCAR/CIF).")
+    structure_dir: Optional[str] = Field(None, description="Directory containing structure files to modify.")
+    output_path: Optional[str] = Field(None, description="Output structure path (workspace-relative) for single file.")
+    output_dir: Optional[str] = Field(
+        None,
+        description=(
+            "Output directory for batch mode. Outputs are written as <output_dir>/<structure_id>.vasp where structure_id "
+            "encodes the relative input path (without suffix) using '__'."
+        ),
+    )
+    indices: List[int] = Field(
+        ...,
+        min_length=1,
+        description="Explicit 0-based atom indices selected by the fixing rule.",
+    )
+    reverse: bool = Field(
+        False,
+        description="If false, freeze the selected indices. If true, keep the selected indices free and freeze all other atoms.",
+    )
 
 
 def _ensure_dir(path: Path) -> None:
@@ -239,7 +272,7 @@ def _build_slab_single(
 
 def build_slab(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
     """
-    Build slabs for all terminations of a given Miller index. Each termination is written
+    [surface/modeling] Build slabs for all terminations of a given Miller index. Each termination is written
     as a separate POSCAR under output_root. Supercell expansion is applied to every termination.
     """
     params = SlabBuildInput(**payload)
@@ -457,6 +490,30 @@ def _center_of_mass(slab: Structure) -> np.ndarray:
     total_mass = float(masses.sum())
     return (coords * masses[:, None]).sum(axis=0) / total_mass
 
+
+def _build_relax_mask_from_frozen_mask(freeze_mask: list[bool], *, reverse: bool) -> list[bool]:
+    if reverse:
+        return [bool(flag) for flag in freeze_mask]
+    return [not bool(flag) for flag in freeze_mask]
+
+
+def _apply_selective_dynamics(slab: Structure, relax_mask: list[bool]) -> None:
+    slab.add_site_property("selective_dynamics", [[bool(m), bool(m), bool(m)] for m in relax_mask])
+
+
+def _normalize_explicit_indices(indices: list[int], *, natoms: int) -> list[int]:
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for raw in indices:
+        idx = int(raw)
+        if idx < 0 or idx >= natoms:
+            raise ValueError(f"Index out of range for structure with {natoms} atoms: {idx}")
+        if idx in seen:
+            continue
+        seen.add(idx)
+        normalized.append(idx)
+    return normalized
+
 def _fix_atoms_by_layers_single(
     structure_ref: Path,
     output_path: Path,
@@ -464,6 +521,7 @@ def _fix_atoms_by_layers_single(
     freeze_layers: int,
     centralize: bool,
     layer_tol: float,
+    reverse: bool,
 ) -> Dict[str, object]:
     slab = Structure.from_file(structure_ref)
     if centralize:
@@ -477,9 +535,10 @@ def _fix_atoms_by_layers_single(
     if freeze_layers < 0 or freeze_layers > len(unique_bins):
         raise ValueError("freeze_layers is more than layers counted")
     freeze_bins = set(unique_bins[:freeze_layers])
-    relax_mask = [b not in freeze_bins for b in bin_ids]
+    freeze_mask = [b in freeze_bins for b in bin_ids]
+    relax_mask = _build_relax_mask_from_frozen_mask(freeze_mask, reverse=reverse)
 
-    slab.add_site_property("selective_dynamics", [[m, m, m] for m in relax_mask])
+    _apply_selective_dynamics(slab, relax_mask)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     slab.to(fmt="poscar", filename=output_path)
 
@@ -490,10 +549,12 @@ def _fix_atoms_by_layers_single(
         "frozen_atoms": int(len(relax_mask) - np.sum(relax_mask)),
         "frozen_layers": int(freeze_layers),
         "total_layers": int(len(unique_bins)),
+        "reverse": bool(reverse),
     }
 
 
 def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze slab atoms by counted bottom layers for one structure or a batch."""
     params = FixAtomsByLayersInput(**payload)
     if (params.structure_ref is None) == (params.structure_dir is None):
         _failure(
@@ -505,6 +566,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
     freeze_layers = int(params.freeze_layers)
     centralize = bool(params.centralize)
     layer_tol = float(params.layer_tol)
+    reverse = bool(params.reverse)
 
     if params.structure_dir is not None:
         if params.output_dir is None:
@@ -534,6 +596,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
 
         results = []
         errors = []
+        warnings: list[str] = []
         for structure_path in structures:
             rel_path = structure_path.relative_to(structure_root)
             slab_id = _slab_id_from(rel_path)
@@ -545,7 +608,16 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                     freeze_layers=freeze_layers,
                     centralize=centralize,
                     layer_tol=layer_tol,
+                    reverse=reverse,
                 )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_layers",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
                 results.append(
                     {
                         "input_rel": str(rel_path),
@@ -553,6 +625,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                         "output_rel": workspace_relpath(output_path),
                         "relaxed_atoms": result["relaxed_atoms"],
                         "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
                     }
                 )
             except Exception as exc:
@@ -573,6 +646,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             "freeze_layers": freeze_layers,
             "layer_tol": layer_tol,
             "centralize": centralize,
+            "reverse": reverse,
             "structures_found": len(structures),
             "structures_processed": len(results),
             "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
@@ -589,7 +663,7 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
         if first_output:
             lines.append(f"first_output_rel={first_output}")
         content = "\n".join(lines)
-        return _success("fix_atoms_by_layers", content=content, data=data)
+        return _success("fix_atoms_by_layers", content=content, data=data, warnings=warnings)
 
     if params.output_path is None:
         _failure(
@@ -606,7 +680,15 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             freeze_layers=freeze_layers,
             centralize=centralize,
             layer_tol=layer_tol,
+            reverse=reverse,
         )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_layers",
+        )
+        if propagated:
+            data.update(propagated)
     except Exception as exc:
         _failure(
             "fix_atoms_by_layers",
@@ -617,9 +699,10 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
     content = (
         "fix_atoms_by_layers completed.\n"
         f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
-        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']}"
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
+        f"reverse={str(data['reverse']).lower()}"
     )
-    return _success("fix_atoms_by_layers", content=content, data=data)
+    return _success("fix_atoms_by_layers", content=content, data=data, warnings=warnings)
 
 
 def _fix_atoms_by_height_single(
@@ -628,12 +711,13 @@ def _fix_atoms_by_height_single(
     *,
     z_ranges: list[tuple[float, float]],
     centralize: bool,
+    reverse: bool,
 ) -> Dict[str, object]:
     slab = Structure.from_file(structure_ref)
     coords = slab.cart_coords[:, 2]
     freeze_mask = [any(zmin <= z <= zmax for zmin, zmax in z_ranges) for z in coords]
-    relax_mask = [not f for f in freeze_mask]
-    slab.add_site_property("selective_dynamics", [[m, m, m] for m in relax_mask])
+    relax_mask = _build_relax_mask_from_frozen_mask(freeze_mask, reverse=reverse)
+    _apply_selective_dynamics(slab, relax_mask)
 
     if centralize:
         z_target = float(slab.lattice.matrix[2][2]) / 2
@@ -649,10 +733,12 @@ def _fix_atoms_by_height_single(
         "relaxed_atoms": int(np.sum(relax_mask)),
         "frozen_atoms": int(len(relax_mask) - np.sum(relax_mask)),
         "z_ranges": [[float(zmin), float(zmax)] for zmin, zmax in z_ranges],
+        "reverse": bool(reverse),
     }
 
 
 def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze slab atoms by Cartesian z ranges for one structure or a batch."""
     params = FixAtomsByHeightInput(**payload)
     if (params.structure_ref is None) == (params.structure_dir is None):
         _failure(
@@ -668,6 +754,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
         )
     z_ranges = [(float(item.z_min), float(item.z_max)) for item in params.z_ranges]
     centralize = bool(params.centralize)
+    reverse = bool(params.reverse)
 
     for zmin, zmax in z_ranges:
         if zmin >= zmax:
@@ -705,6 +792,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
 
         results = []
         errors = []
+        warnings: list[str] = []
         for structure_path in structures:
             rel_path = structure_path.relative_to(structure_root)
             slab_id = _slab_id_from(rel_path)
@@ -715,7 +803,16 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                     output_path,
                     z_ranges=z_ranges,
                     centralize=centralize,
+                    reverse=reverse,
                 )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_height",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
                 results.append(
                     {
                         "input_rel": str(rel_path),
@@ -723,6 +820,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
                         "output_rel": workspace_relpath(output_path),
                         "relaxed_atoms": result["relaxed_atoms"],
                         "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
                     }
                 )
             except Exception as exc:
@@ -742,6 +840,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             "output_dir_rel": workspace_relpath(output_root),
             "z_ranges": [[float(zmin), float(zmax)] for zmin, zmax in z_ranges],
             "centralize": centralize,
+            "reverse": reverse,
             "structures_found": len(structures),
             "structures_processed": len(results),
             "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
@@ -758,7 +857,7 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
         if first_output:
             lines.append(f"first_output_rel={first_output}")
         content = "\n".join(lines)
-        return _success("fix_atoms_by_height", content=content, data=data)
+        return _success("fix_atoms_by_height", content=content, data=data, warnings=warnings)
 
     if params.output_path is None:
         _failure(
@@ -774,7 +873,15 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             output_path,
             z_ranges=z_ranges,
             centralize=centralize,
+            reverse=reverse,
         )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_height",
+        )
+        if propagated:
+            data.update(propagated)
     except Exception as exc:
         _failure(
             "fix_atoms_by_height",
@@ -785,9 +892,184 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
     content = (
         "fix_atoms_by_height completed.\n"
         f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
-        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']}"
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
+        f"reverse={str(data['reverse']).lower()}"
     )
-    return _success("fix_atoms_by_height", content=content, data=data)
+    return _success("fix_atoms_by_height", content=content, data=data, warnings=warnings)
+
+
+def _fix_atoms_by_indices_single(
+    structure_ref: Path,
+    output_path: Path,
+    *,
+    indices: list[int],
+    reverse: bool,
+) -> Dict[str, object]:
+    slab = Structure.from_file(structure_ref)
+    normalized_indices = _normalize_explicit_indices(indices, natoms=len(slab))
+    selected = set(normalized_indices)
+    freeze_mask = [idx in selected for idx in range(len(slab))]
+    relax_mask = _build_relax_mask_from_frozen_mask(freeze_mask, reverse=reverse)
+    _apply_selective_dynamics(slab, relax_mask)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    slab.to(fmt="poscar", filename=output_path)
+
+    return {
+        "input_rel": workspace_relpath(structure_ref),
+        "output_rel": workspace_relpath(output_path),
+        "indices": normalized_indices,
+        "index_base": 0,
+        "reverse": bool(reverse),
+        "selected_atoms": int(len(normalized_indices)),
+        "relaxed_atoms": int(np.sum(relax_mask)),
+        "frozen_atoms": int(len(relax_mask) - np.sum(relax_mask)),
+    }
+
+
+def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze atoms by explicit 0-based indices for one structure or a batch."""
+    params = FixAtomsByIndicesInput(**payload)
+    if (params.structure_ref is None) == (params.structure_dir is None):
+        _failure(
+            "fix_atoms_by_indices",
+            message="Provide exactly one of structure_ref or structure_dir.",
+            error_code="invalid_input_mode",
+        )
+
+    indices = [int(item) for item in params.indices]
+    reverse = bool(params.reverse)
+
+    if params.structure_dir is not None:
+        if params.output_dir is None:
+            _failure(
+                "fix_atoms_by_indices",
+                message="output_dir is required when structure_dir is provided.",
+                error_code="missing_output_dir",
+            )
+        structure_root = resolve_workspace_path(params.structure_dir, must_exist=True)
+        if not structure_root.is_dir():
+            _failure(
+                "fix_atoms_by_indices",
+                message=f"structure_dir is not a directory: {structure_root}",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="invalid_structure_dir",
+            )
+        output_root = resolve_workspace_path(params.output_dir)
+        _ensure_dir(output_root)
+        structures = _collect_structure_files(structure_root)
+        if not structures:
+            _failure(
+                "fix_atoms_by_indices",
+                message="No structure files found in structure_dir.",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="no_structures",
+            )
+
+        results = []
+        errors = []
+        warnings: list[str] = []
+        for structure_path in structures:
+            rel_path = structure_path.relative_to(structure_root)
+            structure_id = _slab_id_from(rel_path)
+            output_path = output_root / f"{structure_id}.vasp"
+            try:
+                result = _fix_atoms_by_indices_single(
+                    structure_path,
+                    output_path,
+                    indices=indices,
+                    reverse=reverse,
+                )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_indices",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
+                results.append(
+                    {
+                        "input_rel": str(rel_path),
+                        "structure_id": structure_id,
+                        "output_rel": workspace_relpath(output_path),
+                        "relaxed_atoms": result["relaxed_atoms"],
+                        "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
+                    }
+                )
+            except Exception as exc:
+                errors.append({"input_rel": str(rel_path), "error": str(exc)})
+
+        batch_json = output_root / "batch_fix_atoms_by_indices.json"
+        try:
+            batch_json.write_text(
+                json.dumps({"results": results, "errors": errors}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+        data = {
+            "structure_dir_rel": workspace_relpath(structure_root),
+            "output_dir_rel": workspace_relpath(output_root),
+            "indices": indices,
+            "index_base": 0,
+            "reverse": reverse,
+            "structures_found": len(structures),
+            "structures_processed": len(results),
+            "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
+            "errors_count": len(errors),
+        }
+        first_output = results[0]["output_rel"] if results else ""
+        lines = [
+            "fix_atoms_by_indices completed.",
+            f"structures_processed={len(results)} structures_found={len(structures)} errors_count={len(errors)}",
+            f"output_dir_rel={data['output_dir_rel']}",
+        ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
+        if first_output:
+            lines.append(f"first_output_rel={first_output}")
+        content = "\n".join(lines)
+        return _success("fix_atoms_by_indices", content=content, data=data, warnings=warnings)
+
+    if params.output_path is None:
+        _failure(
+            "fix_atoms_by_indices",
+            message="output_path is required when structure_ref is provided.",
+            error_code="missing_output_path",
+        )
+    structure_ref = resolve_workspace_path(params.structure_ref, must_exist=True)
+    output_path = resolve_workspace_path(params.output_path)
+    try:
+        data = _fix_atoms_by_indices_single(
+            structure_ref,
+            output_path,
+            indices=indices,
+            reverse=reverse,
+        )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_indices",
+        )
+        if propagated:
+            data.update(propagated)
+    except Exception as exc:
+        _failure(
+            "fix_atoms_by_indices",
+            message=f"fix_atoms_by_indices failed: {exc}",
+            data={"structure_ref_rel": workspace_relpath(structure_ref)},
+            error_code="fix_by_indices_failed",
+        )
+    content = (
+        "fix_atoms_by_indices completed.\n"
+        f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
+        f"indices={data['indices']} index_base=0 reverse={str(data['reverse']).lower()}"
+    )
+    return _success("fix_atoms_by_indices", content=content, data=data, warnings=warnings)
 
 
 __all__ = [

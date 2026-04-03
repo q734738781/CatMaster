@@ -14,7 +14,7 @@ from catmaster.runtime.skills.context_guides import (
 from catmaster.runtime.skills.models import SkillMeta
 
 
-def _skill(name: str, description: str, suggested_tools: list[str]) -> SkillMeta:
+def _skill(name: str, description: str, allowed_tools: list[str]) -> SkillMeta:
     root = Path("/tmp") / name
     return SkillMeta(
         name=name,
@@ -24,7 +24,7 @@ def _skill(name: str, description: str, suggested_tools: list[str]) -> SkillMeta
         abs_skill_md=root / "SKILL.md",
         source_root_name="skills",
         mount_token="@skills",
-        suggested_tools=suggested_tools,
+        allowed_tools=allowed_tools,
     )
 
 
@@ -41,7 +41,7 @@ def test_proposal_skill_guide_stays_at_skill_level() -> None:
     assert "role-visible skills" in text
     assert "slab-construction-and-surface-modeling" in text
     assert "Slab construction and fixing strategy." in text
-    assert "Suggested tools:" not in text
+    assert "Allowed tools:" not in text
 
 
 def test_director_skill_guides_include_soft_tool_hints() -> None:
@@ -53,8 +53,8 @@ def test_director_skill_guides_include_soft_tool_hints() -> None:
     director_text = render_director_skill_guide([skill])
     fast_text = render_fast_director_skill_guide([skill])
 
-    assert "Suggested tools: mace_relax_batch, mace_sp_batch" in director_text
-    assert "Suggested tools: mace_relax_batch, mace_sp_batch" in fast_text
+    assert "Allowed tools: mace_relax_batch, mace_sp_batch" in director_text
+    assert "Allowed tools: mace_relax_batch, mace_sp_batch" in fast_text
     assert "soft hints" in director_text
     assert "soft hints" in fast_text
     assert "task packet" in fast_text
@@ -73,7 +73,7 @@ def test_research_lead_skill_guide_stays_planning_level() -> None:
     )
     assert "Research-lane planning" in text
     assert "literature-grounding" in text
-    assert "Suggested tools:" not in text
+    assert "Allowed tools:" not in text
 
 
 def test_writing_guides_reflect_role_purpose() -> None:
@@ -86,5 +86,5 @@ def test_writing_guides_reflect_role_purpose() -> None:
     section_text = render_section_writer_skill_guide([skill])
     reviewer_text = render_write_reviewer_skill_guide([skill])
     assert "section scope" in director_text
-    assert "Suggested tools: review_research_context, read_research_pack" in section_text
+    assert "Allowed tools: review_research_context, read_research_pack" in section_text
     assert "unsupported claims" in reviewer_text

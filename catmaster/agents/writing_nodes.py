@@ -72,7 +72,7 @@ def _repo_root() -> Path:
 
 
 def _achemso_asset_path(name: str) -> Path:
-    return _repo_root() / "writing_skills" / "achemso-latex-manuscript" / "assets" / name
+    return _repo_root() / "skills" / "writing" / "achemso-latex-manuscript" / "assets" / name
 
 
 def _slug(text: str, *, fallback: str = "section") -> str:

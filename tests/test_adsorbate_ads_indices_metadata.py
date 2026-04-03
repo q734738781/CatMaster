@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("pymatgen")
-
 from pymatgen.core import Structure
 
 from catmaster.tools.geometry_inputs.adsorbate_tool import (
+    enumerate_adsorption_sites,
     generate_batch_adsorption_structures,
     place_adsorbate,
 )
@@ -161,3 +161,59 @@ def test_place_adsorbate_preserves_input_orientation_without_reorient(tmp_path: 
         assert pytest.approx(float(delta[2]), rel=0.0, abs=1e-6) == 0.0
         assert data["geom"]["placement_reference"] == "center_of_mass_of_lowest_z_atoms"
         assert data["geom"]["reoriented"] is False
+
+
+def test_enumerate_adsorption_sites_returns_cartesian_3d_coordinates(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        slab_path, _ = _copy_assets(tmp_path)
+        _, artifact = enumerate_adsorption_sites(
+            {
+                "slab_file": slab_path.name,
+                "mode": "all",
+                "distance": 2.0,
+                "output_json": "out/sites.json",
+            }
+        )
+        data = artifact["data"]
+        rows = json.loads((tmp_path / "files" / data["sites_json_rel"]).read_text(encoding="utf-8"))
+        assert rows
+        first = rows[0]
+        assert "cart_coords" in first
+        assert len(first["cart_coords"]) == 3
+
+
+def test_place_adsorbate_accepts_site_cart_coords_as_direct_coordinate(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        slab_path, ads_path = _copy_assets(tmp_path)
+        requested_coords = [1.234, 2.345, 8.765]
+
+        _, artifact = place_adsorbate(
+            {
+                "slab_file": slab_path.name,
+                "adsorbate_file": ads_path.name,
+                "site_cart_coords": requested_coords,
+                "distance": 2.0,
+                "output_poscar": "out/ads_xy.vasp",
+            }
+        )
+        data = artifact["data"]
+        assert data["site"]["label"] is None
+        assert data["site"]["selection_mode"] == "cart_direct"
+        assert data["site"]["requested_site_cart_coords"] == pytest.approx(requested_coords)
+        assert data["site"]["cart_coords"] == pytest.approx(requested_coords)
+
+
+def test_place_adsorbate_rejects_combined_site_label_and_site_cart_coords(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        slab_path, ads_path = _copy_assets(tmp_path)
+        with pytest.raises(Exception, match="site_label or site_cart_coords"):
+            place_adsorbate(
+                {
+                    "slab_file": slab_path.name,
+                    "adsorbate_file": ads_path.name,
+                    "site_label": "ontop_0",
+                    "site_cart_coords": [1.0, 2.0, 3.0],
+                    "distance": 2.0,
+                    "output_poscar": "out/ads_invalid.vasp",
+                }
+            )

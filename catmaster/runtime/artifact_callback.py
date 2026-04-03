@@ -823,10 +823,11 @@ class UIEventHandler(BaseCallbackHandler):
     ``_emit()`` manually.
     """
 
-    def __init__(self, reporter: Reporter, *, run_id: str = "") -> None:
+    def __init__(self, reporter: Reporter, *, run_id: str = "", default_agent_name: str = "") -> None:
         super().__init__()
         self.reporter = reporter
         self.run_id = run_id
+        self.default_agent_name = str(default_agent_name or "").strip()
         self._tool_pending: Dict[str, Dict[str, Any]] = {}
         self._llm_pending: Dict[str, Dict[str, Any]] = {}
 
@@ -858,6 +859,18 @@ class UIEventHandler(BaseCallbackHandler):
             payload=extra,
         ))
 
+    def _agent_name(self, ctx: Dict[str, Any]) -> str:
+        for key in ("lc_agent_name", "agent_name", "agent", "subagent"):
+            value = str(ctx.get(key) or "").strip()
+            if value:
+                return value
+        checkpoint_ns = str(ctx.get("langgraph_checkpoint_ns") or ctx.get("checkpoint_ns") or "").strip()
+        if checkpoint_ns:
+            head = checkpoint_ns.split(":", 1)[0].strip()
+            if head and head != "model":
+                return head
+        return self.default_agent_name
+
     def on_tool_start(
         self,
         serialized: Dict[str, Any],
@@ -883,6 +896,7 @@ class UIEventHandler(BaseCallbackHandler):
                 raw_params = input_str
         params_compact, params_full = _compact_tool_params(raw_params)
         toolcall_id = str(run_id)
+        agent_name = self._agent_name(ctx)
         self._tool_pending[str(run_id)] = {
             "tool": serialized.get("name", ""),
             "task_id": task_id,
@@ -890,6 +904,7 @@ class UIEventHandler(BaseCallbackHandler):
             "toolcall_id": toolcall_id,
             "params_compact": params_compact,
             "params_full": params_full,
+            "agent_name": agent_name,
         }
         self._emit(
             "TOOL_CALL_START",
@@ -900,6 +915,7 @@ class UIEventHandler(BaseCallbackHandler):
             toolcall_id=toolcall_id,
             params_compact=params_compact,
             params_full=params_full,
+            agent_name=agent_name,
         )
 
     def on_tool_end(
@@ -922,6 +938,7 @@ class UIEventHandler(BaseCallbackHandler):
             highlights="\n".join(str(item) for item in list(parsed.get("highlights") or []) if str(item).strip()),
             params_compact=str(info.get("params_compact") or ""),
             toolcall_id=str(info.get("toolcall_id") or ""),
+            agent_name=str(info.get("agent_name") or ""),
         )
 
     def on_tool_error(
@@ -942,6 +959,7 @@ class UIEventHandler(BaseCallbackHandler):
             error=str(error),
             params_compact=str(info.get("params_compact") or ""),
             toolcall_id=str(info.get("toolcall_id") or ""),
+            agent_name=str(info.get("agent_name") or ""),
         )
 
     def on_llm_start(
@@ -955,12 +973,14 @@ class UIEventHandler(BaseCallbackHandler):
     ) -> None:
         ctx = self._context(metadata, **kwargs)
         model = str(serialized.get("kwargs", {}).get("model_name") or "")
+        agent_name = self._agent_name(ctx)
         self._llm_pending[str(run_id)] = {
             "model": model,
             "start_ts": time.time(),
             "task_id": str(ctx.get("task_id") or ""),
             "step_id": ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
             "node": str(ctx.get("langgraph_node") or ctx.get("node") or ""),
+            "agent_name": agent_name,
             "reasoning_emitted": "",
         }
         self._emit(
@@ -971,6 +991,7 @@ class UIEventHandler(BaseCallbackHandler):
             model=model,
             phase="react",
             node=str(ctx.get("langgraph_node") or ctx.get("node") or ""),
+            agent_name=agent_name,
         )
 
     def on_chat_model_start(
@@ -1013,17 +1034,21 @@ class UIEventHandler(BaseCallbackHandler):
                 phase="react",
                 node=str(info.get("node") or ""),
                 text=reasoning_delta,
+                agent_name=str(info.get("agent_name") or ""),
             )
-        self._emit(
-            "LLM_TOKEN_DELTA",
-            category="llm",
-            task_id=str(info.get("task_id") or "") or None,
-            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
-            model=str(info.get("model") or ""),
-            phase="react",
-            node=str(info.get("node") or ""),
-            text=str(token or ""),
-        )
+        token_text = str(token or "")
+        if token_text:
+            self._emit(
+                "LLM_TOKEN_DELTA",
+                category="llm",
+                task_id=str(info.get("task_id") or "") or None,
+                step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+                model=str(info.get("model") or ""),
+                phase="react",
+                node=str(info.get("node") or ""),
+                text=token_text,
+                agent_name=str(info.get("agent_name") or ""),
+            )
 
     def on_llm_end(
         self,
@@ -1062,6 +1087,7 @@ class UIEventHandler(BaseCallbackHandler):
             reasoning_text=reasoning_text,
             text_preview=text_preview,
             tool_calls=tool_names,
+            agent_name=str(info.get("agent_name") or ""),
         )
 
 

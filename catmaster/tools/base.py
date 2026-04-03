@@ -11,6 +11,27 @@ from pathlib import Path
 PROJECT_FILES_DIR_NAME = "files"
 PROJECT_METADATA_DIR_NAME = "metadata"
 LEGACY_SYSTEM_DIR_NAME = ".catmaster"
+_HOST_ABSOLUTE_TOPLEVEL_HINTS = {
+    "bin",
+    "boot",
+    "dev",
+    "etc",
+    "home",
+    "lib",
+    "lib64",
+    "media",
+    "mnt",
+    "opt",
+    "proc",
+    "root",
+    "run",
+    "sbin",
+    "srv",
+    "sys",
+    "tmp",
+    "usr",
+    "var",
+}
 _PROJECT_SPACE_OVERRIDE: contextvars.ContextVar[Optional[Path]] = contextvars.ContextVar(
     "catmaster_project_space_override",
     default=None,
@@ -111,6 +132,17 @@ def workspace_relpath(path: Path, workspace: Path | str | None = None) -> str:
         return str(path.resolve())
 
 
+def _is_virtual_workspace_absolute(raw_path: str) -> bool:
+    """Allow DeepAgent-style virtual absolute paths like `/foo/bar`, reject host paths like `/home/...`."""
+    pure = Path(str(raw_path or "").strip())
+    if not pure.is_absolute():
+        return False
+    parts = [part for part in pure.parts if part not in {"/", "\\"}]
+    if not parts:
+        return True
+    return parts[0] not in _HOST_ABSOLUTE_TOPLEVEL_HINTS
+
+
 def resolve_scoped_path(
     path: str,
     scope: str,
@@ -134,10 +166,16 @@ def resolve_scoped_path(
             try:
                 resolved_absolute.relative_to(root)
             except ValueError:
-                # DeepAgent exposes the project filesystem with a virtual `/` root.
-                # Treat absolute file-scope paths like `/foo/bar` as virtual paths
-                # relative to <project_space>/files.
-                p = (root / raw_path.lstrip("/")).resolve()
+                if _is_virtual_workspace_absolute(raw_path):
+                    # DeepAgent exposes the project filesystem with a virtual `/` root.
+                    # Treat virtual file-scope paths like `/foo/bar` as paths
+                    # relative to <project_space>/files.
+                    p = (root / raw_path.lstrip("/")).resolve()
+                else:
+                    raise ValueError(
+                        "Absolute host path outside project files root is not allowed in files scope: "
+                        f"{resolved_absolute}. Use a path relative to the project files root."
+                    )
             else:
                 p = resolved_absolute
         else:

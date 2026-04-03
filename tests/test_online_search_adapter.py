@@ -41,6 +41,7 @@ class _FakeClient:
 class _FakeTavilyClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.extract_calls: list[dict[str, object]] = []
 
     def search(self, query: str, **kwargs):
         self.calls.append({"query": query, **kwargs})
@@ -56,6 +57,19 @@ class _FakeTavilyClient:
                     "url": "https://example.org/untitled",
                     "raw_content": "Fallback raw content should still produce a snippet.",
                 },
+            ]
+        }
+
+    def extract(self, urls, **kwargs):
+        self.extract_calls.append({"urls": urls, **kwargs})
+        return {
+            "results": [
+                {
+                    "url": "https://example.org/paper",
+                    "title": "Extracted paper page",
+                    "description": "Extracted abstract-like summary.",
+                    "raw_content": "Pt(111) hydrogen adsorption benchmark text from extracted page.",
+                }
             ]
         }
 
@@ -96,7 +110,29 @@ def test_search_public_web_requires_tavily_key() -> None:
         adapter.search_public_web("CO adsorption Fe surfaces")
 
 
-def test_open_public_page_extracts_title_description_and_text(monkeypatch) -> None:
+def test_open_public_page_prefers_tavily_extract() -> None:
+    adapter = OnlineSearchAdapter(tavily_api_key="test-key")
+    fake_client = _FakeTavilyClient()
+    adapter._tavily_client = fake_client
+
+    page = adapter.open_public_page("https://example.org/paper", max_chars=2000)
+
+    assert fake_client.extract_calls == [
+        {
+            "urls": "https://example.org/paper",
+            "extract_depth": "advanced",
+            "format": "text",
+            "include_images": False,
+            "include_usage": False,
+            "timeout": 30.0,
+        }
+    ]
+    assert page.title == "Extracted paper page"
+    assert page.description == "Extracted abstract-like summary."
+    assert "Pt(111) hydrogen adsorption benchmark text" in page.text
+
+
+def test_open_public_page_falls_back_to_http_extracts_title_description_and_text(monkeypatch) -> None:
     html = """
     <html>
       <head>
@@ -124,6 +160,26 @@ def test_open_public_page_extracts_title_description_and_text(monkeypatch) -> No
     assert page.description == "Short abstract-like description."
     assert "Fe(110) CO study" in page.text
     assert "CO adsorption on Fe(110)" in page.text
+
+
+def test_open_public_page_falls_back_when_tavily_extract_returns_empty(monkeypatch) -> None:
+    html = """
+    <html><head><title>Fallback title</title></head><body><p>Fallback body text.</p></body></html>
+    """
+    adapter = OnlineSearchAdapter(tavily_api_key="test-key")
+    fake_client = _FakeTavilyClient()
+    fake_client.extract = lambda urls, **kwargs: {"results": [{"url": str(urls), "title": "Empty extract", "raw_content": ""}]}
+    adapter._tavily_client = fake_client
+    monkeypatch.setattr(
+        adapter,
+        "_http_client",
+        lambda: _FakeClient(_FakeResponse(url="https://example.org/paper", text=html)),
+    )
+
+    page = adapter.open_public_page("https://example.org/paper", max_chars=2000)
+
+    assert page.title == "Fallback title"
+    assert "Fallback body text" in page.text
 
 
 def test_find_in_page_returns_context_snippets(monkeypatch) -> None:

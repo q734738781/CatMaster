@@ -8,9 +8,19 @@ vasp_execute:
     - "*"
   task_work_path: "."
 
+vasp_execute_neb:
+  resources: vasp_cpu_neb
+  command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
+  forward_files:
+    - "*"
+    - "task_script/vasp_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
 mace_relax_dir:
   resources: mace_gpu
-  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice}"
+  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype}"
   forward_files:
     - "input"
     - "task_script/mace_relax.py"
@@ -20,10 +30,72 @@ mace_relax_dir:
 
 mace_sp_dir:
   resources: mace_gpu
-  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion}"
+  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
   forward_files:
     - "input"
     - "task_script/mace_sp.py"
   backward_files:
     - "output"
+  task_work_path: "."
+
+mace_neb_dir:
+  resources: mace_gpu
+  command: "python task_script/mace_neb.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
+  forward_files:
+    - "input"
+    - "task_script/mace_neb.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+mace_train_dir:
+  resources: mace_gpu
+  command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  forward_files:
+    - "dataset"
+    - "params"
+    - "task_script/mace_train.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+mace_eval_dir:
+  resources: mace_gpu
+  command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  forward_files:
+    - "dataset"
+    - "params"
+    - "task_script/mace_evaluate.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+xtb_run:
+  resources: xtb_cpu
+  command: "python task_script/xtb_boot.py --input {input_name} --mode {mode} --gfn {gfn} --solvent-model {solvent_model} --solvent {solvent} --charge {charge} --uhf {uhf} --opt-level {opt_level} --temperature {temperature} --md-time-ps {md_time_ps} --timestep-fs {timestep_fs} --md-dump-fs {md_dump_fs}"
+  forward_files:
+    - "*"
+    - "task_script/xtb_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+crest_run:
+  resources: crest_cpu
+  command: "python task_script/crest_boot.py --input {input_name} --mode {mode} --method {method} --ewin {ewin} --rthr {rthr} --ethr {ethr} --bthr {bthr} --charge {charge} --uhf {uhf} --solvent {solvent} --constraint-file {constraint_file}"
+  forward_files:
+    - "*"
+    - "task_script/crest_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+orca_execute:
+  resources: orca_cpu
+  command: "python task_script/orca_boot.py --input job.inp"
+  forward_files:
+    - "*"
+    - "task_script/orca_boot.py"
+  backward_files:
+    - "*"
   task_work_path: "."

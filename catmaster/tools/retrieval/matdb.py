@@ -18,7 +18,7 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 class MPSearchMaterialsInput(BaseModel):
     """
-    Search Materials Project with flexible criteria and write results to CSV.
+    [material/discovery] Search Materials Project with flexible criteria and write results to CSV.
 
     Common criteria keys (pass via `criteria`):
       - material_ids (list[str] or str)
@@ -62,7 +62,7 @@ class MPSearchMaterialsInput(BaseModel):
 
 
 class MPDownloadStructureInput(BaseModel):
-    """Download one or more structures from Materials Project into the workspace."""
+    """[material/discovery] Download one or more structures from Materials Project into the workspace."""
 
     mp_ids: List[str] = Field(..., description="Materials Project IDs, e.g., ['mp-149', 'mp-13'].")
     fmt: str = Field("poscar", pattern="^(poscar|cif|json)$", description="Output format: poscar|cif|json.")
@@ -213,7 +213,7 @@ def _serialize_csv_value(value: Any) -> Any:
 
 def mp_search_materials(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
     """
-    Search Materials Project with flexible criteria and write the result table to CSV.
+    [material/discovery] Search Materials Project with flexible criteria and write the result table to CSV.
     """
     params = MPSearchMaterialsInput(**payload)
     try:
@@ -321,7 +321,8 @@ def mp_search_materials(payload: Dict[str, object]) -> tuple[str, dict[str, Any]
 
 def mp_download_structure(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
     """
-    Download one or more structures from Materials Project and write them under the workspace. Downloaded structures are conventional cells.
+    [material/discovery] Download one or more structures from Materials Project and write them under the workspace.
+    Downloaded structures are conventional cells.
     Args:
         mp_ids: Materials Project IDs, e.g., ["mp-149", "mp-13"].
         fmt: Output format: poscar|cif|pymatgen_json.

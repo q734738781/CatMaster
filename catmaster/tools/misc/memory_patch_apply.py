@@ -13,7 +13,7 @@ from catmaster.tools.base import resolve_workspace_path
 
 
 class ApplyAiderEditsInput(BaseModel):
-    """Apply Aider SEARCH/REPLACE edit blocks to workspace files."""
+    """[workspace/edit] Apply Aider SEARCH/REPLACE edit blocks to workspace files."""
 
     edits_text: str = Field(
         ...,
@@ -112,6 +112,7 @@ def _fail(
 
 
 def apply_aider_edits(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[workspace/edit] Apply Aider SEARCH/REPLACE edit blocks to workspace files."""
     params = ApplyAiderEditsInput(**payload)
     edits_text = str(params.edits_text or "").strip()
     if not edits_text:

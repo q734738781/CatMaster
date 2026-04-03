@@ -7,17 +7,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from catmaster.llm.config import LLMConfig, LLMProfile
-from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
-class AgenticCompileTexInput(BaseModel):
-    """Compile or statically validate a manuscript bundle and repair LaTeX compile/reference issues without changing scientific meaning."""
+class CompileTextInput(BaseModel):
+    """[writing/compile] Compile or statically validate a manuscript bundle and return LaTeX diagnostics and artifacts."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -25,22 +22,6 @@ class AgenticCompileTexInput(BaseModel):
         ...,
         description="Workspace-relative path under files/ to the root manuscript .tex file.",
     )
-
-
-class _RewriteFile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    path: str = Field(...)
-    content: str = Field(...)
-
-
-class _TexFixOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    files: list[_RewriteFile] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-
-
 _INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
 _GRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
 _BIB_RE = re.compile(r"\\bibliography\{([^}]+)\}")
@@ -48,12 +29,7 @@ _BEGIN_RE = re.compile(r"\\begin\{([^}]+)\}")
 _END_RE = re.compile(r"\\end\{([^}]+)\}")
 _MISSING_BIBKEY_RE = re.compile(r'Warning--I didn\'t find a database entry for "([^"]+)"')
 _CITE_RE = re.compile(r"\\cite[a-zA-Z*]*\{")
-_SUPPRESS_CITE_RE = re.compile(r"^\s*\\renewcommand\{\\cite\}\[2\]\[\]\{\s*\}\s*$", re.MULTILINE)
-
-
-def _resolve_config() -> LLMConfig:
-    profile = LLMProfile.from_env_or_file()
-    return profile.config_for_role("tex_compile_fixer")
+_LATEX_ERROR_RE = re.compile(r"^!\s*(.+)$", re.MULTILINE)
 
 
 def _strip_comments(text: str) -> str:
@@ -210,14 +186,6 @@ def _needs_bibtex(files: list[Path]) -> bool:
     return False
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _achemso_bib_template() -> Path:
-    return _repo_root() / "writing_skills" / "achemso-latex-manuscript" / "assets" / "achemso-demo.bib"
-
-
 def _has_real_citations(files: list[Path]) -> bool:
     for path in files:
         text = _strip_comments(path.read_text(encoding="utf-8"))
@@ -226,37 +194,26 @@ def _has_real_citations(files: list[Path]) -> bool:
     return False
 
 
-def _enforce_bibliography_wrapper(*, root_tex: Path, files: list[Path]) -> list[str]:
-    touched: list[str] = []
-    wants_bibliography = _has_real_citations(files)
-    root_text = root_tex.read_text(encoding="utf-8")
-    updated = root_text
-
-    if _SUPPRESS_CITE_RE.search(updated):
-        updated = _SUPPRESS_CITE_RE.sub("", updated)
-        updated = re.sub(r"\n{3,}", "\n\n", updated)
-
-    has_bibliography = bool(_BIB_RE.search(_strip_comments(updated)))
-    if wants_bibliography and not has_bibliography:
-        updated = re.sub(
-            r"\\end\{document\}",
-            lambda _m: "\\bibliography{references}\n\\end{document}",
-            updated,
-            count=1,
+def _bibliography_diagnostics(*, root_tex: Path, files: list[Path]) -> list[str]:
+    diagnostics: list[str] = []
+    has_citations = _has_real_citations(files)
+    cleaned_root = _strip_comments(root_tex.read_text(encoding="utf-8"))
+    has_bibliography_cmd = bool(_BIB_RE.search(cleaned_root))
+    has_inline_bibliography = "\\begin{thebibliography}" in cleaned_root
+    bib_files = sorted(path for path in root_tex.parent.glob("*.bib") if path.is_file())
+    if has_inline_bibliography:
+        diagnostics.append(
+            "Inline `thebibliography` detected. Prefer a separate `.bib` file with `\\bibliography{references}`."
         )
-
-    if updated != root_text:
-        root_tex.write_text(updated, encoding="utf-8")
-        touched.append(workspace_relpath(root_tex))
-
-    if wants_bibliography:
-        bib_path = root_tex.parent / "references.bib"
-        if not bib_path.exists():
-            template = _achemso_bib_template()
-            if template.exists():
-                shutil.copy2(template, bib_path)
-                touched.append(workspace_relpath(bib_path))
-    return touched
+    if has_citations and not has_bibliography_cmd and not has_inline_bibliography:
+        diagnostics.append(
+            "Citations are present but no bibliography command or inline bibliography was found."
+        )
+    if has_citations and has_bibliography_cmd and not bib_files:
+        diagnostics.append(
+            "Citations use `\\bibliography{...}` but no `.bib` file was found in the manuscript bundle."
+        )
+    return diagnostics
 
 
 def _compiler_commands(*, root_tex: Path, needs_bibtex: bool) -> tuple[list[list[str]], str] | None:
@@ -321,119 +278,41 @@ def _compiler_diagnostics(compiler_result: dict[str, Any]) -> list[str]:
         diagnostics.append(f"Missing bibliography entry for citation key: {key}")
     if "Empty `thebibliography' environment" in combined:
         diagnostics.append("Bibliography resolved to an empty thebibliography environment.")
+    for item in _LATEX_ERROR_RE.findall(combined):
+        text = str(item).strip()
+        if text:
+            diagnostics.append(f"LaTeX error: {text}")
+    for line in combined.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("LaTeX Error:"):
+            diagnostics.append(stripped)
+        elif stripped.startswith("Package ") and " Error:" in stripped:
+            diagnostics.append(stripped)
     return diagnostics
 
 
-def _build_fix_messages(*, root_tex: Path, diagnostics: list[str], compiler_result: dict[str, Any], files: list[Path]) -> list[Any]:
-    payload_files = []
-    for path in files[:8]:
-        payload_files.append(
-            {
-                "path": workspace_relpath(path),
-                "content": path.read_text(encoding="utf-8"),
-            }
-        )
-    compiler_excerpt = "\n".join(
-        [
-            f"Compiler available: {'yes' if compiler_result.get('available') else 'no'}",
-            f"Compiler name: {compiler_result.get('name') or '(none)'}",
-            f"Return code: {compiler_result.get('returncode')}",
-            "Compiler stdout/stderr excerpt:",
-            (str(compiler_result.get("stdout") or "") + "\n" + str(compiler_result.get("stderr") or ""))[-6000:],
-        ]
-    ).strip()
-    human = "\n".join(
-        [
-            f"Root manuscript: {workspace_relpath(root_tex)}",
-            "Goal: make the manuscript bundle compile cleanly and keep references/graphics/input paths valid.",
-            "Allowed edits: LaTeX syntax, path fixes, missing \\input/\\includegraphics reference corrections, environment/bracing fixes, harmless compile-oriented escapes.",
-            "Allowed citation cleanup: if a citation key is missing from the bibliography and appears hallucinated or unsupported, you may remove that \\cite command or rewrite the sentence into uncited prose while preserving the scientific meaning as closely as possible.",
-            "Forbidden edits: changing scientific claims, changing numerical conclusions, rewriting substantive interpretation, deleting evidence-backed content just to silence errors, or inventing bibliography entries.",
-            "Return only file rewrites for files that truly need changes.",
-            "",
-            "Diagnostics:",
-            *([f"- {item}" for item in diagnostics] or ["- (none)"]),
-            "",
-            compiler_excerpt,
-            "",
-            "Files:",
-            json.dumps(payload_files, ensure_ascii=False, indent=2),
-        ]
-    ).strip()
-    return [
-        SystemMessage(
-            content=(
-                "You repair LaTeX manuscript bundles. "
-                "Fix compile/reference/syntax/path issues only. "
-                "Preserve the author's scientific wording and meaning as much as possible."
-            )
-        ),
-        HumanMessage(content=human),
-    ]
+def _compiler_excerpt(compiler_result: dict[str, Any], *, limit: int = 4000) -> str:
+    combined = f"{compiler_result.get('stdout') or ''}\n{compiler_result.get('stderr') or ''}".strip()
+    if len(combined) <= limit:
+        return combined
+    return combined[-limit:]
 
 
-def _apply_rewrites(*, root_tex: Path, rewrites: list[_RewriteFile]) -> list[str]:
-    bundle_root = root_tex.parent.resolve()
-    touched: list[str] = []
-    for rewrite in rewrites:
-        target = resolve_workspace_path(rewrite.path, must_exist=False)
-        try:
-            target.relative_to(bundle_root)
-        except ValueError as exc:
-            raise ValueError(f"rewrite target escapes manuscript bundle: {rewrite.path}") from exc
-        target.write_text(rewrite.content, encoding="utf-8")
-        touched.append(workspace_relpath(target))
-    return touched
+AgenticCompileTexInput = CompileTextInput
 
 
-def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    tool_name = "agentic_compile_tex"
+def compile_text(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[writing/compile] Run static checks plus an optional TeX compile pass for a manuscript bundle."""
+    tool_name = "compile_text"
     try:
-        params = AgenticCompileTexInput(**payload)
+        params = CompileTextInput(**payload)
         root_tex = resolve_workspace_path(params.source_path, must_exist=True)
         if root_tex.suffix.lower() != ".tex":
             raise ValueError("source_path must point to a .tex file")
-        initial_files, _ = _static_diagnostics(root_tex)
-        needs_bibtex = _needs_bibtex(initial_files)
-        if _compiler_commands(root_tex=root_tex, needs_bibtex=needs_bibtex) is None:
-            raise ValueError("pdflatex not available in PATH")
-        cfg = _resolve_config()
-        model = build_chat_model(cfg).with_structured_output(_TexFixOutput)
-        touched: list[str] = []
-        compiler_name: str | None = None
-        final_diagnostics: list[str] = []
-        compiled_ok = False
-        for _ in range(2):
-            files, diagnostics = _static_diagnostics(root_tex)
-            touched.extend(_enforce_bibliography_wrapper(root_tex=root_tex, files=files))
-            files, diagnostics = _static_diagnostics(root_tex)
-            needs_bibtex = _needs_bibtex(files)
-            compile_result = _run_compiler(root_tex, needs_bibtex=needs_bibtex)
-            compiler_name = str(compile_result.get("name") or "") or compiler_name
-            compile_errors = _compiler_diagnostics(compile_result)
-            if not compile_result.get("ok"):
-                compile_errors.append("Compiler reported errors; inspect stdout/stderr excerpt.")
-            final_diagnostics = list(dict.fromkeys([*diagnostics, *compile_errors]))
-            compiled_ok = bool(compile_result.get("ok") and not diagnostics)
-            if compiled_ok:
-                break
-            fix = model.invoke(
-                _build_fix_messages(
-                    root_tex=root_tex,
-                    diagnostics=final_diagnostics,
-                    compiler_result=compile_result,
-                    files=files,
-                )
-            )
-            if not fix.files:
-                break
-            touched.extend(_apply_rewrites(root_tex=root_tex, rewrites=fix.files))
         files, diagnostics = _static_diagnostics(root_tex)
-        touched.extend(_enforce_bibliography_wrapper(root_tex=root_tex, files=files))
-        files, diagnostics = _static_diagnostics(root_tex)
+        diagnostics.extend(_bibliography_diagnostics(root_tex=root_tex, files=files))
         needs_bibtex = _needs_bibtex(files)
         compile_result = _run_compiler(root_tex, needs_bibtex=needs_bibtex)
-        compiler_name = str(compile_result.get("name") or "") or compiler_name
         final_diagnostics = list(
             dict.fromkeys(
                 [
@@ -445,27 +324,32 @@ def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
         compiled_ok = bool(compile_result.get("ok") and not diagnostics)
         pdf_path = root_tex.with_suffix(".pdf")
+        log_path = root_tex.with_suffix(".log")
+        bib_paths = sorted(workspace_relpath(path) for path in root_tex.parent.glob("*.bib") if path.is_file())
+        bbl_path = root_tex.with_suffix(".bbl")
         content_lines = [
             f"TeX compile pass finished for {workspace_relpath(root_tex)}",
-            f"Compiler used: {compiler_name or '(none)'}",
+            f"Compiler used: {str(compile_result.get('name') or '(none)')}",
             f"Compiled cleanly: {'yes' if compiled_ok else 'no'}",
-            f"Files rewritten: {len(list(dict.fromkeys(touched)))}",
+            f"Separate bibliography files: {len(bib_paths)}",
         ]
         if final_diagnostics:
-            content_lines.append("Remaining diagnostics:")
+            content_lines.append("Diagnostics summary:")
             content_lines.extend(f"- {item}" for item in final_diagnostics[:8])
         artifact = {
             "tool_name": tool_name,
             "data": {
                 "source_path": workspace_relpath(root_tex),
-                "compiler_available": True,
-                "compiler_name": compiler_name,
+                "compiler_available": bool(compile_result.get("available")),
+                "compiler_name": str(compile_result.get("name") or ""),
                 "compiled_ok": compiled_ok,
                 "pdf_path": workspace_relpath(pdf_path) if pdf_path.exists() else None,
-                "rewritten_files": list(dict.fromkeys(touched)),
+                "bib_paths": bib_paths,
+                "bbl_path": workspace_relpath(bbl_path) if bbl_path.exists() else None,
+                "log_path": workspace_relpath(log_path) if log_path.exists() else None,
                 "remaining_diagnostics": final_diagnostics,
+                "log_excerpt": _compiler_excerpt(compile_result),
                 "inspected_files": [workspace_relpath(path) for path in files],
-                "model_name": cfg.model,
             },
         }
         return "\n".join(content_lines).strip(), artifact
@@ -481,8 +365,12 @@ def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                     "source_path": payload.get("source_path"),
                 },
             },
-            error_code="agentic_compile_tex_failed",
+            error_code="compile_text_failed",
         ) from exc
 
 
-__all__ = ["AgenticCompileTexInput", "agentic_compile_tex"]
+def agentic_compile_tex(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    return compile_text(payload)
+
+
+__all__ = ["CompileTextInput", "compile_text", "AgenticCompileTexInput", "agentic_compile_tex"]

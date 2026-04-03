@@ -44,6 +44,7 @@ def test_task_file_record_semantics_allow_file_or_dir() -> None:
     kind_desc = str(props.get("kind", {}).get("description", ""))
     assert "file or directory" in path_desc
     assert "project-relative paths" in path_desc
+    assert "bare filenames" in path_desc
     assert "dir" in kind_desc
 
 
@@ -92,12 +93,15 @@ def test_task_output_descriptions_capture_field_quality_rules() -> None:
     props = schema.get("properties", {})
     summary_desc = str(props.get("summary", {}).get("description", ""))
     facts_desc = str(props.get("facts", {}).get("description", ""))
+    files_desc = str(props.get("files", {}).get("description", ""))
     open_questions_desc = str(props.get("open_questions", {}).get("description", ""))
     decisions_desc = str(props.get("decisions", {}).get("description", ""))
     error_desc = str(props.get("error", {}).get("description", ""))
     hint_desc = str(props.get("hint", {}).get("description", ""))
     assert "Do not paste long tables/logs/scripts" in summary_desc
+    assert "Directly answer the user's core question" in summary_desc
     assert "Do not restate command traces" in facts_desc
+    assert "bare filenames" in files_desc
     assert "speculative questions" in open_questions_desc
     assert "avoid duplicating summary/facts content" in decisions_desc
     assert "status=done" in error_desc
@@ -125,6 +129,7 @@ def test_revise_and_stop_payload_descriptions_capture_compactness() -> None:
     assert "Short change summary" in change_log_desc
     assert "Short question strings" in questions_desc
     assert "Concise final user-facing answer markdown" in final_answer_desc
+    assert "Answer the user's actual question directly" in final_answer_desc
 
 
 def _assert_provider_schema_shape(schema: dict) -> None:

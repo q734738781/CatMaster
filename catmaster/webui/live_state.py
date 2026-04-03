@@ -24,6 +24,7 @@ def new_live_state(run_id: str = "") -> Dict[str, Any]:
     return {
         "run_id": run_id,
         "status": "unknown",
+        "agents": {},
         "todo_items": [],
         "todo_rows": [],
         "current_task_id": "",
@@ -97,6 +98,7 @@ def apply_event(
     task_id = str(event.get("task_id") or "")
     step_id = event.get("step_id")
     ts = _event_ts(event)
+    agent_name = _event_agent_name(payload)
     changed = False
 
     if name in {"RUN_INIT_DONE"}:
@@ -183,6 +185,8 @@ def apply_event(
         }
         state["active_toolcall"] = active
         changed = True
+        if agent_name:
+            _agent_apply_tool_start(state, agent_name=agent_name, task_id=task_id, step_id=step_id, ts=ts, payload=payload)
     elif name == "GRAPH_NODE_UPDATE":
         node = str(payload.get("node") or "").strip()
         if node:
@@ -206,27 +210,11 @@ def apply_event(
         )
         state["llm"] = llm
         changed = True
-    elif name == "LLM_REASONING_DELTA":
-        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
-        llm["status"] = "running"
-        llm["model"] = str(payload.get("model") or llm.get("model") or "")
-        llm["phase"] = str(payload.get("phase") or llm.get("phase") or "")
-        llm["reasoning_text"] = str(llm.get("reasoning_text") or "") + str(payload.get("text") or "")
-        state["llm"] = llm
-        changed = True
-    elif name == "LLM_TOKEN_DELTA":
-        llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
-        llm["status"] = "running"
-        llm["model"] = str(payload.get("model") or llm.get("model") or "")
-        llm["phase"] = str(payload.get("phase") or llm.get("phase") or "")
-        llm["text"] = str(llm.get("text") or "") + str(payload.get("text") or "")
-        state["llm"] = llm
-        changed = True
+        if agent_name:
+            _agent_apply_llm_start(state, agent_name=agent_name, ts=ts, payload=payload)
     elif name == "LLM_CALL_END":
         llm = state.get("llm") if isinstance(state.get("llm"), dict) else {}
-        final_text = str(llm.get("text") or "").strip()
-        if not final_text:
-            final_text = str(payload.get("text_preview") or "").strip()
+        final_text = str(payload.get("text_preview") or "").strip()
         llm.update(
             {
                 "model": str(payload.get("model") or llm.get("model") or ""),
@@ -240,6 +228,8 @@ def apply_event(
         )
         state["llm"] = llm
         changed = True
+        if agent_name:
+            _agent_apply_llm_end(state, agent_name=agent_name, ts=ts, payload=payload)
     elif name == "INTERRUPT_REQUESTED":
         state["status"] = "interrupting"
         state["current_phase"] = "interrupting"
@@ -261,6 +251,8 @@ def apply_event(
         state["status"] = "interrupted_paused"
         state["current_phase"] = "interrupted"
         changed = True
+        if agent_name:
+            _agent_apply_tool_interrupted(state, agent_name=agent_name, ts=ts)
     elif name == "TOOL_CALL_END":
         active = state.get("active_toolcall")
         toolcall_id = str(payload.get("toolcall_id") or "")
@@ -292,6 +284,8 @@ def apply_event(
             ended_record["params_compact"] = str(payload.get("params_compact") or "")
         _push_limited(state, "recent_toolcalls", ended_record, max_recent_toolcalls)
         changed = True
+        if agent_name:
+            _agent_apply_tool_end(state, agent_name=agent_name, ts=ts, payload=payload, task_id=task_id, step_id=step_id)
     elif name == "MEMORY_MERGE_DONE":
         state["current_phase"] = "executing"
         changed = True
@@ -339,6 +333,7 @@ def apply_event(
         )
         state["graph"] = graph
         changed = True
+        _mark_all_agents_completed(state, ts=ts)
     elif name == "RUN_PAUSED":
         state["status"] = "interrupted_paused"
         phase = str(payload.get("phase") or "")
@@ -374,6 +369,220 @@ def should_refresh_live_summary(
     state["_last_summary_ts"] = now
     state["_tool_events_since_summary"] = 0
     return True
+
+
+def _event_agent_name(payload: dict[str, Any]) -> str:
+    for key in ("agent_name", "lc_agent_name", "agent", "subagent"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _new_agent_state(agent_name: str) -> Dict[str, Any]:
+    return {
+        "name": agent_name,
+        "todo_items": [],
+        "todo_rows": [],
+        "active_toolcall": None,
+        "recent_toolcalls": [],
+        "started_ts": 0.0,
+        "completed_ts": 0.0,
+        "llm": {
+            "model": "",
+            "phase": "",
+            "status": "idle",
+            "text": "",
+            "reasoning_text": "",
+            "usage": {},
+            "elapsed_ms": 0,
+        },
+        "status": "idle",
+        "last_updated_ts": 0.0,
+    }
+
+
+def _ensure_agent_state(state: Dict[str, Any], agent_name: str) -> Dict[str, Any]:
+    agents = state.get("agents")
+    if not isinstance(agents, dict):
+        agents = {}
+        state["agents"] = agents
+    current = agents.get(agent_name)
+    if isinstance(current, dict):
+        return current
+    current = _new_agent_state(agent_name)
+    agents[agent_name] = current
+    return current
+
+
+def _agent_mark_active(agent: Dict[str, Any], *, ts: float) -> None:
+    if str(agent.get("status") or "").strip() != "active":
+        agent["started_ts"] = ts
+    agent["completed_ts"] = 0.0
+    agent["status"] = "active"
+    agent["last_updated_ts"] = ts
+
+
+def _agent_mark_completed(agent: Dict[str, Any], *, ts: float) -> None:
+    agent["status"] = "completed"
+    agent["completed_ts"] = ts
+    agent["last_updated_ts"] = ts
+
+
+def _agent_apply_llm_start(state: Dict[str, Any], *, agent_name: str, ts: float, payload: dict[str, Any]) -> None:
+    agent = _ensure_agent_state(state, agent_name)
+    llm = agent.get("llm") if isinstance(agent.get("llm"), dict) else {}
+    llm.update(
+        {
+            "model": str(payload.get("model") or ""),
+            "phase": str(payload.get("phase") or ""),
+            "status": "running",
+            "text": "",
+            "reasoning_text": "",
+            "usage": {},
+            "elapsed_ms": 0,
+        }
+    )
+    agent["llm"] = llm
+    _agent_mark_active(agent, ts=ts)
+
+
+def _agent_apply_llm_delta(
+    state: Dict[str, Any],
+    *,
+    agent_name: str,
+    ts: float,
+    payload: dict[str, Any],
+    field: str,
+) -> None:
+    agent = _ensure_agent_state(state, agent_name)
+    llm = agent.get("llm") if isinstance(agent.get("llm"), dict) else {}
+    llm["status"] = "running"
+    llm["model"] = str(payload.get("model") or llm.get("model") or "")
+    llm["phase"] = str(payload.get("phase") or llm.get("phase") or "")
+    llm[field] = str(llm.get(field) or "") + str(payload.get("text") or "")
+    agent["llm"] = llm
+    _agent_mark_active(agent, ts=ts)
+
+
+def _agent_apply_llm_end(state: Dict[str, Any], *, agent_name: str, ts: float, payload: dict[str, Any]) -> None:
+    agent = _ensure_agent_state(state, agent_name)
+    llm = agent.get("llm") if isinstance(agent.get("llm"), dict) else {}
+    final_text = str(payload.get("text_preview") or "").strip()
+    llm.update(
+        {
+            "model": str(payload.get("model") or llm.get("model") or ""),
+            "phase": str(payload.get("phase") or llm.get("phase") or ""),
+            "status": "completed",
+            "text": final_text,
+            "reasoning_text": str(payload.get("reasoning_text") or llm.get("reasoning_text") or ""),
+            "usage": payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            "elapsed_ms": int(payload.get("elapsed_ms") or 0),
+        }
+    )
+    agent["llm"] = llm
+    if agent.get("active_toolcall"):
+        _agent_mark_active(agent, ts=ts)
+    else:
+        _agent_mark_completed(agent, ts=ts)
+
+
+def _agent_apply_tool_start(
+    state: Dict[str, Any],
+    *,
+    agent_name: str,
+    task_id: str,
+    step_id: int | None,
+    ts: float,
+    payload: dict[str, Any],
+) -> None:
+    agent = _ensure_agent_state(state, agent_name)
+    todo_rows = _normalize_todos(payload.get("params_full"))
+    if str(payload.get("tool") or "").strip() == "write_todos" and todo_rows:
+        agent["todo_rows"] = todo_rows
+        agent["todo_items"] = [str(item.get("content") or "").strip() for item in todo_rows if str(item.get("content") or "").strip()]
+    agent["active_toolcall"] = {
+        "task_id": task_id,
+        "step_id": step_id if isinstance(step_id, int) else None,
+        "tool": str(payload.get("tool") or ""),
+        "toolcall_id": str(payload.get("toolcall_id") or ""),
+        "params_compact": str(payload.get("params_compact") or ""),
+        "params_full": payload.get("params_full"),
+        "started_ts": ts,
+        "elapsed_sec": 0,
+        "status": "running",
+        "agent_name": agent_name,
+    }
+    _agent_mark_active(agent, ts=ts)
+
+
+def _agent_apply_tool_interrupted(state: Dict[str, Any], *, agent_name: str, ts: float) -> None:
+    agent = _ensure_agent_state(state, agent_name)
+    active = agent.get("active_toolcall")
+    if isinstance(active, dict):
+        active["status"] = "interrupted"
+    _agent_mark_completed(agent, ts=ts)
+
+
+def _agent_apply_tool_end(
+    state: Dict[str, Any],
+    *,
+    agent_name: str,
+    ts: float,
+    payload: dict[str, Any],
+    task_id: str,
+    step_id: Any,
+) -> None:
+    agent = _ensure_agent_state(state, agent_name)
+    active = agent.get("active_toolcall")
+    toolcall_id = str(payload.get("toolcall_id") or "")
+    ended_record: Dict[str, Any] = {
+        "task_id": task_id,
+        "step_id": step_id if isinstance(step_id, int) else None,
+        "tool": str(payload.get("tool") or ""),
+        "status": str(payload.get("status") or ""),
+        "highlights": str(payload.get("highlights") or ""),
+        "toolcall_id": toolcall_id,
+        "params_compact": "",
+        "started_ts": ts,
+        "ended_ts": ts,
+        "duration_sec": 0,
+        "agent_name": agent_name,
+    }
+    if isinstance(active, dict):
+        active_id = str(active.get("toolcall_id") or "")
+        if not toolcall_id or not active_id or toolcall_id == active_id:
+            started_ts = _to_float(active.get("started_ts"), default=ts)
+            ended_record["started_ts"] = started_ts
+            ended_record["duration_sec"] = max(0, int(ts - started_ts))
+            ended_record["params_compact"] = str(active.get("params_compact") or "")
+            agent["active_toolcall"] = None
+    if not ended_record["params_compact"]:
+        ended_record["params_compact"] = str(payload.get("params_compact") or "")
+    _push_limited(agent, "recent_toolcalls", ended_record, 20)
+    llm = agent.get("llm") if isinstance(agent.get("llm"), dict) else {}
+    if str(llm.get("status") or "") == "running":
+        _agent_mark_active(agent, ts=ts)
+    else:
+        _agent_mark_completed(agent, ts=ts)
+
+
+def _mark_all_agents_completed(state: Dict[str, Any], *, ts: float) -> None:
+    agents = state.get("agents")
+    if not isinstance(agents, dict):
+        return
+    for agent in agents.values():
+        if not isinstance(agent, dict):
+            continue
+        agent["active_toolcall"] = None
+        llm = agent.get("llm") if isinstance(agent.get("llm"), dict) else {}
+        llm["status"] = "idle"
+        llm["text"] = ""
+        llm["reasoning_text"] = ""
+        llm["usage"] = {}
+        llm["elapsed_ms"] = 0
+        agent["llm"] = llm
+        _agent_mark_completed(agent, ts=ts)
 
 
 def compact_live_state_for_llm(

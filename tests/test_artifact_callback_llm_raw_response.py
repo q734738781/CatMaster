@@ -27,7 +27,7 @@ def test_llm_tracing_handler_persists_raw_response_and_toolcall_arguments(tmp_pa
                 "id": "call_1",
                 "type": "function",
                 "function": {
-                    "name": "vasp_relax_prepare",
+                    "name": "vasp_prepare",
                     "arguments": args_raw,
                 },
             }]
@@ -35,7 +35,7 @@ def test_llm_tracing_handler_persists_raw_response_and_toolcall_arguments(tmp_pa
         tool_calls=[{
             "id": "call_1",
             "type": "tool_call",
-            "name": "vasp_relax_prepare",
+            "name": "vasp_prepare",
             "args": {"MAGMOM": "1 1", "NUPDOWN": 2},
         }],
     )

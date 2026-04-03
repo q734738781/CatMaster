@@ -2,7 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_PROJECT_SPACE_ROOT="$ROOT/project_space"
+DEFAULT_PROJECT_SPACE_ROOT_FILE="$ROOT/.project_space_root_default"
+if [[ -f "$DEFAULT_PROJECT_SPACE_ROOT_FILE" ]]; then
+  DEFAULT_PROJECT_SPACE_ROOT="$(<"$DEFAULT_PROJECT_SPACE_ROOT_FILE")"
+else
+  DEFAULT_PROJECT_SPACE_ROOT="$ROOT/project_space"
+fi
 PROJECT_SPACE_ROOT="${CATMASTER_PROJECT_SPACE_ROOT:-$DEFAULT_PROJECT_SPACE_ROOT}"
 CONDA_ENV_NAME="${CATMASTER_CONDA_ENV:-catmaster}"
 HOST="${CATMASTER_HOST:-127.0.0.1}"
@@ -22,6 +27,10 @@ has_flag() {
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+if [[ -f "$ROOT/scripts/install_jsmol_assets.py" ]]; then
+  python3 "$ROOT/scripts/install_jsmol_assets.py" --quiet
+fi
 
 CMD=(python -m catmaster.webui)
 

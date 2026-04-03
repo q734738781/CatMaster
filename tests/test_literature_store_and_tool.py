@@ -11,9 +11,18 @@ from catmaster.runtime.literature import (
     LiteratureSubagent,
     OnlineSearchAdapter,
     PaperRecord,
+    SemanticScholarRateLimitError,
 )
 from catmaster.llm.config import LiteratureRuntimeConfig
-from catmaster.runtime.literature.tools import run_literature_research
+from catmaster.runtime.literature.tools import (
+    get_openalex_record,
+    get_semantic_scholar_record,
+    open_public_page,
+    run_literature_research,
+    search_openalex,
+    search_public_web,
+    search_semantic_scholar,
+)
 from catmaster.tools.base import workspace_scope
 
 
@@ -85,6 +94,71 @@ def test_run_literature_research_returns_compact_summary(monkeypatch, tmp_path: 
     assert "CO adsorption on Fe surfaces" in content
     assert artifact["tool_name"] == "run_literature_research"
     assert artifact["data"]["summary"] == "Representative adsorption papers were identified."
+
+
+def test_direct_search_openalex_tool_returns_normalized_json(monkeypatch) -> None:
+    class _FakeOpenAlex:
+        def search_works(self, query: str, limit: int):
+            assert query == "CO adsorption Fe(110)"
+            assert limit == 3
+            return [
+                type(
+                    "_Hit",
+                    (),
+                    {
+                        "paper": PaperRecord(
+                            paper_id="https://openalex.org/W1",
+                            title="OpenAlex result",
+                            year=2024,
+                            source="openalex",
+                        )
+                    },
+                )()
+            ]
+
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (object(), _FakeOpenAlex(), object(), object()),
+    )
+
+    content, artifact = search_openalex({"query": "CO adsorption Fe(110)", "limit": 3})
+    payload = json.loads(content)
+    assert payload["source"] == "openalex"
+    assert payload["count"] == 1
+    assert payload["papers"][0]["title"] == "OpenAlex result"
+    assert artifact["tool_name"] == "search_openalex"
+
+
+def test_direct_search_public_web_tool_returns_hits(monkeypatch) -> None:
+    class _FakeWeb:
+        def search_public_web(self, query: str, max_results: int = 5):
+            assert query == "CO adsorption Fe surfaces"
+            assert max_results == 2
+            return type(
+                "_Result",
+                (),
+                {
+                    "results": [
+                        type(
+                            "_Hit",
+                            (),
+                            {"model_dump": lambda self: {"title": "Result", "url": "https://example.org", "snippet": "snippet", "source": "public_web"}},
+                        )()
+                    ]
+                },
+            )()
+
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (object(), object(), object(), _FakeWeb()),
+    )
+
+    content, artifact = search_public_web({"query": "CO adsorption Fe surfaces", "max_results": 2})
+    payload = json.loads(content)
+    assert payload["source"] == "public_web"
+    assert payload["count"] == 1
+    assert payload["hits"][0]["title"] == "Result"
+    assert artifact["tool_name"] == "search_public_web"
 
 
 def test_literature_subagent_run_persists_agent_result(monkeypatch, tmp_path: Path) -> None:
@@ -264,6 +338,107 @@ def test_literature_subagent_builds_agentic_toolset_with_topic_hint(tmp_path: Pa
     assert "Topic hint: CO adsorption on Fe(110)" in tools["search_openalex"].description
     assert "open_public_page" in tools
     assert "find_in_page" in tools
+
+
+def test_search_semantic_scholar_tool_soft_fails_on_rate_limit(monkeypatch) -> None:
+    class _RateLimitedClient:
+        def search_papers(self, query: str, limit: int = 10, year_from=None, year_to=None):
+            _ = (query, limit, year_from, year_to)
+            raise SemanticScholarRateLimitError(attempts=5, wait_seconds=15.0)
+
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (object(), object(), _RateLimitedClient(), object()),
+    )
+
+    content, artifact = search_semantic_scholar({"query": "CO adsorption Fe(110)"})
+    payload = json.loads(content)
+
+    assert payload["status"] == "rate_limited"
+    assert payload["source"] == "semantic_scholar"
+    assert payload["attempts"] == 5
+    assert payload["query"] == "CO adsorption Fe(110)"
+    assert artifact["tool_name"] == "search_semantic_scholar"
+
+
+def test_get_openalex_record_tool_soft_fails_on_not_found(monkeypatch) -> None:
+    class _MissingOpenAlexClient:
+        def get_work(self, ident: str):
+            request = __import__("httpx").Request("GET", "https://api.openalex.org/works/missing")
+            response = __import__("httpx").Response(404, request=request)
+            raise __import__("httpx").HTTPStatusError("404 error", request=request, response=response)
+
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (object(), _MissingOpenAlexClient(), object(), object()),
+    )
+
+    content, artifact = get_openalex_record({"work_id_or_doi": "10.1016/j.susc.2017.09.002"})
+    payload = json.loads(content)
+
+    assert payload["status"] == "not_found"
+    assert payload["source"] == "openalex"
+    assert payload["work_id_or_doi"] == "10.1016/j.susc.2017.09.002"
+    assert artifact["tool_name"] == "get_openalex_record"
+
+
+def test_get_semantic_scholar_record_tool_soft_fails_on_not_found(monkeypatch) -> None:
+    class _MissingSemanticScholarClient:
+        def get_paper(self, ident: str):
+            request = __import__("httpx").Request("GET", "https://api.semanticscholar.org/graph/v1/paper/missing")
+            response = __import__("httpx").Response(404, request=request)
+            raise __import__("httpx").HTTPStatusError("404 error", request=request, response=response)
+
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (object(), object(), _MissingSemanticScholarClient(), object()),
+    )
+
+    content, artifact = get_semantic_scholar_record({"paper_id_or_doi": "10.1016/j.susc.2017.09.002"})
+    payload = json.loads(content)
+
+    assert payload["status"] == "not_found"
+    assert payload["source"] == "semantic_scholar"
+    assert payload["paper_id_or_doi"] == "10.1016/j.susc.2017.09.002"
+    assert artifact["tool_name"] == "get_semantic_scholar_record"
+
+
+def test_search_public_web_tool_soft_fails_without_tavily_key(monkeypatch) -> None:
+    class _UnavailableWeb:
+        def search_public_web(self, query: str, max_results: int = 5):
+            _ = (query, max_results)
+            raise RuntimeError("TAVILY_API_KEY is required for public web search.")
+
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (object(), object(), object(), _UnavailableWeb()),
+    )
+
+    content, artifact = search_public_web({"query": "CO adsorption Fe surfaces"})
+    payload = json.loads(content)
+
+    assert payload["status"] == "unavailable"
+    assert payload["source"] == "public_web"
+    assert artifact["tool_name"] == "search_public_web"
+
+
+def test_open_public_page_tool_soft_fails_on_invalid_url(monkeypatch) -> None:
+    class _FakeWeb:
+        def open_public_page(self, url: str, max_chars: int = 12000):
+            _ = (url, max_chars)
+            raise ValueError("Only public http(s) URLs are supported")
+
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (object(), object(), object(), _FakeWeb()),
+    )
+
+    content, artifact = open_public_page({"url": "file:///tmp/secret.txt"})
+    payload = json.loads(content)
+
+    assert payload["status"] == "invalid_request"
+    assert payload["source"] == "public_web"
+    assert artifact["tool_name"] == "open_public_page"
 
 
 def test_literature_subagent_hides_search_public_web_without_tavily_key(tmp_path: Path) -> None:

@@ -1,4 +1,6 @@
 # CatMaster
+**THIS README WAS WRITTEN AGES AGO AND NOTHING EXCEPT ENVIRONMENT SETTINGS SHOULD BE TREATED AS REAL CAPABILITY OF THE SYSTEM. USE IT WITH YOUR CASES!**
+
 ```
 +----------------------------------------------------------+
 |   _____      _    __  __              _                  |
@@ -16,128 +18,6 @@
 ```
 
 CatMaster is an open-source agent system for computational catalysis workflows. It is built for the real lab setup: files on your workstation, optional GPU-side screening, remote VASP jobs on a cluster, too many structures to inspect by hand, too many calculations to prepare manually, and too much evidence to turn into a clean paper draft at the end.
-
-If you want an agent that can do more than chat about catalysis, CatMaster is meant to help with the actual work:
-
-- inspect the current workspace before doing anything stupid
-- plan bounded scientific tasks
-- prepare and launch real calculations
-- keep project memory across runs
-- run a multi-step research campaign
-- write a manuscript-grade TeX bundle from the resulting evidence
-
-## What CatMaster Can Do
-
-### Run scientific work, not just describe it
-
-CatMaster has two execution lanes:
-
-- `standard`
-  - proposal -> director -> task runner -> memory patch
-  - for multi-step work that benefits from planning and review
-- `fast`
-  - a quicker proposal-free lane for bounded execution
-
-That means it can:
-
-- inspect files, folders, and prior outputs
-- build structures and prepare inputs
-- call scientific tools and shell commands
-- run bounded workflows with MCP filesystem access and domain tools
-- update shared project memory with the durable results
-
-### Drive a research campaign
-
-The `research` lane is the campaign brain. It does not just execute one task and stop.
-
-It can:
-
-- review literature
-- dispatch bounded child experiments
-- pause for human feedback when a decision is actually blocked
-- persist campaign state across resumes
-- decide when the evidence is good enough to move into writing
-
-Its action space is explicit:
-
-- `RunLiterature`
-- `RunExperiment`
-- `RunWriter`
-- `AskHuman`
-- `Conclude`
-
-### Write a paper, not a lab log
-
-The `writing` lane is built for manuscript production.
-
-It can:
-
-- read workspace evidence, project memory, run history, and research artifacts
-- plan paper structure with `write_director`
-- draft section-level TeX with `section_writer`
-- review and revise sections
-- generate lightweight schematic figures
-- assemble a fixed-paper bundle
-- run a compile-fix pass with `pdflatex`
-
-The final output lives in a stable manuscript root:
-
-- `files/manuscript/MANUSCRIPT.tex`
-- `files/manuscript/sections/*.tex`
-- `files/manuscript/figures/*`
-- `files/manuscript/references.bib`
-
-### Keep everything traceable
-
-CatMaster is meant for work you may need to resume, audit, or defend later.
-
-It keeps:
-
-- shared project memory in `files/MEMORY/**`
-- research campaign state in `metadata/research_campaigns/<campaign_id>/`
-- run audit data in `metadata/runs/<run_id>/`
-- reports, traces, tool logs, and UI event streams
-
-So you can stop a run, come back later, inspect what happened, and continue without losing the thread.
-
-## Why It Works
-
-CatMaster is not one giant agent with every tool dumped on it.
-
-It works by splitting the system into lane-specific workflows and role-specific tool surfaces:
-
-- `standard`
-- `fast`
-- `research`
-- `writing`
-
-Backed by:
-
-- `catmaster/agents/graph.py`
-- `catmaster/agents/research_graph.py`
-- `catmaster/agents/writing_graph.py`
-
-Main agent roles:
-
-- execution: `proposal`, `director`, `task_runner`, `memory_patch`
-- research: `research_lead`
-- writing: `write_director`, `section_writer`, `write_reviewer`, `academic_polisher`, `tex_compile_fixer`
-
-That split is what lets CatMaster do different kinds of work well:
-
-- execution agents can focus on getting tasks done
-- research agents can focus on campaign decisions
-- writing agents can focus on manuscript structure, prose, figures, and TeX output
-
-## Core Technical Highlights
-
-- LangGraph-based orchestration for execution, research, and writing
-- shared project memory in `files/MEMORY/**`
-- run ledger indexing and history retrieval
-- MCP filesystem integration with role-scoped access
-- metadata-driven skills from both `skills/` and `writing_skills/`
-- fixed manuscript assembly with figure handling and compile-fix
-- research-to-writer handoff for turning campaign evidence into a draft
 
 ## Scientific Capability Surface
 
@@ -173,34 +53,6 @@ That split is what lets CatMaster do different kinds of work well:
 - fixed manuscript assembly
 - compile-fix workflow
 
-## Project Layout
-
-- `catmaster/`: orchestration graphs, runtime services, WebUI, and tools
-- `configs/`: LLM and DPDispatcher configuration
-- `skills/`: execution and research skills
-- `writing_skills/`: writing skills and template assets
-- `reference_scripts/`: helper scripts and reference templates
-- `devdocs/`: internal development and finalization notes
-- `demos/`: example prompts and workflow demos
-
-## Project Space Layout
-
-Inside a project space, the important paths are:
-
-- `files/`
-  - the real workspace root for agent operations
-- `files/MEMORY/`
-  - shared project memory
-- `files/research/<campaign_id>/`
-  - research campaign file outputs
-- `files/manuscript/`
-  - active manuscript bundle produced by the writing lane
-- `files/manuscript_archive/<run_id>/`
-  - archived manuscript bundles from prior writing runs
-- `metadata/runs/<run_id>/`
-  - per-run audit layer: task state, traces, reports, UI events, tool logs
-- `metadata/research_campaigns/<campaign_id>/`
-  - structured research campaign state
 
 ## Environment Setup
 
@@ -252,6 +104,31 @@ npx -v
 ### LaTeX
 
 The writing lane expects `pdflatex` for the final compile-fix pass.
+
+### VASPKIT
+
+`vaspkit` is recommended for thermochemistry correction tools such as `vaspkit_adsorbate_thermo_correction` and `vaspkit_gas_thermo_correction`.
+
+If you already have a local VASPKIT build, make sure it is on `PATH`:
+
+```bash
+export PATH=~/vaspkit/bin:$PATH
+vaspkit
+```
+
+To persist that for future shells:
+
+```bash
+echo 'export PATH=~/vaspkit/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+If `vaspkit` is unavailable, CatMaster will fall back to ASE thermochemistry:
+
+- `502` fallback uses ASE `IdealGasThermo`
+- `501` fallback uses ASE `HarmonicThermo` with a `50 cm^-1` low-frequency floor
+
+The ASE fallback is intentionally compatibility-oriented, but VASPKIT remains the preferred backend when you need the closest match to VASPKIT output conventions.
 
 ### Materials Project
 
@@ -343,6 +220,49 @@ Useful overrides:
 CATMASTER_CONDA_ENV=catmaster ./start_webui.sh --port 7991
 CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace ./start_webui.sh
 ```
+
+### Execute Timeout Note
+
+In the current specialist runtime, the default `execute` backend timeout is `12h`
+(`43200s`). This default applies when the agent calls `execute(command=...)`
+without an explicit `timeout=...`.
+
+However, explicit per-call `execute(timeout=...)` values are still validated by
+DeepAgent's installed `FilesystemMiddleware`, whose default
+`max_execute_timeout` is typically `3600s`. If you want the LLM to be able to
+request longer explicit timeouts such as `6h` or `24h`, the simplest local-dev
+solution is to manually patch your installed `deepagents` package.
+
+Typical place to edit:
+
+```text
+<your-python-env>/site-packages/deepagents/middleware/filesystem.py
+```
+
+What to change:
+
+- raise the default `max_execute_timeout` from `3600` to your desired limit
+  such as `21600` (`6h`) or `86400` (`24h`)
+- or pass a larger `max_execute_timeout=...` anywhere `FilesystemMiddleware(...)`
+  is constructed inside the installed `deepagents` package
+
+This is a local environment patch, so it may need to be re-applied after
+upgrading or reinstalling `deepagents`.
+
+Deploy a runtime checkout:
+
+```bash
+scripts/deploy_runtime.sh --target ../CatMaster_Run
+```
+
+After deploy, the runtime can be started directly from its root:
+
+```bash
+cd ../CatMaster_Run
+./start_webui.sh --port 7991
+```
+
+The deploy script now defaults the runtime project space to `./project_space` inside the target directory. You can still override it either at deploy time with `--project-space-root`, or at run time with `CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace`.
 
 Then open:
 

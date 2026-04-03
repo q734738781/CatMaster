@@ -141,6 +141,10 @@ agents:
   memory_patch: "openrouter-main"
   summary: "openrouter-main"
 
+peer_review_models:
+  # Explicit reviewer model-label list. One entry here produces one reviewer report.
+  - "openrouter-main-xhigh"
+
 image_generation:
   # Optional: if omitted, the image-generation tool falls back to `image_analyzer`.
   model_label: "openrouter-image-preview"
@@ -152,7 +156,8 @@ writing:
 
 agent_runtime:
   recursion_limit: 300
-  max_tool_calls: 60
+  max_tool_calls: 120
+  max_model_calls: 120
   print_state_messages: false
   print_http_raw_post: false
 
@@ -174,7 +179,7 @@ literature:
     write_reviewer: none
   public_web_on_search_failure: true
   summary_key_paper_count: 5
-  semantic_scholar_retry_429_attempts: 3
+  semantic_scholar_retry_429_attempts: 5
   semantic_scholar_retry_429_wait_seconds: 15.0
   budgets:
     none:

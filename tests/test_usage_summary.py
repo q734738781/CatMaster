@@ -21,6 +21,18 @@ def test_usage_summary_from_langchain_metadata_aggregates_tokens_and_calls(tmp_p
         },
         run_dir=tmp_path,
         call_counts_by_model={"openai/gpt-5.4-20260305": 3},
+        usage_metadata_by_role={
+            "writing_specialist": {
+                "openai/gpt-5.4-20260305": {
+                    "input_tokens": 400,
+                    "output_tokens": 50,
+                    "total_tokens": 450,
+                    "input_token_details": {"cache_read": 200},
+                    "output_token_details": {"reasoning": 10},
+                }
+            }
+        },
+        call_counts_by_role={"writing_specialist": 2},
     )
 
     assert summary["source"] == "langchain_usage_metadata"
@@ -33,6 +45,10 @@ def test_usage_summary_from_langchain_metadata_aggregates_tokens_and_calls(tmp_p
     assert summary["total_tokens"] == 1340
     assert summary["by_model"][0]["name"] == "openai/gpt-5.4-20260305"
     assert summary["by_model"][0]["calls"] == 3
+    assert summary["by_role"][0]["name"] == "writing_specialist"
+    assert summary["by_role"][0]["calls"] == 2
+    assert summary["by_role"][0]["input_tokens"] == 400
+    assert summary["by_role"][0]["output_tokens"] == 50
 
 
 def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> None:
@@ -61,6 +77,16 @@ def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> 
             }
         },
         call_counts_by_model={"model-a": 2},
+        usage_metadata_by_role={
+            "literature_agent": {
+                "model-a": {
+                    "input_tokens": 25,
+                    "output_tokens": 4,
+                    "total_tokens": 29,
+                }
+            }
+        },
+        call_counts_by_role={"literature_agent": 1},
         append=True,
     )
 
@@ -70,6 +96,8 @@ def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> 
     assert second["input_cached_tokens"] == 45
     assert second["reasoning_tokens"] == 2
     assert second["calls"] == 3
+    assert second["by_role"][0]["name"] == "literature_agent"
+    assert second["by_role"][0]["calls"] == 1
 
 
 def test_write_usage_summary_from_metadata_writes_file(tmp_path) -> None:
@@ -77,6 +105,8 @@ def test_write_usage_summary_from_metadata_writes_file(tmp_path) -> None:
         tmp_path,
         usage_metadata={},
         call_counts_by_model={},
+        usage_metadata_by_role={},
+        call_counts_by_role={},
         append=True,
     )
 

@@ -14,7 +14,7 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class PolishAcademicProseInput(BaseModel):
-    """Read a workspace manuscript file, polish its language with the academic polisher model, and write the result back."""
+    """[writing/polish] Read a workspace manuscript file, polish its language with the academic polisher model, and write the result back."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -86,6 +86,7 @@ def _build_prompt(*, path: Path, text: str, focus: str | None) -> list[Any]:
 
 
 def polish_academic_prose(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[writing/polish] Rewrite manuscript prose for clearer academic style while preserving technical meaning."""
     tool_name = "polish_academic_prose"
     try:
         params = PolishAcademicProseInput(**payload)

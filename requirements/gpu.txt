@@ -5,8 +5,6 @@ ase
 numpy
 pandas
 scikit-learn
-umap-learn
-dscribe
 nvidia-ml-py3  # For GPU detection via NVML
 filelock
 tqdm
@@ -19,6 +17,7 @@ openrouter
 tavily-python
 faiss-cpu
 deepagents
+langmem
 langgraph-checkpoint-sqlite>=3.0.3
 aiosqlite
 

@@ -6,7 +6,11 @@ from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from tavily import TavilyClient
+
+try:
+    from tavily import TavilyClient
+except Exception:  # pragma: no cover - optional dependency in some test envs
+    TavilyClient = Any  # type: ignore[misc,assignment]
 
 from .models import FindInPageResult, InPageMatch, PublicPageSnapshot, PublicWebHit, PublicWebSearchResult
 
@@ -20,9 +24,19 @@ class OnlineSearchAdapter:
         topic: str = "general",
     ) -> None:
         api_key = str(tavily_api_key if tavily_api_key is not None else os.environ.get("TAVILY_API_KEY", "")).strip()
-        self._tavily_client = TavilyClient(api_key=api_key) if api_key else None
+        self._tavily_client = None
+        if api_key:
+            try:
+                self._tavily_client = TavilyClient(api_key=api_key)
+            except Exception:
+                self._tavily_client = None
         self.search_depth = str(search_depth or "advanced").strip().lower() or "advanced"
         self.topic = str(topic or "general").strip().lower() or "general"
+
+    def _extract_depth(self) -> str:
+        if self.search_depth == "advanced":
+            return "advanced"
+        return "basic"
 
     @staticmethod
     def _normalize_public_url(url: str) -> str:
@@ -46,6 +60,44 @@ class OnlineSearchAdapter:
     @staticmethod
     def _clean_text(text: str) -> str:
         return " ".join(str(text or "").split()).strip()
+
+    @classmethod
+    def _snapshot_from_extract_payload(
+        cls,
+        payload: Any,
+        *,
+        requested_url: str,
+        max_chars: int,
+    ) -> PublicPageSnapshot | None:
+        data = payload if isinstance(payload, dict) else {}
+        final_url = cls._clean_text(
+            data.get("url")
+            or data.get("final_url")
+            or data.get("source_url")
+            or requested_url
+        ) or requested_url
+        title = cls._clean_text(data.get("title") or "") or None
+        description = cls._clean_text(
+            data.get("description")
+            or data.get("excerpt")
+            or data.get("summary")
+            or ""
+        ) or None
+        text = cls._clean_text(data.get("raw_content") or data.get("content") or data.get("text") or "")
+        if not text:
+            return None
+        content_type = cls._clean_text(data.get("content_type") or "") or "text/plain"
+        status_code = int(data.get("status_code") or 200)
+        limit = max(500, int(max_chars or 0))
+        return PublicPageSnapshot(
+            requested_url=requested_url,
+            final_url=final_url,
+            status_code=status_code,
+            content_type=content_type,
+            title=title,
+            description=description,
+            text=text[:limit],
+        )
 
     def public_search_enabled(self) -> bool:
         return self._tavily_client is not None
@@ -116,6 +168,29 @@ class OnlineSearchAdapter:
 
     def open_public_page(self, url: str, max_chars: int = 12000) -> PublicPageSnapshot:
         normalized_url = self._normalize_public_url(url)
+        if self._tavily_client is not None:
+            try:
+                response = self._require_tavily_client().extract(
+                    normalized_url,
+                    extract_depth=self._extract_depth(),  # type: ignore[arg-type]
+                    format="text",
+                    include_images=False,
+                    include_usage=False,
+                    timeout=30.0,
+                )
+                raw_results = response.get("results") if isinstance(response, dict) else []
+                if isinstance(raw_results, list):
+                    for item in raw_results:
+                        page = self._snapshot_from_extract_payload(
+                            item,
+                            requested_url=normalized_url,
+                            max_chars=max_chars,
+                        )
+                        if page is not None:
+                            return page
+            except Exception:
+                pass
+
         with self._http_client() as client:
             response = client.get(normalized_url)
         response.raise_for_status()

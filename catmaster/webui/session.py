@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib
 import json
@@ -38,7 +39,7 @@ from .web_reporter import PromptBroker, WebReporter
 
 RUN_MODE_NEW = "new_run"
 RUN_MODE_RESUME_SELECTED = "resume_selected_run"
-SUPPORTED_LANES = {"research", "experiment", "writing"}
+SUPPORTED_LANES = {"research", "experiment", "writing", "peer_review"}
 
 _RECENT_SESSION_TURNS = 3
 
@@ -84,6 +85,8 @@ def _entry_system_prompt(lane: str) -> str:
         return "ResearchSpecialist entry context."
     if target == "writing":
         return "WritingSpecialist entry context."
+    if target == "peer_review":
+        return "PeerReviewSpecialist entry context."
     return "ExperimentSpecialist entry context."
 
 
@@ -96,6 +99,8 @@ class WebSession:
         self.broker: Optional[PromptBroker] = None
         self.run_thread: Optional[threading.Thread] = None
         self.run_control: Optional[RunControl] = None
+        self._run_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._run_task: Optional[asyncio.Task[Any]] = None
         self.run_status: str = "idle"
         self.run_error: str = ""
         self.run_info: Dict[str, Any] = {}
@@ -384,7 +389,8 @@ class WebSession:
         resume_feedback = (prompt or "").strip() if is_resume else ""
         session_user_prompt = str(prompt or "")
         effective_prompt_text = session_user_prompt
-        session_context = {"session_id": "", "context_text": "", "estimated_tokens": 0}
+        thread_binding = {"session_id": "", "thread_id": ""}
+        message_session_id = ""
 
         with self._lock:
             ws = self.workspace
@@ -406,13 +412,16 @@ class WebSession:
             resume_dir = str(resume_target) if resume_target else None
             effective_lane = resume_lane or "research"
         if not is_resume:
-            session_context = self.build_session_context(
-                current_prompt=session_user_prompt,
-                lane=effective_lane,
-            )
+            thread_binding = self.build_thread_binding(lane=effective_lane)
             effective_prompt_text = session_user_prompt
+            message_session_id = str(thread_binding.get("session_id") or "").strip()
         else:
             effective_prompt_text = resume_feedback
+            if resume_target is not None:
+                resume_payload = self._read_run_state_payload(resume_target)
+                message_session_id = str(resume_payload.get("chat_session_id") or "").strip()
+        if not message_session_id:
+            message_session_id = self.ensure_active_chat_session()
 
         with self._lock:
             self.run_status = "starting"
@@ -429,7 +438,12 @@ class WebSession:
             run_dir: Optional[Path] = None
             run_error = ""
             skip_summarize = False
-            try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            with self._lock:
+                self._run_loop = loop
+
+            async def _execute() -> Dict[str, Any]:
                 llm_cfg_mod = sys.modules.get("catmaster.llm.config")
                 if llm_cfg_mod is None:
                     llm_cfg_mod = importlib.import_module("catmaster.llm.config")
@@ -465,22 +479,45 @@ class WebSession:
                 self._save_ui_prompt(run_dir, session_user_prompt, is_resume=is_resume)
                 self._mark_sidebar_cache_dirty()
                 if is_resume:
-                    result = runner.resume(human_feedback=resume_feedback)
-                else:
-                    result = runner.run(
+                    if hasattr(runner, "aresume"):
+                        result = await runner.aresume(human_feedback=resume_feedback)
+                    else:
+                        result = await asyncio.to_thread(runner.resume, human_feedback=resume_feedback)
+                elif hasattr(runner, "arun"):
+                    result = await runner.arun(
                         effective_prompt_text,
                         entrypoint=effective_lane,
                         proposal_review=proposal_review,
-                        session_context_text=str(session_context.get("context_text") or ""),
-                        chat_session_id=str(session_context.get("session_id") or ""),
-                        entry_context_tokens_estimate=int(session_context.get("estimated_tokens") or 0),
+                        chat_session_id=str(thread_binding.get("session_id") or ""),
+                        thread_id=str(thread_binding.get("thread_id") or ""),
                     )
+                else:
+                    result = await asyncio.to_thread(
+                        runner.run,
+                        effective_prompt_text,
+                        entrypoint=effective_lane,
+                        proposal_review=proposal_review,
+                        chat_session_id=str(thread_binding.get("session_id") or ""),
+                        thread_id=str(thread_binding.get("thread_id") or ""),
+                    )
+                return result
+
+            try:
+                task = loop.create_task(_execute())
+                with self._lock:
+                    self._run_task = task
+                try:
+                    result = loop.run_until_complete(task)
+                except asyncio.CancelledError:
+                    result = {"status": "interrupted_paused"}
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
                     if run_status == "done":
                         self.run_status = "done"
                     else:
                         self.run_status = run_status
+                        if run_status == "interrupted_paused" and not run_error:
+                            self.run_error = ""
             except Exception as exc:
                 run_error = _format_exception_for_ui(exc)
                 with self._lock:
@@ -492,8 +529,17 @@ class WebSession:
                         level="error",
                         category="run",
                         payload={"status": "error", "error": run_error},
-                    ))
+                        ))
             finally:
+                with self._lock:
+                    self._run_task = None
+                    self._run_loop = None
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception:
+                    pass
+                asyncio.set_event_loop(None)
+                loop.close()
                 if (not skip_summarize) and run_dir and run_dir.exists():
                     summarize_run(run_dir, run_error=run_error or None)
                     if run_error:
@@ -502,6 +548,7 @@ class WebSession:
                             content=f"Run `{run_dir.name}` ended with error:\n\n{run_error}",
                             kind="run_error",
                             source_run_id=run_dir.name,
+                            session_id=message_session_id,
                         )
                     else:
                         response_text = self._read_chat_result_text(run_dir)
@@ -511,6 +558,7 @@ class WebSession:
                                 content=response_text,
                                 kind="run_result",
                                 source_run_id=run_dir.name if run_dir else "",
+                                session_id=message_session_id,
                             )
                     if self.reporter:
                         self.reporter.emit(make_event(
@@ -531,6 +579,7 @@ class WebSession:
             content=session_user_prompt,
             kind="hitl" if is_resume else "chat",
             source_run_id=resume_target.name if is_resume and resume_target is not None else "",
+            session_id=message_session_id,
         )
         self.run_thread = threading.Thread(target=_run, daemon=True)
         self.run_thread.start()
@@ -618,6 +667,8 @@ class WebSession:
             run_control = self.run_control
             reporter = self.reporter
             info = dict(self.run_info)
+            run_loop = self._run_loop
+            run_task = self._run_task
         if not run_thread or not run_thread.is_alive():
             return "No running run to interrupt."
         if run_control is None:
@@ -634,6 +685,31 @@ class WebSession:
                 },
                 run_id=info.get("run_id") or None,
             ))
+        if run_loop is not None and run_task is not None:
+            try:
+                def _cancel_task() -> None:
+                    if run_task.done():
+                        return
+                    run_task.cancel()
+
+                run_loop.call_soon_threadsafe(_cancel_task)
+                ack = run_control.ack_interrupt(
+                    phase="task_cancel_requested",
+                    details={"method": "task.cancel"},
+                )
+                if reporter is not None:
+                    reporter.emit(make_event(
+                        "INTERRUPT_ACKED",
+                        category="run",
+                        payload={
+                            "phase": ack.get("phase", "task_cancel_requested"),
+                            "details": ack.get("details", {}),
+                            "run_id": info.get("run_id", ""),
+                        },
+                        run_id=info.get("run_id") or None,
+                    ))
+            except RuntimeError:
+                pass
         return "Interrupt requested."
 
     def interrupt_status(self) -> Dict[str, Any]:
@@ -752,12 +828,13 @@ class WebSession:
             self.active_chat_session_id = sid
         return sid
 
-    def get_chat_messages(self, *, limit: int = 40) -> List[Dict[str, str]]:
+    def get_chat_messages(self, *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         session_id = self.ensure_active_chat_session()
         store = self._chat_store()
         if store is None or not session_id:
             return []
-        return store.chat_messages(session_id, limit=limit)
+        persisted = store.chat_messages(session_id, limit=limit)
+        return self._merge_missing_run_results(session_id=session_id, persisted_messages=persisted)
 
     def current_chat_session_id(self) -> str:
         return self.ensure_active_chat_session()
@@ -771,14 +848,15 @@ class WebSession:
         source_run_id: str = "",
         source_prompt_id: str = "",
         meta: Optional[Dict[str, Any]] = None,
+        session_id: str = "",
     ) -> None:
-        session_id = self.ensure_active_chat_session()
+        target_session_id = str(session_id or "").strip() or self.ensure_active_chat_session()
         store = self._chat_store()
-        if store is None or not session_id:
+        if store is None or not target_session_id:
             return
         try:
             store.append_message(
-                session_id,
+                target_session_id,
                 role=role,
                 content=content,
                 kind=kind,
@@ -845,85 +923,58 @@ class WebSession:
         except Exception:
             return
 
-    def build_session_context(self, *, current_prompt: str, lane: str) -> Dict[str, Any]:
+    def build_thread_binding(self, *, lane: str) -> Dict[str, Any]:
         session_id = self.ensure_active_chat_session()
-        store = self._chat_store()
-        if store is None or not session_id:
-            return {
-                "session_id": "",
-                "context_text": "",
-                "estimated_tokens": _estimate_tokens(_entry_system_prompt(lane) + "\n" + str(current_prompt or "")),
-            }
-        messages = store.list_messages(session_id)
-        turns: list[tuple[str, str]] = []
-        current_query = ""
-        for item in messages:
-            role = str(item.get("role") or "").strip().lower()
-            kind = str(item.get("kind") or "").strip().lower()
-            content = str(item.get("content") or "").strip()
-            if not content:
-                continue
-            if role == "user" and kind == "chat":
-                current_query = content
-                continue
-            if role == "assistant" and kind == "run_result":
-                if current_query:
-                    turns.append((current_query, content))
-                    current_query = ""
-        recent_turns = turns[-_RECENT_SESSION_TURNS:]
-        if not recent_turns:
-            return {
-                "session_id": session_id,
-                "context_text": "",
-                "estimated_tokens": _estimate_tokens(_entry_system_prompt(lane) + "\n" + str(current_prompt or "")),
-            }
-        lines: List[str] = []
-        lines.append("Relevant conversation history:")
-        for query, answer in recent_turns:
-            lines.append(f"User: {query}")
-            lines.append(f"Assistant: {answer}")
-        context_text = "\n".join(lines).strip()
-        estimated_tokens = _estimate_tokens(
-            "\n".join(
-                [
-                    _entry_system_prompt(lane),
-                    context_text,
-                    str(current_prompt or ""),
-                ]
-            )
-        )
         return {
             "session_id": session_id,
-            "context_text": context_text,
-            "estimated_tokens": estimated_tokens,
+            "thread_id": session_id,
         }
 
     def entry_context_status_text(self, *, lane: str, current_prompt: str = "") -> str:
-        pack = self.build_session_context(current_prompt=current_prompt, lane=lane)
+        _ = current_prompt
+        pack = self.build_thread_binding(lane=lane)
         session_id = str(pack.get("session_id") or self.ensure_active_chat_session()).strip()
-        estimated_tokens = int(pack.get("estimated_tokens") or 0)
+        thread_id = str(pack.get("thread_id") or session_id).strip()
         lane_text = str(lane or "research").strip() or "research"
-        return f"Session `{session_id}` | entry context est. `{estimated_tokens}` tokens | lane `{lane_text}`"
+        return f"Session `{session_id}` | deepagent thread `{thread_id}` | lane `{lane_text}`"
 
-    def read_memory_index(self) -> str:
+    def read_memory_index(self, *, source: str = "all") -> str:
         workspace = self._workspace_path()
         if workspace is None:
             return ""
         db_path = system_root(workspace=workspace) / "deepagent_memory.sqlite"
         if not db_path.exists():
             return "No persistent memory recorded yet."
-        project_id = self._project_id_for_workspace(workspace)
-        prefix = ".".join(("catmaster", project_id, "filesystem"))
+        selected_kinds = self._memory_source_kinds(source)
         try:
             conn = sqlite3.connect(str(db_path), timeout=5, check_same_thread=False)
             conn.row_factory = sqlite3.Row
         except Exception:
             return "Persistent memory database exists but could not be opened."
         try:
-            rows = conn.execute(
-                "SELECT key, value FROM store WHERE prefix = ? ORDER BY key ASC",
-                (prefix,),
-            ).fetchall()
+            available_prefixes = [
+                str(row["prefix"] or "").strip()
+                for row in conn.execute("SELECT DISTINCT prefix FROM store ORDER BY prefix ASC").fetchall()
+                if str(row["prefix"] or "").strip()
+            ]
+            selected_prefixes = self._memory_prefixes_for_workspace(
+                workspace,
+                available_prefixes=available_prefixes,
+                kinds=selected_kinds,
+            )
+            if not selected_prefixes:
+                rows = []
+            elif len(selected_prefixes) == 1:
+                rows = conn.execute(
+                    "SELECT prefix, key, value FROM store WHERE prefix = ? ORDER BY key ASC",
+                    (selected_prefixes[0],),
+                ).fetchall()
+            else:
+                placeholders = ", ".join("?" for _ in selected_prefixes)
+                rows = conn.execute(
+                    f"SELECT prefix, key, value FROM store WHERE prefix IN ({placeholders}) ORDER BY prefix ASC, key ASC",
+                    tuple(selected_prefixes),
+                ).fetchall()
         except Exception:
             return "Persistent memory database exists but could not be read."
         finally:
@@ -936,13 +987,22 @@ class WebSession:
         sections: List[str] = []
         sections.append(f"# Persistent Memory\n")
         sections.append(f"Workspace: `{workspace.name}`")
-        sections.append(f"Namespace: `{prefix}`")
+        sections.append(f"Source: `{str(source or 'all').strip().lower() or 'all'}`")
+        sections.append("Namespace(s):")
+        for prefix in selected_prefixes:
+            sections.append(f"- `{prefix}`")
+        last_prefix = ""
         for row in rows:
+            prefix = str(row["prefix"] or "").strip()
+            if len(selected_prefixes) > 1 and prefix and prefix != last_prefix:
+                sections.append("")
+                sections.append(f"### Namespace `{prefix}`")
             key = str(row["key"] or "").strip() or "/unknown"
             content = self._decode_memory_store_value(row["value"])
             sections.append("")
             sections.append(f"## {key}")
             sections.append(content or "(empty)")
+            last_prefix = prefix
         return "\n".join(sections).strip()
 
     def read_artifacts(self):
@@ -1342,6 +1402,74 @@ class WebSession:
         return f"project_ws_{digest}"
 
     @staticmethod
+    def _memory_source_kinds(source: str) -> tuple[str, ...]:
+        token = str(source or "all").strip().lower()
+        if token == "langmem":
+            return ("long_term_memory",)
+        if token == "instruction":
+            return ("filesystem",)
+        return ("filesystem", "long_term_memory")
+
+    def _memory_prefixes_for_workspace(
+        self,
+        workspace: Path,
+        *,
+        available_prefixes: Optional[List[str]] = None,
+        kinds: Optional[tuple[str, ...]] = None,
+    ) -> List[str]:
+        candidates: List[str] = []
+        seen: set[str] = set()
+        selected_kinds = tuple(kinds or ("filesystem", "long_term_memory"))
+
+        def _append_project_id(project_id: str) -> None:
+            pid = str(project_id or "").strip()
+            if not pid:
+                return
+            for kind in selected_kinds:
+                prefix = ".".join(("catmaster", pid, kind))
+                if prefix not in seen:
+                    candidates.append(prefix)
+                    seen.add(prefix)
+
+        with self._lock:
+            selected_run = self.selected_run_dir
+        selected_meta = self._read_run_meta_payload(selected_run)
+        _append_project_id(str(selected_meta.get("project_id") or ""))
+
+        runs_root = system_root(workspace=workspace) / "runs"
+        if runs_root.exists():
+            run_dirs = [p for p in runs_root.iterdir() if p.is_dir()]
+            for run_dir in sorted(run_dirs, key=lambda p: p.name, reverse=True):
+                meta = self._read_run_meta_payload(run_dir)
+                _append_project_id(str(meta.get("project_id") or ""))
+
+        _append_project_id(self._project_id_for_workspace(workspace))
+
+        available = [str(item or "").strip() for item in list(available_prefixes or []) if str(item or "").strip()]
+        if not available:
+            return candidates
+        available_set = set(available)
+        matched = [prefix for prefix in candidates if prefix in available_set]
+        if matched:
+            return matched
+        if len(available) == 1:
+            return available
+        return []
+
+    @staticmethod
+    def _read_run_meta_payload(run_dir: Optional[Path]) -> Dict[str, Any]:
+        if run_dir is None:
+            return {}
+        path = run_dir / "meta.json"
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
     def _update_active_tool_elapsed(state: Dict[str, Any]) -> None:
         active = state.get("active_toolcall")
         if not isinstance(active, dict):
@@ -1364,6 +1492,51 @@ class WebSession:
         with self._lock:
             ws = self.workspace
         return ws.resolve() if isinstance(ws, Path) else None
+
+    def _merge_missing_run_results(
+        self,
+        *,
+        session_id: str,
+        persisted_messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        rows = [dict(item) for item in (persisted_messages or []) if isinstance(item, dict)]
+        ws = self._workspace_path()
+        if ws is None:
+            return rows
+        runs_root = system_root(workspace=ws) / "runs"
+        if not runs_root.exists():
+            return rows
+        existing_run_ids = {
+            str(item.get("source_run_id") or "").strip()
+            for item in rows
+            if str(item.get("kind") or "").strip() == "run_result"
+        }
+        synthetic: List[Dict[str, Any]] = []
+        for run_dir in sorted((path for path in runs_root.iterdir() if path.is_dir()), key=lambda item: item.name):
+            payload = self._read_run_state_payload(run_dir)
+            if not payload:
+                continue
+            run_session_id = str(payload.get("chat_session_id") or "").strip()
+            if run_session_id != session_id:
+                continue
+            run_id = run_dir.name
+            if run_id in existing_run_ids:
+                continue
+            result_text = self._read_chat_result_text(run_dir)
+            if not result_text:
+                continue
+            synthetic.append(
+                {
+                    "role": "assistant",
+                    "content": result_text,
+                    "kind": "run_result",
+                    "created_at": None,
+                    "source_run_id": run_id,
+                }
+            )
+        if not synthetic:
+            return rows
+        return rows + synthetic
 
     @staticmethod
     def _decode_memory_store_value(raw: Any) -> str:
@@ -1453,6 +1626,26 @@ class WebSession:
             payload = {
                 "todo": list(state.get("todo_items") or []),
                 "proposal_description": self.read_proposal(run_dir),
+                "approval_token": str(pending_input.get("approval_token") or "approve"),
+                "revision_count": max(
+                    0,
+                    int(
+                        pending_input.get("revision_count")
+                        or state.get("proposal_revision_count")
+                        or 0
+                    ),
+                ),
+            }
+        elif interrupt_type == "peer_review":
+            payload = {
+                "report_text": str(pending_input.get("review_text") or ""),
+                "report_path": str(pending_input.get("review_target") or ""),
+                "guidance": str(
+                    pending_input.get("guidance")
+                    or 'Type "continue" to revise, or "approve" to keep the current draft.'
+                ),
+                "run_id": str(self.run_info.get("run_id") or run_dir.name),
+                "phase": interrupt_type,
             }
         else:
             payload = {
@@ -1500,13 +1693,40 @@ class WebSession:
 
         if str(pending.get("kind") or "") == "proposal_review":
             state = self._read_task_state_payload(run_dir)
+            pending_input = state.get("pending_human_input") if isinstance(state.get("pending_human_input"), dict) else {}
+            approval_token = str(
+                payload.get("approval_token")
+                or pending_input.get("approval_token")
+                or "approve"
+            ).strip() or "approve"
+            revision_count = max(
+                0,
+                int(
+                    payload.get("revision_count")
+                    or pending_input.get("revision_count")
+                    or state.get("proposal_revision_count")
+                    or 0
+                ),
+            )
+            payload["approval_token"] = approval_token
+            payload["revision_count"] = revision_count
+            payload.setdefault(
+                "guidance",
+                f'Type "{approval_token}" to continue. Any other input requests a revised proposal.',
+            )
+            if revision_count > 0:
+                payload["is_revised"] = True
+                payload.setdefault(
+                    "reason",
+                    "human review revision" if revision_count == 1 else f"human review revision {revision_count}",
+                )
             history = list(state.get("hitl_history") or [])
             had_task_intervention = any(
                 isinstance(item, dict)
                 and (str(item.get("interrupt_type") or "") == "task_intervention" or bool(item.get("task_id")))
                 for item in history
             )
-            if had_task_intervention:
+            if had_task_intervention and not payload.get("is_revised"):
                 payload["is_revised"] = True
                 payload.setdefault("reason", "replanning after HITL")
 

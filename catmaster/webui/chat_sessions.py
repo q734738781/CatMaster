@@ -244,7 +244,7 @@ class ChatSessionStore:
             source_prompt_id=pid,
         )
 
-    def chat_messages(self, session_id: str, *, limit: int = 40) -> List[Dict[str, str]]:
+    def chat_messages(self, session_id: str, *, limit: Optional[int] = None) -> List[Dict[str, str]]:
         messages = [item for item in self.list_messages(session_id) if _is_conversation_message(item)]
         if limit is not None and limit > 0:
             messages = messages[-limit:]

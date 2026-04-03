@@ -69,6 +69,7 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
         serialized={"name": "demo_tool"},
         input_str='{"alpha": 1}',
         run_id=rid,
+        metadata={"lc_agent_name": "literature_agent"},
     )
 
     handler.on_tool_end(
@@ -90,12 +91,14 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
     assert start_events
     start_payload = start_events[-1].payload
     assert start_payload.get("tool") == "demo_tool"
+    assert start_payload.get("agent_name") == "literature_agent"
     assert start_payload.get("toolcall_id") == str(rid)
     assert "alpha" in str(start_payload.get("params_compact") or "")
     payload = end_events[-1].payload
     assert payload.get("tool") == "demo_tool"
     assert payload.get("status") == "success"
     assert payload.get("toolcall_id") == str(rid)
+    assert payload.get("agent_name") == "literature_agent"
     assert "alpha" in str(payload.get("params_compact") or "")
 
 
@@ -106,7 +109,7 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
 
     rid = uuid.uuid4()
     handler.on_tool_start(
-        serialized={"name": "vasp_relax_prepare"},
+        serialized={"name": "vasp_prepare"},
         input_str=json.dumps({"input_path": "x.vasp"}),
         run_id=rid,
     )
@@ -115,7 +118,7 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
         ToolMessage(
             content="ValidationError: user_incar_settings invalid",
             tool_call_id="call_3",
-            name="vasp_relax_prepare",
+            name="vasp_prepare",
             status="error",
         ),
         run_id=rid,
@@ -127,7 +130,7 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
         if line.strip()
     ]
     assert records
-    assert records[0]["tool_name"] == "vasp_relax_prepare"
+    assert records[0]["tool_name"] == "vasp_prepare"
     assert records[0]["status"] == "error"
 
 
@@ -164,6 +167,7 @@ def test_ui_event_handler_emits_llm_preview_and_tool_plan() -> None:
         serialized={"kwargs": {"model_name": "gpt-5"}},
         prompts=["prompt"],
         run_id=rid,
+        metadata={"lc_agent_name": "experiment_specialist"},
     )
     handler.on_llm_end(
         LLMResult(
@@ -190,6 +194,7 @@ def test_ui_event_handler_emits_llm_preview_and_tool_plan() -> None:
     payload = end_events[-1].payload
     assert payload.get("text_preview") == "Progress: built O2 and preparing relax."
     assert payload.get("tool_calls") == ["mace_relax_batch"]
+    assert payload.get("agent_name") == "experiment_specialist"
 
 
 def test_ui_event_handler_reasoning_delta_emits_only_new_suffix() -> None:
@@ -217,3 +222,23 @@ def test_ui_event_handler_reasoning_delta_emits_only_new_suffix() -> None:
     assert len(reasoning_events) == 2
     assert reasoning_events[0].payload.get("text") == "Running batch process"
     assert reasoning_events[1].payload.get("text") == " on boxed O2"
+
+
+def test_ui_event_handler_skips_empty_token_delta() -> None:
+    reporter = _CollectReporter()
+    handler = UIEventHandler(reporter, run_id="run_x")
+
+    rid = uuid.uuid4()
+    handler.on_llm_start(
+        serialized={"kwargs": {"model_name": "gpt-5"}},
+        prompts=["prompt"],
+        run_id=rid,
+    )
+    handler.on_llm_new_token(
+        "",
+        run_id=rid,
+        chunk={"reasoning_details": [{"type": "reasoning.summary", "summary": "Thinking"}]},
+    )
+
+    assert [e for e in reporter.events if e.name == "LLM_REASONING_DELTA"]
+    assert not [e for e in reporter.events if e.name == "LLM_TOKEN_DELTA"]

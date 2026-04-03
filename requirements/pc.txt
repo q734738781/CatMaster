@@ -10,12 +10,26 @@
 numpy
 scipy
 pandas
+joblib
+seaborn
 
 # Atomistic modeling / materials
 ase
 pymatgen
+cclib
+beautifulsoup4
 ovito
 matplotlib
+phonopy
+dscribe
+mendeleev
+
+# Machine learning
+scikit-learn
+xgboost
+umap-learn
+optuna
+matminer
 
 # YAML parsing (PyYAML) and round-trip editing (ruamel.yaml)
 pyyaml
@@ -27,7 +41,6 @@ paramiko
 
 # LLM agent system
 openai
-aider-chat
 langchain
 langchain-core
 langchain-openai
@@ -36,6 +49,7 @@ langchain-mcp-adapters
 langchain-community
 langgraph
 deepagents
+langmem
 langgraph-checkpoint-sqlite>=3.0.3
 aiosqlite
 httpx

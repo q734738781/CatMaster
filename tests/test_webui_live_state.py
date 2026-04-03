@@ -104,7 +104,7 @@ def test_apply_events_tracks_llm_stream_and_graph_node() -> None:
     assert changed is True
     assert state["current_node"] == "director"
     assert state["llm"]["status"] == "completed"
-    assert state["llm"]["text"] == "Hello world"
+    assert state["llm"]["text"] == ""
     assert state["llm"]["reasoning_text"] == "Check spin state."
 
 
@@ -181,3 +181,75 @@ def test_write_todos_tool_start_updates_live_todo_panel() -> None:
     assert changed is True
     assert state["todo_items"] == ["Inspect the current workspace", "Run quick MACE relax"]
     assert state["todo_rows"][0]["status"] == "in_progress"
+
+
+def test_apply_events_tracks_agent_scoped_live_state() -> None:
+    state = new_live_state("run_007")
+    events = [
+        _event("LLM_CALL_START", ts=1.0, payload={"model": "gpt-5", "agent_name": "research_specialist"}),
+        _event("LLM_REASONING_DELTA", ts=1.1, payload={"text": "Planning.", "agent_name": "research_specialist"}),
+        _event(
+            "TOOL_CALL_START",
+            ts=2.0,
+            payload={
+                "tool": "write_todos",
+                "toolcall_id": "call_todos",
+                "params_full": {"todos": [{"content": "Check literature", "status": "in_progress"}]},
+                "agent_name": "literature_agent",
+            },
+        ),
+        _event(
+            "TOOL_CALL_END",
+            ts=3.0,
+            payload={
+                "tool": "write_todos",
+                "status": "success",
+                "toolcall_id": "call_todos",
+                "agent_name": "literature_agent",
+            },
+        ),
+        _event("RUN_END", ts=4.0, payload={"status": "done"}),
+    ]
+
+    state, changed = apply_events(state, events)
+
+    assert changed is True
+    assert state["agents"]["research_specialist"]["status"] == "completed"
+    assert state["agents"]["research_specialist"]["started_ts"] == 1.0
+    assert state["agents"]["research_specialist"]["completed_ts"] == 4.0
+    assert state["agents"]["literature_agent"]["todo_rows"][0]["content"] == "Check literature"
+    assert state["agents"]["literature_agent"]["recent_toolcalls"][0]["tool"] == "write_todos"
+
+
+def test_agent_tool_end_marks_agent_completed_with_timestamps() -> None:
+    state = new_live_state("run_008")
+    events = [
+        _event(
+            "TOOL_CALL_START",
+            ts=2.0,
+            payload={
+                "tool": "write_todos",
+                "toolcall_id": "call_todos",
+                "params_full": {"todos": [{"content": "Draft note", "status": "in_progress"}]},
+                "agent_name": "writing_specialist",
+            },
+        ),
+        _event(
+            "TOOL_CALL_END",
+            ts=5.0,
+            payload={
+                "tool": "write_todos",
+                "status": "success",
+                "toolcall_id": "call_todos",
+                "agent_name": "writing_specialist",
+            },
+        ),
+    ]
+
+    state, changed = apply_events(state, events)
+
+    assert changed is True
+    agent = state["agents"]["writing_specialist"]
+    assert agent["status"] == "completed"
+    assert agent["started_ts"] == 2.0
+    assert agent["completed_ts"] == 5.0

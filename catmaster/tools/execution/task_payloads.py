@@ -29,15 +29,13 @@ def dedup(items: Iterable[str]) -> List[str]:
 
 
 def expand_forward_files(patterns: Sequence[str], base_dir: Path, ctx: Mapping[str, Any]) -> List[str]:
-    include_all = False
     expanded: List[str] = []
     for item in patterns or []:
         if item == "*":
-            include_all = True
-            continue
+            return ["*"]
         expanded.append(format_template(item, ctx))
-    if include_all or not expanded:
-        expanded.extend([p.name for p in base_dir.iterdir() if p.is_file()])
+    if not expanded:
+        return ["*"]
     return dedup(expanded)
 
 

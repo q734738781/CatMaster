@@ -115,7 +115,7 @@ class LocalToolBackend(ToolBackend):
                         raw_output.close()
                     raise RuntimeError(
                         f"Tool {name} returned an awaitable, but LocalToolBackend is sync-only. "
-                        "Use GraphRunner.arun()/agent ainvoke path or provide a sync tool function."
+                        "Use the async specialist runtime/agent ainvoke path or provide a sync tool function."
                     )
                 content, artifact = adapt_tool_return(
                     tool_name=name,
@@ -171,14 +171,6 @@ class LocalToolBackend(ToolBackend):
             active = dict(self._active_calls.get(toolcall_key) or {})
         if not active:
             return False
-        tool_name = str(active.get("tool_name") or "")
-        if tool_name in {"bash", "bash_exec"}:
-            try:
-                from catmaster.tools.misc.bash_exec import cancel_bash_exec_toolcall
-
-                return bool(cancel_bash_exec_toolcall(toolcall_key))
-            except Exception:
-                return False
         return False
 
     def _set_active_call(

@@ -3,33 +3,12 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
-import pytest
-
 from catmaster.tools.base import workspace_scope
 
 compile_mod = importlib.import_module("catmaster.tools.analysis.agentic_compile_tex")
 
 
-class _FakeStructuredModel:
-    def __init__(self, response):
-        self._response = response
-
-    def invoke(self, _messages):
-        return self._response
-
-
-class _FakeBaseModel:
-    def __init__(self, response):
-        self._response = response
-
-    def with_structured_output(self, _schema):
-        return _FakeStructuredModel(self._response)
-
-
-def test_agentic_compile_tex_fixes_static_tex_issue_without_compiler(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def test_compile_text_returns_log_summary_without_rewriting(monkeypatch, tmp_path: Path) -> None:
     manuscript_dir = tmp_path / "files" / "manuscript"
     sections_dir = manuscript_dir / "sections"
     sections_dir.mkdir(parents=True, exist_ok=True)
@@ -38,68 +17,32 @@ def test_agentic_compile_tex_fixes_static_tex_issue_without_compiler(
     root_tex.write_text("\\documentclass{article}\n\\begin{document}\n\\input{sections/sec_results.tex}\n\\end{document}\n", encoding="utf-8")
     sec_tex.write_text("\\section{Results\nBody.\n", encoding="utf-8")
 
-    monkeypatch.setattr(
-        compile_mod,
-        "build_chat_model",
-        lambda _cfg: _FakeBaseModel(
-            response=type(
-                "_Fix",
-                (),
-                {
-                    "files": [
-                        type(
-                            "_Rewrite",
-                            (),
-                            {
-                                "path": "manuscript/sections/sec_results.tex",
-                                "content": "\\section{Results}\nBody.\n",
-                            },
-                        )()
-                    ],
-                    "notes": ["balanced section heading braces"],
-                },
-            )()
-        ),
-    )
-    monkeypatch.setattr(
-        compile_mod,
-        "_resolve_config",
-        lambda: type("_Cfg", (), {"model": "fake-tex-fixer"})(),
-    )
     class _Proc:
         def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
 
-    calls = {"n": 0}
-
-    def _fake_run(*_args, **_kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return _Proc(1, stderr="! Missing } inserted.")
-        pdf_path = manuscript_dir / "MANUSCRIPT.pdf"
-        pdf_path.write_bytes(b"%PDF-1.4\n")
-        return _Proc(0)
-
     monkeypatch.setattr(compile_mod.shutil, "which", lambda name: "/usr/bin/pdflatex" if name == "pdflatex" else None)
-    monkeypatch.setattr(compile_mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(
+        compile_mod.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _Proc(1, stderr="! Missing } inserted.\nLaTeX Error: File ended while scanning use of \\\\section."),
+    )
 
     with workspace_scope(tmp_path):
-        content, artifact = compile_mod.agentic_compile_tex({"source_path": "manuscript/MANUSCRIPT.tex"})
+        content, artifact = compile_mod.compile_text({"source_path": "manuscript/MANUSCRIPT.tex"})
 
-    assert "Compiler used: pdflatex" in content
-    assert artifact["data"]["compiler_available"] is True
-    assert artifact["data"]["compiled_ok"] is True
-    assert artifact["data"]["remaining_diagnostics"] == []
-    assert "manuscript/sections/sec_results.tex" in artifact["data"]["rewritten_files"]
-    assert sec_tex.read_text(encoding="utf-8") == "\\section{Results}\nBody.\n"
+    assert "Compiled cleanly: no" in content
+    assert artifact["data"]["compiled_ok"] is False
+    assert artifact["data"]["pdf_path"] is None
+    assert artifact["data"]["log_excerpt"]
+    assert any("Unbalanced braces" in item for item in artifact["data"]["remaining_diagnostics"])
+    assert any("LaTeX error:" in item or "LaTeX Error:" in item for item in artifact["data"]["remaining_diagnostics"])
+    assert sec_tex.read_text(encoding="utf-8") == "\\section{Results\nBody.\n"
 
 
-def test_agentic_compile_tex_runs_bibtex_for_bibliography(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def test_compile_text_runs_bibtex_and_reports_artifacts(monkeypatch, tmp_path: Path) -> None:
     manuscript_dir = tmp_path / "files" / "manuscript"
     manuscript_dir.mkdir(parents=True, exist_ok=True)
     root_tex = manuscript_dir / "MANUSCRIPT.tex"
@@ -109,19 +52,6 @@ def test_agentic_compile_tex_runs_bibtex_for_bibliography(
         encoding="utf-8",
     )
     bib_path.write_text("@article{foo, title={Foo}}\n", encoding="utf-8")
-
-    monkeypatch.setattr(
-        compile_mod,
-        "build_chat_model",
-        lambda _cfg: _FakeBaseModel(
-            response=type("_Fix", (), {"files": [], "notes": []})()
-        ),
-    )
-    monkeypatch.setattr(
-        compile_mod,
-        "_resolve_config",
-        lambda: type("_Cfg", (), {"model": "fake-tex-fixer"})(),
-    )
 
     class _Proc:
         def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
@@ -135,6 +65,8 @@ def test_agentic_compile_tex_runs_bibtex_for_bibliography(
         commands.append(list(cmd))
         if cmd[0] == "pdflatex" and len(commands) >= 4:
             (manuscript_dir / "MANUSCRIPT.pdf").write_bytes(b"%PDF-1.4\n")
+            (manuscript_dir / "MANUSCRIPT.log").write_text("clean compile", encoding="utf-8")
+            (manuscript_dir / "MANUSCRIPT.bbl").write_text("% bibliography", encoding="utf-8")
         return _Proc(0)
 
     monkeypatch.setattr(
@@ -145,48 +77,35 @@ def test_agentic_compile_tex_runs_bibtex_for_bibliography(
     monkeypatch.setattr(compile_mod.subprocess, "run", _fake_run)
 
     with workspace_scope(tmp_path):
-        content, artifact = compile_mod.agentic_compile_tex({"source_path": "manuscript/MANUSCRIPT.tex"})
+        content, artifact = compile_mod.compile_text({"source_path": "manuscript/MANUSCRIPT.tex"})
 
     assert "Compiler used: pdflatex+bibtex" in content
     assert artifact["data"]["compiled_ok"] is True
+    assert artifact["data"]["pdf_path"] == "manuscript/MANUSCRIPT.pdf"
+    assert artifact["data"]["bib_paths"] == ["manuscript/references.bib"]
+    assert artifact["data"]["bbl_path"] == "manuscript/MANUSCRIPT.bbl"
+    assert artifact["data"]["log_path"] == "manuscript/MANUSCRIPT.log"
     assert commands[:4] == [
         ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "MANUSCRIPT.tex"],
         ["bibtex", "MANUSCRIPT"],
         ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "MANUSCRIPT.tex"],
         ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "MANUSCRIPT.tex"],
     ]
-    assert any(cmd == ["bibtex", "MANUSCRIPT"] for cmd in commands)
 
 
-def test_agentic_compile_tex_restores_bibliography_when_citations_exist(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def test_compile_text_flags_inline_bibliography(monkeypatch, tmp_path: Path) -> None:
     manuscript_dir = tmp_path / "files" / "manuscript"
-    sections_dir = manuscript_dir / "sections"
     manuscript_dir.mkdir(parents=True, exist_ok=True)
-    sections_dir.mkdir(parents=True, exist_ok=True)
     root_tex = manuscript_dir / "MANUSCRIPT.tex"
-    sec_tex = sections_dir / "sec_intro.tex"
     root_tex.write_text(
         "\\documentclass{article}\n"
-        "\\renewcommand{\\cite}[2][]{ }\n"
         "\\begin{document}\n"
-        "\\input{sections/sec_intro.tex}\n"
+        "Text with citation~\\cite{foo}.\n"
+        "\\begin{thebibliography}{9}\n"
+        "\\bibitem{foo} Foo.\n"
+        "\\end{thebibliography}\n"
         "\\end{document}\n",
         encoding="utf-8",
-    )
-    sec_tex.write_text("Text with citation~\\cite{foo}.\n", encoding="utf-8")
-
-    monkeypatch.setattr(
-        compile_mod,
-        "build_chat_model",
-        lambda _cfg: _FakeBaseModel(response=type("_Fix", (), {"files": [], "notes": []})()),
-    )
-    monkeypatch.setattr(
-        compile_mod,
-        "_resolve_config",
-        lambda: type("_Cfg", (), {"model": "fake-tex-fixer"})(),
     )
 
     class _Proc:
@@ -195,17 +114,12 @@ def test_agentic_compile_tex_restores_bibliography_when_citations_exist(
             self.stdout = stdout
             self.stderr = stderr
 
-    monkeypatch.setattr(
-        compile_mod.shutil,
-        "which",
-        lambda name: f"/usr/bin/{name}" if name in {"pdflatex", "bibtex"} else None,
-    )
+    monkeypatch.setattr(compile_mod.shutil, "which", lambda name: "/usr/bin/pdflatex" if name == "pdflatex" else None)
     monkeypatch.setattr(compile_mod.subprocess, "run", lambda *_args, **_kwargs: _Proc(0))
 
     with workspace_scope(tmp_path):
-        compile_mod.agentic_compile_tex({"source_path": "manuscript/MANUSCRIPT.tex"})
+        _content, artifact = compile_mod.compile_text({"source_path": "manuscript/MANUSCRIPT.tex"})
 
-    updated = root_tex.read_text(encoding="utf-8")
-    assert "\\renewcommand{\\cite}[2][]{ }" not in updated
-    assert "\\bibliography{references}" in updated
-    assert (manuscript_dir / "references.bib").exists()
+    assert artifact["data"]["compiled_ok"] is False
+    assert artifact["data"]["bib_paths"] == []
+    assert any("Inline `thebibliography` detected" in item for item in artifact["data"]["remaining_diagnostics"])

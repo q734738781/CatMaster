@@ -16,12 +16,13 @@ except Exception:  # pragma: no cover
     yaml = None
 
 _FRONTMATTER_DELIMITER = "---"
-_SUGGESTED_TOOLS_KEY = "catmaster-suggested-tools"
+_ALLOWED_TOOLS_KEY = "allowed-tools"
 _ROLES_KEY = "catmaster-roles"
 _LANES_KEY = "catmaster-lanes"
 _TAGS_KEY = "catmaster-tags"
 _TOOL_NAME_ALIASES = {
-    "bash_exec": "bash",
+    "bash": "execute",
+    "bash_exec": "execute",
 }
 
 
@@ -77,7 +78,7 @@ def _parse_frontmatter(frontmatter_text: str) -> dict[str, Any]:
     return parsed
 
 
-def _split_suggested_tools(raw: Any) -> list[str]:
+def _split_allowed_tools(raw: Any) -> list[str]:
     if raw is None:
         return []
     if isinstance(raw, str):
@@ -136,7 +137,7 @@ def _normalize_tool_token(raw: str) -> str | None:
     return _TOOL_NAME_ALIASES.get(token, token)
 
 
-def _parse_suggested_tools_body_section(path: Path) -> list[str]:
+def _parse_allowed_tools_body_section(path: Path) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     in_section = False
@@ -147,7 +148,7 @@ def _parse_suggested_tools_body_section(path: Path) -> list[str]:
             stripped = raw.strip()
             lowered = stripped.lower()
 
-            if lowered == "## suggested tools":
+            if lowered == "## allowed tools":
                 in_section = True
                 continue
 
@@ -197,7 +198,11 @@ class SkillCatalog:
     @classmethod
     def create_default(cls, *, repo_root: Path | None = None) -> "SkillCatalog":
         resolved_repo_root = (repo_root or Path.cwd()).expanduser().resolve()
-        roots = [resolved_repo_root / "skills", resolved_repo_root / "writing_skills"]
+        roots = [
+            resolved_repo_root / "skills" / "experiment",
+            resolved_repo_root / "skills" / "machine_learning",
+            resolved_repo_root / "skills" / "writing",
+        ]
         return cls(
             source_roots=roots,
             repo_root=resolved_repo_root,
@@ -228,25 +233,39 @@ class SkillCatalog:
                         )
                     metadata = frontmatter.get("metadata")
                     metadata_dict = metadata if isinstance(metadata, dict) else {}
-                    suggested_tools = _split_suggested_tools(metadata_dict.get(_SUGGESTED_TOOLS_KEY))
+                    allowed_tools = _split_allowed_tools(frontmatter.get(_ALLOWED_TOOLS_KEY))
                     roles = _split_string_list(metadata_dict.get(_ROLES_KEY))
                     lanes = _split_string_list(metadata_dict.get(_LANES_KEY))
                     tags = _split_string_list(metadata_dict.get(_TAGS_KEY))
-                    if not suggested_tools:
-                        suggested_tools = _parse_suggested_tools_body_section(skill_md)
+                    if not allowed_tools:
+                        allowed_tools = _parse_allowed_tools_body_section(skill_md)
                     compatibility_raw = frontmatter.get("compatibility")
                     compatibility = str(compatibility_raw).strip() if compatibility_raw is not None else None
                     if compatibility == "":
                         compatibility = None
                     source_root_name = source_root.name
                     mount_token = f"@{source_root_name}"
-                    if source_root_name == "writing_skills":
+                    if source_root_name == "writing":
                         if not lanes:
                             lanes = ["writing"]
                         if not roles:
                             roles = ["write_director", "section_writer", "write_reviewer"]
                         if not tags:
                             tags = ["writing"]
+                    elif source_root_name in {"experiment", "machine_learning"}:
+                        if not lanes:
+                            lanes = ["all"]
+                        if not roles:
+                            roles = [
+                                "proposal",
+                                "director",
+                                "fast_director",
+                                "task_runner",
+                                "research_lead",
+                                "research_state_updater",
+                            ]
+                        if not tags:
+                            tags = [source_root_name]
                     meta = SkillMeta(
                         name=name,
                         description=description,
@@ -260,7 +279,7 @@ class SkillCatalog:
                         source_root_name=source_root_name,
                         mount_token=mount_token,
                         compatibility=compatibility,
-                        suggested_tools=suggested_tools,
+                        allowed_tools=allowed_tools,
                         roles=roles,
                         lanes=lanes,
                         tags=tags,
@@ -329,7 +348,7 @@ class CatMasterSkillsRuntime:
             if skill.roles or skill.lanes:
                 if skill.roles and role_text not in skill.roles:
                     continue
-                if skill.lanes and lane_text and lane_text not in skill.lanes:
+                if skill.lanes and lane_text and lane_text not in skill.lanes and "all" not in skill.lanes:
                     continue
                 if skill.lanes and not lane_text and "all" not in skill.lanes:
                     continue
