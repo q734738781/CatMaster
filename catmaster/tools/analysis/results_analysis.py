@@ -283,6 +283,31 @@ def _scan_neb_images(result_dir: Path) -> tuple[list[dict[str, Any]], list[str]]
     return records, issues
 
 
+def _neb_missing_endpoint_outcar_hint(issues: list[str]) -> str | None:
+    missing_endpoint_images: list[str] = []
+    for issue in issues:
+        if issue.startswith("image 00: no energy parsed from OUTCAR"):
+            missing_endpoint_images.append("00")
+        elif issue.startswith("image 0: no energy parsed from OUTCAR"):
+            missing_endpoint_images.append("00")
+        elif issue.startswith("image "):
+            image_label = issue.split(":", 1)[0].replace("image", "").strip()
+            if image_label.isdigit() and issue.endswith("no energy parsed from OUTCAR"):
+                missing_endpoint_images.append(image_label.zfill(2))
+    if len(missing_endpoint_images) < 2:
+        return None
+    normalized = sorted(set(missing_endpoint_images), key=int)
+    first = normalized[0]
+    last = normalized[-1]
+    if first != "00":
+        return None
+    return (
+        f"hint=VASP NEB endpoint images do not produce their own OUTCAR energies. Copy the original relax OUTCAR files into "
+        f"{first}/OUTCAR and {last}/OUTCAR under result_dir, "
+        "then rerun analyze_vasp_neb_results."
+    )
+
+
 def _read_trajectory_frames(path: Path) -> list[Atoms]:
     if path.name == "XDATCAR":
         return list(ase_read(str(path), index=":", format="vasp-xdatcar"))
@@ -511,9 +536,13 @@ def analyze_vasp_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, An
         output_dir.mkdir(parents=True, exist_ok=True)
         records, issues = _scan_neb_images(result_dir)
         if issues:
+            hint = _neb_missing_endpoint_outcar_hint(issues)
+            message = "Incomplete NEB image energies; refusing to report a barrier.\nissues=" + "; ".join(issues)
+            if hint:
+                message += "\n" + hint
             _error(
                 "analyze_vasp_neb_results",
-                "Incomplete NEB image energies; refusing to report a barrier.\nissues=" + "; ".join(issues),
+                message,
                 data={"result_dir_rel": workspace_relpath(result_dir)},
                 error_code="incomplete_neb_profile",
             )

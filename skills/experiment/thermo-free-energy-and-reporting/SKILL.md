@@ -68,4 +68,4 @@ Return:
 ## References
 - If correction details become nontrivial, load the relevant stage outputs and compute them explicitly rather than summarizing from memory.
 - For the local ASE thermochemistry implementation pattern, including reusable code snippets for MACE-frequency post-processing, see `references/ase_vibrational_thermo_reference.md`.
-- For band/DOS, NEB, and MD-derived tables, use `band-and-dos-analysis`, `reaction-neb-analysis`, or `md-diffusion-analysis` as the upstream workflow skill before final thermochemistry reporting.
+- For band/DOS, NEB, and MD-derived tables, use `band-and-dos-analysis`, `neb-analysis`, or `md-diffusion-analysis` as the upstream workflow skill before final thermochemistry reporting.

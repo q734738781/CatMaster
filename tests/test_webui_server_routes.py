@@ -13,6 +13,8 @@ from starlette.routing import Match
 from catmaster.webui import server
 from catmaster.webui.server import create_app
 from catmaster.webui.session import WebSession
+from catmaster.webui.web_reporter import PromptBroker, WebReporter
+from catmaster.ui.events import make_event
 
 
 def _scope(path: str) -> dict:
@@ -382,6 +384,79 @@ def test_merge_usage_summary_preserves_cost_fields_for_active_runs() -> None:
     assert merged["cost_source"] == "mixed"
     assert merged["output_tokens"] == 42
     assert merged["reasoning_tokens"] == 5
+
+
+def test_merge_usage_summary_prefers_runtime_cost_when_runtime_is_newer() -> None:
+    merged = server._merge_usage_summary(
+        {
+            "cost_usd": 0.25,
+            "exact_cost_usd": 0.2,
+            "estimated_cost_usd": 0.05,
+            "cost_source": "mixed",
+            "breakdown_usd": {"completion": 0.05},
+            "output_tokens": 50,
+        },
+        {
+            "cost_usd": 0.1234,
+            "exact_cost_usd": 0.1,
+            "estimated_cost_usd": 0.0234,
+            "cost_source": "estimated",
+            "output_tokens": 30,
+        },
+    )
+
+    assert merged["cost_usd"] == 0.25
+    assert merged["cost_source"] == "mixed"
+    assert merged["breakdown_usd"] == {"completion": 0.05}
+    assert merged["output_tokens"] == 50
+
+
+def test_web_reporter_runtime_usage_totals_include_cost_summary(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "catmaster.webui.web_reporter.summarize_usage_from_metadata",
+        lambda usage_metadata, **kwargs: {
+            "calls": 1,
+            "input_tokens": 120,
+            "input_cached_tokens": 80,
+            "output_tokens": 30,
+            "reasoning_tokens": 7,
+            "total_tokens": 150,
+            "cost_usd": 0.1234,
+            "exact_cost_usd": 0.1,
+            "estimated_cost_usd": 0.0234,
+            "cost_source": "mixed",
+            "by_model": [{"name": "openai/gpt-5.4:online", "cost_usd": 0.1234}],
+            "by_role": [{"name": "materials_worker", "cost_usd": 0.1234}],
+        },
+    )
+    reporter = WebReporter(broker=PromptBroker())
+    reporter.emit(
+        make_event(
+            "LLM_CALL_END",
+            category="llm",
+            payload={
+                "model": "openai/gpt-5.4:online",
+                "agent_name": "materials_worker",
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 30,
+                    "total_tokens": 150,
+                    "input_token_details": {"cache_read": 80},
+                    "output_token_details": {"reasoning": 7},
+                    "cost": 0.1,
+                    "cost_details": {"provider": "openrouter"},
+                },
+            },
+            run_id="run_demo",
+        )
+    )
+
+    snapshot = reporter.get_snapshot()
+    assert snapshot["usage_totals"]["cost_usd"] == 0.1234
+    assert snapshot["usage_totals"]["input_tokens"] == 120
+    assert snapshot["usage_totals"]["input_cached_tokens"] == 80
+    assert snapshot["usage_totals"]["output_tokens"] == 30
+    assert snapshot["usage_totals"]["reasoning_tokens"] == 7
 
 
 def test_runtime_snapshot_annotates_live_prompt_payload() -> None:

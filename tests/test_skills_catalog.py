@@ -172,7 +172,9 @@ def test_method_critical_defaults_sections_exist_for_targeted_skills() -> None:
         "mace-screening-and-relaxation",
         "vasp-input-preparation",
         "thermo-free-energy-and-reporting",
-        "transition-state-neb",
+        "neb-prepare",
+        "neb-calculation",
+        "neb-analysis",
         "adsorption-site-screening",
     ]
     for name in targeted:

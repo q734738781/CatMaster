@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from catmaster.runtime.usage_stats import summarize_usage_from_metadata
 from catmaster.ui import Reporter
 from catmaster.ui.events import UIEvent, make_event
 
@@ -42,6 +43,27 @@ def _copy_usage(usage: Dict[str, Any]) -> Dict[str, int]:
         elif isinstance(value, int):
             out["reasoning_tokens"] = value
     return out
+
+
+def _merge_usage_payload(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base or {})
+    for key, value in (update or {}).items():
+        if isinstance(value, dict):
+            current = merged.get(key)
+            merged[key] = _merge_usage_payload(current if isinstance(current, dict) else {}, value)
+            continue
+        if isinstance(value, bool):
+            merged[key] = int(bool(merged.get(key, 0))) + int(value)
+            continue
+        if isinstance(value, int):
+            merged[key] = int(merged.get(key, 0) or 0) + value
+            continue
+        if isinstance(value, float):
+            merged[key] = float(merged.get(key, 0.0) or 0.0) + value
+            continue
+        if value is not None:
+            merged[key] = value
+    return merged
 
 
 class PromptBroker:
@@ -123,13 +145,11 @@ class WebReporter(Reporter):
             "text_preview": "",
             "last_updated_ts": 0.0,
         }
-        self._usage_totals: Dict[str, int] = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "input_cached_tokens": 0,
-            "reasoning_tokens": 0,
-        }
+        self._usage_totals: Dict[str, Any] = {}
+        self._usage_metadata_by_model: Dict[str, Dict[str, Any]] = {}
+        self._call_counts_by_model: Dict[str, int] = {}
+        self._usage_metadata_by_role: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._call_counts_by_role: Dict[str, int] = {}
 
     def start(self) -> None:
         return
@@ -148,6 +168,11 @@ class WebReporter(Reporter):
         with self._cond:
             self._run_dir = resolved
             self._live_state = new_live_state(run_id=resolved.name)
+            self._usage_totals = {}
+            self._usage_metadata_by_model = {}
+            self._call_counts_by_model = {}
+            self._usage_metadata_by_role = {}
+            self._call_counts_by_role = {}
             self._cond.notify_all()
 
     def get_run_dir(self) -> Optional[Path]:
@@ -358,8 +383,28 @@ class WebReporter(Reporter):
                         "last_updated_ts": now_ts,
                     }
                 )
-            for key, value in compact_usage.items():
-                self._usage_totals[key] = int(self._usage_totals.get(key) or 0) + int(value)
+            model_name = str(payload.get("model") or self._llm_state.get("model") or "").strip()
+            agent_name = str(payload.get("agent_name") or "").strip()
+            if model_name and usage:
+                self._usage_metadata_by_model[model_name] = _merge_usage_payload(
+                    self._usage_metadata_by_model.get(model_name) if isinstance(self._usage_metadata_by_model.get(model_name), dict) else {},
+                    usage,
+                )
+                self._call_counts_by_model[model_name] = int(self._call_counts_by_model.get(model_name, 0)) + 1
+                if agent_name:
+                    role_bucket = self._usage_metadata_by_role.setdefault(agent_name, {})
+                    role_bucket[model_name] = _merge_usage_payload(
+                        role_bucket.get(model_name) if isinstance(role_bucket.get(model_name), dict) else {},
+                        usage,
+                    )
+                    self._call_counts_by_role[agent_name] = int(self._call_counts_by_role.get(agent_name, 0)) + 1
+                self._usage_totals = summarize_usage_from_metadata(
+                    self._usage_metadata_by_model,
+                    run_dir=self._run_dir,
+                    call_counts_by_model=self._call_counts_by_model,
+                    usage_metadata_by_role=self._usage_metadata_by_role,
+                    call_counts_by_role=self._call_counts_by_role,
+                )
         elif name == "GRAPH_NODE_UPDATE":
             tool_calls = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
             self._graph_state.update(

@@ -130,7 +130,7 @@ class VaspNebPrepareInput(BaseModel):
         description=(
             "Optional batch root containing task subdirectories. Each task directory must contain one image tree "
             "using flat image files 00.vasp, 01.vasp, ... or legacy 00/POSCAR, 01/POSCAR, ... . "
-            "Each task directory must also contain endpoint OUTCAR files named IS_OUTCAR and FS_OUTCAR."
+            "Preparation reports warnings when endpoint OUTCAR files still need to be copied in later for NEB analysis."
         ),
     )
     images_root: str | None = Field(
@@ -138,7 +138,7 @@ class VaspNebPrepareInput(BaseModel):
         description=(
             "Existing image-tree root. Preferred form is a flat numbered file tree such as 00.vasp, 01.vasp, ... . "
             "Legacy numbered directories such as 00/POSCAR, 01/POSCAR, ... are also accepted. "
-            "The same directory must also contain IS_OUTCAR and FS_OUTCAR."
+            "Preparation reports warnings when endpoint OUTCAR files still need to be copied in later for NEB analysis."
         ),
     )
     output_root: str = Field(..., description="Target NEB job root. Image directories and root VASP files are written here.")
@@ -750,6 +750,10 @@ class VaspNebWriter:
             f"output_root_rel={data['output_root_rel']}",
             f"output_incar_path={data['output_incar_path']}",
         ]
+        if params.images_root:
+            lines.append(
+                "note=image-tree mode does not infer endpoint energies; copy the original relax OUTCAR files into the endpoint image directories before NEB analysis."
+            )
         if data["diff_json_rel"]:
             lines.append(f"diff_json_rel={data['diff_json_rel']}")
         return _success(
@@ -775,6 +779,7 @@ class VaspNebWriter:
                 error_code="invalid_batch_root",
             )
         task_results: list[dict[str, Any]] = []
+        batch_warnings: list[str] = []
         for task_dir in task_dirs:
             task_payload = params.model_dump(exclude_none=True)
             task_payload.pop("input_root", None)
@@ -782,6 +787,8 @@ class VaspNebWriter:
             task_payload["output_root"] = workspace_relpath(output_root / task_dir.name)
             _content, artifact = self.prepare(VaspNebPrepareInput(**task_payload))
             task_results.append({"task_id": task_dir.name, **artifact["data"]})
+            for warning in artifact.get("warnings", []) or []:
+                batch_warnings.append(f"{task_dir.name}: {warning}")
         batch_summary_path = output_root / "batch_summary.json"
         batch_summary = {
             "input_root_rel": workspace_relpath(input_root),
@@ -799,9 +806,10 @@ class VaspNebWriter:
         content = (
             "vasp_neb_prepare completed.\n"
             f"task_count={len(task_results)} output_root_rel={data['output_root_rel']} "
-            f"batch_summary_rel={data['batch_summary_rel']}"
+            f"batch_summary_rel={data['batch_summary_rel']}\n"
+            "note=batch image-tree mode does not infer endpoint energies; copy the original relax OUTCAR files into the endpoint image directories before NEB analysis."
         )
-        return _success("vasp_neb_prepare", content=content, data=data)
+        return _success("vasp_neb_prepare", content=content, data=data, warnings=batch_warnings)
 
     @staticmethod
     def _prepare_output_root(*, output_root: Path, overwrite: bool) -> None:
@@ -997,11 +1005,15 @@ class VaspNebWriter:
         final_outcar = final_path.parent / "OUTCAR"
         if not _copy_if_exists(initial_outcar, first_dir / "OUTCAR"):
             warnings.append(
-                f"endpoint support file not found for initial image: {workspace_relpath(initial_outcar)}"
+                "initial endpoint OUTCAR not found. "
+                f"Copy the original relax OUTCAR into {workspace_relpath(first_dir / 'OUTCAR')} "
+                f"before NEB analysis. Missing source path: {workspace_relpath(initial_outcar)}"
             )
         if not _copy_if_exists(final_outcar, last_dir / "OUTCAR"):
             warnings.append(
-                f"endpoint support file not found for final image: {workspace_relpath(final_outcar)}"
+                "final endpoint OUTCAR not found. "
+                f"Copy the original relax OUTCAR into {workspace_relpath(last_dir / 'OUTCAR')} "
+                f"before NEB analysis. Missing source path: {workspace_relpath(final_outcar)}"
             )
         return warnings
 
@@ -1014,27 +1026,14 @@ class VaspNebWriter:
     ) -> list[str]:
         if total_images < 2:
             return []
-        initial_outcar = images_root / "IS_OUTCAR"
-        final_outcar = images_root / "FS_OUTCAR"
-        if not initial_outcar.is_file():
-            _fail(
-                "vasp_neb_prepare",
-                message=f"images_root is missing required endpoint OUTCAR file: {workspace_relpath(initial_outcar)}",
-                data={"images_root_rel": workspace_relpath(images_root), "output_root_rel": workspace_relpath(output_root)},
-                error_code="missing_image_tree_outcar",
-            )
-        if not final_outcar.is_file():
-            _fail(
-                "vasp_neb_prepare",
-                message=f"images_root is missing required endpoint OUTCAR file: {workspace_relpath(final_outcar)}",
-                data={"images_root_rel": workspace_relpath(images_root), "output_root_rel": workspace_relpath(output_root)},
-                error_code="missing_image_tree_outcar",
-            )
         first_dir = output_root / "00"
         last_dir = output_root / f"{max(0, total_images - 1):02d}"
-        shutil.copy2(initial_outcar, first_dir / "OUTCAR")
-        shutil.copy2(final_outcar, last_dir / "OUTCAR")
-        return []
+        return [
+            "initial endpoint OUTCAR not provided for image-tree input. "
+            f"Copy the original relax OUTCAR into {workspace_relpath(first_dir / 'OUTCAR')} before NEB analysis.",
+            "final endpoint OUTCAR not provided for image-tree input. "
+            f"Copy the original relax OUTCAR into {workspace_relpath(last_dir / 'OUTCAR')} before NEB analysis.",
+        ]
 
     def _write_neb_support_files(
         self,

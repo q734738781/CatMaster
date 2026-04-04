@@ -618,5 +618,9 @@ def test_analyze_vasp_neb_results_requires_endpoint_outcar(tmp_path: Path) -> No
             )
         for idx in (0, 4):
             (neb_dir / f"{idx:02d}").mkdir(parents=True, exist_ok=True)
-        with pytest.raises(CatMasterToolExecutionError, match="image 00: no energy parsed from OUTCAR"):
+        with pytest.raises(CatMasterToolExecutionError) as exc_info:
             results_analysis.analyze_vasp_neb_results({"result_dir": "neb"})
+        message = str(exc_info.value)
+        assert "image 00: no energy parsed from OUTCAR" in message
+        assert "VASP NEB endpoint images do not produce their own OUTCAR energies" in message
+        assert "Copy the original relax OUTCAR files into 00/OUTCAR and 04/OUTCAR" in message

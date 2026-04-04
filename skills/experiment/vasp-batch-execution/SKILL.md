@@ -62,4 +62,4 @@ Return:
 
 ## References
 - Use `execute` only for focused follow-up reads after the batch state points to a concrete failure target.
-- Hand off finished NEB or MD batches to `reaction-neb-analysis` or `md-diffusion-analysis` rather than reusing this skill as an analysis layer.
+- Hand off finished NEB or MD batches to `neb-analysis` or `md-diffusion-analysis` rather than reusing this skill as an analysis layer.

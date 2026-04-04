@@ -543,6 +543,13 @@ def _merge_usage_summary(runtime_usage: dict[str, Any] | None, persisted_usage: 
         "input_cached_tokens",
         "input_cache_write_tokens",
         "reasoning_tokens",
+        "exact_cost_calls",
+        "estimated_cost_calls",
+    }
+    cost_keys = {
+        "cost_usd",
+        "exact_cost_usd",
+        "estimated_cost_usd",
     }
     for key in count_keys:
         runtime_value = runtime.get(key)
@@ -552,8 +559,37 @@ def _merge_usage_summary(runtime_usage: dict[str, Any] | None, persisted_usage: 
         elif runtime_value is not None:
             merged[key] = runtime_value
 
+    runtime_cost = runtime.get("cost_usd")
+    persisted_cost = persisted.get("cost_usd")
+    runtime_has_cost = isinstance(runtime_cost, (int, float))
+    persisted_has_cost = isinstance(persisted_cost, (int, float))
+    for key in cost_keys:
+        runtime_value = runtime.get(key)
+        persisted_value = persisted.get(key)
+        if isinstance(runtime_value, (int, float)) and isinstance(persisted_value, (int, float)):
+            merged[key] = max(runtime_value, persisted_value)
+        elif runtime_value is not None:
+            merged[key] = runtime_value
+
+    if runtime_has_cost and persisted_has_cost:
+        if float(runtime_cost) >= float(persisted_cost):
+            if runtime.get("cost_source") not in (None, ""):
+                merged["cost_source"] = runtime.get("cost_source")
+            if runtime.get("breakdown_usd") not in (None, "", [], {}):
+                merged["breakdown_usd"] = runtime.get("breakdown_usd")
+            if runtime.get("exact_breakdown_usd") not in (None, "", [], {}):
+                merged["exact_breakdown_usd"] = runtime.get("exact_breakdown_usd")
+            if runtime.get("by_model") not in (None, "", [], {}):
+                merged["by_model"] = runtime.get("by_model")
+            if runtime.get("by_role") not in (None, "", [], {}):
+                merged["by_role"] = runtime.get("by_role")
+    elif runtime_has_cost:
+        for key in ("cost_source", "breakdown_usd", "exact_breakdown_usd", "by_model", "by_role"):
+            if runtime.get(key) not in (None, "", [], {}):
+                merged[key] = runtime.get(key)
+
     for key, value in runtime.items():
-        if key in count_keys:
+        if key in count_keys or key in cost_keys:
             continue
         if key not in merged or merged.get(key) in (None, "", [], {}):
             merged[key] = value

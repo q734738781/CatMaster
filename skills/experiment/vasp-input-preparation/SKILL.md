@@ -50,7 +50,8 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 ### 4. Add a system-aware starting point
 - The tool's canonical defaults are safe starters, but VASP Wiki guidance is more system-aware than a single global default. If the material class is known, surface the system-specific occupancy choice explicitly through `user_incar_patch`.
 - Good start for unknown / high-throughput / gap-uncertain systems: `ISMEAR=0`, `SIGMA=0.05-0.1`; for clearly gapped or unknown-gap cases, consider `EFERMI=MIDGAP`.
-- Good start for metallic relaxations or metallic force-sensitive work: `ISMEAR=1` or `2`, with `SIGMA≈0.2` as a practical first pass; check that the entropy term is acceptably small before treating the setup as converged.
+- Good start for metallic relaxations or metallic force-sensitive work: `ISMEAR=1`, `SIGMA=0.2`; check that the entropy term is acceptably small before treating the setup as converged.
+- Good start for adsorbate slab calculations: `ISMEAR=0`, `SIGMA=0.1`.
 - Good start for semiconductors or insulators in bulk static or DOS-like post-processing: `ISMEAR=-5` on a sufficiently dense `Gamma`-centered mesh.
 - Good start for slab/gas/low-dimensional or tetrahedron-ineligible DOS work: do not assume tetrahedron is safe; fall back to `ISMEAR=0` with small `SIGMA`, typically `0.03-0.1`.
 - Good start for gas references: keep `ISYM=0`, `ISMEAR=0`, `SIGMA=0.01`, and `1x1x1` KPOINTS.
@@ -87,6 +88,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - When the system class is known, prefer a VASP-Wiki-style explicit smearing recipe over silent inheritance of the tool baseline.
 - For unknown systems, `ISMEAR=0` with small `SIGMA` is the safer generic starting point than jumping directly to Methfessel-Paxton.
 - For metallic relaxations, a practical first explicit recipe is `ISMEAR=1`, `SIGMA=0.2`, then check the entropy term before treating it as production-worthy.
+- For adsorbate slab calculations, `ISMEAR=0`, `SIGMA=0.1` is the project-default explicit starting recipe.
 - For slab adsorption studies, do not set `relax_cell=true` unless the task explicitly requires a variable-cell study and the system is not in slab mode.
 - For slab work, use `k*a ~= 35 Å` as the initial project default unless convergence evidence justifies something else.
 - Do not force bulk references to obey the slab default. Bulk `k_product` should be chosen from the bulk convergence requirement, not copied mechanically from slab policy.

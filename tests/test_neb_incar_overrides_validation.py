@@ -205,6 +205,32 @@ def test_vasp_neb_prepare_copies_endpoint_outcars_when_present(
     assert (output_root / "04" / "OUTCAR").read_text(encoding="utf-8") == "final outcar\n"
 
 
+def test_vasp_neb_prepare_warns_how_to_copy_missing_endpoint_outcars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(StructWriter, "write_vasp_inputs", _fake_write_vasp_inputs)
+
+    with workspace_scope(tmp_path):
+        initial = tmp_path / "files" / "inputs" / "is_run" / "CONTCAR"
+        final = tmp_path / "files" / "inputs" / "fs_run" / "CONTCAR"
+        _write_poscar(initial, 0.0)
+        _write_poscar(final, 0.2)
+
+        _content, artifact = vasp_neb_prepare(
+            {
+                "initial_path": "inputs/is_run/CONTCAR",
+                "final_path": "inputs/fs_run/CONTCAR",
+                "output_root": "jobs/neb_case_missing_outcar",
+                "n_images": 3,
+            }
+        )
+
+    warnings = artifact["warnings"]
+    assert any("Copy the original relax OUTCAR into jobs/neb_case_missing_outcar/00/OUTCAR" in item for item in warnings)
+    assert any("Copy the original relax OUTCAR into jobs/neb_case_missing_outcar/04/OUTCAR" in item for item in warnings)
+
+
 def test_make_neb_geometry_writes_flat_vasp_image_tree(tmp_path: Path) -> None:
     with workspace_scope(tmp_path):
         _write_poscar(tmp_path / "files" / "inputs" / "IS.vasp", 0.0)
@@ -389,8 +415,6 @@ def test_vasp_neb_prepare_force_patch_allows_protected_override_from_image_tree(
         _write_poscar(images_root / "00" / "POSCAR", 0.0)
         _write_poscar(images_root / "01" / "POSCAR", 0.1)
         _write_poscar(images_root / "02" / "POSCAR", 0.2)
-        (images_root / "IS_OUTCAR").write_text("legacy initial\n", encoding="utf-8")
-        (images_root / "FS_OUTCAR").write_text("legacy final\n", encoding="utf-8")
 
         _content, artifact = vasp_neb_prepare(
             {
@@ -413,9 +437,12 @@ def test_vasp_neb_prepare_force_patch_allows_protected_override_from_image_tree(
     assert diff["IBRION"]["new"] == "1"
     assert diff["IMAGES"]["new"] == "1"
     assert diff["EDIFF"]["new"] == "2e-06"
+    warnings = artifact["warnings"]
+    assert any("Copy the original relax OUTCAR into jobs/neb_from_tree/00/OUTCAR" in item for item in warnings)
+    assert any("Copy the original relax OUTCAR into jobs/neb_from_tree/02/OUTCAR" in item for item in warnings)
 
 
-def test_vasp_neb_prepare_accepts_flat_image_tree_with_required_endpoint_outcars(
+def test_vasp_neb_prepare_accepts_flat_image_tree_and_warns_for_endpoint_outcars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -426,8 +453,6 @@ def test_vasp_neb_prepare_accepts_flat_image_tree_with_required_endpoint_outcars
         _write_poscar(images_root / "00.vasp", 0.0)
         _write_poscar(images_root / "01.vasp", 0.1)
         _write_poscar(images_root / "02.vasp", 0.2)
-        (images_root / "IS_OUTCAR").write_text("initial flat outcar\n", encoding="utf-8")
-        (images_root / "FS_OUTCAR").write_text("final flat outcar\n", encoding="utf-8")
 
         _content, artifact = vasp_neb_prepare(
             {
@@ -442,11 +467,14 @@ def test_vasp_neb_prepare_accepts_flat_image_tree_with_required_endpoint_outcars
     assert data["num_intermediate_images"] == 1
     assert (output_root / "00" / "POSCAR").is_file()
     assert (output_root / "02" / "POSCAR").is_file()
-    assert (output_root / "00" / "OUTCAR").read_text(encoding="utf-8") == "initial flat outcar\n"
-    assert (output_root / "02" / "OUTCAR").read_text(encoding="utf-8") == "final flat outcar\n"
+    assert not (output_root / "00" / "OUTCAR").exists()
+    assert not (output_root / "02" / "OUTCAR").exists()
+    warnings = artifact["warnings"]
+    assert any("Copy the original relax OUTCAR into jobs/neb_from_flat_tree/00/OUTCAR" in item for item in warnings)
+    assert any("Copy the original relax OUTCAR into jobs/neb_from_flat_tree/02/OUTCAR" in item for item in warnings)
 
 
-def test_vasp_neb_prepare_image_tree_requires_task_local_outcars(
+def test_vasp_neb_prepare_image_tree_warns_when_task_local_outcars_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -458,13 +486,16 @@ def test_vasp_neb_prepare_image_tree_requires_task_local_outcars(
         _write_poscar(images_root / "01.vasp", 0.1)
         _write_poscar(images_root / "02.vasp", 0.2)
 
-        with pytest.raises(CatMasterToolExecutionError, match="IS_OUTCAR"):
-            vasp_neb_prepare(
-                {
-                    "images_root": "prepared_images",
-                    "output_root": "jobs/neb_missing_outcars",
-                }
-            )
+        _content, artifact = vasp_neb_prepare(
+            {
+                "images_root": "prepared_images",
+                "output_root": "jobs/neb_missing_outcars",
+            }
+        )
+
+    warnings = artifact["warnings"]
+    assert any("Copy the original relax OUTCAR into jobs/neb_missing_outcars/00/OUTCAR" in item for item in warnings)
+    assert any("Copy the original relax OUTCAR into jobs/neb_missing_outcars/02/OUTCAR" in item for item in warnings)
 
 
 def test_vasp_neb_prepare_batch_from_task_root(
@@ -478,13 +509,9 @@ def test_vasp_neb_prepare_batch_from_task_root(
         _write_poscar(batch_root / "task0" / "00.vasp", 0.0)
         _write_poscar(batch_root / "task0" / "01.vasp", 0.1)
         _write_poscar(batch_root / "task0" / "02.vasp", 0.2)
-        (batch_root / "task0" / "IS_OUTCAR").write_text("task0 initial\n", encoding="utf-8")
-        (batch_root / "task0" / "FS_OUTCAR").write_text("task0 final\n", encoding="utf-8")
         _write_poscar(batch_root / "task1" / "00.vasp", 0.3)
         _write_poscar(batch_root / "task1" / "01.vasp", 0.4)
         _write_poscar(batch_root / "task1" / "02.vasp", 0.5)
-        (batch_root / "task1" / "IS_OUTCAR").write_text("task1 initial\n", encoding="utf-8")
-        (batch_root / "task1" / "FS_OUTCAR").write_text("task1 final\n", encoding="utf-8")
 
         _content, artifact = vasp_neb_prepare(
             {
@@ -498,6 +525,10 @@ def test_vasp_neb_prepare_batch_from_task_root(
     assert data["task_count"] == 2
     assert (output_root / "batch_summary.json").is_file()
     assert (output_root / "task0" / "00" / "POSCAR").is_file()
-    assert (output_root / "task0" / "02" / "OUTCAR").read_text(encoding="utf-8") == "task0 final\n"
     assert (output_root / "task1" / "00" / "POSCAR").is_file()
     assert (output_root / "task1" / "02" / "POSCAR").is_file()
+    warnings = artifact["warnings"]
+    assert any("task0: initial endpoint OUTCAR not provided for image-tree input." in item for item in warnings)
+    assert any("task0: final endpoint OUTCAR not provided for image-tree input." in item for item in warnings)
+    assert any("task1: initial endpoint OUTCAR not provided for image-tree input." in item for item in warnings)
+    assert any("task1: final endpoint OUTCAR not provided for image-tree input." in item for item in warnings)
