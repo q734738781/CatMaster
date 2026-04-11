@@ -1,9 +1,6 @@
 ---
 name: mace-finetuning-and-benchmark
 description: Use this skill for remote MACE fine-tuning/training plus held-out evaluation using the validated reference-script conventions, especially the `mace-mh-1 + omat_pbe` replay-style path with explicit E0 and replay controls.
-license: project-local
-compatibility: local
-allowed-tools: "mace_train mace_evaluate"
 ---
 
 # mace-finetuning-and-benchmark

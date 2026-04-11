@@ -1,9 +1,6 @@
 ---
 name: elastic-property-workup
 description: Use this skill for finite-strain elastic workflows when the immediate goal is to generate a controlled strain set, run the corresponding VASP calculations, and collect the stress/energy outputs needed for later fitting.
-license: project-local
-compatibility: local
-allowed-tools: "generate_strained_structures vasp_prepare vasp_execute_batch analyze_vasp_results"
 ---
 
 # elastic-property-workup
@@ -44,6 +41,7 @@ Use this skill to build a finite-strain screening set and collect the calculatio
 - `analyze_vasp_results` separates failed strain points from usable ones.
 - This skill stops at collected energies/forces/stresses; it does not fit elastic constants itself.
 - Keep a ledger of which strained member produced usable stress/energy output and which failed.
+- When a single total-energy scalar is needed from `analyze_vasp_results`, use `E0` by default.
 
 ## Method-critical defaults
 - Keep the unstrained reference and every strained member on the same magnetic and electronic-structure footing.

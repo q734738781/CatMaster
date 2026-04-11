@@ -1,9 +1,6 @@
 ---
 name: figure-design-and-captioning
 description: Design evidence-carrying figures and captions from research outputs, with reproducible script and data references.
-allowed-tools: "read_file render_structure_views analyze_images"
-license: project-local
-compatibility: local
 metadata:
   catmaster-roles: "section_writer write_director write_reviewer"
   catmaster-lanes: "writing"
@@ -21,7 +18,6 @@ Use when a section needs structure renders, conceptual schematics, comparison pl
 ## Allowed tools
 - `read_file`
 - `render_structure_views`
-- `analyze_images`
 
 Optional helper tools when the active runtime exposes them:
 - `generate_nanobanana_figure`
@@ -32,7 +28,7 @@ Optional helper tools when the active runtime exposes them:
 2. Identify the minimum artifact and data inputs needed to make that claim visible.
 3. If the figure is a conceptual, mechanistic, or workflow schematic, use `generate_nanobanana_figure` with a precise prompt and save the generated image under the writing workspace.
 4. If the figure comes directly from coordinates or computed data, use reproducible scripts or rendering tools, and keep the script path. For manuscript-facing atomistic structure panels, call `render_structure_views(backend="ovito", ...)` unless the task explicitly needs the denser ASE inspection style.
-5. Inspect the figure for readability, labeling, and whether the intended comparison is obvious.
+5. Inspect the figure with `read_file` for readability, labeling, and whether the intended comparison is obvious.
 6. Write a caption that states what is shown, under what conditions, and why it matters.
 
 ### Figure selection rules

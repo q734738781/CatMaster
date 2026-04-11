@@ -1,9 +1,6 @@
 ---
 name: adsorption-site-screening
 description: Use this skill for adsorption-site enumeration and adsorbate placement workflows, including candidate screening setup and batch structure generation.
-license: project-local
-compatibility: local
-allowed-tools: "enumerate_adsorption_sites place_adsorbate generate_batch_adsorption_structures"
 ---
 
 # adsorption-site-screening

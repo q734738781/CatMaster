@@ -53,6 +53,7 @@ class ToolRegistry:
             place_adsorbate,
             generate_batch_adsorption_structures,
             estimate_neb_image_count,
+            remap_neb_endpoint_atoms,
             make_neb_geometry,
             generate_strained_structures,
             generate_kpath,
@@ -88,6 +89,7 @@ class ToolRegistry:
             PlaceAdsorbateInput,
             GenerateBatchAdsorptionStructuresInput,
             EstimateNebImageCountInput,
+            RemapNebEndpointAtomsInput,
             MakeNebGeometryInput,
             GenerateStrainedStructuresInput,
             GenerateKpathInput,
@@ -120,7 +122,6 @@ class ToolRegistry:
         )
         from catmaster.tools.analysis import (
             compile_text,
-            analyze_images,
             analyze_vasp_neb_results,
             analyze_orca_results,
             analyze_trajectory,
@@ -136,7 +137,6 @@ class ToolRegistry:
             vaspkit_adsorbate_thermo_correction,
             vaspkit_gas_thermo_correction,
             CompileTextInput,
-            AnalyzeImagesInput,
             AnalyzeVaspNebResultsInput,
             AnalyzeOrcaResultsInput,
             AnalyzeTrajectoryInput,
@@ -224,6 +224,7 @@ class ToolRegistry:
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
         self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
         self.register_tool("estimate_neb_image_count", estimate_neb_image_count, EstimateNebImageCountInput)
+        self.register_tool("remap_neb_endpoint_atoms", remap_neb_endpoint_atoms, RemapNebEndpointAtomsInput)
         self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
         self.register_tool("generate_strained_structures", generate_strained_structures, GenerateStrainedStructuresInput)
         self.register_tool("generate_kpath", generate_kpath, GenerateKpathInput)
@@ -240,7 +241,6 @@ class ToolRegistry:
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
-        self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
         self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
         self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
         self.register_tool("analyze_vasp_neb_results", analyze_vasp_neb_results, AnalyzeVaspNebResultsInput)

@@ -581,10 +581,10 @@ def test_render_compact_report_omits_empty_sections() -> None:
 @pytest.mark.parametrize(
     ("entrypoint", "expected_skills", "expected_subagent_names"),
     [
-        ("research", ["/.deepagents/skill_views/research_experiment", "/.deepagents/skill_views/research_writing"], ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
-        ("experiment", ["/.deepagents/skill_views/experiment_specialist"], ["materials_worker", "ml_worker", "orca_xtb_worker", "literature_agent", "report_worker_agent"]),
-        ("writing", ["/.deepagents/skill_views/writing_specialist"], ["literature_agent", "writing_worker_agent", "writing_polisher_agent"]),
-        ("peer_review", ["/.deepagents/skill_views/peer_review_specialist"], ["peer_review_worker_agent"]),
+        ("research", ["/.deepagents/skills/experiment", "/.deepagents/skills/writing"], ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
+        ("experiment", ["/.deepagents/skills/experiment"], ["materials_worker", "ml_worker", "orca_xtb_worker", "literature_agent", "report_worker_agent"]),
+        ("writing", ["/.deepagents/skills/writing"], ["literature_agent", "writing_worker_agent", "writing_polisher_agent"]),
+        ("peer_review", ["/.deepagents/skills/writing"], ["peer_review_worker_agent"]),
     ],
 )
 def test_three_specialist_lanes_start_with_staged_skills(
@@ -701,6 +701,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "Do not infer managed-execution availability from local shell probing alone." in agent_kwargs["system_prompt"]
         assert "downgrading it to literature-only validation" in agent_kwargs["system_prompt"]
         assert "issue a bounded probe to `experiment_specialist`" in agent_kwargs["system_prompt"]
+        assert "If a bounded local task needs a missing Python package, `execute` may install it with `python -m pip install ...`" in agent_kwargs["system_prompt"]
         assert "runnable" in subagents_by_name["experiment_specialist"]
         assert "runnable" in subagents_by_name["writing_specialist"]
         assert "runnable" in subagents_by_name["peer_review_specialist"]
@@ -710,7 +711,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         experiment_agent_kwargs = experiment_agents[0]
         assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
-        assert experiment_agent_kwargs["skills"] == ["/.deepagents/skill_views/experiment_specialist"]
+        assert experiment_agent_kwargs["skills"] == ["/.deepagents/skills/experiment"]
         assert experiment_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
             "materials_worker",
@@ -725,7 +726,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert writing_agents, "expected nested writing specialist to be created"
         writing_agent_kwargs = writing_agents[0]
         assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
-        assert writing_agent_kwargs["skills"] == ["/.deepagents/skill_views/writing_specialist"]
+        assert writing_agent_kwargs["skills"] == ["/.deepagents/skills/writing"]
         assert writing_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
             "literature_agent",
@@ -738,7 +739,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert peer_review_agents, "expected nested peer-review specialist to be created"
         peer_review_agent_kwargs = peer_review_agents[0]
         assert {tool.name for tool in peer_review_agent_kwargs["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_TOOL_NAMES)
-        assert peer_review_agent_kwargs["skills"] == ["/.deepagents/skill_views/peer_review_specialist"]
+        assert peer_review_agent_kwargs["skills"] == ["/.deepagents/skills/writing"]
         assert "Act like a journal editor coordinating external peer review" in peer_review_agent_kwargs["system_prompt"]
         assert "explicit `ReviewTarget` or manuscript PDF path" in peer_review_agent_kwargs["system_prompt"]
         assert "delegate the bounded review episode to `peer_review_worker_agent`" in peer_review_agent_kwargs["system_prompt"]
@@ -770,15 +771,15 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "experiment":
         assert {tool.name for tool in subagents_by_name["materials_worker"]["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["materials_worker"]["skills"] == ["/.deepagents/skill_views/materials_worker"]
+        assert subagents_by_name["materials_worker"]["skills"] == ["/.deepagents/skills/experiment"]
         assert {tool.name for tool in subagents_by_name["ml_worker"]["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["ml_worker"]["skills"] == ["/.deepagents/skill_views/ml_worker"]
+        assert subagents_by_name["ml_worker"]["skills"] == ["/.deepagents/skills/machine_learning"]
         assert {tool.name for tool in subagents_by_name["orca_xtb_worker"]["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["orca_xtb_worker"]["skills"] == ["/.deepagents/skill_views/orca_xtb_worker"]
+        assert subagents_by_name["orca_xtb_worker"]["skills"] == ["/.deepagents/skills/quantum_chemistry"]
         assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
         assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
         assert {tool.name for tool in subagents_by_name["report_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["report_worker_agent"]["skills"] == ["/.deepagents/skill_views/report_worker_agent"]
+        assert subagents_by_name["report_worker_agent"]["skills"] == ["/.deepagents/skills/writing"]
         assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
         assert "/notes/literature/" in subagents_by_name["literature_agent"]["system_prompt"]
@@ -806,11 +807,15 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "Do not infer managed-execution availability from local shell probing alone." in agent_kwargs["system_prompt"]
         assert "Some submission or resource checks are only visible through worker-owned managed tools." in agent_kwargs["system_prompt"]
         assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in agent_kwargs["system_prompt"]
+        assert "If a bounded local task needs a missing Python package, `execute` may install it with `python -m pip install ...`" in agent_kwargs["system_prompt"]
+        assert "If a worker needs a handy Python package for a bounded local step and it is missing" in agent_kwargs["system_prompt"]
         assert "For periodic DFT, the intended path is to prepare inputs locally, submit via `vasp_execute_batch`" in agent_kwargs["system_prompt"]
         assert "mace_neb_batch" in {tool.name for tool in subagents_by_name["materials_worker"]["tools"]}
         assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "install it with `execute` via `python -m pip install ...`" in subagents_by_name["materials_worker"]["system_prompt"]
+        assert "If a handy Python package is missing for a bounded local step" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in subagents_by_name["materials_worker"]["system_prompt"]
         assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["materials_worker"]["system_prompt"]
@@ -821,10 +826,12 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "If a handy Python package is still missing for a bounded local step" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "If the ML logic is longer than a short throwaway snippet and no managed tool covers it" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "install it with `execute` via `python -m pip install ...`" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; MACE training/fine-tuning normally falls into this category." in subagents_by_name["ml_worker"]["system_prompt"]
         assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in subagents_by_name["ml_worker"]["system_prompt"]
@@ -838,6 +845,8 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "`orca_execute_batch`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
         assert "Treat xTB/CREST as the fast exploration layer" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
         assert "default to `xtb_run_batch` or `crest_conformer_search`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
+        assert "install it with `execute` via `python -m pip install ...`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
+        assert "If a handy Python package is missing for a bounded local step" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
         assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["orca_xtb_worker"]["system_prompt"]
         assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in agent_kwargs["system_prompt"]
         assert "compact report packet" in subagents_by_name["report_worker_agent"]["system_prompt"]
@@ -866,9 +875,9 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
         assert "Use the lightweight `internet_search` tool only for tightly bounded writing-support lookups" in subagents_by_name["literature_agent"]["system_prompt"]
         assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skill_views/writing_worker_agent"]
+        assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skills/writing"]
         assert {tool.name for tool in subagents_by_name["writing_polisher_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["writing_polisher_agent"]["skills"] == ["/.deepagents/skill_views/writing_polisher_agent"]
+        assert subagents_by_name["writing_polisher_agent"]["skills"] == ["/.deepagents/skills/writing"]
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
@@ -909,36 +918,29 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "do not compress away the editor comment or reviewer comment sections" in agent_kwargs["system_prompt"]
         assert "peer_review_worker_agent" in subagents_by_name
         assert {tool.name for tool in subagents_by_name["peer_review_worker_agent"]["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["peer_review_worker_agent"]["skills"] == ["/.deepagents/skill_views/peer_review_worker_agent"]
+        assert subagents_by_name["peer_review_worker_agent"]["skills"] == ["/.deepagents/skills/writing"]
         assert "call `peer_review_request` on that PDF exactly once for this episode" in subagents_by_name["peer_review_worker_agent"]["system_prompt"]
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
     staged_experiment = workspace / "files" / ".deepagents" / "skills" / "experiment"
     staged_writing = workspace / "files" / ".deepagents" / "skills" / "writing"
     staged_quantum_chemistry = workspace / "files" / ".deepagents" / "skills" / "quantum_chemistry"
-    staged_views = workspace / "files" / ".deepagents" / "skill_views"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
     assert staged_experiment.is_dir()
     assert staged_writing.is_dir()
     assert staged_quantum_chemistry.is_dir()
-    assert staged_views.is_dir()
     staged_machine_learning = workspace / "files" / ".deepagents" / "skills" / "machine_learning"
     assert staged_machine_learning.is_dir()
-    experiment_view_names = {path.name for path in (staged_views / "experiment_specialist").iterdir() if path.is_dir()}
-    writing_view_names = {path.name for path in (staged_views / "writing_specialist").iterdir() if path.is_dir()}
-    materials_worker_view_names = {path.name for path in (staged_views / "materials_worker").iterdir() if path.is_dir()}
-    ml_worker_view_names = {path.name for path in (staged_views / "ml_worker").iterdir() if path.is_dir()}
-    orca_xtb_worker_view_names = {path.name for path in (staged_views / "orca_xtb_worker").iterdir() if path.is_dir()}
-    report_worker_view_names = {path.name for path in (staged_views / "report_worker_agent").iterdir() if path.is_dir()}
-    writing_worker_view_names = {path.name for path in (staged_views / "writing_worker_agent").iterdir() if path.is_dir()}
-    writing_polisher_view_names = {path.name for path in (staged_views / "writing_polisher_agent").iterdir() if path.is_dir()}
-    peer_review_view_names = {path.name for path in (staged_views / "peer_review_specialist").iterdir() if path.is_dir()}
-    peer_review_worker_view_names = {path.name for path in (staged_views / "peer_review_worker_agent").iterdir() if path.is_dir()}
-    assert "literature-grounding" in experiment_view_names
-    assert "structure-visual-inspection" in experiment_view_names
-    assert "materials-discovery-and-bulk-selection" in experiment_view_names
-    assert "transition-state-neb" not in experiment_view_names
-    assert "structure-visual-inspection" in materials_worker_view_names
+    experiment_skill_names = {path.name for path in staged_experiment.iterdir() if path.is_dir()}
+    writing_skill_names = {path.name for path in staged_writing.iterdir() if path.is_dir()}
+    ml_worker_view_names = {path.name for path in staged_machine_learning.iterdir() if path.is_dir()}
+    orca_xtb_worker_view_names = {path.name for path in staged_quantum_chemistry.iterdir() if path.is_dir()}
+    assert "literature-grounding" in experiment_skill_names
+    assert "structure-visual-inspection" in experiment_skill_names
+    assert "materials-discovery-and-bulk-selection" in experiment_skill_names
+    assert "neb-prepare" in experiment_skill_names
+    assert "neb-calculation" in experiment_skill_names
+    assert "neb-analysis" in experiment_skill_names
     assert {
         "mace-dataset-curation",
         "mace-finetuning-and-benchmark",
@@ -952,14 +954,9 @@ def test_three_specialist_lanes_start_with_staged_skills(
         "nebts-and-irc",
         "nmr-ensemble-workup",
     } <= orca_xtb_worker_view_names
-    assert "achemso-latex-manuscript" in writing_view_names
-    assert "results-and-discussion-writing" in writing_view_names
-    assert "scientific-writing" in writing_view_names
-    assert "scientific-writing" in report_worker_view_names
-    assert "achemso-latex-manuscript" in writing_worker_view_names
-    assert "scientific-writing" in writing_polisher_view_names
-    assert "scientific-writing" in peer_review_view_names
-    assert "scientific-writing" in peer_review_worker_view_names
+    assert "achemso-latex-manuscript" in writing_skill_names
+    assert "results-and-discussion-writing" in writing_skill_names
+    assert "scientific-writing" in writing_skill_names
 
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint

@@ -1,9 +1,6 @@
 ---
 name: adsorption-screening
 description: Use this skill for adsorption-candidate generation, execution, and first-pass ranking when screening one adsorbate across one slab family with reproducible site provenance and thermochemistry-ready metadata.
-license: project-local
-compatibility: local
-allowed-tools: "enumerate_adsorption_sites place_adsorbate generate_batch_adsorption_structures vasp_prepare vasp_execute_batch analyze_vasp_results vaspkit_adsorbate_thermo_correction render_structure_views"
 ---
 
 # adsorption-screening
@@ -45,6 +42,7 @@ Use this skill to build, run, and rank a controlled adsorption screen while pres
 
 ### 4. Rank, then branch
 - Use `analyze_vasp_results` to detect failed or unconverged candidates before ranking.
+- For adsorption-energy ranking, read `E0` from `analyze_vasp_results` by default rather than other OUTCAR energy fields.
 - Run `vaspkit_adsorbate_thermo_correction` only on the retained adsorption states that genuinely need thermal corrections.
 
 ## Method-critical defaults

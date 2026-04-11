@@ -1,9 +1,6 @@
 ---
 name: neb-prepare
 description: "Use this skill for NEB and dimer preparation work: validate endpoint pairs, choose image counts, build image trees, prepare VASP NEB roots, and prepare dimer-ready inputs or raw mode guesses."
-license: project-local
-compatibility: local
-allowed-tools: "estimate_neb_image_count make_neb_geometry vasp_neb_prepare vasp_dimer_prepare make_dimer_mode_from_neb make_dimer_mode_from_mace"
 ---
 
 # neb-prepare
@@ -12,15 +9,17 @@ allowed-tools: "estimate_neb_image_count make_neb_geometry vasp_neb_prepare vasp
 Use this skill when the job is to prepare a pathway calculation rather than execute or analyze it. It covers endpoint validation, interpolation count selection, NEB input-tree assembly, and dimer-ready setup. For the actual run strategy, use `neb-calculation`. For post-run interpretation and pitfalls, use `neb-analysis`.
 
 ## Quick Start
-1. Confirm the endpoint pair is one local elementary step and preserves atom order.
-2. Estimate `n_images` with `estimate_neb_image_count` before interpolating.
-3. Build the image tree with `make_neb_geometry`.
-4. Prepare the VASP NEB root with `vasp_neb_prepare`.
-5. If a dimer refinement branch is needed, prepare the raw mode with `make_dimer_mode_from_neb` or `make_dimer_mode_from_mace`, then build the dimer input with `vasp_dimer_prepare`.
-6. If you need the detailed run protocol for `plain-NEB -> CI-NEB` or `NEB/frequency/dimer`, switch to `neb-calculation`.
+1. Confirm the endpoint pair is one local elementary step and preserve frozen-atom identity.
+2. If same-species atoms may be permuted, run `remap_neb_endpoint_atoms` before interpolation.
+3. Estimate `n_images` with `estimate_neb_image_count` before interpolating.
+4. Build the image tree with `make_neb_geometry`.
+5. Prepare the VASP NEB root with `vasp_neb_prepare`.
+6. If a dimer refinement branch is needed, prepare the raw mode with `make_dimer_mode_from_neb` or `make_dimer_mode_from_mace`, then build the dimer input with `vasp_dimer_prepare`.
+7. If you need the detailed run protocol for `plain-NEB -> CI-NEB` or `NEB/frequency/dimer`, switch to `neb-calculation`.
 
 ## Allowed tools
 - `estimate_neb_image_count`
+- `remap_neb_endpoint_atoms`
 - `make_neb_geometry`
 - `vasp_neb_prepare`
 - `vasp_dimer_prepare`
@@ -31,6 +30,9 @@ Use this skill when the job is to prepare a pathway calculation rather than exec
 
 ### 1. Validate the endpoint contract before interpolation
 - The initial and final structures must keep the same atom ordering. Do not interpolate reordered atoms.
+- If same-species atoms may have been permuted, use `remap_neb_endpoint_atoms` to reorder the final endpoint onto the initial order before estimating distances or building images.
+- The remapping step should normally exclude frozen atoms and preserve selective dynamics. For slab pathways, keep bulk-like frozen layers fixed in identity and only remap the mobile subset.
+- By default, `remap_neb_endpoint_atoms` also locks mobile atoms whose current-order displacement is already below `0.5 Å`; only the remaining mobile atoms are candidates for remapping.
 - A single NEB should describe one local elementary event, not a long migration across several equivalent sites.
 - If the displacement is really a long hop, remodel the final state onto the nearest equivalent site and prepare that primitive hop first.
 

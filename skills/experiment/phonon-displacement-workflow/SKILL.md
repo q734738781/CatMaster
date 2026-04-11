@@ -1,9 +1,6 @@
 ---
 name: phonon-displacement-workflow
 description: Use this skill for finite-displacement phonon force-collection setup when the immediate task is to generate supercell displacements, prepare force jobs, and collect consistent VASP outputs for later phonon fitting.
-license: project-local
-compatibility: local
-allowed-tools: "generate_phonon_displacements vasp_prepare vasp_execute_batch analyze_vasp_results"
 ---
 
 # phonon-displacement-workflow
@@ -38,6 +35,7 @@ Use this skill to generate finite-displacement supercells and collect force calc
 
 ### 3. Collect only accepted force runs
 - Use `analyze_vasp_results` to identify failed or unconverged force points before any later phonon fitting.
+- If a quick energy sanity check is needed from the same summary, prefer `E0` rather than other OUTCAR energy fields.
 - Keep a displacement-to-calculation ledger so later fitting can map every force set back to its displacement ID.
 
 ### 4. Hand off only a complete force dataset

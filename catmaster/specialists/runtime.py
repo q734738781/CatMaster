@@ -15,7 +15,6 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
-import yaml
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
@@ -24,6 +23,7 @@ from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.run_control import RunControl
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError, content_to_text
 from catmaster.runtime.usage_stats import write_usage_summary_from_metadata
+from catmaster.runtime.workspace_python_env import workspace_python_env_overrides
 from catmaster.tools.base import system_root, workspace_root, workspace_scope
 from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_registry import TaskRegistry
@@ -69,6 +69,7 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "place_adsorbate",
     "generate_batch_adsorption_structures",
     "estimate_neb_image_count",
+    "remap_neb_endpoint_atoms",
     "make_neb_geometry",
     "make_dimer_mode_from_neb",
     "make_dimer_mode_from_mace",
@@ -82,9 +83,7 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "mp_search_materials",
     "mp_download_structure",
     "render_structure_views",
-    "analyze_images",
     "identify_structure_fragments",
-    "analyze_vasp_results",
     "analyze_vasp_neb_results",
     "analyze_trajectory",
     "generate_nanobanana_figure",
@@ -103,7 +102,6 @@ _ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
     "filter_conformer_ensemble",
     "extract_optimized_molecules",
     "render_structure_views",
-    "analyze_images",
     "identify_structure_fragments",
     "crest_conformer_search",
     "xtb_run_batch",
@@ -117,13 +115,11 @@ _ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
     "analyze_orca_results",
 }
 _WRITING_TOOL_ALLOWLIST = {
-    "analyze_images",
     "render_structure_views",
     "generate_nanobanana_figure",
     "review_pdf_manuscript",
 }
 _RESEARCH_TOOL_ALLOWLIST = {
-    "analyze_images",
     "render_structure_views",
     "mp_search_materials",
     "mp_download_structure",
@@ -159,7 +155,6 @@ _DEEPAGENT_BUILTIN_TOOL_NAMES = {
 }
 _WRITING_WORKER_TOOL_ALLOWLIST = {
     "polish_academic_prose",
-    "analyze_images",
     "render_structure_views",
     "generate_nanobanana_figure",
     "compile_text",
@@ -192,21 +187,7 @@ _PROJECT_MANAGE_MEMORY_INSTRUCTIONS = (
 _PROJECT_SEARCH_MEMORY_INSTRUCTIONS = (
     "Search project long-term memory before creating a similar memory, and always search before updating or deleting memories."
 )
-_SKILL_VIEW_ROOT = "/.deepagents/skill_views"
-_SPECIALIST_SKILL_VIEW_SPECS: dict[str, tuple[str, set[str]]] = {
-    "research_experiment": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _RESEARCH_TOOL_ALLOWLIST),
-    "research_writing": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _RESEARCH_TOOL_ALLOWLIST),
-    "experiment_specialist": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST),
-    "materials_worker": ("experiment", _DEEPAGENT_BUILTIN_TOOL_NAMES | _MATERIALS_WORKER_TOOL_ALLOWLIST),
-    "ml_worker": ("machine_learning", _DEEPAGENT_BUILTIN_TOOL_NAMES | _ML_WORKER_TOOL_ALLOWLIST),
-    "orca_xtb_worker": ("quantum_chemistry", _DEEPAGENT_BUILTIN_TOOL_NAMES | _ORCA_XTB_WORKER_TOOL_ALLOWLIST),
-    "report_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
-    "writing_specialist": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_TOOL_ALLOWLIST),
-    "writing_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
-    "writing_polisher_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _WRITING_WORKER_TOOL_ALLOWLIST),
-    "peer_review_specialist": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _PEER_REVIEW_TOOL_ALLOWLIST),
-    "peer_review_worker_agent": ("writing", _DEEPAGENT_BUILTIN_TOOL_NAMES | _PEER_REVIEW_WORKER_TOOL_ALLOWLIST),
-}
+_SKILLS_ROOT = "/.deepagents/skills"
 
 
 class _InternetSearchInput(BaseModel):
@@ -888,7 +869,7 @@ class SpecialistRunner:
                     self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skill_view_virtual_path("materials_worker")],
+                skills=[self._skills_group_virtual_path("experiment")],
                 middleware=subagent_middleware,
             ),
             SubAgent(
@@ -902,7 +883,7 @@ class SpecialistRunner:
                     self._named_tools(_ML_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skill_view_virtual_path("ml_worker")],
+                skills=[self._skills_group_virtual_path("machine_learning")],
                 middleware=subagent_middleware,
             ),
             SubAgent(
@@ -916,7 +897,7 @@ class SpecialistRunner:
                     self._named_tools(_ORCA_XTB_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skill_view_virtual_path("orca_xtb_worker")],
+                skills=[self._skills_group_virtual_path("quantum_chemistry")],
                 middleware=subagent_middleware,
             ),
             SubAgent(
@@ -936,7 +917,7 @@ class SpecialistRunner:
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skill_view_virtual_path("report_worker_agent")],
+                skills=[self._skills_group_virtual_path("writing")],
                 middleware=subagent_middleware,
             ),
         ]
@@ -962,7 +943,7 @@ class SpecialistRunner:
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skill_view_virtual_path("writing_worker_agent")],
+                skills=[self._skills_group_virtual_path("writing")],
                 middleware=subagent_middleware,
             ),
             SubAgent(
@@ -974,7 +955,7 @@ class SpecialistRunner:
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skill_view_virtual_path("writing_polisher_agent")],
+                skills=[self._skills_group_virtual_path("writing")],
                 middleware=subagent_middleware,
             ),
         ]
@@ -991,7 +972,7 @@ class SpecialistRunner:
                     self._named_tools(_PEER_REVIEW_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skill_view_virtual_path("peer_review_worker_agent")],
+                skills=[self._skills_group_virtual_path("writing")],
                 middleware=self._subagent_middleware(runtime=runtime),
             ),
         ]
@@ -1165,11 +1146,13 @@ class SpecialistRunner:
         def _factory(runtime: Any) -> Any:
             from deepagents.backends import CompositeBackend, LocalShellBackend, StoreBackend
 
+            workspace_env = workspace_python_env_overrides(self.run_context.workspace)
             return CompositeBackend(
                 default=LocalShellBackend(
                     root_dir=files_root,
                     virtual_mode=True,
-                    timeout=86_400,
+                    timeout=14_400,
+                    env=workspace_env,
                     inherit_env=True,
                 ),
                 routes={
@@ -1473,10 +1456,6 @@ class SpecialistRunner:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(source, target, dirs_exist_ok=True)
-        self._stage_filtered_skill_views(
-            deepagents_root=deepagents_root,
-            repo_root=repo_root,
-        )
         staged_agents = deepagents_root / "AGENTS.md"
         if not staged_agents.exists():
             workspace_agents = Path(self.run_context.workspace) / "AGENTS.md"
@@ -1485,85 +1464,20 @@ class SpecialistRunner:
                 shutil.copyfile(workspace_agents, staged_agents)
 
     @staticmethod
-    def _skill_view_virtual_path(view_name: str) -> str:
-        return f"{_SKILL_VIEW_ROOT}/{str(view_name or '').strip()}"
-
-    @staticmethod
-    def _read_skill_allowed_tools(skill_md: Path) -> list[str]:
-        aliases = {
-            "bash": "execute",
-            "bash_exec": "execute",
-            "apply_aider_edits": "edit_file",
-            "read_research_pack": "read_file",
-            "review_research_context": "read_file",
-            "run_literature_research": "execute",
-        }
-        try:
-            text = skill_md.read_text(encoding="utf-8")
-        except Exception:
-            return []
-        if not text.startswith("---\n"):
-            return []
-        end_idx = text.find("\n---\n", 4)
-        if end_idx < 0:
-            return []
-        try:
-            frontmatter = yaml.safe_load(text[4:end_idx]) or {}
-        except Exception:
-            return []
-        if not isinstance(frontmatter, dict):
-            return []
-        raw = frontmatter.get("allowed-tools")
-        if isinstance(raw, str):
-            tokens = [item.strip().strip(",") for item in raw.split()]
-        elif isinstance(raw, (list, tuple)):
-            tokens = [str(item).strip().strip(",") for item in raw]
-        else:
-            tokens = []
-        out: list[str] = []
-        seen: set[str] = set()
-        for token in tokens:
-            if not token:
-                continue
-            normalized = aliases.get(token, token)
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            out.append(normalized)
-        return out
-
-    def _stage_filtered_skill_views(self, *, deepagents_root: Path, repo_root: Path) -> None:
-        view_root = deepagents_root / "skill_views"
-        for view_name, (source_group, available_tools) in _SPECIALIST_SKILL_VIEW_SPECS.items():
-            source_root = repo_root / "skills" / source_group
-            if not source_root.is_dir():
-                continue
-            target_root = view_root / view_name
-            if target_root.exists():
-                shutil.rmtree(target_root)
-            target_root.mkdir(parents=True, exist_ok=True)
-            for skill_dir in sorted(source_root.iterdir(), key=lambda p: p.name):
-                if not skill_dir.is_dir():
-                    continue
-                skill_md = skill_dir / "SKILL.md"
-                if not skill_md.is_file():
-                    continue
-                declared_tools = self._read_skill_allowed_tools(skill_md)
-                if declared_tools and any(tool_name not in available_tools for tool_name in declared_tools):
-                    continue
-                shutil.copytree(skill_dir, target_root / skill_dir.name, dirs_exist_ok=True)
+    def _skills_group_virtual_path(group_name: str) -> str:
+        return f"{_SKILLS_ROOT}/{str(group_name or '').strip()}"
 
     @staticmethod
     def _virtual_skill_paths(entrypoint: SpecialistEntrypoint) -> list[str]:
         if entrypoint == "experiment":
-            return [SpecialistRunner._skill_view_virtual_path("experiment_specialist")]
+            return [SpecialistRunner._skills_group_virtual_path("experiment")]
         if entrypoint == "writing":
-            return [SpecialistRunner._skill_view_virtual_path("writing_specialist")]
+            return [SpecialistRunner._skills_group_virtual_path("writing")]
         if entrypoint == "peer_review":
-            return [SpecialistRunner._skill_view_virtual_path("peer_review_specialist")]
+            return [SpecialistRunner._skills_group_virtual_path("writing")]
         return [
-            SpecialistRunner._skill_view_virtual_path("research_experiment"),
-            SpecialistRunner._skill_view_virtual_path("research_writing"),
+            SpecialistRunner._skills_group_virtual_path("experiment"),
+            SpecialistRunner._skills_group_virtual_path("writing"),
         ]
 
     def _resolve_thread_id(self, payload: dict[str, Any]) -> str:
@@ -1648,6 +1562,7 @@ class SpecialistRunner:
             "Execution capability contract: distinguish local interactive availability from managed execution availability.",
             "Do not infer managed-execution availability from local shell probing alone. If a registered submission tool exists, treat that capability as available through the platform unless the tool itself fails at runtime.",
             "Your current tool surface is not the whole platform surface; some managed execution, resource visibility, or environment checks exist only behind delegated specialists or workers.",
+            "If a bounded local task needs a missing Python package, `execute` may install it with `python -m pip install ...` when that is the most direct way to complete the step.",
         ]
         if audience == "research":
             lines.append(
@@ -1858,6 +1773,7 @@ class SpecialistRunner:
             "Only do the implementation directly in the specialist thread when no available worker matches the task, or when the action is a tiny coordination-only step that would not justify a delegation round.\n"
             "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
+            "If a worker needs a handy Python package for a bounded local step and it is missing, let it install that package with `execute` via `python -m pip install ...`.\n"
             "When method settings, software behavior, or scientific best practice are uncertain, prefer a quick built-in web check through the online model's native browsing capability to align with current official or primary-source guidance before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
             f"{execution_contract}\n"
@@ -1911,7 +1827,7 @@ class SpecialistRunner:
         return (
             "Multimodal tool-content discipline: if a tool produces images, PDFs, or other non-text payloads, prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary. "
             "Do not rely on raw inline multimodal tool outputs remaining replay-safe across long-lived provider bridges. "
-            "When later reasoning needs that content again, re-open the artifact or use a dedicated analysis tool to turn it into text."
+            "If you need to inspect multimodal content such as images, PDFs, or PPT/PPTX files, use `read_file` as the default multimodal entry point for small or moderate files."
         )
 
     @staticmethod
@@ -1994,6 +1910,7 @@ class SpecialistRunner:
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
             "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis when those steps serve one materials workflow.\n"
             "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
             "When configuration details, package behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
             "For heavier custom logic such as high-throughput screening helpers, large batch post-processing, or multi-step deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
@@ -2020,6 +1937,7 @@ class SpecialistRunner:
             "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request; use the managed remote training path instead.\n"
             "Prefer using libraries already available in the environment and reusable workspace code before introducing new dependencies or parallel implementations.\n"
             "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`; prefer them first unless the task clearly needs something else.\n"
+            "If a handy Python package is still missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
             "If the ML logic is longer than a short throwaway snippet and no managed tool covers it, materialize it as a script instead of keeping it inline in the conversation or a one-off command.\n"
             "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`, and use shared `scripts/` only for genuinely cross-topic utilities.\n"
             "When no dedicated tool covers a bounded ML task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
@@ -2053,6 +1971,7 @@ class SpecialistRunner:
             "Use ORCA with XTB-family methods only when the request explicitly needs an ORCA-native XTB workflow or another ORCA-side feature that `xtb_run_batch` does not cover; do not choose ORCA-XTB as the default fallback for routine preopt steps.\n"
             "When the request is about one mechanistic step or one catalyst-side molecular episode, keep the run on the molecular lane instead of trying to translate it into a periodic workflow.\n"
             "When no dedicated tool covers a bounded molecular task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
             "For heavier custom logic such as ensemble post-processing, Boltzmann aggregation, or multi-step deterministic screening helpers, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When configuration details, software behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
             "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"

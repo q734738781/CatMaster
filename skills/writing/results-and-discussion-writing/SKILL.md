@@ -1,9 +1,6 @@
 ---
 name: results-and-discussion-writing
 description: Write Results and Discussion sections that separate observations from interpretation and preserve uncertainty.
-allowed-tools: "read_file execute"
-license: project-local
-compatibility: local
 metadata:
   catmaster-roles: "section_writer write_reviewer"
   catmaster-lanes: "writing"

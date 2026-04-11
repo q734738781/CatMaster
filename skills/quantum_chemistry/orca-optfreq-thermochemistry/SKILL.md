@@ -1,9 +1,6 @@
 ---
 name: orca-optfreq-thermochemistry
 description: Use this skill for bounded ORCA molecular optimization, frequency, opt+freq thermochemistry, TDDFT, or NMR preparation/execution/analysis after the molecular structure set is already chosen.
-license: project-local
-compatibility: local
-allowed-tools: "orca_prepare orca_execute_batch analyze_orca_results extract_optimized_molecules"
 ---
 
 # orca-optfreq-thermochemistry

@@ -6,7 +6,6 @@ from catmaster.tools.analysis.agentic_compile_tex import (
     agentic_compile_tex,
     compile_text,
 )
-from catmaster.tools.analysis.analyze_images import AnalyzeImagesInput, analyze_images
 from catmaster.tools.analysis.fragment_probe import (
     IdentifyStructureFragmentsInput,
     identify_structure_fragments,
@@ -58,8 +57,6 @@ __all__ = [
     "compile_text",
     "AgenticCompileTexInput",
     "agentic_compile_tex",
-    "AnalyzeImagesInput",
-    "analyze_images",
     "IdentifyStructureFragmentsInput",
     "identify_structure_fragments",
     "GenerateNanoBananaFigureInput",

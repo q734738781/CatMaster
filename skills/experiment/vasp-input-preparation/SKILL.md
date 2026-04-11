@@ -1,9 +1,6 @@
 ---
 name: vasp-input-preparation
 description: Use this skill for preparing canonical VASP relax/static/frequency/DOS/MD input sets, choosing the correct regime and preset, handling INCAR patch-policy edge cases, explicit slab-frequency setup, and producing execution-ready folder layouts before dispatch.
-license: project-local
-compatibility: local
-allowed-tools: "fix_atoms_by_indices vasp_prepare vasp_band_prepare generate_kpath"
 ---
 
 # vasp-input-preparation

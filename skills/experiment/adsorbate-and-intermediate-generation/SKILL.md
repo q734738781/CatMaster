@@ -1,9 +1,6 @@
 ---
 name: adsorbate-and-intermediate-generation
 description: Use this skill for generating adsorbates and reaction intermediates, standardizing molecular inputs, and preparing structures for adsorption placement.
-license: project-local
-compatibility: local
-allowed-tools: "create_molecule_from_smiles"
 ---
 
 # adsorbate-and-intermediate-generation

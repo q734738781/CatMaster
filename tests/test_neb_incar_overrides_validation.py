@@ -8,6 +8,7 @@ import pytest
 from ase.io import read as ase_read
 from pydantic import ValidationError
 from pymatgen.core import Lattice, Structure
+from pymatgen.io.vasp.inputs import Poscar
 
 pytest.importorskip("pymatgen")
 
@@ -16,9 +17,11 @@ from catmaster.tools.base import workspace_scope
 from catmaster.tools.geometry_inputs.neb_tools import (
     EstimateNebImageCountInput,
     MakeNebGeometryInput,
+    RemapNebEndpointAtomsInput,
     VaspNebPrepareInput,
     estimate_neb_image_count,
     make_neb_geometry,
+    remap_neb_endpoint_atoms,
     vasp_neb_prepare,
 )
 from catmaster.tools.geometry_inputs.vasp_inputs import StructWriter
@@ -42,6 +45,16 @@ def _write_two_atom_poscar(path: Path, species: list[str], frac_xs: list[float])
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     structure.to(filename=str(path), fmt="poscar")
+
+
+def _write_poscar_with_sd(path: Path, species: list[str], coords: list[list[float]], selective_dynamics: list[list[bool]]) -> None:
+    structure = Structure(
+        lattice=Lattice.cubic(5.0),
+        species=species,
+        coords=coords,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Poscar(structure, selective_dynamics=selective_dynamics, sort_structure=False).write_file(str(path))
 
 
 def _fake_write_vasp_inputs(self, structure, output_dir, **kwargs):
@@ -128,6 +141,16 @@ def test_estimate_neb_image_count_input_accepts_positive_spacing() -> None:
         target_spacing_angstrom=0.8,
     )
     assert params.target_spacing_angstrom == 0.8
+
+
+def test_remap_neb_endpoint_atoms_input_accepts_defaults() -> None:
+    params = RemapNebEndpointAtomsInput(
+        initial_path="tests/assets/Fe.cif",
+        final_path="tests/assets/Fe.cif",
+    )
+    assert params.mic is True
+    assert params.lock_if_current_displacement_below_angstrom == 0.5
+    assert params.overwrite is False
 
 
 def test_source_mode_rejects_mixing_endpoint_and_image_tree_inputs() -> None:
@@ -353,6 +376,167 @@ def test_estimate_neb_image_count_rejects_element_sequence_mismatch(tmp_path: Pa
                 {
                     "initial_path": "inputs/IS.vasp",
                     "final_path": "inputs/FS.vasp",
+                }
+            )
+
+
+def test_remap_neb_endpoint_atoms_reorders_mobile_same_species_atoms_and_preserves_sd(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        initial = tmp_path / "files" / "inputs" / "IS.vasp"
+        final = tmp_path / "files" / "inputs" / "FS.vasp"
+        _write_poscar_with_sd(
+            initial,
+            ["Cu", "Cu", "Cu", "H", "H"],
+            [
+                [0.00, 0.00, 0.00],
+                [0.25, 0.00, 0.00],
+                [0.50, 0.00, 0.00],
+                [0.10, 0.50, 0.50],
+                [0.90, 0.50, 0.50],
+            ],
+            [
+                [False, False, False],
+                [False, False, False],
+                [False, False, False],
+                [True, True, True],
+                [True, True, True],
+            ],
+        )
+        _write_poscar_with_sd(
+            final,
+            ["Cu", "Cu", "Cu", "H", "H"],
+            [
+                [0.00, 0.00, 0.00],
+                [0.25, 0.00, 0.00],
+                [0.50, 0.00, 0.00],
+                [0.88, 0.50, 0.50],
+                [0.12, 0.50, 0.50],
+            ],
+            [
+                [False, False, False],
+                [False, False, False],
+                [False, False, False],
+                [True, True, True],
+                [True, True, True],
+            ],
+        )
+
+        _content, artifact = remap_neb_endpoint_atoms(
+            {
+                "initial_path": "inputs/IS.vasp",
+                "final_path": "inputs/FS.vasp",
+                "output_path": "mapped/fs_mapped.vasp",
+            }
+        )
+
+    data = artifact["data"]
+    assert data["mobile_atom_indices"] == [3, 4]
+    assert data["mobile_atom_indices_source"] == "selective_dynamics"
+    assert data["lock_if_current_displacement_below_angstrom"] == pytest.approx(0.5)
+    assert data["locked_small_displacement_indices"] == []
+    assert data["remap_candidate_indices"] == [3, 4]
+    assert data["mapping_changed"] is True
+    assert data["rss_displacement_mapped_order_angstrom"] < data["rss_displacement_current_order_angstrom"]
+    mapped = Poscar.from_file(str(tmp_path / "files" / "mapped" / "fs_mapped.vasp"))
+    sd = np.asarray(mapped.selective_dynamics, dtype=bool)
+    assert sd.shape == (5, 3)
+    assert np.all(sd[:3] == np.array([[False, False, False]] * 3))
+    assert np.all(sd[3:] == np.array([[True, True, True], [True, True, True]]))
+    mapped_atoms = ase_read(tmp_path / "files" / "mapped" / "fs_mapped.vasp")
+    scaled = mapped_atoms.get_scaled_positions(wrap=False)[:, 0]
+    assert scaled[0] == pytest.approx(0.00)
+    assert scaled[1] == pytest.approx(0.25)
+    assert scaled[2] == pytest.approx(0.50)
+    assert scaled[3] == pytest.approx(0.12)
+    assert scaled[4] == pytest.approx(0.88)
+
+
+def test_remap_neb_endpoint_atoms_locks_small_displacement_mobile_atoms(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        initial = tmp_path / "files" / "inputs" / "IS.vasp"
+        final = tmp_path / "files" / "inputs" / "FS.vasp"
+        _write_poscar_with_sd(
+            initial,
+            ["Cu", "Cu", "Cu", "H", "H", "H"],
+            [
+                [0.00, 0.00, 0.00],
+                [0.25, 0.00, 0.00],
+                [0.50, 0.00, 0.00],
+                [0.10, 0.50, 0.50],
+                [0.30, 0.50, 0.50],
+                [0.90, 0.50, 0.50],
+            ],
+            [
+                [False, False, False],
+                [False, False, False],
+                [False, False, False],
+                [True, True, True],
+                [True, True, True],
+                [True, True, True],
+            ],
+        )
+        _write_poscar_with_sd(
+            final,
+            ["Cu", "Cu", "Cu", "H", "H", "H"],
+            [
+                [0.00, 0.00, 0.00],
+                [0.25, 0.00, 0.00],
+                [0.50, 0.00, 0.00],
+                [0.12, 0.50, 0.50],
+                [0.88, 0.50, 0.50],
+                [0.91, 0.50, 0.50],
+            ],
+            [
+                [False, False, False],
+                [False, False, False],
+                [False, False, False],
+                [True, True, True],
+                [True, True, True],
+                [True, True, True],
+            ],
+        )
+
+        _content, artifact = remap_neb_endpoint_atoms(
+            {
+                "initial_path": "inputs/IS.vasp",
+                "final_path": "inputs/FS.vasp",
+                "output_path": "mapped/fs_locked.vasp",
+            }
+        )
+
+    data = artifact["data"]
+    assert data["locked_small_displacement_indices"] == [3, 5]
+    assert data["remap_candidate_indices"] == [4]
+    mapped_atoms = ase_read(tmp_path / "files" / "mapped" / "fs_locked.vasp")
+    scaled = mapped_atoms.get_scaled_positions(wrap=False)[:, 0]
+    assert scaled[3] == pytest.approx(0.12)
+    assert scaled[4] == pytest.approx(0.88)
+    assert scaled[5] == pytest.approx(0.91)
+
+
+def test_remap_neb_endpoint_atoms_refuses_fixed_atom_order_mismatch(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        initial = tmp_path / "files" / "inputs" / "IS.vasp"
+        final = tmp_path / "files" / "inputs" / "FS.vasp"
+        _write_poscar_with_sd(
+            initial,
+            ["Cu", "O", "H"],
+            [[0.00, 0.00, 0.00], [0.25, 0.00, 0.00], [0.75, 0.50, 0.50]],
+            [[False, False, False], [False, False, False], [True, True, True]],
+        )
+        _write_poscar_with_sd(
+            final,
+            ["O", "Cu", "H"],
+            [[0.26, 0.00, 0.00], [0.01, 0.00, 0.00], [0.77, 0.50, 0.50]],
+            [[False, False, False], [False, False, False], [True, True, True]],
+        )
+
+        with pytest.raises(CatMasterToolExecutionError, match="Frozen atoms are excluded from remapping"):
+            remap_neb_endpoint_atoms(
+                {
+                    "initial_path": "inputs/IS.vasp",
+                    "final_path": "inputs/FS.vasp",
+                    "output_path": "mapped/fs_bad.vasp",
                 }
             )
 

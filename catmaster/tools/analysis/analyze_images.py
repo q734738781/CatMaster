@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Deprecated image-analysis workaround.
+
+Prefer DeepAgent's built-in `read_file` for images, PDFs, and PPT/PPTX content.
+This module remains only for backward-compatible direct imports.
+"""
+
 import base64
 from dataclasses import replace
 from pathlib import Path

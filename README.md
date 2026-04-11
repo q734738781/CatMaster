@@ -213,6 +213,7 @@ The helper script will:
 - launch with `conda run -n catmaster`
 - export the repository root into `PYTHONPATH`
 - default `--project-space-root` to `./project_space`
+- let local `execute` commands run inside a lightweight workspace-local `metadata/.venv` layered on top of the main environment, so agent-installed Python packages stay scoped to that workspace
 
 Useful overrides:
 

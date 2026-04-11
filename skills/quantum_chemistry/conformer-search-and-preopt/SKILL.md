@@ -1,9 +1,6 @@
 ---
 name: conformer-search-and-preopt
 description: Use this skill for one molecular conformer-search episode that starts from a SMILES string or one seed structure, expands into a conformer ensemble, prunes it, and produces xTB-optimized candidates for downstream ORCA work.
-license: project-local
-compatibility: local
-allowed-tools: "create_molecule_from_smiles enumerate_molecular_conformers filter_conformer_ensemble crest_conformer_search xtb_run_batch analyze_xtb_results extract_optimized_molecules"
 ---
 
 # conformer-search-and-preopt

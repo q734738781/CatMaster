@@ -1,9 +1,6 @@
 ---
 name: surface-and-termination-screening
 description: Use this skill for turning one relaxed bulk reference into a controlled slab/termination screening set, including slab generation, freezing policy, optional lateral expansion, and standardized VASP ranking runs.
-license: project-local
-compatibility: local
-allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell vasp_prepare vasp_execute_batch analyze_vasp_results render_structure_views"
 ---
 
 # surface-and-termination-screening
@@ -47,6 +44,7 @@ Use this skill to screen surface terminations without quietly changing slab geom
 ### 4. Run one controlled ranking stage
 - Use one consistent `vasp_prepare` preset/regime across the termination set.
 - Dispatch as one batch and summarize with `analyze_vasp_results` before selecting survivors.
+- When ranking by total energy, use `E0` as the default energy field from `analyze_vasp_results`.
 
 ## Method-critical defaults
 - Keep thickness, vacuum, k-point density, spin treatment, and dispersion policy fixed across the termination screen unless the workflow explicitly studies those variables.

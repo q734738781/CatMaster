@@ -1,9 +1,6 @@
 ---
 name: band-and-dos-analysis
 description: Use this skill for post-relax bulk electronic-structure workflows when the goal is a clean DOS or band-path-ready calculation sequence with explicit KPOINTS provenance and result summaries.
-license: project-local
-compatibility: local
-allowed-tools: "generate_kpath vasp_prepare vasp_band_prepare vasp_execute_batch analyze_vasp_results render_structure_views"
 ---
 
 # band-and-dos-analysis
@@ -19,6 +16,7 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 5. For bands, generate a recommended line-mode `KPOINTS` with `generate_kpath` and assemble the band job with `vasp_band_prepare`.
 6. Dispatch the resulting VASP jobs with `vasp_execute_batch`.
 7. Use `analyze_vasp_results` to summarize convergence and parsed bandgap evidence.
+8. If you also need a single total-energy value from that summary, use `E0` by default.
 
 ## Allowed tools
 - `generate_kpath`

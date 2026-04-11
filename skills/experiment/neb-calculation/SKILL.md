@@ -1,9 +1,6 @@
 ---
 name: neb-calculation
 description: "Use this skill for the execution stage of NEB and dimer workflows, especially the detailed run protocol for plain-NEB to CI-NEB refinement or NEB/frequency/dimer refinement."
-license: project-local
-compatibility: local
-allowed-tools: "vasp_execute_batch mace_neb_batch"
 ---
 
 # neb-calculation

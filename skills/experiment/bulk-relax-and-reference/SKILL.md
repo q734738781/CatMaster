@@ -1,9 +1,6 @@
 ---
 name: bulk-relax-and-reference
 description: Use this skill for bulk-reference preparation and analysis when a workflow needs a relaxed bulk baseline, symmetry-inequivalent site ledger, and optional band/DOS follow-up from one consistent starting structure.
-license: project-local
-compatibility: local
-allowed-tools: "enumerate_unique_sites vasp_prepare vasp_execute_batch analyze_vasp_results generate_kpath"
 ---
 
 # bulk-relax-and-reference
@@ -39,6 +36,7 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 ### 3. Separate execution from acceptance
 - Submit the prepared root with `vasp_execute_batch`.
 - Accept the relaxed bulk only after `analyze_vasp_results` confirms convergence and reports the final structure path.
+- When the summary includes total energies, use `E0` as the default comparison energy.
 
 ### 4. Branch cleanly after acceptance
 - For band structures, generate a line-mode `KPOINTS` recommendation with `generate_kpath`.

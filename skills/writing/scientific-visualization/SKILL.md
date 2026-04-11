@@ -1,9 +1,6 @@
 ---
 name: scientific-visualization
 description: Meta-skill for publication-ready figures. Use when creating journal submission figures requiring multi-panel layouts, significance annotations, error bars, colorblind-safe palettes, and specific journal formatting (Nature, Science, Cell). Orchestrates matplotlib/seaborn/plotly with publication styles. For quick exploration use seaborn or plotly directly.
-allowed-tools: "read_file write_file edit_file execute"
-license: MIT license
-compatibility: local
 metadata:
     skill-author: K-Dense Inc.
 ---

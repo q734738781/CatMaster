@@ -1,9 +1,6 @@
 ---
 name: slab-construction-and-surface-modeling
 description: Use this skill for slab construction, vacuum and layer choices, surface supercell setup, and atom-fixing strategy in heterogeneous catalysis workflows.
-license: project-local
-compatibility: local
-allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height fix_atoms_by_indices supercell"
 ---
 
 # slab-construction-and-surface-modeling

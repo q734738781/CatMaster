@@ -1,9 +1,6 @@
 ---
 name: vasp-batch-execution
 description: Use this skill for dispatching prepared VASP jobs with vasp_execute_batch, choosing valid input/output layouts, avoiding nested or overlapping calc trees, and collecting clean failure evidence.
-license: project-local
-compatibility: local
-allowed-tools: "vasp_execute_batch analyze_vasp_results execute"
 ---
 
 # vasp-batch-execution
@@ -45,6 +42,7 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 
 ### 5. Hand off to structured analysis
 - After collection, prefer `analyze_vasp_results` over ad hoc manual parsing when the next step needs convergence, energy, or bandgap summaries.
+- When comparing ordinary VASP total energies from `analyze_vasp_results`, use `E0` as the default reference energy unless the workflow explicitly requires another convention.
 - Treat this skill as execution-only; dispatch success is not the same as usable scientific output.
 
 ## Method-critical defaults

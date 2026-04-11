@@ -1,9 +1,6 @@
 ---
 name: achemso-latex-manuscript
 description: Write ACS-style manuscript sections against the local achemso LaTeX template, using deterministic template edits and preserving BibTeX structure.
-allowed-tools: "edit_file read_file execute"
-license: project-local
-compatibility: local
 metadata:
   catmaster-roles: "write_director section_writer write_reviewer"
   catmaster-lanes: "writing"

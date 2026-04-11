@@ -1,9 +1,6 @@
 ---
 name: literature-grounding
 description: Use this skill when the user asks for papers, prior work, benchmark conventions, prior-art mapping, or other explicit evidence grounding from published work, including heterogeneous-catalysis method benchmarks.
-license: project-local
-compatibility: local
-allowed-tools: "execute"
 ---
 
 # literature-grounding

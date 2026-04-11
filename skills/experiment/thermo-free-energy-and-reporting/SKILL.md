@@ -1,9 +1,6 @@
 ---
 name: thermo-free-energy-and-reporting
 description: Use this skill for thermodynamic and free-energy post-processing, result normalization, explicit adsorbate-only frequency-job SOP, and concise reporting standards for catalyst comparison.
-license: project-local
-compatibility: local
-allowed-tools: "fix_atoms_by_indices identify_structure_fragments vaspkit_adsorbate_thermo_correction vaspkit_gas_thermo_correction"
 ---
 
 # thermo-free-energy-and-reporting

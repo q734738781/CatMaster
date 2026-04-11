@@ -1,9 +1,6 @@
 ---
 name: materials-discovery-and-bulk-selection
 description: Use this skill for materials discovery and bulk structure selection before slab construction, including database query strategy, candidate filtering, and export readiness.
-license: project-local
-compatibility: local
-allowed-tools: "mp_search_materials mp_download_structure"
 ---
 
 # materials-discovery-and-bulk-selection

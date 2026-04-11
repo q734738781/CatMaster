@@ -1,9 +1,6 @@
 ---
 name: active-learning-relabel-loop
 description: Use this skill for candidate ranking and relabel-loop bookkeeping when the task is to select the next structures for expensive reference calculations from a structure pool or curated dataset.
-license: project-local
-compatibility: local
-allowed-tools: "calculate_al_candidates build_dataset_from_runs mace_train mace_evaluate"
 ---
 
 # active-learning-relabel-loop

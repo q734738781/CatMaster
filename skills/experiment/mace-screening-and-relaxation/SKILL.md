@@ -1,9 +1,6 @@
 ---
 name: mace-screening-and-relaxation
 description: Use this skill for MACE-based rapid screening and relaxation loops before DFT, including candidate pruning and handoff criteria.
-license: project-local
-compatibility: local
-allowed-tools: "mace_relax_batch mace_sp_batch"
 ---
 
 # mace-screening-and-relaxation

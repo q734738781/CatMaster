@@ -2,12 +2,6 @@
 
 This repository now uses a DeepAgent-native specialist runtime as the active path. Treat the current implementation under `catmaster/specialists/` as the source of truth.
 
-Legacy note:
-
-- Older orchestrator / director-style code under `catmaster/agents/` is deprecated but still present in the repo.
-- Unless you are explicitly maintaining that legacy stack, do not use it as the source of truth for current prompts, routing, tool policy, or runtime behavior.
-- When active-path behavior and legacy code disagree, follow `catmaster/specialists/runtime.py` and the active specialist tests.
-
 ## 1) Active architecture
 
 ### Public entrypoints
@@ -37,10 +31,9 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
 Execution guidance for the active experiment path:
 
 - If a dedicated tool does not cover a bounded execution task, prefer implementing the missing step with `execute`, Python, and mature third-party libraries inside the workspace over stopping at the tool boundary.
+- Local `execute` commands run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there with `python -m pip install ...` instead of modifying the main environment.
 - If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow built-in web check through the online model to align with current official documentation or primary sources before improvising. Do not turn that into a broad literature campaign.
 - If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
-
-Do not design new features around the old `director -> task runner -> memory patch` stack unless you are explicitly maintaining legacy code. The active path is the DeepAgent specialist runtime.
 
 ## 2) Current literature architecture
 
@@ -73,7 +66,7 @@ These are for exact paper metadata, DOI/year/venue/authors/citation resolution, 
 
 The active runtime writes `run_state.json` in the run directory. This is the active run snapshot used by the WebUI and resume flow.
 
-Active multi-turn continuity for specialists comes from the DeepAgent `thread_id` bound to the chat session. Do not manually inject chat-history summaries or reconstructed transcript text into active specialist prompts unless you are explicitly maintaining legacy code or a separate non-specialist flow.
+Active multi-turn continuity for specialists comes from the DeepAgent `thread_id` bound to the chat session. Do not manually inject chat-history summaries or reconstructed transcript text into active specialist prompts.
 
 Do not add new active-path features that depend on:
 
@@ -82,8 +75,6 @@ Do not add new active-path features that depend on:
 - `MEMORY/**`
 - `update_memory`
 - memory patch flows
-
-Those belong to the legacy orchestration stack and are no longer the primary runtime contract.
 
 ### Threading and memory
 
@@ -121,7 +112,7 @@ Maintenance rules for active-path code:
 - Keep long-lived `tool` message history text-first. Prefer concise textual tool outputs plus workspace artifact paths over inline base64 image/file payloads.
 - If a tool naturally returns binary or multimodal content, persist the artifact as a file and keep only a short textual summary, file path, and MIME hint in model-visible history when possible.
 - Do not depend on LangChain-standard multimodal blocks like `{"type": "image", ...}` being replay-safe for provider-backed `tool` history. Provider wire formats may require provider-native blocks such as OpenAI-style `image_url`, and some bridges reject non-text `tool.content`.
-- When a later turn needs image or file understanding, re-open the artifact in that turn or use a dedicated analysis tool to turn it into textual findings. Do not rely on old inline image tool payloads surviving indefinitely inside the thread store.
+- When a later turn needs image, PDF, or PPT/PPTX understanding, re-open the artifact with `read_file` for small or moderate files. Do not rely on old inline image or file payloads surviving indefinitely inside the thread store.
 - Prefer attachments, file IDs, file paths, or generated artifact URLs over embedding large base64 blobs in multi-turn history.
 - If runtime compatibility is uncertain, sanitize non-text `tool` messages before model invocation instead of dropping the whole thread. Preserve only the minimum textual placeholder needed for continuity.
 
@@ -160,7 +151,7 @@ Final specialist responses should contain only these sections:
 - `Facts`
 - `Files`
 
-Do not reintroduce heavy structured task-era payloads like:
+Do not reintroduce heavy structured payloads like:
 
 - `constraints`
 - `open_questions`
@@ -284,17 +275,15 @@ The active runtime uses LangChain step logging and UI event callbacks. Avoid rei
 
 ### WebUI
 
-The WebUI is run-state and SSE driven. Active-path UI work should align with the current streaming model rather than polling-only or legacy task-state assumptions.
+The WebUI is run-state and SSE driven. Active-path UI work should align with the current streaming model.
 
-## 10) Legacy code policy
-
-This repository still contains legacy orchestration code under areas like `catmaster/agents/`, but it is not the primary architecture.
+## 10) Code policy
 
 When making changes:
 
 - prefer `catmaster/specialists/` for active-path behavior
 - prefer DeepAgent-native mechanisms over custom compatibility layers
-- do not add new task-era compatibility shims unless a change explicitly targets legacy support
+- do not add new compatibility shims unless the change explicitly needs them
 
 ## 11) Testing guidance
 

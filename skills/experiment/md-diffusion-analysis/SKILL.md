@@ -1,9 +1,6 @@
 ---
 name: md-diffusion-analysis
 description: Use this skill for MD execution and post-analysis when the goal is trajectory-based MSD/RDF/diffusion evidence rather than a generic VASP run log.
-license: project-local
-compatibility: local
-allowed-tools: "vasp_prepare vasp_execute_batch analyze_trajectory"
 ---
 
 # md-diffusion-analysis

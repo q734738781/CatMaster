@@ -1,9 +1,6 @@
 ---
 name: neb-analysis
 description: "Use this skill for NEB post-analysis: barrier extraction, profile interpretation, endpoint-energy pitfalls, and common QC checks after a pathway run finishes."
-license: project-local
-compatibility: local
-allowed-tools: "analyze_vasp_neb_results"
 ---
 
 # neb-analysis

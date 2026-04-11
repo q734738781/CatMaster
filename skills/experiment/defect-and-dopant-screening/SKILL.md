@@ -1,9 +1,6 @@
 ---
 name: defect-and-dopant-screening
 description: Use this skill for first-pass vacancy, substitution, and explicit interstitial candidate generation plus standardized VASP screening, without pretending to solve formation energies or charge corrections in one step.
-license: project-local
-compatibility: local
-allowed-tools: "enumerate_unique_sites create_vacancy substitute_species insert_interstitial_at_coords supercell vasp_prepare vasp_execute_batch analyze_vasp_results"
 ---
 
 # defect-and-dopant-screening
@@ -45,6 +42,7 @@ Use this skill to generate primitive defect/dopant candidates and screen them co
 ### 4. Run one screening stage
 - Prepare and dispatch the retained candidate set under one method contract.
 - Use `analyze_vasp_results` to separate geometry/execution failure from physically interesting candidates.
+- If the screening compares total energies, use `E0` as the default parsed energy.
 
 ## Method-critical defaults
 - Do not report formation energies, charge corrections, or chemical-potential conclusions from this skill alone.
