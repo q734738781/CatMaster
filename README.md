@@ -222,6 +222,9 @@ CATMASTER_CONDA_ENV=catmaster ./start_webui.sh --port 7991
 CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace ./start_webui.sh
 ```
 
+If you prefer a persistent local default, edit the `LOCAL_PROJECT_SPACE_ROOT`
+block near the top of `start_webui.sh`.
+
 ### Execute Timeout Note
 
 In the current specialist runtime, the default `execute` backend timeout is `12h`

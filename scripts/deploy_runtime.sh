@@ -181,13 +181,9 @@ if [[ $DRY_RUN -eq 0 ]]; then
 source_repo=$REPO_ROOT
 source_commit=$COMMIT
 deployed_at_utc=$DEPLOY_TIME
-project_space_root_default=$PROJECT_SPACE_ROOT
 EOF
   chmod +x "$TARGET_DIR/start_webui.sh"
   mkdir -p "$PROJECT_SPACE_ROOT"
-
-  # Bake the current default into a helper file for visibility.
-  printf '%s\n' "$PROJECT_SPACE_ROOT" > "$TARGET_DIR/.project_space_root_default"
 
   echo
   echo "Deploy completed."

@@ -69,7 +69,6 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
                 "agent_runtime:",
                 "  recursion_limit: 512",
                 "  max_tool_calls: 72",
-                "  max_model_calls: 144",
                 "  print_state_messages: true",
                 "  print_http_raw_post: true",
                 "writing:",
@@ -92,7 +91,6 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert profile.agent_policies.proposal.browse_tools_enabled is False
     assert profile.agent_runtime.recursion_limit == 512
     assert profile.agent_runtime.max_tool_calls == 72
-    assert profile.agent_runtime.max_model_calls == 144
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
     assert profile.writing.author_name == "CatMaster"
@@ -440,7 +438,6 @@ def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.agent_runtime.recursion_limit == 1_000_000
     assert profile.agent_runtime.max_tool_calls == 120
-    assert profile.agent_runtime.max_model_calls == 120
     assert profile.agent_runtime.print_state_messages is False
     assert profile.agent_runtime.print_http_raw_post is False
 
@@ -452,14 +449,12 @@ def test_llm_profile_from_env_ignores_legacy_runtime_env(monkeypatch: pytest.Mon
     monkeypatch.setenv("CATMASTER_STRICT_CONTROL_CONTRACT", "false")
     monkeypatch.setenv("CATMASTER_RECURSION_LIMIT", "256")
     monkeypatch.setenv("CATMASTER_MAX_TOOL_CALLS", "66")
-    monkeypatch.setenv("CATMASTER_MAX_MODEL_CALLS", "132")
     monkeypatch.setenv("CATMASTER_PRINT_HTTP_RAW_POST", "true")
 
     profile = LLMProfile.from_env()
 
     assert profile.agent_runtime.recursion_limit == 256
     assert profile.agent_runtime.max_tool_calls == 66
-    assert profile.agent_runtime.max_model_calls == 132
     assert profile.agent_runtime.print_http_raw_post is True
 
 

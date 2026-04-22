@@ -43,6 +43,7 @@ def _write_completed_run(
     final_answer: str = "Agent answer.",
     summary: str = "Run finished.",
     chat_session_id: str = "",
+    user_prompt: str = "",
 ) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / RUN_STATE_FILE).write_text(
@@ -56,6 +57,7 @@ def _write_completed_run(
                 "facts": ["fact one"],
                 "artifacts": [{"path": "outputs/result.txt", "kind": "file", "description": "reported file"}],
                 "chat_session_id": chat_session_id,
+                "user_prompt": user_prompt,
             }
         ),
         encoding="utf-8",
@@ -232,22 +234,24 @@ def test_websession_backfills_missing_run_results_from_run_state(tmp_path: Path)
         entrypoint="research",
         final_answer="Recovered result one.",
         chat_session_id=active_session_id,
+        user_prompt="Prompt one.",
     )
     _write_completed_run(
         runs_root / "run_20260321_120100_efgh34",
         entrypoint="research",
         final_answer="Recovered result two.",
         chat_session_id=active_session_id,
+        user_prompt="Prompt two.",
     )
 
     chat_messages = session.get_chat_messages()
     assert [item["content"] for item in chat_messages] == [
         "Prompt one.",
-        "Prompt two.",
         "Recovered result one.",
+        "Prompt two.",
         "Recovered result two.",
     ]
-    assert [item["kind"] for item in chat_messages] == ["chat", "chat", "run_result", "run_result"]
+    assert [item["kind"] for item in chat_messages] == ["chat", "run_result", "chat", "run_result"]
 
 
 def test_websession_interrupt_cancels_active_async_run(tmp_path: Path, monkeypatch) -> None:

@@ -35,6 +35,14 @@ from .schemas import ProposalCheckpoint, ResearchKernel, SpecialistEntrypoint
 
 logger = logging.getLogger(__name__)
 
+
+class SpecialistRetryableModelResponseError(RuntimeError):
+    """Transient model/provider response was syntactically successful but unusable."""
+
+
+class SpecialistInvalidFinalReportError(RuntimeError):
+    """Final assistant output did not satisfy the specialist reporting contract."""
+
 RUN_STATE_FILE = "run_state.json"
 PROPOSAL_FILE = "proposal.md"
 MEMORY_STORE_FILE = "deepagent_memory.sqlite"
@@ -89,19 +97,20 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "generate_nanobanana_figure",
     "vaspkit_adsorbate_thermo_correction",
     "vaspkit_gas_thermo_correction",
+    "export_builtin_tool_source",
 }
 _ML_WORKER_TOOL_ALLOWLIST: set[str] = {
     "build_dataset_from_runs",
     "mace_train",
     "mace_evaluate",
     "calculate_al_candidates",
+    "export_builtin_tool_source",
 }
 _ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
     "create_molecule_from_smiles",
     "enumerate_molecular_conformers",
     "filter_conformer_ensemble",
     "extract_optimized_molecules",
-    "render_structure_views",
     "identify_structure_fragments",
     "crest_conformer_search",
     "xtb_run_batch",
@@ -113,18 +122,14 @@ _ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
     "orca_irc_prepare",
     "orca_execute_batch",
     "analyze_orca_results",
+    "export_builtin_tool_source",
 }
 _WRITING_TOOL_ALLOWLIST = {
-    "render_structure_views",
     "generate_nanobanana_figure",
     "review_pdf_manuscript",
 }
-_RESEARCH_TOOL_ALLOWLIST = {
-    "render_structure_views",
-    "mp_search_materials",
-    "mp_download_structure",
-}
-_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = set(_RESEARCH_TOOL_ALLOWLIST)
+_RESEARCH_TOOL_ALLOWLIST: set[str] = set()
+_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = set()
 _PEER_REVIEW_TOOL_ALLOWLIST = {"peer_review_request"}
 _PEER_REVIEW_WORKER_TOOL_ALLOWLIST = set(_PEER_REVIEW_TOOL_ALLOWLIST)
 _METADATA_AGENT_TOOL_ALLOWLIST = {
@@ -155,7 +160,6 @@ _DEEPAGENT_BUILTIN_TOOL_NAMES = {
 }
 _WRITING_WORKER_TOOL_ALLOWLIST = {
     "polish_academic_prose",
-    "render_structure_views",
     "generate_nanobanana_figure",
     "compile_text",
 }
@@ -423,6 +427,9 @@ def build_specialist_runner(
 
 
 class SpecialistRunner:
+    _MODEL_RESPONSE_RETRY_DELAYS_S: tuple[float, ...] = (60.0, 180.0, 300.0)
+    _FINAL_REPORT_RETRY_DELAYS_S: tuple[float, ...] = (30.0, 120.0)
+
     def __init__(
         self,
         *,
@@ -546,72 +553,103 @@ class SpecialistRunner:
                     }
                 )
 
-            while True:
+            retryable_exceptions = (
+                SpecialistRetryableModelResponseError,
+                SpecialistInvalidFinalReportError,
+            )
+            max_attempts = len(self._FINAL_REPORT_RETRY_DELAYS_S) + 1
+            for attempt_index in range(max_attempts):
                 self._raise_if_interrupt_requested(phase="before_agent_invoke", details={"entrypoint": entrypoint})
-                async with self._open_agent_runtime(files_root=files_root) as runtime:
-                    agent = await self._build_entry_agent(
-                        entrypoint=entrypoint,
-                        runtime=runtime,
-                        thread_id=thread_id,
-                    )
-                    message_text = prompt if resume_feedback in (None, "") else (
-                        f"{prompt}\n\nHuman review feedback:\n{resume_feedback}"
-                    )
-                    result = await agent.ainvoke(
-                        {"messages": [{"role": "user", "content": message_text}]},
-                        config={
-                            "configurable": {
-                                "thread_id": thread_id,
-                                "project_id": str(self.run_context.project_id or "").strip(),
+                try:
+                    async with self._open_agent_runtime(files_root=files_root) as runtime:
+                        agent = await self._build_entry_agent(
+                            entrypoint=entrypoint,
+                            runtime=runtime,
+                            thread_id=thread_id,
+                        )
+                        message_text = prompt if resume_feedback in (None, "") else (
+                            f"{prompt}\n\nHuman review feedback:\n{resume_feedback}"
+                        )
+                        result = await agent.ainvoke(
+                            {"messages": [{"role": "user", "content": message_text}]},
+                            config={
+                                "configurable": {
+                                    "thread_id": thread_id,
+                                    "project_id": str(self.run_context.project_id or "").strip(),
+                                },
+                                "callbacks": self._langchain_callbacks(
+                                    usage_handler=usage_handler,
+                                    default_agent_name=f"{entrypoint}_specialist",
+                                ),
+                                "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
                             },
-                            "callbacks": self._langchain_callbacks(
-                                usage_handler=usage_handler,
-                                default_agent_name=f"{entrypoint}_specialist",
-                            ),
-                            "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
-                        },
-                    )
-                parsed = self._finalize_report(self._coerce_report(raw=result))
-                artifacts = self._artifact_rows(parsed["files"])
+                        )
+                    parsed = self._finalize_report(self._coerce_report(raw=result))
+                    artifacts = self._artifact_rows(parsed["files"])
 
-                final_answer = parsed["text"]
-                status = "done"
-                self._write_run_state(
-                    {
-                        "schema_version": 1,
-                        "entrypoint": entrypoint,
+                    final_answer = parsed["text"]
+                    status = "done"
+                    self._write_run_state(
+                        {
+                            "schema_version": 1,
+                            "entrypoint": entrypoint,
+                            "status": status,
+                            "phase": "finalized",
+                            "active_specialist": entrypoint,
+                            "thread_id": thread_id,
+                            "proposal_review": False,
+                            "proposal_revision_count": 0,
+                            "pending_human_input": None,
+                            "todo_items": [],
+                            "artifacts": artifacts,
+                            "delegation_log": [],
+                            "text_preview": final_answer[:280],
+                            "user_prompt": prompt,
+                            "chat_session_id": str(payload.get("chat_session_id") or ""),
+                            "final_answer": final_answer,
+                            "summary": parsed["summary"],
+                            "facts": list(parsed["facts"]),
+                            "review_target": str(parsed.get("review_target") or "").strip(),
+                            **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                        }
+                    )
+                    self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": status})
+                    _flush_usage()
+                    return {
+                        "run_id": self.run_context.run_id,
+                        "run_dir": str(self.run_context.run_dir),
                         "status": status,
-                        "phase": "finalized",
-                        "active_specialist": entrypoint,
-                        "thread_id": thread_id,
-                        "proposal_review": False,
-                        "proposal_revision_count": 0,
-                        "pending_human_input": None,
-                        "todo_items": [],
-                        "artifacts": artifacts,
-                        "delegation_log": [],
-                        "text_preview": final_answer[:280],
-                        "user_prompt": prompt,
-                        "chat_session_id": str(payload.get("chat_session_id") or ""),
-                        "final_answer": final_answer,
                         "summary": parsed["summary"],
                         "facts": list(parsed["facts"]),
-                        "review_target": str(parsed.get("review_target") or "").strip(),
-                        **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                        "final_answer": final_answer,
+                        "artifacts": artifacts,
+                        "delegation_log": [],
                     }
-                )
-                self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": status})
-                _flush_usage()
-                return {
-                    "run_id": self.run_context.run_id,
-                    "run_dir": str(self.run_context.run_dir),
-                    "status": status,
-                    "summary": parsed["summary"],
-                    "facts": list(parsed["facts"]),
-                    "final_answer": final_answer,
-                    "artifacts": artifacts,
-                    "delegation_log": [],
-                }
+                except retryable_exceptions as exc:
+                    if attempt_index >= max_attempts - 1:
+                        raise RuntimeError(
+                            f"{entrypoint}_specialist failed after {max_attempts} attempts due to transient model/output instability."
+                        ) from exc
+                    delay_s = self._FINAL_REPORT_RETRY_DELAYS_S[attempt_index]
+                    logger.warning(
+                        "%s retrying after retryable model/output failure on attempt %d/%d in %.1fs: %s",
+                        entrypoint,
+                        attempt_index + 1,
+                        max_attempts,
+                        delay_s,
+                        exc,
+                    )
+                    self._emit(
+                        "RUN_RETRY",
+                        payload={
+                            "entrypoint": entrypoint,
+                            "attempt": attempt_index + 1,
+                            "max_attempts": max_attempts,
+                            "delay_s": delay_s,
+                            "reason": str(exc),
+                        },
+                    )
+                    await asyncio.sleep(delay_s)
         except asyncio.CancelledError:
             if self.run_control is None or not self.run_control.is_interrupt_requested():
                 raise
@@ -644,6 +682,31 @@ class SpecialistRunner:
             )
             _flush_usage()
             return self._final_response_from_state(interrupted_state)
+        except Exception as exc:
+            failed_state = {
+                "schema_version": 1,
+                "entrypoint": entrypoint,
+                "status": "error",
+                "phase": "failed",
+                "active_specialist": entrypoint,
+                "thread_id": thread_id,
+                "proposal_review": False,
+                "proposal_revision_count": 0,
+                "pending_human_input": None,
+                "todo_items": [],
+                "artifacts": list(payload.get("artifacts") or []),
+                "delegation_log": list(payload.get("delegation_log") or []),
+                "text_preview": str(exc)[:280],
+                "user_prompt": prompt,
+                "chat_session_id": str(payload.get("chat_session_id") or ""),
+                "final_answer": "",
+                "summary": str(exc).strip() or "Run failed.",
+                "facts": [],
+                **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+            }
+            self._write_run_state(failed_state)
+            self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": "error", "error": str(exc)})
+            raise
         finally:
             _flush_usage()
 
@@ -798,21 +861,17 @@ class SpecialistRunner:
     ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
         tools = self._specialist_tools(entrypoint)
-        skills = self._virtual_skill_paths(entrypoint)
-        agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
-        model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
         # TODO: Revisit explicit summarization tuning for OpenRouter-backed specialists
         # via an official config path instead of patching model.profile at runtime.
         kwargs: dict[str, Any] = {
             "model": build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])),
             "tools": tools,
             "system_prompt": self._system_prompt(entrypoint, thread_id=thread_id),
-            "middleware": self._build_default_middleware(model_call_run_limit=model_call_run_limit),
+            "middleware": self._build_default_middleware(),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
             "backend": runtime["backend"],
             "name": f"{entrypoint}_specialist",
-            "skills": skills,
             "memory": self._memory_sources(),
         }
         subagents = self._entry_subagents(entrypoint, runtime=runtime)
@@ -855,125 +914,108 @@ class SpecialistRunner:
         ]
 
     def _experiment_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
-        SubAgent = self._load_subagent()
-        subagent_middleware = self._subagent_middleware(runtime=runtime)
         return [
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="materials_worker",
                 description="Handle bounded, context-heavy materials execution subtasks in isolation and return concise results with artifact paths.",
+                model_role="task_runner",
                 system_prompt=self._materials_worker_prompt(
                     execution_contract=self._execution_capability_contract(audience="materials_worker")
                 ),
-                model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
-                skills=[self._skills_group_virtual_path("experiment")],
-                middleware=subagent_middleware,
+                skills=[self._skills_group_virtual_path("materials")],
+                runtime=runtime,
             ),
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="ml_worker",
                 description="Handle bounded machine-learning subtasks in isolation using the default DeepAgent tool surface until ML-specific tools are added.",
+                model_role="task_runner",
                 system_prompt=self._ml_worker_prompt(
                     execution_contract=self._execution_capability_contract(audience="ml_worker")
                 ),
-                model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_ML_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
                 skills=[self._skills_group_virtual_path("machine_learning")],
-                middleware=subagent_middleware,
+                runtime=runtime,
             ),
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="orca_xtb_worker",
                 description="Handle bounded molecular quantum-chemistry subtasks, including conformer search, xTB screening, and ORCA preparation/execution/analysis.",
+                model_role="task_runner",
                 system_prompt=self._orca_xtb_worker_prompt(
                     execution_contract=self._execution_capability_contract(audience="orca_xtb_worker")
                 ),
-                model=build_chat_model(self.llm_profile.config_for_role("task_runner")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_ORCA_XTB_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
                 skills=[self._skills_group_virtual_path("quantum_chemistry")],
-                middleware=subagent_middleware,
+                runtime=runtime,
             ),
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="literature_agent",
                 description="Run lightweight Tavily-backed public-web search for quick background grounding and literature orientation.",
+                model_role="literature_synthesizer",
                 system_prompt=self._lightweight_literature_agent_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
                 tools=self._lightweight_literature_tools(),
-                middleware=subagent_middleware,
-            ),
-            SubAgent(
-                name="report_worker_agent",
-                description="Write bounded experiment-facing reports, validation summaries, or QC notes from existing workspace evidence.",
-                system_prompt=self._report_worker_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
-                tools=self._augment_with_project_memory_tools(
-                    self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
-                    include_manage_memory=False,
-                ),
-                skills=[self._skills_group_virtual_path("writing")],
-                middleware=subagent_middleware,
+                runtime=runtime,
             ),
         ]
 
     def _writing_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
-        SubAgent = self._load_subagent()
-        subagent_middleware = self._subagent_middleware(runtime=runtime)
         return [
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="literature_agent",
                 description="Provide tightly bounded background/context lookups for writing tasks when introduction or discussion needs focused external grounding.",
+                model_role="literature_synthesizer",
                 system_prompt=self._writing_literature_agent_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
                 tools=self._lightweight_literature_tools(),
-                middleware=subagent_middleware,
+                runtime=runtime,
             ),
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="writing_worker_agent",
                 description="Draft or revise context-heavy sections in isolation and return compact manuscript-ready outputs.",
+                model_role="section_writer",
                 system_prompt=self._writing_worker_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("section_writer")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
                 skills=[self._skills_group_virtual_path("writing")],
-                middleware=subagent_middleware,
+                runtime=runtime,
             ),
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="writing_polisher_agent",
                 description="Apply conservative section-level prose polish without changing the manuscript's scientific stance or structure.",
+                model_role="academic_polisher",
                 system_prompt=self._writing_polisher_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("academic_polisher")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
                 skills=[self._skills_group_virtual_path("writing")],
-                middleware=subagent_middleware,
+                runtime=runtime,
             ),
         ]
 
     def _peer_review_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
-        SubAgent = self._load_subagent()
         return [
-            SubAgent(
+            self._compiled_worker_subagent(
                 name="peer_review_worker_agent",
                 description="Run one bounded peer-review episode over one canonical manuscript PDF and return the full review plus memo path.",
+                model_role="write_reviewer",
                 system_prompt=self._peer_review_worker_prompt(),
-                model=build_chat_model(self.llm_profile.config_for_role("write_reviewer")),
                 tools=self._augment_with_project_memory_tools(
                     self._named_tools(_PEER_REVIEW_WORKER_TOOL_ALLOWLIST),
                     include_manage_memory=False,
                 ),
                 skills=[self._skills_group_virtual_path("writing")],
-                middleware=self._subagent_middleware(runtime=runtime),
+                runtime=runtime,
             ),
         ]
 
@@ -983,17 +1025,15 @@ class SpecialistRunner:
         runtime: dict[str, Any],
         include_memory_middleware: bool = True,
     ) -> list[Any]:
-        agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
-        model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
         middleware = [
-            *self._build_default_middleware(model_call_run_limit=model_call_run_limit),
+            *self._build_default_middleware(),
         ]
         if include_memory_middleware:
             middleware.append(self._new_memory_middleware(backend=runtime["backend"]))
         return middleware
 
     def _metadata_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
-        middleware = self._subagent_middleware(runtime=runtime)
+        middleware: list[Any] = []
         try:
             create_summarization_tool_middleware = self._load_create_summarization_tool_middleware()
             compact_tool_middleware = create_summarization_tool_middleware(
@@ -1029,6 +1069,33 @@ class SpecialistRunner:
             runnable=self._build_nested_specialist_agent(entrypoint=entrypoint, runtime=runtime),
         )
 
+    def _compiled_worker_subagent(
+        self,
+        *,
+        name: str,
+        description: str,
+        model_role: str,
+        system_prompt: str,
+        tools: list[Any],
+        runtime: dict[str, Any],
+        skills: list[str] | None = None,
+        middleware: list[Any] | None = None,
+    ) -> Any:
+        CompiledSubAgent = self._load_compiled_subagent()
+        return CompiledSubAgent(
+            name=name,
+            description=description,
+            runnable=self._build_nested_worker_agent(
+                name=name,
+                model_role=model_role,
+                system_prompt=system_prompt,
+                tools=tools,
+                runtime=runtime,
+                skills=skills,
+                middleware=middleware,
+            ),
+        )
+
     def _build_nested_specialist_agent(
         self,
         *,
@@ -1036,8 +1103,6 @@ class SpecialistRunner:
         runtime: dict[str, Any],
     ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
-        agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
-        model_call_run_limit = max(1, int(getattr(agent_runtime, "max_model_calls", 120)))
         kwargs: dict[str, Any] = {
             "model": build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])),
             "tools": self._specialist_tools(entrypoint),
@@ -1045,12 +1110,11 @@ class SpecialistRunner:
             # `create_deep_agent` already injects its standard stack, including
             # MemoryMiddleware when `memory=` is provided. Only pass additional
             # CatMaster middleware here to avoid duplicate middleware instances.
-            "middleware": self._build_default_middleware(model_call_run_limit=model_call_run_limit),
+            "middleware": self._build_default_middleware(),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
             "backend": runtime["backend"],
             "name": f"{entrypoint}_specialist",
-            "skills": self._virtual_skill_paths(entrypoint),
             "memory": self._memory_sources(),
         }
         subagents = self._entry_subagents(entrypoint, runtime=runtime)
@@ -1058,9 +1122,38 @@ class SpecialistRunner:
             kwargs["subagents"] = subagents
         return create_deep_agent(**kwargs)
 
+    def _build_nested_worker_agent(
+        self,
+        *,
+        name: str,
+        model_role: str,
+        system_prompt: str,
+        tools: list[Any],
+        runtime: dict[str, Any],
+        skills: list[str] | None = None,
+        middleware: list[Any] | None = None,
+    ) -> Any:
+        create_deep_agent = self._load_create_deep_agent()
+        kwargs: dict[str, Any] = {
+            "model": build_chat_model(self.llm_profile.config_for_role(model_role)),
+            "tools": tools,
+            "system_prompt": system_prompt,
+            "middleware": [
+                *self._build_default_middleware(),
+                *(middleware or []),
+            ],
+            "checkpointer": runtime["checkpointer"],
+            "store": runtime["store"],
+            "backend": runtime["backend"],
+            "name": name,
+            "memory": self._memory_sources(),
+        }
+        if skills:
+            kwargs["skills"] = skills
+        return create_deep_agent(**kwargs)
+
     def _build_litreview_agent(self, *, runtime: dict[str, Any]) -> Any:
         create_deep_agent = self._load_create_deep_agent()
-        SubAgent = self._load_subagent()
         return create_deep_agent(
             model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
             tools=self._augment_with_project_memory_tools([], include_manage_memory=False),
@@ -1072,27 +1165,28 @@ class SpecialistRunner:
             name="litreview_agent",
             memory=self._memory_sources(),
             subagents=[
-                SubAgent(
+                self._compiled_worker_subagent(
                     name="literature_agent",
                     description="Use Tavily-backed public web search and page reading for broader literature review, background grounding, and public-source synthesis.",
+                    model_role="literature_synthesizer",
                     system_prompt=self._litreview_agent_prompt(),
-                    model=build_chat_model(self.llm_profile.config_for_role("literature_synthesizer")),
                     tools=self._augment_with_project_memory_tools(
                         self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
                         include_manage_memory=False,
                     ),
-                    middleware=self._subagent_middleware(runtime=runtime),
+                    runtime=runtime,
                 ),
-                SubAgent(
+                self._compiled_worker_subagent(
                     name="metadata_agent",
                     description="Resolve exact paper metadata, DOI/year/venue/authors, and citation details from scholarly databases.",
+                    model_role="literature_deep_research",
                     system_prompt=self._metadata_agent_prompt(),
-                    model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
                     tools=self._augment_with_project_memory_tools(
                         self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST),
                         include_manage_memory=False,
                     ),
                     middleware=self._metadata_middleware(runtime=runtime),
+                    runtime=runtime,
                 ),
             ],
         )
@@ -1446,7 +1540,7 @@ class SpecialistRunner:
         deepagents_root = files_root / ".deepagents"
         base = deepagents_root / "skills"
         layouts = {
-            base / "experiment": repo_root / "skills" / "experiment",
+            base / "materials": repo_root / "skills" / "materials",
             base / "machine_learning": repo_root / "skills" / "machine_learning",
             base / "quantum_chemistry": repo_root / "skills" / "quantum_chemistry",
             base / "writing": repo_root / "skills" / "writing",
@@ -1466,19 +1560,6 @@ class SpecialistRunner:
     @staticmethod
     def _skills_group_virtual_path(group_name: str) -> str:
         return f"{_SKILLS_ROOT}/{str(group_name or '').strip()}"
-
-    @staticmethod
-    def _virtual_skill_paths(entrypoint: SpecialistEntrypoint) -> list[str]:
-        if entrypoint == "experiment":
-            return [SpecialistRunner._skills_group_virtual_path("experiment")]
-        if entrypoint == "writing":
-            return [SpecialistRunner._skills_group_virtual_path("writing")]
-        if entrypoint == "peer_review":
-            return [SpecialistRunner._skills_group_virtual_path("writing")]
-        return [
-            SpecialistRunner._skills_group_virtual_path("experiment"),
-            SpecialistRunner._skills_group_virtual_path("writing"),
-        ]
 
     def _resolve_thread_id(self, payload: dict[str, Any]) -> str:
         thread_id = str(payload.get("thread_id") or "").strip()
@@ -1671,7 +1752,7 @@ class SpecialistRunner:
                 "You may delegate only to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
                 "Use `litreview_agent` for all literature-review work. It can internally delegate to `literature_agent` for Tavily-backed public-web review and to `metadata_agent` for exact DOI/year/venue/authors/citation metadata.\n"
                 "If the user requests a paper, manuscript, journal-style LaTeX draft, cover letter, rebuttal-style response, or other author-facing publication artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
-                "If the user requests an experiment report, validation summary, QC note, execution-facing memo, or other report-style artifact grounded in completed workspace evidence, delegate that work to `experiment_specialist` and have it use `report_worker_agent` when the writing task is substantial.\n"
+                "If the user requests an experiment report, validation summary, QC note, execution-facing memo, or other report-style artifact grounded in completed workspace evidence, delegate that work to `experiment_specialist` as a bounded report-writing episode.\n"
                 "Default to not launching `peer_review_specialist`.\n"
                 "Launch `peer_review_specialist` only when the user explicitly asks for publication-level paper quality, submission-ready or peer-review-ready manuscript quality, formal submission requirements, journal submission standards, or another equivalent formal publication bar.\n"
                 "When you do launch it, treat it as an editor-style review process over the manuscript PDF, not as the primary scientific decision-maker.\n"
@@ -1685,7 +1766,9 @@ class SpecialistRunner:
                 "Do not treat your own local shell view or direct tool view as authoritative for managed experiment capability. If submission-path, remote-environment, or resource visibility matters, issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread.\n"
                 f"{cls._author_packet_policy()}\n"
                 f"{cls._report_packet_policy()}\n"
-                f"{cls._multimodal_tool_history_policy()}\n"
+                f"{cls._tool_policy()}\n"
+                f"{cls._general_purpose_specialist_policy()}\n"
+                f"{cls._multimodal_policy()}\n"
                 f"{execution_contract}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
@@ -1710,6 +1793,7 @@ class SpecialistRunner:
                 "Keep the review grounded in ACS-style expectations: scientific soundness, evidence-claim fit, controls, validation quality, novelty positioning, comparison quality, figure logic, and publication readiness.\n"
                 "Return the full review markdown directly to the parent; do not compress away the editor comment or reviewer comment sections.\n"
                 "Also save the full review as one durable workspace markdown memo under `notes/peer_review/` or another stable path, and include that memo path in `Files`, so the parent can reuse the exact text without depending on kernel summaries.\n"
+                f"{cls._tool_policy()}\n"
                 f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
@@ -1749,7 +1833,9 @@ class SpecialistRunner:
                 f"{cls._peer_review_ready_paper_policy()}\n"
                 f"{cls._journal_manuscript_policy()}\n"
                 f"{cls._author_packet_policy()}\n"
-                f"{cls._multimodal_tool_history_policy()}\n"
+                f"{cls._tool_policy()}\n"
+                f"{cls._general_purpose_specialist_policy()}\n"
+                f"{cls._multimodal_policy()}\n"
                 f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
@@ -1758,10 +1844,10 @@ class SpecialistRunner:
         return (
             "You are ExperimentSpecialist.\n"
             "Your default role is coordination, dispatch, and decision-making across the experiment lane, not personally executing the substantive domain work.\n"
-            "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, and deciding the next bounded handoff.\n"
-            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed; use `report_worker_agent` for experiment reports, validation summaries, QC notes, and other execution-facing written artifacts drawn from existing workspace evidence.\n"
+            "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, deciding the next bounded handoff, and bounded experiment-facing summaries grounded in completed workspace evidence.\n"
+            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
-            "In particular, general materials or surface workflows belong to `materials_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; experiment-facing writing belongs to `report_worker_agent`.\n"
+            "In particular, general materials or surface workflows belong to `materials_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
                 "Each brief should contain one primary goal and one completion criterion. "
                 "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
@@ -1776,10 +1862,11 @@ class SpecialistRunner:
             "If a worker needs a handy Python package for a bounded local step and it is missing, let it install that package with `execute` via `python -m pip install ...`.\n"
             "When method settings, software behavior, or scientific best practice are uncertain, prefer a quick built-in web check through the online model's native browsing capability to align with current official or primary-source guidance before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
-            f"{execution_contract}\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._report_packet_policy()}\n"
-            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._tool_policy()}\n"
+            f"{cls._general_purpose_specialist_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
             f"{cls._soft_reporting_contract()}"
@@ -1823,11 +1910,35 @@ class SpecialistRunner:
         )
 
     @staticmethod
-    def _multimodal_tool_history_policy() -> str:
+    def _general_purpose_specialist_policy() -> str:
         return (
-            "Multimodal tool-content discipline: if a tool produces images, PDFs, or other non-text payloads, prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary. "
-            "Do not rely on raw inline multimodal tool outputs remaining replay-safe across long-lived provider bridges. "
-            "If you need to inspect multimodal content such as images, PDFs, or PPT/PPTX files, use `read_file` as the default multimodal entry point for small or moderate files."
+            "Delegate domain-owned work to the proper specialized subagent first. "
+            "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context. "
+            "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents. It is for context isolation, not responsibility transfer."
+        )
+
+    @staticmethod
+    def _general_purpose_worker_policy() -> str:
+        return (
+            "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context. "
+            "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents. It is for context isolation, not responsibility transfer."
+        )
+
+    @staticmethod
+    def _multimodal_policy() -> str:
+        return (
+            "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread. "
+            "For PDFs, first extract with fitz into workspace text artifacts and analyze those artifacts."
+        )
+
+    @staticmethod
+    def _tool_policy() -> str:
+        return (
+            "Tool discipline: if a relevant skill is available to the current agent, read it before acting. "
+            "Prefer registered builtin tools when they fit the task. "
+            "Before writing custom code, first try to satisfy the task by adjusting the parameters and supported variants of a relevant builtin tool. "
+            "Builtin tools often already encode validated parameter choices, implementation optimizations, and known pitfall handling, so avoid reimplementing that logic unless the builtin boundary truly does not fit. "
+            "For any code that overlaps internal tool functionality, first export the builtin tool source into the workspace with `export_builtin_tool_source` and code against that reference instead of starting from scratch; if custom code is still necessary, inspect that exported source carefully and preserve its validated behavior rather than writing an approximate look-alike from memory."
         )
 
     @staticmethod
@@ -1882,13 +1993,6 @@ class SpecialistRunner:
             "Do not add a placeholder `Facts` section for writing-only closeout."
         )
 
-    @staticmethod
-    def _worker_skill_use_rule() -> str:
-        return (
-            "If the current task matches an available skill topic or workflow, read that skill before acting so you inherit the validated pattern and avoid preventable mistakes. "
-            "Do not skip a relevant skill and jump straight into ad hoc execution when the skill clearly covers the task."
-        )
-
     @classmethod
     def _research_kernel_contract(cls, kernel_path: str) -> str:
         return (
@@ -1910,15 +2014,17 @@ class SpecialistRunner:
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
             "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis when those steps serve one materials workflow.\n"
             "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
             "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
             "When configuration details, package behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
             "For heavier custom logic such as high-throughput screening helpers, large batch post-processing, or multi-step deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to literature_agent.\n"
-            f"{cls._worker_skill_use_rule()}\n"
+            f"{cls._tool_policy()}\n"
             f"{execution_contract}\n"
-            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._general_purpose_worker_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1948,9 +2054,10 @@ class SpecialistRunner:
             "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
             "Do not perform broad literature review; that belongs to literature_agent.\n"
-            f"{cls._worker_skill_use_rule()}\n"
+            f"{cls._tool_policy()}\n"
             f"{execution_contract}\n"
-            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._general_purpose_worker_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1976,9 +2083,10 @@ class SpecialistRunner:
             "When configuration details, software behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
             "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to literature_agent.\n"
-            f"{cls._worker_skill_use_rule()}\n"
+            f"{cls._tool_policy()}\n"
             f"{execution_contract}\n"
-            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._general_purpose_worker_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -1995,6 +2103,7 @@ class SpecialistRunner:
             "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, evidence summaries, source lists, or background briefs.\n"
             "Return concise findings with clear separation between retrieved facts and inference.\n"
             "Do not perform computational execution.\n"
+            f"{cls._tool_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2016,6 +2125,7 @@ class SpecialistRunner:
             "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
             "Keep the final answer compact and decision-relevant. Save a reusable note under `/notes/literature/` or another stable workspace path only when the user asked for it or when a durable handoff artifact is clearly justified.\n"
             "Do not perform computational execution.\n"
+            f"{cls._tool_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2031,6 +2141,7 @@ class SpecialistRunner:
             "Prefer precision over breadth. When the query is ambiguous, narrow the candidate set and explicitly state uncertainty instead of guessing.\n"
             "You may write concise reusable citation notes or metadata tables into the workspace when helpful.\n"
             "Do not perform computational execution.\n"
+            f"{cls._tool_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2052,6 +2163,7 @@ class SpecialistRunner:
             "Only save a concise reusable markdown note under `/notes/literature/` or another stable workspace path when the user asked for a saved artifact or when a durable handoff/writing reference is clearly justified, and include that path in the final `Files` section.\n"
             "If a durable cross-run fact should be stored, report it explicitly so ExperimentSpecialist can decide whether to update project memory.\n"
             "Do not perform computational execution.\n"
+            f"{cls._tool_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2072,6 +2184,7 @@ class SpecialistRunner:
             "Return concise findings with clear separation between retrieved facts and inference.\n"
             "If the request really needs broad review or citation-grade metadata disambiguation beyond this narrow scope, say so explicitly so the user can switch to the research lane.\n"
             "Do not perform computational execution.\n"
+            f"{cls._tool_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2156,11 +2269,12 @@ class SpecialistRunner:
             "If the output is a TeX bundle, you must run `compile_text` yourself before returning and use its diagnostics/log summary to fix compile-facing issues.\n"
             "Do not treat a successful TeX compile as sufficient if the PDF still has obviously misplaced figures or a weak title.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
-            f"{cls._worker_skill_use_rule()}\n"
             f"{cls._peer_review_ready_paper_policy()}\n"
             f"{cls._journal_manuscript_policy()}\n"
             f"{cls._author_packet_policy()}\n"
-            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._tool_policy()}\n"
+            f"{cls._general_purpose_worker_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2176,30 +2290,11 @@ class SpecialistRunner:
             "Do not delete or add substantive scientific content on your own. If a needed change is structural, evidentiary, or argumentative rather than local prose polish, report that in the summary instead of rewriting around it.\n"
             "Do not introduce new experiments, new references, or new limitations.\n"
             "When polishing TeX, preserve commands, labels, citation keys, math, and float structure unless the parent explicitly asks for a local TeX fix.\n"
-            f"{cls._worker_skill_use_rule()}\n"
             f"{cls._peer_review_ready_paper_policy()}\n"
             f"{cls._journal_manuscript_policy()}\n"
-            f"{cls._multimodal_tool_history_policy()}\n"
-            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
-            f"{cls._memory_write_policy()}\n"
-            f"{cls._workspace_path_discipline()}\n"
-            f"{cls._writing_reporting_contract()}"
-        )
-
-    @classmethod
-    def _report_worker_prompt(cls) -> str:
-        return (
-            "You are report_worker_agent for ExperimentSpecialist.\n"
-            "Write bounded experiment-facing reports from existing workspace evidence only.\n"
-            "This lane is for experiment reports, validation summaries, QC notes, execution memos, and other report-style artifacts; it is not a paper/manuscript lane.\n"
-            "Assume the parent has already reduced the task into a compact report packet. Follow that packet instead of replaying raw run history.\n"
-            "Do not restart calculations, broaden the scientific scope, or convert the report into a manuscript-style narrative.\n"
-            "Prioritize reproducibility, executed scope, method specificity, key results, and unresolved execution/QC items. Preserve failed attempts or QC caveats when they are material to interpreting the result.\n"
-            "If visuals are explicitly requested and the evidence supports them, include only the visuals that help an experiment-facing reader understand the result. Prefer `generate_nanobanana_figure` for concise workflow or mechanism sketches, and keep matplotlib-style plotting for quantitative figures.\n"
-            "If the output is a TeX bundle, run `compile_text` yourself before returning and fix compile-facing issues from the diagnostics.\n"
-            f"{cls._worker_skill_use_rule()}\n"
-            f"{cls._report_packet_policy()}\n"
-            f"{cls._multimodal_tool_history_policy()}\n"
+            f"{cls._tool_policy()}\n"
+            f"{cls._general_purpose_worker_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2219,7 +2314,7 @@ class SpecialistRunner:
             "Use decision language such as reject, major revision, minor revision, or conditionally acceptable only when supported by the reviewer comments and manuscript evidence.\n"
             "Keep the review grounded in ACS-style expectations: scientific soundness, evidence-claim fit, controls, validation quality, novelty positioning, comparison quality, figure logic, and publication readiness.\n"
             "Also save the full review as one durable workspace markdown memo under `notes/peer_review/` or another stable path, and include that memo path in `Files`.\n"
-            f"{cls._worker_skill_use_rule()}\n"
+            f"{cls._tool_policy()}\n"
             f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
             f"{cls._memory_write_policy()}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -2257,39 +2352,30 @@ class SpecialistRunner:
                 chunks.append(text)
         return "\n\n".join(chunks)
 
-    @staticmethod
-    def _build_default_middleware(*, model_call_run_limit: int = 120) -> list[Any]:
+    @classmethod
+    def _build_default_middleware(cls) -> list[Any]:
         middleware: list[Any] = []
         try:
-            from langchain.agents.middleware.model_call_limit import ModelCallLimitMiddleware
-        except Exception:
-            pass
-        else:
-            if int(model_call_run_limit) > 0:
-                middleware.append(ModelCallLimitMiddleware(run_limit=int(model_call_run_limit)))
-        try:
-            from langchain.agents.middleware import AgentMiddleware
-        except Exception:
-            AgentMiddleware = None
-        if AgentMiddleware is not None:
-            class _ToolMessageHistorySanitizerMiddleware(AgentMiddleware):
-                def wrap_model_call(self, request: Any, handler: Any) -> Any:
-                    sanitized = SpecialistRunner._sanitize_model_request_messages(getattr(request, "messages", []))
-                    if sanitized is getattr(request, "messages", None):
-                        return handler(request)
-                    return handler(request.override(messages=sanitized))
-
-                async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-                    sanitized = SpecialistRunner._sanitize_model_request_messages(getattr(request, "messages", []))
-                    if sanitized is getattr(request, "messages", None):
-                        return await handler(request)
-                    return await handler(request.override(messages=sanitized))
-
-            middleware.append(_ToolMessageHistorySanitizerMiddleware())
-        try:
-            from langchain.agents.middleware import wrap_tool_call
+            from langchain.agents.middleware import wrap_model_call, wrap_tool_call
         except Exception:
             return middleware
+
+        @wrap_model_call(name="catmaster_retry_semantic_model_failures")
+        async def _retry_invalid_model_responses(request: Any, handler: Any) -> Any:
+            max_attempts = len(cls._MODEL_RESPONSE_RETRY_DELAYS_S) + 1
+            for attempt_index in range(max_attempts):
+                response = await handler(request)
+                try:
+                    cls._validate_model_response_for_retry(response)
+                    return response
+                except SpecialistRetryableModelResponseError:
+                    if attempt_index >= max_attempts - 1:
+                        raise
+                    delay_s = cls._MODEL_RESPONSE_RETRY_DELAYS_S[attempt_index]
+                    await asyncio.sleep(delay_s)
+            raise SpecialistRetryableModelResponseError("Unexpected model retry loop exit.")
+
+        middleware.append(_retry_invalid_model_responses)
 
         @wrap_tool_call(name="catmaster_nonfatal_tool_errors")
         async def _handle_tool_errors(request: Any, handler: Any) -> Any:
@@ -2316,86 +2402,6 @@ class SpecialistRunner:
 
         middleware.append(_handle_tool_errors)
         return middleware
-
-    @staticmethod
-    def _sanitize_model_request_messages(messages: Any) -> Any:
-        if not isinstance(messages, list):
-            return messages
-        changed = False
-        sanitized: list[Any] = []
-        for message in messages:
-            normalized = SpecialistRunner._sanitize_model_request_message(message)
-            if normalized is not message:
-                changed = True
-            sanitized.append(normalized)
-        return sanitized if changed else messages
-
-    @staticmethod
-    def _sanitize_model_request_message(message: Any) -> Any:
-        if not isinstance(message, ToolMessage):
-            return message
-        content = getattr(message, "content", "")
-        if isinstance(content, str):
-            return message
-        replacement = SpecialistRunner._tool_message_content_placeholder(message)
-        if replacement == content:
-            return message
-        try:
-            return message.model_copy(update={"content": replacement})
-        except Exception:
-            return ToolMessage(
-                content=replacement,
-                artifact=getattr(message, "artifact", None),
-                tool_call_id=str(getattr(message, "tool_call_id", "") or ""),
-                name=str(getattr(message, "name", "") or None) or None,
-                status=str(getattr(message, "status", "success") or "success"),
-                additional_kwargs=dict(getattr(message, "additional_kwargs", {}) or {}),
-                response_metadata=dict(getattr(message, "response_metadata", {}) or {}),
-                id=getattr(message, "id", None),
-            )
-
-    @staticmethod
-    def _tool_message_content_placeholder(message: ToolMessage) -> str:
-        content = getattr(message, "content", "")
-        if isinstance(content, str):
-            return content
-        additional = dict(getattr(message, "additional_kwargs", {}) or {})
-        path = str(additional.get("read_file_path") or "").strip()
-        media_type = str(additional.get("read_file_media_type") or "").strip()
-        if isinstance(content, list):
-            text_bits: list[str] = []
-            image_blocks = 0
-            for item in content:
-                if isinstance(item, str) and item.strip():
-                    text_bits.append(item.strip())
-                    continue
-                if not isinstance(item, dict):
-                    continue
-                item_type = str(item.get("type") or "").strip().lower()
-                if item_type == "text":
-                    text = str(item.get("text") or "").strip()
-                    if text:
-                        text_bits.append(text)
-                    continue
-                if item_type in {"image", "image_url"}:
-                    image_blocks += 1
-                    if not media_type:
-                        media_type = str(item.get("mime_type") or "").strip()
-            if image_blocks:
-                details: list[str] = []
-                if path:
-                    details.append(f"source={path}")
-                if media_type:
-                    details.append(f"mime={media_type}")
-                note = (
-                    f"[inline image tool output omitted from model history; "
-                    f"{' '.join(details) if details else f'images={image_blocks}'}]"
-                )
-                if text_bits:
-                    return "\n".join(text_bits + [note]).strip()
-                return note
-        text = content_to_text(content).strip()
-        return text or "[non-text tool output omitted from model history]"
 
     def _langchain_callbacks(
         self,
@@ -2443,8 +2449,12 @@ class SpecialistRunner:
     def _coerce_report(self, *, raw: dict[str, Any] | Any) -> dict[str, Any]:
         text = self._extract_final_text(raw)
         if not text:
-            raise RuntimeError("specialist failed to return a final text report.")
+            raise SpecialistInvalidFinalReportError("specialist failed to return a final assistant text report.")
+        if not self._has_required_summary_heading(text):
+            raise SpecialistInvalidFinalReportError("specialist final report is missing the required `Summary` section.")
         summary, facts, files, review_target = self._parse_summary_and_files(text)
+        if not str(summary or "").strip():
+            raise SpecialistInvalidFinalReportError("specialist final report did not contain a usable summary.")
         return {
             "text": text,
             "summary": summary,
@@ -2476,14 +2486,19 @@ class SpecialistRunner:
             messages = raw.get("messages")
             if isinstance(messages, list):
                 for message in reversed(messages):
+                    if not self._is_assistant_message(message):
+                        continue
                     text = self._message_text(message)
                     if text:
                         return text
         return ""
 
-    @staticmethod
-    def _message_text(message: Any) -> str:
-        content = getattr(message, "content", message)
+    @classmethod
+    def _message_text(cls, message: Any) -> str:
+        if isinstance(message, dict):
+            content = message.get("content")
+        else:
+            content = getattr(message, "content", message)
         if isinstance(content, str):
             return content.strip()
         if isinstance(content, list):
@@ -2494,11 +2509,62 @@ class SpecialistRunner:
                         chunks.append(item.strip())
                     continue
                 if isinstance(item, dict):
+                    item_type = str(item.get("type") or "").strip().lower()
+                    if item_type in {"reasoning", "thinking", "reasoning_text", "redacted_reasoning"}:
+                        continue
                     text = str(item.get("text") or "").strip()
                     if text:
                         chunks.append(text)
             return "\n".join(chunks).strip()
         return str(content or "").strip()
+
+    @staticmethod
+    def _is_assistant_message(message: Any) -> bool:
+        if isinstance(message, AIMessage):
+            return True
+        role = ""
+        if isinstance(message, dict):
+            role = str(message.get("role") or message.get("type") or "").strip().lower()
+        else:
+            role = str(getattr(message, "role", "") or getattr(message, "type", "") or "").strip().lower()
+        return role in {"assistant", "ai"}
+
+    @staticmethod
+    def _has_required_summary_heading(text: str) -> bool:
+        for raw_line in str(text or "").splitlines():
+            if SpecialistRunner._match_report_heading(raw_line) == "summary":
+                return True
+        return False
+
+    @classmethod
+    def _validate_model_response_for_retry(cls, response: Any) -> None:
+        if isinstance(response, AIMessage):
+            cls._validate_ai_message_for_retry(response)
+            return
+
+        result_messages = list(getattr(response, "result", []) or [])
+        if not result_messages:
+            raise SpecialistRetryableModelResponseError("model returned no messages.")
+
+        ai_messages = [message for message in result_messages if isinstance(message, AIMessage)]
+        if not ai_messages:
+            raise SpecialistRetryableModelResponseError("model response contained no assistant message.")
+        cls._validate_ai_message_for_retry(ai_messages[-1])
+
+    @classmethod
+    def _validate_ai_message_for_retry(cls, message: AIMessage) -> None:
+        finish_reason = str((getattr(message, "response_metadata", None) or {}).get("finish_reason") or "").strip().lower()
+        if list(getattr(message, "invalid_tool_calls", None) or []):
+            raise SpecialistRetryableModelResponseError("assistant returned invalid tool calls.")
+        has_tool_calls = bool(list(getattr(message, "tool_calls", None) or []))
+        has_visible_text = bool(cls._message_text(message))
+        if finish_reason == "tool_calls" and not has_tool_calls:
+            raise SpecialistRetryableModelResponseError("assistant reported tool_calls finish_reason without usable tool calls.")
+        if has_tool_calls:
+            return
+        if has_visible_text:
+            return
+        raise SpecialistRetryableModelResponseError("assistant returned neither visible text nor tool calls.")
 
     def _parse_summary_and_files(self, text: str) -> tuple[str, list[str], list[str], str]:
         summary_lines: list[str] = []

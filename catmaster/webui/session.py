@@ -1532,11 +1532,73 @@ class WebSession:
                     "kind": "run_result",
                     "created_at": None,
                     "source_run_id": run_id,
+                    "__user_prompt": str(payload.get("user_prompt") or ""),
                 }
             )
         if not synthetic:
             return rows
-        return rows + synthetic
+        return self._insert_synthetic_run_results(rows, synthetic)
+
+    @staticmethod
+    def _normalize_chat_pair_text(value: Any) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    @staticmethod
+    def _user_message_has_run_result(rows: List[Dict[str, Any]], user_index: int) -> bool:
+        for item in rows[user_index + 1:]:
+            if str(item.get("role") or "") == "user":
+                return False
+            if str(item.get("kind") or "").strip() == "run_result":
+                return True
+        return False
+
+    def _insert_synthetic_run_results(
+        self,
+        rows: List[Dict[str, Any]],
+        synthetic: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        out = [dict(item) for item in rows]
+        for result in synthetic:
+            prompt_text = self._normalize_chat_pair_text(result.get("__user_prompt"))
+            insert_after = -1
+            if prompt_text:
+                for idx, item in enumerate(out):
+                    if item.get("__paired_synthetic_run_result"):
+                        continue
+                    if str(item.get("role") or "") != "user":
+                        continue
+                    if self._user_message_has_run_result(out, idx):
+                        continue
+                    if self._normalize_chat_pair_text(item.get("content")) == prompt_text:
+                        insert_after = idx
+                        break
+            if insert_after < 0:
+                for idx, item in enumerate(out):
+                    if item.get("__paired_synthetic_run_result"):
+                        continue
+                    if str(item.get("role") or "") == "user":
+                        if self._user_message_has_run_result(out, idx):
+                            continue
+                        insert_after = idx
+                        break
+            clean_result = {
+                key: value
+                for key, value in result.items()
+                if not str(key).startswith("__")
+            }
+            if insert_after < 0:
+                out.append(clean_result)
+                continue
+            out[insert_after]["__paired_synthetic_run_result"] = True
+            out.insert(insert_after + 1, clean_result)
+        return [
+            {
+                key: value
+                for key, value in item.items()
+                if not str(key).startswith("__")
+            }
+            for item in out
+        ]
 
     @staticmethod
     def _decode_memory_store_value(raw: Any) -> str:

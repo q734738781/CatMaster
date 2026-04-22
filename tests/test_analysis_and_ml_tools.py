@@ -282,7 +282,8 @@ def test_mace_train_and_evaluate_stage_and_collect(monkeypatch, tmp_path: Path) 
             assert payload["e0s"] == "assets/e0s/e0s/e0s.json"
             assert payload["multiheads_finetuning"] is True
             assert payload["pt_train_file"] == "assets/replay/replay/replay.pt"
-            assert payload["forces_weight"] == 100.0
+            assert payload["forces_weight"] == 10.0
+            assert payload["stress_weight"] == 1.0
             assert payload["restart_latest"] is True
             assert payload["weight_decay"] == pytest.approx(1.0e-6)
             assert payload["scheduler"] == "ReduceLROnPlateau"

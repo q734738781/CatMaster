@@ -196,6 +196,10 @@ class ToolRegistry:
             apply_aider_edits,
             ApplyAiderEditsInput,
         )
+        from catmaster.tools.misc.export_builtin_tool_source import (
+            export_builtin_tool_source,
+            ExportBuiltinToolSourceInput,
+        )
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("enumerate_molecular_conformers", enumerate_molecular_conformers, EnumerateMolecularConformersInput)
@@ -274,6 +278,7 @@ class ToolRegistry:
         self.register_tool("open_public_page", open_public_page, OpenPublicPageInput)
         self.register_tool("find_in_page", find_in_page, FindInPageInput)
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
+        self.register_tool("export_builtin_tool_source", export_builtin_tool_source, ExportBuiltinToolSourceInput)
         self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
         self.register_tool("mace_train", mace_train, MaceTrainInput)
         self.register_tool("mace_evaluate", mace_evaluate, MaceEvaluateInput)

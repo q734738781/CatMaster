@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Deprecated image-analysis workaround.
 
-Prefer DeepAgent's built-in `read_file` for images, PDFs, and PPT/PPTX content.
+Prefer the current agent's built-in multimodal path for images.
 This module remains only for backward-compatible direct imports.
 """
 

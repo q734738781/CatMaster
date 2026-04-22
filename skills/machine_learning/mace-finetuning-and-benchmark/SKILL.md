@@ -42,7 +42,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 - If the training run identifies new structures that need relabeling or new reference calculations, hand those artifacts back into the materials-side workflow before the next dataset rebuild.
 
 ## Method-critical defaults
-- The validated baseline in this repo is `mace-mh-1` with `foundation_head=omat_pbe`, explicit replay controls, `compute_stress=True`, `energy_weight=1.0`, `forces_weight=100.0`, `stress_weight=1.0`, `default_dtype=float32`, `batch_size=4` as the conservative starting point, and `seed=42`.
+- The validated baseline in this repo is `mace-mh-1` with `foundation_head=omat_pbe`, explicit replay controls, `compute_stress=True`, `energy_weight=1.0`, `forces_weight=10.0`, `stress_weight=1.0`, `default_dtype=float32`, `batch_size=4` as the conservative starting point, and `seed=42`.
 - For typical fine-tuning runs in this workflow, use an epoch cap in the `15-25` range as the default starting band. Keep `25` as the normal upper cap unless the user explicitly asks for a longer ablation, and prefer the best validation checkpoint over blindly extending epochs.
 - Prefer the managed remote tool path for that baseline. Only fall back to custom local scripts when the requested workflow is genuinely outside what `mace_train` / `mace_evaluate` can express.
 - Surface the foundation-model choice, head, E0 strategy, replay controls, batch size, learning rate, and epoch cap when they differ across runs.

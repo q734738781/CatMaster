@@ -288,7 +288,7 @@ class MaceTrainInput(BaseModel):
     )
     compute_stress: bool = Field(True, description="Whether to train with stress labels, passed to --compute_stress.")
     energy_weight: float = Field(1.0, ge=0.0, description="Energy loss weight.")
-    forces_weight: float = Field(100.0, ge=0.0, description="Forces loss weight.")
+    forces_weight: float = Field(10.0, ge=0.0, description="Forces loss weight.")
     stress_weight: float = Field(1.0, ge=0.0, description="Stress loss weight.")
     max_num_epochs: int = Field(25, ge=1, description="Maximum training epochs passed to the MACE training CLI.")
     batch_size: int = Field(4, ge=1, description="Batch size passed to the MACE training CLI.")

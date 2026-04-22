@@ -167,17 +167,19 @@ Proposal review is the exception: proposal checkpoints still use a structured `P
 
 The active skill layout is:
 
-- `skills/experiment/*`
+- `skills/materials/*`
 - `skills/machine_learning/*`
+- `skills/quantum_chemistry/*`
 - `skills/writing/*`
 
 At runtime they are staged into:
 
-- `files/.deepagents/skills/experiment`
+- `files/.deepagents/skills/materials`
 - `files/.deepagents/skills/machine_learning`
+- `files/.deepagents/skills/quantum_chemistry`
 - `files/.deepagents/skills/writing`
 
-Specialists bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime.
+Worker agents bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime. Coordinator specialists do not mount skill roots directly.
 
 ### Skill authoring
 

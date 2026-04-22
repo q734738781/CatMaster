@@ -199,8 +199,9 @@ class SkillCatalog:
     def create_default(cls, *, repo_root: Path | None = None) -> "SkillCatalog":
         resolved_repo_root = (repo_root or Path.cwd()).expanduser().resolve()
         roots = [
-            resolved_repo_root / "skills" / "experiment",
+            resolved_repo_root / "skills" / "materials",
             resolved_repo_root / "skills" / "machine_learning",
+            resolved_repo_root / "skills" / "quantum_chemistry",
             resolved_repo_root / "skills" / "writing",
         ]
         return cls(
@@ -252,7 +253,7 @@ class SkillCatalog:
                             roles = ["write_director", "section_writer", "write_reviewer"]
                         if not tags:
                             tags = ["writing"]
-                    elif source_root_name in {"experiment", "machine_learning"}:
+                    elif source_root_name in {"materials", "machine_learning", "quantum_chemistry"}:
                         if not lanes:
                             lanes = ["all"]
                         if not roles:

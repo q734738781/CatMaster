@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.tools import StructuredTool
@@ -246,29 +247,6 @@ def test_specialist_tool_wrapper_returns_nonfatal_error_payload(tmp_path: Path, 
     assert artifact["data"]["tool_name"] == "polish_academic_prose"
 
 
-def test_sanitize_model_request_messages_collapses_inline_image_tool_messages() -> None:
-    tool_message = ToolMessage(
-        content=[{"type": "image", "id": "img_1", "base64": "abc", "mime_type": "image/png"}],
-        tool_call_id="call_1",
-        name="read_file",
-        status="success",
-        additional_kwargs={
-            "read_file_path": "/writing/demo/figure.png",
-            "read_file_media_type": "image/png",
-        },
-    )
-    untouched = AIMessage(content="ok")
-
-    sanitized = runtime_mod.SpecialistRunner._sanitize_model_request_messages([untouched, tool_message])
-
-    assert sanitized[0] is untouched
-    assert isinstance(sanitized[1], ToolMessage)
-    assert isinstance(sanitized[1].content, str)
-    assert "inline image tool output omitted from model history" in sanitized[1].content
-    assert "source=/writing/demo/figure.png" in sanitized[1].content
-    assert "mime=image/png" in sanitized[1].content
-
-
 def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths() -> None:
     contract = runtime_mod.SpecialistRunner._soft_reporting_contract()
     assert "directly answer the user's actual question" in contract
@@ -330,14 +308,13 @@ def test_orca_xtb_worker_prompt_includes_workspace_path_discipline() -> None:
 
 
 def test_common_worker_prompts_require_relevant_skill_check() -> None:
-    expected = "If the current task matches an available skill topic or workflow, read that skill before acting"
+    expected = "Tool discipline: if a relevant skill is available to the current agent, read it before acting."
 
     assert expected in runtime_mod.SpecialistRunner._materials_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._ml_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._orca_xtb_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._writing_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._writing_polisher_prompt()
-    assert expected in runtime_mod.SpecialistRunner._report_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._peer_review_worker_prompt()
 
 
@@ -472,10 +449,91 @@ def test_default_tool_error_middleware_returns_tool_message() -> None:
     assert result.tool_call_id == "call-1"
 
 
-def test_default_middleware_uses_configurable_model_call_limit() -> None:
-    middleware = runtime_mod.SpecialistRunner._build_default_middleware(model_call_run_limit=88)
-    tracker = next(item for item in middleware if getattr(item, "run_limit", None) is not None)
-    assert tracker.run_limit == 88
+def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
+    model_mw = middleware[0]
+    sleeps: list[float] = []
+    attempts = {"count": 0}
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _handler(_request):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            return ModelResponse(result=[AIMessage(content="")])
+        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
+
+    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+
+    async def _run():
+        return await model_mw.awrap_model_call(object(), _handler)
+
+    result = asyncio.run(_run())
+
+    assert isinstance(result, ModelResponse)
+    assert attempts["count"] == 3
+    assert sleeps == [60.0, 180.0]
+
+
+def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
+    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
+    model_mw = middleware[0]
+
+    async def _handler(_request):
+        return ModelResponse(
+            result=[
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "vasp_prepare", "args": {"path": "x"}, "id": "call-1", "type": "tool_call"}],
+                    response_metadata={"finish_reason": "tool_calls"},
+                )
+            ]
+        )
+
+    async def _run():
+        return await model_mw.awrap_model_call(object(), _handler)
+
+    result = asyncio.run(_run())
+    assert isinstance(result, ModelResponse)
+    assert result.result[0].tool_calls
+
+
+def test_extract_final_text_ignores_user_message_fallback() -> None:
+    runner = runtime_mod.SpecialistRunner(
+        llm_profile=_FakeProfile(),
+        run_context=SimpleNamespace(workspace=Path("/tmp"), run_dir=Path("/tmp"), run_id="r1", project_id="proj"),
+        reporter=None,
+        run_control=None,
+    )
+    raw = {
+        "messages": [
+            {"role": "user", "content": "please do the calculation"},
+            {"role": "assistant", "content": ""},
+        ]
+    }
+    assert runner._extract_final_text(raw) == ""
+
+
+def test_message_text_ignores_reasoning_blocks() -> None:
+    message = AIMessage(
+        content=[
+            {"type": "reasoning", "text": "hidden chain"},
+            {"type": "text", "text": "## Summary\nusable"},
+        ]
+    )
+    assert runtime_mod.SpecialistRunner._message_text(message) == "## Summary\nusable"
+
+
+def test_coerce_report_requires_summary_heading() -> None:
+    runner = runtime_mod.SpecialistRunner(
+        llm_profile=_FakeProfile(),
+        run_context=SimpleNamespace(workspace=Path("/tmp"), run_dir=Path("/tmp"), run_id="r1", project_id="proj"),
+        reporter=None,
+        run_control=None,
+    )
+    with pytest.raises(runtime_mod.SpecialistInvalidFinalReportError, match="required `Summary` section"):
+        runner._coerce_report(raw={"messages": [AIMessage(content="plain echo without headings")]})
 
 
 def test_specialist_usage_callback_tracks_agent_scoped_usage() -> None:
@@ -578,20 +636,84 @@ def test_render_compact_report_omits_empty_sections() -> None:
     assert rendered == "## Summary\ndraft revised"
 
 
+def test_run_impl_retries_invalid_final_report_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+
+    created_agents: list[dict] = []
+    sleeps: list[float] = []
+
+    class _RetryAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, payload, config=None):
+            _ = (payload, config)
+            self.calls += 1
+            if self.calls == 1:
+                return {"messages": [{"role": "user", "content": "echoed prompt"}]}
+            return {"messages": [AIMessage(content="## Summary\nrecovered\n\n## Facts\n- ok")]}
+
+    retry_agent = _RetryAgent()
+
+    def _fake_create_deep_agent(**kwargs):
+        created_agents.append(kwargs)
+        return retry_agent
+
+    @asynccontextmanager
+    async def _fake_open_agent_runtime(self, *, files_root: Path):
+        _ = files_root
+        yield {"checkpointer": object(), "store": object(), "backend": object()}
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_entry_subagents", lambda self, entrypoint, runtime: [])
+    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="experiment",
+    )
+
+    result = asyncio.run(
+        built.runner.arun(
+            "Design the stage-2/3 plan.",
+            entrypoint="experiment",
+            proposal_review=False,
+        )
+    )
+
+    assert result["status"] == "done"
+    assert result["summary"] == "recovered"
+    assert retry_agent.calls == 2
+    assert sleeps == [30.0]
+
+
 @pytest.mark.parametrize(
-    ("entrypoint", "expected_skills", "expected_subagent_names"),
+    ("entrypoint", "expected_subagent_names"),
     [
-        ("research", ["/.deepagents/skills/experiment", "/.deepagents/skills/writing"], ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
-        ("experiment", ["/.deepagents/skills/experiment"], ["materials_worker", "ml_worker", "orca_xtb_worker", "literature_agent", "report_worker_agent"]),
-        ("writing", ["/.deepagents/skills/writing"], ["literature_agent", "writing_worker_agent", "writing_polisher_agent"]),
-        ("peer_review", ["/.deepagents/skills/writing"], ["peer_review_worker_agent"]),
+        ("research", ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
+        ("experiment", ["materials_worker", "ml_worker", "orca_xtb_worker", "literature_agent"]),
+        ("writing", ["literature_agent", "writing_worker_agent", "writing_polisher_agent"]),
+        ("peer_review", ["peer_review_worker_agent"]),
     ],
 )
 def test_three_specialist_lanes_start_with_staged_skills(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     entrypoint: str,
-    expected_skills: list[str],
     expected_subagent_names: list[str],
 ) -> None:
     workspace = tmp_path / "project_space"
@@ -663,7 +785,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert created_agents, "expected create_deep_agent to be called"
     agent_kwargs = created_agents[-1]
     assert agent_kwargs["name"] == f"{entrypoint}_specialist"
-    assert agent_kwargs["skills"] == expected_skills
+    assert "skills" not in agent_kwargs
     assert agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
     assert _PROJECT_MEMORY_TOOL_NAMES <= {tool.name for tool in agent_kwargs["tools"]}
     assert "Project long-term memory tools" in agent_kwargs["system_prompt"]
@@ -680,6 +802,24 @@ def test_three_specialist_lanes_start_with_staged_skills(
             assert any(name == "catmaster_nonfatal_tool_errors" for name in middleware_names)
 
     subagents_by_name = {subagent.kwargs["name"]: subagent.kwargs for subagent in top_subagents}
+
+    def _created_agents_named(name: str) -> list[dict]:
+        return [kwargs for kwargs in created_agents if kwargs["name"] == name]
+
+    def _find_created_agent(
+        name: str,
+        *,
+        tool_names: set[str] | None = None,
+        prompt_contains: str | None = None,
+    ) -> dict:
+        matches = _created_agents_named(name)
+        if tool_names is not None:
+            matches = [kwargs for kwargs in matches if {tool.name for tool in kwargs["tools"]} == tool_names]
+        if prompt_contains is not None:
+            matches = [kwargs for kwargs in matches if prompt_contains in kwargs["system_prompt"]]
+        assert matches, f"expected created agent {name!r}"
+        return matches[0]
+
     if entrypoint == "research":
         assert "Maintain a lightweight Research Kernel" in agent_kwargs["system_prompt"]
         assert "/research_kernels/" in agent_kwargs["system_prompt"]
@@ -711,14 +851,13 @@ def test_three_specialist_lanes_start_with_staged_skills(
         experiment_agent_kwargs = experiment_agents[0]
         assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
-        assert experiment_agent_kwargs["skills"] == ["/.deepagents/skills/experiment"]
+        assert "skills" not in experiment_agent_kwargs
         assert experiment_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
             "materials_worker",
             "ml_worker",
             "orca_xtb_worker",
             "literature_agent",
-            "report_worker_agent",
         ]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in experiment_agent_kwargs["middleware"])
 
@@ -726,7 +865,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert writing_agents, "expected nested writing specialist to be created"
         writing_agent_kwargs = writing_agents[0]
         assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
-        assert writing_agent_kwargs["skills"] == ["/.deepagents/skills/writing"]
+        assert "skills" not in writing_agent_kwargs
         assert writing_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
             "literature_agent",
@@ -739,7 +878,7 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert peer_review_agents, "expected nested peer-review specialist to be created"
         peer_review_agent_kwargs = peer_review_agents[0]
         assert {tool.name for tool in peer_review_agent_kwargs["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_TOOL_NAMES)
-        assert peer_review_agent_kwargs["skills"] == ["/.deepagents/skills/writing"]
+        assert "skills" not in peer_review_agent_kwargs
         assert "Act like a journal editor coordinating external peer review" in peer_review_agent_kwargs["system_prompt"]
         assert "explicit `ReviewTarget` or manuscript PDF path" in peer_review_agent_kwargs["system_prompt"]
         assert "delegate the bounded review episode to `peer_review_worker_agent`" in peer_review_agent_kwargs["system_prompt"]
@@ -757,127 +896,159 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
         nested_subagents = {subagent.kwargs["name"]: subagent.kwargs for subagent in litreview_agent_kwargs["subagents"]}
-        assert {tool.name for tool in nested_subagents["literature_agent"]["tools"]} == (_LITREVIEW_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert nested_subagents["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
-        assert {tool.name for tool in nested_subagents["metadata_agent"]["tools"]} == (_METADATA_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        metadata_middleware = nested_subagents["metadata_agent"]["middleware"]
+        assert "runnable" in nested_subagents["literature_agent"]
+        assert "runnable" in nested_subagents["metadata_agent"]
+        litreview_literature_kwargs = _find_created_agent(
+            "literature_agent",
+            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES,
+        )
+        assert litreview_literature_kwargs["model"] == {"model": "literature_synthesizer-model"}
+        metadata_agent_kwargs = _find_created_agent(
+            "metadata_agent",
+            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES,
+        )
+        metadata_middleware = metadata_agent_kwargs["middleware"]
         compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
         assert compact_tool.summarizer["model"] == {"model": "literature_deep_research-model"}
         assert compact_tool.summarizer["backend"] is not None
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in metadata_middleware)
-        literature_middleware = nested_subagents["literature_agent"]["middleware"]
-        assert any(isinstance(item, _FakeMemoryMiddleware) for item in literature_middleware)
-        assert any(isinstance(item, _FakeMemoryMiddleware) for item in metadata_middleware)
+        literature_middleware = litreview_literature_kwargs["middleware"]
+        assert not any(isinstance(item, _FakeMemoryMiddleware) for item in literature_middleware)
+        assert not any(isinstance(item, _FakeMemoryMiddleware) for item in metadata_middleware)
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "experiment":
-        assert {tool.name for tool in subagents_by_name["materials_worker"]["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["materials_worker"]["skills"] == ["/.deepagents/skills/experiment"]
-        assert {tool.name for tool in subagents_by_name["ml_worker"]["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["ml_worker"]["skills"] == ["/.deepagents/skills/machine_learning"]
-        assert {tool.name for tool in subagents_by_name["orca_xtb_worker"]["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["orca_xtb_worker"]["skills"] == ["/.deepagents/skills/quantum_chemistry"]
-        assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
-        assert {tool.name for tool in subagents_by_name["report_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["report_worker_agent"]["skills"] == ["/.deepagents/skills/writing"]
+        materials_worker_kwargs = _find_created_agent("materials_worker")
+        ml_worker_kwargs = _find_created_agent("ml_worker")
+        orca_worker_kwargs = _find_created_agent("orca_xtb_worker")
+        literature_agent_kwargs = _find_created_agent(
+            "literature_agent",
+            tool_names=_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+        )
+        assert "runnable" in subagents_by_name["materials_worker"]
+        assert "runnable" in subagents_by_name["ml_worker"]
+        assert "runnable" in subagents_by_name["orca_xtb_worker"]
+        assert "runnable" in subagents_by_name["literature_agent"]
+        assert {tool.name for tool in materials_worker_kwargs["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert materials_worker_kwargs["skills"] == ["/.deepagents/skills/materials"]
+        assert {tool.name for tool in ml_worker_kwargs["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert ml_worker_kwargs["skills"] == ["/.deepagents/skills/machine_learning"]
+        assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert orca_worker_kwargs["skills"] == ["/.deepagents/skills/quantum_chemistry"]
+        assert {tool.name for tool in literature_agent_kwargs["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert literature_agent_kwargs["model"] == {"model": "literature_synthesizer-model"}
         assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
-        assert "/notes/literature/" in subagents_by_name["literature_agent"]["system_prompt"]
-        assert "Only save a concise reusable markdown note" in subagents_by_name["literature_agent"]["system_prompt"]
-        assert "Web Evidence" in subagents_by_name["literature_agent"]["system_prompt"]
-        assert "You do not have permission to modify long-term project memory" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "dataset/model lifecycle tasks" in subagents_by_name["ml_worker"]["system_prompt"]
+        assert "/notes/literature/" in literature_agent_kwargs["system_prompt"]
+        assert "Only save a concise reusable markdown note" in literature_agent_kwargs["system_prompt"]
+        assert "Web Evidence" in literature_agent_kwargs["system_prompt"]
+        assert "You do not have permission to modify long-term project memory" in materials_worker_kwargs["system_prompt"]
+        assert "dataset/model lifecycle tasks" in ml_worker_kwargs["system_prompt"]
         assert "default role is coordination, dispatch, and decision-making across the experiment lane" in agent_kwargs["system_prompt"]
         assert "Keep direct work in the specialist thread minimal and coordination-oriented" in agent_kwargs["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself." in agent_kwargs["system_prompt"]
         assert "general materials or surface workflows belong to `materials_worker`" in agent_kwargs["system_prompt"]
         assert "model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`" in agent_kwargs["system_prompt"]
-        assert "use `report_worker_agent` for experiment reports, validation summaries, QC notes" in agent_kwargs["system_prompt"]
         assert "use `orca_xtb_worker` for molecular or cluster quantum-chemistry work" in agent_kwargs["system_prompt"]
         assert "purely report writing from already completed evidence" in agent_kwargs["system_prompt"]
+        assert "stays in `ExperimentSpecialist`" in agent_kwargs["system_prompt"]
         assert "Each worker should receive only one bounded execution episode around one primary artifact" in agent_kwargs["system_prompt"]
         assert "Do not hand an entire high-throughput campaign to one worker" in agent_kwargs["system_prompt"]
         assert "Do not personally absorb worker-owned tasks just because your own direct tool surface appears sufficient" in agent_kwargs["system_prompt"]
         assert "Only do the implementation directly in the specialist thread when no available worker matches the task" in agent_kwargs["system_prompt"]
-        assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
+        assert "Delegate domain-owned work to the proper specialized subagent first." in agent_kwargs["system_prompt"]
+        assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
+        assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
+        assert "export_builtin_tool_source" in agent_kwargs["system_prompt"]
+        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
+        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in agent_kwargs["system_prompt"]
+        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
         assert "prefer a quick built-in web check through the online model's native browsing capability" in agent_kwargs["system_prompt"]
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in agent_kwargs["system_prompt"]
-        assert "Some submission or resource checks are only visible through worker-owned managed tools." in agent_kwargs["system_prompt"]
-        assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in agent_kwargs["system_prompt"]
-        assert "If a bounded local task needs a missing Python package, `execute` may install it with `python -m pip install ...`" in agent_kwargs["system_prompt"]
         assert "If a worker needs a handy Python package for a bounded local step and it is missing" in agent_kwargs["system_prompt"]
-        assert "For periodic DFT, the intended path is to prepare inputs locally, submit via `vasp_execute_batch`" in agent_kwargs["system_prompt"]
-        assert "mace_neb_batch" in {tool.name for tool in subagents_by_name["materials_worker"]["tools"]}
-        assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "install it with `execute` via `python -m pip install ...`" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "If a handy Python package is missing for a bounded local step" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "write a reusable workspace script under `scripts/`" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "do not require a local periodic DFT engine to be directly runnable first" in subagents_by_name["materials_worker"]["system_prompt"]
-        assert "Start here when the primary artifact is a curated dataset" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "When a registered managed ML tool fits the task, prefer that managed path first." in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "prefer `build_dataset_from_runs`, `mace_train`, and `mace_evaluate` over ad hoc local wrapper scripts" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Prefer using libraries already available in the environment and reusable workspace code" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "If a handy Python package is still missing for a bounded local step" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "If the ML logic is longer than a short throwaway snippet and no managed tool covers it" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "install it with `execute` via `python -m pip install ...`" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; MACE training/fine-tuning normally falls into this category." in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "keep going locally with reusable scripts under `scripts/` instead of stopping" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "registered managed-execution path" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "write a reusable workspace script under `scripts/`" in subagents_by_name["ml_worker"]["system_prompt"]
-        assert "molecular quantum-chemistry subtask" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
-        assert "`enumerate_molecular_conformers`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
-        assert "`orca_execute_batch`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
-        assert "Treat xTB/CREST as the fast exploration layer" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
-        assert "default to `xtb_run_batch` or `crest_conformer_search`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
-        assert "install it with `execute` via `python -m pip install ...`" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
-        assert "If a handy Python package is missing for a bounded local step" in subagents_by_name["orca_xtb_worker"]["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in subagents_by_name["orca_xtb_worker"]["system_prompt"]
+        assert "mace_neb_batch" in {tool.name for tool in materials_worker_kwargs["tools"]}
+        assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in materials_worker_kwargs["system_prompt"]
+        assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
+        assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
+        assert "export_builtin_tool_source" in materials_worker_kwargs["system_prompt"]
+        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in materials_worker_kwargs["system_prompt"]
+        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in materials_worker_kwargs["system_prompt"]
+        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in materials_worker_kwargs["system_prompt"]
+        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in materials_worker_kwargs["system_prompt"]
+        assert "obtain POTCARs through the pymatgen interface" in materials_worker_kwargs["system_prompt"]
+        assert "install it with `execute` via `python -m pip install ...`" in materials_worker_kwargs["system_prompt"]
+        assert "If a handy Python package is missing for a bounded local step" in materials_worker_kwargs["system_prompt"]
+        assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in materials_worker_kwargs["system_prompt"]
+        assert "write a reusable workspace script under `scripts/`" in materials_worker_kwargs["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in materials_worker_kwargs["system_prompt"]
+        assert "do not require a local periodic DFT engine to be directly runnable first" in materials_worker_kwargs["system_prompt"]
+        assert "Start here when the primary artifact is a curated dataset" in ml_worker_kwargs["system_prompt"]
+        assert "When a registered managed ML tool fits the task, prefer that managed path first." in ml_worker_kwargs["system_prompt"]
+        assert "prefer `build_dataset_from_runs`, `mace_train`, and `mace_evaluate` over ad hoc local wrapper scripts" in ml_worker_kwargs["system_prompt"]
+        assert "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request" in ml_worker_kwargs["system_prompt"]
+        assert "Prefer using libraries already available in the environment and reusable workspace code" in ml_worker_kwargs["system_prompt"]
+        assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`" in ml_worker_kwargs["system_prompt"]
+        assert "If a handy Python package is still missing for a bounded local step" in ml_worker_kwargs["system_prompt"]
+        assert "If the ML logic is longer than a short throwaway snippet and no managed tool covers it" in ml_worker_kwargs["system_prompt"]
+        assert "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`" in ml_worker_kwargs["system_prompt"]
+        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in ml_worker_kwargs["system_prompt"]
+        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in ml_worker_kwargs["system_prompt"]
+        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in ml_worker_kwargs["system_prompt"]
+        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in ml_worker_kwargs["system_prompt"]
+        assert "install it with `execute` via `python -m pip install ...`" in ml_worker_kwargs["system_prompt"]
+        assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in ml_worker_kwargs["system_prompt"]
+        assert "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; MACE training/fine-tuning normally falls into this category." in ml_worker_kwargs["system_prompt"]
+        assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in ml_worker_kwargs["system_prompt"]
+        assert "keep going locally with reusable scripts under `scripts/` instead of stopping" in ml_worker_kwargs["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in ml_worker_kwargs["system_prompt"]
+        assert "registered managed-execution path" in ml_worker_kwargs["system_prompt"]
+        assert "use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check" in ml_worker_kwargs["system_prompt"]
+        assert "write a reusable workspace script under `scripts/`" in ml_worker_kwargs["system_prompt"]
+        assert "molecular quantum-chemistry subtask" in orca_worker_kwargs["system_prompt"]
+        assert "`enumerate_molecular_conformers`" in orca_worker_kwargs["system_prompt"]
+        assert "`orca_execute_batch`" in orca_worker_kwargs["system_prompt"]
+        assert "Treat xTB/CREST as the fast exploration layer" in orca_worker_kwargs["system_prompt"]
+        assert "default to `xtb_run_batch` or `crest_conformer_search`" in orca_worker_kwargs["system_prompt"]
+        assert "install it with `execute` via `python -m pip install ...`" in orca_worker_kwargs["system_prompt"]
+        assert "If a handy Python package is missing for a bounded local step" in orca_worker_kwargs["system_prompt"]
+        assert "Do not infer managed-execution availability from local shell probing alone." in orca_worker_kwargs["system_prompt"]
         assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in agent_kwargs["system_prompt"]
-        assert "compact report packet" in subagents_by_name["report_worker_agent"]["system_prompt"]
-        assert "it is not a paper/manuscript lane" in subagents_by_name["report_worker_agent"]["system_prompt"]
-        assert "Do not restart calculations" in subagents_by_name["report_worker_agent"]["system_prompt"]
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"
-            for item in subagents_by_name["materials_worker"]["middleware"]
+            for item in materials_worker_kwargs["middleware"]
         )
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"
-            for item in subagents_by_name["orca_xtb_worker"]["middleware"]
+            for item in orca_worker_kwargs["middleware"]
         )
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"
-            for item in subagents_by_name["ml_worker"]["middleware"]
+            for item in ml_worker_kwargs["middleware"]
         )
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"
-            for item in subagents_by_name["literature_agent"]["middleware"]
+            for item in literature_agent_kwargs["middleware"]
         )
     elif entrypoint == "writing":
         assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _PROJECT_MEMORY_TOOL_NAMES)
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
-        assert {tool.name for tool in subagents_by_name["literature_agent"]["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["literature_agent"]["model"] == {"model": "literature_synthesizer-model"}
-        assert "Use the lightweight `internet_search` tool only for tightly bounded writing-support lookups" in subagents_by_name["literature_agent"]["system_prompt"]
-        assert {tool.name for tool in subagents_by_name["writing_worker_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["writing_worker_agent"]["skills"] == ["/.deepagents/skills/writing"]
-        assert {tool.name for tool in subagents_by_name["writing_polisher_agent"]["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["writing_polisher_agent"]["skills"] == ["/.deepagents/skills/writing"]
+        writing_literature_kwargs = _find_created_agent(
+            "literature_agent",
+            tool_names=_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+        )
+        writing_worker_kwargs = _find_created_agent("writing_worker_agent")
+        writing_polisher_kwargs = _find_created_agent("writing_polisher_agent")
+        assert "runnable" in subagents_by_name["literature_agent"]
+        assert "runnable" in subagents_by_name["writing_worker_agent"]
+        assert "runnable" in subagents_by_name["writing_polisher_agent"]
+        assert {tool.name for tool in writing_literature_kwargs["tools"]} == (_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert writing_literature_kwargs["model"] == {"model": "literature_synthesizer-model"}
+        assert "Use the lightweight `internet_search` tool only for tightly bounded writing-support lookups" in writing_literature_kwargs["system_prompt"]
+        assert {tool.name for tool in writing_worker_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert writing_worker_kwargs["skills"] == ["/.deepagents/skills/writing"]
+        assert {tool.name for tool in writing_polisher_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert writing_polisher_kwargs["skills"] == ["/.deepagents/skills/writing"]
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
@@ -894,53 +1065,72 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert "clearly exposed as `ReviewTarget`" in agent_kwargs["system_prompt"]
         assert "publishable paper ready to enter peer review" in agent_kwargs["system_prompt"]
         assert "Do not mention the workspace, files, runs, prompts, tools, agents, interruptions" in agent_kwargs["system_prompt"]
-        assert "Do not rely on raw inline multimodal tool outputs remaining replay-safe" in agent_kwargs["system_prompt"]
-        assert "Handle only one section or one bounded organization/integration task at a time" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "compact author packet" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "organize what belongs in the main text versus Supporting Information / Supporting Data" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "keep Supporting Information in the same manuscript file" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "For short notes or compact summaries, do not manufacture extra visuals" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "Use `generate_nanobanana_figure` for conceptual, mechanistic, or workflow figures" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "produce a compact journal-style title" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "do not batch figures into a later block" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "Do not treat a successful TeX compile as sufficient" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "publishable paper ready to enter peer review" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "Perform conservative section-level prose polish" in subagents_by_name["writing_polisher_agent"]["system_prompt"]
-        assert "without changing claim strength, scientific scope, evidence selection" in subagents_by_name["writing_polisher_agent"]["system_prompt"]
-        assert "For journal-facing citations and BibTeX, use publication-style metadata only" in subagents_by_name["writing_worker_agent"]["system_prompt"]
-        assert "prefer keeping them as workspace artifacts and refer to them by path plus a short textual summary" in subagents_by_name["writing_worker_agent"]["system_prompt"]
+        assert "Delegate domain-owned work to the proper specialized subagent first." in agent_kwargs["system_prompt"]
+        assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
+        assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
+        assert "export_builtin_tool_source" in agent_kwargs["system_prompt"]
+        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
+        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in agent_kwargs["system_prompt"]
+        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
+        assert "Handle only one section or one bounded organization/integration task at a time" in writing_worker_kwargs["system_prompt"]
+        assert "compact author packet" in writing_worker_kwargs["system_prompt"]
+        assert "organize what belongs in the main text versus Supporting Information / Supporting Data" in writing_worker_kwargs["system_prompt"]
+        assert "keep Supporting Information in the same manuscript file" in writing_worker_kwargs["system_prompt"]
+        assert "For short notes or compact summaries, do not manufacture extra visuals" in writing_worker_kwargs["system_prompt"]
+        assert "Use `generate_nanobanana_figure` for conceptual, mechanistic, or workflow figures" in writing_worker_kwargs["system_prompt"]
+        assert "produce a compact journal-style title" in writing_worker_kwargs["system_prompt"]
+        assert "do not batch figures into a later block" in writing_worker_kwargs["system_prompt"]
+        assert "Do not treat a successful TeX compile as sufficient" in writing_worker_kwargs["system_prompt"]
+        assert "publishable paper ready to enter peer review" in writing_worker_kwargs["system_prompt"]
+        assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in writing_worker_kwargs["system_prompt"]
+        assert "Prefer registered builtin tools when they fit the task." in writing_worker_kwargs["system_prompt"]
+        assert "export_builtin_tool_source" in writing_worker_kwargs["system_prompt"]
+        assert "Perform conservative section-level prose polish" in writing_polisher_kwargs["system_prompt"]
+        assert "without changing claim strength, scientific scope, evidence selection" in writing_polisher_kwargs["system_prompt"]
+        assert "For journal-facing citations and BibTeX, use publication-style metadata only" in writing_worker_kwargs["system_prompt"]
+        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in writing_worker_kwargs["system_prompt"]
+        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in writing_worker_kwargs["system_prompt"]
+        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in writing_worker_kwargs["system_prompt"]
     else:
         assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_TOOL_NAMES)
         assert "Act like a journal editor coordinating external peer review" in agent_kwargs["system_prompt"]
         assert "Reviewer Comments" in agent_kwargs["system_prompt"]
         assert "peer_review_request" in agent_kwargs["system_prompt"]
         assert "save the full review as one durable workspace markdown memo" in agent_kwargs["system_prompt"]
+        assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
+        assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
+        assert "export_builtin_tool_source" in agent_kwargs["system_prompt"]
         assert "do not compress away the editor comment or reviewer comment sections" in agent_kwargs["system_prompt"]
         assert "peer_review_worker_agent" in subagents_by_name
-        assert {tool.name for tool in subagents_by_name["peer_review_worker_agent"]["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_READ_TOOL_NAMES)
-        assert subagents_by_name["peer_review_worker_agent"]["skills"] == ["/.deepagents/skills/writing"]
-        assert "call `peer_review_request` on that PDF exactly once for this episode" in subagents_by_name["peer_review_worker_agent"]["system_prompt"]
+        peer_review_worker_kwargs = _find_created_agent("peer_review_worker_agent")
+        assert "runnable" in subagents_by_name["peer_review_worker_agent"]
+        assert {tool.name for tool in peer_review_worker_kwargs["tools"]} == ({"peer_review_request"} | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert peer_review_worker_kwargs["skills"] == ["/.deepagents/skills/writing"]
+        assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in peer_review_worker_kwargs["system_prompt"]
+        assert "Prefer registered builtin tools when they fit the task." in peer_review_worker_kwargs["system_prompt"]
+        assert "export_builtin_tool_source" in peer_review_worker_kwargs["system_prompt"]
+        assert "call `peer_review_request` on that PDF exactly once for this episode" in peer_review_worker_kwargs["system_prompt"]
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
-    staged_experiment = workspace / "files" / ".deepagents" / "skills" / "experiment"
+    staged_materials = workspace / "files" / ".deepagents" / "skills" / "materials"
     staged_writing = workspace / "files" / ".deepagents" / "skills" / "writing"
     staged_quantum_chemistry = workspace / "files" / ".deepagents" / "skills" / "quantum_chemistry"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
-    assert staged_experiment.is_dir()
+    assert staged_materials.is_dir()
     assert staged_writing.is_dir()
     assert staged_quantum_chemistry.is_dir()
     staged_machine_learning = workspace / "files" / ".deepagents" / "skills" / "machine_learning"
     assert staged_machine_learning.is_dir()
-    experiment_skill_names = {path.name for path in staged_experiment.iterdir() if path.is_dir()}
+    materials_skill_names = {path.name for path in staged_materials.iterdir() if path.is_dir()}
     writing_skill_names = {path.name for path in staged_writing.iterdir() if path.is_dir()}
     ml_worker_view_names = {path.name for path in staged_machine_learning.iterdir() if path.is_dir()}
     orca_xtb_worker_view_names = {path.name for path in staged_quantum_chemistry.iterdir() if path.is_dir()}
-    assert "literature-grounding" in experiment_skill_names
-    assert "structure-visual-inspection" in experiment_skill_names
-    assert "materials-discovery-and-bulk-selection" in experiment_skill_names
-    assert "neb-prepare" in experiment_skill_names
-    assert "neb-calculation" in experiment_skill_names
-    assert "neb-analysis" in experiment_skill_names
+    assert "literature-grounding" in materials_skill_names
+    assert "structure-visual-inspection" in materials_skill_names
+    assert "materials-discovery-and-bulk-selection" in materials_skill_names
+    assert "neb-prepare" in materials_skill_names
+    assert "neb-calculation" in materials_skill_names
+    assert "neb-analysis" in materials_skill_names
     assert {
         "mace-dataset-curation",
         "mace-finetuning-and-benchmark",
