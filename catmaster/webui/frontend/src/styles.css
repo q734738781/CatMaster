@@ -599,6 +599,10 @@ button:disabled {
   word-break: break-all;
 }
 
+.file-upload-input {
+  display: none;
+}
+
 .files-shell {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -633,6 +637,56 @@ button:disabled {
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
+}
+
+.file-upload-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  padding: 10px;
+}
+
+.file-upload-target {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: calc(14px * 0.95);
+}
+
+.file-upload-target code {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  padding: 4px 6px;
+  color: var(--text);
+}
+
+.file-upload-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.file-upload-overwrite {
+  font-size: calc(14px * 0.95);
+}
+
+.file-upload-status {
+  color: var(--text-tertiary);
+  font-size: calc(14px * 0.95);
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .file-tree-branch {

@@ -449,6 +449,49 @@ def test_default_tool_error_middleware_returns_tool_message() -> None:
     assert result.tool_call_id == "call-1"
 
 
+def test_tool_result_middleware_textualizes_multimodal_tool_messages() -> None:
+    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
+    history_mw = middleware[1]
+
+    class _Request:
+        tool_call = {
+            "id": "call-1",
+            "name": "read_file",
+            "args": {"file_path": "/paper/page.png"},
+        }
+
+    async def _handler(_request):
+        return ToolMessage(
+            content_blocks=[
+                {
+                    "type": "image",
+                    "id": "img-1",
+                    "base64": "not-for-history",
+                    "mime_type": "image/png",
+                }
+            ],
+            additional_kwargs={
+                "read_file_path": "/paper/page.png",
+                "read_file_media_type": "image/png",
+            },
+            tool_call_id="call-1",
+            name="read_file",
+            status="success",
+        )
+
+    async def _run():
+        return await history_mw.awrap_tool_call(_Request(), _handler)
+
+    result = asyncio.run(_run())
+
+    assert isinstance(result, ToolMessage)
+    assert isinstance(result.content, str)
+    assert "image tool content omitted from persistent history" in result.content
+    assert "path=/paper/page.png" in result.content
+    assert "not-for-history" not in result.content
+    assert result.tool_call_id == "call-1"
+
+
 def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.MonkeyPatch) -> None:
     middleware = runtime_mod.SpecialistRunner._build_default_middleware()
     model_mw = middleware[0]
@@ -476,6 +519,52 @@ def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.Mo
     assert sleeps == [60.0, 180.0]
 
 
+def test_model_retry_middleware_sanitizes_multimodal_tool_history() -> None:
+    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
+    model_mw = middleware[0]
+    seen_messages = []
+
+    class _Request:
+        def __init__(self, messages):
+            self.messages = messages
+
+        def override(self, **kwargs):
+            return _Request(kwargs.get("messages", self.messages))
+
+    request = _Request(
+        [
+            ToolMessage(
+                content_blocks=[
+                    {
+                        "type": "image",
+                        "id": "img-1",
+                        "base64": "not-for-model-history",
+                        "mime_type": "image/png",
+                    }
+                ],
+                additional_kwargs={"read_file_path": "/paper/page.png"},
+                tool_call_id="call-1",
+                name="read_file",
+            )
+        ]
+    )
+
+    async def _handler(sanitized_request):
+        seen_messages.extend(sanitized_request.messages)
+        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
+
+    async def _run():
+        return await model_mw.awrap_model_call(request, _handler)
+
+    result = asyncio.run(_run())
+
+    assert isinstance(result, ModelResponse)
+    assert isinstance(seen_messages[0], ToolMessage)
+    assert isinstance(seen_messages[0].content, str)
+    assert "not-for-model-history" not in seen_messages[0].content
+    assert "path=/paper/page.png" in seen_messages[0].content
+
+
 def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
     middleware = runtime_mod.SpecialistRunner._build_default_middleware()
     model_mw = middleware[0]
@@ -497,6 +586,36 @@ def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
     result = asyncio.run(_run())
     assert isinstance(result, ModelResponse)
     assert result.result[0].tool_calls
+
+
+def test_model_retry_middleware_retries_openrouter_unmarshaller_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
+    model_mw = middleware[0]
+    sleeps: list[float] = []
+    attempts = {"count": 0}
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _handler(_request):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise ValueError(
+                "ValidationError: 40 validation errors for Unmarshaller "
+                "body.174.tool.content.str Input should be a valid string"
+            )
+        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
+
+    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+
+    async def _run():
+        return await model_mw.awrap_model_call(object(), _handler)
+
+    result = asyncio.run(_run())
+
+    assert isinstance(result, ModelResponse)
+    assert attempts["count"] == 2
+    assert sleeps == [60.0]
 
 
 def test_extract_final_text_ignores_user_message_fallback() -> None:

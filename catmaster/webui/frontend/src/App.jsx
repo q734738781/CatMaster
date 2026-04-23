@@ -22,6 +22,25 @@ function escapePath(value) {
   return encodeURIComponent(String(value));
 }
 
+function parentPath(path) {
+  const text = String(path || "").replace(/^\/+|\/+$/g, "");
+  if (!text || !text.includes("/")) {
+    return "";
+  }
+  return text.split("/").slice(0, -1).join("/");
+}
+
+function defaultUploadDirectory(treeNodes, preview, selectedPath) {
+  if (preview?.node_type === "directory") {
+    return String(preview.path || "");
+  }
+  if (selectedPath) {
+    return parentPath(selectedPath);
+  }
+  const roots = Array.isArray(treeNodes?.[""]) ? treeNodes[""] : [];
+  return roots.some((node) => node?.node_type === "directory" && node?.name === "files") ? "files" : "";
+}
+
 function isRunActive(status) {
   return ["running", "starting", "interrupting", "awaiting_human_feedback"].includes(String(status || "").trim());
 }
@@ -2195,8 +2214,16 @@ function FileTree({
   treeLoading,
   selectedPath,
   error,
+  uploadTarget,
+  uploadStatus,
+  uploadOverwrite,
+  uploadUnzip,
+  uploadDisabled,
   onToggle,
   onSelect,
+  onChooseUpload,
+  onUploadOverwriteChange,
+  onUploadUnzipChange,
 }) {
   const roots = treeNodes[""] || [];
   return (
@@ -2206,6 +2233,34 @@ function FileTree({
           <div className="section-label">Tree</div>
           <h3 className="section-title">Workspace files</h3>
         </div>
+      </div>
+      <div className="file-upload-panel">
+        <div className="file-upload-target">
+          <span>Upload target</span>
+          <code>{uploadTarget || "."}</code>
+        </div>
+        <div className="file-upload-actions">
+          <button type="button" className="ghost-btn" onClick={onChooseUpload} disabled={uploadDisabled}>
+            Upload
+          </button>
+          <label className="toggle-line file-upload-overwrite">
+            <input
+              type="checkbox"
+              checked={Boolean(uploadOverwrite)}
+              onChange={(event) => onUploadOverwriteChange(event.target.checked)}
+            />
+            overwrite
+          </label>
+          <label className="toggle-line file-upload-overwrite">
+            <input
+              type="checkbox"
+              checked={Boolean(uploadUnzip)}
+              onChange={(event) => onUploadUnzipChange(event.target.checked)}
+            />
+            unzip
+          </label>
+        </div>
+        {uploadStatus ? <div className="file-upload-status">{uploadStatus}</div> : null}
       </div>
       {error ? <div className="memory-drawer-note error">{error}</div> : null}
       {!error && !roots.length && !treeLoading[""] ? (
@@ -2230,7 +2285,7 @@ function FileTree({
   );
 }
 
-function FilePreviewPanel({ preview, loading, error, onRefresh }) {
+function FilePreviewPanel({ ctx, preview, loading, error, deleteBusy, onRefresh, onDelete }) {
   const directoryChildren = Array.isArray(preview?.children) ? preview.children : [];
   const structure = preview?.structure && typeof preview.structure === "object" ? preview.structure : null;
   const csvPreview = isCsvPreview(preview);
@@ -2250,6 +2305,16 @@ function FilePreviewPanel({ preview, loading, error, onRefresh }) {
             <a className="ghost-btn file-download-link" href={preview.download_url}>
               Download
             </a>
+          ) : null}
+          {ctx && preview?.path !== undefined ? (
+            <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive?path=${escapePath(preview.path || "")}`}>
+              Download ZIP
+            </a>
+          ) : null}
+          {preview?.path ? (
+            <button type="button" className="ghost-btn danger" onClick={onDelete} disabled={loading || deleteBusy}>
+              Delete
+            </button>
           ) : null}
         </div>
       </div>
@@ -2485,6 +2550,67 @@ function MemoryDrawer({ open, workspaceName, loading, error, text, source, onSou
   );
 }
 
+const WEBUI_SESSION_STORAGE_KEY = "catmaster.webui.session";
+
+function readStoredWebuiSession() {
+  try {
+    const raw = window.localStorage.getItem(WEBUI_SESSION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function rememberWebuiSession(data, lane) {
+  if (!data || typeof data !== "object") {
+    return;
+  }
+  const ctx = String(data.ctx || "").trim();
+  const projectSpace = String(data.workspace_name || "").trim();
+  const nextLane = String(lane || "").trim() || "experiment";
+  if (!ctx) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      WEBUI_SESSION_STORAGE_KEY,
+      JSON.stringify({
+        ctx,
+        project_space: projectSpace,
+        lane: nextLane,
+      }),
+    );
+  } catch {
+    return;
+  }
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("ctx", ctx);
+    if (projectSpace) {
+      url.searchParams.set("project_space", projectSpace);
+    }
+    url.searchParams.set("lane", nextLane);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // The remembered session is still enough for the next bootstrap.
+  }
+}
+
+function buildBootstrapParams() {
+  const params = new URLSearchParams(window.location.search);
+  const stored = readStoredWebuiSession();
+  if (!params.get("ctx") && stored.ctx) {
+    params.set("ctx", String(stored.ctx));
+  }
+  if (!params.get("project_space") && stored.project_space) {
+    params.set("project_space", String(stored.project_space));
+  }
+  const nextLane = params.get("lane") || String(stored.lane || "") || "experiment";
+  params.set("lane", nextLane);
+  return { params, lane: nextLane };
+}
+
 function App({ boot }) {
   const view = ["home", "monitor", "files"].includes(boot?.view) ? boot.view : "home";
   const [snapshot, setSnapshot] = useState(null);
@@ -2517,6 +2643,11 @@ function App({ boot }) {
   const [fileTreeError, setFileTreeError] = useState("");
   const [filePreviewError, setFilePreviewError] = useState("");
   const [filePreviewLoading, setFilePreviewLoading] = useState(false);
+  const [fileUploadStatus, setFileUploadStatus] = useState("");
+  const [fileUploadBusy, setFileUploadBusy] = useState(false);
+  const [fileUploadOverwrite, setFileUploadOverwrite] = useState(false);
+  const [fileUploadUnzip, setFileUploadUnzip] = useState(false);
+  const [fileDeleteBusy, setFileDeleteBusy] = useState(false);
   const [form, setForm] = useState({
     prompt: "",
     run_mode: "new_run",
@@ -2525,14 +2656,11 @@ function App({ boot }) {
   const deferredSearch = useDeferredValue(search);
   const eventSourceRef = useRef(null);
   const latestSeqRef = useRef(0);
+  const fileUploadInputRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
-    const params = new URLSearchParams(window.location.search);
-    const nextLane = params.get("lane") || "experiment";
-    if (!params.get("lane")) {
-      params.set("lane", nextLane);
-    }
+    const { params, lane: nextLane } = buildBootstrapParams();
     setLane(nextLane);
     (async () => {
       try {
@@ -2540,6 +2668,7 @@ function App({ boot }) {
         if (cancelled) {
           return;
         }
+        rememberWebuiSession(data, nextLane);
         startTransition(() => {
           setCtx(data.ctx || "");
           setWorkspaceRoot(data.workspace_root || "");
@@ -2731,6 +2860,9 @@ function App({ boot }) {
       setFileTreeError("");
       setFilePreviewError("");
       setFilePreviewLoading(false);
+      setFileUploadStatus("");
+      setFileUploadBusy(false);
+      setFileDeleteBusy(false);
     });
     apiFetch(`/api/session/${escapePath(ctx)}/files/tree`)
       .then((data) => {
@@ -2903,6 +3035,101 @@ function App({ boot }) {
     }
   }
 
+  async function handleUploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!ctx || !files.length) {
+      return;
+    }
+    const targetDir = defaultUploadDirectory(treeNodes, filePreview, selectedFilePath);
+    startTransition(() => {
+      setFileUploadBusy(true);
+      setFileUploadStatus(`Uploading ${files.length} file${files.length === 1 ? "" : "s"} to ${targetDir || "."}...`);
+      setFileTreeError("");
+    });
+    let lastUploadedPath = "";
+    try {
+      for (const file of files) {
+        const response = await fetch(
+          `/api/session/${escapePath(ctx)}/files/upload?path=${escapePath(targetDir)}&filename=${escapePath(file.name)}&overwrite=${fileUploadOverwrite ? "true" : "false"}&unzip=${fileUploadUnzip ? "true" : "false"}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": file.type || "application/octet-stream" },
+            body: file,
+          },
+        );
+        if (!response.ok) {
+          throw new Error((await response.text()) || `Upload failed: ${response.status}`);
+        }
+        const payload = await response.json();
+        lastUploadedPath = String(payload?.unzipped ? targetDir : (payload?.path || lastUploadedPath || ""));
+      }
+      await loadDirectory(targetDir, { force: true });
+      if (targetDir) {
+        startTransition(() => {
+          setExpandedDirs((prev) => ({ ...prev, [targetDir]: true }));
+        });
+      }
+      if (lastUploadedPath && !fileUploadUnzip) {
+        await loadFilePreview(lastUploadedPath);
+      } else if (fileUploadUnzip) {
+        await loadFilePreview(targetDir);
+      }
+      startTransition(() => {
+        setFileUploadStatus(`${fileUploadUnzip ? "Unzipped" : "Uploaded"} ${files.length} file${files.length === 1 ? "" : "s"} to ${targetDir || "."}.`);
+      });
+    } catch (error) {
+      startTransition(() => {
+        setFileUploadStatus(String(error?.message || error));
+      });
+    } finally {
+      startTransition(() => {
+        setFileUploadBusy(false);
+      });
+      if (fileUploadInputRef.current) {
+        fileUploadInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function handleDeleteSelectedFile() {
+    if (!ctx || !filePreview?.path) {
+      return;
+    }
+    const targetPath = String(filePreview.path || "");
+    const confirmed = window.confirm(`Delete ${targetPath}? This cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+    const parent = parentPath(targetPath);
+    startTransition(() => {
+      setFileDeleteBusy(true);
+      setFilePreviewError("");
+    });
+    try {
+      const response = await fetch(`/api/session/${escapePath(ctx)}/files/delete?path=${escapePath(targetPath)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()) || `Delete failed: ${response.status}`);
+      }
+      await loadDirectory(parent, { force: true });
+      await loadDirectory("", { force: true });
+      startTransition(() => {
+        setSelectedFilePath("");
+        setFilePreview(null);
+        setFileUploadStatus(`Deleted ${targetPath}.`);
+      });
+    } catch (error) {
+      startTransition(() => {
+        setFilePreviewError(String(error?.message || error));
+      });
+    } finally {
+      startTransition(() => {
+        setFileDeleteBusy(false);
+      });
+    }
+  }
+
   async function postAndApply(url, payload, { loadDetails = false } = {}) {
     if (!ctx) {
       return;
@@ -2911,6 +3138,7 @@ function App({ boot }) {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    rememberWebuiSession(data, payload?.lane || lane);
     startTransition(() => {
       setSnapshot(data);
       setStatusMessage(data.status_message || "");
@@ -3005,6 +3233,7 @@ function App({ boot }) {
   const workspaceOptions = snapshot?.workspaces || [];
   const chatSessionOptions = snapshot?.chat_sessions || [];
   const runOptions = snapshot?.runs || [];
+  const fileUploadTarget = defaultUploadDirectory(treeNodes, filePreview, selectedFilePath);
   const cards = (snapshot?.cards || []).filter((card) => {
     if (!deferredSearch.trim()) {
       return true;
@@ -3178,12 +3407,24 @@ function App({ boot }) {
         <section className="center-stage">
           {view === "files" ? (
             <div className="center-content files-content">
+              <input
+                ref={fileUploadInputRef}
+                type="file"
+                multiple
+                className="file-upload-input"
+                onChange={(event) => handleUploadFiles(event.target.files)}
+              />
               <div className="center-header">
                 <div className="center-header-left">
                   <h2>{centerTitle}</h2>
                   <span className="section-label">{snapshot?.workspace_name || "No workspace"}</span>
                 </div>
                 <div className="inline-actions">
+                  {ctx ? (
+                    <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive`}>
+                      Workspace ZIP
+                    </a>
+                  ) : null}
                   <button type="button" className="ghost-btn" onClick={refreshFilesView}>
                     Refresh
                   </button>
@@ -3197,18 +3438,29 @@ function App({ boot }) {
                   treeLoading={treeLoading}
                   selectedPath={selectedFilePath}
                   error={fileTreeError}
+                  uploadTarget={fileUploadTarget}
+                  uploadStatus={fileUploadStatus}
+                  uploadOverwrite={fileUploadOverwrite}
+                  uploadUnzip={fileUploadUnzip}
+                  uploadDisabled={!ctx || fileUploadBusy}
                   onToggle={handleDirectoryToggle}
                   onSelect={handleFileSelect}
+                  onChooseUpload={() => fileUploadInputRef.current?.click()}
+                  onUploadOverwriteChange={setFileUploadOverwrite}
+                  onUploadUnzipChange={setFileUploadUnzip}
                 />
                 <FilePreviewPanel
+                  ctx={ctx}
                   preview={filePreview}
                   loading={filePreviewLoading}
                   error={filePreviewError}
+                  deleteBusy={fileDeleteBusy}
                   onRefresh={() => {
                     if (selectedFilePath) {
                       loadFilePreview(selectedFilePath);
                     }
                   }}
+                  onDelete={handleDeleteSelectedFile}
                 />
               </div>
             </div>

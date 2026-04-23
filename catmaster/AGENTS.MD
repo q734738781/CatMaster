@@ -2,6 +2,9 @@
 
 This repository now uses a DeepAgent-native specialist runtime as the active path. Treat the current implementation under `catmaster/specialists/` as the source of truth.
 
+Maintainer notes for CatMaster's non-standard DeepAgents/LangChain/OpenRouter
+interaction layers are in [deepagents_interactions.md](/home/chenhh/python_projects/CatMaster/docs/deepagents_interactions.md).
+
 ## 1) Active architecture
 
 ### Public entrypoints
@@ -116,7 +119,7 @@ Maintenance rules for active-path code:
 - Prefer attachments, file IDs, file paths, or generated artifact URLs over embedding large base64 blobs in multi-turn history.
 - If runtime compatibility is uncertain, sanitize non-text `tool` messages before model invocation instead of dropping the whole thread. Preserve only the minimum textual placeholder needed for continuity.
 
-This is a compatibility rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while avoiding provider/schema failures from replaying raw multimodal `tool` history across turns.
+This is a replay-safety rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while avoiding provider/schema failures from replaying raw multimodal `tool` history across turns.
 
 ## 4) Research Kernel
 
@@ -284,8 +287,8 @@ The WebUI is run-state and SSE driven. Active-path UI work should align with the
 When making changes:
 
 - prefer `catmaster/specialists/` for active-path behavior
-- prefer DeepAgent-native mechanisms over custom compatibility layers
-- do not add new compatibility shims unless the change explicitly needs them
+- prefer DeepAgent-native mechanisms over provider-specific shims
+- do not add new provider-specific shims unless the change explicitly needs them
 
 ## 11) Testing guidance
 

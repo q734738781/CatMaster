@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--skip-frontend-build] [--autorun|--no-autorun]
+  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--skip-frontend-build] [--sync-start-webui] [--autorun|--no-autorun]
 
 Options:
   --target DIR
@@ -27,6 +27,10 @@ Options:
   --skip-frontend-build
       Do not rebuild catmaster/webui/static from catmaster/webui/frontend before deploy.
 
+  --sync-start-webui
+      Overwrite target start_webui.sh from this checkout. By default, deploy
+      preserves an existing target launcher and only initializes it if missing.
+
   --autorun
       Start runtime WebUI automatically after deployment (default).
 
@@ -43,6 +47,7 @@ NO_DELETE=0
 FULL_REPO=0
 AUTORUN=1
 SKIP_FRONTEND_BUILD=0
+SYNC_START_WEBUI=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-frontend-build)
       SKIP_FRONTEND_BUILD=1
+      shift
+      ;;
+    --sync-start-webui)
+      SYNC_START_WEBUI=1
       shift
       ;;
     --autorun)
@@ -121,10 +130,18 @@ fi
 if [[ $DRY_RUN -eq 1 ]]; then
   RSYNC_ARGS+=(--dry-run)
 fi
+if [[ $SYNC_START_WEBUI -eq 0 ]]; then
+  RSYNC_ARGS+=(--exclude "/start_webui.sh")
+fi
 
 echo "Source: $REPO_ROOT"
 echo "Target: $TARGET_DIR"
 echo "Project space root for launcher: $PROJECT_SPACE_ROOT"
+if [[ $SYNC_START_WEBUI -eq 1 ]]; then
+  echo "Launcher: sync start_webui.sh from source"
+else
+  echo "Launcher: preserve target start_webui.sh"
+fi
 echo
 
 if [[ $DRY_RUN -eq 0 && $SKIP_FRONTEND_BUILD -eq 0 ]]; then
@@ -153,10 +170,12 @@ else
     "skills"
     "scripts"
     "main.py"
-    "start_webui.sh"
     "README.md"
     "LICENSE"
   )
+  if [[ $SYNC_START_WEBUI -eq 1 ]]; then
+    RUNTIME_PATHS+=("start_webui.sh")
+  fi
   for rel in "${RUNTIME_PATHS[@]}"; do
     src="$REPO_ROOT/$rel"
     dst="$TARGET_DIR/$rel"
@@ -182,7 +201,24 @@ source_repo=$REPO_ROOT
 source_commit=$COMMIT
 deployed_at_utc=$DEPLOY_TIME
 EOF
-  chmod +x "$TARGET_DIR/start_webui.sh"
+  if [[ ! -f "$TARGET_DIR/start_webui.sh" ]]; then
+    if [[ -f "$REPO_ROOT/start_webui.sh" ]]; then
+      echo "Target has no start_webui.sh; installing default launcher."
+      install -m 755 "$REPO_ROOT/start_webui.sh" "$TARGET_DIR/start_webui.sh"
+    else
+      echo "Missing source launcher: $REPO_ROOT/start_webui.sh" >&2
+      exit 1
+    fi
+  elif [[ $SYNC_START_WEBUI -eq 0 ]]; then
+    echo "Preserved existing target launcher: $TARGET_DIR/start_webui.sh"
+  fi
+
+  LAUNCHER_CMD=(./start_webui.sh)
+  LAUNCHER_DISPLAY="./start_webui.sh"
+  if [[ ! -x "$TARGET_DIR/start_webui.sh" ]]; then
+    LAUNCHER_CMD=(bash ./start_webui.sh)
+    LAUNCHER_DISPLAY="bash ./start_webui.sh"
+  fi
   mkdir -p "$PROJECT_SPACE_ROOT"
 
   echo
@@ -191,16 +227,16 @@ EOF
     echo "Autorun enabled. Starting WebUI now..."
     cd "$TARGET_DIR"
     if [[ "$PROJECT_SPACE_ROOT" == "$TARGET_DIR/project_space" ]]; then
-      ./start_webui.sh --port 7991
+      "${LAUNCHER_CMD[@]}"
     else
-      CATMASTER_PROJECT_SPACE_ROOT="$PROJECT_SPACE_ROOT" ./start_webui.sh --port 7991
+      CATMASTER_PROJECT_SPACE_ROOT="$PROJECT_SPACE_ROOT" "${LAUNCHER_CMD[@]}"
     fi
   else
     echo "Next run command:"
     if [[ "$PROJECT_SPACE_ROOT" == "$TARGET_DIR/project_space" ]]; then
-      echo "  cd \"$TARGET_DIR\" && ./start_webui.sh --port 7991"
+      echo "  cd \"$TARGET_DIR\" && $LAUNCHER_DISPLAY"
     else
-      echo "  cd \"$TARGET_DIR\" && CATMASTER_PROJECT_SPACE_ROOT=\"$PROJECT_SPACE_ROOT\" ./start_webui.sh --port 7991"
+      echo "  cd \"$TARGET_DIR\" && CATMASTER_PROJECT_SPACE_ROOT=\"$PROJECT_SPACE_ROOT\" $LAUNCHER_DISPLAY"
     fi
   fi
 else

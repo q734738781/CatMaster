@@ -147,6 +147,11 @@ def test_websession_binds_chat_session_as_deepagent_thread_for_experiment_lane(t
             captured["entrypoint"] = str(kwargs.get("entrypoint") or "")
             captured["chat_session_id"] = str(kwargs.get("chat_session_id") or "")
             captured["thread_id"] = str(kwargs.get("thread_id") or "")
+            initial_state = json.loads((run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+            assert initial_state["status"] == "running"
+            assert initial_state["entrypoint"] == "experiment"
+            assert initial_state["user_prompt"] == "Current request."
+            assert initial_state["chat_session_id"] == captured["chat_session_id"]
             _write_completed_run(
                 run_dir,
                 entrypoint="experiment",

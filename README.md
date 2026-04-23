@@ -259,14 +259,25 @@ Deploy a runtime checkout:
 scripts/deploy_runtime.sh --target ../CatMaster_Run
 ```
 
+`start_webui.sh` is treated as target-local configuration during deploy. An
+existing launcher in the runtime checkout is preserved so stable deployments can
+keep different ports, conda envs, or workspace defaults. If the target has no
+launcher yet, deploy initializes one from the source checkout. To intentionally
+replace the target launcher, pass `--sync-start-webui`.
+
 After deploy, the runtime can be started directly from its root:
 
 ```bash
 cd ../CatMaster_Run
-./start_webui.sh --port 7991
+./start_webui.sh
 ```
 
-The deploy script now defaults the runtime project space to `./project_space` inside the target directory. You can still override it either at deploy time with `--project-space-root`, or at run time with `CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace`.
+The deploy script now defaults the runtime project space to `./project_space`
+inside the target directory. You can still override it either at deploy time
+with `--project-space-root`, or at run time with
+`CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace`. Deploy autorun does not pass a
+hard-coded port; keep stable runtime port/env defaults in the target
+`start_webui.sh`, or pass CLI arguments when launching manually.
 
 Then open:
 

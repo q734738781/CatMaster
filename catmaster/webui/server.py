@@ -4,6 +4,9 @@ import asyncio
 import json
 import mimetypes
 import re
+import shutil
+import tempfile
+import zipfile
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -12,6 +15,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 import uvicorn
 
 from .session_registry import SessionRegistry
@@ -19,6 +23,11 @@ from .session_registry import SessionRegistry
 TEXT_PREVIEW_LIMIT_BYTES = 160_000
 DIRECTORY_PREVIEW_LIMIT = 40
 STRUCTURE_ANIMATION_FRAME_LIMIT = 240
+UPLOAD_LIMIT_BYTES = 512 * 1024 * 1024
+ARCHIVE_ENTRY_LIMIT = 20_000
+ARCHIVE_TOTAL_BYTES_LIMIT = 2 * 1024 * 1024 * 1024
+UNZIP_ENTRY_LIMIT = 20_000
+UNZIP_TOTAL_BYTES_LIMIT = 2 * 1024 * 1024 * 1024
 STRUCTURE_FILE_SUFFIXES = {
     ".cif",
     ".cssr",
@@ -108,6 +117,112 @@ def _resolve_workspace_entry(session, rel_path: str = "") -> tuple[Path, Path, s
         raise HTTPException(status_code=404, detail="Requested path was not found.")
     rel_text = "" if candidate == workspace_root else str(candidate.relative_to(workspace_root)).replace("\\", "/")
     return workspace_root, candidate, rel_text
+
+
+def _resolve_workspace_destination(session, rel_path: str = "") -> tuple[Path, Path, str]:
+    workspace_root = _workspace_root_for_session(session)
+    requested = str(rel_path or "").strip().strip("/")
+    candidate = workspace_root if not requested else (workspace_root / requested).resolve()
+    try:
+        candidate.relative_to(workspace_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Requested path escapes the project space.") from exc
+    rel_text = "" if candidate == workspace_root else str(candidate.relative_to(workspace_root)).replace("\\", "/")
+    return workspace_root, candidate, rel_text
+
+
+def _resolve_workspace_mutation_entry(session, rel_path: str) -> tuple[Path, Path, str]:
+    workspace_root = _workspace_root_for_session(session)
+    requested = str(rel_path or "").strip().strip("/")
+    if not requested:
+        raise HTTPException(status_code=400, detail="Refusing to modify the project-space root.")
+    if "\x00" in requested:
+        raise HTTPException(status_code=400, detail="Requested path is invalid.")
+    parts = Path(requested.replace("\\", "/")).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(status_code=400, detail="Requested path is invalid.")
+    candidate = workspace_root.joinpath(*parts)
+    try:
+        candidate.parent.resolve().relative_to(workspace_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Requested path escapes the project space.") from exc
+    if not candidate.exists() and not candidate.is_symlink():
+        raise HTTPException(status_code=404, detail="Requested path was not found.")
+    if not candidate.is_symlink():
+        try:
+            candidate.resolve().relative_to(workspace_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Requested path escapes the project space.") from exc
+    rel_text = str(candidate.relative_to(workspace_root)).replace("\\", "/")
+    return workspace_root, candidate, rel_text
+
+
+def _safe_upload_filename(filename: str) -> str:
+    name = Path(str(filename or "").replace("\\", "/")).name.strip()
+    if not name or name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Upload filename is required.")
+    if "/" in name or "\\" in name or "\x00" in name:
+        raise HTTPException(status_code=400, detail="Upload filename is invalid.")
+    return name
+
+
+def _zip_info_is_symlink(info: zipfile.ZipInfo) -> bool:
+    return ((int(info.external_attr) >> 16) & 0o170000) == 0o120000
+
+
+def _safe_zip_member_path(root: Path, member_name: str) -> Path:
+    raw_name = str(member_name or "").replace("\\", "/")
+    if not raw_name or raw_name.startswith("/"):
+        raise HTTPException(status_code=400, detail="Zip archive contains an invalid path.")
+    parts = Path(raw_name).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(status_code=400, detail="Zip archive contains an unsafe path.")
+    target = root.joinpath(*parts).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Zip archive contains a path that escapes the target directory.") from exc
+    return target
+
+
+def _extract_zip_to_workspace(
+    *,
+    zip_path: Path,
+    target_dir: Path,
+    overwrite: bool = False,
+) -> list[dict[str, Any]]:
+    target_root = target_dir.resolve()
+    extracted: list[dict[str, Any]] = []
+    total_bytes = 0
+    entry_count = 0
+    try:
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            for info in archive.infolist():
+                if not info.filename or info.filename.endswith("/"):
+                    target_directory = _safe_zip_member_path(target_root, info.filename.rstrip("/"))
+                    target_directory.mkdir(parents=True, exist_ok=True)
+                    continue
+                if _zip_info_is_symlink(info):
+                    continue
+                entry_count += 1
+                if entry_count > UNZIP_ENTRY_LIMIT:
+                    raise HTTPException(status_code=413, detail="Zip archive contains too many files.")
+                total_bytes += int(info.file_size)
+                if total_bytes > UNZIP_TOTAL_BYTES_LIMIT:
+                    raise HTTPException(status_code=413, detail="Zip archive expands beyond the maximum allowed size.")
+
+                target = _safe_zip_member_path(target_root, info.filename)
+                if target.exists() and not overwrite:
+                    raise HTTPException(status_code=409, detail=f"Zip entry already exists: {info.filename}")
+                if target.exists() and target.is_dir():
+                    raise HTTPException(status_code=409, detail=f"Zip entry conflicts with a directory: {info.filename}")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info, "r") as source, target.open("wb") as dest:
+                    shutil.copyfileobj(source, dest)
+                extracted.append({"path": str(target.relative_to(target_root)).replace("\\", "/"), "size": int(info.file_size)})
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid zip archive.") from exc
+    return extracted
 
 
 def _entry_preview_kind(path: Path, *, mime_type: str = "") -> str:
@@ -479,6 +594,138 @@ def _file_content_payload(*, ctx: str, session, rel_path: str) -> dict[str, Any]
     return payload
 
 
+async def _upload_workspace_file(
+    *,
+    session,
+    rel_path: str,
+    filename: str,
+    request: Request,
+    overwrite: bool = False,
+    unzip: bool = False,
+) -> dict[str, Any]:
+    workspace_root, directory, normalized_dir = _resolve_workspace_destination(session, rel_path)
+    if directory.exists() and not directory.is_dir():
+        raise HTTPException(status_code=400, detail="Upload target is not a directory.")
+    directory.mkdir(parents=True, exist_ok=True)
+
+    safe_name = _safe_upload_filename(filename)
+    if unzip and not safe_name.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Unzip upload only supports .zip files.")
+    destination = (directory / safe_name).resolve()
+    try:
+        destination.relative_to(workspace_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Upload path escapes the project space.") from exc
+    if not unzip and destination.exists() and not overwrite:
+        raise HTTPException(status_code=409, detail="A file with this name already exists.")
+    if not unzip and destination.exists() and destination.is_dir():
+        raise HTTPException(status_code=409, detail="A directory with this name already exists.")
+
+    tmp_path = directory / f".{safe_name}.uploading"
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    bytes_written = 0
+    try:
+        with tmp_path.open("wb") as handle:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                bytes_written += len(chunk)
+                if bytes_written > UPLOAD_LIMIT_BYTES:
+                    raise HTTPException(status_code=413, detail="Upload exceeds the maximum allowed size.")
+                handle.write(chunk)
+        if unzip:
+            extracted = _extract_zip_to_workspace(zip_path=tmp_path, target_dir=directory, overwrite=overwrite)
+            tmp_path.unlink(missing_ok=True)
+            return {
+                "ok": True,
+                "path": normalized_dir,
+                "directory": normalized_dir,
+                "unzipped": True,
+                "extracted_count": len(extracted),
+                "extracted": extracted[:200],
+            }
+        tmp_path.replace(destination)
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
+
+    rel_file = str(destination.relative_to(workspace_root)).replace("\\", "/")
+    return {
+        "ok": True,
+        "path": rel_file,
+        "directory": normalized_dir,
+        "unzipped": False,
+        "file": _serialize_tree_entry(destination, workspace_root=workspace_root),
+    }
+
+
+def _delete_workspace_entry(*, session, rel_path: str) -> dict[str, Any]:
+    _workspace_root, candidate, normalized_path = _resolve_workspace_mutation_entry(session, rel_path)
+    if candidate.is_symlink() or candidate.is_file():
+        candidate.unlink()
+        node_type = "file"
+    elif candidate.is_dir():
+        shutil.rmtree(candidate)
+        node_type = "directory"
+    else:
+        raise HTTPException(status_code=400, detail="Requested path cannot be deleted.")
+    return {"ok": True, "path": normalized_path, "node_type": node_type}
+
+
+def _archive_workspace_entry(*, session, rel_path: str) -> FileResponse:
+    workspace_root, candidate, normalized_path = _resolve_workspace_entry(session, rel_path)
+    archive_base = candidate.name if normalized_path else workspace_root.name
+    archive_name = f"{archive_base or 'workspace'}.zip"
+
+    temp = tempfile.NamedTemporaryFile(prefix="catmaster-files-", suffix=".zip", delete=False)
+    temp_path = Path(temp.name)
+    temp.close()
+
+    total_bytes = 0
+    entry_count = 0
+    try:
+        with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            if candidate.is_file():
+                total_bytes = candidate.stat().st_size
+                if total_bytes > ARCHIVE_TOTAL_BYTES_LIMIT:
+                    raise HTTPException(status_code=413, detail="Archive exceeds the maximum allowed size.")
+                archive.write(candidate, arcname=candidate.name)
+                entry_count = 1
+            else:
+                for item in candidate.rglob("*"):
+                    if not item.is_file():
+                        continue
+                    try:
+                        item.resolve().relative_to(workspace_root)
+                    except ValueError:
+                        continue
+                    entry_count += 1
+                    if entry_count > ARCHIVE_ENTRY_LIMIT:
+                        raise HTTPException(status_code=413, detail="Archive contains too many files.")
+                    total_bytes += item.stat().st_size
+                    if total_bytes > ARCHIVE_TOTAL_BYTES_LIMIT:
+                        raise HTTPException(status_code=413, detail="Archive exceeds the maximum allowed size.")
+                    archive.write(item, arcname=str(item.relative_to(candidate.parent)).replace("\\", "/"))
+    except HTTPException:
+        temp_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Archive failed: {exc}") from exc
+
+    return FileResponse(
+        temp_path,
+        media_type="application/zip",
+        filename=archive_name,
+        background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
+    )
+
+
 def _runtime_snapshot(session) -> dict[str, Any]:
     reporter = session.reporter
     if reporter is None:
@@ -523,7 +770,21 @@ def _active_run_name(session, runtime: dict[str, Any] | None = None) -> str:
         run_id = str(info.get("run_id") or "").strip()
         if run_id:
             return run_id
+    run_dir = session.get_selected_run_dir()
+    try:
+        run_status = session._load_task_state_status(run_dir)
+    except Exception:
+        run_status = ""
+    if run_dir is not None and run_status in {"running", "starting", "awaiting_human_feedback"}:
+        return run_dir.name
     return ""
+
+
+def _display_run_status(session, run_dir) -> str:
+    try:
+        return str(session._display_status(getattr(session, "run_status", "idle"), run_dir) or "idle")
+    except Exception:
+        return str(getattr(session, "run_status", "idle") or "idle")
 
 
 def _merge_usage_summary(runtime_usage: dict[str, Any] | None, persisted_usage: dict[str, Any] | None) -> dict[str, Any]:
@@ -623,7 +884,7 @@ def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _pick_selected_run(session, requested_run: str = "") -> str:
+def _pick_selected_run(session, requested_run: str = "", *, lane: str = "") -> str:
     selected = str(requested_run or "").strip()
     runs = session.list_runs()
     run_names = {value for _, value in runs}
@@ -634,6 +895,14 @@ def _pick_selected_run(session, requested_run: str = "") -> str:
     current_name = current.name if current is not None else ""
     if current_name and current_name in run_names:
         return current_name
+    lane_name = str(lane or "").strip()
+    workspace_path = str(session.current_workspace_path() or "").strip()
+    if lane_name and workspace_path:
+        active_run = session._resolve_resume_dir(lane_name, workspace=Path(workspace_path))
+        active_name = Path(active_run).name if active_run else ""
+        if active_name and active_name in run_names:
+            session.select_run(active_name)
+            return active_name
     if runs:
         fallback = runs[0][1]
         session.select_run(fallback)
@@ -650,7 +919,7 @@ def _run_dir_for_name(session, run_name: str):
 
 def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "research", run_name: str = "") -> dict[str, Any]:
     session = registry.get_session(ctx)
-    selected_run = _pick_selected_run(session, run_name)
+    selected_run = _pick_selected_run(session, run_name, lane=lane)
     run_dir = session.get_selected_run_dir()
     runtime = _runtime_snapshot(session)
     active_run = _active_run_name(session, runtime)
@@ -685,7 +954,7 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         "active_run": active_run,
         "selected_run": selected_run,
         "cards": cards,
-        "run_status": str(session.run_status or "idle"),
+        "run_status": _display_run_status(session, run_dir),
         "run_status_text": session.run_status_text(),
         "run_info": dict(session.run_info or {}),
         "live_state": live_state,
@@ -930,6 +1199,37 @@ def create_app(*, project_space_root: str) -> FastAPI:
         if not candidate.is_file():
             raise HTTPException(status_code=400, detail="Only files can be downloaded.")
         return FileResponse(candidate, filename=candidate.name)
+
+    @app.get("/api/session/{ctx}/files/archive")
+    def _session_file_archive(ctx: str, path: str = ""):
+        session = registry.get_session(ctx)
+        return _archive_workspace_entry(session=session, rel_path=path)
+
+    @app.post("/api/session/{ctx}/files/upload")
+    async def _session_file_upload(
+        ctx: str,
+        request: Request,
+        path: str = "files",
+        filename: str = "",
+        overwrite: bool = False,
+        unzip: bool = False,
+    ):
+        session = registry.get_session(ctx)
+        return JSONResponse(
+            await _upload_workspace_file(
+                session=session,
+                rel_path=path,
+                filename=filename,
+                request=request,
+                overwrite=overwrite,
+                unzip=unzip,
+            )
+        )
+
+    @app.delete("/api/session/{ctx}/files/delete")
+    def _session_file_delete(ctx: str, path: str):
+        session = registry.get_session(ctx)
+        return JSONResponse(_delete_workspace_entry(session=session, rel_path=path))
 
     @app.post("/api/session/{ctx}/workspace/open")
     async def _workspace_open(ctx: str, request: Request):

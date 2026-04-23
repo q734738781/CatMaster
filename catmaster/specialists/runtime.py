@@ -14,6 +14,7 @@ from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.tools import StructuredTool
+from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from catmaster.llm.config import LLMProfile
@@ -633,6 +634,33 @@ class SpecialistRunner:
                     delay_s = self._FINAL_REPORT_RETRY_DELAYS_S[attempt_index]
                     logger.warning(
                         "%s retrying after retryable model/output failure on attempt %d/%d in %.1fs: %s",
+                        entrypoint,
+                        attempt_index + 1,
+                        max_attempts,
+                        delay_s,
+                        exc,
+                    )
+                    self._emit(
+                        "RUN_RETRY",
+                        payload={
+                            "entrypoint": entrypoint,
+                            "attempt": attempt_index + 1,
+                            "max_attempts": max_attempts,
+                            "delay_s": delay_s,
+                            "reason": str(exc),
+                        },
+                    )
+                    await asyncio.sleep(delay_s)
+                except Exception as exc:
+                    if not self._is_retryable_model_exception(exc):
+                        raise
+                    if attempt_index >= max_attempts - 1:
+                        raise RuntimeError(
+                            f"{entrypoint}_specialist failed after {max_attempts} attempts due to transient provider/schema instability."
+                        ) from exc
+                    delay_s = self._FINAL_REPORT_RETRY_DELAYS_S[attempt_index]
+                    logger.warning(
+                        "%s retrying after transient provider/schema failure on attempt %d/%d in %.1fs: %s",
                         entrypoint,
                         attempt_index + 1,
                         max_attempts,
@@ -2362,20 +2390,30 @@ class SpecialistRunner:
 
         @wrap_model_call(name="catmaster_retry_semantic_model_failures")
         async def _retry_invalid_model_responses(request: Any, handler: Any) -> Any:
+            request = cls._sanitize_model_request_for_history(request)
             max_attempts = len(cls._MODEL_RESPONSE_RETRY_DELAYS_S) + 1
             for attempt_index in range(max_attempts):
-                response = await handler(request)
                 try:
+                    response = await handler(request)
                     cls._validate_model_response_for_retry(response)
                     return response
-                except SpecialistRetryableModelResponseError:
-                    if attempt_index >= max_attempts - 1:
+                except Exception as exc:
+                    if not isinstance(exc, SpecialistRetryableModelResponseError) and not cls._is_retryable_model_exception(exc):
                         raise
+                    if attempt_index >= max_attempts - 1:
+                        raise SpecialistRetryableModelResponseError(str(exc)) from exc
                     delay_s = cls._MODEL_RESPONSE_RETRY_DELAYS_S[attempt_index]
                     await asyncio.sleep(delay_s)
             raise SpecialistRetryableModelResponseError("Unexpected model retry loop exit.")
 
         middleware.append(_retry_invalid_model_responses)
+
+        @wrap_tool_call(name="catmaster_textualize_multimodal_tool_results")
+        async def _textualize_multimodal_tool_results(request: Any, handler: Any) -> Any:
+            result = await handler(request)
+            return cls._sanitize_tool_result_for_history(result)
+
+        middleware.append(_textualize_multimodal_tool_results)
 
         @wrap_tool_call(name="catmaster_nonfatal_tool_errors")
         async def _handle_tool_errors(request: Any, handler: Any) -> Any:
@@ -2535,6 +2573,147 @@ class SpecialistRunner:
             if SpecialistRunner._match_report_heading(raw_line) == "summary":
                 return True
         return False
+
+    @classmethod
+    def _is_retryable_model_exception(cls, exc: Exception) -> bool:
+        text = str(exc or "").lower()
+        if not text:
+            return False
+        retryable_fragments = (
+            "response validation failed",
+            "eof while parsing",
+            "validation errors for unmarshaller",
+            "validation error for unmarshaller",
+            "union_tag_invalid",
+            "body.",
+            ".tool.content",
+        )
+        if "validationerror" in text and "unmarshaller" in text:
+            return True
+        if "openrouter" in text and "validation" in text:
+            return True
+        if "body." in text and ".tool.content" in text:
+            return True
+        return any(fragment in text for fragment in retryable_fragments[:4])
+
+    @classmethod
+    def _sanitize_tool_result_for_history(cls, result: Any) -> Any:
+        if isinstance(result, ToolMessage):
+            return cls._sanitize_tool_message_for_history(result)
+        if isinstance(result, Command):
+            update = getattr(result, "update", None)
+            if isinstance(update, dict) and isinstance(update.get("messages"), list):
+                updated_messages = [
+                    cls._sanitize_tool_message_for_history(item) if isinstance(item, ToolMessage) else item
+                    for item in update["messages"]
+                ]
+                return Command(
+                    graph=getattr(result, "graph", None),
+                    update={**update, "messages": updated_messages},
+                    resume=getattr(result, "resume", None),
+                    goto=getattr(result, "goto", ()),
+                )
+        return result
+
+    @classmethod
+    def _sanitize_model_request_for_history(cls, request: Any) -> Any:
+        messages = getattr(request, "messages", None)
+        override = getattr(request, "override", None)
+        if not isinstance(messages, list) or not callable(override):
+            return request
+        sanitized = [cls._sanitize_tool_message_for_history(item) if isinstance(item, ToolMessage) else item for item in messages]
+        if all(left is right for left, right in zip(messages, sanitized, strict=False)):
+            return request
+        return override(messages=sanitized)
+
+    @classmethod
+    def _sanitize_tool_message_for_history(cls, message: ToolMessage) -> ToolMessage:
+        content = getattr(message, "content", None)
+        if not cls._tool_content_needs_textualization(content):
+            return message
+        text = cls._textualized_tool_content(
+            content,
+            tool_name=str(getattr(message, "name", "") or ""),
+            additional_kwargs=getattr(message, "additional_kwargs", None),
+        )
+        return ToolMessage(
+            content=text,
+            additional_kwargs=dict(getattr(message, "additional_kwargs", None) or {}),
+            response_metadata=dict(getattr(message, "response_metadata", None) or {}),
+            name=getattr(message, "name", None),
+            id=getattr(message, "id", None),
+            tool_call_id=str(getattr(message, "tool_call_id", "") or "tool_result"),
+            artifact=getattr(message, "artifact", None),
+            status=getattr(message, "status", "success"),
+        )
+
+    @staticmethod
+    def _tool_content_needs_textualization(content: Any) -> bool:
+        if not isinstance(content, list):
+            return False
+        for item in content:
+            if isinstance(item, str):
+                continue
+            if not isinstance(item, dict):
+                return True
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type != "text":
+                return True
+        return False
+
+    @classmethod
+    def _textualized_tool_content(
+        cls,
+        content: Any,
+        *,
+        tool_name: str = "",
+        additional_kwargs: Any = None,
+    ) -> str:
+        if not isinstance(content, list):
+            return str(content or "").strip()
+        lines: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                if item.strip():
+                    lines.append(item.strip())
+                continue
+            if isinstance(item, dict):
+                item_type = str(item.get("type") or "content").strip() or "content"
+                if item_type == "text" and isinstance(item.get("text"), str):
+                    text = str(item.get("text") or "").strip()
+                    if text:
+                        lines.append(text)
+                    continue
+                lines.append(cls._multimodal_tool_block_reference(item, tool_name=tool_name, additional_kwargs=additional_kwargs))
+                continue
+            lines.append(f"[{type(item).__name__} tool content omitted from persistent history]")
+        return "\n".join(line for line in lines if line).strip() or "[tool result omitted from persistent history]"
+
+    @staticmethod
+    def _multimodal_tool_block_reference(
+        block: dict[str, Any],
+        *,
+        tool_name: str = "",
+        additional_kwargs: Any = None,
+    ) -> str:
+        block_type = str(block.get("type") or "content").strip() or "content"
+        mime_type = str(block.get("mime_type") or "").strip()
+        path = ""
+        if isinstance(additional_kwargs, dict):
+            path = str(additional_kwargs.get("read_file_path") or "").strip()
+            mime_type = mime_type or str(additional_kwargs.get("read_file_media_type") or "").strip()
+        block_id = str(block.get("id") or "").strip()
+        details = []
+        if tool_name:
+            details.append(f"tool={tool_name}")
+        if path:
+            details.append(f"path={path}")
+        if mime_type:
+            details.append(f"mime_type={mime_type}")
+        if block_id:
+            details.append(f"id={block_id}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        return f"[{block_type} tool content omitted from persistent history{suffix}]"
 
     @classmethod
     def _validate_model_response_for_retry(cls, response: Any) -> None:

@@ -12,56 +12,79 @@ from catmaster.llm.config import LLMConfig
 _logger = logging.getLogger(__name__)
 
 
-def _patch_langchain_openrouter_file_wrapper() -> None:
-    """Patch langchain_openrouter so file-block messages retain `role`.
+def _openrouter_text_block(text: str) -> dict[str, str]:
+    return {"type": "text", "text": str(text or "").strip() or "[non-text content omitted]"}
 
-    langchain_openrouter currently wraps file-block messages with SDK Pydantic
-    models via `model_construct(**fields)` after removing the `role` key. The
-    resulting serialized payload omits `role`, which OpenRouter rejects with
-    "Could not find discriminator field role". Keep the full dict so the SDK
-    models still dump `role` correctly.
-    """
-    try:
-        from langchain_openrouter import chat_models as chat_models_mod  # type: ignore
-    except Exception:
-        return
 
-    if getattr(chat_models_mod, "_catmaster_file_wrapper_patched", False):
-        return
+def _unsupported_openrouter_block_text(block: dict[str, Any]) -> str:
+    block_type = str(block.get("type") or "content").strip() or "content"
+    details: list[str] = []
+    for key in ("id", "mime_type", "filename", "name"):
+        value = str(block.get(key) or "").strip()
+        if value:
+            details.append(f"{key}={value}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    return f"[{block_type} block omitted from replayed message{suffix}]"
 
-    original = getattr(chat_models_mod, "_wrap_messages_for_sdk", None)
-    has_file_blocks = getattr(chat_models_mod, "_has_file_content_blocks", None)
-    if not callable(original) or not callable(has_file_blocks):
-        return
 
-    def _fixed_wrap_messages_for_sdk(message_dicts: list[dict[str, Any]]) -> list[dict[str, Any]] | list[Any]:
-        if not has_file_blocks(message_dicts):
-            return message_dicts
+def _sanitize_openrouter_content(content: Any, *, role: str | None = None) -> Any:
+    """Normalize replayed message blocks to the current OpenRouter SDK schema."""
+    if not isinstance(content, list):
+        return content
 
-        try:
-            from openrouter import components  # type: ignore  # noqa: PLC0415
-        except Exception:
-            return message_dicts
+    sanitized: list[Any] = []
+    for item in content:
+        if isinstance(item, str):
+            if item.strip():
+                sanitized.append(_openrouter_text_block(item))
+            continue
+        if not isinstance(item, dict):
+            sanitized.append(_openrouter_text_block(f"[{type(item).__name__} content omitted from replayed message]"))
+            continue
 
-        role_to_model: dict[str, Any] = {
-            "user": components.UserMessage,
-            "system": components.SystemMessage,
-            "assistant": components.AssistantMessage,
-            "tool": components.ToolResponseMessage,
-            "developer": components.DeveloperMessage,
-        }
-
-        wrapped: list[Any] = []
-        for msg in message_dicts:
-            model_cls = role_to_model.get(str(msg.get("role", "") or ""))
-            if model_cls is None:
-                wrapped.append(msg)
+        block = dict(item)
+        block_type = str(block.get("type") or "").strip().lower()
+        if role == "tool" and block_type != "text":
+            sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
+            continue
+        if block_type in {"text", "file", "image_url", "input_audio", "input_video", "video_url"}:
+            sanitized.append(block)
+            continue
+        if block_type == "image":
+            image_url = block.get("image_url")
+            if isinstance(image_url, dict) and image_url.get("url"):
+                block["type"] = "image_url"
+                sanitized.append(block)
                 continue
-            wrapped.append(model_cls.model_construct(**dict(msg)))
-        return wrapped
+            url = str(block.get("url") or "").strip()
+            if url:
+                sanitized.append({"type": "image_url", "image_url": {"url": url}})
+                continue
+            sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
+            continue
 
-    chat_models_mod._wrap_messages_for_sdk = _fixed_wrap_messages_for_sdk
-    chat_models_mod._catmaster_file_wrapper_patched = True
+        text = str(block.get("text") or "").strip()
+        if text:
+            sanitized.append(_openrouter_text_block(text))
+        else:
+            sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
+    return sanitized
+
+
+def _sanitize_openrouter_message_dicts(message_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for message in message_dicts:
+        if not isinstance(message, dict):
+            sanitized.append(message)
+            continue
+        content = message.get("content")
+        role = str(message.get("role") or "").strip().lower() or None
+        new_content = _sanitize_openrouter_content(content, role=role)
+        if new_content is content:
+            sanitized.append(message)
+        else:
+            sanitized.append({**message, "content": new_content})
+    return sanitized
 
 
 def _suppress_openrouter_file_block_serializer_warnings() -> None:
@@ -70,8 +93,9 @@ def _suppress_openrouter_file_block_serializer_warnings() -> None:
     The OpenRouter API accepts file content blocks, but the current SDK type
     declarations lag behind and emit noisy `Pydantic serializer warnings`
     during request serialization. These are not actionable for callers once the
-    payload is patched to include `role` correctly, so suppress this specific
-    warning family while leaving real API failures untouched.
+    payload is produced by the current langchain-openrouter/openrouter stack, so
+    suppress this specific warning family while leaving real API failures
+    untouched.
     """
     warnings.filterwarnings(
         "ignore",
@@ -419,7 +443,6 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         from langchain_openrouter import ChatOpenRouter
         from langchain_core.messages import BaseMessage
 
-        _patch_langchain_openrouter_file_wrapper()
         _suppress_openrouter_file_block_serializer_warnings()
         api_key = _require_api_key(cfg)
         kwargs = _resolve_openrouter_request_kwargs(cfg)
@@ -452,6 +475,7 @@ def build_chat_model(cfg: LLMConfig) -> Any:
                     message_dicts,
                     self.content_cache_control,
                 )
+                message_dicts = _sanitize_openrouter_message_dicts(message_dicts)
                 return message_dicts, params
 
         return CatMasterChatOpenRouter(

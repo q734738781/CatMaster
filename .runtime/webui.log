@@ -1,0 +1,241 @@
+INFO:     Started server process [609167]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:48990 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49006 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49020 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49030 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49036 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47624 - "POST /api/session/ctx_5cfa06df4058/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47636 - "POST /api/session/ctx_5cfa06df4058/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59174 - "POST /api/session/ctx_5cfa06df4058/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59186 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33714 - "GET /?ctx=ctx_5cfa06df4058&lane=experiment&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33726 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&lane=experiment&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33738 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=14 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33740 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33754 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33766 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60938 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60940 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60948 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51084 - "GET /monitor/?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51096 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51120 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=30 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51108 - "GET /api/session/ctx_5cfa06df4058/details?run=run_20260422_081438_b5cfea HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34244 - "GET /?ctx=ctx_5cfa06df4058&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34260 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34272 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=30 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56120 - "GET /?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56132 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56142 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=57 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57634 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57640 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57654 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=57 HTTP/1.1" 200 OK
+<string>:31: BadInputSetWarning: Overriding the POTCAR functional is generally not recommended  as it significantly affects the results of calculations and compatibility with other calculations done with the same input set. Note that some POTCAR symbols specified in the configuration file may not be available in the selected functional.
+2026-04-22 16:17:59,462 - INFO : info:check_all_finished: False
+2026-04-22 16:17:59,467 - INFO : remote path: /public/home/chenhh/catmaster_work/ec5d1d75856f7747f23301cc0149765c6f14f4e4
+2026-04-22 16:18:01,009 - INFO : job: 8acd9929cf4e0805b879ff06ae01bf800aa7f5c8 submit; job_id is 2772
+2026-04-22 16:19:02,485 - INFO : job: 8acd9929cf4e0805b879ff06ae01bf800aa7f5c8 2772 finished
+2026-04-22 16:19:02,620 - ERROR : Get error code 2 in calling tar czfh ec5d1d75856f7747f23301cc0149765c6f14f4e4.tar.gz o2_vasp_relax_in/status.json o2_vasp_relax_in/vasp_stdout.out o2_vasp_relax_in/log o2_vasp_relax_in/XDATCAR o2_vasp_relax_in/REPORT o2_vasp_relax_in/CHG o2_vasp_relax_in/IBZKPT o2_vasp_relax_in/vasprun.xml o2_vasp_relax_in/EIGENVAL o2_vasp_relax_in/CONTCAR o2_vasp_relax_in/POTCAR o2_vasp_relax_in/stderr.log o2_vasp_relax_in/OUTCAR o2_vasp_relax_in/CHGCAR o2_vasp_relax_in/task_script/vasp_boot.py o2_vasp_relax_in/DOSCAR o2_vasp_relax_in/stdout.log o2_vasp_relax_in/POSCAR o2_vasp_relax_in/INCAR o2_vasp_relax_in/KPOINTS o2_vasp_relax_in/err o2_vasp_relax_in/OSZICAR o2_vasp_relax_in/83e484527441c8ea1bb40cb0464bed868d4b58ae_task_tag_finished o2_vasp_relax_in/WAVECAR o2_vasp_relax_in/PCDAT with job: ec5d1d75856f7747f23301cc0149765c6f14f4e4 . message: tar: o2_vasp_relax_in/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/POTCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/POSCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/INCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/PCDAT: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+Traceback (most recent call last):
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 276, in try_download_result
+    self.download_jobs()
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/submission.py", line 496, in download_jobs
+    self.machine.context.download(self)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 795, in download
+    self._get_files(
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 995, in _get_files
+    raise e
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/contexts/ssh_context.py", line 989, in _get_files
+    self.block_checkcall(tar_cmd)
+  File "/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/dpdispatcher/base_context.py", line 104, in block_checkcall
+    raise RuntimeError(
+RuntimeError: Get error code 2 in calling tar czfh ec5d1d75856f7747f23301cc0149765c6f14f4e4.tar.gz o2_vasp_relax_in/status.json o2_vasp_relax_in/vasp_stdout.out o2_vasp_relax_in/log o2_vasp_relax_in/XDATCAR o2_vasp_relax_in/REPORT o2_vasp_relax_in/CHG o2_vasp_relax_in/IBZKPT o2_vasp_relax_in/vasprun.xml o2_vasp_relax_in/EIGENVAL o2_vasp_relax_in/CONTCAR o2_vasp_relax_in/POTCAR o2_vasp_relax_in/stderr.log o2_vasp_relax_in/OUTCAR o2_vasp_relax_in/CHGCAR o2_vasp_relax_in/task_script/vasp_boot.py o2_vasp_relax_in/DOSCAR o2_vasp_relax_in/stdout.log o2_vasp_relax_in/POSCAR o2_vasp_relax_in/INCAR o2_vasp_relax_in/KPOINTS o2_vasp_relax_in/err o2_vasp_relax_in/OSZICAR o2_vasp_relax_in/83e484527441c8ea1bb40cb0464bed868d4b58ae_task_tag_finished o2_vasp_relax_in/WAVECAR o2_vasp_relax_in/PCDAT with job: ec5d1d75856f7747f23301cc0149765c6f14f4e4 . message: tar: o2_vasp_relax_in/XDATCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/IBZKPT: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/vasprun.xml: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/EIGENVAL: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/CONTCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/POTCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/OUTCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/DOSCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/POSCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/INCAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/KPOINTS: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/OSZICAR: Cannot open: Resource temporarily unavailable
+tar: o2_vasp_relax_in/PCDAT: Cannot open: Resource temporarily unavailable
+tar: Exiting with failure status due to previous errors
+
+2026-04-22 16:19:02,628 - INFO : Retrying in 1 minute...
+INFO:     127.0.0.1:40558 - "GET /?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40570 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40578 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=75 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55718 - "GET /?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55724 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55730 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=103 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49028 - "GET /files/?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49032 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49060 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=103 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49044 - "GET /api/session/ctx_5cfa06df4058/files/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55092 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55100 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55104 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55116 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55130 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes%2Fo2_relax_report.md HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55146 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes%2Fo2_relax_result.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52590 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes%2Fo2_relax_report.md HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52600 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fcalculations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52614 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53042 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fcalculations%2Fo2_vasp_relax_in HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53046 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53048 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fcalculations%2Fo2_vasp_relax_out HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53054 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_out HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53058 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fcalculations%2Fo2_vasp_relax_out%2Fo2_vasp_relax_in HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53074 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_out%2Fo2_vasp_relax_in HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53080 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_out%2Fo2_vasp_relax_in%2FCONTCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53082 - "GET /static/vendor/jsmol/JSmol.min.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53098 - "GET /static/vendor/jsmol/j2s/img/cursor_wait.gif HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53100 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53102 - "GET /static/vendor/jsmol/j2s/img/JSmol_spinner.gif HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53106 - "GET /static/vendor/jsmol/j2s/core/package.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53122 - "GET /static/vendor/jsmol/j2s/core/corejmol.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53130 - "GET /static/vendor/jsmol/j2s/J/translation/PO.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53146 - "GET /static/vendor/jsmol/j2s/core/corescript.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53154 - "GET /static/vendor/jsmol/j2s/J/translation/JmolApplet/zh_CN.po HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53170 - "GET /static/vendor/jsmol/j2s/J/translation/JmolApplet/zh_TW.po HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53178 - "GET /static/vendor/jsmol/j2s/core/corescriptcmd.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53194 - "GET /static/vendor/jsmol/j2s/core/coretext.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53200 - "GET /api/session/ctx_5cfa06df4058/files/view?path=files/calculations/o2_vasp_relax_out/o2_vasp_relax_in/CONTCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53216 - "GET /static/vendor/jsmol/j2s/J/adapter/readers/xtal/VaspPoscarReader.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53230 - "GET /static/vendor/jsmol/j2s/core/coresym.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53234 - "GET /static/vendor/jsmol/j2s/java/util/Stack.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53242 - "GET /static/vendor/jsmol/j2s/java/util/Vector.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53246 - "GET /static/vendor/jsmol/j2s/java/util/HashSet.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53258 - "GET /static/vendor/jsmol/j2s/java/util/HashMap.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53274 - "GET /static/vendor/jsmol/j2s/J/shape/Axes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53278 - "GET /static/vendor/jsmol/j2s/J/shape/Uccage.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53286 - "GET /static/vendor/jsmol/j2s/core/coresurface.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53300 - "GET /static/vendor/jsmol/j2s/J/shape/MeshCollection.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53310 - "GET /static/vendor/jsmol/j2s/J/shape/Mesh.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53322 - "GET /static/vendor/jsmol/j2s/J/render/MeshRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53330 - "GET /static/vendor/jsmol/j2s/J/shapespecial/Draw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53338 - "GET /static/vendor/jsmol/j2s/J/shapespecial/DrawMesh.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53354 - "GET /static/vendor/jsmol/j2s/J/renderspecial/DrawRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53362 - "GET /static/vendor/jsmol/j2s/J/render/UccageRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53372 - "GET /static/vendor/jsmol/j2s/J/render/CageRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53386 - "GET /static/vendor/jsmol/j2s/J/render/AxesRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FINCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45068 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FKPOINTS HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45078 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FPOSCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45090 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45096 - "GET /api/session/ctx_5cfa06df4058/files/view?path=files/calculations/o2_vasp_relax_in/POSCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45098 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FPOTCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45110 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FPOSCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45116 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45122 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FKPOINTS HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45128 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FINCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45134 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FKPOINTS HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45144 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FPOSCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45158 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45174 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fo2_vasp_relax_in%2FINCAR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43520 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2F_tool_outputs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43536 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2F_tool_outputs%2Fvasp_execute_batch HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43550 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2F_tool_outputs%2Fvasp_prepare HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43566 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2F_tool_outputs%2Fvasp_prepare HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43572 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2F_tool_outputs%2Fvasp_execute_batch%2Fvasp_execute_batch_20260422T082003350705Z_79b51b99.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43574 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2F_tool_outputs%2Fvasp_prepare%2Fvasp_prepare_20260422T081743445601Z_510b5228.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55904 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fscripts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55918 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fscripts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55922 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fstructures HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55930 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fstructures HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55944 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fstructures%2Fo2_gas_initial.vasp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55958 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55972 - "GET /api/session/ctx_5cfa06df4058/files/view?path=files/structures/o2_gas_initial.vasp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55980 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fstructures%2Fo2_gas_relaxed.vasp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55988 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56000 - "GET /api/session/ctx_5cfa06df4058/files/view?path=files/structures/o2_gas_relaxed.vasp HTTP/1.1" 200 OK
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [609167]
+usage: __main__.py [-h] [--project-space-root PROJECT_SPACE_ROOT]
+                   [--host HOST] [--port PORT]
+                   [--timeout-keep-alive TIMEOUT_KEEP_ALIVE]
+                   [--timeout-graceful-shutdown TIMEOUT_GRACEFUL_SHUTDOWN]
+__main__.py: error: unrecognized arguments: --start
+INFO:     Started server process [724273]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:54322 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54334 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54336 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54348 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54352 - "GET /static/asset-KaTeX_Main-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54368 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54370 - "GET /monitor/?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54372 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54394 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54380 - "GET /api/session/ctx_5cfa06df4058/details?run=run_20260422_081438_b5cfea HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33838 - "GET /files/?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33842 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&run=run_20260422_081438_b5cfea&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33854 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33846 - "GET /api/session/ctx_5cfa06df4058/files/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33870 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33878 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2F.deepagents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33886 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2F.deepagents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45096 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2F_tool_outputs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45098 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2F_tool_outputs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45112 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45116 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes%2Fo2_relax_report.md HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45132 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40614 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes%2Fo2_relax_report.md HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40618 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40630 - "POST /api/session/ctx_5cfa06df4058/files/upload?path=files%2Fnotes&filename=SI_infrastructure.png&overwrite=false HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40638 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40650 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes%2FSI_infrastructure.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40664 - "GET /api/session/ctx_5cfa06df4058/files/download?path=files/notes/SI_infrastructure.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40270 - "GET /api/session/ctx_5cfa06df4058/files/archive?path=files%2Fnotes%2FSI_infrastructure.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39930 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39946 - "GET /api/session/ctx_5cfa06df4058/files/archive?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53372 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fnotes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53378 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fcalculations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53394 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43596 - "POST /api/session/ctx_5cfa06df4058/files/upload?path=files%2Fcalculations&filename=notes.zip&overwrite=false HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43598 - "GET /api/session/ctx_5cfa06df4058/files/tree?path=files%2Fcalculations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43614 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43626 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38820 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38830 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38842 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38846 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38854 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38858 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38864 - "GET /api/session/ctx_5cfa06df4058/files/content?path=files%2Fcalculations%2Fnotes.zip HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45052 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45058 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45068 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45080 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45096 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45084 - "GET /static/asset-KaTeX_Main-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37704 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37720 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:37724 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:37732 - "GET /api/bootstrap?ctx=ctx_5cfa06df4058&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37738 - "GET /static/asset-KaTeX_Main-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:37748 - "GET /api/session/ctx_5cfa06df4058/stream?last_seq=0 HTTP/1.1" 200 OK

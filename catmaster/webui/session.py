@@ -444,6 +444,7 @@ class WebSession:
                 self._run_loop = loop
 
             async def _execute() -> Dict[str, Any]:
+                nonlocal run_dir
                 llm_cfg_mod = sys.modules.get("catmaster.llm.config")
                 if llm_cfg_mod is None:
                     llm_cfg_mod = importlib.import_module("catmaster.llm.config")
@@ -477,6 +478,14 @@ class WebSession:
                     self.reporter.set_run_dir(run_dir)
                 self._write_active_runs(effective_lane, run_dir, workspace=ws)
                 self._save_ui_prompt(run_dir, session_user_prompt, is_resume=is_resume)
+                self._write_initial_run_state(
+                    run_dir,
+                    entrypoint=effective_lane,
+                    user_prompt=session_user_prompt,
+                    chat_session_id=message_session_id,
+                    thread_id=str(thread_binding.get("thread_id") or message_session_id),
+                    is_resume=is_resume,
+                )
                 self._mark_sidebar_cache_dirty()
                 if is_resume:
                     if hasattr(runner, "aresume"):
@@ -1230,6 +1239,9 @@ class WebSession:
             return
         if not isinstance(payload, dict):
             return
+        status = str(payload.get("status") or "").strip().lower()
+        if status:
+            state["status"] = status
         work_label = str(payload.get("text_preview") or "").strip()
         if work_label and not str(state.get("current_task_goal") or "").strip():
             state["current_task_goal"] = work_label
@@ -1350,6 +1362,49 @@ class WebSession:
             active_runs[lane] = str(run_dir)
         try:
             active_runs_path.write_text(json.dumps(active_runs, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
+    def _write_initial_run_state(
+        self,
+        run_dir: Path,
+        *,
+        entrypoint: str,
+        user_prompt: str,
+        chat_session_id: str,
+        thread_id: str,
+        is_resume: bool,
+    ) -> None:
+        if not run_dir:
+            return
+        try:
+            run_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return
+        payload = self._read_run_state_payload(run_dir)
+        if str(payload.get("status") or "").strip().lower() in {
+            "done",
+            "failure",
+            "error",
+            "needs_intervention",
+        }:
+            return
+        payload.update(
+            {
+                "schema_version": int(payload.get("schema_version") or 1),
+                "entrypoint": str(payload.get("entrypoint") or entrypoint or "research").strip() or "research",
+                "status": "running",
+                "phase": str(payload.get("phase") or "executing"),
+                "user_prompt": str(payload.get("user_prompt") or user_prompt or ""),
+                "chat_session_id": str(payload.get("chat_session_id") or chat_session_id or ""),
+                "thread_id": str(payload.get("thread_id") or thread_id or ""),
+                "text_preview": str(payload.get("text_preview") or user_prompt or "")[:280],
+                "proposal_review": bool(payload.get("proposal_review") or False),
+                "resume": bool(is_resume),
+            }
+        )
+        try:
+            (run_dir / RUN_STATE_FILE).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             return
 
@@ -1629,8 +1684,6 @@ class WebSession:
 
     def _display_status(self, base_status: str, selected_run: Optional[Path]) -> str:
         status = str(base_status or "").strip() or "unknown"
-        if status not in {"running", "starting", "paused"}:
-            return status
         pending = self.get_prompt()
         if isinstance(pending, dict):
             return "awaiting_human_feedback"
@@ -1659,6 +1712,10 @@ class WebSession:
             "starting",
             "done",
             "blocked",
+            "error",
+            "failure",
+            "needs_intervention",
+            "interrupted_paused",
         }:
             return status
         return ""

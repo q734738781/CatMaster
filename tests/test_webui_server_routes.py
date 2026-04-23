@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 from ase import Atoms
@@ -97,6 +99,163 @@ def test_files_routes_list_preview_and_download(tmp_path: Path) -> None:
     download = client.get(f"/api/session/{ctx}/files/download", params={"path": "files/notes.md"})
     assert download.status_code == 200
     assert "Hello files view" in download.text
+
+
+def test_files_routes_upload_and_archive(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    (ws / "files" / "nested").mkdir(parents=True)
+    (ws / "metadata").mkdir(parents=True)
+    (ws / "files" / "nested" / "existing.txt").write_text("old", encoding="utf-8")
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+
+    upload = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "files/nested", "filename": "new.txt"},
+        content=b"uploaded content",
+        headers={"content-type": "text/plain"},
+    )
+    assert upload.status_code == 200
+    assert upload.json()["path"] == "files/nested/new.txt"
+    assert (ws / "files" / "nested" / "new.txt").read_text(encoding="utf-8") == "uploaded content"
+
+    conflict = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "files/nested", "filename": "new.txt"},
+        content=b"replacement",
+    )
+    assert conflict.status_code == 409
+
+    overwrite = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "files/nested", "filename": "new.txt", "overwrite": "true"},
+        content=b"replacement",
+    )
+    assert overwrite.status_code == 200
+    assert (ws / "files" / "nested" / "new.txt").read_text(encoding="utf-8") == "replacement"
+
+    escaped = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "../outside", "filename": "bad.txt"},
+        content=b"bad",
+    )
+    assert escaped.status_code == 400
+
+    archive = client.get(f"/api/session/{ctx}/files/archive", params={"path": "files/nested"})
+    assert archive.status_code == 200
+    assert archive.headers["content-type"].startswith("application/zip")
+    with zipfile.ZipFile(BytesIO(archive.content)) as zip_handle:
+        names = set(zip_handle.namelist())
+        assert "nested/new.txt" in names
+        assert zip_handle.read("nested/new.txt") == b"replacement"
+
+
+def test_files_routes_upload_unzip_and_delete(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    (ws / "files" / "incoming").mkdir(parents=True)
+    (ws / "metadata").mkdir(parents=True)
+
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zip_handle:
+        zip_handle.writestr("folder/a.txt", "alpha")
+        zip_handle.writestr("folder/b.txt", "beta")
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo"})
+    ctx = boot.json()["ctx"]
+
+    unzip = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "files/incoming", "filename": "bundle.zip", "unzip": "true"},
+        content=zip_buffer.getvalue(),
+        headers={"content-type": "application/zip"},
+    )
+    assert unzip.status_code == 200
+    payload = unzip.json()
+    assert payload["unzipped"] is True
+    assert payload["extracted_count"] == 2
+    assert not (ws / "files" / "incoming" / "bundle.zip").exists()
+    assert (ws / "files" / "incoming" / "folder" / "a.txt").read_text(encoding="utf-8") == "alpha"
+
+    conflict = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "files/incoming", "filename": "bundle.zip", "unzip": "true"},
+        content=zip_buffer.getvalue(),
+        headers={"content-type": "application/zip"},
+    )
+    assert conflict.status_code == 409
+
+    overwrite = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "files/incoming", "filename": "bundle.zip", "unzip": "true", "overwrite": "true"},
+        content=zip_buffer.getvalue(),
+        headers={"content-type": "application/zip"},
+    )
+    assert overwrite.status_code == 200
+
+    delete_file = client.delete(f"/api/session/{ctx}/files/delete", params={"path": "files/incoming/folder/a.txt"})
+    assert delete_file.status_code == 200
+    assert not (ws / "files" / "incoming" / "folder" / "a.txt").exists()
+
+    delete_dir = client.delete(f"/api/session/{ctx}/files/delete", params={"path": "files/incoming/folder"})
+    assert delete_dir.status_code == 200
+    assert not (ws / "files" / "incoming" / "folder").exists()
+
+    delete_root = client.delete(f"/api/session/{ctx}/files/delete", params={"path": ""})
+    assert delete_root.status_code == 400
+
+
+def test_files_upload_unzip_rejects_unsafe_paths(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    (ws / "files").mkdir(parents=True)
+    (ws / "metadata").mkdir(parents=True)
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zip_handle:
+        zip_handle.writestr("../escape.txt", "bad")
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo"})
+    ctx = boot.json()["ctx"]
+
+    response = client.post(
+        f"/api/session/{ctx}/files/upload",
+        params={"path": "files", "filename": "bad.zip", "unzip": "true"},
+        content=zip_buffer.getvalue(),
+        headers={"content-type": "application/zip"},
+    )
+    assert response.status_code == 400
+    assert not (ws / "escape.txt").exists()
+
+
+def test_files_archive_skips_symlinks_that_escape_workspace(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    (ws / "files").mkdir(parents=True)
+    (ws / "metadata").mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside secret", encoding="utf-8")
+    (ws / "files" / "safe.txt").write_text("safe", encoding="utf-8")
+    try:
+        (ws / "files" / "escape.txt").symlink_to(outside)
+    except OSError:
+        return
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo"})
+    ctx = boot.json()["ctx"]
+
+    archive = client.get(f"/api/session/{ctx}/files/archive", params={"path": "files"})
+    assert archive.status_code == 200
+    with zipfile.ZipFile(BytesIO(archive.content)) as zip_handle:
+        names = set(zip_handle.namelist())
+        assert "files/safe.txt" in names
+        assert "files/escape.txt" not in names
 
 
 def test_structure_view_and_animation_routes(tmp_path: Path, monkeypatch) -> None:
@@ -550,3 +709,39 @@ def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path)
     assert payload["todo_items"] == []
     assert payload["current_chat_session"]
     assert len(payload["chat_sessions"]) >= 2
+
+
+def test_bootstrap_recovers_active_run_for_lane(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    run_dir = ws / "metadata" / "runs" / "run_live"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (ws / "files").mkdir(parents=True, exist_ok=True)
+    (ws / "metadata" / "active_runs.json").write_text(
+        json.dumps({"experiment": "runs/run_live"}),
+        encoding="utf-8",
+    )
+    (run_dir / "run_state.json").write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "entrypoint": "experiment",
+                "phase": "executing",
+                "text_preview": "Still working.",
+                "chat_session_id": "chat_demo",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    response = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_run"] == "run_live"
+    assert payload["active_run"] == "run_live"
+    assert payload["run_status"] == "running"
+    assert payload["live_state"]["status"] == "running"
+    assert payload["live_state"]["current_task_goal"] == "Still working."

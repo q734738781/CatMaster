@@ -5,10 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Local startup defaults.
 # Set these if you want convenient persistent values when launching via this script.
-LOCAL_PROJECT_SPACE_ROOT="/home/chenhh/python_projects/cm_app"
+LOCAL_PROJECT_SPACE_ROOT="/home/chenhh/python_projects/cm_test"
 LOCAL_CONDA_ENV_NAME="catmaster"
 LOCAL_HOST="0.0.0.0"
-LOCAL_PORT="7980"
+LOCAL_PORT="7990"
 
 PROJECT_SPACE_ROOT="${CATMASTER_PROJECT_SPACE_ROOT:-${LOCAL_PROJECT_SPACE_ROOT:-$ROOT/project_space}}"
 CONDA_ENV_NAME="${CATMASTER_CONDA_ENV:-${LOCAL_CONDA_ENV_NAME:-catmaster}}"
@@ -26,6 +26,7 @@ usage() {
 Usage: ./start_webui.sh [script-options] [webui-options]
 
 Script options:
+  --start        Start WebUI in the background (default).
   --foreground   Run WebUI in the current terminal.
   --status       Show whether the background WebUI is running.
   --stop         Stop the background WebUI recorded in $PID_FILE.
@@ -117,6 +118,10 @@ has_flag() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --start)
+      RUN_MODE="background"
+      shift
+      ;;
     --foreground)
       RUN_MODE="foreground"
       shift

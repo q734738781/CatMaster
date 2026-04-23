@@ -44,7 +44,7 @@ openai
 langchain
 langchain-core
 langchain-openai
-langchain-openrouter
+langchain-openrouter>=0.2.1
 langchain-mcp-adapters
 langchain-community
 langgraph
@@ -53,7 +53,7 @@ langmem
 langgraph-checkpoint-sqlite>=3.0.3
 aiosqlite
 httpx
-openrouter
+openrouter>=0.9.1
 tavily-python
 faiss-cpu
 
