@@ -22,7 +22,7 @@ def test_http_debug_clients_log_raw_post_and_response(monkeypatch, caplog) -> No
     fake_httpx = SimpleNamespace(Client=_FakeClient, AsyncClient=_FakeAsyncClient)
     monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
 
-    cfg = LLMConfig(provider="openrouter", model="openai/gpt-5.4:online")
+    cfg = LLMConfig(provider="openrouter", model="openai/gpt-5.4")
 
     caplog.set_level(logging.INFO, logger="catmaster.llm.factory")
     sync_client, _ = factory._build_http_debug_clients(cfg)
@@ -59,7 +59,7 @@ def test_http_debug_logging_compacts_blank_lines(monkeypatch, caplog) -> None:
     fake_httpx = SimpleNamespace(Client=_FakeClient, AsyncClient=_FakeAsyncClient)
     monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
 
-    cfg = LLMConfig(provider="openrouter", model="openai/gpt-5.4:online")
+    cfg = LLMConfig(provider="openrouter", model="openai/gpt-5.4")
 
     caplog.set_level(logging.INFO, logger="catmaster.llm.factory")
     sync_client, _ = factory._build_http_debug_clients(cfg)

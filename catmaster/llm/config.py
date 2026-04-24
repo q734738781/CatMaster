@@ -65,6 +65,56 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "literature_synthesizer",
     "literature_deep_research",
 )
+AGENT_ROLE_ALIASES: dict[str, str] = {
+    "proposal_agent": "proposal",
+    "planning_director": "director",
+    "experiment_specialist": "task_runner",
+    "research_specialist": "research_lead",
+    "research_kernel_updater": "research_state_updater",
+    "writing_specialist": "write_director",
+    "writing_worker_agent": "section_writer",
+    "peer_review_specialist": "write_reviewer",
+    "writing_polisher_agent": "academic_polisher",
+    "latex_fixer": "tex_compile_fixer",
+    "memory_patcher": "memory_patch",
+    "run_summary": "summary",
+    "tool_router": "tool_selector",
+    "literature_agent": "literature_synthesizer",
+    "litreview_agent": "literature_deep_research",
+    "metadata_agent": "literature_deep_research",
+}
+LITERATURE_ROLE_ALIASES: dict[str, str] = {
+    **AGENT_ROLE_ALIASES,
+    "research_specialist_fast_lane": "fast_director",
+}
+
+
+def _normalize_agent_role_name(role: Any) -> str:
+    text = str(role or "").strip()
+    if not text:
+        return ""
+    return AGENT_ROLE_ALIASES.get(text, text)
+
+
+def _normalize_literature_role_name(role: Any) -> str:
+    text = str(role or "").strip()
+    if not text:
+        return ""
+    return LITERATURE_ROLE_ALIASES.get(text, text)
+
+
+def _normalize_agents_mapping(raw_agents: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for raw_role, bound in raw_agents.items():
+        role = _normalize_agent_role_name(raw_role)
+        if not role:
+            continue
+        if role in normalized and normalized[role] != bound:
+            raise ValueError(
+                f"Conflicting model bindings provided for role {role!r} via aliases in llm config agents."
+            )
+        normalized[role] = bound
+    return normalized
 
 
 @dataclass
@@ -273,7 +323,7 @@ class LiteratureRuntimeConfig:
         role_auto_max_raw = data.get("role_auto_max")
         if isinstance(role_auto_max_raw, dict):
             for role, depth in role_auto_max_raw.items():
-                role_text = str(role or "").strip()
+                role_text = _normalize_literature_role_name(role)
                 depth_text = str(depth or "").strip().lower()
                 if not role_text:
                     continue
@@ -487,15 +537,16 @@ class LLMProfile:
     writing: WritingRuntimeConfig = field(default_factory=WritingRuntimeConfig)
 
     def label_for_role(self, role: str) -> str:
-        label = self.agents.get(role)
+        canonical_role = _normalize_agent_role_name(role)
+        label = self.agents.get(canonical_role)
         if not label:
-            fallback_role = OPTIONAL_AGENT_ROLE_FALLBACKS.get(role)
+            fallback_role = OPTIONAL_AGENT_ROLE_FALLBACKS.get(canonical_role)
             if fallback_role:
                 label = self.agents.get(fallback_role)
         if not label:
             raise ValueError(f"Missing model label binding for role: {role}")
         if label not in self.models:
-            raise ValueError(f"Role {role} references unknown model label: {label}")
+            raise ValueError(f"Role {canonical_role or role} references unknown model label: {label}")
         return label
 
     def config_for_role(self, role: str) -> LLMConfig:
@@ -630,6 +681,7 @@ class LLMProfile:
                     raise ValueError(f"LLM config 'models' cannot be empty: {config_path}")
                 if not isinstance(agents_raw, dict):
                     raise ValueError(f"LLM config requires top-level 'agents' mapping: {config_path}")
+                agents_raw = _normalize_agents_mapping(agents_raw)
 
                 unknown_roles = sorted(set(agents_raw.keys()) - set(AGENT_ROLES))
                 if unknown_roles:

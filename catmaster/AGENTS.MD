@@ -24,21 +24,23 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
   - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
 - `ExperimentSpecialist`
   - Bounded execution specialist.
-  - May delegate only to `materials_worker`, `ml_worker`, and a lightweight `literature_agent`.
-  - For narrow best-practice checks during implementation, may rely on the online model's built-in web-browsing capability instead of waiting for a dedicated search tool. Keep this limited to official docs / primary-source verification, not broad review.
+  - May delegate only to `materials_worker`, `ml_worker`, and `orca_xtb_worker`.
+  - Uses the default `web_search` tool directly for narrow best-practice checks, official docs, or primary-source verification. Keep this limited to focused implementation grounding, not broad review.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
-  - May use the lightweight `literature_agent` only for tightly bounded background supplementation needed by the current manuscript or note.
+  - Uses the default `web_search` tool directly only for tightly bounded background supplementation needed by the current manuscript or note.
 
 Execution guidance for the active experiment path:
 
 - If a dedicated tool does not cover a bounded execution task, prefer implementing the missing step with `execute`, Python, and mature third-party libraries inside the workspace over stopping at the tool boundary.
 - Local `execute` commands run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there with `python -m pip install ...` instead of modifying the main environment.
-- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow built-in web check through the online model to align with current official documentation or primary sources before improvising. Do not turn that into a broad literature campaign.
+- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow `web_search` check against current official documentation or primary sources before improvising. Do not turn that into a broad literature campaign.
 - If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
 
 ## 2) Current literature architecture
+
+All agent-visible public web search should flow through the unified `web_search` tool.
 
 Literature support is split into two forms:
 
@@ -46,12 +48,13 @@ Literature support is split into two forms:
   - Used by `research`
   - A compiled DeepAgent subagent
   - Internally delegates to:
-    - `literature_agent` for broad Tavily-backed public-web review
+    - `literature_agent` for broad public-web review using `web_search`, `open_public_page`, and `find_in_page`
     - `metadata_agent` for exact scholarly metadata
-- lightweight `literature_agent`
-  - Used by `experiment`
-  - Also used by `writing` for narrow background/context supplementation only
-  - Exposes only a lightweight Tavily-backed `internet_search` tool for quick external grounding
+
+All autonomous specialists and workers also receive `web_search` as a default tool. That means:
+
+- `ExperimentSpecialist`, `WritingSpecialist`, and worker agents may run their own narrow web checks directly.
+- Broad review, source inspection, and citation-grade reconciliation still belong to `litreview_agent`.
 
 The metadata side is intentionally separate from broad review:
 

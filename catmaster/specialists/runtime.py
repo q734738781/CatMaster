@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
@@ -141,11 +141,11 @@ _METADATA_AGENT_TOOL_ALLOWLIST = {
     "recommend_semantic_scholar",
 }
 _LITREVIEW_AGENT_TOOL_ALLOWLIST = {
-    "search_public_web",
+    "web_search",
     "open_public_page",
     "find_in_page",
 }
-_LIGHTWEIGHT_LITERATURE_AGENT_TOOL_NAMES = {"internet_search"}
+_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES = {"web_search"}
 _PROJECT_MEMORY_READ_TOOL_NAMES = {"search_memory"}
 _PROJECT_MEMORY_WRITE_TOOL_NAMES = {"manage_memory"}
 _PROJECT_MEMORY_TOOL_NAMES = {"manage_memory", "search_memory"}
@@ -193,82 +193,6 @@ _PROJECT_SEARCH_MEMORY_INSTRUCTIONS = (
     "Search project long-term memory before creating a similar memory, and always search before updating or deleting memories."
 )
 _SKILLS_ROOT = "/.deepagents/skills"
-
-
-class _InternetSearchInput(BaseModel):
-    query: str = Field(..., description="Focused public-web query for background facts or literature orientation.")
-    max_results: int = Field(5, ge=1, le=10, description="Maximum number of search results to return.")
-    topic: Literal["general", "news", "finance"] = Field(
-        "general",
-        description="Tavily search topic. Use `general` for scientific background lookup.",
-    )
-    include_raw_content: bool = Field(
-        False,
-        description="Whether Tavily should include raw page content excerpts in the response.",
-    )
-
-
-def _compact_search_text(value: Any, *, max_chars: int) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if len(text) <= max_chars:
-        return text
-    return text[: max(0, max_chars - 1)].rstrip() + "…"
-
-
-def _format_lightweight_internet_search_content(
-    data: dict[str, Any],
-    *,
-    max_results: int = 5,
-) -> str:
-    status = str(data.get("status") or "").strip().lower()
-    if status == "error":
-        query = _compact_search_text(data.get("query") or "", max_chars=160)
-        message = _compact_search_text(data.get("message") or "unknown error", max_chars=280)
-        source = _compact_search_text(data.get("source") or "search backend", max_chars=40)
-        return f"internet_search failed for query={query!r} via {source}: {message}"
-
-    query = _compact_search_text(data.get("query") or "", max_chars=200)
-    topic = _compact_search_text(data.get("topic") or "general", max_chars=20)
-    answer = _compact_search_text(data.get("answer") or "", max_chars=360)
-    follow_up_raw = data.get("follow_up_questions") or []
-    follow_up = [
-        _compact_search_text(item, max_chars=140)
-        for item in follow_up_raw
-        if str(item or "").strip()
-    ][:3]
-    results_raw = data.get("results") or []
-    result_lines: list[str] = []
-    raw_content_present = False
-    for idx, item in enumerate(results_raw[: max(1, int(max_results or 1))], start=1):
-        if not isinstance(item, dict):
-            continue
-        title = _compact_search_text(item.get("title") or "Untitled result", max_chars=120)
-        url = _compact_search_text(item.get("url") or "", max_chars=220)
-        snippet = _compact_search_text(item.get("content") or "", max_chars=220)
-        if not snippet:
-            snippet = "(no summary provided)"
-        if str(item.get("raw_content") or "").strip():
-            raw_content_present = True
-        result_lines.append(f"- [{idx}] {title} | {url} | {snippet}")
-
-    lines = [
-        f"Query: {query or '(none)'}",
-        f"Topic: {topic}",
-        f"Results returned: {len(results_raw)}",
-    ]
-    if answer:
-        lines.append(f"Answer summary: {answer}")
-    if follow_up:
-        lines.append("Follow-up questions:")
-        lines.extend(f"- {item}" for item in follow_up)
-    if result_lines:
-        lines.append("Top results:")
-        lines.extend(result_lines)
-    else:
-        lines.append("Top results: (none)")
-    if raw_content_present:
-        lines.append("Note: raw page content was returned by Tavily but omitted from tool content.")
-    return "\n".join(lines)
 
 
 class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
@@ -460,6 +384,7 @@ class SpecialistRunner:
         proposal_review: bool,
         chat_session_id: str = "",
         thread_id: str = "",
+        conversation_messages: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return asyncio.run(
             self.arun(
@@ -468,6 +393,7 @@ class SpecialistRunner:
                 proposal_review=proposal_review,
                 chat_session_id=chat_session_id,
                 thread_id=thread_id,
+                conversation_messages=conversation_messages,
             )
         )
 
@@ -482,6 +408,7 @@ class SpecialistRunner:
         proposal_review: bool,
         chat_session_id: str = "",
         thread_id: str = "",
+        conversation_messages: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         payload = {
             "entrypoint": entrypoint,
@@ -489,6 +416,7 @@ class SpecialistRunner:
             "proposal_review": bool(proposal_review),
             "chat_session_id": str(chat_session_id or "").strip(),
             "thread_id": str(thread_id or "").strip(),
+            "conversation_messages": list(conversation_messages or []),
         }
         return await self._run_impl(payload=payload, resume_feedback=None)
 
@@ -496,19 +424,17 @@ class SpecialistRunner:
         run_state = self._read_run_state()
         if not run_state:
             raise ValueError("Cannot resume run without run_state.json")
-        status = str(run_state.get("status") or "").strip()
-        if status != "awaiting_human_feedback":
-            raise ValueError("Selected run is not waiting for human feedback.")
-        pending = run_state.get("pending_human_input") if isinstance(run_state.get("pending_human_input"), dict) else {}
-        kind = str(pending.get("kind") or "").strip()
-        feedback = str(human_feedback or "").strip()
-        if kind == "proposal_review":
-            if feedback.lower() == "approve":
-                feedback = ""
-            run_state["status"] = "running"
-            run_state["phase"] = "executing"
-            run_state["pending_human_input"] = None
-            run_state["proposal_review"] = False
+        status = str(run_state.get("status") or "").strip().lower() or "unknown"
+        if status in {"done", "failure"}:
+            raise ValueError("Selected run is already finished.")
+        feedback = str(human_feedback or "").strip() or "Continue the previous interrupted request."
+        run_state["status"] = "running"
+        run_state["phase"] = "executing"
+        run_state["pending_human_input"] = None
+        run_state["proposal_review"] = False
+        run_state["proposal_revision_count"] = 0
+        run_state["resume_guidance"] = feedback
+        run_state["resume_source_status"] = status
         return await self._run_impl(payload=run_state, resume_feedback=feedback)
 
     async def _run_impl(self, *, payload: dict[str, Any], resume_feedback: str | None) -> dict[str, Any]:
@@ -520,6 +446,7 @@ class SpecialistRunner:
         if not prompt:
             raise ValueError("Prompt is required.")
         thread_id = self._resolve_thread_id(payload)
+        conversation_messages = self._coerce_conversation_messages(payload.get("conversation_messages"))
 
         files_root = workspace_root(self.run_context.workspace)
         files_root.mkdir(parents=True, exist_ok=True)
@@ -568,11 +495,15 @@ class SpecialistRunner:
                             runtime=runtime,
                             thread_id=thread_id,
                         )
-                        message_text = prompt if resume_feedback in (None, "") else (
-                            f"{prompt}\n\nHuman review feedback:\n{resume_feedback}"
-                        )
+                        if resume_feedback is None:
+                            messages = [
+                                *conversation_messages,
+                                {"role": "user", "content": prompt},
+                            ]
+                        else:
+                            messages = [{"role": "user", "content": str(resume_feedback or "").strip() or prompt}]
                         result = await agent.ainvoke(
-                            {"messages": [{"role": "user", "content": message_text}]},
+                            {"messages": messages},
                             config={
                                 "configurable": {
                                     "thread_id": thread_id,
@@ -985,26 +916,10 @@ class SpecialistRunner:
                 skills=[self._skills_group_virtual_path("quantum_chemistry")],
                 runtime=runtime,
             ),
-            self._compiled_worker_subagent(
-                name="literature_agent",
-                description="Run lightweight Tavily-backed public-web search for quick background grounding and literature orientation.",
-                model_role="literature_synthesizer",
-                system_prompt=self._lightweight_literature_agent_prompt(),
-                tools=self._lightweight_literature_tools(),
-                runtime=runtime,
-            ),
         ]
 
     def _writing_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
         return [
-            self._compiled_worker_subagent(
-                name="literature_agent",
-                description="Provide tightly bounded background/context lookups for writing tasks when introduction or discussion needs focused external grounding.",
-                model_role="literature_synthesizer",
-                system_prompt=self._writing_literature_agent_prompt(),
-                tools=self._lightweight_literature_tools(),
-                runtime=runtime,
-            ),
             self._compiled_worker_subagent(
                 name="writing_worker_agent",
                 description="Draft or revise context-heavy sections in isolation and return compact manuscript-ready outputs.",
@@ -1078,7 +993,7 @@ class SpecialistRunner:
         CompiledSubAgent = self._load_compiled_subagent()
         return CompiledSubAgent(
             name="litreview_agent",
-            description="Orchestrate literature review by delegating broad public-web review to `literature_agent` and exact DOI/venue/author resolution to `metadata_agent`.",
+            description="Orchestrate literature review by combining `web_search`, public-page inspection, and exact DOI/venue/author resolution via `metadata_agent`.",
             runnable=self._build_litreview_agent(runtime=runtime),
         )
 
@@ -1195,7 +1110,7 @@ class SpecialistRunner:
             subagents=[
                 self._compiled_worker_subagent(
                     name="literature_agent",
-                    description="Use Tavily-backed public web search and page reading for broader literature review, background grounding, and public-source synthesis.",
+                    description="Use `web_search`, `open_public_page`, and `find_in_page` for broader literature review, background grounding, and public-source synthesis.",
                     model_role="literature_synthesizer",
                     system_prompt=self._litreview_agent_prompt(),
                     tools=self._augment_with_project_memory_tools(
@@ -1334,6 +1249,11 @@ class SpecialistRunner:
     ) -> list[Any]:
         existing = {str(getattr(tool, "name", "") or "").strip() for tool in tools}
         augmented = list(tools)
+        for tool in self._named_tools(_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES):
+            name = str(getattr(tool, "name", "") or "").strip()
+            if name and name not in existing:
+                augmented.append(tool)
+                existing.add(name)
         for tool in self._project_memory_tools(include_manage_memory=include_manage_memory):
             name = str(getattr(tool, "name", "") or "").strip()
             if name and name not in existing:
@@ -1360,62 +1280,6 @@ class SpecialistRunner:
             )
             tools.append(self._wrap_project_memory_tool(manage_tool))
         return tools
-
-    def _lightweight_literature_tools(self) -> list[Any]:
-        def internet_search(
-            query: str,
-            max_results: int = 5,
-            topic: Literal["general", "news", "finance"] = "general",
-            include_raw_content: bool = False,
-        ) -> tuple[str, dict[str, Any]]:
-            data: dict[str, Any]
-            try:
-                import os
-                from tavily import TavilyClient
-
-                api_key = str(os.environ.get("TAVILY_API_KEY", "")).strip()
-                if not api_key:
-                    raise RuntimeError("TAVILY_API_KEY is required for public web search.")
-                tavily_client = TavilyClient(api_key=api_key)
-                response = tavily_client.search(
-                    query,
-                    max_results=max_results,
-                    include_raw_content=include_raw_content,
-                    topic=topic,
-                )
-                payload = response if isinstance(response, dict) else {"result": response}
-                if isinstance(payload, dict):
-                    payload.setdefault("query", query)
-                    payload.setdefault("topic", topic)
-                data = payload
-            except Exception as exc:
-                data = {
-                    "status": "error",
-                    "source": "tavily",
-                    "query": query,
-                    "topic": topic,
-                    "include_raw_content": bool(include_raw_content),
-                    "message": str(exc),
-                }
-            return _format_lightweight_internet_search_content(
-                data,
-                max_results=max_results,
-            ), {
-                "tool_name": "internet_search",
-                "data": data,
-            }
-
-        tools = [
-            StructuredTool.from_function(
-                func=internet_search,
-                name="internet_search",
-                description="Search the public web for targeted scientific background facts and literature orientation.",
-                args_schema=_InternetSearchInput,
-                infer_schema=False,
-                response_format="content_and_artifact",
-            )
-        ]
-        return self._augment_with_project_memory_tools(tools, include_manage_memory=False)
 
     @staticmethod
     def _nonfatal_tool_error_result(tool_name: str, exc: Exception, tool_args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -1598,6 +1462,23 @@ class SpecialistRunner:
             return chat_session_id
         return self.run_context.run_id
 
+    @staticmethod
+    def _coerce_conversation_messages(raw: Any) -> list[dict[str, str]]:
+        if not isinstance(raw, list):
+            return []
+        out: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            out.append({"role": role, "content": content})
+        return out
+
     def _system_prompt(
         self,
         entrypoint: SpecialistEntrypoint,
@@ -1778,7 +1659,7 @@ class SpecialistRunner:
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
                 "You may delegate only to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
-                "Use `litreview_agent` for all literature-review work. It can internally delegate to `literature_agent` for Tavily-backed public-web review and to `metadata_agent` for exact DOI/year/venue/authors/citation metadata.\n"
+                "Use `litreview_agent` for literature-review work that needs synthesis, source inspection, or metadata verification. It internally uses `web_search`, `open_public_page`, and `find_in_page`, and can delegate exact DOI/year/venue/authors/citation metadata resolution to `metadata_agent`.\n"
                 "If the user requests a paper, manuscript, journal-style LaTeX draft, cover letter, rebuttal-style response, or other author-facing publication artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
                 "If the user requests an experiment report, validation summary, QC note, execution-facing memo, or other report-style artifact grounded in completed workspace evidence, delegate that work to `experiment_specialist` as a bounded report-writing episode.\n"
                 "Default to not launching `peer_review_specialist`.\n"
@@ -1835,8 +1716,8 @@ class SpecialistRunner:
                 "Write from existing workspace evidence only. Do not initiate new computational experiments.\n"
                 "Do not reopen broad literature review from the writing thread.\n"
                 "This lane owns paper, manuscript, and author-facing scientific writing. It is not the default lane for experiment reports, QC summaries, or execution-facing internal reports.\n"
-                "You may use `literature_agent` only for narrow background supplementation when the user explicitly asks to expand background/context, or when a paper/manuscript draft lacks the minimal external background needed for a credible introduction or discussion.\n"
-                "Keep such literature work tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
+                "Use `web_search` directly only for narrow background supplementation when the user explicitly asks to expand background/context, or when a paper/manuscript draft lacks the minimal external background needed for a credible introduction or discussion.\n"
+                "Keep such `web_search` use tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
                 "Your default role is coordination, not long-form drafting in the main thread.\n"
                 "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
                 "Before a substantial paper/manuscript rewrite, first condense the task into one compact inline author packet, then dispatch the section or integration brief from that packet instead of forwarding raw run logs.\n"
@@ -1873,7 +1754,7 @@ class SpecialistRunner:
             "You are ExperimentSpecialist.\n"
             "Your default role is coordination, dispatch, and decision-making across the experiment lane, not personally executing the substantive domain work.\n"
             "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, deciding the next bounded handoff, and bounded experiment-facing summaries grounded in completed workspace evidence.\n"
-            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use `literature_agent` for fast Tavily-backed public-web grounding when a quick external check is needed.\n"
+            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use `web_search` directly when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
             "In particular, general materials or surface workflows belong to `materials_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
@@ -1888,7 +1769,7 @@ class SpecialistRunner:
             "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
             "If a worker needs a handy Python package for a bounded local step and it is missing, let it install that package with `execute` via `python -m pip install ...`.\n"
-            "When method settings, software behavior, or scientific best practice are uncertain, prefer a quick built-in web check through the online model's native browsing capability to align with current official or primary-source guidance before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
+            "When method settings, software behavior, or scientific best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._report_packet_policy()}\n"
@@ -2044,11 +1925,11 @@ class SpecialistRunner:
             "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
             "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
-            "When configuration details, package behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
+            "When configuration details, package behavior, or methodological best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before finalizing the workflow.\n"
             "For heavier custom logic such as high-throughput screening helpers, large batch post-processing, or multi-step deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
-            "Do not perform broad literature review; that belongs to literature_agent.\n"
+            "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
             f"{cls._tool_policy()}\n"
             f"{execution_contract}\n"
             f"{cls._general_purpose_worker_policy()}\n"
@@ -2078,10 +1959,10 @@ class SpecialistRunner:
             "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts rather than burying them in one-off shell snippets.\n"
             "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; MACE training/fine-tuning normally falls into this category.\n"
             "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate. If the current ML task is not covered by those managed tools, keep going locally with reusable scripts under `scripts/` instead of stopping.\n"
-            "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before locking the workflow; do not wait for a dedicated search tool.\n"
+            "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before locking the workflow.\n"
             "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
-            "Do not perform broad literature review; that belongs to literature_agent.\n"
+            "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
             f"{cls._tool_policy()}\n"
             f"{execution_contract}\n"
             f"{cls._general_purpose_worker_policy()}\n"
@@ -2108,9 +1989,9 @@ class SpecialistRunner:
             "When no dedicated tool covers a bounded molecular task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
             "For heavier custom logic such as ensemble post-processing, Boltzmann aggregation, or multi-step deterministic screening helpers, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
-            "When configuration details, software behavior, or methodological best practice are uncertain, use the online model's built-in web-browsing capability for a narrow official-docs or primary-source check before finalizing the workflow; do not wait for a dedicated search tool.\n"
+            "When configuration details, software behavior, or methodological best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before finalizing the workflow.\n"
             "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
-            "Do not perform broad literature review; that belongs to literature_agent.\n"
+            "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
             f"{cls._tool_policy()}\n"
             f"{execution_contract}\n"
             f"{cls._general_purpose_worker_policy()}\n"
@@ -2125,7 +2006,7 @@ class SpecialistRunner:
     def _litreview_agent_prompt(cls) -> str:
         return (
             "You are literature_agent.\n"
-            "Use Tavily-backed public web search and public-page reading to gather external literature grounding, benchmark conventions, broader background evidence, and public-source synthesis.\n"
+            "Use `web_search`, `open_public_page`, and `find_in_page` to gather external literature grounding, benchmark conventions, broader background evidence, and public-source synthesis.\n"
             "You are the broad-review and orientation layer, not the exact scholarly metadata resolver. If exact DOI/year/venue/authors/citation details are missing or uncertain, ResearchSpecialist should delegate that part to `metadata_agent`.\n"
             "Stay focused on representative, decision-relevant sources instead of broad browsing.\n"
             "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, evidence summaries, source lists, or background briefs.\n"
@@ -2148,7 +2029,7 @@ class SpecialistRunner:
         return (
             "You are litreview_agent.\n"
             "You are the top-level literature-review orchestrator used by ResearchSpecialist.\n"
-            "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`.\n"
+            "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`, which uses `web_search`, `open_public_page`, and `find_in_page`.\n"
             "Delegate exact DOI/year/venue/authors/citation verification and scholarly record disambiguation to `metadata_agent`.\n"
             "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
             "Keep the final answer compact and decision-relevant. Save a reusable note under `/notes/literature/` or another stable workspace path only when the user asked for it or when a durable handoff artifact is clearly justified.\n"
@@ -2178,50 +2059,6 @@ class SpecialistRunner:
             "`Candidate Records` should be a flat bullet list with title, year, venue, DOI/identifier, and why each record is relevant.\n"
             "`Gaps` should explain any unresolved ambiguity or missing metadata.\n"
             "`Files` should list any saved reusable metadata-note paths, or `(none reported)` if nothing was persisted."
-        )
-
-    @classmethod
-    def _lightweight_literature_agent_prompt(cls) -> str:
-        return (
-            "You are literature_agent for ExperimentSpecialist.\n"
-            "Use the lightweight `internet_search` tool for focused external web research when ExperimentSpecialist needs quick literature hints, benchmark conventions, or general public-web answers.\n"
-            "Treat Tavily results as preprocessed web evidence. Prefer a few narrow searches over one vague broad search.\n"
-            "This agent is not limited to academic literature: it may answer with high-quality web evidence when the user asks for broader background, methods, safety notes, public documentation, or benchmark references.\n"
-            "Use the standard DeepAgent workspace capabilities when helpful to save reusable notes or evidence summaries into the workspace.\n"
-            "Only save a concise reusable markdown note under `/notes/literature/` or another stable workspace path when the user asked for a saved artifact or when a durable handoff/writing reference is clearly justified, and include that path in the final `Files` section.\n"
-            "If a durable cross-run fact should be stored, report it explicitly so ExperimentSpecialist can decide whether to update project memory.\n"
-            "Do not perform computational execution.\n"
-            f"{cls._tool_policy()}\n"
-            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
-            f"{cls._memory_write_policy()}\n"
-            f"{cls._workspace_path_discipline()}\n"
-            "Return a polished markdown answer with exactly these sections in order: `Answer`, `Web Evidence`, `Interpretation`, and `Files`.\n"
-            "`Answer` should directly answer the request in a few compact paragraphs.\n"
-            "`Web Evidence` should be a flat bullet list with source titles, concrete factual takeaways, and source URLs.\n"
-            "`Interpretation` should separate direct evidence from your inference, note uncertainty, and explain why the evidence matters for the experiment context.\n"
-            "`Files` should list any saved reusable note paths, or `(none reported)` if nothing was persisted."
-        )
-
-    @classmethod
-    def _writing_literature_agent_prompt(cls) -> str:
-        return (
-            "You are literature_agent for WritingSpecialist.\n"
-            "Use the lightweight `internet_search` tool only for tightly bounded writing-support lookups: missing introduction background, a specific benchmark/context check, or a small citation-support query needed by the current manuscript draft.\n"
-            "Do not expand the task into a broad literature review, a new scientific campaign, or open-ended research planning.\n"
-            "Prioritize a few targeted, high-signal sources that directly support the current writing need.\n"
-            "Return concise findings with clear separation between retrieved facts and inference.\n"
-            "If the request really needs broad review or citation-grade metadata disambiguation beyond this narrow scope, say so explicitly so the user can switch to the research lane.\n"
-            "Do not perform computational execution.\n"
-            f"{cls._tool_policy()}\n"
-            f"{cls._long_term_memory_policy(allow_manage_memory=False)}\n"
-            f"{cls._memory_write_policy()}\n"
-            f"{cls._workspace_path_discipline()}\n"
-            "Only save a concise reusable markdown note under `/notes/literature/` or another stable workspace path when a durable writing handoff artifact is clearly justified.\n"
-            "Return a polished markdown answer with exactly these sections in order: `Answer`, `Web Evidence`, `Interpretation`, and `Files`.\n"
-            "`Answer` should directly address the bounded writing-context question in a few compact paragraphs.\n"
-            "`Web Evidence` should be a flat bullet list with source titles, concrete factual takeaways, and source URLs.\n"
-            "`Interpretation` should explain how the evidence should influence the manuscript wording and note uncertainty.\n"
-            "`Files` should list any saved reusable note paths, or `(none reported)` if nothing was persisted."
         )
 
     @staticmethod

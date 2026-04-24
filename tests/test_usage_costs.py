@@ -12,7 +12,7 @@ def test_usage_summary_aggregates_exact_costs(tmp_path, monkeypatch) -> None:
     run_dir = tmp_path / "run_a"
     summary = usage_stats.summarize_usage_from_metadata(
         {
-            "openai/gpt-5.4:online": {
+            "openai/gpt-5.4": {
                 "input_tokens": 1000,
                 "output_tokens": 200,
                 "total_tokens": 1200,
@@ -20,7 +20,7 @@ def test_usage_summary_aggregates_exact_costs(tmp_path, monkeypatch) -> None:
             }
         },
         run_dir=run_dir,
-        call_counts_by_model={"openai/gpt-5.4:online": 1},
+        call_counts_by_model={"openai/gpt-5.4": 1},
     )
 
     assert summary["cost_source"] == "unavailable"
@@ -30,7 +30,7 @@ def test_usage_summary_aggregates_exact_costs(tmp_path, monkeypatch) -> None:
     assert summary["input_tokens"] == 1000
     assert summary["input_cached_tokens"] == 400
     assert summary["output_tokens"] == 200
-    assert summary["by_model"][0]["name"] == "openai/gpt-5.4:online"
+    assert summary["by_model"][0]["name"] == "openai/gpt-5.4"
 
 
 def test_usage_summary_estimates_cost_from_pricing(tmp_path, monkeypatch) -> None:
@@ -51,7 +51,7 @@ def test_usage_summary_estimates_cost_from_pricing(tmp_path, monkeypatch) -> Non
     run_dir = tmp_path / "run_b"
     summary = usage_stats.summarize_usage_from_metadata(
         {
-            "openai/gpt-5.4:online-minimum": {
+            "openai/gpt-5.4-minimum": {
                 "input_tokens": 1000,
                 "output_tokens": 120,
                 "total_tokens": 1120,
@@ -60,7 +60,7 @@ def test_usage_summary_estimates_cost_from_pricing(tmp_path, monkeypatch) -> Non
             }
         },
         run_dir=run_dir,
-        call_counts_by_model={"openai/gpt-5.4:online-minimum": 1},
+        call_counts_by_model={"openai/gpt-5.4-minimum": 1},
     )
 
     expected = round(

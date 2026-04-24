@@ -35,13 +35,13 @@ from .chat_sessions import ChatSessionStore
 from .live_state import apply_events, new_live_state, should_refresh_live_summary
 from .live_summary_service import summarize_live_state
 from .summary_service import snapshot_summary, summarize_run
-from .web_reporter import PromptBroker, WebReporter
+from .web_reporter import WebReporter
 
 RUN_MODE_NEW = "new_run"
 RUN_MODE_RESUME_SELECTED = "resume_selected_run"
 SUPPORTED_LANES = {"research", "experiment", "writing", "peer_review"}
 
-_RECENT_SESSION_TURNS = 3
+_CHAT_HISTORY_MAX_MESSAGES = 60
 
 
 def _estimate_tokens(text: str) -> int:
@@ -96,7 +96,6 @@ class WebSession:
         self.workspace_root: Optional[Path] = None
         self.workspace: Optional[Path] = None
         self.reporter: Optional[WebReporter] = None
-        self.broker: Optional[PromptBroker] = None
         self.run_thread: Optional[threading.Thread] = None
         self.run_control: Optional[RunControl] = None
         self._run_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -386,11 +385,11 @@ class WebSession:
         if requested_lane not in SUPPORTED_LANES:
             requested_lane = "research"
         is_resume = mode == RUN_MODE_RESUME_SELECTED
-        resume_feedback = (prompt or "").strip() if is_resume else ""
         session_user_prompt = str(prompt or "")
-        effective_prompt_text = session_user_prompt
-        thread_binding = {"session_id": "", "thread_id": ""}
         message_session_id = ""
+        conversation_messages: list[dict[str, str]] = []
+        resume_guidance = ""
+        resume_payload: Dict[str, Any] = {}
 
         with self._lock:
             ws = self.workspace
@@ -411,17 +410,23 @@ class WebSession:
                 return err
             resume_dir = str(resume_target) if resume_target else None
             effective_lane = resume_lane or "research"
-        if not is_resume:
-            thread_binding = self.build_thread_binding(lane=effective_lane)
-            effective_prompt_text = session_user_prompt
-            message_session_id = str(thread_binding.get("session_id") or "").strip()
-        else:
-            effective_prompt_text = resume_feedback
             if resume_target is not None:
                 resume_payload = self._read_run_state_payload(resume_target)
+                resume_status = str(resume_payload.get("status") or "").strip().lower()
+                if resume_status in {"done", "failure"}:
+                    return "Selected run is already finished."
                 message_session_id = str(resume_payload.get("chat_session_id") or "").strip()
+                resume_guidance = session_user_prompt.strip() or "Continue the previous interrupted request."
+        else:
+            message_session_id = self.ensure_active_chat_session()
+            conversation_messages = self._conversation_messages_for_session(
+                session_id=message_session_id,
+                max_messages=_CHAT_HISTORY_MAX_MESSAGES,
+            )
         if not message_session_id:
             message_session_id = self.ensure_active_chat_session()
+        if is_resume and message_session_id:
+            self.select_chat_session(message_session_id)
 
         with self._lock:
             self.run_status = "starting"
@@ -429,8 +434,7 @@ class WebSession:
             self.last_event_seq = 0
             self.event_lines = []
             self.live_state_by_run = {}
-            self.broker = PromptBroker()
-            self.reporter = WebReporter(broker=self.broker, max_events=2000)
+            self.reporter = WebReporter(max_events=2000)
             self.run_control = RunControl()
             if resume_target is not None:
                 self.selected_run_dir = resume_target
@@ -476,6 +480,15 @@ class WebSession:
                     self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
                 if self.reporter:
                     self.reporter.set_run_dir(run_dir)
+                run_thread_id = str(
+                    (
+                        resume_payload.get("thread_id")
+                        if is_resume
+                        else run_ctx.run_id
+                    )
+                    or run_ctx.run_id
+                    or run_dir.name
+                ).strip()
                 self._write_active_runs(effective_lane, run_dir, workspace=ws)
                 self._save_ui_prompt(run_dir, session_user_prompt, is_resume=is_resume)
                 self._write_initial_run_state(
@@ -483,31 +496,33 @@ class WebSession:
                     entrypoint=effective_lane,
                     user_prompt=session_user_prompt,
                     chat_session_id=message_session_id,
-                    thread_id=str(thread_binding.get("thread_id") or message_session_id),
+                    thread_id=run_thread_id,
                     is_resume=is_resume,
                 )
                 self._mark_sidebar_cache_dirty()
                 if is_resume:
                     if hasattr(runner, "aresume"):
-                        result = await runner.aresume(human_feedback=resume_feedback)
+                        result = await runner.aresume(human_feedback=resume_guidance)
                     else:
-                        result = await asyncio.to_thread(runner.resume, human_feedback=resume_feedback)
+                        result = await asyncio.to_thread(runner.resume, human_feedback=resume_guidance)
                 elif hasattr(runner, "arun"):
                     result = await runner.arun(
-                        effective_prompt_text,
+                        session_user_prompt,
                         entrypoint=effective_lane,
                         proposal_review=proposal_review,
-                        chat_session_id=str(thread_binding.get("session_id") or ""),
-                        thread_id=str(thread_binding.get("thread_id") or ""),
+                        chat_session_id=message_session_id,
+                        thread_id=run_thread_id,
+                        conversation_messages=conversation_messages,
                     )
                 else:
                     result = await asyncio.to_thread(
                         runner.run,
-                        effective_prompt_text,
+                        session_user_prompt,
                         entrypoint=effective_lane,
                         proposal_review=proposal_review,
-                        chat_session_id=str(thread_binding.get("session_id") or ""),
-                        thread_id=str(thread_binding.get("thread_id") or ""),
+                        chat_session_id=message_session_id,
+                        thread_id=run_thread_id,
+                        conversation_messages=conversation_messages,
                     )
                 return result
 
@@ -585,8 +600,8 @@ class WebSession:
 
         self._append_chat_message(
             role="user",
-            content=session_user_prompt,
-            kind="hitl" if is_resume else "chat",
+            content=resume_guidance if is_resume else session_user_prompt,
+            kind="chat",
             source_run_id=resume_target.name if is_resume and resume_target is not None else "",
             session_id=message_session_id,
         )
@@ -656,20 +671,6 @@ class WebSession:
             return None
         return candidate
 
-    def submit_prompt(self, prompt_id: str, text: str) -> str:
-        if not prompt_id:
-            return "No active prompt."
-        ok = False
-        reporter = self.reporter
-        if reporter is not None:
-            ok = reporter.submit_prompt(prompt_id, text)
-        elif self.broker:
-            ok = self.broker.submit(prompt_id, text)
-        if ok:
-            with self._lock:
-                self._last_submitted_prompt_ts = time.time()
-        return "Submitted." if ok else "Prompt not found."
-
     def request_interrupt_current_run(self, *, note: str = "") -> str:
         with self._lock:
             run_thread = self.run_thread
@@ -732,27 +733,11 @@ class WebSession:
         return {"running": running, "run_status": status, "interrupt": snap}
 
     def get_prompt(self) -> Optional[Dict[str, Any]]:
-        if self._in_submit_grace_period():
-            return None
-        run_dir = self.get_selected_run_dir()
-        broker = self.broker
-        if broker:
-            pending = broker.get_pending()
-            if isinstance(pending, dict):
-                return self._annotate_prompt_payload(run_dir, pending)
-        if run_dir is not None:
-            pending = self._load_prompt_from_run_dir(run_dir)
-            return pending
         return None
 
-    _SUBMIT_GRACE_SEC = 15
-
-    def _in_submit_grace_period(self) -> bool:
-        with self._lock:
-            ts = self._last_submitted_prompt_ts
-        if ts <= 0:
-            return False
-        return time.time() - ts < self._SUBMIT_GRACE_SEC
+    def submit_prompt(self, prompt_id: str, text: str) -> str:
+        _ = (prompt_id, text)
+        return "Prompt-response HITL interface has been removed."
 
     def get_events(self) -> Tuple[List[Dict[str, Any]], int]:
         reporter = self.reporter
@@ -876,76 +861,23 @@ class WebSession:
         except Exception:
             return
 
-    def _ensure_prompt_logged_to_chat(self, pending: Optional[Dict[str, Any]]) -> None:
-        if not isinstance(pending, dict):
-            return
-        prompt_id = str(pending.get("prompt_id") or "")
-        if not prompt_id:
-            return
-        payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
-        kind = str(pending.get("kind") or "").strip() or "hitl"
-        body_parts = [str(payload.get("title") or "").strip(), str(payload.get("body") or "").strip()]
-        # Prompt display text is rendered in components; store the raw payload body here.
-        title = ""
-        if kind == "proposal_review":
-            title = "Revised Proposal Review" if bool(payload.get("is_revised")) else "Proposal Review"
-            body_parts = [str(payload.get("proposal_description") or "").strip()]
-            meta_lines: List[str] = []
-            if payload.get("run_id"):
-                label = "same run" if bool(payload.get("is_revised")) else "run"
-                meta_lines.append(f"{label}: {payload.get('run_id')}")
-            if payload.get("reason"):
-                meta_lines.append(f"reason: {payload.get('reason')}")
-            todo = payload.get("todo") if isinstance(payload.get("todo"), list) else []
-            if todo:
-                meta_lines.append("work packages:")
-                meta_lines.extend(f"{idx + 1}. {item}" for idx, item in enumerate(todo))
-            if meta_lines:
-                body_parts.append("\n".join(meta_lines))
-        elif kind == "hitl":
-            title = "HITL Feedback Required"
-            report_text = str(payload.get("report_text") or "").strip()
-            report_path = str(payload.get("report_path") or "").strip()
-            body_parts = [report_text]
-            if report_path:
-                body_parts.append(f"report: {report_path}")
-        elif kind == "interrupt_feedback":
-            title = "Interrupt Guidance Required"
-            body_parts = [str(payload.get("guidance") or "").strip()]
-        content = title.strip()
-        body_text = "\n\n".join(part for part in body_parts if part)
-        if body_text:
-            content = f"{content}\n\n{body_text}" if content else body_text
-        session_id = self.ensure_active_chat_session()
-        store = self._chat_store()
-        if store is None or not session_id:
-            return
-        try:
-            store.ensure_prompt_message(
-                session_id,
-                prompt_id=prompt_id,
-                title=title,
-                body=body_text,
-                meta_text="",
-                run_id=str(payload.get("run_id") or ""),
-            )
-        except Exception:
-            return
-
     def build_thread_binding(self, *, lane: str) -> Dict[str, Any]:
         session_id = self.ensure_active_chat_session()
+        history = self._conversation_messages_for_session(session_id=session_id, max_messages=_CHAT_HISTORY_MAX_MESSAGES)
         return {
             "session_id": session_id,
-            "thread_id": session_id,
+            "thread_id": "",
+            "history_messages": len(history),
+            "history_turns": len(history) // 2,
         }
 
     def entry_context_status_text(self, *, lane: str, current_prompt: str = "") -> str:
         _ = current_prompt
         pack = self.build_thread_binding(lane=lane)
         session_id = str(pack.get("session_id") or self.ensure_active_chat_session()).strip()
-        thread_id = str(pack.get("thread_id") or session_id).strip()
         lane_text = str(lane or "research").strip() or "research"
-        return f"Session `{session_id}` | deepagent thread `{thread_id}` | lane `{lane_text}`"
+        history_turns = int(pack.get("history_turns") or 0)
+        return f"Session `{session_id}` | new deepagent thread per run | replay last `{history_turns}` turns | lane `{lane_text}`"
 
     def read_memory_index(self, *, source: str = "all") -> str:
         workspace = self._workspace_path()
@@ -1684,9 +1616,6 @@ class WebSession:
 
     def _display_status(self, base_status: str, selected_run: Optional[Path]) -> str:
         status = str(base_status or "").strip() or "unknown"
-        pending = self.get_prompt()
-        if isinstance(pending, dict):
-            return "awaiting_human_feedback"
         run_status = self._load_task_state_status(selected_run)
         if run_status:
             return run_status
@@ -1721,66 +1650,8 @@ class WebSession:
         return ""
 
     def _load_prompt_from_run_dir(self, run_dir: Path) -> Optional[Dict[str, Any]]:
-        state_path = run_dir / RUN_STATE_FILE
-        if not state_path.exists():
-            return None
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if not isinstance(state, dict):
-            return None
-        status = str(state.get("status") or "").strip().lower()
-        if status != "awaiting_human_feedback":
-            return None
-        pending_input = state.get("pending_human_input")
-        if not isinstance(pending_input, dict):
-            return None
-
-        interrupt_type = str(pending_input.get("kind") or "")
-        prompt_kind = "interrupt_feedback"
-        payload: Dict[str, Any]
-        if interrupt_type == "proposal_review":
-            prompt_kind = "proposal_review"
-            payload = {
-                "todo": list(state.get("todo_items") or []),
-                "proposal_description": self.read_proposal(run_dir),
-                "approval_token": str(pending_input.get("approval_token") or "approve"),
-                "revision_count": max(
-                    0,
-                    int(
-                        pending_input.get("revision_count")
-                        or state.get("proposal_revision_count")
-                        or 0
-                    ),
-                ),
-            }
-        elif interrupt_type == "peer_review":
-            payload = {
-                "report_text": str(pending_input.get("review_text") or ""),
-                "report_path": str(pending_input.get("review_target") or ""),
-                "guidance": str(
-                    pending_input.get("guidance")
-                    or 'Type "continue" to revise, or "approve" to keep the current draft.'
-                ),
-                "run_id": str(self.run_info.get("run_id") or run_dir.name),
-                "phase": interrupt_type,
-            }
-        else:
-            payload = {
-                "guidance": "Provide feedback.",
-                "run_id": str(self.run_info.get("run_id") or run_dir.name),
-                "phase": interrupt_type,
-            }
-
-        prompt_id = f"snapshot::{run_dir.name}::{interrupt_type or 'interrupt'}"
-        return self._annotate_prompt_payload(run_dir, {
-            "prompt_id": prompt_id,
-            "kind": prompt_kind,
-            "payload": payload,
-            "created_at": time.time(),
-            "source": "run_state_snapshot",
-        })
+        _ = run_dir
+        return None
 
     @staticmethod
     def _read_task_state_payload(run_dir: Optional[Path]) -> Dict[str, Any]:
@@ -1800,57 +1671,29 @@ class WebSession:
         run_dir: Optional[Path],
         pending: Dict[str, Any],
     ) -> Dict[str, Any]:
-        annotated = dict(pending)
-        payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
-        payload = dict(payload)
-        run_id = run_dir.name if run_dir is not None else ""
-        prompt_id = str(pending.get("prompt_id") or "")
-        if run_id and not payload.get("run_id"):
-            payload["run_id"] = run_id
-        if prompt_id and not payload.get("prompt_id"):
-            payload["prompt_id"] = prompt_id
+        _ = run_dir
+        return dict(pending)
 
-        if str(pending.get("kind") or "") == "proposal_review":
-            state = self._read_task_state_payload(run_dir)
-            pending_input = state.get("pending_human_input") if isinstance(state.get("pending_human_input"), dict) else {}
-            approval_token = str(
-                payload.get("approval_token")
-                or pending_input.get("approval_token")
-                or "approve"
-            ).strip() or "approve"
-            revision_count = max(
-                0,
-                int(
-                    payload.get("revision_count")
-                    or pending_input.get("revision_count")
-                    or state.get("proposal_revision_count")
-                    or 0
-                ),
-            )
-            payload["approval_token"] = approval_token
-            payload["revision_count"] = revision_count
-            payload.setdefault(
-                "guidance",
-                f'Type "{approval_token}" to continue. Any other input requests a revised proposal.',
-            )
-            if revision_count > 0:
-                payload["is_revised"] = True
-                payload.setdefault(
-                    "reason",
-                    "human review revision" if revision_count == 1 else f"human review revision {revision_count}",
-                )
-            history = list(state.get("hitl_history") or [])
-            had_task_intervention = any(
-                isinstance(item, dict)
-                and (str(item.get("interrupt_type") or "") == "task_intervention" or bool(item.get("task_id")))
-                for item in history
-            )
-            if had_task_intervention and not payload.get("is_revised"):
-                payload["is_revised"] = True
-                payload.setdefault("reason", "replanning after HITL")
-
-        annotated["payload"] = payload
-        return annotated
+    def _conversation_messages_for_session(
+        self,
+        *,
+        session_id: str,
+        max_messages: int,
+    ) -> List[Dict[str, str]]:
+        store = self._chat_store()
+        if store is None or not session_id:
+            return []
+        pack = store.build_history_pack(session_id, recent_messages=max_messages)
+        out: List[Dict[str, str]] = []
+        for item in pack.recent_messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            out.append({"role": role, "content": content})
+        return out
 
     @staticmethod
     def _submit_prompt_via_file(run_dir: Path, *, prompt_id: str, text: str) -> bool:

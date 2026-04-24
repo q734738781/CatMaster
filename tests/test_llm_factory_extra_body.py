@@ -20,7 +20,7 @@ def test_build_chat_model_passes_provider_bound_extra_body(monkeypatch) -> None:
 
     cfg = LLMConfig(
         provider="openrouter",
-        model="openai/gpt-5.2:online",
+        model="openai/gpt-5.2",
         api_key="test-key",
         base_url="https://openrouter.ai/api/v1",
         provider_options={
@@ -46,7 +46,7 @@ def test_build_chat_model_passes_provider_openrouter_extra_body(monkeypatch) -> 
 
     cfg = LLMConfig(
         provider="openrouter",
-        model="openai/gpt-5.2:online",
+        model="openai/gpt-5.2",
         api_key="test-key",
         base_url="https://openrouter.ai/api/v1",
         provider_options={
@@ -73,7 +73,7 @@ def test_build_chat_model_maps_openrouter_cache_control_to_content_breakpoints(m
 
     cfg = LLMConfig(
         provider="openrouter",
-        model="anthropic/claude-sonnet-4.6:online",
+        model="anthropic/claude-sonnet-4.6",
         api_key="test-key",
         base_url="https://openrouter.ai/api/v1",
         provider_options={
@@ -102,7 +102,7 @@ def test_build_chat_model_passes_reasoning_object(monkeypatch) -> None:
 
     cfg = LLMConfig(
         provider="openrouter",
-        model="openai/gpt-5.2:online",
+        model="openai/gpt-5.2",
         api_key="test-key",
         base_url="https://openrouter.ai/api/v1",
         reasoning={"effort": "high"},
@@ -200,7 +200,7 @@ def test_build_chat_model_rejects_extra_extra_body(monkeypatch) -> None:
 
     cfg = LLMConfig(
         provider="openrouter",
-        model="openai/gpt-5.2:online",
+        model="openai/gpt-5.2",
         api_key="test-key",
         base_url="https://openrouter.ai/api/v1",
         extra={"extra_body": {"provider": {"order": ["openai"]}}},
@@ -221,7 +221,7 @@ def test_build_chat_model_enables_http_raw_post_clients(monkeypatch) -> None:
 
     cfg = LLMConfig(
         provider="openrouter",
-        model="openai/gpt-5.2:online",
+        model="openai/gpt-5.2",
         api_key="test-key",
         base_url="https://openrouter.ai/api/v1",
         print_http_raw_post=True,
@@ -244,7 +244,7 @@ def test_build_chat_model_maps_openrouter_headers_and_route(monkeypatch) -> None
 
     cfg = LLMConfig(
         provider="openrouter",
-        model="openai/gpt-5.2:online",
+        model="openai/gpt-5.2",
         api_key="test-key",
         base_url="https://openrouter.ai/api/v1",
         default_headers={"HTTP-Referer": "https://catmaster.local", "X-Title": "CatMaster"},

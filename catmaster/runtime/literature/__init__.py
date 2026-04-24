@@ -27,6 +27,7 @@ from .tools import (
     SearchOpenAlexInput,
     SearchPublicWebInput,
     SearchSemanticScholarInput,
+    WebSearchInput,
     find_in_page,
     get_openalex_record,
     get_semantic_scholar_record,
@@ -36,6 +37,7 @@ from .tools import (
     search_openalex,
     search_public_web,
     search_semantic_scholar,
+    web_search,
 )
 
 __all__ = [
@@ -60,6 +62,8 @@ __all__ = [
     "synthesize_deep_report",
     "RunLiteratureResearchInput",
     "run_literature_research",
+    "WebSearchInput",
+    "web_search",
     "SearchOpenAlexInput",
     "search_openalex",
     "SearchSemanticScholarInput",

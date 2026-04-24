@@ -168,9 +168,10 @@ class ToolRegistry:
             GetSemanticScholarRecordInput,
             OpenPublicPageInput,
             RecommendSemanticScholarInput,
+            WebSearchInput,
             run_literature_research,
+            web_search,
             search_openalex,
-            search_public_web,
             search_semantic_scholar,
             get_openalex_record,
             get_semantic_scholar_record,
@@ -179,7 +180,6 @@ class ToolRegistry:
             find_in_page,
             RunLiteratureResearchInput,
             SearchOpenAlexInput,
-            SearchPublicWebInput,
             SearchSemanticScholarInput,
         )
 
@@ -274,7 +274,8 @@ class ToolRegistry:
         self.register_tool("get_openalex_record", get_openalex_record, GetOpenAlexRecordInput)
         self.register_tool("get_semantic_scholar_record", get_semantic_scholar_record, GetSemanticScholarRecordInput)
         self.register_tool("recommend_semantic_scholar", recommend_semantic_scholar, RecommendSemanticScholarInput)
-        self.register_tool("search_public_web", search_public_web, SearchPublicWebInput)
+        self.register_tool("web_search", web_search, WebSearchInput)
+        self.register_alias("search_public_web", "web_search")
         self.register_tool("open_public_page", open_public_page, OpenPublicPageInput)
         self.register_tool("find_in_page", find_in_page, FindInPageInput)
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)

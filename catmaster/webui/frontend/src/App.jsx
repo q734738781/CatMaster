@@ -42,7 +42,7 @@ function defaultUploadDirectory(treeNodes, preview, selectedPath) {
 }
 
 function isRunActive(status) {
-  return ["running", "starting", "interrupting", "awaiting_human_feedback"].includes(String(status || "").trim());
+  return ["running", "starting", "interrupting"].includes(String(status || "").trim());
 }
 
 async function apiFetch(url, options = {}) {
@@ -630,7 +630,7 @@ const LANE_GUIDE = {
   experiment: {
     title: "Experiment",
     summary: "Run bounded computational execution and return concise evidence with files.",
-    subagents: ["materials_worker", "ml_worker", "literature_agent"],
+    subagents: ["materials_worker", "ml_worker", "orca_xtb_worker"],
   },
   research: {
     title: "Research",
@@ -640,7 +640,7 @@ const LANE_GUIDE = {
   writing: {
     title: "Writing",
     summary: "Draft or revise deliverables from existing evidence and compile when needed.",
-    subagents: ["writing_worker_agent", "literature_agent"],
+    subagents: ["writing_worker_agent", "writing_polisher_agent"],
   },
   peer_review: {
     title: "Peer Review",
@@ -2623,7 +2623,6 @@ function App({ boot }) {
   const [search, setSearch] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [events, setEvents] = useState([]);
-  const [promptResponse, setPromptResponse] = useState("");
   const [monitorTab, setMonitorTab] = useState("result");
   const [agentTab, setAgentTab] = useState("ALL");
   const [streamNonce, setStreamNonce] = useState(0);
@@ -2753,21 +2752,19 @@ function App({ boot }) {
               live_state: runtime.live_state || prev.live_state || {},
               llm: runtime.llm || prev.llm || {},
               graph: runtime.graph || prev.graph || {},
-              prompt: runtime.prompt ?? prev.prompt ?? null,
               usage_summary: data.usage_summary || runtime.usage_totals || prev.usage_summary || {},
               chat_messages: data.chat_messages || prev.chat_messages || [],
               cards: data.cards || prev.cards || [],
               todo_items: data.todo_items || prev.todo_items || [],
               result_text: data.result_text ?? prev.result_text ?? "",
               proposal: data.proposal ?? prev.proposal ?? "",
-              can_submit_prompt: Boolean(runtime.prompt),
               run_status: data.run_status || prev.run_status,
               run_status_text: data.run_status_text || prev.run_status_text,
             };
           });
         });
       }
-      if (view === "monitor" && ["RUN_SNAPSHOT_READY", "PROMPT_REQUESTED", "PROMPT_RESOLVED"].includes(String(event.name || ""))) {
+      if (view === "monitor" && String(event.name || "") === "RUN_SNAPSHOT_READY") {
         const nextRun = streamRunName || selectedRun;
         if (nextRun) {
           apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(nextRun)}`)
@@ -3216,20 +3213,6 @@ function App({ boot }) {
     await postAndApply(`/api/session/${escapePath(ctx)}/run/interrupt`, { lane });
   }
 
-  async function handlePromptSubmit() {
-    const prompt = snapshot?.prompt;
-    if (!prompt) {
-      return;
-    }
-    await postAndApply(`/api/session/${escapePath(ctx)}/prompt/respond`, {
-      prompt_id: prompt.prompt_id || prompt.payload?.prompt_id || "",
-      text: promptResponse,
-      lane,
-      run_name: selectedRun,
-    }, { loadDetails: view === "monitor" });
-    setPromptResponse("");
-  }
-
   const workspaceOptions = snapshot?.workspaces || [];
   const chatSessionOptions = snapshot?.chat_sessions || [];
   const runOptions = snapshot?.runs || [];
@@ -3504,14 +3487,6 @@ function App({ boot }) {
                     <MetricCard label="Reasoning tokens" value={usage.reasoning_tokens || llm.usage?.reasoning_tokens || "-"} />
                   </div>
                 ) : null}
-
-                <PromptPanel
-                  prompt={snapshot?.prompt}
-                  value={promptResponse}
-                  onChange={setPromptResponse}
-                  onSubmit={handlePromptSubmit}
-                  disabled={!snapshot?.can_submit_prompt}
-                />
 
                 {view === "home" ? (
                   <>

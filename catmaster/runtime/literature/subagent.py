@@ -253,12 +253,12 @@ class LiteratureSubagent:
                 ensure_ascii=False,
             )
 
-        def search_public_web(query: str, max_results: int | None = None) -> str:
+        def web_search(query: str, max_results: int | None = None) -> str:
             actual_limit = max(1, min(int(max_results or web_limit or 1), max(web_limit, 1)))
             try:
                 hits = self.online_search.search_public_web(query, max_results=actual_limit).results
             except Exception as exc:
-                return f"Public web search failed: {exc}"
+                return f"Web search failed: {exc}"
             return json.dumps(
                 {
                     "status": "ok",
@@ -351,8 +351,8 @@ class LiteratureSubagent:
         if public_search_enabled and web_limit > 0:
             tools.append(
                 StructuredTool.from_function(
-                    func=search_public_web,
-                    name="search_public_web",
+                    func=web_search,
+                    name="web_search",
                     description=(
                         f"Search public web for broad background, NIH/landing-page summaries, or context beyond metadata. "
                         f"Use this for broad orientation or when scholarly APIs are sparse. Default/cap results={web_limit}."
@@ -398,7 +398,7 @@ class LiteratureSubagent:
         ToolStrategy = _load_tool_strategy()
         tools = self._build_search_tools(budget=budget, topic=topic)
         tool_names = {tool.name for tool in tools}
-        if "search_public_web" in tool_names:
+        if "web_search" in tool_names:
             public_web_guidance = (
                 "Source routing rule: start with public web search for broad orientation, public summaries, landing-page abstracts, and lightweight evidence checks. "
                 "Only use OpenAlex or Semantic Scholar when you need exact paper metadata, DOI/year/venue/authors/citation details, or metadata-grounded recommendation expansion from known seeds. "

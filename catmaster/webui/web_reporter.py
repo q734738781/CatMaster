@@ -119,7 +119,7 @@ class PromptBroker:
 
 
 class WebReporter(Reporter):
-    def __init__(self, *, broker: PromptBroker, max_events: int = 4000) -> None:
+    def __init__(self, *, broker: PromptBroker | None = None, max_events: int = 4000) -> None:
         self._broker = broker
         self._events: Deque[Dict[str, Any]] = deque(maxlen=max_events)
         self._lock = threading.Lock()
@@ -227,6 +227,8 @@ class WebReporter(Reporter):
             return list(self._events)[-limit:]
 
     def prompt_proposal_feedback(self, *, todo: List[str], proposal_description: str) -> str:
+        if self._broker is None:
+            return ""
         payload = {
             "todo": list(todo),
             "proposal_description": proposal_description or "",
@@ -234,6 +236,8 @@ class WebReporter(Reporter):
         return self._request_prompt("proposal_review", payload)
 
     def prompt_hitl_feedback(self, *, report_text: str, report_path: str) -> str:
+        if self._broker is None:
+            return ""
         payload = {
             "report_text": report_text or "",
             "report_path": report_path or "",
@@ -241,6 +245,8 @@ class WebReporter(Reporter):
         return self._request_prompt("hitl", payload)
 
     def prompt_interrupt_feedback(self, *, guidance: str, run_id: str, phase: str) -> str:
+        if self._broker is None:
+            return ""
         payload = {
             "guidance": guidance or "",
             "run_id": run_id or "",
@@ -249,6 +255,8 @@ class WebReporter(Reporter):
         return self._request_prompt("interrupt_feedback", payload)
 
     def submit_prompt(self, prompt_id: str, text: str) -> bool:
+        if self._broker is None:
+            return False
         submitted = self._broker.submit(prompt_id, text)
         if submitted:
             self.emit(
@@ -262,6 +270,8 @@ class WebReporter(Reporter):
         return submitted
 
     def get_prompt(self) -> Optional[Dict[str, Any]]:
+        if self._broker is None:
+            return None
         return self._broker.get_pending()
 
     def show_final_summary(self, summary: str) -> None:
@@ -298,13 +308,15 @@ class WebReporter(Reporter):
                     "text_preview": str(self._graph_state.get("text_preview") or ""),
                     "last_updated_ts": float(self._graph_state.get("last_updated_ts") or 0.0),
                 },
-                "prompt": _clone_prompt(self._broker.get_pending()),
+                "prompt": _clone_prompt(self._broker.get_pending()) if self._broker is not None else None,
                 "final_summary": str(self._final_summary or ""),
                 "usage_totals": dict(self._usage_totals),
                 "recent_events": list(self._events)[-120:],
             }
 
     def _request_prompt(self, kind: str, payload: Dict[str, Any]) -> str:
+        if self._broker is None:
+            return ""
         text_holder: Dict[str, str] = {}
 
         def _waiter() -> None:

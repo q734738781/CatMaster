@@ -15,7 +15,7 @@ from starlette.routing import Match
 from catmaster.webui import server
 from catmaster.webui.server import create_app
 from catmaster.webui.session import WebSession
-from catmaster.webui.web_reporter import PromptBroker, WebReporter
+from catmaster.webui.web_reporter import WebReporter
 from catmaster.ui.events import make_event
 
 
@@ -584,17 +584,17 @@ def test_web_reporter_runtime_usage_totals_include_cost_summary(monkeypatch) -> 
             "exact_cost_usd": 0.1,
             "estimated_cost_usd": 0.0234,
             "cost_source": "mixed",
-            "by_model": [{"name": "openai/gpt-5.4:online", "cost_usd": 0.1234}],
+            "by_model": [{"name": "openai/gpt-5.4", "cost_usd": 0.1234}],
             "by_role": [{"name": "materials_worker", "cost_usd": 0.1234}],
         },
     )
-    reporter = WebReporter(broker=PromptBroker())
+    reporter = WebReporter()
     reporter.emit(
         make_event(
             "LLM_CALL_END",
             category="llm",
             payload={
-                "model": "openai/gpt-5.4:online",
+                "model": "openai/gpt-5.4",
                 "agent_name": "materials_worker",
                 "usage": {
                     "input_tokens": 120,
@@ -618,7 +618,7 @@ def test_web_reporter_runtime_usage_totals_include_cost_summary(monkeypatch) -> 
     assert snapshot["usage_totals"]["reasoning_tokens"] == 7
 
 
-def test_runtime_snapshot_annotates_live_prompt_payload() -> None:
+def test_runtime_snapshot_omits_removed_prompt_payload() -> None:
     class _DummyReporter:
         @staticmethod
         def get_snapshot():
@@ -628,40 +628,15 @@ def test_runtime_snapshot_annotates_live_prompt_payload() -> None:
                 "live_state": {},
                 "llm": {},
                 "graph": {},
-                "prompt": {
-                    "prompt_id": "prompt_live",
-                    "kind": "proposal_review",
-                    "payload": {"proposal_description": "# live proposal"},
-                },
                 "usage_totals": {},
                 "recent_events": [],
             }
 
-    class _DummyRunDir:
-        name = "run_live"
-
     class _DummySession:
         reporter = _DummyReporter()
 
-        @staticmethod
-        def get_selected_run_dir():
-            return _DummyRunDir()
-
-        @staticmethod
-        def _annotate_prompt_payload(run_dir, pending):
-            assert run_dir.name == "run_live"
-            return {
-                **pending,
-                "payload": {
-                    **dict(pending.get("payload") or {}),
-                    "guidance": 'Type "approve" to continue. Any other input requests a revised proposal.',
-                },
-            }
-
     snapshot = server._runtime_snapshot(_DummySession())
-    prompt = snapshot["prompt"]
-    assert isinstance(prompt, dict)
-    assert prompt["payload"]["guidance"] == 'Type "approve" to continue. Any other input requests a revised proposal.'
+    assert "prompt" not in snapshot
 
 
 def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path) -> None:

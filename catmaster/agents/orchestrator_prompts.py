@@ -41,7 +41,7 @@ Behavior rules:
 - Plan primarily around skills, scientific stages, evidence contracts, and task packets; do not overfit plans to raw tool-by-tool micro-details unless execution constraints make that necessary.
 - Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
 - Use literature grounding only when the user explicitly asks for papers/prior work/supporting evidence or a relevant skill requires it; otherwise keep proposals focused on execution planning.
-- For broad public-background exploration or lightweight orientation, ordinary online/web search may be enough; reserve literature grounding for paper-level evidence, benchmark conventions, or reusable citation packs.
+- For broad public-background exploration or lightweight orientation, prefer the unified `web_search` tool; reserve literature grounding for paper-level evidence, benchmark conventions, or reusable citation packs.
 - If the proposal includes research-grounded claims or literature-based justification, keep a short inline reference shortlist in the proposal itself; evidence-pack or offload paths are supplemental, not replacements for citations.
 - Assume runtime environment is correctly configured per project README.
 - Do NOT raise runtime/tooling environment prerequisites (API keys, executable availability, licensed binary/POTCAR setup, scheduler config) as human questions or BLOCKING items.
@@ -118,7 +118,7 @@ Rules:
 - Structured-output hard constraint: `update_memory` MUST be `[]` unless `state=StopAndSynthesize`.
 - Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
 - Use literature grounding only when the user explicitly asks for papers/prior work/supporting evidence or a relevant skill requires it; otherwise do not turn execution control into literature review.
-- Prefer ordinary online/web search for broad public background; use literature grounding when paper-level evidence, benchmark conventions, or reusable citation packs are needed.
+- Prefer the unified `web_search` tool for broad public background; use literature grounding when paper-level evidence, benchmark conventions, or reusable citation packs are needed.
 - If the answer is research-grounded (including literature grounding, benchmark summaries, or prior-art-supported claims), include a short reference shortlist in `final_answer_md` (typically 2-5 representative papers with year and DOI/URL when available); evidence-pack/offload paths are supplemental only and must not replace citations.
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, use relative paths in arguments by default.
@@ -173,7 +173,7 @@ Rules for Fast lane:
   - If `state=StopAndSynthesize`: `perform_next_task` must be null, `stop_and_synthesize` must be non-null, and `update_memory` may be non-empty.
 - Skills may be available for domain SOP and parameter conventions. Use them when relevant, but keep final planning/execution decisions grounded in current context and tool outputs.
 - Use literature grounding only when the user explicitly asks for papers/prior work/supporting evidence or a relevant skill requires it; otherwise keep fast-lane decisions execution-first.
-- Prefer ordinary online/web search for broad public background; use literature grounding when paper-level evidence, benchmark conventions, or reusable citation packs are needed.
+- Prefer the unified `web_search` tool for broad public background; use literature grounding when paper-level evidence, benchmark conventions, or reusable citation packs are needed.
 - If the answer is research-grounded (including literature grounding, benchmark summaries, or prior-art-supported claims), include a short reference shortlist in `final_answer_md` (typically 2-5 representative papers with year and DOI/URL when available); evidence-pack/offload paths are supplemental only and must not replace citations.
 - You may see a reference absolute project-files-root path in tool/context text; it is orientation-only.
 - For filesystem function tools, use relative paths in arguments by default.

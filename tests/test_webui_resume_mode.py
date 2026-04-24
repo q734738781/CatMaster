@@ -47,9 +47,28 @@ def _write_completed_run(run_dir: Path, *, entrypoint: str, final_answer: str) -
     )
 
 
-def _mk_run(path: Path, *, lane: str = "research") -> None:
+def _mk_run(
+    path: Path,
+    *,
+    lane: str = "research",
+    status: str = "interrupted_paused",
+    thread_id: str = "thread_existing",
+    chat_session_id: str = "chat_existing",
+    user_prompt: str = "Original request.",
+) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    (path / RUN_STATE_FILE).write_text(json.dumps({"entrypoint": lane, "status": "running"}), encoding="utf-8")
+    (path / RUN_STATE_FILE).write_text(
+        json.dumps(
+            {
+                "entrypoint": lane,
+                "status": status,
+                "thread_id": thread_id,
+                "chat_session_id": chat_session_id,
+                "user_prompt": user_prompt,
+            }
+        ),
+        encoding="utf-8",
+    )
     (path / "meta.json").write_text("{}", encoding="utf-8")
 
 
@@ -134,6 +153,7 @@ def test_start_run_resume_uses_selected_run_lane(tmp_path: Path, monkeypatch) ->
     assert Path(str(captured["init"]["run_dir"])).resolve() == resume_run.resolve()
     assert captured["init"]["preferred_entrypoint"] == "experiment"
     assert captured["resume_feedback"] == "resume with hint"
+    assert session.current_chat_session_id() == "chat_existing"
 
 
 def test_start_run_new_lane_uses_specialist_runner(tmp_path: Path, monkeypatch) -> None:
@@ -181,6 +201,8 @@ def test_start_run_new_lane_uses_specialist_runner(tmp_path: Path, monkeypatch) 
     assert captured["init"]["preferred_entrypoint"] == "writing"
     assert captured["run_kwargs"]["entrypoint"] == "writing"
     assert captured["prompt"] == "do something"
+    assert captured["run_kwargs"]["thread_id"] == "run_test"
+    assert captured["run_kwargs"]["conversation_messages"] == []
 
 
 def test_start_run_resume_uses_run_state_entrypoint_even_when_ui_lane_differs(tmp_path: Path, monkeypatch) -> None:
@@ -226,3 +248,45 @@ def test_start_run_resume_uses_run_state_entrypoint_even_when_ui_lane_differs(tm
     assert not session.run_thread.is_alive()
     assert captured["resume_feedback"] == "resume note"
     assert captured["init"]["preferred_entrypoint"] == "research"
+
+
+def test_start_run_resume_uses_default_continue_guidance_when_input_empty(tmp_path: Path, monkeypatch) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+    _install_dummy_llm_profile(monkeypatch)
+
+    resume_run = system_root(workspace=ws) / "runs" / "run_experiment"
+    _mk_run(resume_run, lane="experiment")
+    captured: dict = {}
+
+    class DummyRunner:
+        def resume(self, *, human_feedback: str = ""):
+            captured["resume_feedback"] = human_feedback
+            _write_completed_run(resume_run, entrypoint="experiment", final_answer="Resume finished.")
+            return {"status": "done"}
+
+    def fake_build_specialist_runner(**kwargs):
+        captured["init"] = kwargs
+        return SimpleNamespace(
+            runner=DummyRunner(),
+            run_context=SimpleNamespace(run_id="run_test", run_dir=resume_run, model_name="dummy"),
+        )
+
+    monkeypatch.setattr(specialists_mod, "build_specialist_runner", fake_build_specialist_runner)
+
+    msg = session.start_run(
+        prompt="",
+        lane="research",
+        run_mode="resume_selected_run",
+        resume_run_name="run_experiment",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    )
+    assert msg == "Run started."
+    assert session.run_thread is not None
+    session.run_thread.join(timeout=5)
+    assert captured["resume_feedback"] == "Continue the previous interrupted request."

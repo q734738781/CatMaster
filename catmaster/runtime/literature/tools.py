@@ -223,11 +223,14 @@ class RecommendSemanticScholarInput(BaseModel):
     negative_ids: list[str] | None = Field(None, description="Optional negative paper ids to avoid.")
 
 
-class SearchPublicWebInput(BaseModel):
+class WebSearchInput(BaseModel):
     """[web/search] Search the public web for broad scientific background or landing-page summaries."""
 
     query: str = Field(..., description="Public-web query.")
     max_results: int = Field(5, ge=1, le=20, description="Maximum number of results to return.")
+
+
+SearchPublicWebInput = WebSearchInput
 
 
 class OpenPublicPageInput(BaseModel):
@@ -267,6 +270,45 @@ class RunLiteratureResearchInput(BaseModel):
         None,
         description="Internal caller role used for depth-policy gating. Usually injected automatically.",
     )
+
+
+def _compact_search_text(value: Any, *, max_chars: int) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 1)].rstrip() + "…"
+
+
+def _format_web_search_content(
+    data: dict[str, Any],
+    *,
+    max_results: int = 5,
+) -> str:
+    status = str(data.get("status") or "").strip().lower()
+    if status == "error":
+        query = _compact_search_text(data.get("query") or "", max_chars=160)
+        message = _compact_search_text(data.get("message") or "unknown error", max_chars=280)
+        source = _compact_search_text(data.get("source") or "search backend", max_chars=40)
+        return f"web_search failed for query={query!r} via {source}: {message}"
+
+    query = _compact_search_text(data.get("query") or "", max_chars=200)
+    hits_raw = data.get("hits") or data.get("results") or []
+    lines = [f"Query: {query}", "Top results:"]
+    for idx, item in enumerate(hits_raw[: max(1, int(max_results or 1))], start=1):
+        if not isinstance(item, dict):
+            continue
+        title = _compact_search_text(item.get("title") or "Untitled result", max_chars=120)
+        url = _compact_search_text(item.get("url") or "", max_chars=220)
+        snippet = _compact_search_text(item.get("snippet") or item.get("content") or "", max_chars=220)
+        if not snippet:
+            snippet = "(no summary provided)"
+        lines.append(f"- [{idx}] {title}")
+        if url:
+            lines.append(f"  URL: {url}")
+        lines.append(f"  Snippet: {snippet}")
+    if len(lines) == 2:
+        lines.append("- (no results)")
+    return "\n".join(lines)
 
 
 def _pack_summary_text(data: dict[str, Any]) -> str:
@@ -482,11 +524,11 @@ def recommend_semantic_scholar(payload: dict[str, Any]) -> tuple[str, dict[str, 
         return soft
 
 
-def search_public_web(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def web_search(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[web/search] Search the public web for broad scientific context."""
-    tool_name = "search_public_web"
+    tool_name = "web_search"
     try:
-        params = SearchPublicWebInput(**payload)
+        params = WebSearchInput(**payload)
         _profile, _openalex, _scholar, web = _literature_components()
         result = web.search_public_web(params.query, max_results=params.max_results)
         data = {
@@ -496,7 +538,11 @@ def search_public_web(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "count": len(result.results),
             "hits": [item.model_dump() for item in result.results],
         }
-        return _json_tool_result(data=data, tool_name=tool_name)
+        return _format_web_search_content(data, max_results=params.max_results), {
+            "tool_name": tool_name,
+            "data": data,
+            "suppress_content_offload_ref": True,
+        }
     except Exception as exc:
         soft = _soft_external_error(
             tool_name,
@@ -505,6 +551,11 @@ def search_public_web(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             extra={"query": payload.get("query")},
         )
         return soft
+
+
+def search_public_web(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Deprecated alias for `web_search`."""
+    return web_search(payload)
 
 
 def open_public_page(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -562,6 +613,8 @@ def find_in_page(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 __all__ = [
     "RunLiteratureResearchInput",
     "run_literature_research",
+    "WebSearchInput",
+    "web_search",
     "SearchOpenAlexInput",
     "search_openalex",
     "SearchSemanticScholarInput",

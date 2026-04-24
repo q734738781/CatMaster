@@ -736,17 +736,10 @@ def _runtime_snapshot(session) -> dict[str, Any]:
             "live_state": {},
             "llm": {},
             "graph": {},
-            "prompt": None,
             "usage_totals": {},
             "recent_events": [],
         }
     snapshot = reporter.get_snapshot()
-    prompt = snapshot.get("prompt") if isinstance(snapshot.get("prompt"), dict) else None
-    if prompt is not None:
-        try:
-            prompt = session._annotate_prompt_payload(session.get_selected_run_dir(), prompt)
-        except Exception:
-            prompt = prompt
     return {
         "active": True,
         "run_name": str(snapshot.get("run_name") or ""),
@@ -754,7 +747,6 @@ def _runtime_snapshot(session) -> dict[str, Any]:
         "live_state": snapshot.get("live_state") if isinstance(snapshot.get("live_state"), dict) else {},
         "llm": snapshot.get("llm") if isinstance(snapshot.get("llm"), dict) else {},
         "graph": snapshot.get("graph") if isinstance(snapshot.get("graph"), dict) else {},
-        "prompt": prompt,
         "usage_totals": snapshot.get("usage_totals") if isinstance(snapshot.get("usage_totals"), dict) else {},
         "recent_events": snapshot.get("recent_events") if isinstance(snapshot.get("recent_events"), list) else [],
     }
@@ -775,7 +767,7 @@ def _active_run_name(session, runtime: dict[str, Any] | None = None) -> str:
         run_status = session._load_task_state_status(run_dir)
     except Exception:
         run_status = ""
-    if run_dir is not None and run_status in {"running", "starting", "awaiting_human_feedback"}:
+    if run_dir is not None and run_status in {"running", "starting"}:
         return run_dir.name
     return ""
 
@@ -927,21 +919,18 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
 
     if runtime_matches_selection:
         live_state = dict(runtime.get("live_state") or {})
-        prompt = runtime.get("prompt")
         events = list(runtime.get("recent_events") or [])
         usage_summary = _merge_usage_summary(runtime.get("usage_totals"), session.read_usage_summary(run_dir))
         llm = dict(runtime.get("llm") or {})
         graph = dict(runtime.get("graph") or {})
     else:
         live_state = session.snapshot_live_state(run_dir)
-        prompt = session.get_prompt() if str(session._load_task_state_status(run_dir) or "") == "awaiting_human_feedback" else None
         events = []
         usage_summary = session.read_usage_summary(run_dir)
         llm = live_state.get("llm") if isinstance(live_state.get("llm"), dict) else {}
         graph = {"node": str(live_state.get("current_node") or ""), "message_count": 0, "tool_calls": [], "text_preview": ""}
 
     cards = _serialize_cards(session.list_run_cards())
-    prompt_payload = prompt if isinstance(prompt, dict) else None
     return {
         "ctx": ctx,
         "workspace_root": str(registry.default_project_space_root),
@@ -960,7 +949,7 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         "live_state": live_state,
         "llm": llm,
         "graph": graph,
-        "prompt": prompt_payload,
+        "prompt": None,
         "events": events[-120:],
         "usage_summary": usage_summary,
         "proposal": session.read_proposal(run_dir),
@@ -969,7 +958,7 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         "chat_messages": session.get_chat_messages(),
         "entry_context_status": session.entry_context_status_text(lane=lane),
         "runtime": runtime,
-        "can_submit_prompt": bool(runtime_matches_selection and prompt_payload),
+        "can_submit_prompt": False,
     }
 
 
@@ -1337,17 +1326,8 @@ def create_app(*, project_space_root: str) -> FastAPI:
 
     @app.post("/api/session/{ctx}/prompt/respond")
     async def _prompt_respond(ctx: str, request: Request):
-        payload = await _json_body(request)
-        session = registry.get_session(ctx)
-        message = session.submit_prompt(str(payload.get("prompt_id") or ""), str(payload.get("text") or ""))
-        snapshot = _build_snapshot(
-            registry=registry,
-            ctx=ctx,
-            lane=str(payload.get("lane") or "research"),
-            run_name=str(payload.get("run_name") or ""),
-        )
-        snapshot["status_message"] = message
-        return JSONResponse(snapshot)
+        _ = (ctx, request)
+        raise HTTPException(status_code=410, detail="Prompt-response HITL endpoint has been removed.")
 
     @app.get("/api/session/{ctx}/stream")
     async def _session_stream(ctx: str, request: Request, last_seq: str = "0"):

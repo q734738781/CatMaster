@@ -8,7 +8,7 @@ models:
   # -------------------------------------------------------------------------
   "openrouter-main":
     provider: openrouter
-    model: openai/gpt-5.2:online
+    model: openai/gpt-5.2
 
     temperature: 1.0
     top_p: null
@@ -39,7 +39,7 @@ models:
   # Optional OpenRouter example for deeper research synthesis
   "openrouter-main-xhigh":
     provider: openrouter
-    model: openai/gpt-5.4:online
+    model: openai/gpt-5.4
 
     temperature: 1.0
     top_p: null
@@ -134,7 +134,7 @@ agents:
   # Public-web literature search is handled by Tavily in the literature tools, not an LLM role.
   literature_synthesizer: "openrouter-main"
   # Optional: if omitted, it falls back to `literature_synthesizer`.
-  # Recommended: keep this non-online unless you explicitly want provider-managed web search here too.
+  # Recommended: keep this on the plain base model and let `web_search` handle external grounding.
   literature_deep_research: "openrouter-main-xhigh"
   # Optional: if omitted, it falls back to `task_runner`.
   tool_selector: "openrouter-main"

@@ -56,6 +56,30 @@ def test_resolve_depth_auto_is_capped_to_focused_for_director() -> None:
     assert depth == "focused"
 
 
+def test_resolve_depth_accepts_current_specialist_aliases_in_role_caps() -> None:
+    config = LiteratureRuntimeConfig.from_dict(
+        {
+            "auto_default_depth": "deep_report",
+            "role_auto_max": {
+                "research_specialist": "focused",
+                "research_specialist_fast_lane": "standard",
+            },
+        }
+    )
+    lead_depth = resolve_depth(
+        "Prepare a deep research survey and benchmark landscape for Fe-based single-atom ORR catalysis.",
+        role="research_lead",
+        config=config,
+    )
+    fast_depth = resolve_depth(
+        "Prepare a deep research survey and benchmark landscape for Fe-based single-atom ORR catalysis.",
+        role="fast_director",
+        config=config,
+    )
+    assert lead_depth == "focused"
+    assert fast_depth == "standard"
+
+
 def test_resolve_depth_auto_can_use_internal_preferred_depth_flag() -> None:
     config = LiteratureRuntimeConfig.from_dict({"auto_default_depth": "quick"})
     depth = resolve_depth(
