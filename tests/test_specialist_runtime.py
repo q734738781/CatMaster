@@ -99,6 +99,8 @@ class _FakeDeepAgent:
             content = "## Summary\nresearch summary\n\n## Facts\n- grounded by literature agent when needed\n\n## Files\n- reports/research.md"
         elif name == "writing_specialist":
             content = "## Summary\nwriting summary\n\n## Facts\n- manuscript draft updated\n\n## Files\n- drafts/report.md"
+        elif name == "litreview_agent":
+            content = "## Summary\nliterature review summary\n\n## Facts\n- source-grounded synthesis completed\n\n## Files\n- notes/literature/brief.md"
         else:
             content = "## Summary\nexperiment summary\n\n## Facts\n- bounded execution completed\n\n## Files\n- experiments/out.json"
         return {"messages": [AIMessage(content=content)]}
@@ -783,11 +785,12 @@ def test_run_impl_retries_invalid_final_report_and_recovers(
     [
         ("research", ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
         ("experiment", ["materials_worker", "ml_worker", "orca_xtb_worker"]),
+        ("literature_review", ["literature_agent", "metadata_agent"]),
         ("writing", ["writing_worker_agent", "writing_polisher_agent"]),
         ("peer_review", ["peer_review_worker_agent"]),
     ],
 )
-def test_three_specialist_lanes_start_with_staged_skills(
+def test_specialist_lanes_start_with_staged_skills(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     entrypoint: str,
@@ -861,10 +864,15 @@ def test_three_specialist_lanes_start_with_staged_skills(
     assert result["status"] == "done"
     assert created_agents, "expected create_deep_agent to be called"
     agent_kwargs = created_agents[-1]
-    assert agent_kwargs["name"] == f"{entrypoint}_specialist"
+    expected_agent_name = "litreview_agent" if entrypoint == "literature_review" else f"{entrypoint}_specialist"
+    assert agent_kwargs["name"] == expected_agent_name
     assert "skills" not in agent_kwargs
     assert agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
-    assert _PROJECT_MEMORY_TOOL_NAMES <= {tool.name for tool in agent_kwargs["tools"]}
+    if entrypoint == "literature_review":
+        assert _PROJECT_MEMORY_READ_TOOL_NAMES <= {tool.name for tool in agent_kwargs["tools"]}
+        assert "manage_memory" not in {tool.name for tool in agent_kwargs["tools"]}
+    else:
+        assert _PROJECT_MEMORY_TOOL_NAMES <= {tool.name for tool in agent_kwargs["tools"]}
     assert "Project long-term memory tools" in agent_kwargs["system_prompt"]
     assert "Never store transient task requests" in agent_kwargs["system_prompt"]
     assert all(getattr(tool, "name", None) != "bash" for tool in agent_kwargs["tools"])
@@ -991,6 +999,25 @@ def test_three_specialist_lanes_start_with_staged_skills(
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in literature_middleware)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in metadata_middleware)
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
+    elif entrypoint == "literature_review":
+        assert {tool.name for tool in agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert "top-level literature-review orchestrator" in agent_kwargs["system_prompt"]
+        assert "Delegate broad public-web orientation" in agent_kwargs["system_prompt"]
+        assert "Delegate exact DOI/year/venue/authors/citation verification" in agent_kwargs["system_prompt"]
+        assert "Do not perform computational execution" in agent_kwargs["system_prompt"]
+        assert not any(isinstance(item, _FakeMemoryMiddleware) for item in agent_kwargs["middleware"])
+        literature_agent_kwargs = _find_created_agent(
+            "literature_agent",
+            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+        )
+        metadata_agent_kwargs = _find_created_agent(
+            "metadata_agent",
+            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+        )
+        assert literature_agent_kwargs["model"] == {"model": "literature_synthesizer-model"}
+        assert metadata_agent_kwargs["model"] == {"model": "literature_deep_research-model"}
+        assert "broad-review and orientation layer" in literature_agent_kwargs["system_prompt"]
+        assert "scholarly metadata tools" in metadata_agent_kwargs["system_prompt"]
     elif entrypoint == "experiment":
         materials_worker_kwargs = _find_created_agent("materials_worker")
         ml_worker_kwargs = _find_created_agent("ml_worker")

@@ -279,3 +279,13 @@ INFO:     127.0.0.1:60496 - "GET /static/app.css HTTP/1.1" 200 OK
 INFO:     127.0.0.1:60508 - "GET /static/app.js HTTP/1.1" 304 Not Modified
 INFO:     127.0.0.1:60518 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
 INFO:     127.0.0.1:60534 - "GET /api/session/ctx_35985b95046e/stream?last_seq=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50578 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50588 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50592 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50606 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50610 - "GET /api/session/ctx_35985b95046e/stream?last_seq=5 HTTP/1.1" 200 OK
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1104588]

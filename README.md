@@ -1,307 +1,437 @@
 # CatMaster
-**THIS README WAS WRITTEN AGES AGO AND NOTHING EXCEPT ENVIRONMENT SETTINGS SHOULD BE TREATED AS REAL CAPABILITY OF THE SYSTEM. USE IT WITH YOUR CASES!**
 
-```
-+----------------------------------------------------------+
-|   _____      _    __  __              _                  |
-|  / ____|    | |  |  \/  |            | |                 |
-| | |     __ _| |_ | \  / |  __ _  ___ | |_  ___  _ __     |
-| | |    / _` | __|| |\/| | / _` |/ __|| __|/ _ \| '__|    |
-| | |___| (_| | |_ | |  | || (_| |\__ \| |_| ___/| |       |
-|  \_____\__,_|\__||_|  |_| \__,_||___/ \__|\___||_|       |
-|        \_____________________________________________\   |
-|         \_____________________________________________\  |
-|                                                          |
-|   Agentic Catalysis Research and Scientific Writing      |
-|                                                          |
-+----------------------------------------------------------+
-```
+CatMaster 是一个面向计算催化工作的本地 agent 工具。日常使用入口是 WebUI：打开一个项目空间，选择任务模式，提交需求，然后在同一个界面里查看运行状态、文件、历史记录和结果。
 
-CatMaster is an open-source agent system for computational catalysis workflows. It is built for the real lab setup: files on your workstation, optional GPU-side screening, remote VASP jobs on a cluster, too many structures to inspect by hand, too many calculations to prepare manually, and too much evidence to turn into a clean paper draft at the end.
+> 中文为主；英文使用指南见后半部分。
 
-## Scientific Capability Surface
+---
 
-### Geometry and input preparation
+## 中文使用指南
 
-- molecule generation from SMILES
-- slab construction and surface preparation
-- selective dynamics helpers
-- supercells
-- adsorption-site enumeration
-- adsorbate placement and batch adsorption generation
-- NEB geometry and INCAR preparation
-- VASP input preparation
+### 1. 安装
 
-### Execution
-
-- VASP execution through DPDispatcher
-- MACE relaxation and batch screening
-- remote task forwarding for CPU/GPU environments
-
-### Retrieval and evidence gathering
-
-- Materials Project retrieval
-- run-history retrieval and review
-- research pack access
-- workspace inspection and file reading through MCP filesystem tools
-
-### Writing and figures
-
-- TeX-first section writing
-- schematic figure generation
-- figure planning vs realized figure tracking
-- fixed manuscript assembly
-- compile-fix workflow
-
-
-## Environment Setup
-
-CatMaster targets the common catalysis setup: local workstation + optional GPU machine + remote CPU/VASP cluster.
-
-### Python
-
-Typical local setup:
+建议使用独立的 conda 环境：
 
 ```bash
 conda create -n catmaster python=3.11
+conda activate catmaster
 pip install -r requirements/pc.txt
 ```
 
-If the same machine is also your GPU-side execution host:
+如果这台机器也要跑本地 GPU / MACE 相关任务，再安装 GPU 依赖：
 
 ```bash
-pip install -r requirements/pc.txt
 pip install -r requirements/gpu.txt
 ```
 
-### OVITO
-
-`render_structure_views` prefers OVITO. `ovito` is already included in `requirements/pc.txt`.
-
-If Ubuntu is missing OpenGL runtime symbols:
-
-```bash
-sudo apt update
-sudo apt install -y libopengl0
-```
-
-### Node.js
-
-MCP filesystem tools run through `npx @modelcontextprotocol/server-filesystem`, so Node.js is required.
-
-```bash
-brew install node
-```
-
-Then verify:
+如需重新构建 WebUI 前端或使用部署脚本，请确保已安装 Node.js 和 npm：
 
 ```bash
 node -v
 npm -v
-npx -v
 ```
 
-### LaTeX
+### 2. 配置
 
-The writing lane expects `pdflatex` for the final compile-fix pass.
-
-### VASPKIT
-
-`vaspkit` is recommended for thermochemistry correction tools such as `vaspkit_adsorbate_thermo_correction` and `vaspkit_gas_thermo_correction`.
-
-If you already have a local VASPKIT build, make sure it is on `PATH`:
+复制 LLM 配置模板：
 
 ```bash
-export PATH=~/vaspkit/bin:$PATH
-vaspkit
+cp configs/llm.template.yaml configs/llm.yaml
 ```
 
-To persist that for future shells:
-
-```bash
-echo 'export PATH=~/vaspkit/bin:$PATH' >> ~/.bashrc
-source ~/.bashrc
-```
-
-If `vaspkit` is unavailable, CatMaster will fall back to ASE thermochemistry:
-
-- `502` fallback uses ASE `IdealGasThermo`
-- `501` fallback uses ASE `HarmonicThermo` with a `50 cm^-1` low-frequency floor
-
-The ASE fallback is intentionally compatibility-oriented, but VASPKIT remains the preferred backend when you need the closest match to VASPKIT output conventions.
-
-### Materials Project
-
-```bash
-export MP_API_KEY=YOUR_API_KEY
-```
-
-## Credits
-
-CatMaster's writing skill stack includes adapted ideas and skill content from the `claude-scientific-skills` project by K-Dense AI:
-
-- https://github.com/K-Dense-AI/claude-scientific-skills
-
-### POTCAR setup
-
-Pymatgen requires local POTCAR availability. Download the VASP POTCAR files and configure Pymatgen accordingly:
-
-https://pymatgen.org/installation.html
-
-### DPDispatcher
-
-DPDispatcher runtime config lives in `configs/dpdispatcher/`.
-
-Typical setup:
-
-```bash
-cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml
-```
-
-Then fill in SSH, queue, and environment details in `machines.yaml`.
-
-Remote execution assumptions:
-
-- passwordless SSH
-- Slurm-style HPC on the CPU/VASP side
-- Python 3.10+ available on compute nodes
-- remote VASP or MACE runtime already installed
-
-## LLM Configuration
-
-CatMaster uses `configs/llm.yaml`, with credentials coming from environment variables.
-
-Typical setup:
+通过环境变量提供 API key：
 
 ```bash
 export OPENROUTER_API_KEY="..."
+# 或
+export OPENAI_API_KEY="..."
 ```
 
-Important config areas:
-
-- `models`
-  - provider/model registry
-- `agents`
-  - role -> model mapping
-- `image_generation`
-  - static image model config for schematic figure generation
-- `writing.author_name`
-  - fixed author name for manuscript assembly, default `CatMaster`
-
-## Quick Start
-
-Run the WebUI:
+如果需要联网文献检索，可配置：
 
 ```bash
-./start_webui.sh
+export TAVILY_API_KEY="..."
 ```
 
-Equivalent:
+如需从 Materials Project 检索或下载结构：
 
 ```bash
-python -m catmaster.webui --project-space-root ./project_space
+export MP_API_KEY="..."
 ```
 
-Also works:
+### 3. 准备项目空间
+
+项目空间用于保存输入、输出、运行记录和中间文件。可以使用任意本地目录：
 
 ```bash
-python main.py --project-space-root ./project_space
+mkdir -p ~/catmaster_projects
 ```
 
-The helper script will:
+启动 WebUI 时通过 `CATMASTER_PROJECT_SPACE_ROOT` 或 `--project-space-root` 指定。
 
-- launch with `conda run -n catmaster`
-- export the repository root into `PYTHONPATH`
-- default `--project-space-root` to `./project_space`
-- let local `execute` commands run inside a lightweight workspace-local `metadata/.venv` layered on top of the main environment, so agent-installed Python packages stay scoped to that workspace
+### 4. 启动 WebUI
 
-Useful overrides:
+最常用方式：
 
 ```bash
-CATMASTER_CONDA_ENV=catmaster ./start_webui.sh --port 7991
-CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace ./start_webui.sh
+CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh
 ```
 
-If you prefer a persistent local default, edit the `LOCAL_PROJECT_SPACE_ROOT`
-block near the top of `start_webui.sh`.
+如果 conda 环境名不是 `catmaster`：
 
-### Execute Timeout Note
+```bash
+CATMASTER_CONDA_ENV=your_env_name CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh
+```
 
-In the current specialist runtime, the default `execute` backend timeout is `12h`
-(`43200s`). This default applies when the agent calls `execute(command=...)`
-without an explicit `timeout=...`.
+查看状态或停止后台服务：
 
-However, explicit per-call `execute(timeout=...)` values are still validated by
-DeepAgent's installed `FilesystemMiddleware`, whose default
-`max_execute_timeout` is typically `3600s`. If you want the LLM to be able to
-request longer explicit timeouts such as `6h` or `24h`, the simplest local-dev
-solution is to manually patch your installed `deepagents` package.
+```bash
+./start_webui.sh --status
+./start_webui.sh --stop
+```
 
-Typical place to edit:
+前台运行，方便查看日志：
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh --foreground
+```
+
+指定端口：
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh --port 7991
+```
+
+也可以直接用 Python 启动：
+
+```bash
+python -m catmaster.webui --project-space-root ~/catmaster_projects --host 127.0.0.1 --port 7860
+```
+
+默认脚本端口通常是：
 
 ```text
-<your-python-env>/site-packages/deepagents/middleware/filesystem.py
+http://127.0.0.1:7990
 ```
 
-What to change:
+如果你手动指定了端口，请打开对应端口。
 
-- raise the default `max_execute_timeout` from `3600` to your desired limit
-  such as `21600` (`6h`) or `86400` (`24h`)
-- or pass a larger `max_execute_timeout=...` anywhere `FilesystemMiddleware(...)`
-  is constructed inside the installed `deepagents` package
+### 5. 基本使用流程
 
-This is a local environment patch, so it may need to be re-applied after
-upgrading or reinstalling `deepagents`.
+1. 打开 WebUI。
+2. 选择或新建一个 project space。
+3. 上传已有结构、计算结果、文稿或数据文件；也可以让 agent 新建文件。
+4. 选择任务模式。
+5. 在输入框里写清楚目标、已知约束和希望输出的文件格式。
+6. 运行后在界面中查看进度、工具调用、文件树和结果。
+7. 需要继续未完成任务时，选择历史 run，并使用 `resume_selected_run`。
 
-Deploy a runtime checkout:
+### 6. 任务模式
+
+#### Experiment
+
+用于边界明确的计算任务，例如准备结构和输入文件、提交或分析计算、从已有结果中提取数据。
+
+```text
+读取当前项目里的 Ni slab 和 CO 分子，生成 CO 在顶位、桥位、空位的吸附结构，并为每个结构准备 VASP 输入。
+```
+
+#### Research
+
+用于更开放的研究问题，适合把一个催化方向拆成若干轮文献、计算和结果整理任务。
+
+```text
+围绕 CO2 加氢到甲醇，帮我制定一轮 Cu 基催化剂筛选计划。先结合文献给出候选体系，再安排可执行的计算任务。
+```
+
+#### Literature Review
+
+用于直接启动 LitReview Agent，完成文献综述、公开来源核查、代表性论文整理和 DOI / 年份 / 期刊 / 作者等元数据确认。
+
+```text
+综述近五年单原子 Ni 催化 CO2 电还原生成 CO 的代表性工作，按催化剂结构、活性指标、关键证据和 DOI 整理。
+```
+
+#### Writing
+
+用于基于项目空间里的证据写作、修改和整理文稿。
+
+```text
+根据当前项目中的计算结果和图表，写一版 ACS 风格的 Results and Discussion，输出 TeX。
+```
+
+#### Peer Review
+
+用于对已有 PDF 文稿做审稿式检查，并给出编辑意见和 reviewer 风格评论。
+
+```text
+审阅 files/manuscript.pdf，重点检查催化机理证据是否充分、计算方法是否可复现、结论是否被数据支持。
+```
+
+### 7. 可选外部程序
+
+只在你需要对应任务时安装：
+
+- OVITO：结构渲染和结构视图导出。
+- LaTeX / `pdflatex`：TeX 文稿编译。
+- VASPKIT：吸附物和气相热力学校正。
+- ORCA、xTB、CREST、VASP、MACE：对应量化、半经验、构象搜索、第一性原理和机器学习势任务。
+
+如果要准备或提交 VASP 任务，请先在本机或远程机器上准备好 VASP 运行环境，并按 pymatgen 的要求配置 POTCAR。
+
+远程提交使用 `configs/dpdispatcher/` 下的配置文件。可以从模板开始：
 
 ```bash
-scripts/deploy_runtime.sh --target ../CatMaster_Run
+cp configs/machines_template.yaml configs/dpdispatcher/machines.yaml
 ```
 
-`start_webui.sh` is treated as target-local configuration during deploy. An
-existing launcher in the runtime checkout is preserved so stable deployments can
-keep different ports, conda envs, or workspace defaults. If the target has no
-launcher yet, deploy initializes one from the source checkout. To intentionally
-replace the target launcher, pass `--sync-start-webui`.
+然后按你的集群账号、队列、环境加载方式和执行命令修改：
 
-After deploy, the runtime can be started directly from its root:
+```text
+configs/dpdispatcher/machines.yaml
+configs/dpdispatcher/resources.yaml
+configs/dpdispatcher/tasks.yaml
+```
+
+### 8. 部署到运行目录
+
+如果想把当前代码同步到一个独立运行目录：
+
+```bash
+scripts/deploy_runtime.sh --target ../CatMaster_Run --no-autorun
+```
+
+然后进入目标目录启动：
 
 ```bash
 cd ../CatMaster_Run
-./start_webui.sh
+CATMASTER_PROJECT_SPACE_ROOT=./project_space ./start_webui.sh
 ```
 
-The deploy script now defaults the runtime project space to `./project_space`
-inside the target directory. You can still override it either at deploy time
-with `--project-space-root`, or at run time with
-`CATMASTER_PROJECT_SPACE_ROOT=/path/to/workspace`. Deploy autorun does not pass a
-hard-coded port; keep stable runtime port/env defaults in the target
-`start_webui.sh`, or pass CLI arguments when launching manually.
+默认会保留目标目录已有的 `start_webui.sh` 本地端口和路径设置。若要强制同步当前仓库里的启动脚本：
 
-Then open:
+```bash
+scripts/deploy_runtime.sh --target ../CatMaster_Run --sync-start-webui
+```
+
+### 9. 说明
+
+- 计算任务是否能成功，取决于你本机或远程机器上的外部程序、队列系统和环境变量是否已经配置好。
+- WebUI 的 run 历史、日志、产物和中间文件都会保存在对应 project space 中。
+- `devdocs/` 和 `docs/` 主要面向开发和内部记录；日常使用以本 README 为准。
+
+---
+
+## English Guide
+
+### 1. Installation
+
+Use a dedicated conda environment:
+
+```bash
+conda create -n catmaster python=3.11
+conda activate catmaster
+pip install -r requirements/pc.txt
+```
+
+If the same machine will run local GPU / MACE tasks, also install:
+
+```bash
+pip install -r requirements/gpu.txt
+```
+
+If you need to rebuild the WebUI frontend or use the deployment script, make sure Node.js and npm are available:
+
+```bash
+node -v
+npm -v
+```
+
+### 2. Configuration
+
+Copy the LLM config template:
+
+```bash
+cp configs/llm.template.yaml configs/llm.yaml
+```
+
+Provide API keys through environment variables:
+
+```bash
+export OPENROUTER_API_KEY="..."
+# or
+export OPENAI_API_KEY="..."
+```
+
+For web-backed literature search:
+
+```bash
+export TAVILY_API_KEY="..."
+```
+
+For Materials Project access:
+
+```bash
+export MP_API_KEY="..."
+```
+
+### 3. Project Space
+
+A project space stores inputs, outputs, run records, and intermediate files. Any local directory can be used:
+
+```bash
+mkdir -p ~/catmaster_projects
+```
+
+Pass it to the WebUI with `CATMASTER_PROJECT_SPACE_ROOT` or `--project-space-root`.
+
+### 4. Start The WebUI
+
+Recommended:
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh
+```
+
+If your conda environment is not named `catmaster`:
+
+```bash
+CATMASTER_CONDA_ENV=your_env_name CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh
+```
+
+Check or stop the background service:
+
+```bash
+./start_webui.sh --status
+./start_webui.sh --stop
+```
+
+Run in the foreground:
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh --foreground
+```
+
+Use a custom port:
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh --port 7991
+```
+
+You can also start it directly with Python:
+
+```bash
+python -m catmaster.webui --project-space-root ~/catmaster_projects --host 127.0.0.1 --port 7860
+```
+
+The default launcher port is usually:
 
 ```text
-http://127.0.0.1:7860
+http://127.0.0.1:7990
 ```
 
-Supported top-level lanes:
+If you set a custom port, open that port instead.
 
-- `standard`
-- `fast`
-- `research`
-- `writing`
+### 5. Basic Workflow
 
-## Good First Uses
+1. Open the WebUI.
+2. Select or create a project space.
+3. Upload structures, calculation outputs, manuscripts, or data files; the agent can also create files for you.
+4. Choose a task lane.
+5. Describe the goal, constraints, and desired output format.
+6. Watch progress, tool calls, files, and results in the interface.
+7. To continue an interrupted run, select the historical run and use `resume_selected_run`.
 
-If you want to get a feel for the system quickly, try one of these:
+### 6. Task Lanes
 
-- ask `fast` lane to inspect an existing catalysis workspace and summarize what is already there
-- ask `standard` lane to prepare a bounded VASP or MACE workflow
-- ask `research` lane to turn a vague catalyst question into a campaign with literature and experiments
-- ask `writing` lane to turn existing workspace evidence into a compact ACS-style TeX manuscript
+#### Experiment
 
-## Notes
+Use this for bounded computational tasks, such as preparing structures and input files, launching or analyzing calculations, and extracting data from existing outputs.
 
-- `devdocs/` is for internal development and finalization notes.
-- This README is the main top-level capability overview for new users.
+```text
+Read the Ni slab and CO molecule in the current project, generate CO adsorption structures at top, bridge, and hollow sites, and prepare VASP inputs for each structure.
+```
+
+#### Research
+
+Use this for broader research questions that may require literature review, multiple computational steps, and result synthesis.
+
+```text
+For CO2 hydrogenation to methanol, design a first-round Cu-based catalyst screening plan. Start from literature-supported candidates, then propose executable calculations.
+```
+
+#### Literature Review
+
+Use this to launch LitReview Agent directly for literature synthesis, public-source checking, representative paper lists, and DOI / year / venue / author metadata verification.
+
+```text
+Review representative work from the last five years on single-atom Ni catalysts for electrochemical CO2-to-CO conversion. Organize by catalyst structure, activity metrics, key evidence, and DOI.
+```
+
+#### Writing
+
+Use this to draft, revise, or organize manuscripts from evidence already present in the project space.
+
+```text
+Based on the calculation results and figures in this project, draft an ACS-style Results and Discussion section in TeX.
+```
+
+#### Peer Review
+
+Use this for reviewer-style assessment of an existing PDF manuscript.
+
+```text
+Review files/manuscript.pdf. Focus on whether the catalytic mechanism evidence is sufficient, the computational methods are reproducible, and the conclusions are supported by data.
+```
+
+### 7. Optional External Programs
+
+Install only what your tasks require:
+
+- OVITO: structure rendering and exported structure views.
+- LaTeX / `pdflatex`: TeX manuscript compilation.
+- VASPKIT: adsorbate and gas-phase thermochemistry corrections.
+- ORCA, xTB, CREST, VASP, MACE: quantum chemistry, semiempirical calculations, conformer search, first-principles calculations, and machine-learning potential tasks.
+
+For VASP preparation or submission, prepare the VASP runtime and configure POTCAR for pymatgen.
+
+Remote submission uses files under `configs/dpdispatcher/`. Start from:
+
+```bash
+cp configs/machines_template.yaml configs/dpdispatcher/machines.yaml
+```
+
+Then edit these files for your cluster account, queue, environment setup, and execution commands:
+
+```text
+configs/dpdispatcher/machines.yaml
+configs/dpdispatcher/resources.yaml
+configs/dpdispatcher/tasks.yaml
+```
+
+### 8. Deploy To A Runtime Directory
+
+To sync the current checkout to a separate runtime directory:
+
+```bash
+scripts/deploy_runtime.sh --target ../CatMaster_Run --no-autorun
+```
+
+Then start from the target directory:
+
+```bash
+cd ../CatMaster_Run
+CATMASTER_PROJECT_SPACE_ROOT=./project_space ./start_webui.sh
+```
+
+By default, an existing target `start_webui.sh` is preserved so local port and path settings remain stable. To force-sync the launcher from this checkout:
+
+```bash
+scripts/deploy_runtime.sh --target ../CatMaster_Run --sync-start-webui
+```
+
+### 9. Notes
+
+- Computational success depends on your local or remote external programs, queue system, and environment variables.
+- WebUI run history, logs, outputs, and intermediate files are stored inside the selected project space.
+- `devdocs/` and `docs/` are mainly for development notes; this README is the user-facing guide.

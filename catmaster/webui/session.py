@@ -39,7 +39,11 @@ from .web_reporter import WebReporter
 
 RUN_MODE_NEW = "new_run"
 RUN_MODE_RESUME_SELECTED = "resume_selected_run"
-SUPPORTED_LANES = {"research", "experiment", "writing", "peer_review"}
+SUPPORTED_LANES = {"research", "experiment", "writing", "peer_review", "literature_review"}
+LANE_ALIASES = {
+    "litreview": "literature_review",
+    "literature": "literature_review",
+}
 
 _CHAT_HISTORY_MAX_MESSAGES = 60
 
@@ -80,13 +84,16 @@ def _format_exception_for_ui(exc: BaseException, *, max_items: int = 6, max_dept
 
 
 def _entry_system_prompt(lane: str) -> str:
-    target = str(lane or "research").strip() or "research"
+    raw_target = str(lane or "research").strip() or "research"
+    target = LANE_ALIASES.get(raw_target, raw_target)
     if target == "research":
         return "ResearchSpecialist entry context."
     if target == "writing":
         return "WritingSpecialist entry context."
     if target == "peer_review":
         return "PeerReviewSpecialist entry context."
+    if target == "literature_review":
+        return "LitReviewAgent entry context."
     return "ExperimentSpecialist entry context."
 
 
@@ -381,7 +388,8 @@ class WebSession:
         mode = str(run_mode or RUN_MODE_NEW).strip()
         if mode not in {RUN_MODE_NEW, RUN_MODE_RESUME_SELECTED}:
             return f"Invalid run mode: {mode}"
-        requested_lane = str(lane or "research").strip() or "research"
+        raw_lane = str(lane or "research").strip() or "research"
+        requested_lane = LANE_ALIASES.get(raw_lane, raw_lane)
         if requested_lane not in SUPPORTED_LANES:
             requested_lane = "research"
         is_resume = mode == RUN_MODE_RESUME_SELECTED
@@ -650,7 +658,8 @@ class WebSession:
             return None, f"Invalid {RUN_STATE_FILE} in selected run: {exc}"
         if not isinstance(data, dict):
             return None, f"Invalid {RUN_STATE_FILE} in selected run: expected JSON object"
-        lane = str(data.get("entrypoint") or "research").strip() or "research"
+        raw_lane = str(data.get("entrypoint") or "research").strip() or "research"
+        lane = LANE_ALIASES.get(raw_lane, raw_lane)
         if lane not in SUPPORTED_LANES:
             return None, f"Invalid entrypoint in selected run {RUN_STATE_FILE}: {lane}"
         return lane, None

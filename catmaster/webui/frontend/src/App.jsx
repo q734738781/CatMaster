@@ -637,6 +637,11 @@ const LANE_GUIDE = {
     summary: "Coordinate broader investigation and delegate experiment, writing, literature, or publication-grade peer review only when needed.",
     subagents: ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"],
   },
+  literature_review: {
+    title: "Literature Review",
+    summary: "Launch LitReview Agent directly for source-grounded literature synthesis, public evidence inspection, and citation metadata checks.",
+    subagents: ["literature_agent", "metadata_agent"],
+  },
   writing: {
     title: "Writing",
     summary: "Draft or revise deliverables from existing evidence and compile when needed.",
@@ -3507,8 +3512,8 @@ function App({ boot }) {
                     <label>
                       <span>Lane</span>
                       <select value={lane} onChange={(event) => setLane(event.target.value)}>
-                        {["experiment", "research", "writing", "peer_review"].map((item) => (
-                          <option key={item} value={item}>{item}</option>
+                        {["experiment", "research", "literature_review", "writing", "peer_review"].map((item) => (
+                          <option key={item} value={item}>{LANE_GUIDE[item]?.title || item}</option>
                         ))}
                       </select>
                     </label>

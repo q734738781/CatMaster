@@ -56,6 +56,12 @@ _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
     "experiment": "task_runner",
     "writing": "write_director",
     "peer_review": "write_reviewer",
+    "literature_review": "literature_deep_research",
+}
+_SUPPORTED_ENTRYPOINTS = set(_ENTRYPOINT_TO_MODEL_ROLE)
+_ENTRYPOINT_ALIASES = {
+    "litreview": "literature_review",
+    "literature": "literature_review",
 }
 
 _MATERIALS_WORKER_TOOL_ALLOWLIST = {
@@ -438,8 +444,9 @@ class SpecialistRunner:
         return await self._run_impl(payload=run_state, resume_feedback=feedback)
 
     async def _run_impl(self, *, payload: dict[str, Any], resume_feedback: str | None) -> dict[str, Any]:
-        entrypoint = str(payload.get("entrypoint") or "research").strip() or "research"
-        if entrypoint not in {"research", "experiment", "writing", "peer_review"}:
+        raw_entrypoint = str(payload.get("entrypoint") or "research").strip() or "research"
+        entrypoint = _ENTRYPOINT_ALIASES.get(raw_entrypoint, raw_entrypoint)
+        if entrypoint not in _SUPPORTED_ENTRYPOINTS:
             raise ValueError(f"Unsupported specialist entrypoint: {entrypoint}")
 
         prompt = str(payload.get("user_prompt") or "").strip()
@@ -818,6 +825,9 @@ class SpecialistRunner:
         runtime: dict[str, Any],
         thread_id: str,
     ) -> Any:
+        if entrypoint == "literature_review":
+            _ = thread_id
+            return self._build_litreview_agent(runtime=runtime)
         create_deep_agent = self._load_create_deep_agent()
         tools = self._specialist_tools(entrypoint)
         # TODO: Revisit explicit summarization tuning for OpenRouter-backed specialists
@@ -2007,7 +2017,7 @@ class SpecialistRunner:
         return (
             "You are literature_agent.\n"
             "Use `web_search`, `open_public_page`, and `find_in_page` to gather external literature grounding, benchmark conventions, broader background evidence, and public-source synthesis.\n"
-            "You are the broad-review and orientation layer, not the exact scholarly metadata resolver. If exact DOI/year/venue/authors/citation details are missing or uncertain, ResearchSpecialist should delegate that part to `metadata_agent`.\n"
+            "You are the broad-review and orientation layer, not the exact scholarly metadata resolver. If exact DOI/year/venue/authors/citation details are missing or uncertain, the parent LitReview Agent should delegate that part to `metadata_agent`.\n"
             "Stay focused on representative, decision-relevant sources instead of broad browsing.\n"
             "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, evidence summaries, source lists, or background briefs.\n"
             "Return concise findings with clear separation between retrieved facts and inference.\n"
@@ -2028,7 +2038,7 @@ class SpecialistRunner:
     def _litreview_wrapper_prompt(cls) -> str:
         return (
             "You are litreview_agent.\n"
-            "You are the top-level literature-review orchestrator used by ResearchSpecialist.\n"
+            "You are the top-level literature-review orchestrator used by ResearchSpecialist and the direct Literature Review lane.\n"
             "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`, which uses `web_search`, `open_public_page`, and `find_in_page`.\n"
             "Delegate exact DOI/year/venue/authors/citation verification and scholarly record disambiguation to `metadata_agent`.\n"
             "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
