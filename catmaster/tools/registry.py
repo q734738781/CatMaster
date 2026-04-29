@@ -105,6 +105,7 @@ class ToolRegistry:
         from catmaster.tools.execution import (
             mace_relax_batch,
             mace_sp_batch,
+            mace_md_batch,
             mace_neb_batch,
             vasp_execute_batch,
             xtb_run_batch,
@@ -114,6 +115,7 @@ class ToolRegistry:
         from catmaster.tools.execution import (
             MaceRelaxBatchInput,
             MaceSPBatchInput,
+            MaceMDBatchInput,
             MaceNebBatchInput,
             VaspExecuteBatchInput,
             XtbRunBatchInput,
@@ -212,6 +214,7 @@ class ToolRegistry:
         self.register_tool("orca_irc_prepare", orca_irc_prepare, OrcaIRCPrepareInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
+        self.register_tool("mace_md_batch", mace_md_batch, MaceMDBatchInput)
         self.register_tool("mace_neb_batch", mace_neb_batch, MaceNebBatchInput)
         self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
         self.register_tool("vasp_band_prepare", vasp_band_prepare, VaspBandPrepareInput)

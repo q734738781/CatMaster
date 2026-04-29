@@ -396,10 +396,11 @@ def _resolve_openrouter_request_kwargs(cfg: LLMConfig) -> dict[str, Any]:
 
 
 def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> None:
-    if str(cfg.provider or "").strip().lower() != "openai":
+    provider = str(cfg.provider or "").strip().lower()
+    if provider not in {"openai", "deepseek"}:
         return
 
-    request_options = _provider_options_for(cfg, "openai").get("request_options")
+    request_options = _provider_options_for(cfg, provider).get("request_options")
     if request_options is None:
         return
     if not isinstance(request_options, dict):
@@ -490,7 +491,60 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         )
 
     if cfg.provider in ("openai", "oai_compatible", "deepseek"):
-        from langchain_openai import ChatOpenAI
+        if cfg.provider == "deepseek":
+            from langchain_deepseek import ChatDeepSeek as ChatModel
+            from langchain_core.messages import AIMessage
+
+            class CatMasterChatDeepSeek(ChatModel):
+                @staticmethod
+                def _thinking_enabled_for_extra_body(*extra_bodies: Any) -> bool:
+                    extra_body: dict[str, Any] = {}
+                    for candidate in extra_bodies:
+                        if isinstance(candidate, dict):
+                            extra_body.update(candidate)
+                    thinking = extra_body.get("thinking")
+                    if isinstance(thinking, dict):
+                        return str(thinking.get("type") or "").strip().lower() != "disabled"
+                    return True
+
+                def _get_request_payload(
+                    self,
+                    input_: Any,
+                    *,
+                    stop: list[str] | None = None,
+                    **kwargs: Any,
+                ) -> dict[str, Any]:
+                    payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+                    message_dicts = payload.get("messages")
+                    if not isinstance(message_dicts, list):
+                        return payload
+
+                    messages = self._convert_input(input_).to_messages()
+                    thinking_enabled = self._thinking_enabled_for_extra_body(
+                        _resolve_extra_body(cfg),
+                        kwargs.get("extra_body"),
+                        payload.get("extra_body"),
+                    )
+                    for message, message_dict in zip(messages, message_dicts):
+                        if not isinstance(message, AIMessage) or not isinstance(message_dict, dict):
+                            continue
+                        if message_dict.get("role") != "assistant" or not message_dict.get("tool_calls"):
+                            continue
+                        if not thinking_enabled:
+                            continue
+                        # Backport langchain-ai/langchain PRs #34438/#35094:
+                        # DeepSeek thinking-mode tool loops require only
+                        # assistant tool-call messages to replay
+                        # reasoning_content at the top level. Keep this as an
+                        # outbound payload adaptation; do not mutate LangChain
+                        # messages or add reasoning to normal assistant turns.
+                        reasoning_content = message.additional_kwargs.get("reasoning_content")
+                        message_dict["reasoning_content"] = reasoning_content or ""
+                    return payload
+
+            ChatModel = CatMasterChatDeepSeek
+        else:
+            from langchain_openai import ChatOpenAI as ChatModel
 
         api_key = _require_api_key(cfg)
         kwargs: dict[str, Any] = {}
@@ -529,15 +583,23 @@ def build_chat_model(cfg: LLMConfig) -> Any:
                 cfg.model,
             )
 
-        return ChatOpenAI(
+        provider = str(cfg.provider or "").strip().lower()
+        use_responses_api = provider == "openai"
+        init_kwargs: dict[str, Any] = {}
+        if use_responses_api:
+            init_kwargs["reasoning"] = reasoning_config
+        elif cfg.reasoning_effort:
+            init_kwargs["reasoning_effort"] = cfg.reasoning_effort
+
+        return ChatModel(
             model=cfg.model,
             api_key=api_key,
             temperature=cfg.temperature,
-            reasoning=reasoning_config,
             model_kwargs=model_kwargs,
             streaming=False,
             disable_streaming=True,
-            use_responses_api=True,
+            use_responses_api=use_responses_api,
+            **init_kwargs,
             **kwargs,
         )
 

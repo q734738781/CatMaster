@@ -60,10 +60,10 @@ class SessionRegistry:
             if target_path is None:
                 status_parts.append(f"Project space does not exist: {project_space_value}")
             else:
-                ok, msg = session.open_workspace(str(target_path), create=False)
+                ok, msg = session.open_workspace(str(target_path), create=False, set_current=True)
                 status_parts.append(msg)
                 if ok:
-                    project_space_path = session.current_workspace_path()
+                    project_space_path = str(target_path.resolve())
                     project_space_name = self._project_space_name_from_path(project_space_path) or project_space_name
 
         run_name = (run or "").strip()
@@ -79,7 +79,7 @@ class SessionRegistry:
             ctx=key,
             project_space_root=str(self.default_project_space_root),
             project_space_name=project_space_name,
-            project_space_path=session.current_workspace_path(),
+            project_space_path=project_space_path,
             run_name=run_name,
             status="\n".join([part for part in status_parts if part]).strip(),
         )

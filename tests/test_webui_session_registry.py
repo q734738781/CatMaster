@@ -24,6 +24,20 @@ def test_same_ctx_reuses_same_session(tmp_path: Path) -> None:
     assert a is b
 
 
+def test_different_ctx_keeps_workspace_selection_isolated(tmp_path: Path) -> None:
+    (tmp_path / "alpha").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "beta").mkdir(parents=True, exist_ok=True)
+    registry = SessionRegistry(default_project_space_root=tmp_path)
+
+    alpha = registry.bootstrap(ctx="ctx_test_alpha", project_space="alpha", run="")
+    beta = registry.bootstrap(ctx="ctx_test_beta", project_space="beta", run="")
+
+    assert alpha.ctx == "ctx_test_alpha"
+    assert beta.ctx == "ctx_test_beta"
+    assert registry.get_session("ctx_test_alpha").current_workspace_path().endswith("alpha")
+    assert registry.get_session("ctx_test_beta").current_workspace_path().endswith("beta")
+
+
 def test_monitor_url_encodes_values(tmp_path: Path) -> None:
     registry = SessionRegistry(default_project_space_root=tmp_path)
     url = registry.monitor_url(ctx="ctx test", project_space="a/b", run="run 1")

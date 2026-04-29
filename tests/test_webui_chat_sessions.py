@@ -5,6 +5,7 @@ import json
 import sqlite3
 import shutil
 import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -194,6 +195,115 @@ def test_websession_starts_new_thread_and_replays_chat_history_for_experiment_la
     assert [item["role"] for item in chat_messages[-2:]] == ["user", "assistant"]
     assert [item["kind"] for item in chat_messages[-2:]] == ["chat", "run_result"]
     assert str(chat_messages[-1]["source_run_id"]) == "run_test"
+
+
+def test_websession_allows_one_running_run_per_workspace(tmp_path: Path, monkeypatch) -> None:
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    _install_dummy_llm_profile(monkeypatch)
+
+    started: dict[str, threading.Event] = {}
+    release: dict[str, threading.Event] = {}
+    created_run_dirs: dict[str, Path] = {}
+
+    class BlockingRunner:
+        def __init__(self, *, workspace_name: str, run_dir: Path):
+            self.workspace_name = workspace_name
+            self.run_dir = run_dir
+
+        async def arun(self, prompt: str, **kwargs):
+            started[self.workspace_name].set()
+            await asyncio.to_thread(release[self.workspace_name].wait)
+            _write_completed_run(
+                self.run_dir,
+                entrypoint="experiment",
+                final_answer=f"{self.workspace_name} finished.",
+                chat_session_id=str(kwargs.get("chat_session_id") or ""),
+                user_prompt=prompt,
+            )
+            return {"status": "done"}
+
+    def fake_build_specialist_runner(**kwargs):
+        workspace = Path(kwargs["workspace"])
+        workspace_name = workspace.name
+        run_dir = system_root(workspace=workspace) / "runs" / f"run_{workspace_name}"
+        created_run_dirs[workspace_name] = run_dir
+        return SimpleNamespace(
+            runner=BlockingRunner(workspace_name=workspace_name, run_dir=run_dir),
+            run_context=SimpleNamespace(run_id=run_dir.name, run_dir=run_dir, model_name="task-model"),
+        )
+
+    monkeypatch.setattr(specialists_mod, "build_specialist_runner", fake_build_specialist_runner)
+
+    for name in ("ws_a", "ws_b"):
+        started[name] = threading.Event()
+        release[name] = threading.Event()
+
+    ok, _ = session.open_workspace(str(tmp_path / "ws_a"), create=True)
+    assert ok
+    assert session.start_run(
+        prompt="Run A.",
+        lane="experiment",
+        run_mode="new_run",
+        resume_run_name="",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    ) == "Run started."
+    assert started["ws_a"].wait(timeout=5)
+    thread_a = session.run_thread
+    assert thread_a is not None and thread_a.is_alive()
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_b"), create=True)
+    assert ok, msg
+    assert session.run_thread is None
+    assert session.start_run(
+        prompt="Run B.",
+        lane="experiment",
+        run_mode="new_run",
+        resume_run_name="",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    ) == "Run started."
+    assert started["ws_b"].wait(timeout=5)
+    thread_b = session.run_thread
+    assert thread_b is not None and thread_b.is_alive()
+    assert thread_b is not thread_a
+
+    assert session.start_run(
+        prompt="Second B.",
+        lane="experiment",
+        run_mode="new_run",
+        resume_run_name="",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    ) == "Run already in progress for this project space."
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_a"), create=False)
+    assert ok, msg
+    assert session.run_thread is thread_a
+    assert session.get_selected_run_dir() == created_run_dirs["ws_a"]
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_b"), create=False)
+    assert ok, msg
+    release["ws_a"].set()
+    release["ws_b"].set()
+    thread_a.join(timeout=5)
+    thread_b.join(timeout=5)
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_a"), create=False)
+    assert ok, msg
+    assert session.run_status == "done"
+    assert session.read_result_text(created_run_dirs["ws_a"]) == "ws_a finished."
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_b"), create=False)
+    assert ok, msg
+    assert session.run_status == "done"
+    assert session.read_result_text(created_run_dirs["ws_b"]) == "ws_b finished."
 
 
 def test_websession_builds_thread_binding_for_research_lane(tmp_path: Path) -> None:

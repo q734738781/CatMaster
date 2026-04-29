@@ -686,6 +686,36 @@ def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path)
     assert len(payload["chat_sessions"]) >= 2
 
 
+def test_same_ctx_snapshot_is_scoped_by_project_space(tmp_path: Path) -> None:
+    for name in ("alpha", "beta"):
+        ws = tmp_path / name
+        (ws / "files").mkdir(parents=True, exist_ok=True)
+        (ws / "metadata" / "runs" / f"run_{name}").mkdir(parents=True, exist_ok=True)
+        (ws / "metadata" / "runs" / f"run_{name}" / "run_state.json").write_text(
+            json.dumps({"status": "done", "entrypoint": "experiment", "summary": name}),
+            encoding="utf-8",
+        )
+
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "alpha"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+    switch = client.get("/api/bootstrap", params={"ctx": ctx, "project_space": "beta"})
+    assert switch.status_code == 200
+    assert switch.json()["workspace_name"] == "beta"
+
+    alpha = client.get(f"/api/session/{ctx}/snapshot", params={"project_space": "alpha", "lane": "experiment"})
+    beta = client.get(f"/api/session/{ctx}/snapshot", params={"project_space": "beta", "lane": "experiment"})
+
+    assert alpha.status_code == 200
+    assert beta.status_code == 200
+    assert alpha.json()["workspace_name"] == "alpha"
+    assert beta.json()["workspace_name"] == "beta"
+    assert alpha.json()["selected_run"] == "run_alpha"
+    assert beta.json()["selected_run"] == "run_beta"
+
+
 def test_bootstrap_recovers_active_run_for_lane(tmp_path: Path) -> None:
     ws = tmp_path / "demo"
     run_dir = ws / "metadata" / "runs" / "run_live"

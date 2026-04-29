@@ -1060,7 +1060,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
         assert "If a worker needs a handy Python package for a bounded local step and it is missing" in agent_kwargs["system_prompt"]
         assert "mace_neb_batch" in {tool.name for tool in materials_worker_kwargs["tools"]}
-        assert "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis" in materials_worker_kwargs["system_prompt"]
+        assert "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
         assert "export_builtin_tool_source" in materials_worker_kwargs["system_prompt"]

@@ -1,0 +1,231 @@
+# LLM configuration for CatMaster ModelE internal benchmark.
+# Secrets (API keys) should come from environment variables.
+# This follows configs/llm.yaml naming and role-binding rules.
+
+models:
+  "deepseek-v4-pro":
+    provider: deepseek
+    model: deepseek-v4-pro
+
+    reasoning_effort: high
+    api_key_env: DEEPSEEK_API_KEY
+    api_key: null
+    base_url: "https://api.deepseek.com"
+
+    default_headers: {}
+    
+  "openai/gpt-5.4:medium":
+    provider: openrouter
+    model: openai/gpt-5.4
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: medium
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+  "openai/gpt-5.4:xhigh":
+    provider: openrouter
+    model: openai/gpt-5.4
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: xhigh
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+  "openai/gpt-5.4:high":
+    provider: openrouter
+    model: openai/gpt-5.4
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: high
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+  "openai/gpt-5.3-codex:high":
+    provider: openrouter
+    model: openai/gpt-5.3-codex
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: high
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+  "openai/gpt-5.4:minimal":
+    provider: openrouter
+    model: openai/gpt-5.4
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: minimal
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+  "openai/gpt-5.4-mini":
+    provider: openrouter
+    model: openai/gpt-5.4-mini
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: high
+
+  "google/gemini-3-flash-preview":
+    provider: openrouter
+    model: google/gemini-3-flash-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: minimal
+
+  "google/gemini-3.1-pro-preview":
+    provider: openrouter
+    model: google/gemini-3.1-pro-preview
+    temperature: 0.2
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: medium
+
+  "google/nanobanana_2":
+    provider: openrouter
+    model: google/gemini-3.1-flash-image-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+
+agents:
+  # Current runtime entry specialists
+  proposal_agent: "deepseek-v4-pro"
+  planning_director: "deepseek-v4-pro"
+  experiment_specialist: "deepseek-v4-pro"
+  research_specialist: "deepseek-v4-pro"
+  research_kernel_updater: "deepseek-v4-pro"
+  writing_specialist: "deepseek-v4-pro"
+  peer_review_specialist: "openai/gpt-5.4:medium"
+
+  # Current runtime worker / helper agents
+  writing_worker_agent: "deepseek-v4-pro"
+  writing_polisher_agent: "google/gemini-3.1-pro-preview"
+  literature_agent: "openai/gpt-5.4:medium"
+  litreview_agent: "openai/gpt-5.4:medium"
+
+  # Internal utility roles
+  latex_fixer: "openai/gpt-5.4:medium"
+  image_analyzer: "openai/gpt-5.4:medium"
+  memory_patcher: "openai/gpt-5.4:medium"
+  tool_router: "openai/gpt-5.4-mini"
+  run_summary: "google/gemini-3-flash-preview"
+
+peer_review_models:
+  - "google/gemini-3.1-pro-preview"
+
+image_generation:
+  model_label: "google/nanobanana_2"
+  image_config:
+    aspect_ratio: "4:3"
+
+writing:
+  author_name: "CatMaster"
+
+agent_runtime:
+  recursion_limit: 9999
+  max_tool_calls: 120
+  print_state_messages: true
+  print_http_raw_post: false
+
+agent_policies:
+  proposal:
+    browse_tools_enabled: true
+
+literature:
+  auto_default_depth: quick
+  role_auto_max:
+    proposal_agent: standard
+    planning_director: focused
+    research_specialist_fast_lane: focused
+    experiment_specialist: none
+    research_specialist: deep_report
+    research_kernel_updater: deep_report
+    writing_specialist: none
+    writing_worker_agent: standard
+    peer_review_specialist: none
+  public_web_on_search_failure: true
+  summary_key_paper_count: 5
+  semantic_scholar_retry_429_attempts: 5
+  semantic_scholar_retry_429_wait_seconds: 15.0
+  budgets:
+    none:
+      agent_step_budget: 1
+      search_limit: 0
+      recommendation_limit: 0
+      recommendation_seed_count: 0
+      public_web_limit: 0
+      use_public_web: false
+    quick:
+      agent_step_budget: 4
+      search_limit: 6
+      recommendation_limit: 0
+      recommendation_seed_count: 0
+      public_web_limit: 5
+      use_public_web: false
+    standard:
+      agent_step_budget: 6
+      search_limit: 10
+      recommendation_limit: 4
+      recommendation_seed_count: 3
+      public_web_limit: 3
+      use_public_web: true
+    focused:
+      agent_step_budget: 8
+      search_limit: 12
+      recommendation_limit: 6
+      recommendation_seed_count: 3
+      public_web_limit: 5
+      use_public_web: true
+    deep_report:
+      agent_step_budget: 16
+      search_limit: 14
+      recommendation_limit: 6
+      recommendation_seed_count: 3
+      public_web_limit: 5
+      use_public_web: true

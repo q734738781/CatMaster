@@ -137,6 +137,231 @@ def test_build_chat_model_passes_reasoning_summary_config(monkeypatch) -> None:
     assert captured.get("use_responses_api") is True
 
 
+def test_build_chat_model_passes_deepseek_official_reasoning_effort(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatDeepSeek:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "langchain_deepseek", types.SimpleNamespace(ChatDeepSeek=FakeChatDeepSeek))
+
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        reasoning_effort="high",
+        provider_options={
+            "deepseek": {
+                "extra_body": {"thinking": {"type": "enabled"}},
+            }
+        },
+    )
+
+    build_chat_model(cfg)
+
+    assert captured.get("base_url") == "https://api.deepseek.com"
+    assert captured.get("reasoning_effort") == "high"
+    assert captured.get("extra_body") == {"thinking": {"type": "enabled"}}
+    assert captured.get("reasoning") is None
+    assert captured.get("use_responses_api") is False
+
+
+def test_deepseek_payload_replays_reasoning_content() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        reasoning_effort="high",
+    )
+
+    model = build_chat_model(cfg)
+    payload = model._get_request_payload(
+        [
+            HumanMessage(content="weather?"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "name": "get_weather",
+                        "args": {"city": "Paris"},
+                        "type": "tool_call",
+                    }
+                ],
+                additional_kwargs={"reasoning_content": "need to call weather tool"},
+            ),
+            ToolMessage(content="sunny", tool_call_id="call_1"),
+        ]
+    )
+
+    assert payload["messages"][1]["role"] == "assistant"
+    assert payload["messages"][1]["reasoning_content"] == "need to call weather tool"
+
+
+def test_deepseek_payload_adds_empty_reasoning_content_for_tool_calls() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        reasoning_effort="high",
+    )
+
+    model = build_chat_model(cfg)
+    payload = model._get_request_payload(
+        [
+            HumanMessage(content="weather?"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "name": "get_weather",
+                        "args": {"city": "Paris"},
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ToolMessage(content="sunny", tool_call_id="call_1"),
+        ]
+    )
+
+    assert payload["messages"][1]["role"] == "assistant"
+    assert payload["messages"][1]["reasoning_content"] == ""
+
+
+def test_deepseek_payload_does_not_replay_reasoning_content_when_thinking_disabled() -> None:
+    from langchain_core.messages import AIMessage
+
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        reasoning_effort="high",
+        provider_options={
+            "deepseek": {
+                "extra_body": {"thinking": {"type": "disabled"}},
+            }
+        },
+    )
+
+    model = build_chat_model(cfg)
+    payload = model._get_request_payload(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "name": "get_weather",
+                        "args": {"city": "Paris"},
+                        "type": "tool_call",
+                    }
+                ],
+                additional_kwargs={"reasoning_content": "hidden"},
+            ),
+        ]
+    )
+
+    assert "reasoning_content" not in payload["messages"][0]
+
+
+def test_deepseek_payload_does_not_replay_reasoning_content_without_tool_calls() -> None:
+    from langchain_core.messages import AIMessage
+
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        reasoning_effort="high",
+    )
+
+    model = build_chat_model(cfg)
+    payload = model._get_request_payload(
+        [
+            AIMessage(
+                content="plain answer",
+                additional_kwargs={"reasoning_content": "hidden"},
+            ),
+        ]
+    )
+
+    assert payload["messages"][0]["role"] == "assistant"
+    assert payload["messages"][0]["content"] == "plain answer"
+    assert "reasoning_content" not in payload["messages"][0]
+
+
+def test_deepseek_payload_honors_runtime_thinking_disabled() -> None:
+    from langchain_core.messages import AIMessage
+
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        reasoning_effort="high",
+    )
+
+    model = build_chat_model(cfg)
+    payload = model._get_request_payload(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "name": "get_weather",
+                        "args": {"city": "Paris"},
+                        "type": "tool_call",
+                    }
+                ],
+                additional_kwargs={"reasoning_content": "hidden"},
+            ),
+        ],
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+
+    assert "reasoning_content" not in payload["messages"][0]
+
+
+def test_deepseek_payload_does_not_mutate_original_ai_message() -> None:
+    from langchain_core.messages import AIMessage
+
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        reasoning_effort="high",
+    )
+    message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_1",
+                "name": "get_weather",
+                "args": {"city": "Paris"},
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    model = build_chat_model(cfg)
+    payload = model._get_request_payload([message])
+
+    assert payload["messages"][0]["reasoning_content"] == ""
+    assert "reasoning_content" not in message.additional_kwargs
+
+
 def test_build_chat_model_maps_openai_request_options(monkeypatch) -> None:
     captured: dict = {}
 

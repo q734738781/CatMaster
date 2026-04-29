@@ -4,8 +4,10 @@ from catmaster.tools.execution.mace_dispatch import (
     MaceRelaxInput,
     MaceRelaxBatchInput,
     MaceSPBatchInput,
+    MaceMDBatchInput,
     mace_relax_batch,
     mace_sp_batch,
+    mace_md_batch,
 )
 from catmaster.tools.execution.mace_neb import (
     MaceNebBatchInput,
@@ -31,9 +33,11 @@ __all__ = [
     "MaceRelaxInput",
     "MaceRelaxBatchInput",
     "MaceSPBatchInput",
+    "MaceMDBatchInput",
     "MaceNebBatchInput",
     "mace_relax_batch",
     "mace_sp_batch",
+    "mace_md_batch",
     "mace_neb_batch",
     "VaspExecuteInput",
     "VaspExecuteBatchInput",

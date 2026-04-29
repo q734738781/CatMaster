@@ -95,18 +95,40 @@ def _coerce_int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
-def _workspace_root_for_session(session) -> Path:
-    workspace_path = str(session.current_workspace_path() or "").strip()
-    if not workspace_path:
+def _workspace_for_request(registry: SessionRegistry, session, project_space: str = "", *, create: bool = False) -> tuple[Optional[Path], str]:
+    value = str(project_space or "").strip()
+    if value:
+        target = session.resolve_workspace_by_name(value)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Project space not found: {value}")
+        ok, message = session.open_workspace(str(target), create=create, set_current=False)
+        if not ok:
+            raise HTTPException(status_code=404 if not create else 400, detail=message)
+        return target.expanduser().resolve(), registry._project_space_name_from_path(str(target)) or value
+    current = str(session.current_workspace_path() or "").strip()
+    if current:
+        target = Path(current).expanduser().resolve()
+        return target, registry._project_space_name_from_path(str(target)) or target.name
+    return None, ""
+
+
+def _workspace_root_for_session(session, *, workspace: Optional[Path] = None) -> Path:
+    if isinstance(workspace, Path):
+        workspace_root = workspace.expanduser().resolve()
+    else:
+        workspace_path = str(session.current_workspace_path() or "").strip()
+        if not workspace_path:
+            raise HTTPException(status_code=400, detail="Open a project space first.")
+        workspace_root = Path(workspace_path).expanduser().resolve()
+    if not workspace_root:
         raise HTTPException(status_code=400, detail="Open a project space first.")
-    workspace_root = Path(workspace_path).expanduser().resolve()
     if not workspace_root.exists() or not workspace_root.is_dir():
         raise HTTPException(status_code=404, detail="Project space not found.")
     return workspace_root
 
 
-def _resolve_workspace_entry(session, rel_path: str = "") -> tuple[Path, Path, str]:
-    workspace_root = _workspace_root_for_session(session)
+def _resolve_workspace_entry(session, rel_path: str = "", *, workspace: Optional[Path] = None) -> tuple[Path, Path, str]:
+    workspace_root = _workspace_root_for_session(session, workspace=workspace)
     requested = str(rel_path or "").strip().strip("/")
     candidate = workspace_root if not requested else (workspace_root / requested).resolve()
     try:
@@ -119,8 +141,8 @@ def _resolve_workspace_entry(session, rel_path: str = "") -> tuple[Path, Path, s
     return workspace_root, candidate, rel_text
 
 
-def _resolve_workspace_destination(session, rel_path: str = "") -> tuple[Path, Path, str]:
-    workspace_root = _workspace_root_for_session(session)
+def _resolve_workspace_destination(session, rel_path: str = "", *, workspace: Optional[Path] = None) -> tuple[Path, Path, str]:
+    workspace_root = _workspace_root_for_session(session, workspace=workspace)
     requested = str(rel_path or "").strip().strip("/")
     candidate = workspace_root if not requested else (workspace_root / requested).resolve()
     try:
@@ -131,8 +153,8 @@ def _resolve_workspace_destination(session, rel_path: str = "") -> tuple[Path, P
     return workspace_root, candidate, rel_text
 
 
-def _resolve_workspace_mutation_entry(session, rel_path: str) -> tuple[Path, Path, str]:
-    workspace_root = _workspace_root_for_session(session)
+def _resolve_workspace_mutation_entry(session, rel_path: str, *, workspace: Optional[Path] = None) -> tuple[Path, Path, str]:
+    workspace_root = _workspace_root_for_session(session, workspace=workspace)
     requested = str(rel_path or "").strip().strip("/")
     if not requested:
         raise HTTPException(status_code=400, detail="Refusing to modify the project-space root.")
@@ -391,7 +413,7 @@ def _structure_file_type(path: Path) -> str:
     }.get(suffix, "")
 
 
-def _build_structure_payload(path: Path, *, ctx: str, rel_path: str) -> Optional[dict[str, Any]]:
+def _build_structure_payload(path: Path, *, ctx: str, rel_path: str, project_space: str = "") -> Optional[dict[str, Any]]:
     try:
         from ase.io import write as ase_write
     except Exception:
@@ -426,21 +448,22 @@ def _build_structure_payload(path: Path, *, ctx: str, rel_path: str) -> Optional
     viewer_source_mode = "inline"
     viewer_source_url = ""
     viewer_source_file_type = ""
+    project_param = f"&project_space={quote(project_space)}" if project_space else ""
     if is_vibration_source and vibration_modes:
         viewer_source_mode = "url"
-        viewer_source_url = f"/api/session/{ctx}/files/structure-vibration?path={quote(rel_path)}"
+        viewer_source_url = f"/api/session/{ctx}/files/structure-vibration?path={quote(rel_path)}{project_param}"
         viewer_source_file_type = "Xyz"
     elif is_vibration_source:
         viewer_source_mode = "url"
-        viewer_source_url = f"/api/session/{ctx}/files/view?path={quote(rel_path)}"
+        viewer_source_url = f"/api/session/{ctx}/files/view?path={quote(rel_path)}{project_param}"
         viewer_source_file_type = "VaspOutcar"
     elif is_trajectory_source:
         viewer_source_mode = "url"
-        viewer_source_url = f"/api/session/{ctx}/files/structure-animation?path={quote(rel_path)}"
+        viewer_source_url = f"/api/session/{ctx}/files/structure-animation?path={quote(rel_path)}{project_param}"
         viewer_source_file_type = "Xyz"
     else:
         viewer_source_mode = "url"
-        viewer_source_url = f"/api/session/{ctx}/files/view?path={quote(rel_path)}"
+        viewer_source_url = f"/api/session/{ctx}/files/view?path={quote(rel_path)}{project_param}"
         viewer_source_file_type = _structure_file_type(path)
     return {
         "formula": str(atoms.get_chemical_formula() or ""),
@@ -482,8 +505,8 @@ def _build_structure_payload(path: Path, *, ctx: str, rel_path: str) -> Optional
     }
 
 
-def _structure_animation_response(*, session, rel_path: str) -> Response:
-    _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, rel_path)
+def _structure_animation_response(*, session, rel_path: str, workspace: Optional[Path] = None) -> Response:
+    _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, rel_path, workspace=workspace)
     if not candidate.is_file():
         raise HTTPException(status_code=400, detail="Only files can be viewed.")
     frame_bundle = _read_structure_frames(candidate)
@@ -500,8 +523,8 @@ def _structure_animation_response(*, session, rel_path: str) -> Response:
     return Response(payload.getvalue(), media_type="chemical/x-xyz")
 
 
-def _structure_view_response(*, session, rel_path: str) -> FileResponse:
-    _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, rel_path)
+def _structure_view_response(*, session, rel_path: str, workspace: Optional[Path] = None) -> FileResponse:
+    _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, rel_path, workspace=workspace)
     if not candidate.is_file():
         raise HTTPException(status_code=400, detail="Only files can be viewed.")
     upper_name = candidate.name.upper()
@@ -512,8 +535,8 @@ def _structure_view_response(*, session, rel_path: str) -> FileResponse:
     return FileResponse(candidate, media_type=media_type)
 
 
-def _structure_vibration_response(*, session, rel_path: str, mode_index: int) -> Response:
-    _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, rel_path)
+def _structure_vibration_response(*, session, rel_path: str, mode_index: int, workspace: Optional[Path] = None) -> Response:
+    _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, rel_path, workspace=workspace)
     if not candidate.is_file():
         raise HTTPException(status_code=400, detail="Only files can be viewed.")
     frame_bundle = _read_structure_frames(candidate, limit=1)
@@ -556,8 +579,9 @@ def _structure_vibration_response(*, session, rel_path: str, mode_index: int) ->
     return Response(payload.getvalue(), media_type="chemical/x-xyz")
 
 
-def _file_content_payload(*, ctx: str, session, rel_path: str) -> dict[str, Any]:
-    workspace_root, candidate, normalized_path = _resolve_workspace_entry(session, rel_path)
+def _file_content_payload(*, ctx: str, session, rel_path: str, workspace: Optional[Path] = None) -> dict[str, Any]:
+    workspace_root, candidate, normalized_path = _resolve_workspace_entry(session, rel_path, workspace=workspace)
+    project_space = Path(workspace_root).name
     stat = candidate.stat()
     mime_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
     payload: dict[str, Any] = {
@@ -567,7 +591,7 @@ def _file_content_payload(*, ctx: str, session, rel_path: str) -> dict[str, Any]
         "size": int(stat.st_size),
         "modified_ts": float(stat.st_mtime),
         "mime_type": mime_type,
-        "download_url": f"/api/session/{ctx}/files/download?path={quote(normalized_path)}",
+        "download_url": f"/api/session/{ctx}/files/download?path={quote(normalized_path)}&project_space={quote(project_space)}",
     }
     if candidate.is_dir():
         payload["kind"] = "directory"
@@ -579,7 +603,7 @@ def _file_content_payload(*, ctx: str, session, rel_path: str) -> dict[str, Any]
     if kind == "image":
         return payload
     if kind == "structure":
-        payload["structure"] = _build_structure_payload(candidate, ctx=ctx, rel_path=normalized_path)
+        payload["structure"] = _build_structure_payload(candidate, ctx=ctx, rel_path=normalized_path, project_space=project_space)
         preview_text, truncated = _read_text_preview(candidate)
         payload["preview_text"] = preview_text
         payload["truncated"] = truncated
@@ -602,8 +626,9 @@ async def _upload_workspace_file(
     request: Request,
     overwrite: bool = False,
     unzip: bool = False,
+    workspace: Optional[Path] = None,
 ) -> dict[str, Any]:
-    workspace_root, directory, normalized_dir = _resolve_workspace_destination(session, rel_path)
+    workspace_root, directory, normalized_dir = _resolve_workspace_destination(session, rel_path, workspace=workspace)
     if directory.exists() and not directory.is_dir():
         raise HTTPException(status_code=400, detail="Upload target is not a directory.")
     directory.mkdir(parents=True, exist_ok=True)
@@ -664,8 +689,8 @@ async def _upload_workspace_file(
     }
 
 
-def _delete_workspace_entry(*, session, rel_path: str) -> dict[str, Any]:
-    _workspace_root, candidate, normalized_path = _resolve_workspace_mutation_entry(session, rel_path)
+def _delete_workspace_entry(*, session, rel_path: str, workspace: Optional[Path] = None) -> dict[str, Any]:
+    _workspace_root, candidate, normalized_path = _resolve_workspace_mutation_entry(session, rel_path, workspace=workspace)
     if candidate.is_symlink() or candidate.is_file():
         candidate.unlink()
         node_type = "file"
@@ -677,8 +702,8 @@ def _delete_workspace_entry(*, session, rel_path: str) -> dict[str, Any]:
     return {"ok": True, "path": normalized_path, "node_type": node_type}
 
 
-def _archive_workspace_entry(*, session, rel_path: str) -> FileResponse:
-    workspace_root, candidate, normalized_path = _resolve_workspace_entry(session, rel_path)
+def _archive_workspace_entry(*, session, rel_path: str, workspace: Optional[Path] = None) -> FileResponse:
+    workspace_root, candidate, normalized_path = _resolve_workspace_entry(session, rel_path, workspace=workspace)
     archive_base = candidate.name if normalized_path else workspace_root.name
     archive_name = f"{archive_base or 'workspace'}.zip"
 
@@ -726,8 +751,13 @@ def _archive_workspace_entry(*, session, rel_path: str) -> FileResponse:
     )
 
 
-def _runtime_snapshot(session) -> dict[str, Any]:
-    reporter = session.reporter
+def _runtime_snapshot(session, *, workspace: Optional[Path] = None) -> dict[str, Any]:
+    if hasattr(session, "_lock") and hasattr(session, "_runtime_for_workspace_unlocked"):
+        with session._lock:
+            runtime_state = session._runtime_for_workspace_unlocked(workspace, create=True)
+            reporter = runtime_state.reporter
+    else:
+        reporter = getattr(session, "reporter", None)
     if reporter is None:
         return {
             "active": False,
@@ -752,17 +782,25 @@ def _runtime_snapshot(session) -> dict[str, Any]:
     }
 
 
-def _active_run_name(session, runtime: dict[str, Any] | None = None) -> str:
+def _active_run_name(session, runtime: dict[str, Any] | None = None, *, workspace: Optional[Path] = None) -> str:
     runtime_dict = runtime if isinstance(runtime, dict) else {}
     runtime_run = str(runtime_dict.get("run_name") or "").strip()
     if runtime_run:
         return runtime_run
-    info = getattr(session, "run_info", None)
+    if hasattr(session, "_lock") and hasattr(session, "_runtime_for_workspace_unlocked"):
+        with session._lock:
+            runtime_state = session._runtime_for_workspace_unlocked(workspace, create=True)
+            info = dict(runtime_state.run_info or {})
+    else:
+        info = getattr(session, "run_info", None)
     if isinstance(info, dict):
         run_id = str(info.get("run_id") or "").strip()
         if run_id:
             return run_id
-    run_dir = session.get_selected_run_dir()
+    try:
+        run_dir = session.get_selected_run_dir(workspace=workspace)
+    except TypeError:
+        run_dir = session.get_selected_run_dir()
     try:
         run_status = session._load_task_state_status(run_dir)
     except Exception:
@@ -772,11 +810,13 @@ def _active_run_name(session, runtime: dict[str, Any] | None = None) -> str:
     return ""
 
 
-def _display_run_status(session, run_dir) -> str:
+def _display_run_status(session, run_dir, *, workspace: Optional[Path] = None) -> str:
     try:
-        return str(session._display_status(getattr(session, "run_status", "idle"), run_dir) or "idle")
+        with session._lock:
+            status = session._runtime_for_workspace_unlocked(workspace, create=True).run_status
+        return str(session._display_status(status, run_dir) or "idle")
     except Exception:
-        return str(getattr(session, "run_status", "idle") or "idle")
+        return "idle"
 
 
 def _merge_usage_summary(runtime_usage: dict[str, Any] | None, persisted_usage: dict[str, Any] | None) -> dict[str, Any]:
@@ -849,72 +889,80 @@ def _merge_usage_summary(runtime_usage: dict[str, Any] | None, persisted_usage: 
     return merged
 
 
-def _stream_patch(session, runtime: dict[str, Any]) -> dict[str, Any]:
+def _stream_patch(session, runtime: dict[str, Any], *, workspace: Optional[Path] = None) -> dict[str, Any]:
     run_name = str(runtime.get("run_name") or "").strip()
-    active_run = _active_run_name(session, runtime)
+    active_run = _active_run_name(session, runtime, workspace=workspace)
     selected_run = run_name
     run_dir = None
-    workspace_path = str(session.current_workspace_path() or "").strip()
+    workspace_path = str(workspace or session.current_workspace_path() or "").strip()
     if run_name and workspace_path:
         resolved = session._resolve_run_dir_by_name(run_name, workspace=Path(workspace_path))
         if resolved is not None:
             run_dir = resolved
     if run_dir is None:
-        run_dir = session.get_selected_run_dir()
+        run_dir = session.get_selected_run_dir(workspace=workspace)
         selected_run = run_dir.name if run_dir is not None else selected_run
     persisted_usage = session.read_usage_summary(run_dir) if run_dir is not None else {}
     usage_summary = _merge_usage_summary(runtime.get("usage_totals"), persisted_usage)
     return {
         "active_run": active_run,
         "selected_run": selected_run,
-        "chat_messages": session.get_chat_messages(),
-        "cards": _serialize_cards(session.list_run_cards()),
+        "chat_messages": session.get_chat_messages(workspace=workspace),
+        "cards": _serialize_cards(session.list_run_cards(workspace=workspace)),
         "usage_summary": usage_summary,
-        "proposal": session.read_proposal(run_dir),
+        "proposal": session.read_proposal(run_dir, workspace=workspace),
         "todo_items": session.read_todo_items(run_dir),
         "result_text": session.read_result_text(run_dir),
     }
 
 
-def _pick_selected_run(session, requested_run: str = "", *, lane: str = "") -> str:
+def _pick_selected_run(session, requested_run: str = "", *, lane: str = "", workspace: Optional[Path] = None) -> str:
     selected = str(requested_run or "").strip()
-    runs = session.list_runs()
+    runs = session.list_runs(workspace=workspace)
     run_names = {value for _, value in runs}
     if selected and selected in run_names:
-        session.select_run(selected)
+        session.select_run(selected, workspace=workspace)
         return selected
-    current = session.get_selected_run_dir()
+    current = session.get_selected_run_dir(workspace=workspace)
     current_name = current.name if current is not None else ""
     if current_name and current_name in run_names:
         return current_name
     lane_name = str(lane or "").strip()
-    workspace_path = str(session.current_workspace_path() or "").strip()
+    workspace_path = str(workspace or session.current_workspace_path() or "").strip()
     if lane_name and workspace_path:
         active_run = session._resolve_resume_dir(lane_name, workspace=Path(workspace_path))
         active_name = Path(active_run).name if active_run else ""
         if active_name and active_name in run_names:
-            session.select_run(active_name)
+            session.select_run(active_name, workspace=workspace)
             return active_name
     if runs:
         fallback = runs[0][1]
-        session.select_run(fallback)
+        session.select_run(fallback, workspace=workspace)
         return fallback
     return ""
 
 
-def _run_dir_for_name(session, run_name: str):
-    selected = _pick_selected_run(session, run_name)
+def _run_dir_for_name(session, run_name: str, *, workspace: Optional[Path] = None):
+    selected = _pick_selected_run(session, run_name, workspace=workspace)
     if not selected:
         return None, ""
-    return session.get_selected_run_dir(), selected
+    return session.get_selected_run_dir(workspace=workspace), selected
 
 
-def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "research", run_name: str = "") -> dict[str, Any]:
+def _build_snapshot(
+    *,
+    registry: SessionRegistry,
+    ctx: str,
+    lane: str = "research",
+    run_name: str = "",
+    project_space: str = "",
+) -> dict[str, Any]:
     session = registry.get_session(ctx)
-    selected_run = _pick_selected_run(session, run_name, lane=lane)
-    run_dir = session.get_selected_run_dir()
-    runtime = _runtime_snapshot(session)
-    active_run = _active_run_name(session, runtime)
+    workspace, workspace_name = _workspace_for_request(registry, session, project_space)
+    selected_run = _pick_selected_run(session, run_name, lane=lane, workspace=workspace)
+    run_dir = session.get_selected_run_dir(workspace=workspace)
+    runtime = _runtime_snapshot(session, workspace=workspace)
+    active_run = _active_run_name(session, runtime, workspace=workspace)
     runtime_matches_selection = bool(selected_run) and selected_run == str(runtime.get("run_name") or "")
 
     if runtime_matches_selection:
@@ -924,39 +972,39 @@ def _build_snapshot(*, registry: SessionRegistry, ctx: str, lane: str = "researc
         llm = dict(runtime.get("llm") or {})
         graph = dict(runtime.get("graph") or {})
     else:
-        live_state = session.snapshot_live_state(run_dir)
+        live_state = session.snapshot_live_state(run_dir, workspace=workspace)
         events = []
         usage_summary = session.read_usage_summary(run_dir)
         llm = live_state.get("llm") if isinstance(live_state.get("llm"), dict) else {}
         graph = {"node": str(live_state.get("current_node") or ""), "message_count": 0, "tool_calls": [], "text_preview": ""}
 
-    cards = _serialize_cards(session.list_run_cards())
+    cards = _serialize_cards(session.list_run_cards(workspace=workspace))
     return {
         "ctx": ctx,
         "workspace_root": str(registry.default_project_space_root),
-        "workspace_path": session.current_workspace_path(),
-        "workspace_name": registry.project_space_name_for_session(session),
+        "workspace_path": str(workspace or ""),
+        "workspace_name": workspace_name,
         "workspaces": _serialize_choices(session.list_workspaces()),
-        "chat_sessions": _serialize_choices(session.list_chat_sessions()),
-        "current_chat_session": session.current_chat_session_id(),
-        "runs": _serialize_choices(session.list_runs()),
+        "chat_sessions": _serialize_choices(session.list_chat_sessions(workspace=workspace)),
+        "current_chat_session": session.current_chat_session_id(workspace=workspace),
+        "runs": _serialize_choices(session.list_runs(workspace=workspace)),
         "active_run": active_run,
         "selected_run": selected_run,
         "cards": cards,
-        "run_status": _display_run_status(session, run_dir),
-        "run_status_text": session.run_status_text(),
-        "run_info": dict(session.run_info or {}),
+        "run_status": _display_run_status(session, run_dir, workspace=workspace),
+        "run_status_text": session.run_status_text(workspace=workspace),
+        "run_info": dict(session._runtime_for_workspace(workspace).run_info or {}),
         "live_state": live_state,
         "llm": llm,
         "graph": graph,
         "prompt": None,
         "events": events[-120:],
         "usage_summary": usage_summary,
-        "proposal": session.read_proposal(run_dir),
+        "proposal": session.read_proposal(run_dir, workspace=workspace),
         "todo_items": session.read_todo_items(run_dir),
         "result_text": session.read_result_text(run_dir),
-        "chat_messages": session.get_chat_messages(),
-        "entry_context_status": session.entry_context_status_text(lane=lane),
+        "chat_messages": session.get_chat_messages(workspace=workspace),
+        "entry_context_status": session.entry_context_status_text(lane=lane, workspace=workspace),
         "runtime": runtime,
         "can_submit_prompt": False,
     }
@@ -981,33 +1029,35 @@ def _apply_chat_session_view(snapshot: dict[str, Any], *, active_run: str = "") 
     return snapshot
 
 
-def _build_details(*, registry: SessionRegistry, ctx: str, run_name: str) -> dict[str, Any]:
+def _build_details(*, registry: SessionRegistry, ctx: str, run_name: str, project_space: str = "") -> dict[str, Any]:
     session = registry.get_session(ctx)
-    run_dir, selected_run = _run_dir_for_name(session, run_name)
-    artifacts = session.read_artifacts()
+    workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+    run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
+    artifacts = session.read_artifacts(workspace=workspace)
     if hasattr(artifacts, "to_dict"):
         artifact_rows = artifacts.to_dict(orient="records")
     else:
         artifact_rows = list(artifacts or [])
     return {
         "selected_run": selected_run,
-        "memory": session.read_memory_index(),
+        "memory": session.read_memory_index(workspace=workspace),
         "artifacts": artifact_rows,
-        "proposal": session.read_proposal(run_dir),
-        "task_state": session.read_task_state(run_dir),
-        "trace_event": session.read_trace(run_dir, "event_trace.jsonl"),
-        "trace_tool": session.read_trace(run_dir, "tool_trace.jsonl"),
-        "trace_patch": session.read_trace(run_dir, "patch_trace.jsonl"),
+        "proposal": session.read_proposal(run_dir, workspace=workspace),
+        "task_state": session.read_task_state(run_dir, workspace=workspace),
+        "trace_event": session.read_trace(run_dir, "event_trace.jsonl", workspace=workspace),
+        "trace_tool": session.read_trace(run_dir, "tool_trace.jsonl", workspace=workspace),
+        "trace_patch": session.read_trace(run_dir, "patch_trace.jsonl", workspace=workspace),
     }
 
 
-def _build_memory(*, registry: SessionRegistry, ctx: str, run_name: str = "", source: str = "all") -> dict[str, Any]:
+def _build_memory(*, registry: SessionRegistry, ctx: str, run_name: str = "", source: str = "all", project_space: str = "") -> dict[str, Any]:
     session = registry.get_session(ctx)
-    _run_dir, selected_run = _run_dir_for_name(session, run_name)
+    workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+    _run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
     return {
         "selected_run": selected_run,
         "source": str(source or "all").strip().lower() or "all",
-        "memory": session.read_memory_index(source=source),
+        "memory": session.read_memory_index(source=source, workspace=workspace),
     }
 
 
@@ -1125,74 +1175,81 @@ def create_app(*, project_space_root: str) -> FastAPI:
         lane: str = "research",
     ):
         state = registry.bootstrap(ctx=ctx, project_space=project_space, run=run)
-        snapshot = _build_snapshot(registry=registry, ctx=state.ctx, lane=lane, run_name=state.run_name)
+        snapshot = _build_snapshot(registry=registry, ctx=state.ctx, lane=lane, run_name=state.run_name, project_space=state.project_space_name)
         snapshot["status_message"] = state.status
         snapshot["workspace_root"] = state.project_space_root
         return JSONResponse(snapshot)
 
     @app.get("/api/session/{ctx}/snapshot")
-    def _session_snapshot(ctx: str, lane: str = "research", run: str = ""):
-        return JSONResponse(_build_snapshot(registry=registry, ctx=ctx, lane=lane, run_name=run))
+    def _session_snapshot(ctx: str, lane: str = "research", run: str = "", project_space: str = ""):
+        return JSONResponse(_build_snapshot(registry=registry, ctx=ctx, lane=lane, run_name=run, project_space=project_space))
 
     @app.get("/api/session/{ctx}/details")
-    def _session_details(ctx: str, run: str = ""):
-        return JSONResponse(_build_details(registry=registry, ctx=ctx, run_name=run))
+    def _session_details(ctx: str, run: str = "", project_space: str = ""):
+        return JSONResponse(_build_details(registry=registry, ctx=ctx, run_name=run, project_space=project_space))
 
     @app.get("/api/session/{ctx}/memory")
-    def _session_memory(ctx: str, run: str = "", source: str = "all"):
-        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source=source))
+    def _session_memory(ctx: str, run: str = "", source: str = "all", project_space: str = ""):
+        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source=source, project_space=project_space))
 
     @app.get("/api/session/{ctx}/langmem")
-    def _session_langmem(ctx: str, run: str = ""):
-        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source="langmem"))
+    def _session_langmem(ctx: str, run: str = "", project_space: str = ""):
+        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source="langmem", project_space=project_space))
 
     @app.get("/api/session/{ctx}/files/tree")
-    def _session_files_tree(ctx: str, path: str = ""):
+    def _session_files_tree(ctx: str, path: str = "", project_space: str = ""):
         session = registry.get_session(ctx)
-        workspace_root, directory, normalized_path = _resolve_workspace_entry(session, path)
+        workspace, workspace_name = _workspace_for_request(registry, session, project_space)
+        workspace_root, directory, normalized_path = _resolve_workspace_entry(session, path, workspace=workspace)
         if not directory.is_dir():
             raise HTTPException(status_code=400, detail="Requested path is not a directory.")
         return JSONResponse(
             {
                 "path": normalized_path,
                 "workspace_path": str(workspace_root),
-                "workspace_name": registry.project_space_name_for_session(session),
+                "workspace_name": workspace_name,
                 "children": _list_directory_entries(directory, workspace_root=workspace_root),
             }
         )
 
     @app.get("/api/session/{ctx}/files/content")
-    def _session_file_content(ctx: str, path: str):
+    def _session_file_content(ctx: str, path: str, project_space: str = ""):
         session = registry.get_session(ctx)
-        return JSONResponse(_file_content_payload(ctx=ctx, session=session, rel_path=path))
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        return JSONResponse(_file_content_payload(ctx=ctx, session=session, rel_path=path, workspace=workspace))
 
     @app.get("/api/session/{ctx}/files/structure-animation")
-    def _session_structure_animation(ctx: str, path: str):
+    def _session_structure_animation(ctx: str, path: str, project_space: str = ""):
         session = registry.get_session(ctx)
-        return _structure_animation_response(session=session, rel_path=path)
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        return _structure_animation_response(session=session, rel_path=path, workspace=workspace)
 
     @app.get("/api/session/{ctx}/files/view")
-    def _session_structure_view(ctx: str, path: str):
+    def _session_structure_view(ctx: str, path: str, project_space: str = ""):
         session = registry.get_session(ctx)
-        return _structure_view_response(session=session, rel_path=path)
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        return _structure_view_response(session=session, rel_path=path, workspace=workspace)
 
     @app.get("/api/session/{ctx}/files/structure-vibration")
-    def _session_structure_vibration(ctx: str, path: str, mode: int = -1):
+    def _session_structure_vibration(ctx: str, path: str, mode: int = -1, project_space: str = ""):
         session = registry.get_session(ctx)
-        return _structure_vibration_response(session=session, rel_path=path, mode_index=mode)
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        return _structure_vibration_response(session=session, rel_path=path, mode_index=mode, workspace=workspace)
 
     @app.get("/api/session/{ctx}/files/download")
-    def _session_file_download(ctx: str, path: str):
+    def _session_file_download(ctx: str, path: str, project_space: str = ""):
         session = registry.get_session(ctx)
-        _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, path)
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, path, workspace=workspace)
         if not candidate.is_file():
             raise HTTPException(status_code=400, detail="Only files can be downloaded.")
         return FileResponse(candidate, filename=candidate.name)
 
     @app.get("/api/session/{ctx}/files/archive")
-    def _session_file_archive(ctx: str, path: str = ""):
+    def _session_file_archive(ctx: str, path: str = "", project_space: str = ""):
         session = registry.get_session(ctx)
-        return _archive_workspace_entry(session=session, rel_path=path)
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        return _archive_workspace_entry(session=session, rel_path=path, workspace=workspace)
 
     @app.post("/api/session/{ctx}/files/upload")
     async def _session_file_upload(
@@ -1202,8 +1259,10 @@ def create_app(*, project_space_root: str) -> FastAPI:
         filename: str = "",
         overwrite: bool = False,
         unzip: bool = False,
+        project_space: str = "",
     ):
         session = registry.get_session(ctx)
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return JSONResponse(
             await _upload_workspace_file(
                 session=session,
@@ -1212,13 +1271,15 @@ def create_app(*, project_space_root: str) -> FastAPI:
                 request=request,
                 overwrite=overwrite,
                 unzip=unzip,
+                workspace=workspace,
             )
         )
 
     @app.delete("/api/session/{ctx}/files/delete")
-    def _session_file_delete(ctx: str, path: str):
+    def _session_file_delete(ctx: str, path: str, project_space: str = ""):
         session = registry.get_session(ctx)
-        return JSONResponse(_delete_workspace_entry(session=session, rel_path=path))
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        return JSONResponse(_delete_workspace_entry(session=session, rel_path=path, workspace=workspace))
 
     @app.post("/api/session/{ctx}/workspace/open")
     async def _workspace_open(ctx: str, request: Request):
@@ -1226,8 +1287,9 @@ def create_app(*, project_space_root: str) -> FastAPI:
         session = registry.get_session(ctx)
         root_path = str(payload.get("root_path") or registry.default_project_space_root)
         session.set_workspace_root(root_path)
-        ok, message = session.open_workspace_by_name(str(payload.get("workspace") or ""))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        project_space = str(payload.get("workspace") or "")
+        ok, message = session.open_workspace_by_name(project_space, set_current=False)
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space if ok else "")
         snapshot["ok"] = ok
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
@@ -1237,7 +1299,12 @@ def create_app(*, project_space_root: str) -> FastAPI:
         payload = await _json_body(request)
         session = registry.get_session(ctx)
         ok, message, _choices = session.set_workspace_root(str(payload.get("root_path") or registry.default_project_space_root))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            lane=str(payload.get("lane") or "research"),
+            project_space=str(payload.get("workspace") or payload.get("project_space") or ""),
+        )
         snapshot["ok"] = ok
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
@@ -1248,8 +1315,9 @@ def create_app(*, project_space_root: str) -> FastAPI:
         session = registry.get_session(ctx)
         root_path = str(payload.get("root_path") or registry.default_project_space_root)
         session.set_workspace_root(root_path)
-        ok, message = session.create_workspace(str(payload.get("workspace") or ""))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        project_space = str(payload.get("workspace") or "")
+        ok, message = session.create_workspace(project_space, set_current=False)
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space if ok else "")
         snapshot["ok"] = ok
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
@@ -1258,12 +1326,15 @@ def create_app(*, project_space_root: str) -> FastAPI:
     async def _run_select(ctx: str, request: Request):
         payload = await _json_body(request)
         session = registry.get_session(ctx)
-        message = session.select_run(str(payload.get("run_name") or ""))
+        project_space = str(payload.get("project_space") or payload.get("workspace") or "")
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        message = session.select_run(str(payload.get("run_name") or ""), workspace=workspace)
         snapshot = _build_snapshot(
             registry=registry,
             ctx=ctx,
             lane=str(payload.get("lane") or "research"),
             run_name=str(payload.get("run_name") or ""),
+            project_space=project_space,
         )
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
@@ -1272,8 +1343,10 @@ def create_app(*, project_space_root: str) -> FastAPI:
     async def _chat_create(ctx: str, request: Request):
         payload = await _json_body(request)
         session = registry.get_session(ctx)
-        session_id = session.create_chat_session()
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        project_space = str(payload.get("project_space") or payload.get("workspace") or "")
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        session_id = session.create_chat_session(workspace=workspace)
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
         snapshot = _apply_chat_session_view(snapshot)
         snapshot["status_message"] = f"Started new chat session: {session_id}"
         return JSONResponse(snapshot)
@@ -1282,8 +1355,10 @@ def create_app(*, project_space_root: str) -> FastAPI:
     async def _chat_select(ctx: str, request: Request):
         payload = await _json_body(request)
         session = registry.get_session(ctx)
-        session_id = session.select_chat_session(str(payload.get("session_id") or ""))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        project_space = str(payload.get("project_space") or payload.get("workspace") or "")
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        session_id = session.select_chat_session(str(payload.get("session_id") or ""), workspace=workspace)
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
         snapshot = _apply_chat_session_view(snapshot)
         snapshot["status_message"] = f"Switched to chat session: {session_id}" if session_id else "Chat session not found."
         return JSONResponse(snapshot)
@@ -1292,6 +1367,8 @@ def create_app(*, project_space_root: str) -> FastAPI:
     async def _run_start(ctx: str, request: Request):
         payload = await _json_body(request)
         session = registry.get_session(ctx)
+        project_space = str(payload.get("project_space") or payload.get("workspace") or "")
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         message = session.start_run(
             prompt=str(payload.get("prompt") or ""),
             lane=str(payload.get("lane") or "research"),
@@ -1310,8 +1387,9 @@ def create_app(*, project_space_root: str) -> FastAPI:
             max_fast_runs=int(payload.get("max_fast_runs") or 3),
             max_standard_runs=int(payload.get("max_standard_runs") or 2),
             allow_deep_report=bool(payload.get("allow_deep_report", False)),
+            workspace=workspace,
         )
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
 
@@ -1319,8 +1397,10 @@ def create_app(*, project_space_root: str) -> FastAPI:
     async def _run_interrupt(ctx: str, request: Request):
         payload = await _json_body(request)
         session = registry.get_session(ctx)
-        message = session.request_interrupt_current_run(note=str(payload.get("note") or ""))
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"))
+        project_space = str(payload.get("project_space") or payload.get("workspace") or "")
+        workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+        message = session.request_interrupt_current_run(note=str(payload.get("note") or ""), workspace=workspace)
+        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
         snapshot["status_message"] = message
         return JSONResponse(snapshot)
 
@@ -1330,14 +1410,20 @@ def create_app(*, project_space_root: str) -> FastAPI:
         raise HTTPException(status_code=410, detail="Prompt-response HITL endpoint has been removed.")
 
     @app.get("/api/session/{ctx}/stream")
-    async def _session_stream(ctx: str, request: Request, last_seq: str = "0"):
+    async def _session_stream(ctx: str, request: Request, last_seq: str = "0", project_space: str = ""):
         async def _event_stream():
             seq = _coerce_int(last_seq, 0)
             while True:
                 if await request.is_disconnected():
                     break
                 session = registry.get_session(ctx)
-                reporter = session.reporter
+                try:
+                    workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+                except HTTPException:
+                    workspace = None
+                with session._lock:
+                    runtime_state = session._runtime_for_workspace_unlocked(workspace, create=True)
+                    reporter = runtime_state.reporter
                 if reporter is None:
                     yield ": keepalive\n\n"
                     await asyncio.sleep(1.0)
@@ -1346,15 +1432,15 @@ def create_app(*, project_space_root: str) -> FastAPI:
                 if not events:
                     yield ": keepalive\n\n"
                     continue
-                runtime = _runtime_snapshot(session)
+                runtime = _runtime_snapshot(session, workspace=workspace)
                 for event in events:
                     envelope = {
                         "event": event,
                         "runtime": runtime,
-                        "run_status": str(session.run_status or "idle"),
-                        "run_status_text": session.run_status_text(),
+                        "run_status": str(runtime_state.run_status or "idle"),
+                        "run_status_text": session.run_status_text(workspace=workspace),
                     }
-                    envelope.update(_stream_patch(session, runtime))
+                    envelope.update(_stream_patch(session, runtime, workspace=workspace))
                     yield f"id: {int(event.get('seq') or seq)}\ndata: {json.dumps(envelope, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(_event_stream(), media_type="text/event-stream")

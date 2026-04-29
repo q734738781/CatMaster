@@ -127,6 +127,27 @@ def test_analyze_vasp_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
         traj_summary = json.loads((tmp_path / "files" / traj_artifact["data"]["summary_json_rel"]).read_text(encoding="utf-8"))
         assert traj_summary["rdf_species"] == "Li"
         assert traj_summary["diffusion_dimension"] == "xy"
+        assert traj_summary["coordinate_mode"] == "unwrapped_cartesian"
+
+
+def test_analyze_trajectory_keeps_unwrapped_ase_traj_positions_for_msd(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        traj_dir = tmp_path / "files" / "mace_md"
+        traj_dir.mkdir(parents=True, exist_ok=True)
+        frames = [
+            Atoms("Li", positions=[[0.0, 0.0, 0.0]], cell=[5, 5, 5], pbc=True),
+            Atoms("Li", positions=[[3.0, 0.0, 0.0]], cell=[5, 5, 5], pbc=True),
+        ]
+        ase_write(str(traj_dir / "md.traj"), frames, format="traj")
+
+        _, artifact = results_analysis.analyze_trajectory(
+            {"path": "mace_md", "timestep_fs": 1.0, "species": "Li", "diffusion_dimension": "x"}
+        )
+
+        summary = json.loads((tmp_path / "files" / artifact["data"]["summary_json_rel"]).read_text(encoding="utf-8"))
+        assert summary["coordinate_mode"] == "unwrapped_cartesian"
+        assert summary["positions_are_wrapped"] is False
+        assert summary["final_msd_a2"] == pytest.approx(9.0)
 
 
 def test_build_dataset_from_runs_and_calculate_al_candidates(monkeypatch, tmp_path: Path) -> None:

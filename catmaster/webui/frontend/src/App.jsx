@@ -2290,7 +2290,7 @@ function FileTree({
   );
 }
 
-function FilePreviewPanel({ ctx, preview, loading, error, deleteBusy, onRefresh, onDelete }) {
+function FilePreviewPanel({ ctx, projectSpace, preview, loading, error, deleteBusy, onRefresh, onDelete }) {
   const directoryChildren = Array.isArray(preview?.children) ? preview.children : [];
   const structure = preview?.structure && typeof preview.structure === "object" ? preview.structure : null;
   const csvPreview = isCsvPreview(preview);
@@ -2312,7 +2312,7 @@ function FilePreviewPanel({ ctx, preview, loading, error, deleteBusy, onRefresh,
             </a>
           ) : null}
           {ctx && preview?.path !== undefined ? (
-            <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive?path=${escapePath(preview.path || "")}`}>
+            <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive?path=${escapePath(preview.path || "")}&project_space=${escapePath(projectSpace || "")}`}>
               Download ZIP
             </a>
           ) : null}
@@ -2661,6 +2661,7 @@ function App({ boot }) {
   const eventSourceRef = useRef(null);
   const latestSeqRef = useRef(0);
   const fileUploadInputRef = useRef(null);
+  const currentProjectSpace = String(snapshot?.workspace_name || "").trim();
 
   useEffect(() => {
     let cancelled = false;
@@ -2700,7 +2701,7 @@ function App({ boot }) {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(selectedRun)}`);
+        const data = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(selectedRun)}&project_space=${escapePath(currentProjectSpace)}`);
         if (!cancelled) {
           startTransition(() => {
             setDetails(data);
@@ -2715,7 +2716,7 @@ function App({ boot }) {
     return () => {
       cancelled = true;
     };
-  }, [ctx, selectedRun, view]);
+  }, [ctx, selectedRun, view, currentProjectSpace]);
 
   useEffect(() => {
     if (!ctx) {
@@ -2724,7 +2725,7 @@ function App({ boot }) {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
     }
-    const source = new EventSource(`/api/session/${escapePath(ctx)}/stream?last_seq=${escapePath(latestSeqRef.current)}`);
+    const source = new EventSource(`/api/session/${escapePath(ctx)}/stream?last_seq=${escapePath(latestSeqRef.current)}&project_space=${escapePath(currentProjectSpace)}`);
     eventSourceRef.current = source;
 
     source.onmessage = (message) => {
@@ -2772,7 +2773,7 @@ function App({ boot }) {
       if (view === "monitor" && String(event.name || "") === "RUN_SNAPSHOT_READY") {
         const nextRun = streamRunName || selectedRun;
         if (nextRun) {
-          apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(nextRun)}`)
+          apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(nextRun)}&project_space=${escapePath(currentProjectSpace)}`)
             .then((detailData) => {
               startTransition(() => {
                 setDetails(detailData);
@@ -2799,7 +2800,7 @@ function App({ boot }) {
       source.close();
       eventSourceRef.current = null;
     };
-  }, [ctx, selectedRun, streamNonce]);
+  }, [ctx, selectedRun, streamNonce, currentProjectSpace]);
 
   useEffect(() => {
     if (view !== "home" || !memoryOpen || !ctx) {
@@ -2815,7 +2816,7 @@ function App({ boot }) {
         error: "",
       }));
     });
-    apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}`)
+    apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}&project_space=${escapePath(currentProjectSpace)}`)
       .then((data) => {
         if (cancelled) {
           return;
@@ -2846,7 +2847,7 @@ function App({ boot }) {
     return () => {
       cancelled = true;
     };
-  }, [ctx, memoryOpen, selectedRun, snapshot?.workspace_name, view, memoryPanel.source]);
+  }, [ctx, memoryOpen, selectedRun, currentProjectSpace, view, memoryPanel.source]);
 
   useEffect(() => {
     if (view !== "files" || !ctx) {
@@ -2866,7 +2867,7 @@ function App({ boot }) {
       setFileUploadBusy(false);
       setFileDeleteBusy(false);
     });
-    apiFetch(`/api/session/${escapePath(ctx)}/files/tree`)
+    apiFetch(`/api/session/${escapePath(ctx)}/files/tree?project_space=${escapePath(currentProjectSpace)}`)
       .then((data) => {
         if (cancelled) {
           return;
@@ -2889,7 +2890,7 @@ function App({ boot }) {
     return () => {
       cancelled = true;
     };
-  }, [ctx, snapshot?.workspace_path, view]);
+  }, [ctx, snapshot?.workspace_path, view, currentProjectSpace]);
 
   useEffect(() => {
     const live = snapshot?.live_state || {};
@@ -2904,13 +2905,13 @@ function App({ boot }) {
       return;
     }
     const data = await apiFetch(
-      `/api/session/${escapePath(ctx)}/snapshot?lane=${escapePath(lane)}&run=${escapePath(runName || "")}`,
+      `/api/session/${escapePath(ctx)}/snapshot?lane=${escapePath(lane)}&run=${escapePath(runName || "")}&project_space=${escapePath(currentProjectSpace)}`,
     );
     startTransition(() => {
       setSnapshot(data);
       setSelectedRun(data.selected_run || "");
       setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
-      latestSeqRef.current = Number(data.runtime?.seq || latestSeqRef.current || 0);
+      latestSeqRef.current = Number(data.runtime?.seq ?? 0);
     });
   }
 
@@ -2927,7 +2928,7 @@ function App({ boot }) {
       }));
     });
     try {
-      const data = await apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}`);
+      const data = await apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}&project_space=${escapePath(currentProjectSpace)}`);
       startTransition(() => {
         setMemoryPanel({
           text: String(data.memory || "").trim(),
@@ -2962,7 +2963,7 @@ function App({ boot }) {
       setFileTreeError("");
     });
     try {
-      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/tree?path=${escapePath(targetPath)}`);
+      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/tree?path=${escapePath(targetPath)}&project_space=${escapePath(currentProjectSpace)}`);
       startTransition(() => {
         setTreeNodes((prev) => ({ ...prev, [targetPath]: Array.isArray(data.children) ? data.children : [] }));
         setTreeLoading((prev) => ({ ...prev, [targetPath]: false }));
@@ -2986,7 +2987,7 @@ function App({ boot }) {
       setFilePreviewError("");
     });
     try {
-      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/content?path=${escapePath(targetPath)}`);
+      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/content?path=${escapePath(targetPath)}&project_space=${escapePath(currentProjectSpace)}`);
       startTransition(() => {
         setFilePreview(data);
         setFilePreviewLoading(false);
@@ -3052,7 +3053,7 @@ function App({ boot }) {
     try {
       for (const file of files) {
         const response = await fetch(
-          `/api/session/${escapePath(ctx)}/files/upload?path=${escapePath(targetDir)}&filename=${escapePath(file.name)}&overwrite=${fileUploadOverwrite ? "true" : "false"}&unzip=${fileUploadUnzip ? "true" : "false"}`,
+          `/api/session/${escapePath(ctx)}/files/upload?path=${escapePath(targetDir)}&filename=${escapePath(file.name)}&overwrite=${fileUploadOverwrite ? "true" : "false"}&unzip=${fileUploadUnzip ? "true" : "false"}&project_space=${escapePath(currentProjectSpace)}`,
           {
             method: "POST",
             headers: { "Content-Type": file.type || "application/octet-stream" },
@@ -3108,7 +3109,7 @@ function App({ boot }) {
       setFilePreviewError("");
     });
     try {
-      const response = await fetch(`/api/session/${escapePath(ctx)}/files/delete?path=${escapePath(targetPath)}`, {
+      const response = await fetch(`/api/session/${escapePath(ctx)}/files/delete?path=${escapePath(targetPath)}&project_space=${escapePath(currentProjectSpace)}`, {
         method: "DELETE",
       });
       if (!response.ok) {
@@ -3136,24 +3137,30 @@ function App({ boot }) {
     if (!ctx) {
       return;
     }
+    const scopedPayload = {
+      ...(payload || {}),
+      project_space: payload?.project_space ?? currentProjectSpace,
+    };
     const data = await apiFetch(url, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(scopedPayload),
     });
-    rememberWebuiSession(data, payload?.lane || lane);
+    rememberWebuiSession(data, scopedPayload?.lane || lane);
     startTransition(() => {
       setSnapshot(data);
       setStatusMessage(data.status_message || "");
       setWorkspaceRoot(data.workspace_root || workspaceRoot);
       setSelectedRun(data.selected_run || data.runtime?.run_name || "");
       setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
-      latestSeqRef.current = Number(data.runtime?.seq || latestSeqRef.current || 0);
+      latestSeqRef.current = Number(data.runtime?.seq ?? 0);
       if (data.selected_run || data.runtime?.run_name) {
         setForm((prev) => ({ ...prev, resume_run_name: data.selected_run || data.runtime?.run_name || "" }));
       }
     });
+    setStreamNonce((value) => value + 1);
     if (loadDetails && data.selected_run) {
-      const detailData = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(data.selected_run)}`);
+      const detailProjectSpace = String(data.workspace_name || currentProjectSpace || "");
+      const detailData = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(data.selected_run)}&project_space=${escapePath(detailProjectSpace)}`);
       startTransition(() => {
         setDetails(detailData);
       });
@@ -3164,6 +3171,7 @@ function App({ boot }) {
     await postAndApply(`/api/session/${escapePath(ctx)}/workspace/refresh`, {
       root_path: workspaceRoot,
       lane,
+      workspace: currentProjectSpace,
     });
   }
 
@@ -3215,7 +3223,7 @@ function App({ boot }) {
   }
 
   async function handleInterrupt() {
-    await postAndApply(`/api/session/${escapePath(ctx)}/run/interrupt`, { lane });
+    await postAndApply(`/api/session/${escapePath(ctx)}/run/interrupt`, { lane, project_space: snapshot?.workspace_name || "" });
   }
 
   const workspaceOptions = snapshot?.workspaces || [];
@@ -3409,7 +3417,7 @@ function App({ boot }) {
                 </div>
                 <div className="inline-actions">
                   {ctx ? (
-                    <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive`}>
+                    <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive?project_space=${escapePath(currentProjectSpace)}`}>
                       Workspace ZIP
                     </a>
                   ) : null}
@@ -3439,6 +3447,7 @@ function App({ boot }) {
                 />
                 <FilePreviewPanel
                   ctx={ctx}
+                  projectSpace={currentProjectSpace}
                   preview={filePreview}
                   loading={filePreviewLoading}
                   error={filePreviewError}

@@ -9,15 +9,16 @@ description: Use this skill for MD execution and post-analysis when the goal is 
 Use this skill to prepare an MD stage, dispatch it, and summarize the resulting trajectory with MSD, RDF, and diffusion-fit artifacts. Do not use it for a generic VASP run log, one-off thermalization checks, or when the trajectory is too short to support diffusion claims.
 
 ## Quick Start
-1. Prepare MD inputs with `vasp_prepare(preset="md", ...)`.
-2. Make the intended ensemble, timestep, target temperature schedule, and total run length explicit through `user_incar_patch`.
-3. Decide what part of the trajectory is equilibration and what part is production.
-4. Dispatch with `vasp_execute_batch`.
+1. Choose whether this is a VASP MD run or a cheaper MACE MD sampling run.
+2. For VASP, prepare inputs with `vasp_prepare(preset="md", ...)` and make controls explicit through `user_incar_patch`.
+3. For MACE, dispatch with `mace_md_batch` and place MD controls inside the free-form `md_config` object.
+4. Decide what part of the trajectory is equilibration and what part is production.
 5. Analyze the collected trajectory with `analyze_trajectory`.
 
 ## Allowed tools
 - `vasp_prepare`
 - `vasp_execute_batch`
+- `mace_md_batch`
 - `analyze_trajectory`
 
 ## Workflow
@@ -26,6 +27,8 @@ Use this skill to prepare an MD stage, dispatch it, and summarize the resulting 
 - Keep the default Nose-Hoover/NVT starter only when it matches the scientific question.
 - Use `user_incar_patch` in the same `vasp_prepare` call to set the actual timestep, thermostat, or temperature schedule needed for the run.
 - Surface the intended ensemble semantics explicitly; do not leave the reader guessing whether the run is being interpreted as NVT-like sampling, annealing, or another protocol.
+
+For MACE MD, do not flatten all MD knobs into top-level arguments. Use one `md_config` object, with optional nested `dynamics`, `thermostat`, `barostat`, and `output` groups. Read `mace-screening-and-relaxation` for concrete `md_config` templates.
 
 ### 2. Separate equilibration from production
 - Report how much trajectory is being discarded as warmup before any diffusion fit.

@@ -422,6 +422,7 @@ class LLMConfig:
     max_tokens: Optional[int] = None
     max_output_tokens: Optional[int] = None
     reasoning: Dict[str, Any] = field(default_factory=dict)
+    reasoning_effort: Optional[str] = None
 
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
@@ -465,6 +466,7 @@ class LLMConfig:
             max_tokens=_to_int(data.get("max_tokens")),
             max_output_tokens=_to_int(data.get("max_output_tokens")),
             reasoning=dict(reasoning) if isinstance(reasoning, dict) else {},
+            reasoning_effort=_to_str_or_none(data.get("reasoning_effort")),
             frequency_penalty=_to_float(data.get("frequency_penalty")),
             presence_penalty=_to_float(data.get("presence_penalty")),
             api_key_env=_to_str_or_none(data.get("api_key_env")),
@@ -786,12 +788,6 @@ def _reject_legacy_model_fields(data: Dict[str, Any], *, model_label: str) -> No
             f"LLM config model {model_label!r} no longer supports top-level 'extra_body'. "
             "Use 'provider_options.<provider>.extra_body' instead."
         )
-    if "reasoning_effort" in data:
-        raise ValueError(
-            f"LLM config model {model_label!r} no longer supports 'reasoning_effort'. "
-            "Use 'reasoning: { effort: ... }' instead."
-        )
-
 
 def _normalize_provider_options(value: Any) -> Dict[str, Dict[str, Any]]:
     if not isinstance(value, dict):

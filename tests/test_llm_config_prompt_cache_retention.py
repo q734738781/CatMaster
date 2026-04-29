@@ -550,29 +550,30 @@ def test_llm_profile_rejects_legacy_model_tool_calling(tmp_path: Path) -> None:
         LLMProfile.from_env_or_file(str(cfg))
 
 
-def test_llm_profile_rejects_legacy_reasoning_effort(tmp_path: Path) -> None:
+def test_llm_profile_accepts_official_reasoning_effort(tmp_path: Path) -> None:
     cfg = tmp_path / "llm.yaml"
     cfg.write_text(
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2':",
-                "    provider: openrouter",
-                "    model: openai/gpt-5.2",
+                "  'deepseek-v4-pro':",
+                "    provider: oai_compatible",
+                "    model: deepseek-v4-pro",
                 "    reasoning_effort: high",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2'",
-                "  director: 'openai/gpt-5.2'",
-                "  task_runner: 'openai/gpt-5.2'",
-                "  memory_patch: 'openai/gpt-5.2'",
-                "  summary: 'openai/gpt-5.2'",
+                "  proposal: 'deepseek-v4-pro'",
+                "  director: 'deepseek-v4-pro'",
+                "  task_runner: 'deepseek-v4-pro'",
+                "  memory_patch: 'deepseek-v4-pro'",
+                "  summary: 'deepseek-v4-pro'",
             ]
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="reasoning_effort"):
-        LLMProfile.from_env_or_file(str(cfg))
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.config_for_role("task_runner").reasoning_effort == "high"
 
 
 def test_llm_profile_rejects_model_level_extra_body(tmp_path: Path) -> None:

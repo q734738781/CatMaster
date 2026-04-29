@@ -68,6 +68,7 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "create_molecule_from_smiles",
     "mace_neb_batch",
     "mace_relax_batch",
+    "mace_md_batch",
     "mace_sp_batch",
     "vasp_prepare",
     "vasp_band_prepare",
@@ -1518,6 +1519,7 @@ class SpecialistRunner:
                 "vasp_execute_batch",
                 "mace_neb_batch",
                 "mace_relax_batch",
+                "mace_md_batch",
                 "mace_sp_batch",
                 "mace_train",
                 "mace_evaluate",
@@ -1607,7 +1609,7 @@ class SpecialistRunner:
             lines.append(
                 "For serious molecular quantum-chemistry runs, prepare jobs locally with the ORCA preparation tools, submit them with `orca_execute_batch`, then close the loop with `analyze_orca_results`."
             )
-        if audience in {"experiment", "materials_worker"} and any(name in available for name in ("mace_neb_batch", "mace_relax_batch", "mace_sp_batch")):
+        if audience in {"experiment", "materials_worker"} and any(name in available for name in ("mace_neb_batch", "mace_relax_batch", "mace_md_batch", "mace_sp_batch")):
             lines.append(
                 "For surrogate screening or MACE-based materials workflows, prefer the registered batch execution tools over ad hoc shell probing of remote resources."
             )
@@ -1931,7 +1933,7 @@ class SpecialistRunner:
             "You are materials_worker for ExperimentSpecialist.\n"
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
-            "Typical MACE work here includes surrogate screening, relaxation, ranking, and post-analysis when those steps serve one materials workflow.\n"
+            "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis when those steps serve one materials workflow.\n"
             "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
             "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"

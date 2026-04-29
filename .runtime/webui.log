@@ -289,3 +289,59 @@ ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
 INFO:     Waiting for application shutdown.
 INFO:     Application shutdown complete.
 INFO:     Finished server process [1104588]
+INFO:     Started server process [1379642]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:44000 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44016 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44028 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44030 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44034 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36388 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36402 - "POST /api/session/ctx_35985b95046e/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36404 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36412 - "GET /static/asset-KaTeX_Main-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36424 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36430 - "GET /?ctx=ctx_35985b95046e&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36432 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36442 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36448 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36456 - "POST /api/session/ctx_35985b95046e/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36458 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36462 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46592 - "POST /api/session/ctx_35985b95046e/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46596 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46608 - "POST /api/session/ctx_35985b95046e/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46618 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46634 - "POST /api/session/ctx_35985b95046e/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46638 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46650 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46660 - "POST /api/session/ctx_35985b95046e/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46668 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54024 - "POST /api/session/ctx_35985b95046e/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54030 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54040 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54054 - "POST /api/session/ctx_35985b95046e/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54056 - "GET /api/session/ctx_35985b95046e/stream?last_seq=2&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52368 - "POST /api/session/ctx_35985b95046e/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52374 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52384 - "GET /api/session/ctx_35985b95046e/stream?last_seq=1&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43944 - "POST /api/session/ctx_35985b95046e/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43956 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43962 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43976 - "POST /api/session/ctx_35985b95046e/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43992 - "GET /api/session/ctx_35985b95046e/stream?last_seq=2&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55872 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55880 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55894 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55896 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55910 - "GET /api/session/ctx_35985b95046e/stream?last_seq=5&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55920 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55936 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55952 - "GET /api/session/ctx_35985b95046e/stream?last_seq=5&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55426 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55428 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55436 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55444 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55452 - "GET /api/session/ctx_35985b95046e/stream?last_seq=5&project_space=t1 HTTP/1.1" 200 OK
