@@ -15,7 +15,8 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 4. Use `patch_policy="safe"` by default.
 5. For `dos` and `md`, treat the preset as a starter template and do job-specific tuning through `user_incar_patch` in the same call.
 6. If a later DOS/band branch should reuse `CHGCAR`, make that an explicit upstream requirement and preserve the file in the self-consistent stage.
-7. Use `vasp_band_prepare` instead of `vasp_prepare` when the job is a line-mode band-structure calculation with an explicit band `KPOINTS`.
+7. If comparison-sensitive toggles matter (`use_d3`, `use_dft_plus_u`, `enable_dipole`, spin/`MAGMOM`, smearing, or reference-state choices), set them explicitly in the first preparation call and report them.
+8. Use `vasp_band_prepare` instead of `vasp_prepare` when the job is a line-mode band-structure calculation with an explicit band `KPOINTS`.
 
 ## Allowed tools
 - `fix_atoms_by_indices`
@@ -25,7 +26,16 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 
 ## Workflow
 
+### INCAR patching
+- Use `user_incar_patch` for targeted job-specific INCAR controls.
+- For DOS jobs, `dos_charge_density_path` copies a CHGCAR into the output root, enables `ICHARG=11`, and applies the recommended `LMAXMIX` baseline when absent.
+- For DOS or MD presets, `user_incar_patch` is the main hook for controls such as `NEDOS`, `ISMEAR`, `TEBEG`, `TEEND`, `POTIM`, `NSW`, `SMASS`, or `MDALGO`.
+- `MAGMOM`, `LDAUU`, and `LDAUJ` must be element-value maps such as `{"Fe": 2.2}`.
+- Use `null` in `user_incar_patch` to request removal of a key from the final INCAR.
+- Keep `patch_policy="safe"` by default; use `force` only when intentionally overriding canonical defaults.
+
 ### 1. Pick the right canonical preset
+- Confirm the input path exists before preparing a VASP tree.
 - `vasp_prepare(preset="relax", ...)` is for ionic relaxation jobs.
 - `vasp_prepare(preset="static", ...)` is for static jobs and enforces `NSW=1`, `IBRION=-1`.
 - `vasp_prepare(preset="freq", ...)` is for finite-difference vibrational jobs and enforces the frequency-specific overrides.

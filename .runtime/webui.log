@@ -345,3 +345,562 @@ INFO:     127.0.0.1:55428 - "GET /static/app.css HTTP/1.1" 200 OK
 INFO:     127.0.0.1:55436 - "GET /static/app.js HTTP/1.1" 200 OK
 INFO:     127.0.0.1:55444 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
 INFO:     127.0.0.1:55452 - "GET /api/session/ctx_35985b95046e/stream?last_seq=5&project_space=t1 HTTP/1.1" 200 OK
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1379642]
+INFO:     Started server process [2949155]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:52208 - "GET /?ctx=ctx_35985b95046e&lane=experiment&project_space=NatComm_Reproduce HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52220 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52228 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "GET /api/bootstrap?ctx=ctx_35985b95046e&lane=experiment&project_space=NatComm_Reproduce HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52234 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52242 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t1&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52244 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43532 - "POST /api/session/ctx_35985b95046e/workspace/refresh HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43544 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43556 - "POST /api/session/ctx_35985b95046e/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43566 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59686 - "POST /api/session/ctx_35985b95046e/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59692 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59704 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38836 - "POST /api/session/ctx_35985b95046e/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38838 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38850 - "GET /api/session/ctx_35985b95046e/stream?last_seq=1&project_space=t2 HTTP/1.1" 200 OK
+2026-04-29 11:12:59,836 - INFO : info:check_all_finished: False
+2026-04-29 11:12:59,839 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/6e122c2e8c28ead18f6fd91a5399d524335c4fea
+2026-04-29 11:13:00,460 - INFO : job: 23534be9b82cb76d8fa8a18fbf0ebd63694cef95 submit; job_id is 1314
+2026-04-29 11:13:31,527 - INFO : job: 23534be9b82cb76d8fa8a18fbf0ebd63694cef95 1314 finished
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [2949155]
+INFO:     Started server process [3208379]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:53278 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53286 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:53294 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:53308 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=t2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53320 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44008 - "POST /api/session/ctx_35985b95046e/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44018 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=t2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44034 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38636 - "POST /api/session/ctx_35985b95046e/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38646 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53926 - "GET /api/session/ctx_35985b95046e/stream?last_seq=1&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+experiment retrying after retryable model/output failure on attempt 1/3 in 30.0s: specialist final report is missing the required `Summary` section.
+experiment retrying after retryable model/output failure on attempt 2/3 in 120.0s: specialist final report is missing the required `Summary` section.
+INFO:     127.0.0.1:41746 - "GET /?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41758 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41768 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54934 - "GET /files/?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_024852_a36b90 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54940 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_024852_a36b90&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54948 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54942 - "GET /api/session/ctx_35985b95046e/files/tree?project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54958 - "GET /monitor/?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_024852_a36b90 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54972 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_024852_a36b90&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54980 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54992 - "GET /api/session/ctx_35985b95046e/details?run=run_20260430_024852_a36b90&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58292 - "GET /?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58294 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58304 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58312 - "POST /api/session/ctx_35985b95046e/chat/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58314 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55242 - "POST /api/session/ctx_35985b95046e/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55246 - "GET /api/session/ctx_35985b95046e/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55248 - "GET /api/session/ctx_35985b95046e/stream?last_seq=1&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-18' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-93' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-165' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+INFO:     127.0.0.1:35904 - "GET /monitor/?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_032848_551e7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35912 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_032848_551e7e&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35920 - "GET /api/session/ctx_35985b95046e/stream?last_seq=2&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35926 - "GET /api/session/ctx_35985b95046e/details?run=run_20260430_032848_551e7e&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35928 - "GET /?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35930 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35942 - "GET /api/session/ctx_35985b95046e/stream?last_seq=2&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+experiment retrying after retryable model/output failure on attempt 1/3 in 30.0s: specialist final report is missing the required `Summary` section.
+experiment retrying after retryable model/output failure on attempt 2/3 in 120.0s: specialist final report is missing the required `Summary` section.
+INFO:     127.0.0.1:42606 - "GET /monitor/?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_032848_551e7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42622 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:42626 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:42632 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_032848_551e7e&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42652 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42636 - "GET /api/session/ctx_35985b95046e/details?run=run_20260430_032848_551e7e&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42658 - "GET /monitor/?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_032848_551e7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42660 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&run=run_20260430_032848_551e7e&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42664 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42680 - "GET /api/session/ctx_35985b95046e/details?run=run_20260430_032848_551e7e&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57316 - "GET /?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57320 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57334 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3208379]
+INFO:     Started server process [3306012]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:59800 - "GET /api/session/ctx_35985b95046e/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46472 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46494 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46484 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46502 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46510 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58216 - "POST /api/session/ctx_1e19e77cabc0/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58232 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58246 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50848 - "POST /api/session/ctx_1e19e77cabc0/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50872 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=1&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39582 - "POST /api/session/ctx_1e19e77cabc0/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39588 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=2&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39598 - "POST /api/session/ctx_1e19e77cabc0/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39602 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=2&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50596 - "GET /monitor/?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50612 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50630 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=21&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50628 - "GET /api/session/ctx_1e19e77cabc0/details?run=run_20260430_112000_1721d5&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53668 - "GET /?ctx=ctx_1e19e77cabc0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53682 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53690 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=29&project_space=o2 HTTP/1.1" 200 OK
+2026-04-30 19:21:20,981 - INFO : info:check_all_finished: False
+2026-04-30 19:21:20,986 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/1c6d4a7849d00a86d1a354a6fa422637c98f390d
+2026-04-30 19:21:21,601 - INFO : job: bd95d5338c7391588c2e4b582710b67f9e0199d5 submit; job_id is 1315
+2026-04-30 19:21:52,756 - INFO : job: bd95d5338c7391588c2e4b582710b67f9e0199d5 1315 finished
+INFO:     127.0.0.1:32974 - "POST /api/session/ctx_1e19e77cabc0/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32984 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=67&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33000 - "POST /api/session/ctx_1e19e77cabc0/run/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33008 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=67&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54756 - "GET /monitor/?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54768 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54778 - "GET /api/session/ctx_1e19e77cabc0/details?run=run_20260430_112000_1721d5&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54792 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=67&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49560 - "GET /?ctx=ctx_1e19e77cabc0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49564 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49578 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=79&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46586 - "GET /monitor/?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46594 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46596 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=79&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46608 - "GET /api/session/ctx_1e19e77cabc0/details?run=run_20260430_112000_1721d5&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40786 - "GET /?ctx=ctx_1e19e77cabc0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40794 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40796 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=79&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49708 - "GET /monitor/?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49712 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49724 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=87&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49714 - "GET /api/session/ctx_1e19e77cabc0/details?run=run_20260430_112000_1721d5&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35108 - "GET /api/session/ctx_1e19e77cabc0/details?run=run_20260430_112000_1721d5&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59058 - "GET /?ctx=ctx_1e19e77cabc0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59062 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59070 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=135&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45216 - "GET /monitor/?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45222 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&run=run_20260430_112000_1721d5&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45242 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=135&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45230 - "GET /api/session/ctx_1e19e77cabc0/details?run=run_20260430_112000_1721d5&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35632 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44538 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44554 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44562 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44564 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44578 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44576 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44586 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44594 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44598 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44610 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44620 - "GET /api/session/ctx_8e2e87dbe6e7/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44628 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44632 - "GET /api/session/ctx_14ae8fdcacfb/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44646 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44652 - "GET /monitor/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44694 - "GET /api/session/ctx_28391166ea50/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44664 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44680 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44708 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44710 - "GET /api/session/ctx_caffdac82994/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52764 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52780 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52796 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52804 - "GET /monitor/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52822 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52828 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52806 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52832 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52834 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52836 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52844 - "GET /api/session/ctx_c4d64809a430/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52846 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52862 - "GET /api/session/ctx_f796f45dec6f/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52876 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52880 - "GET /api/session/ctx_6ad5d7f448c2/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43090 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43096 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43102 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43114 - "GET /monitor/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43144 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43128 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43150 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43176 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43166 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43192 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43196 - "GET /api/session/ctx_de582433c2bd/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43198 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43210 - "GET /api/session/ctx_526d4ec48d78/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43216 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43228 - "GET /api/session/ctx_5ba45e14d687/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55264 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55278 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55290 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55292 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55318 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55302 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55328 - "GET /monitor/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55340 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55338 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52556 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52558 - "GET /api/session/ctx_eef5e9d11289/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52562 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52564 - "GET /api/session/ctx_39f1a92e2b16/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52576 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52584 - "GET /api/session/ctx_928b046ccab9/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     Started server process [3358920]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 7990): address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     127.0.0.1:56086 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56088 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:37374 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37384 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37400 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37414 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57994 - "GET /monitor/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58002 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:47994 - "GET /monitor/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48002 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56198 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56208 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55440 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55460 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55454 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55470 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:36844 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     Started server process [3380861]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 7990): address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     127.0.0.1:44442 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44456 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44470 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44476 - "GET /api/bootstrap?ctx=ctx_35985b95046e&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:44492 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44496 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44500 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44510 - "POST /api/session/ctx_1876a7f22556/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44520 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44522 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60972 - "POST /api/session/ctx_1876a7f22556/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60978 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60980 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33606 - "POST /api/session/ctx_1876a7f22556/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33614 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33630 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46842 - "GET /api/session/ctx_1876a7f22556/memory?run=run_20260430_143126_41225e&source=all&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /monitor/?ctx=ctx_1876a7f22556&project_space=o2_2&run=run_20260430_143126_41225e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55408 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=o2_2&run=run_20260430_143126_41225e&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55420 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=27&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41428 - "GET /?ctx=ctx_1876a7f22556&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41442 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=o2_2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41454 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=31&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32788 - "GET /monitor/?ctx=ctx_1876a7f22556&project_space=o2_2&run=run_20260430_143126_41225e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32792 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=o2_2&run=run_20260430_143126_41225e&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32802 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=51&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55836 - "GET /?ctx=ctx_1e19e77cabc0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55848 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55852 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55862 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55870 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=135&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45238 - "GET /?ctx=ctx_1876a7f22556&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45248 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=o2_2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45260 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=75&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45276 - "GET /monitor/?ctx=ctx_1876a7f22556&project_space=o2_2&run=run_20260430_143126_41225e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45288 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=o2_2&run=run_20260430_143126_41225e&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45296 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=79&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45304 - "GET /?ctx=ctx_1876a7f22556&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45308 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=o2_2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45310 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=79&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     Started server process [3406510]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 7990): address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3306012]
+INFO:     Started server process [3408061]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:49878 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=191&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49886 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49900 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49914 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49926 - "GET /api/bootstrap?ctx=ctx_1e19e77cabc0&project_space=o2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49936 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33668 - "POST /api/session/ctx_1e19e77cabc0/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33684 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33698 - "POST /api/session/ctx_1e19e77cabc0/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33708 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33714 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space=o2_3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33728 - "POST /api/session/ctx_1e19e77cabc0/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33744 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=0&project_space=o2_3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /api/session/ctx_1e19e77cabc0/stream?last_seq=1&project_space=o2_3 HTTP/1.1" 200 OK
+2026-04-30 23:17:12,276 - INFO : info:check_all_finished: False
+2026-04-30 23:17:12,276 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/8ae8be90278f1fed7710a2f1743420886c6e9e43
+2026-04-30 23:17:12,822 - INFO : job: 66846aa5da3eacf92318d710f37d9c7fe0f8ca53 submit; job_id is 1316
+2026-04-30 23:17:43,925 - INFO : job: 66846aa5da3eacf92318d710f37d9c7fe0f8ca53 1316 finished
+INFO:     127.0.0.1:46764 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46780 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46788 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46798 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=o2_2&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46800 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48072 - "POST /api/session/ctx_1876a7f22556/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48076 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48090 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49590 - "POST /api/session/ctx_1876a7f22556/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49604 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49606 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-23' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+experiment retrying after retryable model/output failure on attempt 1/3 in 30.0s: specialist final report is missing the required `Summary` section.
+experiment retrying after retryable model/output failure on attempt 2/3 in 120.0s: specialist final report is missing the required `Summary` section.
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3408061]
+INFO:     Started server process [3547320]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:36860 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=12&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36876 - "POST /api/session/ctx_1876a7f22556/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36882 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36884 - "GET /?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36898 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:36908 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:36922 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36938 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33570 - "POST /api/session/ctx_1876a7f22556/chat/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33586 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33598 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33604 - "POST /api/session/ctx_1876a7f22556/chat/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33612 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41198 - "GET /?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41208 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41212 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47770 - "POST /api/session/ctx_1876a7f22556/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47774 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60866 - "POST /api/session/ctx_1876a7f22556/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60868 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60872 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=1&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42270 - "POST /api/session/ctx_1876a7f22556/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42278 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42280 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=1&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-33' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+INFO:     127.0.0.1:47638 - "POST /api/session/ctx_1876a7f22556/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47642 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47650 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=1&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-15628' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+INFO:     127.0.0.1:49788 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49790 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49800 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49816 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49826 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35872 - "POST /api/session/ctx_39a157e2eda0/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35882 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35888 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo_Fe111 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53356 - "POST /api/session/ctx_39a157e2eda0/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53372 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo_Fe111 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53380 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=1&project_space=Demo_Fe111 HTTP/1.1" 200 OK
+2026-05-01 18:23:11,700 - INFO : info:check_all_finished: False
+2026-05-01 18:23:11,705 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/6caaa7493fa63a0ca270ceeaec999461562572e4
+2026-05-01 18:23:12,328 - INFO : job: e6ef42457171aab7a83956935cddc251205f1a9a submit; job_id is 1317
+2026-05-01 18:25:13,499 - INFO : job: e6ef42457171aab7a83956935cddc251205f1a9a 1317 finished
+2026-05-01 18:25:39,098 - INFO : info:check_all_finished: False
+2026-05-01 18:25:39,099 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/e445ac054c2ca290b676aab48f0ec35ec4aae99b
+2026-05-01 18:25:39,683 - INFO : job: 793cb8da0b70e7e1b9b53dad8bba97eca0b72f43 submit; job_id is 1318
+2026-05-01 18:27:10,831 - INFO : job: 793cb8da0b70e7e1b9b53dad8bba97eca0b72f43 1318 finished
+INFO:     127.0.0.1:43474 - "POST /api/session/ctx_39a157e2eda0/run/interrupt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43490 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=205&project_space=Demo_Fe111 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33316 - "POST /api/session/ctx_39a157e2eda0/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33330 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo_Fe111 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33334 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38208 - "POST /api/session/ctx_39a157e2eda0/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38224 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38240 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=1&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-35850' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-51396' coro=<_run() running at /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/site-packages/langgraph/store/base/batch.py:330> wait_for=<Future cancelled>>
+INFO:     127.0.0.1:35730 - "POST /api/session/ctx_39a157e2eda0/run/interrupt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35732 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=45&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35740 - "POST /api/session/ctx_39a157e2eda0/run/interrupt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35744 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56310 - "GET /?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56326 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56332 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59820 - "POST /api/session/ctx_39a157e2eda0/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59832 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space= HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59842 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59846 - "GET /?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59862 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59870 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59876 - "GET /?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59888 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59898 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59910 - "GET /?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59914 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59916 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59928 - "GET /?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59936 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&lane=experiment&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59942 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44746 - "POST /api/session/ctx_39a157e2eda0/chat/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44750 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44760 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44776 - "POST /api/session/ctx_39a157e2eda0/chat/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44778 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44788 - "POST /api/session/ctx_39a157e2eda0/chat/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44804 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44810 - "POST /api/session/ctx_39a157e2eda0/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44820 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=47&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34764 - "POST /api/session/ctx_39a157e2eda0/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34772 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo_BCC_Fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34774 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51522 - "POST /api/session/ctx_39a157e2eda0/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51524 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=0&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51538 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=1&project_space=Demo HTTP/1.1" 200 OK
+2026-05-01 18:38:20,546 - INFO : info:check_all_finished: False
+2026-05-01 18:38:20,550 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/672606f52ab977c91505cbc851e248aa61eda801
+2026-05-01 18:38:21,199 - INFO : job: f8d9e54860728eeb98ecd9b334d19ddab8d33799 submit; job_id is 1319
+2026-05-01 18:40:22,371 - INFO : job: f8d9e54860728eeb98ecd9b334d19ddab8d33799 1319 finished
+2026-05-01 18:41:53,518 - INFO : info:check_all_finished: False
+2026-05-01 18:41:53,518 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/167d571d00983438875627318b9a7197e03b87b4
+2026-05-01 18:41:54,150 - INFO : job: bff38acaf94339faf691dcadb817546d5b96426c submit; job_id is 1320
+2026-05-01 18:42:25,301 - INFO : job: bff38acaf94339faf691dcadb817546d5b96426c 1320 finished
+INFO:     127.0.0.1:49588 - "GET /files/?ctx=ctx_39a157e2eda0&project_space=Demo&run=run_20260501_103416_c85e08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49600 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&project_space=Demo&run=run_20260501_103416_c85e08&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49618 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=249&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49608 - "GET /api/session/ctx_39a157e2eda0/files/tree?project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45370 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45374 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45376 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations%2Fco_fe111_mace_relax&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45380 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fatop_rerun&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45386 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fatop_rerun%2Fads_C_down_atop&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39664 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fatop_rerun%2Fads_C_down_atop%2Fopt.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39668 - "GET /static/vendor/jsmol/JSmol.min.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39680 - "GET /static/vendor/jsmol/j2s/img/cursor_wait.gif HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39686 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39696 - "GET /static/vendor/jsmol/j2s/img/JSmol_spinner.gif HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39698 - "GET /static/vendor/jsmol/j2s/core/package.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39708 - "GET /static/vendor/jsmol/j2s/core/corejmol.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39722 - "GET /static/vendor/jsmol/j2s/J/translation/PO.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39730 - "GET /static/vendor/jsmol/j2s/core/corescript.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39738 - "GET /static/vendor/jsmol/j2s/J/translation/JmolApplet/zh_CN.po HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39740 - "GET /static/vendor/jsmol/j2s/J/translation/JmolApplet/zh_TW.po HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39742 - "GET /static/vendor/jsmol/j2s/core/corescriptcmd.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39752 - "GET /static/vendor/jsmol/j2s/core/coretext.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39766 - "GET /api/session/ctx_39a157e2eda0/files/view?path=files/calculations/co_fe111_mace_relax/atop_rerun/ads_C_down_atop/opt.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39782 - "GET /static/vendor/jsmol/j2s/J/adapter/readers/xtal/VaspPoscarReader.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39786 - "GET /static/vendor/jsmol/j2s/core/coresym.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39790 - "GET /static/vendor/jsmol/j2s/java/util/Stack.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39804 - "GET /static/vendor/jsmol/j2s/java/util/Vector.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39820 - "GET /static/vendor/jsmol/j2s/java/util/HashSet.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39826 - "GET /static/vendor/jsmol/j2s/java/util/HashMap.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39834 - "GET /static/vendor/jsmol/j2s/J/shape/Axes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39846 - "GET /static/vendor/jsmol/j2s/J/shape/Uccage.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39862 - "GET /static/vendor/jsmol/j2s/core/coresurface.z.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39870 - "GET /static/vendor/jsmol/j2s/J/shape/MeshCollection.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39884 - "GET /static/vendor/jsmol/j2s/J/shape/Mesh.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39886 - "GET /static/vendor/jsmol/j2s/J/render/MeshRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39888 - "GET /static/vendor/jsmol/j2s/J/shapespecial/Draw.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39904 - "GET /static/vendor/jsmol/j2s/J/shapespecial/DrawMesh.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39910 - "GET /static/vendor/jsmol/j2s/J/renderspecial/DrawRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39920 - "GET /static/vendor/jsmol/j2s/J/render/UccageRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39928 - "GET /static/vendor/jsmol/j2s/J/render/CageRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39932 - "GET /static/vendor/jsmol/j2s/J/render/AxesRenderer.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45748 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fanalysis&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45752 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fresults&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42104 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fresults%2Fads_C_down_hollow_like&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42108 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fresults%2Fads_C_down_hollow_like%2Fopt.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42116 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42130 - "GET /api/session/ctx_39a157e2eda0/files/view?path=files/calculations/co_fe111_mace_relax/results/ads_C_down_hollow_like/opt.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54074 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fresults%2Fads_C_down_bridge&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54088 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fresults%2Fads_C_down_bridge&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54090 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fcalculations%2Fco_fe111_mace_relax%2Fresults%2Fads_C_down_bridge%2Fopt.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54104 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54110 - "GET /api/session/ctx_39a157e2eda0/files/view?path=files/calculations/co_fe111_mace_relax/results/ads_C_down_bridge/opt.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41994 - "GET /api/session/ctx_39a157e2eda0/files/download?path=files/calculations/co_fe111_mace_relax/results/ads_C_down_bridge/opt.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60738 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fnotes&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60744 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fnotes%2Fco_fe111&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60760 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fnotes%2Fco_fe111&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60770 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fscripts&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60782 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fscripts&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60794 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fstructures&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60802 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fstructures&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60814 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fstructures%2Fco_fe111&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60822 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fstructures%2Fco_fe111&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46566 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fstructures%2Fco_fe111%2Ffe_bcc_a2p8665.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46574 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46578 - "GET /api/session/ctx_39a157e2eda0/files/view?path=files/structures/co_fe111/fe_bcc_a2p8665.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58288 - "GET /?ctx=ctx_39a157e2eda0&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58300 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&project_space=Demo&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58310 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=249&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45908 - "GET /files/?ctx=ctx_39a157e2eda0&project_space=Demo&run=run_20260501_103416_c85e08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45914 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&project_space=Demo&run=run_20260501_103416_c85e08&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45926 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=249&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45916 - "GET /api/session/ctx_39a157e2eda0/files/tree?project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45930 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49426 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fscripts&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49436 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fstructures&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49450 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fstructures%2Fco_fe111&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49460 - "GET /api/session/ctx_39a157e2eda0/files/tree?path=files%2Fstructures%2Fco_fe111%2Fmace_inputs&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49466 - "GET /api/session/ctx_39a157e2eda0/files/content?path=files%2Fstructures%2Fco_fe111%2Fmace_inputs%2Fads_C_down_atop.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49470 - "GET /files/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49486 - "GET /api/session/ctx_39a157e2eda0/files/view?path=files/structures/co_fe111/mace_inputs/ads_C_down_atop.vasp&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51394 - "GET /?ctx=ctx_39a157e2eda0&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51410 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&project_space=Demo&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51416 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=249&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47022 - "GET /files/?ctx=ctx_39a157e2eda0&project_space=Demo&run=run_20260501_103416_c85e08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47024 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&project_space=Demo&run=run_20260501_103416_c85e08&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47038 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=249&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47032 - "GET /api/session/ctx_39a157e2eda0/files/tree?project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57574 - "GET /?ctx=ctx_39a157e2eda0&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57590 - "GET /api/bootstrap?ctx=ctx_39a157e2eda0&project_space=Demo&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57596 - "GET /api/session/ctx_39a157e2eda0/stream?last_seq=249&project_space=Demo HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49422 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49440 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49434 - "GET /static/app.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49456 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49468 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=1119&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK

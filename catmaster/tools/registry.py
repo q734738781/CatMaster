@@ -135,7 +135,6 @@ class ToolRegistry:
             peer_review_request,
             polish_academic_prose,
             review_pdf_manuscript,
-            render_structure_views,
             vaspkit_adsorbate_thermo_correction,
             vaspkit_gas_thermo_correction,
             CompileTextInput,
@@ -150,7 +149,6 @@ class ToolRegistry:
             PeerReviewRequestInput,
             PolishAcademicProseInput,
             ReviewPdfManuscriptInput,
-            RenderStructureViewsInput,
             VaspkitAdsorbateThermoCorrectionInput,
             VaspkitGasThermoCorrectionInput,
         )
@@ -247,7 +245,6 @@ class ToolRegistry:
         self.register_tool("orca_execute_batch", orca_execute_batch, OrcaExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
-        self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
         self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
         self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
         self.register_tool("analyze_vasp_neb_results", analyze_vasp_neb_results, AnalyzeVaspNebResultsInput)
@@ -531,6 +528,9 @@ def _make_langchain_tool(
         _awrapper.__name__ = f"{name}_async"
     description = (input_model.__doc__ or f"Input for {name}").strip()
     args_schema = sanitize_json_schema(input_model.model_json_schema())
+    # The model docstring is already sent as the function description. Keeping
+    # the same text in parameters.description duplicates tokens for every tool.
+    args_schema.pop("description", None)
 
     return StructuredTool.from_function(
         func=_wrapper if func is not None else None,
@@ -551,6 +551,8 @@ def sanitize_json_schema(schema: dict) -> dict:
 
     cleaned: dict = {}
     for key, value in schema.items():
+        if key in {"title", "examples"}:
+            continue
         if isinstance(value, dict):
             cleaned[key] = sanitize_json_schema(value)
         elif isinstance(value, list):

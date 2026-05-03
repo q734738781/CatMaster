@@ -10,9 +10,10 @@ Use this skill once the pathway inputs are already prepared and the question is 
 
 ## Quick Start
 1. Decide whether the task is a NEB refinement workflow or a dimer-refinement workflow.
-2. Dispatch the prepared calculation root through `vasp_execute_batch`, normally with `task_name="vasp_execute_neb"` for VASP pathway work.
-3. For MACE pathway optimization, use `mace_neb_batch`.
-4. Keep coarse convergence and refinement as separate episodes instead of mixing them into one opaque run root.
+2. Confirm the prepared root, execution branch, climb policy, dtype, output root, and whether the run is coarse convergence or refinement.
+3. Dispatch the prepared calculation root through `vasp_execute_batch`, normally with `task_name="vasp_execute_neb"` for VASP pathway work.
+4. For MACE pathway optimization, use `mace_neb_batch`.
+5. Keep coarse convergence and refinement as separate episodes instead of mixing them into one opaque run root.
 
 ## Allowed tools
 - `vasp_execute_batch`
@@ -21,6 +22,7 @@ Use this skill once the pathway inputs are already prepared and the question is 
 ## Workflow
 
 ### 1. Default NEB route: coarse `plain-NEB`, then `CI-NEB`
+- Do not use managed NEB execution as a diagnostic for missing preparation. If image trees, endpoint provenance, or dimer modes are uncertain, return to `neb-prepare` first.
 - Start from a prepared NEB root with climbing image disabled.
 - Run a coarse plain `NEB` first to localize the band and reduce gross path noise.
 - Once the band is reasonably converged, restart from those coarse-converged images with climbing image enabled for `CI-NEB` refinement.

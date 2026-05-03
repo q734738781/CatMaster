@@ -61,29 +61,17 @@ class MaceNebBatchInput(BaseModel):
 
     input_root: str = Field(
         ...,
-        description=(
-            "Task root for MACE NEB image trees. Two modes are supported: "
-            "(1) single-task mode: input_root itself contains numbered image files such as 00.vasp, 01.vasp, ...; "
-            "(2) batch mode: input_root contains task subdirectories, each with numbered image files. "
-            "Nested task directories deeper than one level are forbidden. "
-            "In batch mode, loose root-level files such as batch summaries or notes are ignored."
-        ),
+        description="Task root for one NEB image tree or a batch of one-level task subdirectories.",
     )
     output_root: str = Field(
         ...,
-        description=(
-            "Output root for NEB results. In single-task mode, results go to output_root/<basename(input_root)>. "
-            "In batch mode, results mirror task directory names under output_root."
-        ),
+        description="Output root for NEB results.",
     )
     fmax: float = Field(0.05, gt=0, description="NEB optimizer force threshold in eV/Angstrom.")
     steps: int = Field(300, ge=1, description="Maximum FIRE optimization steps.")
     mode: Literal["plain", "autoneb"] = Field(
         "plain",
-        description=(
-            "Path optimization mode. plain runs one standard NEB over the supplied image tree; "
-            "autoneb runs ASE AutoNEB and may insert extra images automatically."
-        ),
+        description="Path optimization mode: plain or autoneb.",
     )
     autoneb: AutoNebOptions = Field(
         default_factory=AutoNebOptions,
@@ -91,23 +79,18 @@ class MaceNebBatchInput(BaseModel):
     )
     climb: bool = Field(
         False,
-        description=(
-            "Enable climbing-image refinement. In plain mode this runs CI-NEB; in autoneb mode this enables the final CI-NEB stage."
-        ),
+        description="Enable climbing-image refinement.",
     )
     model: str = Field(
         "mh-1",
-        description=(
-            "MACE model identifier or workspace-local trained-model path. "
-            "Local paths may point to one model file or a directory containing a unique preferred model artifact."
-        ),
+        description="MACE model identifier or workspace-local trained-model path.",
         examples=["mh-1", "medium-mpa-0", "models/best.model"],
     )
     head: Optional[str] = Field("omat_pbe", description="Model head for multi-head models; use empty string to disable.")
     dispersion: bool = Field(False, description="Enable dispersion correction when supported by the underlying calculator.")
     default_dtype: Literal["float32", "float64"] = Field(
         "float64",
-        description="Floating-point precision passed to the MACE calculator. Keep the default float64 for NEB/path optimization unless a throughput-oriented float32 run is explicitly acceptable.",
+        description="MACE calculator precision.",
     )
     overwrite: bool = Field(False, description="If true, overwrite existing per-task output directories.")
 

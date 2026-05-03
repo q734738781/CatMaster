@@ -7,6 +7,17 @@ import {
   useState,
 } from "react";
 import { Grid } from "gridjs-react";
+import * as Tooltip from "@radix-ui/react-tooltip";
+import {
+  Bot,
+  Files,
+  FolderOpen,
+  MemoryStick,
+  MonitorDot,
+  RefreshCw,
+  Send,
+  Square,
+} from "lucide-react";
 import Papa from "papaparse";
 import Markdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -321,8 +332,7 @@ function eventToChatMessage(event) {
   if (name === "LLM_CALL_END") {
     const preview = compactText(payload.text_preview || "", 900);
     const reasoning = compactText(payload.reasoning_text || "", 2400);
-    const tools = Array.isArray(payload.tool_calls) ? payload.tool_calls.filter(Boolean) : [];
-    if (!reasoning && !preview && !tools.length) {
+    if (!reasoning && !preview) {
       return null;
     }
     const parts = [];
@@ -331,9 +341,6 @@ function eventToChatMessage(event) {
     }
     if (preview) {
       parts.push(preview);
-    }
-    if (tools.length) {
-      parts.push(`Tool plan: ${tools.join(", ")}`);
     }
     return {
       role: "assistant",
@@ -344,32 +351,21 @@ function eventToChatMessage(event) {
     };
   }
   if (name === "TOOL_CALL_START") {
-    const tool = String(payload.tool || "").trim();
-    if (!tool) {
-      return null;
-    }
-    const params = compactText(payload.params_compact || "", 320);
-    return {
-      role: "assistant",
-      kind: "tool_event",
-      badge: "tool",
-      status: tsText,
-      content: [`Running ${tool}.`, params ? `Args: ${params}` : ""].filter(Boolean).join("\n"),
-    };
+    return null;
   }
   if (name === "TOOL_CALL_END") {
     const tool = String(payload.tool || "").trim();
-    if (!tool) {
+    const status = String(payload.status || "done").trim().toLowerCase();
+    const error = compactText(payload.error || "", 900);
+    if (!tool || (!error && ["success", "done"].includes(status))) {
       return null;
     }
-    const status = String(payload.status || "done").trim();
-    const summary = compactText(payload.highlights || "", 420);
     return {
       role: "assistant",
       kind: "tool_event",
-      badge: status === "success" ? "done" : status,
+      badge: status || "tool",
       status: tsText,
-      content: [`${tool}: ${status}.`, summary].filter(Boolean).join("\n"),
+      content: [`${tool}: ${status || "done"}.`, error].filter(Boolean).join("\n"),
     };
   }
   if (name === "PROMPT_REQUESTED") {
@@ -407,6 +403,45 @@ function buildEventMessages(events) {
       return eventToChatMessage(event);
     })
     .filter(Boolean);
+}
+
+function buildLatestLlmEndMessage(snapshot, events, agentTab = "ALL") {
+  const live = snapshot?.live_state || {};
+  const status = String(snapshot?.run_status || live.status || "").trim();
+  if (!isRunActive(status)) {
+    return null;
+  }
+  const candidates = (Array.isArray(events) ? events : [])
+    .filter((event) => String(event?.name || "") === "LLM_CALL_END")
+    .sort((left, right) => Number(right?.seq || right?.ts || 0) - Number(left?.seq || left?.ts || 0));
+  const scopedCandidates = agentTab === "ALL"
+    ? candidates
+    : candidates.filter((event) => String(event?.payload?.agent_name || "").trim() === agentTab);
+  const messageCandidates = scopedCandidates.length ? scopedCandidates : candidates;
+  let selectedEvent = null;
+  let message = null;
+  for (const candidate of messageCandidates) {
+    if (!candidate) {
+      continue;
+    }
+    const nextMessage = eventToChatMessage(candidate);
+    if (nextMessage) {
+      selectedEvent = candidate;
+      message = nextMessage;
+      break;
+    }
+  }
+  if (!message || !selectedEvent) {
+    return null;
+  }
+  const payload = selectedEvent?.payload || {};
+  const meta = joinItems([payload.agent_name, payload.model, formatTime(selectedEvent?.ts)]);
+  return {
+    ...message,
+    kind: "live_assistant",
+    badge: "latest",
+    status: meta || message.status || "LLM CALL END",
+  };
 }
 
 function messageMatchesResult(message, resultText) {
@@ -718,6 +753,35 @@ function formatDateTime(value) {
   }
 }
 
+function ActionContent({ icon: Icon, children }) {
+  return (
+    <span className="action-content">
+      {Icon ? <Icon size={15} strokeWidth={2} aria-hidden="true" /> : null}
+      <span>{children}</span>
+    </span>
+  );
+}
+
+function IconButton({ icon: Icon, label, className = "ghost-btn", ...props }) {
+  return (
+    <Tooltip.Provider delayDuration={250}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button type="button" className={`icon-btn ${className || ""}`} aria-label={label} {...props}>
+            {Icon ? <Icon size={16} strokeWidth={2} aria-hidden="true" /> : null}
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content className="tooltip-content" sideOffset={6}>
+            {label}
+            <Tooltip.Arrow className="tooltip-arrow" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  );
+}
+
 function StatusPill({ status }) {
   return <span className={`status-pill status-${String(status || "idle").replaceAll("_", "-")}`}>{status || "idle"}</span>;
 }
@@ -754,24 +818,48 @@ function RunCard({ card, active, onSelect }) {
   );
 }
 
-function EventFeed({ events }) {
+function EventFeed({ events, hasMore, loadingOlder, onLoadOlder }) {
   const containerRef = useRef(null);
+  const lastMaxSeqRef = useRef(0);
   const hiddenNames = new Set(["LLM_CALL_START", "LLM_TOKEN_DELTA", "LLM_REASONING_DELTA"]);
+  const visibleRows = (Array.isArray(events) ? events : []).filter((event) => {
+    if (hiddenNames.has(String(event?.name || ""))) {
+      return false;
+    }
+    const payload = event.payload || {};
+    const body =
+      payload.text ||
+      payload.summary_snippet ||
+      payload.reasoning_text ||
+      payload.error ||
+      payload.text_preview ||
+      payload.goal ||
+      payload.status ||
+      "";
+    return Boolean(body);
+  });
 
   useEffect(() => {
     const node = containerRef.current;
-    if (node) {
+    const nextMaxSeq = (Array.isArray(events) ? events : []).reduce(
+      (maxSeq, event) => Math.max(maxSeq, Number(event?.seq || 0)),
+      0,
+    );
+    if (node && (lastMaxSeqRef.current === 0 || nextMaxSeq > lastMaxSeqRef.current)) {
       node.scrollTop = node.scrollHeight;
     }
+    lastMaxSeqRef.current = nextMaxSeq;
   }, [events]);
 
   return (
     <div ref={containerRef} className="feed-list">
-      {(events || []).slice(-120).map((event) => {
+      {hasMore ? (
+        <button type="button" className="feed-load-more" onClick={onLoadOlder} disabled={loadingOlder}>
+          {loadingOlder ? "Loading..." : "Load older events"}
+        </button>
+      ) : null}
+      {visibleRows.length ? visibleRows.map((event) => {
         const payload = event.payload || {};
-        if (hiddenNames.has(String(event?.name || ""))) {
-          return null;
-        }
         const title = joinItems([event.category, event.name, payload.tool || payload.model || payload.node]);
         const body =
           payload.text ||
@@ -782,9 +870,6 @@ function EventFeed({ events }) {
           payload.goal ||
           payload.status ||
           "";
-        if (!body) {
-          return null;
-        }
         return (
           <article key={event.seq || `${event.name}-${event.ts}`} className="feed-item">
             <div className="feed-meta">
@@ -794,7 +879,7 @@ function EventFeed({ events }) {
             <p>{body || "(no body)"}</p>
           </article>
         );
-      })}
+      }) : <div className="todo-empty">No persisted events for this run yet.</div>}
     </div>
   );
 }
@@ -2567,6 +2652,14 @@ function readStoredWebuiSession() {
   }
 }
 
+function forgetWebuiSession() {
+  try {
+    window.localStorage.removeItem(WEBUI_SESSION_STORAGE_KEY);
+  } catch {
+    return;
+  }
+}
+
 function rememberWebuiSession(data, lane) {
   if (!data || typeof data !== "object") {
     return;
@@ -2594,6 +2687,11 @@ function rememberWebuiSession(data, lane) {
     url.searchParams.set("ctx", ctx);
     if (projectSpace) {
       url.searchParams.set("project_space", projectSpace);
+    } else {
+      url.searchParams.delete("project_space");
+    }
+    if (!String(data.selected_run || "").trim()) {
+      url.searchParams.delete("run");
     }
     url.searchParams.set("lane", nextLane);
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
@@ -2602,24 +2700,26 @@ function rememberWebuiSession(data, lane) {
   }
 }
 
-function buildBootstrapParams() {
-  const params = new URLSearchParams(window.location.search);
-  const stored = readStoredWebuiSession();
-  if (!params.get("ctx") && stored.ctx) {
+function buildBootstrapParams({ useStored = true } = {}) {
+  const urlParams = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(urlParams);
+  const stored = useStored ? readStoredWebuiSession() : {};
+  const usedStoredCtx = !urlParams.get("ctx") && Boolean(stored.ctx);
+  const usedStoredProjectSpace = !urlParams.get("project_space") && Boolean(stored.project_space);
+  if (usedStoredCtx) {
     params.set("ctx", String(stored.ctx));
   }
-  if (!params.get("project_space") && stored.project_space) {
+  if (usedStoredProjectSpace) {
     params.set("project_space", String(stored.project_space));
   }
   const nextLane = params.get("lane") || String(stored.lane || "") || "experiment";
   params.set("lane", nextLane);
-  return { params, lane: nextLane };
+  return { params, lane: nextLane, usedStoredCtx, usedStoredProjectSpace };
 }
 
 function App({ boot }) {
   const view = ["home", "monitor", "files"].includes(boot?.view) ? boot.view : "home";
   const [snapshot, setSnapshot] = useState(null);
-  const [details, setDetails] = useState(null);
   const [ctx, setCtx] = useState("");
   const [lane, setLane] = useState("experiment");
   const [selectedRun, setSelectedRun] = useState("");
@@ -2628,7 +2728,7 @@ function App({ boot }) {
   const [search, setSearch] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [events, setEvents] = useState([]);
-  const [monitorTab, setMonitorTab] = useState("result");
+  const [eventPage, setEventPage] = useState({ has_more: false, min_seq: 0, max_seq: 0, loading: false });
   const [agentTab, setAgentTab] = useState("ALL");
   const [streamNonce, setStreamNonce] = useState(0);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -2665,25 +2765,56 @@ function App({ boot }) {
 
   useEffect(() => {
     let cancelled = false;
-    const { params, lane: nextLane } = buildBootstrapParams();
-    setLane(nextLane);
+    function applyBootstrapData(data, nextLane) {
+      rememberWebuiSession(data, nextLane);
+      startTransition(() => {
+        setCtx(data.ctx || "");
+        setWorkspaceRoot(data.workspace_root || "");
+        setSelectedRun(data.selected_run || "");
+        setSnapshot(data);
+        setStatusMessage(data.status_message || "");
+        setEvents(Array.isArray(data.events) ? data.events : []);
+        setEventPage({
+          has_more: Boolean(data.events_page?.has_more),
+          min_seq: Number(data.events_page?.min_seq || 0),
+          max_seq: Number(data.events_page?.max_seq || 0),
+          loading: false,
+        });
+        latestSeqRef.current = Number(data.runtime?.seq || 0);
+      });
+    }
+
+    const initialBootstrap = buildBootstrapParams();
+    setLane(initialBootstrap.lane);
     (async () => {
       try {
-        const data = await apiFetch(`/api/bootstrap?${params.toString()}`);
+        const data = await apiFetch(`/api/bootstrap?${initialBootstrap.params.toString()}`);
         if (cancelled) {
           return;
         }
-        rememberWebuiSession(data, nextLane);
-        startTransition(() => {
-          setCtx(data.ctx || "");
-          setWorkspaceRoot(data.workspace_root || "");
-          setSelectedRun(data.selected_run || "");
-          setSnapshot(data);
-          setStatusMessage(data.status_message || "");
-          setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
-          latestSeqRef.current = Number(data.runtime?.seq || 0);
-        });
+        applyBootstrapData(data, initialBootstrap.lane);
       } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        if (initialBootstrap.usedStoredCtx || initialBootstrap.usedStoredProjectSpace) {
+          forgetWebuiSession();
+          const fallbackBootstrap = buildBootstrapParams({ useStored: false });
+          setLane(fallbackBootstrap.lane);
+          try {
+            const data = await apiFetch(`/api/bootstrap?${fallbackBootstrap.params.toString()}`);
+            if (cancelled) {
+              return;
+            }
+            applyBootstrapData(data, fallbackBootstrap.lane);
+            return;
+          } catch (fallbackError) {
+            if (!cancelled) {
+              setStatusMessage(String(fallbackError?.message || fallbackError));
+            }
+            return;
+          }
+        }
         if (!cancelled) {
           setStatusMessage(String(error?.message || error));
         }
@@ -2693,30 +2824,6 @@ function App({ boot }) {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (view !== "monitor" || !ctx || !selectedRun) {
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(selectedRun)}&project_space=${escapePath(currentProjectSpace)}`);
-        if (!cancelled) {
-          startTransition(() => {
-            setDetails(data);
-          });
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setStatusMessage(String(error?.message || error));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ctx, selectedRun, view, currentProjectSpace]);
 
   useEffect(() => {
     if (!ctx) {
@@ -2744,7 +2851,17 @@ function App({ boot }) {
             setSelectedRun(streamRunName);
           }
           if (shouldRecordEvent(event)) {
-            setEvents((prev) => [...prev, event].slice(-120));
+            setEvents((prev) => {
+              const key = String(event?.seq || `${event?.name || "event"}-${event?.ts || ""}`);
+              if (prev.some((item) => String(item?.seq || `${item?.name || "event"}-${item?.ts || ""}`) === key)) {
+                return prev;
+              }
+              return [...prev, event];
+            });
+            setEventPage((prev) => ({
+              ...prev,
+              max_seq: Math.max(Number(prev.max_seq || 0), Number(event?.seq || 0)),
+            }));
           }
           setSnapshot((prev) => {
             if (!prev) {
@@ -2769,18 +2886,6 @@ function App({ boot }) {
             };
           });
         });
-      }
-      if (view === "monitor" && String(event.name || "") === "RUN_SNAPSHOT_READY") {
-        const nextRun = streamRunName || selectedRun;
-        if (nextRun) {
-          apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(nextRun)}&project_space=${escapePath(currentProjectSpace)}`)
-            .then((detailData) => {
-              startTransition(() => {
-                setDetails(detailData);
-              });
-            })
-            .catch(() => {});
-        }
       }
     };
 
@@ -2910,9 +3015,52 @@ function App({ boot }) {
     startTransition(() => {
       setSnapshot(data);
       setSelectedRun(data.selected_run || "");
-      setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
+      setEvents(Array.isArray(data.events) ? data.events : []);
+      setEventPage({
+        has_more: Boolean(data.events_page?.has_more),
+        min_seq: Number(data.events_page?.min_seq || 0),
+        max_seq: Number(data.events_page?.max_seq || 0),
+        loading: false,
+      });
       latestSeqRef.current = Number(data.runtime?.seq ?? 0);
     });
+  }
+
+  async function loadOlderEvents() {
+    if (!ctx || !selectedRun || eventPage.loading) {
+      return;
+    }
+    const beforeSeq = Number(eventPage.min_seq || 0);
+    if (!beforeSeq) {
+      return;
+    }
+    startTransition(() => {
+      setEventPage((prev) => ({ ...prev, loading: true }));
+    });
+    try {
+      const data = await apiFetch(
+        `/api/session/${escapePath(ctx)}/events?run=${escapePath(selectedRun)}&project_space=${escapePath(currentProjectSpace)}&limit=200&before_seq=${escapePath(beforeSeq)}`,
+      );
+      const older = Array.isArray(data.events) ? data.events : [];
+      startTransition(() => {
+        setEvents((prev) => {
+          const seen = new Set(older.map((event) => String(event?.seq || `${event?.name || "event"}-${event?.ts || ""}`)));
+          const rest = prev.filter((event) => !seen.has(String(event?.seq || `${event?.name || "event"}-${event?.ts || ""}`)));
+          return [...older, ...rest];
+        });
+        setEventPage({
+          has_more: Boolean(data.has_more),
+          min_seq: Number(data.min_seq || beforeSeq),
+          max_seq: Math.max(Number(eventPage.max_seq || 0), Number(data.max_seq || 0)),
+          loading: false,
+        });
+      });
+    } catch (error) {
+      startTransition(() => {
+        setStatusMessage(String(error?.message || error));
+        setEventPage((prev) => ({ ...prev, loading: false }));
+      });
+    }
   }
 
   async function refreshMemoryPanel() {
@@ -3151,20 +3299,20 @@ function App({ boot }) {
       setStatusMessage(data.status_message || "");
       setWorkspaceRoot(data.workspace_root || workspaceRoot);
       setSelectedRun(data.selected_run || data.runtime?.run_name || "");
-      setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
+      setEvents(Array.isArray(data.events) ? data.events : []);
+      setEventPage({
+        has_more: Boolean(data.events_page?.has_more),
+        min_seq: Number(data.events_page?.min_seq || 0),
+        max_seq: Number(data.events_page?.max_seq || 0),
+        loading: false,
+      });
       latestSeqRef.current = Number(data.runtime?.seq ?? 0);
       if (data.selected_run || data.runtime?.run_name) {
         setForm((prev) => ({ ...prev, resume_run_name: data.selected_run || data.runtime?.run_name || "" }));
       }
     });
     setStreamNonce((value) => value + 1);
-    if (loadDetails && data.selected_run) {
-      const detailProjectSpace = String(data.workspace_name || currentProjectSpace || "");
-      const detailData = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(data.selected_run)}&project_space=${escapePath(detailProjectSpace)}`);
-      startTransition(() => {
-        setDetails(detailData);
-      });
-    }
+    void loadDetails;
   }
 
   async function handleWorkspaceRefresh() {
@@ -3241,7 +3389,8 @@ function App({ boot }) {
   const graph = snapshot?.graph || {};
   const usage = snapshot?.usage_summary || {};
   const visibleEvents = view === "monitor" ? events : [];
-  const liveAssistantMessage = buildLiveAssistantMessage(snapshot, agentTab);
+  const latestLlmMessage = buildLatestLlmEndMessage(snapshot, events, agentTab);
+  const liveAssistantMessage = latestLlmMessage || buildLiveAssistantMessage(snapshot, agentTab);
   const chatMessages = buildChatTimeline(snapshot, events, liveAssistantMessage);
   const laneGuide = LANE_GUIDE[lane] || LANE_GUIDE.experiment;
   const todoRows = Array.isArray(live?.todo_rows) && live.todo_rows.length
@@ -3294,13 +3443,13 @@ function App({ boot }) {
         </div>
         <nav className="topbar-nav">
           <a className={view === "home" ? "active" : ""} href={homeHref}>
-            Home
+            <ActionContent icon={Bot}>Home</ActionContent>
           </a>
           <a className={view === "monitor" ? "active" : ""} href={monitorHref}>
-            Monitor
+            <ActionContent icon={MonitorDot}>Monitor</ActionContent>
           </a>
           <a className={view === "files" ? "active" : ""} href={filesHref}>
-            Files
+            <ActionContent icon={Files}>Files</ActionContent>
           </a>
         </nav>
       </header>
@@ -3316,7 +3465,7 @@ function App({ boot }) {
           <div className="control-stack">
             <div className="section-head">
               <div className="section-label">Workspace</div>
-              <button type="button" className="ghost-btn" onClick={handleWorkspaceRefresh}>Refresh</button>
+              <IconButton icon={RefreshCw} label="Refresh workspace" onClick={handleWorkspaceRefresh} />
             </div>
             <label>
               <span>Root</span>
@@ -3342,14 +3491,18 @@ function App({ boot }) {
               </select>
             </label>
             <div className="btn-row">
-              <button type="button" onClick={handleWorkspaceOpen}>Open</button>
+              <button type="button" onClick={handleWorkspaceOpen}>
+                <ActionContent icon={FolderOpen}>Open</ActionContent>
+              </button>
               <button type="button" className="ghost-btn" onClick={() => setWorkspaceName(snapshot?.workspace_name || "")}>Mirror</button>
             </div>
             <label>
               <span>New workspace</span>
               <input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="new workspace" />
             </label>
-            <button type="button" onClick={handleWorkspaceCreate}>Create Workspace</button>
+            <button type="button" onClick={handleWorkspaceCreate}>
+              <ActionContent icon={FolderOpen}>Create Workspace</ActionContent>
+            </button>
           </div>
 
           <div className="divider" />
@@ -3357,7 +3510,7 @@ function App({ boot }) {
           <div className="control-stack">
             <div className="section-head">
               <div className="section-label">Chat Sessions</div>
-              <button type="button" className="ghost-btn" onClick={handleChatCreate}>New Chat</button>
+              <IconButton icon={Bot} label="New chat" onClick={handleChatCreate} />
             </div>
             <label>
               <span>Current chat</span>
@@ -3422,7 +3575,7 @@ function App({ boot }) {
                     </a>
                   ) : null}
                   <button type="button" className="ghost-btn" onClick={refreshFilesView}>
-                    Refresh
+                    <ActionContent icon={RefreshCw}>Refresh</ActionContent>
                   </button>
                 </div>
               </div>
@@ -3473,18 +3626,18 @@ function App({ boot }) {
                     {view === "home" ? (
                       <button
                         type="button"
-                        className={`ghost-btn ${memoryOpen ? "active" : ""}`}
-                        onClick={() => setMemoryOpen((prev) => !prev)}
-                      >
-                        {memoryOpen ? "Hide Memory" : "Memory"}
+                      className={`ghost-btn ${memoryOpen ? "active" : ""}`}
+                      onClick={() => setMemoryOpen((prev) => !prev)}
+                    >
+                        <ActionContent icon={MemoryStick}>{memoryOpen ? "Hide Memory" : "Memory"}</ActionContent>
                       </button>
                     ) : null}
                     <button type="button" className="ghost-btn danger" onClick={handleInterrupt}>
-                      Interrupt
+                      <ActionContent icon={Square}>Interrupt</ActionContent>
                     </button>
                     {view === "monitor" ? (
                       <button type="button" className="ghost-btn" onClick={() => refreshSnapshot(selectedRun)}>
-                        Refresh
+                        <ActionContent icon={RefreshCw}>Refresh</ActionContent>
                       </button>
                     ) : null}
                   </div>
@@ -3510,7 +3663,12 @@ function App({ boot }) {
                 ) : (
                   <div className="monitor-grid">
                     <div className="section-label">Events</div>
-                    <EventFeed events={visibleEvents} />
+                    <EventFeed
+                      events={visibleEvents}
+                      hasMore={eventPage.has_more}
+                      loadingOlder={eventPage.loading}
+                      onLoadOlder={loadOlderEvents}
+                    />
                   </div>
                 )}
               </div>
@@ -3557,7 +3715,9 @@ function App({ boot }) {
                     </label>
                   </div>
                   <div className="btn-row">
-                    <button type="button" onClick={handleStartRun}>Start Run</button>
+                    <button type="button" onClick={handleStartRun}>
+                      <ActionContent icon={Send}>Start Run</ActionContent>
+                    </button>
                     <button
                       type="button"
                       className="ghost-btn"
@@ -3571,40 +3731,6 @@ function App({ boot }) {
             </>
           )}
         </section>
-
-        {view === "monitor" ? (
-          <aside className="right-rail">
-            <div className="section-head">
-              <div>
-                <div className="section-label">Run details</div>
-                <h3 className="section-title">Artifacts & Traces</h3>
-              </div>
-              <button type="button" className="ghost-btn" onClick={() => refreshSnapshot(selectedRun)}>
-                Pull latest
-              </button>
-            </div>
-
-            <MonitorTabs tab={monitorTab} onChange={setMonitorTab} />
-            {monitorTab === "result" ? (
-              <CodePane title="Recorded result" helper="run_state result" text={snapshot?.result_text || ""} />
-            ) : null}
-            {monitorTab === "task" ? (
-              <CodePane title="Run state" helper="run_state.json" text={details?.task_state || ""} />
-            ) : null}
-            {monitorTab === "trace" ? (
-              <CodePane
-                title="Trace bundle"
-                helper="event/tool/patch trace"
-                text={[details?.trace_event, details?.trace_tool, details?.trace_patch].filter(Boolean).join("\n\n")}
-              />
-            ) : null}
-            {monitorTab === "artifacts" ? (
-              <CodePane title="Artifacts JSON" helper="run_state.artifacts" text={JSON.stringify(details?.artifacts || [], null, 2)} />
-            ) : null}
-            <UsagePanel usage={usage} />
-            <ArtifactPanel details={details} />
-          </aside>
-        ) : null}
 
         {view === "home" ? (
           <aside className="right-rail home-sidecar">

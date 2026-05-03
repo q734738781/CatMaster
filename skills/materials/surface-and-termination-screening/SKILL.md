@@ -24,7 +24,7 @@ Use this skill to screen surface terminations without quietly changing slab geom
 - `vasp_prepare`
 - `vasp_execute_batch`
 - `analyze_vasp_results`
-- `render_structure_views`
+- `execute`
 
 ## Workflow
 
@@ -38,7 +38,7 @@ Use this skill to screen surface terminations without quietly changing slab geom
 - If lateral coverage needs more spacing, apply `supercell` after the fixing policy is understood.
 
 ### 3. Inspect before paying for DFT
-- Use `render_structure_views` when termination identity or vacuum/fixing mistakes are visually ambiguous.
+- Use the `structure-visual-inspection` skill script when termination identity or vacuum/fixing mistakes are visually ambiguous.
 - Do not send obviously malformed or duplicated slabs into the VASP batch.
 
 ### 4. Run one controlled ranking stage

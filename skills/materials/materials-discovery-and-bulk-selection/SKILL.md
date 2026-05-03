@@ -10,9 +10,10 @@ Use this skill to turn an open-ended catalyst search into a shortlist of downloa
 
 ## Quick Start
 1. Define search criteria and requested fields before querying Materials Project.
-2. Use `mp_search_materials` to write a CSV candidate table, not just a chat summary.
-3. Prune the candidate table before downloading structures.
-4. Use `mp_download_structure` only for the shortlisted `mp_id` values.
+2. Choose a non-empty `criteria`, non-empty `fields`, and an `output_csv_rel` ledger path before calling `mp_search_materials`.
+3. Use `mp_search_materials` to write a CSV candidate table, not just a chat summary.
+4. Prune the candidate table before downloading structures.
+5. Use `mp_download_structure` only for the shortlisted `mp_id` values.
 
 ## Allowed tools
 - `mp_search_materials`
@@ -24,6 +25,9 @@ Use this skill to turn an open-ended catalyst search into a shortlist of downloa
 - `mp_search_materials` fails on empty criteria or empty fields.
 - The tool writes the full result table to `output_csv_rel` and returns preview rows for quick inspection.
 - Keep the requested fields aligned with the intended downstream ranking so the CSV is directly usable.
+- Common `criteria` keys include `material_ids`, `elements`, `chemsys`, `formula`, `is_stable`, `energy_above_hull`, `formation_energy`, `band_gap`, `crystal_system`, `spacegroup_number`, `spacegroup_symbol`, `num_sites`, `density`, `volume`, and `num_elements`.
+- Range criteria should be passed as `[min, max]` pairs.
+- Common output fields include `material_id`, `formula_pretty`, `energy_above_hull`, `formation_energy_per_atom`, `band_gap`, `crystal_system`, `spacegroup_number`, `spacegroup_symbol`, `nsites`, `density`, and `volume`.
 
 ### 2. Prune before download
 - Use the CSV output as the candidate ledger instead of retyping IDs from memory.

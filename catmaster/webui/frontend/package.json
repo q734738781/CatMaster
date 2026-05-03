@@ -7,9 +7,11 @@
     "build": "vite build && python3 ../../../scripts/install_jsmol_assets.py --quiet"
   },
   "dependencies": {
+    "@radix-ui/react-tooltip": "^1.2.8",
     "gridjs": "^6.2.0",
     "gridjs-react": "^6.1.1",
     "katex": "^0.16.38",
+    "lucide-react": "^1.14.0",
     "papaparse": "^5.5.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

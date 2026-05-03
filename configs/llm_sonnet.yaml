@@ -3,9 +3,9 @@
 # For a full provider-by-provider template, see `configs/llm.template.yaml`.
 
 models:
-  "openai/gpt-5.4:medium":
+  "openai/gpt-5.5:medium":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
 
     temperature: 1.0
     top_p: null
@@ -22,9 +22,9 @@ models:
 
 
 
-  "openai/gpt-5.4:xhigh":
+  "openai/gpt-5.5:xhigh":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
 
     temperature: 1.0
     top_p: null
@@ -41,9 +41,9 @@ models:
 
 
 
-  "openai/gpt-5.4:high":
+  "openai/gpt-5.5:high":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
 
     # Sampling / reasoning
     temperature: 1.0
@@ -83,9 +83,9 @@ models:
     default_headers: {}
 
     # Provider-bound options
-  "openai/gpt-5.4:minimal":
+  "openai/gpt-5.5:minimal":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
 
     temperature: 1.0
     top_p: null
@@ -160,18 +160,18 @@ agents:
   proposal: "anthropic/claude-sonnet-4.6:high"
   director: "anthropic/claude-sonnet-4.6:high"
   task_runner: "anthropic/claude-sonnet-4.6:high"
-  research_lead: "openai/gpt-5.4:high"
-  research_state_updater: "openai/gpt-5.4:high"
-  write_director: "openai/gpt-5.4:high"
+  research_lead: "openai/gpt-5.5:high"
+  research_state_updater: "openai/gpt-5.5:high"
+  write_director: "openai/gpt-5.5:high"
   section_writer: "anthropic/claude-sonnet-4.6:high"
-  write_reviewer: "openai/gpt-5.4:medium"
+  write_reviewer: "openai/gpt-5.5:medium"
   academic_polisher: "google/gemini-3.1-pro-preview"
-  tex_compile_fixer: "openai/gpt-5.4:medium"
+  tex_compile_fixer: "openai/gpt-5.5:medium"
   # Tool Agent Models
-  image_analyzer: "openai/gpt-5.4:medium"
-  literature_synthesizer: "openai/gpt-5.4:medium"
-  literature_deep_research: "openai/gpt-5.4:high"
-  memory_patch: "openai/gpt-5.4:medium"
+  image_analyzer: "openai/gpt-5.5:medium"
+  literature_synthesizer: "openai/gpt-5.5:medium"
+  literature_deep_research: "openai/gpt-5.5:high"
+  memory_patch: "openai/gpt-5.5:medium"
   tool_selector: "openai/gpt-5.4-mini"
   summary: "google/gemini-3-flash-preview"
 

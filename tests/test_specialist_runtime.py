@@ -251,6 +251,8 @@ def test_specialist_tool_wrapper_returns_nonfatal_error_payload(tmp_path: Path, 
 def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths() -> None:
     contract = runtime_mod.SpecialistRunner._soft_reporting_contract()
     assert "directly answer the user's actual question" in contract
+    assert "helpful but not mandatory" in contract
+    assert "follow the user's requested response shape" in contract
     assert "workspace-relative output paths" in contract
     assert "optional `ReviewTarget` section" in contract
     assert "replace or delete stale incorrect reports/notes" in contract
@@ -258,7 +260,8 @@ def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths
 
 def test_writing_reporting_contract_allows_summary_first_closeout() -> None:
     contract = runtime_mod.SpecialistRunner._writing_reporting_contract()
-    assert "required section is `Summary`" in contract
+    assert "shape the user requested" in contract
+    assert "not required" in contract
     assert "Include a `Files` section only when" in contract
     assert "optional `ReviewTarget` section" in contract
     assert "Do not add a placeholder `Facts` section" in contract
@@ -353,11 +356,15 @@ def test_execution_capability_contract_distinguishes_local_and_managed_runtime(t
     orca_contract = built.runner._execution_capability_contract(audience="orca_xtb_worker")
 
     assert "Do not infer managed-execution availability from local shell probing alone." in research_contract
+    assert "Remote-first execution rule" in research_contract
+    assert "call that tool before using `execute`, local Python, or ad hoc shell scripts" in research_contract
     assert "downgrading it to literature-only validation" in research_contract
     assert "`vasp_execute_batch`" in materials_contract
     assert "do not require a local periodic DFT engine to be directly runnable first" in materials_contract
+    assert "before attempting local MACE calculators or ad hoc Python wrappers" in materials_contract
     assert "`mace_train`" in ml_contract
-    assert "registered managed-execution path" in ml_contract
+    assert "MACE training/fine-tuning/evaluation" in ml_contract
+    assert "before attempting local MACE CLI/Python wrappers" in ml_contract
     assert "prefer the registered managed tools when they fit the task" in ml_contract
     assert "continue by writing and running local workspace scripts instead of blocking on tool coverage" in ml_contract
     assert "`xtb_run_batch`" in orca_contract
@@ -604,15 +611,20 @@ def test_message_text_ignores_reasoning_blocks() -> None:
     assert runtime_mod.SpecialistRunner._message_text(message) == "## Summary\nusable"
 
 
-def test_coerce_report_requires_summary_heading() -> None:
+def test_coerce_report_accepts_plain_text_without_summary_heading() -> None:
     runner = runtime_mod.SpecialistRunner(
         llm_profile=_FakeProfile(),
         run_context=SimpleNamespace(workspace=Path("/tmp"), run_dir=Path("/tmp"), run_id="r1", project_id="proj"),
         reporter=None,
         run_control=None,
     )
-    with pytest.raises(runtime_mod.SpecialistInvalidFinalReportError, match="required `Summary` section"):
-        runner._coerce_report(raw={"messages": [AIMessage(content="plain echo without headings")]})
+    parsed = runner._coerce_report(raw={"messages": [AIMessage(content="plain echo without headings")]})
+
+    assert parsed["text"] == "plain echo without headings"
+    assert parsed["summary"] == "plain echo without headings"
+    assert parsed["facts"] == []
+    assert parsed["files"] == []
+    assert parsed["structured_report"] is False
 
 
 def test_specialist_usage_callback_tracks_agent_scoped_usage() -> None:
@@ -713,6 +725,27 @@ def test_render_compact_report_omits_empty_sections() -> None:
     )
 
     assert rendered == "## Summary\ndraft revised"
+
+
+def test_finalize_report_preserves_unstructured_plain_text() -> None:
+    runner = runtime_mod.SpecialistRunner(
+        llm_profile=_FakeProfile(),
+        run_context=SimpleNamespace(workspace=Path("/tmp"), run_dir=Path("/tmp"), run_id="r1", project_id="proj"),
+        reporter=None,
+        run_control=None,
+    )
+
+    finalized = runner._finalize_report(
+        {
+            "text": "## 1. Initial model interpretation\nPlain requested shape.",
+            "summary": "## 1. Initial model interpretation\nPlain requested shape.",
+            "facts": [],
+            "files": [],
+            "structured_report": False,
+        }
+    )
+
+    assert finalized["text"] == "## 1. Initial model interpretation\nPlain requested shape."
 
 
 def test_run_impl_retries_invalid_final_report_and_recovers(
@@ -1075,10 +1108,13 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "write a reusable workspace script under `scripts/`" in materials_worker_kwargs["system_prompt"]
         assert "Do not infer managed-execution availability from local shell probing alone." in materials_worker_kwargs["system_prompt"]
         assert "do not require a local periodic DFT engine to be directly runnable first" in materials_worker_kwargs["system_prompt"]
+        assert "For MACE relaxations, single-points, MD, and NEB, call the registered `mace_*_batch` managed tools first" in materials_worker_kwargs["system_prompt"]
+        assert "do not run MACE calculators directly in local Python just because the package is importable" in materials_worker_kwargs["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in ml_worker_kwargs["system_prompt"]
         assert "When a registered managed ML tool fits the task, prefer that managed path first." in ml_worker_kwargs["system_prompt"]
         assert "prefer `build_dataset_from_runs`, `mace_train`, and `mace_evaluate` over ad hoc local wrapper scripts" in ml_worker_kwargs["system_prompt"]
         assert "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request" in ml_worker_kwargs["system_prompt"]
+        assert "Do not replace `mace_train` or `mace_evaluate` with local MACE CLI/Python execution" in ml_worker_kwargs["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in ml_worker_kwargs["system_prompt"]
         assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`" in ml_worker_kwargs["system_prompt"]
         assert "If a handy Python package is still missing for a bounded local step" in ml_worker_kwargs["system_prompt"]

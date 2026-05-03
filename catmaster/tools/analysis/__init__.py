@@ -30,7 +30,6 @@ from catmaster.tools.analysis.review_pdf_manuscript import (
     ReviewPdfManuscriptInput,
     review_pdf_manuscript,
 )
-from catmaster.tools.analysis.render_structure_views import RenderStructureViewsInput, render_structure_views
 from catmaster.tools.analysis.results_analysis import (
     AnalyzeVaspNebResultsInput,
     AnalyzeTrajectoryInput,
@@ -69,8 +68,6 @@ __all__ = [
     "peer_review_request",
     "ReviewPdfManuscriptInput",
     "review_pdf_manuscript",
-    "RenderStructureViewsInput",
-    "render_structure_views",
     "AnalyzeVaspResultsInput",
     "AnalyzeVaspNebResultsInput",
     "AnalyzeTrajectoryInput",

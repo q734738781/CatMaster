@@ -2,9 +2,9 @@
 # Secrets (API keys) should come from environment variables.
 
 models:
-  "openai/gpt-5.4:medium":
+  "openai/gpt-5.5:medium":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -16,9 +16,9 @@ models:
     base_url: "https://openrouter.ai/api/v1"
     default_headers: {}
 
-  "openai/gpt-5.4:xhigh":
+  "openai/gpt-5.5:xhigh":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -30,9 +30,9 @@ models:
     base_url: "https://openrouter.ai/api/v1"
     default_headers: {}
 
-  "openai/gpt-5.4:high":
+  "openai/gpt-5.5:high":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -56,9 +56,9 @@ models:
     api_key: null
     base_url: "https://openrouter.ai/api/v1"
     default_headers: {}
-  "openai/gpt-5.4:minimal":
+  "openai/gpt-5.5:minimal":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -124,17 +124,17 @@ agents:
   proposal: "xiaomi/mimo-v2-pro:high"
   director: "xiaomi/mimo-v2-pro:high"
   task_runner: "xiaomi/mimo-v2-pro:high"
-  research_lead: "openai/gpt-5.4:high"
-  research_state_updater: "openai/gpt-5.4:high"
-  write_director: "openai/gpt-5.4:high"
+  research_lead: "openai/gpt-5.5:high"
+  research_state_updater: "openai/gpt-5.5:high"
+  write_director: "openai/gpt-5.5:high"
   section_writer: "xiaomi/mimo-v2-pro:high"
-  write_reviewer: "openai/gpt-5.4:medium"
+  write_reviewer: "openai/gpt-5.5:medium"
   academic_polisher: "google/gemini-3.1-pro-preview"
-  tex_compile_fixer: "openai/gpt-5.4:medium"
-  image_analyzer: "openai/gpt-5.4:medium"
-  literature_synthesizer: "openai/gpt-5.4:medium"
-  literature_deep_research: "openai/gpt-5.4:high"
-  memory_patch: "openai/gpt-5.4:medium"
+  tex_compile_fixer: "openai/gpt-5.5:medium"
+  image_analyzer: "openai/gpt-5.5:medium"
+  literature_synthesizer: "openai/gpt-5.5:medium"
+  literature_deep_research: "openai/gpt-5.5:high"
+  memory_patch: "openai/gpt-5.5:medium"
   tool_selector: "openai/gpt-5.4-mini"
   summary: "google/gemini-3-flash-preview"
 

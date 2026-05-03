@@ -12,7 +12,8 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 1. Start from a validated slab and a canonical adsorbate file.
 2. Run `enumerate_adsorption_sites` first and keep the returned `sites_json_rel`.
 3. Use `place_adsorbate` for one chosen site or `generate_batch_adsorption_structures` for a screening set.
-4. Preserve the returned `ads_indices` metadata for downstream relaxations and thermochemistry.
+4. For a screening batch, choose the slab source, adsorbate source, site family, distance, and `max_structures` from the task intent before calling the tool.
+5. Preserve the returned `ads_indices` metadata for downstream relaxations and thermochemistry.
 
 ## Allowed tools
 - `enumerate_adsorption_sites`
@@ -22,6 +23,7 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 ## Workflow
 
 ### 1. Enumerate before placing
+- Do not call placement tools on guessed paths. First create or locate the exact slab and adsorbate files under the workspace, then reuse returned paths.
 - `enumerate_adsorption_sites` writes a JSON site list and returns `default_site_label`.
 - Each enumerated site row includes Cartesian `cart_coords`; the `ontop_0` / `bridge_1` / `hollow_2` labels used by `place_adsorbate` come from this enumeration.
 - In `mode=all`, the candidate families are `ontop`, `bridge`, and `hollow`.
@@ -37,8 +39,10 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 
 ### 3. Batch only the candidates you want to screen
 - `generate_batch_adsorption_structures` supports either `slab_file` or `slab_dir`, not both.
+- When `slab_dir` is used, each slab gets its own subdirectory under `output_dir`; nested input paths are encoded in `slab_id` using `__`.
 - `max_structures` is a real cap; if the site count exceeds it, the batch is truncated.
-- The batch output writes `batch_structures.json` plus `ads_indices.json` under `output_dir`.
+- The batch output writes `batch_structures.json` plus `ads_indices.json` under `output_dir`, and per-structure `<output>.meta.json` sidecars with `ads_indices`.
+- `ads_indices.json` rows include the slab source, slab id, site label, generated POSCAR path, newly added adsorbate indices, and merged adsorbate indices.
 
 ## Method-critical defaults
 - If the screening is intended for quantitative ranking, preserve metadata and reference-state traceability needed for downstream consistent energy evaluation.

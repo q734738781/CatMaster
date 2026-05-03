@@ -98,7 +98,6 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "vasp_execute_batch",
     "mp_search_materials",
     "mp_download_structure",
-    "render_structure_views",
     "identify_structure_fragments",
     "analyze_vasp_neb_results",
     "analyze_trajectory",
@@ -1563,6 +1562,8 @@ class SpecialistRunner:
         lines = [
             "Execution capability contract: distinguish local interactive availability from managed execution availability.",
             "Do not infer managed-execution availability from local shell probing alone. If a registered submission tool exists, treat that capability as available through the platform unless the tool itself fails at runtime.",
+            "Remote-first execution rule: when a registered managed-execution tool covers the requested computation, call that tool before using `execute`, local Python, or ad hoc shell scripts for the same computation.",
+            "Use `execute` and local Python for input preparation, lightweight inspection, glue logic, and post-processing; do not use them to replace a fitting managed remote execution tool unless the user explicitly asks for a local-only run or the managed tool has already failed for a task-specific reason.",
             "Your current tool surface is not the whole platform surface; some managed execution, resource visibility, or environment checks exist only behind delegated specialists or workers.",
             "If a bounded local task needs a missing Python package, `execute` may install it with `python -m pip install ...` when that is the most direct way to complete the step.",
         ]
@@ -1611,11 +1612,11 @@ class SpecialistRunner:
             )
         if audience in {"experiment", "materials_worker"} and any(name in available for name in ("mace_neb_batch", "mace_relax_batch", "mace_md_batch", "mace_sp_batch")):
             lines.append(
-                "For surrogate screening or MACE-based materials workflows, prefer the registered batch execution tools over ad hoc shell probing of remote resources."
+                "For surrogate screening or MACE-based materials workflows, use `mace_relax_batch`, `mace_sp_batch`, `mace_md_batch`, or `mace_neb_batch` before attempting local MACE calculators or ad hoc Python wrappers."
             )
         if audience in {"experiment", "ml_worker"} and any(name in available for name in ("mace_train", "mace_evaluate")):
             lines.append(
-                "For heavy ML training or evaluation, use the registered managed-execution path when the run is long, batch-oriented, or compute-intensive."
+                "For MACE training/fine-tuning/evaluation, use the registered managed-execution path (`mace_train` or `mace_evaluate`) before attempting local MACE CLI/Python wrappers when the managed tool can express the run."
             )
         if audience in {"experiment", "ml_worker"}:
             lines.append(
@@ -1856,6 +1857,8 @@ class SpecialistRunner:
     def _tool_policy() -> str:
         return (
             "Tool discipline: if a relevant skill is available to the current agent, read it before acting. "
+            "Treat tool schemas as compact invocation interfaces, not as complete SOP; skills carry workflow rules, method-critical defaults, and common edge-case guidance that may be intentionally absent from short schema descriptions. "
+            "Before the first expensive, managed, or irreversible tool call in a workflow, do a brief skill-grounded preflight: confirm required input paths exist, choose method-critical toggles explicitly, and decide whether the builtin tool fits the task without probing by trial calls. "
             "Prefer registered builtin tools when they fit the task. "
             "Before writing custom code, first try to satisfy the task by adjusting the parameters and supported variants of a relevant builtin tool. "
             "Builtin tools often already encode validated parameter choices, implementation optimizations, and known pitfall handling, so avoid reimplementing that logic unless the builtin boundary truly does not fit. "
@@ -1895,11 +1898,11 @@ class SpecialistRunner:
     def _soft_reporting_contract() -> str:
         return (
             "For multi-step work, use `write_todos` early and keep it updated when the plan changes. "
-            "When you finish, reply with only three markdown sections in this order: `Summary`, `Facts`, and `Files`. "
-            "`Summary` must directly answer the user's actual question with the key result and conclusion; do not say only that a report was written. "
-            "`Facts` should be a short flat list of the most important archival facts. "
-            "`Files` should be a flat list of relevant workspace-relative output paths; do not return bare filenames, and use `(none reported)` if there are none. "
-            "If one manuscript PDF is the canonical downstream review target, you may add an optional `ReviewTarget` section with exactly one workspace-relative PDF path. "
+            "For durable multi-step closeouts, it is helpful but not mandatory to use three markdown sections in this order: `Summary`, `Facts`, and `Files`; follow the user's requested response shape when it conflicts with this archival convention. "
+            "`Summary`, when used, should directly answer the user's actual question with the key result and conclusion; do not say only that a report was written. "
+            "`Facts`, when used, should be a short flat list of the most important archival facts. "
+            "`Files`, when used, should be a flat list of relevant workspace-relative output paths; do not return bare filenames, and use `(none reported)` if there are none. "
+            "If one manuscript PDF is the canonical downstream review target, you may add an optional `ReviewTarget` section with exactly one workspace-relative PDF path when using the archival sections. "
             "If you are correcting a previously wrong result after the user pointed out an error, replace or delete stale incorrect reports/notes when feasible and do not leave superseded wrong paths in `Files`."
         )
 
@@ -1907,8 +1910,8 @@ class SpecialistRunner:
     def _writing_reporting_contract() -> str:
         return (
             "For multi-step work, use `write_todos` early and keep it updated when the plan changes. "
-            "When you finish, reply with a concise markdown report whose required section is `Summary`. "
-            "`Summary` must directly answer the user's current writing request by stating what was drafted, revised, or recommended and the current manuscript status. "
+            "When you finish, reply in the shape the user requested; a concise `Summary` section is recommended for durable writing closeouts but is not required. "
+            "`Summary`, when used, should directly answer the user's current writing request by stating what was drafted, revised, or recommended and the current manuscript status. "
             "Include a `Files` section only when you created or materially updated durable workspace artifacts that the parent should inspect. "
             "If one manuscript PDF is the canonical downstream review target, add an optional `ReviewTarget` section with exactly one workspace-relative PDF path. "
             "Do not add a placeholder `Facts` section for writing-only closeout."
@@ -1934,6 +1937,7 @@ class SpecialistRunner:
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
             "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis when those steps serve one materials workflow.\n"
+            "For MACE relaxations, single-points, MD, and NEB, call the registered `mace_*_batch` managed tools first when they fit; do not run MACE calculators directly in local Python just because the package is importable.\n"
             "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
             "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
@@ -1962,6 +1966,7 @@ class SpecialistRunner:
             "When a registered managed ML tool fits the task, prefer that managed path first.\n"
             "For MACE dataset curation, training, and benchmark evaluation, prefer `build_dataset_from_runs`, `mace_train`, and `mace_evaluate` over ad hoc local wrapper scripts.\n"
             "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request; use the managed remote training path instead.\n"
+            "Do not replace `mace_train` or `mace_evaluate` with local MACE CLI/Python execution unless the user explicitly requested a local-only dry run or the managed tool cannot express the required workflow.\n"
             "Prefer using libraries already available in the environment and reusable workspace code before introducing new dependencies or parallel implementations.\n"
             "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`; prefer them first unless the task clearly needs something else.\n"
             "If a handy Python package is still missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
@@ -2337,9 +2342,11 @@ class SpecialistRunner:
         text = self._extract_final_text(raw)
         if not text:
             raise SpecialistInvalidFinalReportError("specialist failed to return a final assistant text report.")
-        if not self._has_required_summary_heading(text):
-            raise SpecialistInvalidFinalReportError("specialist final report is missing the required `Summary` section.")
-        summary, facts, files, review_target = self._parse_summary_and_files(text)
+        structured_report = self._has_required_summary_heading(text)
+        if structured_report:
+            summary, facts, files, review_target = self._parse_summary_and_files(text)
+        else:
+            summary, facts, files, review_target = self._fallback_summary(text), [], [], ""
         if not str(summary or "").strip():
             raise SpecialistInvalidFinalReportError("specialist final report did not contain a usable summary.")
         return {
@@ -2348,16 +2355,21 @@ class SpecialistRunner:
             "facts": facts,
             "files": files,
             "review_target": review_target,
+            "structured_report": structured_report,
         }
 
     def _finalize_report(self, parsed: dict[str, Any]) -> dict[str, Any]:
+        original_text = str(parsed.get("text") or "").strip()
+        structured_report = bool(parsed.get("structured_report", True))
         summary = str(parsed.get("summary") or "").strip()
         facts = [str(item).strip() for item in list(parsed.get("facts") or []) if str(item).strip()]
         files = [self._normalize_artifact_path(str(item).strip()) for item in list(parsed.get("files") or []) if str(item).strip()]
         review_target = self._normalize_artifact_path(str(parsed.get("review_target") or "").strip()) if parsed.get("review_target") else ""
         files, facts = self._ensure_tex_bundle_outputs(files=files, facts=facts)
         return {
-            "text": self._render_compact_report(summary=summary, facts=facts, files=files, review_target=review_target),
+            "text": self._render_compact_report(summary=summary, facts=facts, files=files, review_target=review_target)
+            if structured_report
+            else original_text,
             "summary": summary,
             "facts": facts,
             "files": files,

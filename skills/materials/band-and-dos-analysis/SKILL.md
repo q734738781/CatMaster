@@ -24,7 +24,7 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 - `vasp_band_prepare`
 - `vasp_execute_batch`
 - `analyze_vasp_results`
-- `render_structure_views`
+- `execute`
 
 ## Workflow
 
@@ -52,7 +52,7 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 - Report the exact `KPOINTS` artifact used for the band job.
 - Report the DOS smearing choice, whether the run is self-consistent or `ICHARG=11`, and the source of any reused `CHGCAR`.
 - If the upstream static stage was created specifically to feed DOS/bands, say so and keep the `CHGCAR`-writing choice explicit.
-- Use `render_structure_views` when the bulk cell standardization or orientation is visually ambiguous.
+- Use the `structure-visual-inspection` skill script when the bulk cell standardization or orientation is visually ambiguous.
 
 ## Method-critical defaults
 - Do not compare DOS or bandgaps across jobs that changed spin, `DFT+U`, smearing, or k-point density silently.

@@ -17,32 +17,11 @@ from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
 class MPSearchMaterialsInput(BaseModel):
-    """
-    [material/discovery] Search Materials Project with flexible criteria and write results to CSV.
-
-    Common criteria keys (pass via `criteria`):
-      - material_ids (list[str] or str)
-      - elements (list[str] or str)
-      - chemsys (str)
-      - formula (str)
-      - is_stable (bool)
-      - energy_above_hull ([min, max])
-      - formation_energy ([min, max])
-      - band_gap ([min, max])
-      - crystal_system (str)
-      - spacegroup_number / spacegroup_symbol
-      - num_sites ([min, max])
-      - density ([min, max])
-      - volume ([min, max])
-      - num_elements ([min, max])
-    Common fields for output rows (pass via `fields`):
-      material_id, formula_pretty (or formula), energy_above_hull, formation_energy_per_atom (or formation_energy),
-      band_gap, crystal_system, spacegroup_number, spacegroup_symbol, nsites (or num_sites), density, volume.
-    """
+    """[material/discovery] Search Materials Project with flexible criteria and write a CSV candidate table."""
 
     criteria: Dict = Field(
         default_factory=dict,
-        description="Direct summary.search filters as a dict (keys listed above). Range values may be [min, max].",
+        description="Direct summary.search filters as a dict. Range values may be [min, max].",
     )
     fields: List[str] = Field(
         default_factory=lambda: [

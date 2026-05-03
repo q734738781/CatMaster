@@ -65,29 +65,20 @@ class MakeNebGeometryInput(BaseModel):
     final_path: str | None = Field(None, description="Final structure file (POSCAR/CONTCAR/.vasp/.cif).")
     input_root: str | None = Field(
         None,
-        description=(
-            "Optional batch root containing task subdirectories. Each task directory must contain one initial-state "
-            "structure file named IS(.vasp/.cif/...) and one final-state file named FS(.vasp/.cif/...)."
-        ),
+        description="Optional batch root; each task subdir contains IS and FS structure files.",
     )
     output_root: str | None = Field(
         None,
-        description="Batch output root used only with input_root. Outputs are written to output_root/<task_id>/00.vasp...",
+        description="Batch output root used only with input_root.",
     )
     n_images: int = Field(
         ...,
         ge=1,
-        description=(
-            "Number of intermediate images (NI). For routine local events, prefer about 4-8 intermediate images. "
-            "If no better prior exists, estimate with ceil(sqrt(sum_i ||Δr_i||^2) / 0.8 Å) after fixing atom "
-            "matching and periodic minimum-image displacements. If that path-scale estimate exceeds about 6 Å or "
-            "suggests more than about 8 intermediate images, reconsider whether the endpoints describe an overlong "
-            "non-primitive migration."
-        ),
+        description="Number of intermediate images (NI). Use neb-prepare skill for the image-count heuristic.",
     )
     output_dir: str = Field(
         "neb_images",
-        description="Single-case output directory for a flat numbered image-file tree such as 00.vasp, 01.vasp, ... (workspace-relative).",
+        description="Single-case output directory for a flat numbered image-file tree.",
     )
     interp_mode: str = Field(
         "direct",
@@ -128,31 +119,17 @@ class VaspNebPrepareInput(BaseModel):
     final_path: str | None = Field(None, description="Final endpoint structure path.")
     input_root: str | None = Field(
         None,
-        description=(
-            "Optional batch root containing task subdirectories. Each task directory must contain one image tree "
-            "using flat image files 00.vasp, 01.vasp, ... or legacy 00/POSCAR, 01/POSCAR, ... . "
-            "Preparation reports warnings when endpoint OUTCAR files still need to be copied in later for NEB analysis."
-        ),
+        description="Optional batch root containing task subdirectories with one NEB image tree each.",
     )
     images_root: str | None = Field(
         None,
-        description=(
-            "Existing image-tree root. Preferred form is a flat numbered file tree such as 00.vasp, 01.vasp, ... . "
-            "Legacy numbered directories such as 00/POSCAR, 01/POSCAR, ... are also accepted. "
-            "Preparation reports warnings when endpoint OUTCAR files still need to be copied in later for NEB analysis."
-        ),
+        description="Existing NEB image-tree root; flat numbered files or legacy numbered POSCAR dirs are accepted.",
     )
     output_root: str = Field(..., description="Target NEB job root. Image directories and root VASP files are written here.")
     n_images: int = Field(
         5,
         ge=1,
-        description=(
-            "Number of intermediate images when generating from endpoints. For routine local events, prefer about "
-            "4-8 intermediate images. If no better prior exists, estimate with ceil(sqrt(sum_i ||Δr_i||^2) / 0.8 Å) "
-            "after fixing atom matching and periodic minimum-image displacements. If that path-scale estimate "
-            "exceeds about 6 Å or suggests more than about 8 intermediate images, reconsider whether the endpoints "
-            "describe an overlong non-primitive migration."
-        ),
+        description="Number of intermediate images when generating from endpoints.",
     )
     output_filename: str = Field("POSCAR", description="Filename for generated/copied image structures.")
     interp_mode: str = Field(

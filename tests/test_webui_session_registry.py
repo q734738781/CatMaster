@@ -52,3 +52,13 @@ def test_bootstrap_loads_root_project_space_when_root_itself_is_project(tmp_path
 
     assert state.project_space_name == tmp_path.name
     assert state.project_space_path == str(tmp_path.resolve())
+
+
+def test_bootstrap_missing_project_space_keeps_root_selection_empty(tmp_path: Path) -> None:
+    registry = SessionRegistry(default_project_space_root=tmp_path)
+
+    state = registry.bootstrap(ctx="ctx_test_stale", project_space="missing", run="")
+
+    assert state.project_space_name == ""
+    assert state.project_space_path == ""
+    assert "Project space does not exist: missing" in state.status

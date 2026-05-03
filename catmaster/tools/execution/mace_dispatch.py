@@ -87,23 +87,13 @@ class MaceRelaxBatchInput(BaseModel):
     )
     output_root: str = Field(
         ...,
-        description=(
-            "Root directory to store batch outputs. Results mirror the input directory structure; each input file "
-            "expands to a folder without suffix (e.g. input_dir/a/c.vasp -> output_root/a/c/opt.vasp). "
-            "Must be outside input_dir."
-        ),
+        description="Output root for mirrored batch results. Must be outside input_dir.",
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
     model: str = Field(
         "mh-1",
-        description=(
-            "MACE model identifier or workspace-local trained-model path. "
-            "Recommended pretrained options: "
-            "'mh-1' (slower, higher accuracy) or "
-            "'medium-mpa-0' (faster, lower accuracy). "
-            "Local paths may point to one model file or to a directory containing a unique preferred model artifact."
-        ),
+        description="MACE model identifier or workspace-local trained-model path.",
         examples=["mh-1", "medium-mpa-0"],
     )
     head: Optional[str] = Field(
@@ -116,7 +106,7 @@ class MaceRelaxBatchInput(BaseModel):
     )
     default_dtype: Literal["float32", "float64"] = Field(
         "float64",
-        description="Floating-point precision passed to the MACE calculator. Keep the default float64 for geometry optimization unless a cheaper float32 screening pass is explicitly intended.",
+        description="MACE calculator precision.",
     )
     relax_lattice: bool = Field(
         False,
@@ -154,7 +144,7 @@ class MaceSPBatchInput(BaseModel):
     )
     default_dtype: Literal["float32", "float64"] = Field(
         "float64",
-        description="Floating-point precision passed to the MACE calculator. float64 is the default conservative choice; use float32 only when a cheaper screening pass is acceptable.",
+        description="MACE calculator precision.",
     )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
 

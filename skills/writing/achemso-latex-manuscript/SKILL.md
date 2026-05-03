@@ -60,7 +60,7 @@ Read these assets first through the read-only skills mount:
 - In ACS-style TeX, place each figure close to the first substantive paragraph that discusses it; do not accumulate figure environments in a later block after the surrounding argument is already complete.
 - Prefer conservative float placement such as `[htbp]` for ordinary figures. If the template already includes `placeins`, use `\FloatBarrier` sparingly to stop obvious float drift across subsection boundaries.
 - After compilation, inspect whether figures appear near their first callout in the PDF and repair placement if they do not; compile success alone is not enough.
-- When the manuscript needs atomistic structure renders, prefer `render_structure_views(backend="ovito", ...)` for the journal-facing figure, and do not annotate the exported panel with renderer/backend labels.
+- When the manuscript needs atomistic structure renders, create a tuned reproducible render script, starting from `skills/materials/structure-visual-inspection/code/render_structure_panel.py` when useful, and do not annotate the exported panel with renderer/backend labels.
 - When the manuscript needs a conceptual, mechanistic, or workflow figure, use `generate_nanobanana_figure` to create a concise publication-facing schematic and save it under the writing workspace.
 - When numerical evidence is better communicated as a table or plot than prose alone, add that artifact instead of forcing the explanation into dense text.
 - If you create a new `.tex` helper file, record the path in `latex_artifact_refs`.

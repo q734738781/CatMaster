@@ -23,7 +23,7 @@ Use this skill to build, run, and rank a controlled adsorption screen while pres
 - `vasp_execute_batch`
 - `analyze_vasp_results`
 - `vaspkit_adsorbate_thermo_correction`
-- `render_structure_views`
+- `execute`
 
 ## Workflow
 
@@ -34,7 +34,7 @@ Use this skill to build, run, and rank a controlled adsorption screen while pres
 ### 2. Build a controlled candidate set
 - Use one adsorbate geometry source across the whole screen.
 - If only one site is under study, use `place_adsorbate` directly and keep the chosen site label explicit.
-- Use `render_structure_views` when collisions or orientation ambiguity need a visual check before DFT.
+- Use the `structure-visual-inspection` skill script when collisions or orientation ambiguity need a visual check before DFT.
 
 ### 3. Run one comparable relaxation stage
 - Prepare adsorption candidates with one consistent slab regime and method policy.

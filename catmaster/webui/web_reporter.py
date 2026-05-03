@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
@@ -8,7 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
-from catmaster.runtime.usage_stats import summarize_usage_from_metadata
+from catmaster.runtime.usage_stats import summarize_usage_from_metadata, write_usage_summary_from_metadata
 from catmaster.ui import Reporter
 from catmaster.ui.events import UIEvent, make_event
 
@@ -167,6 +168,7 @@ class WebReporter(Reporter):
         resolved = Path(run_dir).expanduser().resolve()
         with self._cond:
             self._run_dir = resolved
+            self._seq = max(int(self._seq or 0), self._last_persisted_event_seq(resolved))
             self._live_state = new_live_state(run_id=resolved.name)
             self._usage_totals = {}
             self._usage_metadata_by_model = {}
@@ -200,6 +202,7 @@ class WebReporter(Reporter):
             payload["seq"] = self._seq
             self._apply_live_updates(payload)
             self._events.append(payload)
+            self._append_persisted_ui_event(payload)
             self._cond.notify_all()
 
     def get_events_since(self, last_seq: int) -> Tuple[List[Dict[str, Any]], int]:
@@ -417,6 +420,7 @@ class WebReporter(Reporter):
                     usage_metadata_by_role=self._usage_metadata_by_role,
                     call_counts_by_role=self._call_counts_by_role,
                 )
+                self._persist_usage_summary()
         elif name == "GRAPH_NODE_UPDATE":
             tool_calls = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
             self._graph_state.update(
@@ -446,6 +450,58 @@ class WebReporter(Reporter):
                     "last_updated_ts": now_ts,
                 }
             )
+
+    def _append_persisted_ui_event(self, event: Dict[str, Any]) -> None:
+        run_dir = self._run_dir
+        if run_dir is None:
+            return
+        try:
+            path = Path(run_dir) / "ui_events.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            return
+
+    @staticmethod
+    def _last_persisted_event_seq(run_dir: Path) -> int:
+        path = Path(run_dir) / "ui_events.jsonl"
+        if not path.exists():
+            return 0
+        last_seq = 0
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for index, line in enumerate(handle, start=1):
+                    text = line.strip()
+                    if not text:
+                        continue
+                    try:
+                        item = json.loads(text)
+                    except Exception:
+                        continue
+                    try:
+                        last_seq = max(last_seq, int(item.get("seq") or index))
+                    except Exception:
+                        last_seq = max(last_seq, index)
+        except Exception:
+            return 0
+        return last_seq
+
+    def _persist_usage_summary(self) -> None:
+        run_dir = self._run_dir
+        if run_dir is None or not self._usage_metadata_by_model:
+            return
+        try:
+            write_usage_summary_from_metadata(
+                run_dir,
+                usage_metadata=self._usage_metadata_by_model,
+                call_counts_by_model=self._call_counts_by_model,
+                usage_metadata_by_role=self._usage_metadata_by_role,
+                call_counts_by_role=self._call_counts_by_role,
+                append=False,
+            )
+        except Exception:
+            return
 
 
 __all__ = ["PromptBroker", "WebReporter"]

@@ -11,8 +11,9 @@ Use this skill to run cheap MACE screening or short MACE MD sampling on a struct
 ## Quick Start
 1. Prepare a clean structure batch under `input_dir`.
 2. Choose `mace_relax_batch` for geometry cleanup, `mace_sp_batch` for static ranking, or `mace_md_batch` for ASE-backed MD sampling.
-3. Keep `output_root` outside `input_dir`.
-4. Use the collected outputs and batch-state files to decide which candidates advance to VASP.
+3. Choose `model`, `default_dtype`, dispersion policy, and any shortlist criterion needed for the next VASP or ML step before dispatch.
+4. Keep `output_root` outside `input_dir`.
+5. Use the collected outputs and batch-state files to decide which candidates advance to VASP.
 
 ## Allowed tools
 - `mace_relax_batch`
@@ -22,6 +23,7 @@ Use this skill to run cheap MACE screening or short MACE MD sampling on a struct
 ## Workflow
 
 ### 1. Choose relax vs single-point deliberately
+- Use lightweight local filesystem/Python checks for paths and batch shape before launching managed MACE. Submit one intentional managed batch rather than probing remote execution for setup questions local inspection can answer.
 - `mace_relax_batch` needs a `model`; it can also toggle `head`, `dispersion`, and `relax_lattice`.
 - `mace_sp_batch` is for energy evaluation only and does not relax geometry.
 - `mace_md_batch` is for trajectory generation and thermal sampling, not a replacement for a converged relaxation.

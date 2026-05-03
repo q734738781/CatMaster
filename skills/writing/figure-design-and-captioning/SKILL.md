@@ -17,17 +17,16 @@ Use when a section needs structure renders, conceptual schematics, comparison pl
 
 ## Allowed tools
 - `read_file`
-- `render_structure_views`
+- `execute`
 
 Optional helper tools when the active runtime exposes them:
 - `generate_nanobanana_figure`
-- `execute`
 
 ## Workflow
 1. Start from the claim the figure must support; if the claim is unclear, the figure is not ready.
 2. Identify the minimum artifact and data inputs needed to make that claim visible.
 3. If the figure is a conceptual, mechanistic, or workflow schematic, use `generate_nanobanana_figure` with a precise prompt and save the generated image under the writing workspace.
-4. If the figure comes directly from coordinates or computed data, use reproducible scripts or rendering tools, and keep the script path. For manuscript-facing atomistic structure panels, call `render_structure_views(backend="ovito", ...)` unless the task explicitly needs the denser ASE inspection style.
+4. If the figure comes directly from coordinates or computed data, use reproducible scripts and keep the script path. For atomistic structure panels, start from `skills/materials/structure-visual-inspection/code/render_structure_panel.py` and tune camera vectors, fit, tile size, atom scale, and layout instead of relying on a fixed four-view tool.
 5. Inspect the figure with `read_file` for readability, labeling, and whether the intended comparison is obvious.
 6. Write a caption that states what is shown, under what conditions, and why it matters.
 
@@ -38,7 +37,7 @@ Optional helper tools when the active runtime exposes them:
 - Show uncertainty, spread, or sensitivity when the conclusion depends on robustness.
 - If a table communicates the evidence more clearly than a plot, use a table.
 - Prefer `generate_nanobanana_figure` for conceptual, mechanistic, and workflow visuals; use matplotlib or similar plotting only for quantitative or data-native figures.
-- For publication-facing atomistic renders, prefer the OVITO backend; for internal geometry debugging, prefer the ASE backend instead of reusing the manuscript render.
+- For publication-facing atomistic renders, use a tuned reproducible renderer script. If OVITO is needed, write a task-specific workspace script with explicit renderer, camera, lighting, and export settings; for internal geometry debugging, keep a separate inspection render instead of reusing the manuscript render.
 - Do not use matplotlib or plotting libraries to typeset paragraphs, long bullet lists, or caption-like explanation inside the figure.
 - Keep figure text sparse: short axis labels, short legends, short panel labels, and brief callouts only.
 - Any explanation longer than a short phrase belongs in the caption or body text, not inside the graphic.

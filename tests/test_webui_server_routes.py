@@ -58,6 +58,23 @@ def test_pages_load_react_static_bundle(tmp_path: Path) -> None:
     assert '/static/app.js' in files_page.text
 
 
+def test_bootstrap_recovers_from_stale_missing_project_space(tmp_path: Path) -> None:
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/bootstrap",
+        params={"ctx": "ctx_stale_001", "project_space": "missing_space", "lane": "experiment"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ctx"] == "ctx_stale_001"
+    assert payload["workspace_root"] == str(tmp_path.resolve())
+    assert payload["workspace_name"] == ""
+    assert "Project space does not exist: missing_space" in payload["status_message"]
+
+
 def test_files_routes_list_preview_and_download(tmp_path: Path) -> None:
     ws = tmp_path / "demo"
     (ws / "files").mkdir(parents=True)
@@ -616,6 +633,70 @@ def test_web_reporter_runtime_usage_totals_include_cost_summary(monkeypatch) -> 
     assert snapshot["usage_totals"]["input_cached_tokens"] == 80
     assert snapshot["usage_totals"]["output_tokens"] == 30
     assert snapshot["usage_totals"]["reasoning_tokens"] == 7
+
+
+def test_web_reporter_persists_ui_events_and_usage_summary(tmp_path: Path) -> None:
+    reporter = WebReporter()
+    reporter.set_run_dir(tmp_path)
+
+    reporter.emit(
+        make_event(
+            "LLM_CALL_END",
+            category="llm",
+            payload={
+                "model": "openai/gpt-5.4",
+                "agent_name": "materials_worker",
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 30,
+                    "total_tokens": 150,
+                    "cost": 0.42,
+                },
+                "text_preview": "latest answer",
+            },
+            run_id="run_demo",
+        )
+    )
+
+    event_rows = [
+        json.loads(line)
+        for line in (tmp_path / "ui_events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert event_rows[-1]["seq"] == 1
+    assert event_rows[-1]["name"] == "LLM_CALL_END"
+
+    usage = json.loads((tmp_path / "usage_summary.json").read_text(encoding="utf-8"))
+    assert usage["cost_usd"] == 0.42
+    assert usage["cost_source"] == "exact"
+    assert usage["calls"] == 1
+
+    resumed = WebReporter()
+    resumed.set_run_dir(tmp_path)
+    resumed.emit(make_event("RUN_END", category="run", payload={"status": "done"}, run_id="run_demo"))
+    event_rows = [
+        json.loads(line)
+        for line in (tmp_path / "ui_events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert event_rows[-1]["seq"] == 2
+
+
+def test_websession_read_ui_events_paginates_by_sequence(tmp_path: Path) -> None:
+    for seq in range(1, 6):
+        with (tmp_path / "ui_events.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"seq": seq, "name": "RUN_EVENT", "payload": {"status": str(seq)}}) + "\n")
+
+    session = WebSession()
+
+    latest = session.read_ui_events(tmp_path, limit=2)
+    assert [event["seq"] for event in latest["events"]] == [4, 5]
+    assert latest["has_more"] is True
+    assert latest["min_seq"] == 4
+
+    older = session.read_ui_events(tmp_path, limit=2, before_seq=4)
+    assert [event["seq"] for event in older["events"]] == [2, 3]
+    assert older["has_more"] is True
 
 
 def test_runtime_snapshot_omits_removed_prompt_payload() -> None:

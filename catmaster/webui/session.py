@@ -1297,6 +1297,62 @@ class WebSession:
         except Exception:
             return {}
 
+    def read_ui_events(
+        self,
+        run_dir: Optional[Path],
+        *,
+        limit: int = 200,
+        before_seq: int = 0,
+        after_seq: int = 0,
+    ) -> Dict[str, Any]:
+        if not run_dir:
+            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+        path = Path(run_dir) / "ui_events.jsonl"
+        if not path.exists():
+            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+        capped_limit = min(1000, max(1, int(limit or 200)))
+        rows: List[Dict[str, Any]] = []
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for index, line in enumerate(handle, start=1):
+                    text = line.strip()
+                    if not text:
+                        continue
+                    try:
+                        item = json.loads(text)
+                    except Exception:
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        seq = int(item.get("seq") or index)
+                    except Exception:
+                        seq = index
+                    item["seq"] = seq
+                    rows.append(item)
+        except Exception:
+            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+
+        rows.sort(key=lambda item: int(item.get("seq") or 0))
+        if after_seq > 0:
+            matching = [item for item in rows if int(item.get("seq") or 0) > int(after_seq)]
+            page = matching[:capped_limit]
+            has_more = len(matching) > len(page)
+        elif before_seq > 0:
+            matching = [item for item in rows if int(item.get("seq") or 0) < int(before_seq)]
+            page = matching[-capped_limit:]
+            has_more = len(matching) > len(page)
+        else:
+            matching = rows
+            page = matching[-capped_limit:]
+            has_more = len(matching) > len(page)
+        return {
+            "events": page,
+            "has_more": has_more,
+            "min_seq": int(page[0].get("seq") or 0) if page else 0,
+            "max_seq": int(page[-1].get("seq") or 0) if page else 0,
+        }
+
     def update_live_state(
         self,
         run_dir: Optional[Path],

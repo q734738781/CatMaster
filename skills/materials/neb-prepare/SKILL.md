@@ -12,10 +12,11 @@ Use this skill when the job is to prepare a pathway calculation rather than exec
 1. Confirm the endpoint pair is one local elementary step and preserve frozen-atom identity.
 2. If same-species atoms may be permuted, run `remap_neb_endpoint_atoms` before interpolation.
 3. Estimate `n_images` with `estimate_neb_image_count` before interpolating.
-4. Build the image tree with `make_neb_geometry`.
-5. Prepare the VASP NEB root with `vasp_neb_prepare`.
-6. If a dimer refinement branch is needed, prepare the raw mode with `make_dimer_mode_from_neb` or `make_dimer_mode_from_mace`, then build the dimer input with `vasp_dimer_prepare`.
-7. If you need the detailed run protocol for `plain-NEB -> CI-NEB` or `NEB/frequency/dimer`, switch to `neb-calculation`.
+4. Keep the image count tied to a stated displacement rationale, not a guessed constant.
+5. Build the image tree with `make_neb_geometry`.
+6. Prepare the VASP NEB root with `vasp_neb_prepare`.
+7. If a dimer refinement branch is needed, prepare the raw mode with `make_dimer_mode_from_neb` or `make_dimer_mode_from_mace`, then build the dimer input with `vasp_dimer_prepare`.
+8. If you need the detailed run protocol for `plain-NEB -> CI-NEB` or `NEB/frequency/dimer`, switch to `neb-calculation`.
 
 ## Allowed tools
 - `estimate_neb_image_count`
@@ -29,6 +30,7 @@ Use this skill when the job is to prepare a pathway calculation rather than exec
 ## Workflow
 
 ### 1. Validate the endpoint contract before interpolation
+- Do not skip endpoint validation because a downstream NEB execution tool exists. A managed pathway run is only useful if this preparation contract is already satisfied.
 - The initial and final structures must keep the same atom ordering. Do not interpolate reordered atoms.
 - If same-species atoms may have been permuted, use `remap_neb_endpoint_atoms` to reorder the final endpoint onto the initial order before estimating distances or building images.
 - The remapping step should normally exclude frozen atoms and preserve selective dynamics. For slab pathways, keep bulk-like frozen layers fixed in identity and only remap the mobile subset.

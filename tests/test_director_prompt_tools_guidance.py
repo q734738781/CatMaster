@@ -26,6 +26,7 @@ def test_director_prompt_includes_available_tools_and_constraints() -> None:
     assert "Plan primarily around skills, scientific stages, evidence contracts, and task packets" in system_content
     assert "encode method-critical settings explicitly in `task_detail`" in system_content
     assert "Skills may be available for domain SOP and parameter conventions." in system_content
+    assert "Tool schemas are compact invocation interfaces, not complete SOP." in system_content
     assert "Use literature grounding only when the user explicitly asks for papers/prior work/supporting evidence" in system_content
     assert "Default priority: PerformNextTask > MinorReviseProposal > MajorReviseProposal." in system_content
     assert "StopAndSynthesize" in system_content

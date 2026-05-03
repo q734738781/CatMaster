@@ -967,13 +967,15 @@ def _build_snapshot(
 
     if runtime_matches_selection:
         live_state = dict(runtime.get("live_state") or {})
-        events = list(runtime.get("recent_events") or [])
+        event_page = session.read_ui_events(run_dir, limit=200)
+        events = list(event_page.get("events") or []) or list(runtime.get("recent_events") or [])
         usage_summary = _merge_usage_summary(runtime.get("usage_totals"), session.read_usage_summary(run_dir))
         llm = dict(runtime.get("llm") or {})
         graph = dict(runtime.get("graph") or {})
     else:
         live_state = session.snapshot_live_state(run_dir, workspace=workspace)
-        events = []
+        event_page = session.read_ui_events(run_dir, limit=200)
+        events = list(event_page.get("events") or [])
         usage_summary = session.read_usage_summary(run_dir)
         llm = live_state.get("llm") if isinstance(live_state.get("llm"), dict) else {}
         graph = {"node": str(live_state.get("current_node") or ""), "message_count": 0, "tool_calls": [], "text_preview": ""}
@@ -998,7 +1000,8 @@ def _build_snapshot(
         "llm": llm,
         "graph": graph,
         "prompt": None,
-        "events": events[-120:],
+        "events": events,
+        "events_page": event_page if isinstance(event_page, dict) else {},
         "usage_summary": usage_summary,
         "proposal": session.read_proposal(run_dir, workspace=workspace),
         "todo_items": session.read_todo_items(run_dir),
@@ -1048,6 +1051,24 @@ def _build_details(*, registry: SessionRegistry, ctx: str, run_name: str, projec
         "trace_tool": session.read_trace(run_dir, "tool_trace.jsonl", workspace=workspace),
         "trace_patch": session.read_trace(run_dir, "patch_trace.jsonl", workspace=workspace),
     }
+
+
+def _build_events(
+    *,
+    registry: SessionRegistry,
+    ctx: str,
+    run_name: str,
+    project_space: str = "",
+    limit: int = 200,
+    before_seq: int = 0,
+    after_seq: int = 0,
+) -> dict[str, Any]:
+    session = registry.get_session(ctx)
+    workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+    run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
+    page = session.read_ui_events(run_dir, limit=limit, before_seq=before_seq, after_seq=after_seq)
+    page["selected_run"] = selected_run
+    return page
 
 
 def _build_memory(*, registry: SessionRegistry, ctx: str, run_name: str = "", source: str = "all", project_space: str = "") -> dict[str, Any]:
@@ -1187,6 +1208,27 @@ def create_app(*, project_space_root: str) -> FastAPI:
     @app.get("/api/session/{ctx}/details")
     def _session_details(ctx: str, run: str = "", project_space: str = ""):
         return JSONResponse(_build_details(registry=registry, ctx=ctx, run_name=run, project_space=project_space))
+
+    @app.get("/api/session/{ctx}/events")
+    def _session_events(
+        ctx: str,
+        run: str = "",
+        project_space: str = "",
+        limit: int = 200,
+        before_seq: int = 0,
+        after_seq: int = 0,
+    ):
+        return JSONResponse(
+            _build_events(
+                registry=registry,
+                ctx=ctx,
+                run_name=run,
+                project_space=project_space,
+                limit=limit,
+                before_seq=before_seq,
+                after_seq=after_seq,
+            )
+        )
 
     @app.get("/api/session/{ctx}/memory")
     def _session_memory(ctx: str, run: str = "", source: str = "all", project_space: str = ""):
