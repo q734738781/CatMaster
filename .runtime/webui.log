@@ -904,3 +904,49 @@ INFO:     127.0.0.1:49440 - "GET /static/app.js HTTP/1.1" 304 Not Modified
 INFO:     127.0.0.1:49434 - "GET /static/app.css HTTP/1.1" 304 Not Modified
 INFO:     127.0.0.1:49456 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
 INFO:     127.0.0.1:49468 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=1119&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     Shutting down
+ERROR:    Cancel 0 running task(s), timeout graceful shutdown exceeded
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3547320]
+INFO:     Started server process [4089002]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:49176 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=1119&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49184 - "GET /?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49198 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49208 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49212 - "GET /api/bootstrap?ctx=ctx_1876a7f22556&project_space=01_RE2O3_Ru_NH3&lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49214 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34068 - "POST /api/session/ctx_1876a7f22556/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34080 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=01_RE2O3_Ru_NH3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34088 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34092 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34104 - "POST /api/session/ctx_1876a7f22556/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34116 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34118 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34122 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39268 - "POST /api/session/ctx_1876a7f22556/workspace/open HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39280 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39290 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37348 - "POST /api/session/ctx_1876a7f22556/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37350 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37356 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0&project_space=o2_4 HTTP/1.1" 200 OK
+2026-05-03 12:05:57,493 - INFO : info:check_all_finished: False
+2026-05-03 12:05:57,493 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/64aeac0b521a902f47a8d3759b048092ff740f34
+2026-05-03 12:05:58,178 - INFO : job: 29cb8c8596054b73b997158c3a19451e54570f5e submit; job_id is 1322
+2026-05-03 12:06:29,247 - INFO : job: 29cb8c8596054b73b997158c3a19451e54570f5e 1322 finished
+[langchain.step] phase=tool.error run_id=run_20260503_040435_f2d0dc callback_run_id=019dec03-ac68-7943-a4b2-f907e952114a tool=mace_relax_batch error=DPDispatcher submission failed: Remote task failed with non-zero exit code (task_index=0, task_work_path=., returncode=1, cwd=/mnt/ssd/chenhh/catmaster_work/64aeac0b521a902f47a8d3759b048092ff740f34, status_path=/home/chenhh/python_projec...
+2026-05-03 12:07:35,823 - INFO : info:check_all_finished: False
+2026-05-03 12:07:35,823 - INFO : remote path: /mnt/ssd/chenhh/catmaster_work/ee7a8ac427b39d218a6741508cda33dd8df08692
+2026-05-03 12:07:36,467 - INFO : job: 8bfd06ed22d7c6f0784e81acb989fa789b1a21c2 submit; job_id is 1323
+2026-05-03 12:08:07,588 - INFO : job: 8bfd06ed22d7c6f0784e81acb989fa789b1a21c2 1323 finished
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)
+Socket exception: Connection reset by peer (104)
+Socket exception: Connection reset by peer (104)

@@ -1169,7 +1169,7 @@ class WebSession:
         sections: List[str] = []
         sections.append(f"# Persistent Memory\n")
         sections.append(f"Workspace: `{workspace.name}`")
-        sections.append(f"Source: `{str(source or 'all').strip().lower() or 'all'}`")
+        sections.append("Source: `deepagents`")
         sections.append("Namespace(s):")
         for prefix in selected_prefixes:
             sections.append(f"- `{prefix}`")
@@ -1695,11 +1695,8 @@ class WebSession:
     @staticmethod
     def _memory_source_kinds(source: str) -> tuple[str, ...]:
         token = str(source or "all").strip().lower()
-        if token == "langmem":
-            return ("long_term_memory",)
-        if token == "instruction":
-            return ("filesystem",)
-        return ("filesystem", "long_term_memory")
+        _ = token
+        return ("filesystem",)
 
     def _memory_prefixes_for_workspace(
         self,
@@ -1710,7 +1707,7 @@ class WebSession:
     ) -> List[str]:
         candidates: List[str] = []
         seen: set[str] = set()
-        selected_kinds = tuple(kinds or ("filesystem", "long_term_memory"))
+        selected_kinds = tuple(kinds or ("filesystem",))
 
         def _append_project_id(project_id: str) -> None:
             pid = str(project_id or "").strip()

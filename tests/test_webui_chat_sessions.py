@@ -515,35 +515,9 @@ def test_websession_reads_persistent_memory_index(tmp_path: Path) -> None:
 
     text = session.read_memory_index()
     assert "Persistent Memory" in text
-    assert "Source: `all`" in text
+    assert "Source: `deepagents`" in text
     assert "Prefer MACE screening before VASP" in text
     assert "catmaster." in text
-
-
-def test_websession_reads_langmem_long_term_memory_index(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    session = WebSession()
-    session.set_workspace_root(str(tmp_path))
-    ok, _ = session.open_workspace(str(ws), create=True)
-    assert ok
-
-    db_path = system_root(workspace=ws) / "deepagent_memory.sqlite"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE store (prefix TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL)")
-    project_id = session._project_id_for_workspace(ws)
-    prefix = ".".join(("catmaster", project_id, "long_term_memory"))
-    payload = {"content": "Pt(111) 1/4 ML benchmark was validated under a consistent slab setup."}
-    conn.execute(
-        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
-        (prefix, "memory-001", json.dumps(payload).encode("utf-8")),
-    )
-    conn.commit()
-    conn.close()
-
-    text = session.read_memory_index(source="langmem")
-    assert "long_term_memory" in text
-    assert "Source: `langmem`" in text
-    assert "Pt(111) 1/4 ML benchmark was validated" in text
 
 
 def test_websession_reads_instruction_memory_only_when_requested(tmp_path: Path) -> None:
@@ -565,21 +539,12 @@ def test_websession_reads_instruction_memory_only_when_requested(tmp_path: Path)
             json.dumps({"content": "Use MACE before VASP when screening."}).encode("utf-8"),
         ),
     )
-    conn.execute(
-        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
-        (
-            ".".join(("catmaster", project_id, "long_term_memory")),
-            "memory-001",
-            json.dumps({"content": "Durable benchmark fact."}).encode("utf-8"),
-        ),
-    )
     conn.commit()
     conn.close()
 
     text = session.read_memory_index(source="instruction")
-    assert "Source: `instruction`" in text
+    assert "Source: `deepagents`" in text
     assert "Use MACE before VASP when screening." in text
-    assert "Durable benchmark fact." not in text
 
 
 def test_websession_reads_persistent_memory_index_when_workspace_path_changes(tmp_path: Path) -> None:

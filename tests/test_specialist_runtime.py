@@ -22,8 +22,6 @@ from catmaster.specialists.runtime import (
     _METADATA_AGENT_TOOL_ALLOWLIST,
     _ML_WORKER_TOOL_ALLOWLIST,
     _ORCA_XTB_WORKER_TOOL_ALLOWLIST,
-    _PROJECT_MEMORY_READ_TOOL_NAMES,
-    _PROJECT_MEMORY_TOOL_NAMES,
     _LITREVIEW_AGENT_TOOL_ALLOWLIST,
     _LITREVIEW_COMPACT_KEEP_TOKENS,
     _LITREVIEW_COMPACT_TRIGGER_TOKENS,
@@ -74,19 +72,6 @@ class _FakeMemoryMiddleware:
         self.kwargs = kwargs
 
 
-class _FakeSearchMemoryInput(BaseModel):
-    query: str
-    limit: int = 10
-    offset: int = 0
-    filter: dict | None = None
-
-
-class _FakeManageMemoryInput(BaseModel):
-    content: str | None = None
-    action: str = "create"
-    id: str | None = None
-
-
 class _FakeDeepAgent:
     def __init__(self, *, kwargs: dict) -> None:
         self.kwargs = kwargs
@@ -104,42 +89,6 @@ class _FakeDeepAgent:
         else:
             content = "## Summary\nexperiment summary\n\n## Facts\n- bounded execution completed\n\n## Files\n- experiments/out.json"
         return {"messages": [AIMessage(content=content)]}
-
-
-def _fake_create_search_memory_tool(*, namespace, instructions="", response_format="content", name="search_memory", **kwargs):
-    _ = (namespace, instructions, response_format, kwargs)
-
-    def _search_memory(query: str, limit: int = 10, offset: int = 0, filter: dict | None = None):
-        _ = (limit, offset, filter)
-        return json.dumps([{"key": "mem-1", "value": {"content": f"memory about {query}"}}])
-
-    return StructuredTool.from_function(
-        func=_search_memory,
-        name=name,
-        description="fake search memory tool",
-        args_schema=_FakeSearchMemoryInput,
-        infer_schema=False,
-        response_format="content",
-    )
-
-
-def _fake_create_manage_memory_tool(*, namespace, instructions="", actions_permitted=("create", "update", "delete"), name="manage_memory", **kwargs):
-    _ = (namespace, instructions, actions_permitted, kwargs)
-
-    def _manage_memory(content: str | None = None, action: str = "create", *, id: str | None = None):
-        _ = content
-        target = id or "generated-id"
-        return f"{action}d memory {target}"
-
-    return StructuredTool.from_function(
-        func=_manage_memory,
-        name=name,
-        description="fake manage memory tool",
-        args_schema=_FakeManageMemoryInput,
-        infer_schema=False,
-        response_format="content",
-    )
-
 
 class _FakeUsageCallback:
     def __init__(self) -> None:
@@ -375,7 +324,7 @@ def test_execution_capability_contract_distinguishes_local_and_managed_runtime(t
 def test_writing_worker_and_proposal_prompts_include_workspace_layout_guidance() -> None:
     writing_prompt = runtime_mod.SpecialistRunner._writing_worker_prompt()
     proposal_prompt = runtime_mod.SpecialistRunner._proposal_system_prompt("experiment")
-    assert "Project long-term memory tools" in writing_prompt
+    assert "Persistent project memory" in writing_prompt
     assert "Only persist key constraints, decisive results" in writing_prompt
     assert "structures/" in writing_prompt
     assert "calculations/" in writing_prompt
@@ -864,16 +813,6 @@ def test_specialist_lanes_start_with_staged_skills(
         "_load_memory_middleware",
         staticmethod(lambda: _FakeMemoryMiddleware),
     )
-    monkeypatch.setattr(
-        runtime_mod.SpecialistRunner,
-        "_load_create_search_memory_tool",
-        staticmethod(lambda: _fake_create_search_memory_tool),
-    )
-    monkeypatch.setattr(
-        runtime_mod.SpecialistRunner,
-        "_load_create_manage_memory_tool",
-        staticmethod(lambda: _fake_create_manage_memory_tool),
-    )
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
 
@@ -901,13 +840,10 @@ def test_specialist_lanes_start_with_staged_skills(
     assert agent_kwargs["name"] == expected_agent_name
     assert "skills" not in agent_kwargs
     assert agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
-    if entrypoint == "literature_review":
-        assert _PROJECT_MEMORY_READ_TOOL_NAMES <= {tool.name for tool in agent_kwargs["tools"]}
-        assert "manage_memory" not in {tool.name for tool in agent_kwargs["tools"]}
-    else:
-        assert _PROJECT_MEMORY_TOOL_NAMES <= {tool.name for tool in agent_kwargs["tools"]}
-    assert "Project long-term memory tools" in agent_kwargs["system_prompt"]
-    assert "Never store transient task requests" in agent_kwargs["system_prompt"]
+    assert "search_memory" not in {tool.name for tool in agent_kwargs["tools"]}
+    assert "manage_memory" not in {tool.name for tool in agent_kwargs["tools"]}
+    assert "Persistent project memory" in agent_kwargs["system_prompt"]
+    assert "Do not store transient requests" in agent_kwargs["system_prompt"]
     assert all(getattr(tool, "name", None) != "bash" for tool in agent_kwargs["tools"])
     assert all(getattr(tool, "name", None) != "run_literature_research" for tool in agent_kwargs["tools"])
     top_subagents = list(agent_kwargs.get("subagents") or [])
@@ -967,7 +903,7 @@ def test_specialist_lanes_start_with_staged_skills(
         experiment_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "experiment_specialist"]
         assert experiment_agents, "expected nested experiment specialist to be created"
         experiment_agent_kwargs = experiment_agents[0]
-        assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
         assert "skills" not in experiment_agent_kwargs
         assert experiment_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
@@ -981,7 +917,7 @@ def test_specialist_lanes_start_with_staged_skills(
         writing_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "writing_specialist"]
         assert writing_agents, "expected nested writing specialist to be created"
         writing_agent_kwargs = writing_agents[0]
-        assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "skills" not in writing_agent_kwargs
         assert writing_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
@@ -993,7 +929,7 @@ def test_specialist_lanes_start_with_staged_skills(
         peer_review_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "peer_review_specialist"]
         assert peer_review_agents, "expected nested peer-review specialist to be created"
         peer_review_agent_kwargs = peer_review_agents[0]
-        assert {tool.name for tool in peer_review_agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in peer_review_agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "skills" not in peer_review_agent_kwargs
         assert "Act like a journal editor coordinating external peer review" in peer_review_agent_kwargs["system_prompt"]
         assert "explicit `ReviewTarget` or manuscript PDF path" in peer_review_agent_kwargs["system_prompt"]
@@ -1007,7 +943,7 @@ def test_specialist_lanes_start_with_staged_skills(
         litreview_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "litreview_agent"]
         assert litreview_agents, "expected nested litreview agent to be created"
         litreview_agent_kwargs = litreview_agents[0]
-        assert {tool.name for tool in litreview_agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in litreview_agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert litreview_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
@@ -1016,12 +952,12 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in nested_subagents["metadata_agent"]
         litreview_literature_kwargs = _find_created_agent(
             "literature_agent",
-            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
         )
         assert litreview_literature_kwargs["model"] == {"model": "literature_synthesizer-model"}
         metadata_agent_kwargs = _find_created_agent(
             "metadata_agent",
-            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
         )
         metadata_middleware = metadata_agent_kwargs["middleware"]
         compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
@@ -1033,7 +969,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in metadata_middleware)
         assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
     elif entrypoint == "literature_review":
-        assert {tool.name for tool in agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "top-level literature-review orchestrator" in agent_kwargs["system_prompt"]
         assert "Delegate broad public-web orientation" in agent_kwargs["system_prompt"]
         assert "Delegate exact DOI/year/venue/authors/citation verification" in agent_kwargs["system_prompt"]
@@ -1041,11 +977,11 @@ def test_specialist_lanes_start_with_staged_skills(
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in agent_kwargs["middleware"])
         literature_agent_kwargs = _find_created_agent(
             "literature_agent",
-            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
         )
         metadata_agent_kwargs = _find_created_agent(
             "metadata_agent",
-            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES,
+            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
         )
         assert literature_agent_kwargs["model"] == {"model": "literature_synthesizer-model"}
         assert metadata_agent_kwargs["model"] == {"model": "literature_deep_research-model"}
@@ -1058,15 +994,16 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["materials_worker"]
         assert "runnable" in subagents_by_name["ml_worker"]
         assert "runnable" in subagents_by_name["orca_xtb_worker"]
-        assert {tool.name for tool in materials_worker_kwargs["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in materials_worker_kwargs["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert materials_worker_kwargs["skills"] == ["/.deepagents/skills/materials"]
-        assert {tool.name for tool in ml_worker_kwargs["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in ml_worker_kwargs["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert ml_worker_kwargs["skills"] == ["/.deepagents/skills/machine_learning"]
-        assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert orca_worker_kwargs["skills"] == ["/.deepagents/skills/quantum_chemistry"]
-        assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
-        assert "You do not have permission to modify long-term project memory" in materials_worker_kwargs["system_prompt"]
+        assert "parent-maintained project memory" in materials_worker_kwargs["system_prompt"]
+        assert "Instruction context files" not in materials_worker_kwargs["system_prompt"]
         assert "dataset/model lifecycle tasks" in ml_worker_kwargs["system_prompt"]
         assert "default role is coordination, dispatch, and decision-making across the experiment lane" in agent_kwargs["system_prompt"]
         assert "Keep direct work in the specialist thread minimal and coordination-oriented" in agent_kwargs["system_prompt"]
@@ -1155,15 +1092,15 @@ def test_specialist_lanes_start_with_staged_skills(
             for item in ml_worker_kwargs["middleware"]
         )
     elif entrypoint == "writing":
-        assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         writing_worker_kwargs = _find_created_agent("writing_worker_agent")
         writing_polisher_kwargs = _find_created_agent("writing_polisher_agent")
         assert "runnable" in subagents_by_name["writing_worker_agent"]
         assert "runnable" in subagents_by_name["writing_polisher_agent"]
-        assert {tool.name for tool in writing_worker_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in writing_worker_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert writing_worker_kwargs["skills"] == ["/.deepagents/skills/writing"]
-        assert {tool.name for tool in writing_polisher_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in writing_polisher_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert writing_polisher_kwargs["skills"] == ["/.deepagents/skills/writing"]
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
@@ -1208,7 +1145,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in writing_worker_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in writing_worker_kwargs["system_prompt"]
     else:
-        assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_TOOL_NAMES)
+        assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "Act like a journal editor coordinating external peer review" in agent_kwargs["system_prompt"]
         assert "Reviewer Comments" in agent_kwargs["system_prompt"]
         assert "peer_review_request" in agent_kwargs["system_prompt"]
@@ -1220,7 +1157,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "peer_review_worker_agent" in subagents_by_name
         peer_review_worker_kwargs = _find_created_agent("peer_review_worker_agent")
         assert "runnable" in subagents_by_name["peer_review_worker_agent"]
-        assert {tool.name for tool in peer_review_worker_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES | _PROJECT_MEMORY_READ_TOOL_NAMES)
+        assert {tool.name for tool in peer_review_worker_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert peer_review_worker_kwargs["skills"] == ["/.deepagents/skills/writing"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in peer_review_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in peer_review_worker_kwargs["system_prompt"]
@@ -1285,7 +1222,7 @@ def test_specialist_lanes_start_with_staged_skills(
     assert usage_summary["by_role"][0]["name"] == "experiment_specialist"
     assert usage_summary["by_role"][0]["calls"] == 1
 
-def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_specialist_run_passes_project_id_to_runtime_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = tmp_path / "project_space"
     workspace.mkdir(parents=True)
     captured: dict[str, object] = {}
@@ -1317,8 +1254,6 @@ def test_specialist_run_passes_project_id_to_langmem_namespace(tmp_path: Path, m
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
 
@@ -1381,8 +1316,6 @@ def test_proposal_review_flag_is_ignored_and_run_executes_immediately(
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
 
@@ -1448,8 +1381,6 @@ def test_interrupted_run_can_resume_into_normal_execution(
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
 
@@ -1531,8 +1462,6 @@ def test_conversation_messages_are_replayed_only_for_new_run(
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_search_memory_tool", staticmethod(lambda: _fake_create_search_memory_tool))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_manage_memory_tool", staticmethod(lambda: _fake_create_manage_memory_tool))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
 

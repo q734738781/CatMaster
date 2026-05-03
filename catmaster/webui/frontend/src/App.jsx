@@ -2615,15 +2615,6 @@ function MemoryDrawer({ open, workspaceName, loading, error, text, source, onSou
             <h3>{workspaceName ? `${workspaceName} memory` : "Project memory"}</h3>
           </div>
           <div className="inline-actions">
-            <button type="button" className={`ghost-btn ${source === "all" ? "active" : ""}`} onClick={() => onSourceChange("all")} disabled={loading}>
-              All
-            </button>
-            <button type="button" className={`ghost-btn ${source === "langmem" ? "active" : ""}`} onClick={() => onSourceChange("langmem")} disabled={loading}>
-              LangMem
-            </button>
-            <button type="button" className={`ghost-btn ${source === "instruction" ? "active" : ""}`} onClick={() => onSourceChange("instruction")} disabled={loading}>
-              AGENTS
-            </button>
             <button type="button" className="ghost-btn" onClick={onRefresh} disabled={loading}>
               Refresh
             </button>

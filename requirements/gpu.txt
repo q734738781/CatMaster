@@ -16,8 +16,7 @@ langchain-openrouter>=0.2.1
 openrouter>=0.9.1
 tavily-python
 faiss-cpu
-deepagents
-langmem
+deepagents==0.5.6
 langgraph-checkpoint-sqlite>=3.0.3
 aiosqlite
 

@@ -1234,10 +1234,6 @@ def create_app(*, project_space_root: str) -> FastAPI:
     def _session_memory(ctx: str, run: str = "", source: str = "all", project_space: str = ""):
         return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source=source, project_space=project_space))
 
-    @app.get("/api/session/{ctx}/langmem")
-    def _session_langmem(ctx: str, run: str = "", project_space: str = ""):
-        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source="langmem", project_space=project_space))
-
     @app.get("/api/session/{ctx}/files/tree")
     def _session_files_tree(ctx: str, path: str = "", project_space: str = ""):
         session = registry.get_session(ctx)
