@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 SpecialistEntrypoint = Literal["research", "experiment", "writing", "peer_review", "literature_review"]
+ResearchGoalStatus = Literal["active", "paused", "complete"]
 
 
 class ProposalCheckpoint(BaseModel):
@@ -48,8 +49,23 @@ class ResearchKernel(BaseModel):
     conclusion_draft: str = Field("", description="Tentative current conclusion draft.")
 
 
+class ResearchGoalRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    objective: str = Field(..., description="Runtime-owned original research objective.")
+    status: ResearchGoalStatus = Field("active", description="Current lifecycle state for the objective.")
+    thread_id: str = Field(..., description="DeepAgent thread id that owns this objective.")
+    source_run_id: str = Field("", description="Run id that created the objective record.")
+    created_at: str = Field(..., description="UTC ISO timestamp for record creation.")
+    updated_at: str = Field(..., description="UTC ISO timestamp for last update.")
+    completed_at: str = Field("", description="UTC ISO timestamp for successful completion.")
+    completion_audit_md: str = Field("", description="Short final completion audit against the objective.")
+
+
 __all__ = [
     "ProposalCheckpoint",
+    "ResearchGoalRecord",
+    "ResearchGoalStatus",
     "ResearchKernel",
     "ResearchRunCard",
     "SpecialistEntrypoint",

@@ -7,6 +7,7 @@ import re
 import shutil
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -32,7 +33,7 @@ from catmaster.tools.registry import get_tool_registry
 from catmaster.ui import make_event
 from catmaster.ui.reporters import NullReporter, Reporter
 
-from .schemas import ProposalCheckpoint, ResearchKernel, SpecialistEntrypoint
+from .schemas import ProposalCheckpoint, ResearchGoalRecord, ResearchKernel, SpecialistEntrypoint
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ MEMORY_STORE_FILE = "deepagent_memory.sqlite"
 CHECKPOINT_STORE_FILE = "deepagent_threads.sqlite"
 MEMORY_FILE_PATH = "/memories/AGENTS.md"
 RESEARCH_KERNEL_DIR = "research_kernels"
+RESEARCH_GOAL_DIR = "research_goals"
 
 _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
     "research": "research_lead",
@@ -445,8 +447,12 @@ class SpecialistRunner:
         files_root.mkdir(parents=True, exist_ok=True)
         self._stage_deepagent_assets(files_root)
         research_kernel_relpath = ""
+        research_goal: ResearchGoalRecord | None = None
+        research_goal_relpath = ""
         if entrypoint == "research":
             research_kernel_relpath = self._ensure_research_kernel_seed(files_root=files_root, thread_id=thread_id, prompt=prompt)
+            research_goal = self._research_goal_for_run(thread_id=thread_id, prompt=prompt, resume_feedback=resume_feedback)
+            research_goal_relpath = self._research_goal_relpath(thread_id)
         self._emit("RUN_START", payload={"entrypoint": entrypoint, "status": "running"})
         usage_handler = self._new_usage_callback()
         usage_flushed = False
@@ -471,6 +477,7 @@ class SpecialistRunner:
                         "proposal_review": False,
                         "proposal_revision_count": 0,
                         "text_preview": str(resume_feedback or "")[:280],
+                        **self._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
                     }
                 )
 
@@ -493,6 +500,16 @@ class SpecialistRunner:
                                 *conversation_messages,
                                 {"role": "user", "content": prompt},
                             ]
+                        elif entrypoint == "research" and research_goal is not None:
+                            messages = [
+                                {
+                                    "role": "user",
+                                    "content": self._research_continuation_prompt(
+                                        goal=research_goal,
+                                        resume_feedback=resume_feedback,
+                                    ),
+                                }
+                            ]
                         else:
                             messages = [{"role": "user", "content": str(resume_feedback or "").strip() or prompt}]
                         result = await agent.ainvoke(
@@ -514,6 +531,14 @@ class SpecialistRunner:
 
                     final_answer = parsed["text"]
                     status = "done"
+                    if entrypoint == "research" and research_goal is not None:
+                        research_goal = self._complete_research_goal(
+                            research_goal,
+                            completion_audit_md=self._research_completion_audit_md(
+                                objective=research_goal.objective,
+                                parsed=parsed,
+                            ),
+                        )
                     self._write_run_state(
                         {
                             "schema_version": 1,
@@ -536,6 +561,7 @@ class SpecialistRunner:
                             "facts": list(parsed["facts"]),
                             "review_target": str(parsed.get("review_target") or "").strip(),
                             **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                            **self._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
                         }
                     )
                     self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": status})
@@ -606,6 +632,8 @@ class SpecialistRunner:
             if self.run_control is None or not self.run_control.is_interrupt_requested():
                 raise
             self.run_control.ack_interrupt(phase="specialist_runtime", details={"entrypoint": entrypoint})
+            if entrypoint == "research" and research_goal is not None:
+                research_goal = self._update_research_goal_status(research_goal, status="paused")
             interrupted_state = {
                 "schema_version": 1,
                 "entrypoint": entrypoint,
@@ -626,6 +654,7 @@ class SpecialistRunner:
                 "summary": "Run interrupted by user.",
                 "facts": [],
                 **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                **self._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
             }
             self._write_run_state(interrupted_state)
             self._emit(
@@ -655,6 +684,7 @@ class SpecialistRunner:
                 "summary": str(exc).strip() or "Run failed.",
                 "facts": [],
                 **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                **self._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
             }
             self._write_run_state(failed_state)
             self._emit("RUN_END", payload={"entrypoint": entrypoint, "status": "error", "error": str(exc)})
@@ -788,6 +818,10 @@ class SpecialistRunner:
                 "user_prompt": prompt,
                 "chat_session_id": chat_session_id,
                 **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
+                **self._research_goal_state_fields(
+                    research_goal=self._load_research_goal(thread_id) if entrypoint == "research" else None,
+                    relpath=self._research_goal_relpath(thread_id) if entrypoint == "research" else "",
+                ),
             }
         )
 
@@ -1575,7 +1609,9 @@ class SpecialistRunner:
                 f"{cls._multimodal_policy()}\n"
                 f"{execution_contract}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
+                f"{cls._research_goal_guard_contract()}\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
+                f"{cls._research_completion_audit_contract()}\n"
                 f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
                 f"{cls._workspace_path_discipline()}\n"
@@ -1668,6 +1704,7 @@ class SpecialistRunner:
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._report_packet_policy()}\n"
+            f"{cls._experiment_completion_audit_contract()}\n"
             f"{cls._tool_policy()}\n"
             f"{cls._general_purpose_specialist_policy()}\n"
             f"{cls._multimodal_policy()}\n"
@@ -1702,6 +1739,15 @@ class SpecialistRunner:
             "For experiment-report handoffs, pass one compact inline report packet with exactly these fields: "
             "`objective`, `executed_scope`, `key_methods`, `key_results`, `failures_or_qc`, and `target_outputs`. "
             "Keep it terse, execution-facing, and grounded in completed workspace evidence. Do not pad it with paper-style novelty framing or raw transcript excerpts."
+        )
+
+    @staticmethod
+    def _experiment_completion_audit_contract() -> str:
+        return (
+            "Experiment completion audit: before final closeout, compare the requested experiment or parent handoff against current evidence. "
+            "Verify that each required preparation, calculation, analysis, QC check, and requested output is supported by a concrete tool result, workspace artifact path, or explicit blocked/failed status. "
+            "Do not treat a worker's return as sufficient when the requested outputs, stop condition, or evidence paths are still missing. "
+            "If the scope is complete, state the executed scope, key evidence paths, and residual limitations; if it is incomplete, either dispatch the next bounded step or return a blocked status with the minimal next action."
         )
 
     @staticmethod
@@ -1799,6 +1845,24 @@ class SpecialistRunner:
             "Do not add a placeholder `Facts` section for writing-only closeout."
         )
 
+    @staticmethod
+    def _research_goal_guard_contract() -> str:
+        return (
+            "Research goal guard: the active objective is runtime-owned. "
+            "Use the Research Kernel only as working memory, not as the authority for rewriting the objective. "
+            "On resume, continue the original objective plus any human resume note; do not treat the note as a replacement objective."
+        )
+
+    @staticmethod
+    def _research_completion_audit_contract() -> str:
+        return (
+            "Research completion audit: before final answer, verify completion against the original objective and current workspace evidence. "
+            "Check run cards, artifact paths, reports, figures, literature notes, calculation outputs, and workspace files. "
+            "If evidence is missing, weak, stale, or indirect, keep it as frontier or limitation instead of calling it complete. "
+            "If the objective is not complete, do not stop only because the current research thread lacks direct capability; dispatch the next bounded specialist step or return a precise blocker plus the minimal next action. "
+            "Final conclusions should cite the evidence paths or saved memos they depend on."
+        )
+
     @classmethod
     def _research_kernel_contract(cls, kernel_path: str) -> str:
         return (
@@ -1806,6 +1870,7 @@ class SpecialistRunner:
             "It must contain exactly these top-level fields: `question`, `hypotheses`, `run_cards`, `frontier`, `conclusion_draft`. "
             "Keep `hypotheses` to only the currently active 3-5 lines. "
             "Every time a subagent returns, immediately update `run_cards` with one compact card containing only `source`, `summary`, `facts`, and `artifacts`. "
+            "After every delegated specialist return or major direct tool result, reconcile progress against the runtime objective: refresh `frontier`, revise `conclusion_draft` when evidence changes, and choose the next bounded action. "
             "Do not inline long editor comments, reviewer comments, or other bulky source text into the kernel; keep only a short summary plus artifact paths pointing to any saved full memo. "
             "Keep only the minimum decision-relevant facts needed for the next choice. "
             "Use `frontier` for the next unresolved questions or actions to validate. "
@@ -2007,6 +2072,166 @@ class SpecialistRunner:
         if kernel:
             result["research_kernel"] = kernel
         return result
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @classmethod
+    def _research_goal_relpath_for_thread(cls, thread_id: str) -> str:
+        safe_thread = cls._sanitize_kernel_component(thread_id)
+        return f"{RESEARCH_GOAL_DIR}/{safe_thread}/goal.json"
+
+    def _research_goal_relpath(self, thread_id: str) -> str:
+        return self._research_goal_relpath_for_thread(thread_id)
+
+    def _research_goal_fs_path(self, thread_id: str) -> Path:
+        return system_root(self.run_context.workspace) / self._research_goal_relpath(thread_id)
+
+    def _research_goal_for_run(
+        self,
+        *,
+        thread_id: str,
+        prompt: str,
+        resume_feedback: str | None,
+    ) -> ResearchGoalRecord:
+        if resume_feedback is None:
+            return self._create_or_replace_research_goal(thread_id=thread_id, objective=prompt)
+
+        goal = self._load_research_goal(thread_id)
+        if goal is None:
+            return self._create_or_replace_research_goal(thread_id=thread_id, objective=prompt)
+        if goal.status != "active":
+            updates: dict[str, Any] = {"status": "active", "updated_at": self._utc_now_iso()}
+            if goal.status == "complete":
+                updates["completed_at"] = ""
+                updates["completion_audit_md"] = ""
+            goal = goal.model_copy(update=updates)
+            self._save_research_goal(goal)
+        return goal
+
+    def _create_or_replace_research_goal(self, *, thread_id: str, objective: str) -> ResearchGoalRecord:
+        now = self._utc_now_iso()
+        goal = ResearchGoalRecord(
+            objective=str(objective or "").strip(),
+            status="active",
+            thread_id=thread_id,
+            source_run_id=str(self.run_context.run_id or "").strip(),
+            created_at=now,
+            updated_at=now,
+        )
+        self._save_research_goal(goal)
+        return goal
+
+    def _load_research_goal(self, thread_id: str) -> ResearchGoalRecord | None:
+        path = self._research_goal_fs_path(thread_id)
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            goal = ResearchGoalRecord.model_validate(payload)
+        except Exception:
+            return None
+        if goal.thread_id != thread_id:
+            return None
+        return goal
+
+    def _save_research_goal(self, goal: ResearchGoalRecord) -> str:
+        path = self._research_goal_fs_path(goal.thread_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(goal.model_dump_json(indent=2), encoding="utf-8")
+        return self._research_goal_relpath(goal.thread_id)
+
+    def _update_research_goal_status(
+        self,
+        goal: ResearchGoalRecord,
+        *,
+        status: Literal["active", "paused", "complete"],
+    ) -> ResearchGoalRecord:
+        if goal.status == status:
+            return goal
+        updated = goal.model_copy(update={"status": status, "updated_at": self._utc_now_iso()})
+        self._save_research_goal(updated)
+        return updated
+
+    def _complete_research_goal(self, goal: ResearchGoalRecord, *, completion_audit_md: str) -> ResearchGoalRecord:
+        now = self._utc_now_iso()
+        updated = goal.model_copy(
+            update={
+                "status": "complete",
+                "updated_at": now,
+                "completed_at": now,
+                "completion_audit_md": str(completion_audit_md or "").strip()[:4000],
+            }
+        )
+        self._save_research_goal(updated)
+        return updated
+
+    @staticmethod
+    def _research_goal_state_fields(*, research_goal: ResearchGoalRecord | None, relpath: str = "") -> dict[str, Any]:
+        if research_goal is None and not relpath:
+            return {}
+        result: dict[str, Any] = {}
+        if relpath:
+            result["research_goal_path"] = relpath
+        if research_goal is not None:
+            result["research_goal"] = research_goal.model_dump()
+        return result
+
+    @classmethod
+    def _research_continuation_prompt(cls, *, goal: ResearchGoalRecord, resume_feedback: str | None) -> str:
+        objective = str(goal.objective or "").strip()
+        note = str(resume_feedback or "").strip() or "(none)"
+        return (
+            "Continue the active research objective.\n\n"
+            "<objective>\n"
+            f"{objective}\n"
+            "</objective>\n\n"
+            "User resume note:\n"
+            f"{note}\n\n"
+            "Do not shrink, reinterpret, or replace the objective. Treat the current workspace, Research Kernel, run cards, "
+            "saved reports, and calculation/literature artifacts as the authoritative state. Make concrete progress toward "
+            "the original objective. If the objective is complete, perform the completion audit before final answer."
+        ).strip()
+
+    @classmethod
+    def _research_completion_audit_md(cls, *, objective: str, parsed: dict[str, Any]) -> str:
+        summary = cls._compact_audit_line(parsed.get("summary") or "", limit=600)
+        facts = [
+            cls._compact_audit_line(item, limit=360)
+            for item in list(parsed.get("facts") or [])
+            if str(item or "").strip()
+        ][:8]
+        files = [
+            cls._compact_audit_line(item, limit=360)
+            for item in list(parsed.get("files") or [])
+            if str(item or "").strip() and str(item or "").strip() != "(none reported)"
+        ][:10]
+        lines = [
+            "Completion audit",
+            "",
+            f"Objective: {cls._compact_audit_line(objective, limit=600)}",
+            f"Final summary: {summary or '(none reported)'}",
+            "",
+            "Evidence paths:",
+            *(f"- {item}" for item in (files or ["(none reported)"])),
+            "",
+            "Key facts:",
+            *(f"- {item}" for item in (facts or ["(none reported)"])),
+        ]
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _compact_audit_line(text: Any, *, limit: int) -> str:
+        value = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(value) <= limit:
+            return value
+        return value[: max(0, limit - 3)].rstrip() + "..."
 
     @classmethod
     def _writing_worker_prompt(cls) -> str:

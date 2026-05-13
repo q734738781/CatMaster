@@ -280,8 +280,16 @@ def test_specialist_prompts_require_explicit_follow_on_delegate_judgment() -> No
     assert "actively judge from the user's request, current evidence, and actual project state whether another bounded delegation round is needed" in research_prompt
     assert "do not default to closing in the research thread just because one delegate completed" in research_prompt
     assert "issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread" in research_prompt
+    assert "Research goal guard: the active objective is runtime-owned" in research_prompt
+    assert "On resume, continue the original objective plus any human resume note" in research_prompt
+    assert "Research completion audit: before final answer" in research_prompt
+    assert "reconcile progress against the runtime objective" in research_prompt
+    assert "dispatch the next bounded specialist step or return a precise blocker" in research_prompt
+    assert "Final conclusions should cite the evidence paths or saved memos they depend on" in research_prompt
     assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in experiment_prompt
     assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in experiment_prompt
+    assert "Experiment completion audit: before final closeout" in experiment_prompt
+    assert "requested outputs, stop condition, or evidence paths are still missing" in experiment_prompt
     assert "When one writing-worker pass returns, actively decide whether another bounded delegate pass is needed" in writing_prompt
     assert "When one worker review episode returns, actively decide whether another bounded delegate pass is needed" in peer_review_prompt
 
@@ -877,6 +885,11 @@ def test_specialist_lanes_start_with_staged_skills(
     if entrypoint == "research":
         assert "Maintain a lightweight Research Kernel" in agent_kwargs["system_prompt"]
         assert "/research_kernels/" in agent_kwargs["system_prompt"]
+        assert "Research goal guard: the active objective is runtime-owned" in agent_kwargs["system_prompt"]
+        assert "Use the Research Kernel only as working memory" in agent_kwargs["system_prompt"]
+        assert "Research completion audit: before final answer" in agent_kwargs["system_prompt"]
+        assert "reconcile progress against the runtime objective" in agent_kwargs["system_prompt"]
+        assert "dispatch the next bounded specialist step or return a precise blocker" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "metadata_agent" in agent_kwargs["system_prompt"]
         assert "paper, manuscript, journal-style LaTeX draft" in agent_kwargs["system_prompt"]
@@ -1029,6 +1042,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "use `web_search` for a narrow official-docs or primary-source check" in agent_kwargs["system_prompt"]
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
         assert "If a worker needs a handy Python package for a bounded local step and it is missing" in agent_kwargs["system_prompt"]
+        assert "Experiment completion audit: before final closeout" in agent_kwargs["system_prompt"]
+        assert "Verify that each required preparation, calculation, analysis, QC check, and requested output" in agent_kwargs["system_prompt"]
+        assert "If the scope is complete, state the executed scope, key evidence paths, and residual limitations" in agent_kwargs["system_prompt"]
         assert "mace_neb_batch" in {tool.name for tool in materials_worker_kwargs["tools"]}
         assert "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
@@ -1212,6 +1228,12 @@ def test_specialist_lanes_start_with_staged_skills(
         assert run_state["research_kernel"]["hypotheses"] == []
         kernel_file = workspace / "files" / run_state["research_kernel_path"]
         assert kernel_file.is_file()
+        assert run_state["research_goal_path"].endswith("/goal.json")
+        assert run_state["research_goal"]["objective"] == "Run the lane smoke test."
+        assert run_state["research_goal"]["status"] == "complete"
+        assert "Completion audit" in run_state["research_goal"]["completion_audit_md"]
+        goal_file = workspace / "metadata" / run_state["research_goal_path"]
+        assert goal_file.is_file()
     usage_summary = load_usage_summary(built.run_context.run_dir)
     assert usage_summary["source"] == "langchain_usage_metadata"
     assert usage_summary["input_tokens"] == 123
@@ -1428,6 +1450,97 @@ def test_interrupted_run_can_resume_into_normal_execution(
     assert run_state["proposal_revision_count"] == 0
 
 
+def test_research_resume_uses_runtime_owned_goal_objective(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    captured: dict[str, object] = {}
+
+    class _CapturingAgent:
+        async def ainvoke(self, payload, config=None):
+            captured["payload"] = payload
+            captured["config"] = config
+            return {
+                "messages": [
+                    AIMessage(
+                        content="## Summary\nok\n\n## Facts\n- resumed original objective\n\n## Files\n- notes/research/resume.md"
+                    )
+                ]
+            }
+
+    def _fake_create_deep_agent(**kwargs):
+        captured.setdefault("agent_kwargs", kwargs)
+        return _CapturingAgent()
+
+    @asynccontextmanager
+    async def _fake_open_agent_runtime(self, *, files_root: Path):
+        _ = files_root
+        yield {"checkpointer": object(), "store": object(), "backend": object()}
+
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj_resume_research_goal",
+        preferred_entrypoint="research",
+    )
+    goal = built.runner._create_or_replace_research_goal(
+        thread_id="thread-research-goal",
+        objective="Use MACE to compute the O2 bond length and report the evidence path.",
+    )
+    built.runner._update_research_goal_status(goal, status="paused")
+    (built.run_context.run_dir / RUN_STATE_FILE).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "entrypoint": "research",
+                "status": "interrupted_paused",
+                "phase": "interrupted",
+                "active_specialist": "research",
+                "thread_id": "thread-research-goal",
+                "proposal_review": False,
+                "proposal_revision_count": 0,
+                "pending_human_input": None,
+                "todo_items": [],
+                "artifacts": [],
+                "delegation_log": [],
+                "user_prompt": "This stale prompt must not replace the goal.",
+                "chat_session_id": "chat-research-goal",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = asyncio.run(built.runner.aresume("also include a short caveat"))
+
+    assert result["status"] == "done"
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    resume_message = payload["messages"][0]["content"]
+    assert "Continue the active research objective." in resume_message
+    assert "Use MACE to compute the O2 bond length and report the evidence path." in resume_message
+    assert "also include a short caveat" in resume_message
+    assert "Do not shrink, reinterpret, or replace the objective" in resume_message
+    assert "This stale prompt must not replace the goal." not in resume_message
+    run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+    assert run_state["research_goal"]["status"] == "complete"
+    assert run_state["research_goal"]["objective"] == "Use MACE to compute the O2 bond length and report the evidence path."
+    assert "notes/research/resume.md" in run_state["research_goal"]["completion_audit_md"]
+
+
 def test_conversation_messages_are_replayed_only_for_new_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1525,3 +1638,5 @@ def test_specialist_runner_returns_interrupted_paused_when_interrupt_requested_b
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["status"] == "interrupted_paused"
     assert run_state["summary"] == "Run interrupted by user."
+    assert run_state["research_goal"]["objective"] == "Stop before any deepagent work starts."
+    assert run_state["research_goal"]["status"] == "paused"
