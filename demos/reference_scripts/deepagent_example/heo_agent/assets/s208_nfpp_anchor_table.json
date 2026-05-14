@@ -1,0 +1,240 @@
+{
+  "model_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/train/checkpoints/battery_mh1_replay_run-42.model",
+  "anchor_root": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC",
+  "output_root": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500",
+  "fmax": 0.02,
+  "max_steps": 500,
+  "rows": [
+    {
+      "element": "Al",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Al__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -0.73266601,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "1",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Al__base/final.vasp"
+    },
+    {
+      "element": "Ca",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Ca__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -0.28332519,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "2",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Ca__base/final.vasp"
+    },
+    {
+      "element": "Co",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Co__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 2.29821777,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "3",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Co__base/final.vasp"
+    },
+    {
+      "element": "Cr",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Cr__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -3.20922851,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "0",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Cr__base/final.vasp"
+    },
+    {
+      "element": "Cu",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Cu__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 3.81652832,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "1",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Cu__base/final.vasp"
+    },
+    {
+      "element": "Ga",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Ga__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 4.31164551,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "2",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Ga__base/final.vasp"
+    },
+    {
+      "element": "In",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_In__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 5.01098633,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "3",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_In__base/final.vasp"
+    },
+    {
+      "element": "Mg",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Mg__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 1.66650391,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "0",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Mg__base/final.vasp"
+    },
+    {
+      "element": "Mn",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Mn__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -2.76831055,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "1",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Mn__base/final.vasp"
+    },
+    {
+      "element": "Mo",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Mo__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -1.83129883,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "2",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Mo__base/final.vasp"
+    },
+    {
+      "element": "Nb",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Nb__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -4.97998047,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "3",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Nb__base/final.vasp"
+    },
+    {
+      "element": "Ni",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Ni__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 4.3737793,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "0",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Ni__base/final.vasp"
+    },
+    {
+      "element": "Pd",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Pd__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 4.83178711,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "1",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Pd__base/final.vasp"
+    },
+    {
+      "element": "Rh",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Rh__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 2.01818848,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "2",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Rh__base/final.vasp"
+    },
+    {
+      "element": "Ru",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Ru__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 0.37963867,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "3",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Ru__base/final.vasp"
+    },
+    {
+      "element": "Sc",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Sc__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -5.33703613,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "0",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Sc__base/final.vasp"
+    },
+    {
+      "element": "Sn",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Sn__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 3.27136231,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "1",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Sn__base/final.vasp"
+    },
+    {
+      "element": "Sr",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Sr__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 1.578125,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "2",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Sr__base/final.vasp"
+    },
+    {
+      "element": "Ti",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Ti__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -4.01611328,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "3",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Ti__base/final.vasp"
+    },
+    {
+      "element": "V",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_V__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -3.81591797,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "0",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_V__base/final.vasp"
+    },
+    {
+      "element": "Y",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Y__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -5.77905273,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "1",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Y__base/final.vasp"
+    },
+    {
+      "element": "Zn",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Zn__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": 4.83288574,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "2",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Zn__base/final.vasp"
+    },
+    {
+      "element": "Zr",
+      "reference_dir": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/DFT_files/v0/ABC/B1__S208__Na4__dop_Zr__base",
+      "reference_family": "B1__S208__Na4__dop_*__base",
+      "substitution_energy_eV_per_dopant": -5.88293457,
+      "fmax": 0.02,
+      "max_steps": 500,
+      "gpu_id": "3",
+      "mace_structure_path": "/mnt/ssd/chenhh/projects/Battery/MACE_Training/anchor_benchmarks/s208_nfpp_mace_run42_f002_s500/relaxations/B1__S208__Na4__dop_Zr__base/final.vasp"
+    }
+  ],
+  "note": "Pure MACE substitution-energy table for replacing or comparing against DFT S208 anchors."
+}

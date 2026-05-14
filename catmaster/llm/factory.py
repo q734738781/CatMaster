@@ -243,6 +243,20 @@ def _provider_options_for(cfg: LLMConfig, provider: str | None = None) -> Dict[s
     return dict(options) if isinstance(options, dict) else {}
 
 
+def _provider_chat_kwargs_for(cfg: LLMConfig, provider: str | None = None) -> Dict[str, Any]:
+    key = str(provider or cfg.provider or "").strip().lower()
+    options = _provider_options_for(cfg, key)
+    kwargs: Dict[str, Any] = {}
+    for field in ("kwargs", "chat_kwargs"):
+        raw = options.get(field)
+        if raw is None:
+            continue
+        if not isinstance(raw, dict):
+            raise ValueError(f"models.*.provider_options.{key}.{field} must be a mapping")
+        kwargs.update(raw)
+    return kwargs
+
+
 def _resolve_extra_body(cfg: LLMConfig) -> Dict[str, Any]:
     provider_extra = _provider_options_for(cfg).get("extra_body")
     if isinstance(provider_extra, dict) and provider_extra:
@@ -489,6 +503,67 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             content_cache_control=cache_control_config,
             **kwargs,
         )
+
+    if cfg.provider == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError as exc:  # pragma: no cover - dependency guidance
+            raise RuntimeError(
+                "provider=anthropic requires langchain-anthropic. "
+                "Install it with `python -m pip install langchain-anthropic`."
+            ) from exc
+
+        kwargs = _provider_chat_kwargs_for(cfg, "anthropic")
+        api_key = _require_api_key(cfg)
+        kwargs.setdefault("api_key", api_key)
+        if cfg.base_url:
+            kwargs.setdefault("base_url", cfg.base_url)
+        if cfg.default_headers:
+            kwargs.setdefault("default_headers", cfg.default_headers)
+        if cfg.timeout_s is not None:
+            kwargs.setdefault("timeout", cfg.timeout_s)
+        if cfg.max_retries is not None:
+            kwargs.setdefault("max_retries", cfg.max_retries)
+        if cfg.top_p is not None:
+            kwargs.setdefault("top_p", cfg.top_p)
+        max_tokens = cfg.max_tokens
+        if max_tokens is None and cfg.max_output_tokens is not None:
+            max_tokens = cfg.max_output_tokens
+        if max_tokens is not None:
+            kwargs.setdefault("max_tokens", max_tokens)
+        kwargs.setdefault("model", cfg.model)
+        if cfg.temperature is not None:
+            kwargs.setdefault("temperature", cfg.temperature)
+        kwargs.setdefault("streaming", False)
+
+        return ChatAnthropic(**kwargs)
+
+    if cfg.provider == "codex_oauth":
+        try:
+            from langchain_codex_oauth import ChatCodexOAuth
+        except ImportError as exc:  # pragma: no cover - dependency guidance
+            raise RuntimeError(
+                "provider=codex_oauth requires langchain-codex-oauth. "
+                "Install it with `python -m pip install langchain-codex-oauth`."
+            ) from exc
+
+        kwargs = _provider_chat_kwargs_for(cfg, "codex_oauth")
+        if cfg.base_url:
+            kwargs.setdefault("base_url", cfg.base_url)
+        if cfg.timeout_s is not None:
+            kwargs.setdefault("timeout", cfg.timeout_s)
+        if cfg.max_retries is not None:
+            kwargs.setdefault("max_retries", cfg.max_retries)
+        if cfg.temperature is not None:
+            kwargs.setdefault("temperature", cfg.temperature)
+        max_tokens = cfg.max_tokens
+        if max_tokens is None and cfg.max_output_tokens is not None:
+            max_tokens = cfg.max_output_tokens
+        if max_tokens is not None:
+            kwargs.setdefault("max_tokens", max_tokens)
+        kwargs.setdefault("model", cfg.model)
+
+        return ChatCodexOAuth(**kwargs)
 
     if cfg.provider in ("openai", "oai_compatible", "deepseek"):
         if cfg.provider == "deepseek":

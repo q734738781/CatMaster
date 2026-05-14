@@ -137,6 +137,118 @@ def test_build_chat_model_passes_reasoning_summary_config(monkeypatch) -> None:
     assert captured.get("use_responses_api") is True
 
 
+def test_build_chat_model_passes_anthropic_common_and_chat_kwargs(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatAnthropic:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "langchain_anthropic", types.SimpleNamespace(ChatAnthropic=FakeChatAnthropic))
+
+    cfg = LLMConfig(
+        provider="anthropic",
+        model="claude-sonnet-4-5-20250929",
+        api_key="test-key",
+        base_url="https://api.anthropic.com",
+        temperature=0.2,
+        top_p=0.9,
+        max_output_tokens=4096,
+        timeout_s=30,
+        max_retries=4,
+        default_headers={"x-test": "1"},
+        provider_options={
+            "anthropic": {
+                "chat_kwargs": {
+                    "thinking": {"type": "enabled", "budget_tokens": 1024},
+                    "betas": ["token-efficient-tools-2025-02-19"],
+                }
+            }
+        },
+    )
+
+    build_chat_model(cfg)
+
+    assert captured.get("model") == "claude-sonnet-4-5-20250929"
+    assert captured.get("api_key") == "test-key"
+    assert captured.get("base_url") == "https://api.anthropic.com"
+    assert captured.get("temperature") == 0.2
+    assert captured.get("top_p") == 0.9
+    assert captured.get("max_tokens") == 4096
+    assert captured.get("timeout") == 30
+    assert captured.get("max_retries") == 4
+    assert captured.get("default_headers") == {"x-test": "1"}
+    assert captured.get("streaming") is False
+    assert captured.get("thinking") == {"type": "enabled", "budget_tokens": 1024}
+    assert captured.get("betas") == ["token-efficient-tools-2025-02-19"]
+
+
+def test_build_chat_model_does_not_map_anthropic_reasoning(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatAnthropic:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "langchain_anthropic", types.SimpleNamespace(ChatAnthropic=FakeChatAnthropic))
+
+    cfg = LLMConfig(
+        provider="anthropic",
+        model="claude-sonnet-4-5-20250929",
+        api_key="test-key",
+        reasoning={"effort": "high"},
+    )
+
+    build_chat_model(cfg)
+
+    assert "reasoning" not in captured
+    assert "thinking" not in captured
+
+
+def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatCodexOAuth:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_codex_oauth",
+        types.SimpleNamespace(ChatCodexOAuth=FakeChatCodexOAuth),
+    )
+
+    cfg = LLMConfig(
+        provider="codex_oauth",
+        model="gpt-5.2-codex",
+        base_url="https://chatgpt.com/backend-api/codex",
+        temperature=0.1,
+        max_tokens=2048,
+        timeout_s=60,
+        max_retries=2,
+        provider_options={
+            "codex_oauth": {
+                "chat_kwargs": {
+                    "system_prompt_mode": "strict",
+                    "text_verbosity": "medium",
+                }
+            }
+        },
+    )
+
+    build_chat_model(cfg)
+
+    assert captured.get("model") == "gpt-5.2-codex"
+    assert captured.get("base_url") == "https://chatgpt.com/backend-api/codex"
+    assert captured.get("temperature") == 0.1
+    assert captured.get("max_tokens") == 2048
+    assert captured.get("timeout") == 60
+    assert captured.get("max_retries") == 2
+    assert captured.get("system_prompt_mode") == "strict"
+    assert captured.get("text_verbosity") == "medium"
+    assert "api_key" not in captured
+
+
 def test_build_chat_model_passes_deepseek_official_reasoning_effort(monkeypatch) -> None:
     captured: dict = {}
 

@@ -39,6 +39,22 @@ def test_llm_config_env_fallback_sets_reasoning_effort(monkeypatch) -> None:
     assert cfg.reasoning == {"effort": "medium"}
 
 
+def test_llm_config_env_fallback_sets_anthropic_key_env() -> None:
+    cfg = LLMConfig(provider="anthropic", model="claude-sonnet-4-5-20250929")
+
+    cfg.apply_env_fallbacks()
+
+    assert cfg.api_key_env == "ANTHROPIC_API_KEY"
+
+
+def test_llm_config_env_fallback_leaves_codex_oauth_keyless() -> None:
+    cfg = LLMConfig(provider="codex_oauth", model="gpt-5.2-codex")
+
+    cfg.apply_env_fallbacks()
+
+    assert cfg.api_key_env == ""
+
+
 def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     cfg = tmp_path / "llm.yaml"
     cfg.write_text(

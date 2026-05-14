@@ -117,6 +117,62 @@ models:
           default_query:
             api-version: "2025-01-01"
 
+  # -------------------------------------------------------------------------
+  # Anthropic direct API example
+  # -------------------------------------------------------------------------
+  "anthropic-main":
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: ANTHROPIC_API_KEY
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+
+    # Provider-bound options passed directly to langchain_anthropic.ChatAnthropic.
+    # CatMaster does not translate `reasoning` into Anthropic `thinking`;
+    # set Anthropic-native options here when you need them.
+    provider_options:
+      anthropic:
+        chat_kwargs:
+          # thinking:
+          #   type: enabled
+          #   budget_tokens: 4096
+          # betas:
+          #   - token-efficient-tools-2025-02-19
+
+  # -------------------------------------------------------------------------
+  # Codex OAuth example (non-official package; no API key)
+  # -------------------------------------------------------------------------
+  "codex-oauth-main":
+    provider: codex_oauth
+    model: gpt-5.2-codex
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+
+    # Provider-bound options passed directly to langchain_codex_oauth.ChatCodexOAuth.
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          system_prompt_mode: strict
+          # text_verbosity: medium
+          # reasoning_effort: medium
+
 agents:
   proposal: "openrouter-main"
   director: "openrouter-main"

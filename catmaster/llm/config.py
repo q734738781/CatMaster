@@ -11,7 +11,16 @@ try:  # optional dependency
 except Exception:  # pragma: no cover
     yaml = None
 
-Provider = Literal["openai", "openrouter", "deepseek", "gemini", "oai_compatible", "langchain"]
+Provider = Literal[
+    "openai",
+    "openrouter",
+    "deepseek",
+    "gemini",
+    "oai_compatible",
+    "langchain",
+    "anthropic",
+    "codex_oauth",
+]
 AgentRole = Literal[
     "proposal",
     "director",
@@ -593,6 +602,12 @@ class LLMProfile:
         if provider == "openrouter":
             api_key_env = "OPENROUTER_API_KEY"
             base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+        elif provider == "anthropic":
+            api_key_env = os.getenv("CATMASTER_API_KEY_ENV", "ANTHROPIC_API_KEY").strip()
+            base_url = os.getenv("CATMASTER_BASE_URL", "").strip() or None
+        elif provider == "codex_oauth":
+            api_key_env = os.getenv("CATMASTER_API_KEY_ENV", "").strip()
+            base_url = os.getenv("CATMASTER_BASE_URL", "").strip() or None
         else:
             api_key_env = os.getenv("CATMASTER_API_KEY_ENV", "OPENAI_API_KEY").strip()
             base_url = os.getenv("CATMASTER_BASE_URL", "").strip() or None
@@ -807,6 +822,10 @@ def _default_api_key_env(provider: str) -> str:
         return "OPENROUTER_API_KEY"
     if provider == "deepseek":
         return "DEEPSEEK_API_KEY"
+    if provider == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    if provider == "codex_oauth":
+        return ""
     return "OPENAI_API_KEY"
 
 

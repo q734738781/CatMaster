@@ -13,6 +13,8 @@ dpdispatcher
 pyyaml
 httpx
 langchain-openrouter>=0.2.1
+langchain-anthropic
+langchain-codex-oauth>=1.0,<1.1
 openrouter>=0.9.1
 tavily-python
 faiss-cpu

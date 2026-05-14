@@ -45,6 +45,8 @@ langchain
 langchain-core
 langchain-openai
 langchain-openrouter>=0.2.1
+langchain-anthropic
+langchain-codex-oauth>=1.0,<1.1
 langchain-mcp-adapters
 langchain-community
 langgraph

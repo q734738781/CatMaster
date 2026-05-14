@@ -33,31 +33,95 @@ npm -v
 
 ### 2. 配置
 
-复制 LLM 配置模板：
+CatMaster 默认读取 `configs/llm.yaml`。第一次使用时建议从模板开始：
 
 ```bash
 cp configs/llm.template.yaml configs/llm.yaml
 ```
 
-通过环境变量提供 API key：
+也可以直接选一个已有预设作为起点：
+
+```bash
+cp configs/llm_gemini.yaml configs/llm.yaml
+# 或
+cp configs/llm_sonnet.yaml configs/llm.yaml
+```
+
+如果想临时使用另一个配置文件，而不覆盖 `configs/llm.yaml`：
+
+```bash
+export CATMASTER_LLM_CONFIG=configs/llm_gemini.yaml
+```
+
+LLM 配置文件里主要改两处：
+
+- `models`：给每个模型起一个本地标签，设置 provider、model、base URL 和 provider 专属参数。
+- `agents`：把不同任务角色绑定到这些模型标签。最少需要 `proposal`、`director`、`task_runner`、`memory_patch`、`summary`；模板里已经给出完整示例。
+
+内置 provider 包括 `openrouter`、`openai`、`deepseek`、`anthropic`、`codex_oauth`、`oai_compatible` 和通用 `langchain`。Anthropic 与 Codex OAuth 都只做薄适配：YAML 中的 `provider_options.<provider>.chat_kwargs` 会直接传给对应 LangChain ChatModel；DeepSeek 的 reasoning/tool-call 兼容 patch 仍只作用于 `provider: deepseek`。
+
+不要把 API key 写进 YAML。常用 key 通过环境变量提供：
 
 ```bash
 export OPENROUTER_API_KEY="..."
 # 或
 export OPENAI_API_KEY="..."
+# 或
+export DEEPSEEK_API_KEY="..."
+# 或
+export ANTHROPIC_API_KEY="..."
 ```
 
-如果需要联网文献检索，可配置：
+Codex OAuth 使用非官方 `langchain-codex-oauth` 包，不使用 API key。第一次使用前在 `catmaster` conda 环境里登录一次：
 
 ```bash
-export TAVILY_API_KEY="..."
+langchain-codex-oauth auth login
+# 远程机器或端口受限时：
+langchain-codex-oauth auth login --manual
 ```
 
-如需从 Materials Project 检索或下载结构：
+`configs/llm.template.yaml` 已包含 Anthropic 与 Codex OAuth 示例。最小模型片段如下：
+
+```yaml
+models:
+  anthropic-main:
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+    api_key_env: ANTHROPIC_API_KEY
+    provider_options:
+      anthropic:
+        chat_kwargs: {}
+
+  codex-oauth-main:
+    provider: codex_oauth
+    model: gpt-5.2-codex
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          system_prompt_mode: strict
+```
+
+可选服务：
 
 ```bash
-export MP_API_KEY="..."
+export TAVILY_API_KEY="..."   # 公共网页/文献检索
+export MP_API_KEY="..."       # Materials Project 结构检索
 ```
+
+如果完全不使用 YAML，也可以用环境变量快速指定一个单模型配置：
+
+```bash
+export CATMASTER_LLM_PROVIDER=openrouter
+export CATMASTER_LLM_MODEL=openai/gpt-5.5
+export OPENROUTER_API_KEY="..."
+```
+
+其他常用配置文件：
+
+- `configs/tool_output.yaml`：控制长工具输出是否写入 `_tool_outputs/`。
+- `configs/tool_policy.yaml`：允许或禁用某些工具。
+- `configs/dpdispatcher/resources.yaml` 和 `configs/dpdispatcher/tasks.yaml`：远程计算任务的资源和命令。
+- `configs/machines_template.yaml`：远程机器模板；复制为 `configs/dpdispatcher/machines.yaml` 后填写自己的集群账号和环境。
 
 ### 3. 准备项目空间
 
@@ -249,31 +313,95 @@ npm -v
 
 ### 2. Configuration
 
-Copy the LLM config template:
+CatMaster reads `configs/llm.yaml` by default. For a first setup, start from the template:
 
 ```bash
 cp configs/llm.template.yaml configs/llm.yaml
 ```
 
-Provide API keys through environment variables:
+You can also start from one of the included presets:
+
+```bash
+cp configs/llm_gemini.yaml configs/llm.yaml
+# or
+cp configs/llm_sonnet.yaml configs/llm.yaml
+```
+
+To use another config file without replacing `configs/llm.yaml`:
+
+```bash
+export CATMASTER_LLM_CONFIG=configs/llm_gemini.yaml
+```
+
+The LLM config mainly has two sections:
+
+- `models`: local labels for provider/model/base URL and provider-specific parameters.
+- `agents`: role-to-model bindings. At minimum configure `proposal`, `director`, `task_runner`, `memory_patch`, and `summary`; the template includes the optional roles.
+
+Built-in providers include `openrouter`, `openai`, `deepseek`, `anthropic`, `codex_oauth`, `oai_compatible`, and generic `langchain`. Anthropic and Codex OAuth are thin adapters: `provider_options.<provider>.chat_kwargs` is passed through to the matching LangChain ChatModel. The DeepSeek reasoning/tool-call compatibility patch remains scoped to `provider: deepseek`.
+
+Keep secrets out of YAML. Provide API keys through environment variables:
 
 ```bash
 export OPENROUTER_API_KEY="..."
 # or
 export OPENAI_API_KEY="..."
+# or
+export DEEPSEEK_API_KEY="..."
+# or
+export ANTHROPIC_API_KEY="..."
 ```
 
-For web-backed literature search:
+Codex OAuth uses the non-official `langchain-codex-oauth` package and does not use an API key. Log in once inside the `catmaster` conda environment:
 
 ```bash
-export TAVILY_API_KEY="..."
+langchain-codex-oauth auth login
+# On remote machines or when the callback port is unavailable:
+langchain-codex-oauth auth login --manual
 ```
 
-For Materials Project access:
+`configs/llm.template.yaml` includes Anthropic and Codex OAuth examples. Minimal model snippets:
+
+```yaml
+models:
+  anthropic-main:
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+    api_key_env: ANTHROPIC_API_KEY
+    provider_options:
+      anthropic:
+        chat_kwargs: {}
+
+  codex-oauth-main:
+    provider: codex_oauth
+    model: gpt-5.2-codex
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          system_prompt_mode: strict
+```
+
+Optional services:
 
 ```bash
-export MP_API_KEY="..."
+export TAVILY_API_KEY="..."   # public web / literature search
+export MP_API_KEY="..."       # Materials Project access
 ```
+
+For a quick single-model setup without YAML:
+
+```bash
+export CATMASTER_LLM_PROVIDER=openrouter
+export CATMASTER_LLM_MODEL=openai/gpt-5.5
+export OPENROUTER_API_KEY="..."
+```
+
+Other useful config files:
+
+- `configs/tool_output.yaml`: controls whether long tool outputs are stored under `_tool_outputs/`.
+- `configs/tool_policy.yaml`: allows or blocks selected tools.
+- `configs/dpdispatcher/resources.yaml` and `configs/dpdispatcher/tasks.yaml`: remote-job resources and commands.
+- `configs/machines_template.yaml`: remote-machine template; copy it to `configs/dpdispatcher/machines.yaml` and fill in your cluster account and environment.
 
 ### 3. Project Space
 
