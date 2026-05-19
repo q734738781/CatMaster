@@ -432,6 +432,9 @@ def test_websession_interrupt_cancels_active_async_run(tmp_path: Path, monkeypat
     interrupt = session.interrupt_status()["interrupt"]
     assert interrupt.get("requested") is True
     assert interrupt.get("acked") is True
+    run_state = json.loads((run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+    assert run_state["status"] == "interrupted_paused"
+    assert run_state["phase"] == "interrupted"
 
 
 def test_websession_lists_and_switches_chat_sessions(tmp_path: Path) -> None:

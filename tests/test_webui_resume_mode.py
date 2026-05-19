@@ -290,3 +290,18 @@ def test_start_run_resume_uses_default_continue_guidance_when_input_empty(tmp_pa
     assert session.run_thread is not None
     session.run_thread.join(timeout=5)
     assert captured["resume_feedback"] == "Continue the previous interrupted request."
+
+
+def test_display_status_prefers_starting_resume_over_stale_paused_state(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    ok, _ = session.open_workspace(str(ws), create=True)
+    assert ok
+
+    resume_run = system_root(workspace=ws) / "runs" / "run_paused"
+    _mk_run(resume_run, lane="research", status="interrupted_paused")
+    session.selected_run_dir = resume_run
+    session.run_status = "starting"
+
+    assert session.run_status_text().startswith("starting")

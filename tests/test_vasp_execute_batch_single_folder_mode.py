@@ -7,6 +7,7 @@ import pytest
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import workspace_scope
+from catmaster.tools.execution import dpdispatcher_runner as dpr
 from catmaster.tools.execution import vasp_dispatch
 from catmaster.tools.execution.task_payloads import render_task_fields
 from catmaster.tools.execution.task_registry import TaskRegistry
@@ -88,6 +89,49 @@ def test_vasp_execute_batch_accepts_custom_task_name_for_neb(monkeypatch, tmp_pa
     assert captured["task_work_paths"] == ["neb_case"]
     assert data.get("task_name") == "vasp_execute_neb"
     assert data.get("resources_key") == "vasp_cpu_neb"
+
+
+def test_vasp_execute_batch_failure_exposes_remote_context(monkeypatch, tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        calc_dir = files_root / "runs" / "A"
+        _touch_vasp_inputs(calc_dir)
+
+        monkeypatch.setattr(vasp_dispatch, "_resolve_machine_for_resources", lambda _: "dummy_machine")
+
+        def _fake_dispatch(req):
+            raise dpr.DPDispatcherDispatchError(
+                "Connection reset by peer",
+                remote_context={
+                    "remote_context_id": "dp_ctx",
+                    "submitted_at": "2026-05-19T00:00:00+08:00",
+                    "updated_at": "2026-05-19T00:01:00+08:00",
+                    "submission_hash": "abc",
+                    "jobs": [{"job_hash": "jobhash", "job_id": "3849", "status_code": 3, "status": "running"}],
+                    "job_status_counts": {"running": 1},
+                    "receipt_rel": ".deepagents/dpdispatcher/receipts/dp_ctx.json",
+                },
+            )
+
+        monkeypatch.setattr(vasp_dispatch, "dispatch_submission", _fake_dispatch)
+
+        with pytest.raises(CatMasterToolExecutionError) as excinfo:
+            vasp_dispatch.vasp_execute_batch(
+                {
+                    "input_dir": "runs/A",
+                    "output_dir": "outs",
+                    "check_interval": 1,
+                }
+            )
+
+    text = str(excinfo.value)
+    data = excinfo.value.artifact["data"]
+    assert "remote_context_id=dp_ctx" in text
+    assert "submission_hash=abc" in text
+    assert data["remote_context_id"] == "dp_ctx"
+    assert data["submission_hash"] == "abc"
+    assert data["jobs"][0]["status"] == "running"
+    assert data["job_status_counts"] == {"running": 1}
 
 
 def test_vasp_execute_batch_rejects_nested_when_root_is_calc_folder(tmp_path: Path) -> None:

@@ -421,6 +421,8 @@ class SpecialistRunner:
         status = str(run_state.get("status") or "").strip().lower() or "unknown"
         if status in {"done", "failure"}:
             raise ValueError("Selected run is already finished.")
+        if self.run_control is not None:
+            self.run_control.clear_interrupt()
         feedback = str(human_feedback or "").strip() or "Continue the previous interrupted request."
         run_state["status"] = "running"
         run_state["phase"] = "executing"
@@ -914,7 +916,10 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("materials")],
+                skills=[
+                    self._skills_group_virtual_path("materials"),
+                    self._skills_group_virtual_path("execution"),
+                ],
                 runtime=runtime,
             ),
             self._compiled_worker_subagent(
@@ -927,7 +932,10 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_ML_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("machine_learning")],
+                skills=[
+                    self._skills_group_virtual_path("machine_learning"),
+                    self._skills_group_virtual_path("execution"),
+                ],
                 runtime=runtime,
             ),
             self._compiled_worker_subagent(
@@ -940,7 +948,10 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_ORCA_XTB_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("quantum_chemistry")],
+                skills=[
+                    self._skills_group_virtual_path("quantum_chemistry"),
+                    self._skills_group_virtual_path("execution"),
+                ],
                 runtime=runtime,
             ),
         ]
@@ -1361,6 +1372,7 @@ class SpecialistRunner:
             base / "materials": repo_root / "skills" / "materials",
             base / "machine_learning": repo_root / "skills" / "machine_learning",
             base / "quantum_chemistry": repo_root / "skills" / "quantum_chemistry",
+            base / "execution": repo_root / "skills" / "execution",
             base / "writing": repo_root / "skills" / "writing",
         }
         for target, source in layouts.items():
@@ -1501,6 +1513,14 @@ class SpecialistRunner:
             lines.append(f"Local preparation/analysis tools here: {', '.join(f'`{name}`' for name in prepare_tools)}.")
         if managed_tools:
             lines.append(f"Managed execution tools here: {', '.join(f'`{name}`' for name in managed_tools)}.")
+        if audience in {"materials_worker", "ml_worker", "orca_xtb_worker"} and managed_tools:
+            lines.append(
+                "If a DPDispatcher-backed tool fails and reports `remote_context_id`, `submission_hash`, or `receipt_rel`, read the `dpdispatcher-remote-receipts` skill before retrying; use `execute` for focused status, download, reset, or cleanup steps."
+            )
+        elif audience == "experiment" and managed_tools:
+            lines.append(
+                "If a worker reports DPDispatcher `remote_context_id`, `submission_hash`, or `receipt_rel`, send a focused follow-up to that worker for receipt-guided recovery instead of blindly rerunning the calculation."
+            )
         if machine_names or resource_names or task_names:
             facts: list[str] = []
             if machine_names:

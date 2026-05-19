@@ -15,6 +15,8 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     TaskSpec,
     dispatch_submission,
     make_work_base,
+    remote_context_from_exception,
+    remote_context_from_result,
 )
 from catmaster.tools.execution.mace_dispatch import (
     _collect_mace_outputs,
@@ -321,6 +323,7 @@ def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=30,
+        tool_name="mace_neb_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -358,6 +361,7 @@ def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "input_root_rel": workspace_relpath(input_root),
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             error_code="dispatch_failed",
@@ -383,6 +387,7 @@ def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "climb": params.climb,
         "fmax": params.fmax,
         "steps": params.steps,
+        **remote_context_from_result(result),
         **collect_info,
     }
     lines = [

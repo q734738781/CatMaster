@@ -176,6 +176,7 @@ The active skill layout is:
 - `skills/materials/*`
 - `skills/machine_learning/*`
 - `skills/quantum_chemistry/*`
+- `skills/execution/*`
 - `skills/writing/*`
 
 At runtime they are staged into:
@@ -183,6 +184,7 @@ At runtime they are staged into:
 - `files/.deepagents/skills/materials`
 - `files/.deepagents/skills/machine_learning`
 - `files/.deepagents/skills/quantum_chemistry`
+- `files/.deepagents/skills/execution`
 - `files/.deepagents/skills/writing`
 
 Worker agents bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime. Coordinator specialists do not mount skill roots directly.

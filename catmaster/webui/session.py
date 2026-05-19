@@ -757,6 +757,22 @@ class WebSession:
                     result = loop.run_until_complete(task)
                 except asyncio.CancelledError:
                     result = {"status": "interrupted_paused"}
+                    if run_dir is not None:
+                        self._write_interrupted_run_state(
+                            run_dir,
+                            entrypoint=effective_lane,
+                            user_prompt=session_user_prompt,
+                            chat_session_id=message_session_id,
+                        )
+                    if runtime.reporter:
+                        runtime.reporter.emit(
+                            make_event(
+                                "RUN_PAUSED",
+                                category="run",
+                                payload={"status": "interrupted_paused", "phase": "task_cancelled"},
+                                run_id=run_dir.name if run_dir is not None else None,
+                            )
+                        )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
                     if run_status == "done":
@@ -1630,13 +1646,53 @@ class WebSession:
                 "schema_version": int(payload.get("schema_version") or 1),
                 "entrypoint": str(payload.get("entrypoint") or entrypoint or "research").strip() or "research",
                 "status": "running",
-                "phase": str(payload.get("phase") or "executing"),
+                "phase": "executing" if is_resume else str(payload.get("phase") or "executing"),
                 "user_prompt": str(payload.get("user_prompt") or user_prompt or ""),
                 "chat_session_id": str(payload.get("chat_session_id") or chat_session_id or ""),
                 "thread_id": str(payload.get("thread_id") or thread_id or ""),
                 "text_preview": str(payload.get("text_preview") or user_prompt or "")[:280],
                 "proposal_review": bool(payload.get("proposal_review") or False),
                 "resume": bool(is_resume),
+            }
+        )
+        try:
+            (run_dir / RUN_STATE_FILE).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
+    def _write_interrupted_run_state(
+        self,
+        run_dir: Path,
+        *,
+        entrypoint: str,
+        user_prompt: str,
+        chat_session_id: str,
+    ) -> None:
+        if not run_dir:
+            return
+        payload = self._read_run_state_payload(run_dir)
+        if str(payload.get("status") or "").strip().lower() in {
+            "done",
+            "failure",
+            "error",
+            "needs_intervention",
+        }:
+            return
+        payload.update(
+            {
+                "schema_version": int(payload.get("schema_version") or 1),
+                "entrypoint": str(payload.get("entrypoint") or entrypoint or "research").strip() or "research",
+                "status": "interrupted_paused",
+                "phase": "interrupted",
+                "pending_human_input": None,
+                "proposal_review": False,
+                "proposal_revision_count": 0,
+                "text_preview": "Run interrupted by user.",
+                "user_prompt": str(payload.get("user_prompt") or user_prompt or ""),
+                "chat_session_id": str(payload.get("chat_session_id") or chat_session_id or ""),
+                "final_answer": "",
+                "summary": "Run interrupted by user.",
+                "facts": [],
             }
         )
         try:
@@ -1920,6 +1976,8 @@ class WebSession:
 
     def _display_status(self, base_status: str, selected_run: Optional[Path]) -> str:
         status = str(base_status or "").strip() or "unknown"
+        if status in {"starting", "running", "interrupting"}:
+            return status
         run_status = self._load_task_state_status(selected_run)
         if run_status:
             return run_status

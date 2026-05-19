@@ -35,6 +35,7 @@ class DPDispatcherAdapter:
             "download_path": res.output_dir,
             "submission_dir": res.submission_dir,
             "work_base": res.work_base,
+            "remote_context": res.remote_context,
         }
 
     def _submit_vasp(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -48,6 +49,7 @@ class DPDispatcherAdapter:
             "download_path": res.output_dir,
             "submission_dir": res.submission_dir,
             "work_base": res.work_base,
+            "remote_context": res.remote_context,
         }
 
 

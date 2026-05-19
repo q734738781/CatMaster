@@ -7,11 +7,12 @@ The active runtime loads these skills through DeepAgent skill roots:
 - `skills/materials/*`
 - `skills/machine_learning/*`
 - `skills/quantum_chemistry/*`
+- `skills/execution/*`
 - `skills/writing/*`
 
 ## Required format
 
-Each skill must live at `skills/materials/<skill-name>/SKILL.md`, `skills/machine_learning/<skill-name>/SKILL.md`, `skills/quantum_chemistry/<skill-name>/SKILL.md`, or `skills/writing/<skill-name>/SKILL.md` and must satisfy all of the following:
+Each skill must live at `skills/materials/<skill-name>/SKILL.md`, `skills/machine_learning/<skill-name>/SKILL.md`, `skills/quantum_chemistry/<skill-name>/SKILL.md`, `skills/execution/<skill-name>/SKILL.md`, or `skills/writing/<skill-name>/SKILL.md` and must satisfy all of the following:
 
 - YAML frontmatter at the top.
 - `name` must exactly match the directory name.

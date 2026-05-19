@@ -3712,7 +3712,12 @@ function App({ boot }) {
                     <button
                       type="button"
                       className="ghost-btn"
-                      onClick={() => setForm((prev) => ({ ...prev, resume_run_name: selectedRun }))}
+                      onClick={() => setForm((prev) => ({
+                        ...prev,
+                        run_mode: "resume_selected_run",
+                        resume_run_name: selectedRun,
+                      }))}
+                      disabled={!selectedRun}
                     >
                       Use selected run for resume
                     </button>

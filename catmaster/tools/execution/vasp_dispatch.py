@@ -14,6 +14,8 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
+    remote_context_from_exception,
+    remote_context_from_result,
     TaskSpec,
     BatchDispatchRequest,
     make_work_base,
@@ -383,6 +385,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="vasp_execute_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -426,6 +429,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "output_root_rel": workspace_relpath(output_root),
                 "outputs": outputs,
                 "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
             },
             error_code="dispatch_failed",
         )
@@ -440,6 +444,7 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "batch_state_rel": workspace_relpath(state_path),
         "task_name": task_name,
         "resources_key": resources_key,
+        **remote_context_from_result(result),
     }
     first_output = outputs[0]["output_dir_rel"] if outputs else ""
     lines = [
@@ -494,6 +499,7 @@ def _build_vasp_execute_request(
         backward_common_files=rendered["backward_common_files"],
         local_root=str(local_root),
         check_interval=params.check_interval,
+        tool_name="vasp_execute",
     )
 
 

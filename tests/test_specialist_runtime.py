@@ -319,6 +319,7 @@ def test_execution_capability_contract_distinguishes_local_and_managed_runtime(t
     assert "`vasp_execute_batch`" in materials_contract
     assert "do not require a local periodic DFT engine to be directly runnable first" in materials_contract
     assert "before attempting local MACE calculators or ad hoc Python wrappers" in materials_contract
+    assert "remote_context_id" in materials_contract
     assert "`mace_train`" in ml_contract
     assert "MACE training/fine-tuning/evaluation" in ml_contract
     assert "before attempting local MACE CLI/Python wrappers" in ml_contract
@@ -1008,11 +1009,11 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["ml_worker"]
         assert "runnable" in subagents_by_name["orca_xtb_worker"]
         assert {tool.name for tool in materials_worker_kwargs["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert materials_worker_kwargs["skills"] == ["/.deepagents/skills/materials"]
+        assert materials_worker_kwargs["skills"] == ["/.deepagents/skills/materials", "/.deepagents/skills/execution"]
         assert {tool.name for tool in ml_worker_kwargs["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert ml_worker_kwargs["skills"] == ["/.deepagents/skills/machine_learning"]
+        assert ml_worker_kwargs["skills"] == ["/.deepagents/skills/machine_learning", "/.deepagents/skills/execution"]
         assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert orca_worker_kwargs["skills"] == ["/.deepagents/skills/quantum_chemistry"]
+        assert orca_worker_kwargs["skills"] == ["/.deepagents/skills/quantum_chemistry", "/.deepagents/skills/execution"]
         assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
         assert "parent-maintained project memory" in materials_worker_kwargs["system_prompt"]
@@ -1184,38 +1185,25 @@ def test_specialist_lanes_start_with_staged_skills(
     staged_materials = workspace / "files" / ".deepagents" / "skills" / "materials"
     staged_writing = workspace / "files" / ".deepagents" / "skills" / "writing"
     staged_quantum_chemistry = workspace / "files" / ".deepagents" / "skills" / "quantum_chemistry"
+    staged_execution = workspace / "files" / ".deepagents" / "skills" / "execution"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
     assert staged_materials.is_dir()
     assert staged_writing.is_dir()
     assert staged_quantum_chemistry.is_dir()
+    assert staged_execution.is_dir()
     staged_machine_learning = workspace / "files" / ".deepagents" / "skills" / "machine_learning"
     assert staged_machine_learning.is_dir()
-    materials_skill_names = {path.name for path in staged_materials.iterdir() if path.is_dir()}
-    writing_skill_names = {path.name for path in staged_writing.iterdir() if path.is_dir()}
-    ml_worker_view_names = {path.name for path in staged_machine_learning.iterdir() if path.is_dir()}
-    orca_xtb_worker_view_names = {path.name for path in staged_quantum_chemistry.iterdir() if path.is_dir()}
-    assert "literature-grounding" in materials_skill_names
-    assert "structure-visual-inspection" in materials_skill_names
-    assert "materials-discovery-and-bulk-selection" in materials_skill_names
-    assert "neb-prepare" in materials_skill_names
-    assert "neb-calculation" in materials_skill_names
-    assert "neb-analysis" in materials_skill_names
-    assert {
-        "mace-dataset-curation",
-        "mace-finetuning-and-benchmark",
-        "active-learning-relabel-loop",
-    } <= ml_worker_view_names
-    assert {
-        "conformer-search-and-preopt",
-        "xtb-screen-and-prune",
-        "orca-optfreq-thermochemistry",
-        "scan-to-ts",
-        "nebts-and-irc",
-        "nmr-ensemble-workup",
-    } <= orca_xtb_worker_view_names
-    assert "achemso-latex-manuscript" in writing_skill_names
-    assert "results-and-discussion-writing" in writing_skill_names
-    assert "scientific-writing" in writing_skill_names
+    repo_root = Path(runtime_mod.__file__).resolve().parents[2]
+
+    def _skill_names(root: Path) -> set[str]:
+        return {path.parent.name for path in root.glob("*/SKILL.md") if path.is_file()}
+
+    assert _skill_names(staged_materials) == _skill_names(repo_root / "skills" / "materials")
+    assert _skill_names(staged_machine_learning) == _skill_names(repo_root / "skills" / "machine_learning")
+    assert _skill_names(staged_quantum_chemistry) == _skill_names(repo_root / "skills" / "quantum_chemistry")
+    assert _skill_names(staged_execution) == _skill_names(repo_root / "skills" / "execution")
+    assert _skill_names(staged_writing) == _skill_names(repo_root / "skills" / "writing")
+    assert _skill_names(staged_writing)
 
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint
@@ -1640,3 +1628,72 @@ def test_specialist_runner_returns_interrupted_paused_when_interrupt_requested_b
     assert run_state["summary"] == "Run interrupted by user."
     assert run_state["research_goal"]["objective"] == "Stop before any deepagent work starts."
     assert run_state["research_goal"]["status"] == "paused"
+
+
+def test_specialist_resume_clears_stale_interrupt_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    run_control = RunControl(run_id="run_interrupt_resume")
+    run_control.request_interrupt(source="ui", note="stop")
+    captured: dict[str, object] = {}
+
+    class _CapturingAgent:
+        async def ainvoke(self, payload, config=None):
+            captured["payload"] = payload
+            captured["config"] = config
+            return {
+                "messages": [
+                    AIMessage(
+                        content="## Summary\nresumed\n\n## Facts\n- interrupt flag cleared\n\n## Files\n- notes/resumed.md"
+                    )
+                ]
+            }
+
+    def _fake_create_deep_agent(**kwargs):
+        captured["agent_kwargs"] = kwargs
+        return _CapturingAgent()
+
+    @asynccontextmanager
+    async def _fake_open_agent_runtime(self, *, files_root: Path):
+        _ = files_root
+        yield {"checkpointer": object(), "store": object(), "backend": object()}
+
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_subagent", staticmethod(lambda: _FakeSubAgent))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=run_control,
+        project_id="proj_interrupt_resume",
+        preferred_entrypoint="research",
+    )
+
+    interrupted = asyncio.run(
+        built.runner.arun(
+            "Interrupt this run first.",
+            entrypoint="research",
+            proposal_review=False,
+        )
+    )
+    assert interrupted["status"] == "interrupted_paused"
+    assert run_control.snapshot()["requested"] is True
+
+    result = asyncio.run(built.runner.aresume("continue now"))
+
+    assert result["status"] == "done"
+    assert run_control.snapshot()["requested"] is False
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert "continue now" in payload["messages"][0]["content"]
+    run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+    assert run_state["status"] == "done"

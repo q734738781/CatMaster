@@ -17,6 +17,8 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
+    remote_context_from_exception,
+    remote_context_from_result,
     TaskSpec,
     BatchDispatchRequest,
     make_work_base,
@@ -585,6 +587,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="mace_relax_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -625,6 +628,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "input_root_rel": workspace_relpath(input_root),
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             error_code="dispatch_failed",
@@ -647,6 +651,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "dispersion": dispersion,
         "default_dtype": params.default_dtype,
         "relax_lattice": relax_lattice,
+        **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
@@ -775,6 +780,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="mace_sp_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -815,6 +821,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "input_root_rel": workspace_relpath(input_root),
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             error_code="dispatch_failed",
@@ -836,6 +843,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "head": head,
         "dispersion": dispersion,
         "default_dtype": params.default_dtype,
+        **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
@@ -972,6 +980,7 @@ def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="mace_md_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -1012,6 +1021,7 @@ def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "input_root_rel": workspace_relpath(input_root),
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             error_code="dispatch_failed",
@@ -1035,6 +1045,7 @@ def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "default_dtype": params.default_dtype,
         "md_config": params.md_config,
         "params_file_rel": workspace_relpath(params_path),
+        **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
