@@ -1,7 +1,7 @@
 vasp_cpu:
-  machine: cpu_server
+  machine: cpu_server_2
   number_node: 1
-  cpu_per_node: 52
+  cpu_per_node: 32
   queue_name: batch
   group_size: 1
   custom_flags:
@@ -10,9 +10,9 @@ vasp_cpu:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
 
 vasp_cpu_neb:
-  machine: cpu_server
+  machine: cpu_server_2
   number_node: 1
-  cpu_per_node: 104
+  cpu_per_node: 96
   queue_name: batch
   group_size: 1
   custom_flags:
