@@ -5,6 +5,7 @@ CatMaster 是一个面向计算催化工作的本地 agent 工具。日常使用
 > 中文为主；英文使用指南见后半部分。
 
 能力说明请参考arxiv预印本：[Toward Autonomous Computational Catalysis Research via Agentic Systems](https://arxiv.org/abs/2601.13508)
+
 如果这个工作对你有用，考虑引用：
 ```
 @misc{chen2026autonomouscomputationalcatalysisresearch,
