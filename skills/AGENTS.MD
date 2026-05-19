@@ -38,8 +38,6 @@ description: Use this skill for slab construction, vacuum and layer choices, sur
 license: project-local
 compatibility: local
 allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height supercell"
-metadata:
-  catmaster-suggested-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height supercell"
 ---
 ```
 
@@ -47,8 +45,6 @@ Rules:
 
 - `license`, `compatibility`, and `allowed-tools` should follow the DeepAgent skill frontmatter pattern.
 - `allowed-tools` is the primary field and should list concrete tool names separated by spaces.
-- `metadata.catmaster-suggested-tools`, if present, should carry the same semantics and the same tool set as `allowed-tools`.
-- Keep `metadata.catmaster-suggested-tools` synchronized with `allowed-tools` while legacy readers still exist.
 - The `allowed-tools` list and the body `## Suggested tools` list must agree.
 - If no tool should be suggested, use an empty frontmatter string and body text `- (none specified)`.
 - Suggested tool names must match real active-path tool names or DeepAgent built-ins. Do not leave legacy names such as removed tools or stale aliases in new or updated skills.

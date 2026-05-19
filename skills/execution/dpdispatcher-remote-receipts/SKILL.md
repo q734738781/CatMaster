@@ -4,8 +4,6 @@ description: Use this skill when a DPDispatcher-backed managed execution tool re
 license: project-local
 compatibility: local
 allowed-tools: "execute"
-metadata:
-  catmaster-suggested-tools: "execute"
 ---
 
 # dpdispatcher-remote-receipts
