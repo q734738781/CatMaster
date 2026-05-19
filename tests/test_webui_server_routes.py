@@ -24,21 +24,21 @@ def _scope(path: str) -> dict:
 
 
 def test_monitor_path_redirect_route_precedes_root_mount(tmp_path: Path) -> None:
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     full_matches = [route for route in app.routes if route.matches(_scope("/monitor"))[0] == Match.FULL]
     assert full_matches
     assert getattr(full_matches[0], "path", None) == "/monitor"
 
 
 def test_monitor_path_with_slash_hits_monitor_mount(tmp_path: Path) -> None:
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     full_matches = [route for route in app.routes if route.matches(_scope("/monitor/"))[0] == Match.FULL]
     assert full_matches
     assert getattr(full_matches[0], "path", None) == "/monitor/"
 
 
 def test_pages_load_react_static_bundle(tmp_path: Path) -> None:
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
 
     home = client.get("/")
@@ -59,7 +59,7 @@ def test_pages_load_react_static_bundle(tmp_path: Path) -> None:
 
 
 def test_bootstrap_recovers_from_stale_missing_project_space(tmp_path: Path) -> None:
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
 
     response = client.get(
@@ -82,7 +82,7 @@ def test_files_routes_list_preview_and_download(tmp_path: Path) -> None:
     (ws / "files" / "notes.md").write_text("# Demo\n\nHello files view.\n", encoding="utf-8")
     shutil.copyfile("tests/assets/Fe.cif", ws / "files" / "Fe.cif")
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     assert boot.status_code == 200
@@ -124,7 +124,7 @@ def test_files_routes_upload_and_archive(tmp_path: Path) -> None:
     (ws / "metadata").mkdir(parents=True)
     (ws / "files" / "nested" / "existing.txt").write_text("old", encoding="utf-8")
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     assert boot.status_code == 200
@@ -181,7 +181,7 @@ def test_files_routes_upload_unzip_and_delete(tmp_path: Path) -> None:
         zip_handle.writestr("folder/a.txt", "alpha")
         zip_handle.writestr("folder/b.txt", "beta")
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     ctx = boot.json()["ctx"]
@@ -235,7 +235,7 @@ def test_files_upload_unzip_rejects_unsafe_paths(tmp_path: Path) -> None:
     with zipfile.ZipFile(zip_buffer, "w") as zip_handle:
         zip_handle.writestr("../escape.txt", "bad")
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     ctx = boot.json()["ctx"]
@@ -262,7 +262,7 @@ def test_files_archive_skips_symlinks_that_escape_workspace(tmp_path: Path) -> N
     except OSError:
         return
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     ctx = boot.json()["ctx"]
@@ -304,7 +304,7 @@ def test_structure_view_and_animation_routes(tmp_path: Path, monkeypatch) -> Non
 
     monkeypatch.setattr(server, "_read_structure_frames", _patched_read_structure_frames)
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     assert boot.status_code == 200
@@ -348,7 +348,7 @@ def test_plain_outcar_uses_native_view_without_vibration_controls(tmp_path: Path
 
     monkeypatch.setattr(server, "_read_structure_frames", _patched_read_structure_frames)
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     ctx = boot.json()["ctx"]
@@ -385,7 +385,7 @@ def test_outcar_with_vibration_header_without_equals_uses_compatibility_view(tmp
 
     monkeypatch.setattr(server, "_read_structure_frames", _patched_read_structure_frames)
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     ctx = boot.json()["ctx"]
@@ -402,7 +402,7 @@ def test_outcar_with_vibration_header_without_equals_uses_compatibility_view(tmp
 
 
 def test_root_asset_route_serves_static_font_files(tmp_path: Path) -> None:
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
 
     response = client.get("/asset-KaTeX_Main-Regular.woff")
@@ -445,7 +445,7 @@ def test_poscar_uses_native_vasp_poscar_view(tmp_path: Path, monkeypatch) -> Non
 
     monkeypatch.setattr(server, "_read_structure_frames", _patched_read_structure_frames)
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     ctx = boot.json()["ctx"]
@@ -475,7 +475,7 @@ def test_cif_uses_native_cif_view(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(server, "_read_structure_frames", _patched_read_structure_frames)
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     ctx = boot.json()["ctx"]
@@ -489,7 +489,7 @@ def test_cif_uses_native_cif_view(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_favicon_route_does_not_404(tmp_path: Path) -> None:
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
 
     response = client.get("/favicon.ico")
@@ -517,7 +517,7 @@ def test_memory_route_returns_workspace_memory(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     assert boot.status_code == 200
@@ -740,7 +740,7 @@ def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path)
         encoding="utf-8",
     )
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     assert boot.status_code == 200
@@ -777,7 +777,7 @@ def test_same_ctx_snapshot_is_scoped_by_project_space(tmp_path: Path) -> None:
             encoding="utf-8",
         )
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "alpha"})
     assert boot.status_code == 200
@@ -820,7 +820,7 @@ def test_bootstrap_recovers_active_run_for_lane(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    app = create_app(project_space_root=str(tmp_path))
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     response = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
 

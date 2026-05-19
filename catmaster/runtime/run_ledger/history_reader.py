@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
-from catmaster.agents.llm_utils import llm_text
+from catmaster.llm import llm_text
 from catmaster.runtime.run_ledger.hybrid_search import HybridRunLedgerSearcher
 from catmaster.runtime.run_ledger.models import (
     HistoricalRunsContextPack,

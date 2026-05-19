@@ -15,8 +15,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ToolPolicy": ("catmaster.runtime.tool_policy", "ToolPolicy"),
     "ToolBackend": ("catmaster.runtime.tool_backend", "ToolBackend"),
     "LocalToolBackend": ("catmaster.runtime.local_tool_backend", "LocalToolBackend"),
-    "RuntimeToolSurface": ("catmaster.runtime.tool_surface", "RuntimeToolSurface"),
-    "build_runtime_tool_surface": ("catmaster.runtime.tool_surface", "build_runtime_tool_surface"),
     "RunControl": ("catmaster.runtime.run_control", "RunControl"),
     "ArtifactPersistenceHandler": ("catmaster.runtime.artifact_callback", "ArtifactPersistenceHandler"),
     "LLMTracingHandler": ("catmaster.runtime.artifact_callback", "LLMTracingHandler"),

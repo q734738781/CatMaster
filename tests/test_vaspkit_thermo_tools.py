@@ -13,6 +13,10 @@ from catmaster.tools.analysis.vaspkit_thermo import (
 )
 
 
+_VASP_ADSORBATE_REFERENCE = "demos/reference_scripts/vaspkit_501_502/501_Z5_PX"
+_VASP_GAS_REFERENCE = "demos/reference_scripts/vaspkit_501_502/502_PX"
+
+
 def test_resolve_vaspkit_executable_expands_tilde_in_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
@@ -48,7 +52,7 @@ def test_vaspkit_adsorbate_thermo_correction_matches_reference_sample() -> None:
 
     content, artifact = vaspkit_adsorbate_thermo_correction(
         {
-            "calculation_dir": "reference_scripts/vaspkit_501_502/501_Z5_PX",
+            "calculation_dir": _VASP_ADSORBATE_REFERENCE,
             "temperature_k": 623.0,
         }
     )
@@ -58,7 +62,7 @@ def test_vaspkit_adsorbate_thermo_correction_matches_reference_sample() -> None:
     assert data["task_id"] == 501
     assert data["backend"] == "vaspkit"
     assert data["calculation_dir_scope"] == "repo"
-    assert data["calculation_dir"] == "reference_scripts/vaspkit_501_502/501_Z5_PX"
+    assert data["calculation_dir"] == _VASP_ADSORBATE_REFERENCE
     assert data["temperature_k"] == pytest.approx(623.0)
     assert data["e_zpe_ev"] == pytest.approx(4.151605)
     assert data["thermal_correction_u_ev"] == pytest.approx(5.081731)
@@ -76,7 +80,7 @@ def test_vaspkit_gas_thermo_correction_matches_reference_sample() -> None:
 
     content, artifact = vaspkit_gas_thermo_correction(
         {
-            "calculation_dir": "reference_scripts/vaspkit_501_502/502_PX",
+            "calculation_dir": _VASP_GAS_REFERENCE,
             "temperature_k": 623.0,
             "pressure_atm": 1.0,
             "spin_multiplicity": 1,
@@ -88,7 +92,7 @@ def test_vaspkit_gas_thermo_correction_matches_reference_sample() -> None:
     assert data["task_id"] == 502
     assert data["backend"] == "vaspkit"
     assert data["calculation_dir_scope"] == "repo"
-    assert data["calculation_dir"] == "reference_scripts/vaspkit_501_502/502_PX"
+    assert data["calculation_dir"] == _VASP_GAS_REFERENCE
     assert data["temperature_k"] == pytest.approx(623.0)
     assert data["pressure_atm_input"] == pytest.approx(1.0)
     assert data["pressure_pa"] == pytest.approx(101325.0)
@@ -109,7 +113,7 @@ def test_vaspkit_adsorbate_thermo_correction_falls_back_to_ase(monkeypatch: pyte
 
     content, artifact = vaspkit_adsorbate_thermo_correction(
         {
-            "calculation_dir": "reference_scripts/vaspkit_501_502/501_Z5_PX",
+            "calculation_dir": _VASP_ADSORBATE_REFERENCE,
             "temperature_k": 623.0,
         }
     )
@@ -133,7 +137,7 @@ def test_vaspkit_gas_thermo_correction_falls_back_to_ase(monkeypatch: pytest.Mon
 
     content, artifact = vaspkit_gas_thermo_correction(
         {
-            "calculation_dir": "reference_scripts/vaspkit_501_502/502_PX",
+            "calculation_dir": _VASP_GAS_REFERENCE,
             "temperature_k": 623.0,
             "pressure_atm": 1.0,
             "spin_multiplicity": 1,

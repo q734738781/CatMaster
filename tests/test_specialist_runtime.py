@@ -251,12 +251,8 @@ def test_orca_xtb_worker_prompt_includes_workspace_path_discipline() -> None:
     assert "Workspace path discipline" in prompt
     assert "Treat `/` only as the workspace virtual root" in prompt
     assert "molecular quantum-chemistry subtask" in prompt
-    assert "`create_molecule_from_smiles`" in prompt
-    assert "`xtb_run_batch`" in prompt
-    assert "`orca_execute_batch`" in prompt
     assert "first create the structure under `<topic>/structures/`" in prompt
     assert "Do not guess that a path like `<topic>/structures/<name>.xyz` already exists" in prompt
-    assert "default to `xtb_run_batch` or `crest_conformer_search`" in prompt
     assert "do not choose ORCA-XTB as the default fallback for routine preopt steps" in prompt
 
 
@@ -294,7 +290,7 @@ def test_specialist_prompts_require_explicit_follow_on_delegate_judgment() -> No
     assert "When one worker review episode returns, actively decide whether another bounded delegate pass is needed" in peer_review_prompt
 
 
-def test_execution_capability_contract_distinguishes_local_and_managed_runtime(tmp_path: Path) -> None:
+def test_execution_capability_contract_is_worker_scoped_and_tool_surface_bound(tmp_path: Path) -> None:
     workspace = tmp_path / "project_space"
     workspace.mkdir(parents=True)
 
@@ -307,27 +303,15 @@ def test_execution_capability_contract_distinguishes_local_and_managed_runtime(t
         preferred_entrypoint="research",
     )
 
-    research_contract = built.runner._execution_capability_contract(audience="research")
-    materials_contract = built.runner._execution_capability_contract(audience="materials_worker")
-    ml_contract = built.runner._execution_capability_contract(audience="ml_worker")
-    orca_contract = built.runner._execution_capability_contract(audience="orca_xtb_worker")
-
-    assert "Do not infer managed-execution availability from local shell probing alone." in research_contract
-    assert "Remote-first execution rule" in research_contract
-    assert "call that tool before using `execute`, local Python, or ad hoc shell scripts" in research_contract
-    assert "downgrading it to literature-only validation" in research_contract
-    assert "`vasp_execute_batch`" in materials_contract
-    assert "do not require a local periodic DFT engine to be directly runnable first" in materials_contract
-    assert "before attempting local MACE calculators or ad hoc Python wrappers" in materials_contract
-    assert "remote_context_id" in materials_contract
-    assert "`mace_train`" in ml_contract
-    assert "MACE training/fine-tuning/evaluation" in ml_contract
-    assert "before attempting local MACE CLI/Python wrappers" in ml_contract
-    assert "prefer the registered managed tools when they fit the task" in ml_contract
-    assert "continue by writing and running local workspace scripts instead of blocking on tool coverage" in ml_contract
-    assert "`xtb_run_batch`" in orca_contract
-    assert "`orca_execute_batch`" in orca_contract
-    assert "serious molecular quantum-chemistry runs" in orca_contract
+    assert set(_MATERIALS_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
+    assert set(_ML_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
+    assert set(_ORCA_XTB_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
+    assert "mace_neb_batch" in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "mace_train" in _ML_WORKER_TOOL_ALLOWLIST
+    assert "orca_execute_batch" in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
+    assert "mace_neb_batch" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+    assert "mace_train" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+    assert "orca_execute_batch" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
 
 
 def test_writing_worker_and_proposal_prompts_include_workspace_layout_guidance() -> None:
@@ -906,10 +890,6 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "You remain the sole coordinator and final decision-maker" in agent_kwargs["system_prompt"]
         assert "you may relaunch `experiment_specialist` for bounded follow-up work" in agent_kwargs["system_prompt"]
         assert "do not default to closing in the research thread just because one delegate completed" in agent_kwargs["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in agent_kwargs["system_prompt"]
-        assert "downgrading it to literature-only validation" in agent_kwargs["system_prompt"]
-        assert "issue a bounded probe to `experiment_specialist`" in agent_kwargs["system_prompt"]
-        assert "If a bounded local task needs a missing Python package, `execute` may install it with `python -m pip install ...`" in agent_kwargs["system_prompt"]
         assert "runnable" in subagents_by_name["experiment_specialist"]
         assert "runnable" in subagents_by_name["writing_specialist"]
         assert "runnable" in subagents_by_name["peer_review_specialist"]
@@ -1035,12 +1015,10 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Delegate domain-owned work to the proper specialized subagent first." in agent_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
-        assert "export_builtin_tool_source" in agent_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
         assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in agent_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
-        assert "use `web_search` for a narrow official-docs or primary-source check" in agent_kwargs["system_prompt"]
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
         assert "If a worker needs a handy Python package for a bounded local step and it is missing" in agent_kwargs["system_prompt"]
         assert "Experiment completion audit: before final closeout" in agent_kwargs["system_prompt"]
@@ -1050,25 +1028,15 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
-        assert "export_builtin_tool_source" in materials_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in materials_worker_kwargs["system_prompt"]
         assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in materials_worker_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in materials_worker_kwargs["system_prompt"]
-        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in materials_worker_kwargs["system_prompt"]
         assert "obtain POTCARs through the pymatgen interface" in materials_worker_kwargs["system_prompt"]
-        assert "install it with `execute` via `python -m pip install ...`" in materials_worker_kwargs["system_prompt"]
         assert "If a handy Python package is missing for a bounded local step" in materials_worker_kwargs["system_prompt"]
-        assert "use `web_search` for a narrow official-docs or primary-source check" in materials_worker_kwargs["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in materials_worker_kwargs["system_prompt"]
         assert "Do not infer managed-execution availability from local shell probing alone." in materials_worker_kwargs["system_prompt"]
-        assert "do not require a local periodic DFT engine to be directly runnable first" in materials_worker_kwargs["system_prompt"]
-        assert "For MACE relaxations, single-points, MD, and NEB, call the registered `mace_*_batch` managed tools first" in materials_worker_kwargs["system_prompt"]
-        assert "do not run MACE calculators directly in local Python just because the package is importable" in materials_worker_kwargs["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in ml_worker_kwargs["system_prompt"]
         assert "When a registered managed ML tool fits the task, prefer that managed path first." in ml_worker_kwargs["system_prompt"]
-        assert "prefer `build_dataset_from_runs`, `mace_train`, and `mace_evaluate` over ad hoc local wrapper scripts" in ml_worker_kwargs["system_prompt"]
-        assert "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request" in ml_worker_kwargs["system_prompt"]
-        assert "Do not replace `mace_train` or `mace_evaluate` with local MACE CLI/Python execution" in ml_worker_kwargs["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in ml_worker_kwargs["system_prompt"]
         assert "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`" in ml_worker_kwargs["system_prompt"]
         assert "If a handy Python package is still missing for a bounded local step" in ml_worker_kwargs["system_prompt"]
@@ -1077,22 +1045,13 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in ml_worker_kwargs["system_prompt"]
         assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in ml_worker_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in ml_worker_kwargs["system_prompt"]
-        assert "use `execute` to implement the missing step with Python and mature third-party libraries" in ml_worker_kwargs["system_prompt"]
-        assert "install it with `execute` via `python -m pip install ...`" in ml_worker_kwargs["system_prompt"]
         assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in ml_worker_kwargs["system_prompt"]
-        assert "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; MACE training/fine-tuning normally falls into this category." in ml_worker_kwargs["system_prompt"]
         assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in ml_worker_kwargs["system_prompt"]
         assert "keep going locally with reusable scripts under `scripts/` instead of stopping" in ml_worker_kwargs["system_prompt"]
         assert "Do not infer managed-execution availability from local shell probing alone." in ml_worker_kwargs["system_prompt"]
-        assert "registered managed-execution path" in ml_worker_kwargs["system_prompt"]
-        assert "use `web_search` for a narrow official-docs or primary-source check" in ml_worker_kwargs["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in ml_worker_kwargs["system_prompt"]
         assert "molecular quantum-chemistry subtask" in orca_worker_kwargs["system_prompt"]
-        assert "`enumerate_molecular_conformers`" in orca_worker_kwargs["system_prompt"]
-        assert "`orca_execute_batch`" in orca_worker_kwargs["system_prompt"]
         assert "Treat xTB/CREST as the fast exploration layer" in orca_worker_kwargs["system_prompt"]
-        assert "default to `xtb_run_batch` or `crest_conformer_search`" in orca_worker_kwargs["system_prompt"]
-        assert "install it with `execute` via `python -m pip install ...`" in orca_worker_kwargs["system_prompt"]
         assert "If a handy Python package is missing for a bounded local step" in orca_worker_kwargs["system_prompt"]
         assert "Do not infer managed-execution availability from local shell probing alone." in orca_worker_kwargs["system_prompt"]
         assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in agent_kwargs["system_prompt"]
@@ -1122,7 +1081,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
-        assert "Use `web_search` directly only for narrow background supplementation" in agent_kwargs["system_prompt"]
+        assert "narrow background supplementation" in agent_kwargs["system_prompt"]
         assert "Each writing-worker handoff should cover only one section or one bounded organization/integration task" in agent_kwargs["system_prompt"]
         assert "figures, tables, and concise explanatory schematics as part of the default deliverable" in agent_kwargs["system_prompt"]
         assert "Supporting Information / Supporting Data package" in agent_kwargs["system_prompt"]
@@ -1130,7 +1089,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "place it after the references" in agent_kwargs["system_prompt"]
         assert "journal-style title centered on the chemical system and principal scientific finding" in agent_kwargs["system_prompt"]
         assert "figures to be inserted near their first substantive discussion rather than batched at the end" in agent_kwargs["system_prompt"]
-        assert "run `review_pdf_manuscript` once on that PDF for comment-only publication-readiness review" in agent_kwargs["system_prompt"]
+        assert "manuscript-review capability once on that PDF" in agent_kwargs["system_prompt"]
         assert "reconcile the manuscript against the accepted suggestions and run one more bounded polishing/revision pass" in agent_kwargs["system_prompt"]
         assert "clearly exposed as `ReviewTarget`" in agent_kwargs["system_prompt"]
         assert "publishable paper ready to enter peer review" in agent_kwargs["system_prompt"]
@@ -1138,7 +1097,6 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Delegate domain-owned work to the proper specialized subagent first." in agent_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
-        assert "export_builtin_tool_source" in agent_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
         assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in agent_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
@@ -1154,7 +1112,6 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "publishable paper ready to enter peer review" in writing_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in writing_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in writing_worker_kwargs["system_prompt"]
-        assert "export_builtin_tool_source" in writing_worker_kwargs["system_prompt"]
         assert "Perform conservative section-level prose polish" in writing_polisher_kwargs["system_prompt"]
         assert "without changing claim strength, scientific scope, evidence selection" in writing_polisher_kwargs["system_prompt"]
         assert "For journal-facing citations and BibTeX, use publication-style metadata only" in writing_worker_kwargs["system_prompt"]
@@ -1165,11 +1122,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "Act like a journal editor coordinating external peer review" in agent_kwargs["system_prompt"]
         assert "Reviewer Comments" in agent_kwargs["system_prompt"]
-        assert "peer_review_request" in agent_kwargs["system_prompt"]
         assert "save the full review as one durable workspace markdown memo" in agent_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
-        assert "export_builtin_tool_source" in agent_kwargs["system_prompt"]
         assert "do not compress away the editor comment or reviewer comment sections" in agent_kwargs["system_prompt"]
         assert "peer_review_worker_agent" in subagents_by_name
         peer_review_worker_kwargs = _find_created_agent("peer_review_worker_agent")
@@ -1178,8 +1133,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert peer_review_worker_kwargs["skills"] == ["/.deepagents/skills/writing"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in peer_review_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in peer_review_worker_kwargs["system_prompt"]
-        assert "export_builtin_tool_source" in peer_review_worker_kwargs["system_prompt"]
-        assert "call `peer_review_request` on that PDF exactly once for this episode" in peer_review_worker_kwargs["system_prompt"]
+        assert "dedicated peer-review request capability on that PDF exactly once" in peer_review_worker_kwargs["system_prompt"]
 
     staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
     staged_materials = workspace / "files" / ".deepagents" / "skills" / "materials"

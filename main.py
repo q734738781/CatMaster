@@ -27,8 +27,13 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument(
+        "--no-login",
+        action="store_true",
+        help="Disable login and open the built-in admin workspace.",
+    )
     args = parser.parse_args()
-    launch(host=args.host, port=args.port, project_space_root=args.project_space_root)
+    launch(host=args.host, port=args.port, project_space_root=args.project_space_root, no_login=args.no_login)
 
 
 if __name__ == "__main__":

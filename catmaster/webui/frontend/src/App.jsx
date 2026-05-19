@@ -12,11 +12,16 @@ import {
   Bot,
   Files,
   FolderOpen,
+  LockKeyhole,
+  LogIn,
+  LogOut,
   MemoryStick,
   MonitorDot,
   RefreshCw,
   Send,
   Square,
+  UserPlus,
+  UserRound,
 } from "lucide-react";
 import Papa from "papaparse";
 import Markdown from "react-markdown";
@@ -64,10 +69,18 @@ async function apiFetch(url, options = {}) {
     },
     ...options,
   });
+  const text = await response.text();
   if (!response.ok) {
-    throw new Error((await response.text()) || `Request failed: ${response.status}`);
+    let message = text || `Request failed: ${response.status}`;
+    try {
+      const payload = JSON.parse(text || "{}");
+      message = String(payload?.detail || payload?.message || message);
+    } catch {
+      // Keep the raw response body when it is not JSON.
+    }
+    throw new Error(message);
   }
-  return response.json();
+  return text ? JSON.parse(text) : {};
 }
 
 function formatTime(ts) {
@@ -2708,6 +2721,97 @@ function buildBootstrapParams({ useStored = true } = {}) {
   return { params, lane: nextLane, usedStoredCtx, usedStoredProjectSpace };
 }
 
+function AuthScreen({
+  mode,
+  form,
+  busy,
+  error,
+  loading = false,
+  onModeChange,
+  onFormChange,
+  onSubmit,
+  onCaptchaRefresh,
+}) {
+  const isRegister = mode === "register";
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel">
+        <div className="auth-header">
+          <div className="topbar-logo">C</div>
+          <div>
+            <h1>CatMaster</h1>
+            <p>{loading ? "Checking session" : isRegister ? "Create account" : "Sign in"}</p>
+          </div>
+        </div>
+        {loading ? (
+          <div className="auth-loading">Loading...</div>
+        ) : (
+          <>
+            <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+              <button
+                type="button"
+                className={mode === "login" ? "active" : ""}
+                onClick={() => onModeChange("login")}
+              >
+                <ActionContent icon={LogIn}>Login</ActionContent>
+              </button>
+              <button
+                type="button"
+                className={isRegister ? "active" : ""}
+                onClick={() => onModeChange("register")}
+              >
+                <ActionContent icon={UserPlus}>Register</ActionContent>
+              </button>
+            </div>
+            <form className="auth-form" onSubmit={onSubmit}>
+              <label>
+                <span>Username</span>
+                <input
+                  value={form.username}
+                  autoComplete="username"
+                  onChange={(event) => onFormChange({ username: event.target.value })}
+                  placeholder="username"
+                />
+              </label>
+              <label>
+                <span>Password</span>
+                <input
+                  value={form.password}
+                  type="password"
+                  autoComplete={isRegister ? "new-password" : "current-password"}
+                  onChange={(event) => onFormChange({ password: event.target.value })}
+                  placeholder="password"
+                />
+              </label>
+              {isRegister ? (
+                <label>
+                  <span>Captcha</span>
+                  <div className="captcha-row">
+                    <div className="captcha-question">{form.captcha_question || "..."}</div>
+                    <button type="button" className="ghost-btn" onClick={onCaptchaRefresh} disabled={busy}>
+                      <ActionContent icon={RefreshCw}>Refresh</ActionContent>
+                    </button>
+                  </div>
+                  <input
+                    value={form.captcha_answer}
+                    inputMode="numeric"
+                    onChange={(event) => onFormChange({ captcha_answer: event.target.value })}
+                    placeholder="answer"
+                  />
+                </label>
+              ) : null}
+              {error ? <div className="auth-error">{error}</div> : null}
+              <button type="submit" disabled={busy}>
+                <ActionContent icon={isRegister ? UserPlus : LogIn}>{busy ? "Working" : isRegister ? "Register" : "Login"}</ActionContent>
+              </button>
+            </form>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+
 function App({ boot }) {
   const view = ["home", "monitor", "files"].includes(boot?.view) ? boot.view : "home";
   const [snapshot, setSnapshot] = useState(null);
@@ -2748,6 +2852,23 @@ function App({ boot }) {
     run_mode: "new_run",
     resume_run_name: "",
   });
+  const [authStatus, setAuthStatus] = useState({
+    loading: true,
+    auth_enabled: true,
+    authenticated: false,
+    username: "",
+  });
+  const [authMode, setAuthMode] = useState("login");
+  const [authForm, setAuthForm] = useState({
+    username: "",
+    password: "",
+    captcha_id: "",
+    captcha_question: "",
+    captcha_answer: "",
+  });
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authNonce, setAuthNonce] = useState(0);
   const deferredSearch = useDeferredValue(search);
   const eventSourceRef = useRef(null);
   const latestSeqRef = useRef(0);
@@ -2779,6 +2900,27 @@ function App({ boot }) {
     setLane(initialBootstrap.lane);
     (async () => {
       try {
+        const authData = await apiFetch("/api/auth/status");
+        if (cancelled) {
+          return;
+        }
+        startTransition(() => {
+          setAuthStatus({
+            loading: false,
+            auth_enabled: Boolean(authData.auth_enabled),
+            authenticated: Boolean(authData.authenticated),
+            username: String(authData.username || ""),
+          });
+        });
+        if (authData.auth_enabled && !authData.authenticated) {
+          startTransition(() => {
+            setSnapshot(null);
+            setCtx("");
+            setEvents([]);
+            setStatusMessage("");
+          });
+          return;
+        }
         const data = await apiFetch(`/api/bootstrap?${initialBootstrap.params.toString()}`);
         if (cancelled) {
           return;
@@ -2807,6 +2949,7 @@ function App({ boot }) {
           }
         }
         if (!cancelled) {
+          setAuthStatus((prev) => ({ ...prev, loading: false }));
           setStatusMessage(String(error?.message || error));
         }
       }
@@ -2814,7 +2957,16 @@ function App({ boot }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authNonce]);
+
+  useEffect(() => {
+    if (authStatus.loading || !authStatus.auth_enabled || authStatus.authenticated || authMode !== "register") {
+      return;
+    }
+    if (!authForm.captcha_id) {
+      void loadAuthCaptcha();
+    }
+  }, [authMode, authStatus.loading, authStatus.auth_enabled, authStatus.authenticated, authForm.captcha_id]);
 
   useEffect(() => {
     if (!ctx) {
@@ -2995,6 +3147,104 @@ function App({ boot }) {
       setAgentTab("ALL");
     }
   }, [agentTab, snapshot?.live_state]);
+
+  async function loadAuthCaptcha() {
+    try {
+      const data = await apiFetch("/api/auth/captcha");
+      startTransition(() => {
+        setAuthForm((prev) => ({
+          ...prev,
+          captcha_id: String(data.captcha_id || ""),
+          captcha_question: String(data.question || ""),
+          captcha_answer: "",
+        }));
+      });
+    } catch (error) {
+      startTransition(() => {
+        setAuthError(String(error?.message || error));
+      });
+    }
+  }
+
+  async function handleAuthSubmit(event) {
+    event.preventDefault();
+    const isRegister = authMode === "register";
+    startTransition(() => {
+      setAuthBusy(true);
+      setAuthError("");
+    });
+    try {
+      const payload = {
+        username: authForm.username,
+        password: authForm.password,
+        ...(isRegister
+          ? {
+              captcha_id: authForm.captcha_id,
+              captcha_answer: authForm.captcha_answer,
+            }
+          : {}),
+      };
+      const data = await apiFetch(isRegister ? "/api/auth/register" : "/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      forgetWebuiSession();
+      startTransition(() => {
+        setAuthStatus({
+          loading: false,
+          auth_enabled: Boolean(data.auth_enabled),
+          authenticated: Boolean(data.authenticated),
+          username: String(data.username || ""),
+        });
+        setAuthForm((prev) => ({ ...prev, password: "", captcha_answer: "" }));
+      });
+      setAuthNonce((value) => value + 1);
+    } catch (error) {
+      startTransition(() => {
+        setAuthError(String(error?.message || error));
+      });
+      if (isRegister) {
+        void loadAuthCaptcha();
+      }
+    } finally {
+      startTransition(() => {
+        setAuthBusy(false);
+      });
+    }
+  }
+
+  async function handleLogout() {
+    startTransition(() => {
+      setAuthBusy(true);
+      setStatusMessage("");
+    });
+    try {
+      await apiFetch("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    } catch {
+      // Local state still needs to leave the authenticated view.
+    } finally {
+      forgetWebuiSession();
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      startTransition(() => {
+        setSnapshot(null);
+        setCtx("");
+        setEvents([]);
+        setSelectedRun("");
+        setWorkspaceRoot("");
+        setWorkspaceName("");
+        setAuthStatus({
+          loading: false,
+          auth_enabled: true,
+          authenticated: false,
+          username: "",
+        });
+        setAuthBusy(false);
+      });
+    }
+  }
 
   async function refreshSnapshot(runName = selectedRun) {
     if (!ctx) {
@@ -3308,7 +3558,6 @@ function App({ boot }) {
 
   async function handleWorkspaceRefresh() {
     await postAndApply(`/api/session/${escapePath(ctx)}/workspace/refresh`, {
-      root_path: workspaceRoot,
       lane,
       workspace: currentProjectSpace,
     });
@@ -3316,7 +3565,6 @@ function App({ boot }) {
 
   async function handleWorkspaceOpen() {
     await postAndApply(`/api/session/${escapePath(ctx)}/workspace/open`, {
-      root_path: workspaceRoot,
       workspace: snapshot?.workspace_name || "",
       lane,
     }, { loadDetails: view === "monitor" });
@@ -3324,7 +3572,6 @@ function App({ boot }) {
 
   async function handleWorkspaceCreate() {
     await postAndApply(`/api/session/${escapePath(ctx)}/workspace/create`, {
-      root_path: workspaceRoot,
       workspace: workspaceName,
       lane,
     }, { loadDetails: view === "monitor" });
@@ -3363,6 +3610,30 @@ function App({ boot }) {
 
   async function handleInterrupt() {
     await postAndApply(`/api/session/${escapePath(ctx)}/run/interrupt`, { lane, project_space: snapshot?.workspace_name || "" });
+  }
+
+  if (authStatus.loading) {
+    return <AuthScreen mode={authMode} form={authForm} busy={authBusy} error={authError} loading />;
+  }
+
+  if (authStatus.auth_enabled && !authStatus.authenticated) {
+    return (
+      <AuthScreen
+        mode={authMode}
+        form={authForm}
+        busy={authBusy}
+        error={authError}
+        onModeChange={(nextMode) => {
+          startTransition(() => {
+            setAuthMode(nextMode);
+            setAuthError("");
+          });
+        }}
+        onFormChange={(patch) => setAuthForm((prev) => ({ ...prev, ...patch }))}
+        onSubmit={handleAuthSubmit}
+        onCaptchaRefresh={loadAuthCaptcha}
+      />
+    );
   }
 
   const workspaceOptions = snapshot?.workspaces || [];
@@ -3443,6 +3714,19 @@ function App({ boot }) {
             <ActionContent icon={Files}>Files</ActionContent>
           </a>
         </nav>
+        <div className="topbar-user">
+          <span className="topbar-user-name">
+            <UserRound size={14} />
+            {authStatus.username || "admin"}
+          </span>
+          {authStatus.auth_enabled ? (
+            <button type="button" className="ghost-btn topbar-logout" onClick={handleLogout} disabled={authBusy}>
+              <ActionContent icon={LogOut}>Logout</ActionContent>
+            </button>
+          ) : (
+            <span className="topbar-auth-mode">no-login</span>
+          )}
+        </div>
       </header>
 
       <div className="status-bar">
@@ -3459,8 +3743,11 @@ function App({ boot }) {
               <IconButton icon={RefreshCw} label="Refresh workspace" onClick={handleWorkspaceRefresh} />
             </div>
             <label>
-              <span>Root</span>
-              <input value={workspaceRoot} onChange={(event) => setWorkspaceRoot(event.target.value)} placeholder="Project-space root" />
+              <span>Locked root</span>
+              <div className="locked-root" title={workspaceRoot || ""}>
+                <LockKeyhole size={14} />
+                <span>{workspaceRoot || "-"}</span>
+              </div>
             </label>
             <label>
               <span>Current workspace</span>

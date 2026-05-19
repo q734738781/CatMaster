@@ -25,22 +25,22 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
 - `ExperimentSpecialist`
   - Bounded execution specialist.
   - May delegate only to `materials_worker`, `ml_worker`, and `orca_xtb_worker`.
-  - Uses the default `web_search` tool directly for narrow best-practice checks, official docs, or primary-source verification. Keep this limited to focused implementation grounding, not broad review.
+  - Uses direct public-source checking only for narrow best-practice checks, official docs, or primary-source verification. Keep this limited to focused implementation grounding, not broad review.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
-  - Uses the default `web_search` tool directly only for tightly bounded background supplementation needed by the current manuscript or note.
+  - Uses direct public-source checking only for tightly bounded background supplementation needed by the current manuscript or note.
 
 Execution guidance for the active experiment path:
 
-- If a dedicated tool does not cover a bounded execution task, prefer implementing the missing step with `execute`, Python, and mature third-party libraries inside the workspace over stopping at the tool boundary.
-- Local `execute` commands run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there with `python -m pip install ...` instead of modifying the main environment.
-- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow `web_search` check against current official documentation or primary sources before improvising. Do not turn that into a broad literature campaign.
+- If a dedicated tool does not cover a bounded execution task, prefer implementing the missing step with local command/Python capability and mature third-party libraries inside the workspace over stopping at the tool boundary.
+- Local command calls run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there instead of modifying the main environment.
+- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow current-docs or primary-source check before improvising. Do not turn that into a broad literature campaign.
 - If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
 
 ## 2) Current literature architecture
 
-All agent-visible public web search should flow through the unified `web_search` tool.
+All agent-visible public web search should flow through the registered public-source checking capability.
 
 Literature support is split into two forms:
 
@@ -48,21 +48,15 @@ Literature support is split into two forms:
   - Used by `research`
   - A compiled DeepAgent subagent
   - Internally delegates to:
-    - `literature_agent` for broad public-web review using `web_search`, `open_public_page`, and `find_in_page`
+    - `literature_agent` for broad public-web review, source inspection, and source-local page lookup
     - `metadata_agent` for exact scholarly metadata
 
-All autonomous specialists and workers also receive `web_search` as a default tool. That means:
+All autonomous specialists and workers also receive a default public-source checking capability. That means:
 
 - `ExperimentSpecialist`, `WritingSpecialist`, and worker agents may run their own narrow web checks directly.
 - Broad review, source inspection, and citation-grade reconciliation still belong to `litreview_agent`.
 
-The metadata side is intentionally separate from broad review:
-
-- `search_openalex`
-- `search_semantic_scholar`
-- `get_openalex_record`
-- `get_semantic_scholar_record`
-- `recommend_semantic_scholar`
+The metadata side is intentionally separate from broad review and is implemented by dedicated scholarly search, exact-record lookup, and recommendation tools.
 
 These are for exact paper metadata, DOI/year/venue/authors/citation resolution, and seed-paper expansion. They are not the broad-review layer.
 
@@ -208,7 +202,7 @@ Recommended frontmatter fields:
 `allowed-tools` is a skill-level recommendation list. It does not define the runtime-visible tool surface. Visible tools are determined by the specialist/subagent `tools=[...]` binding.
 
 When a tool surface changes, update the relevant skills in the same change.
-When adding or changing remote/managed execution tools, also update the relevant specialist or worker prompts in `catmaster/specialists/runtime.py` so they describe the new capability contract correctly. In particular, keep local interactive availability separate from managed execution availability, and do not leave agents inferring platform capability from local shell probing alone.
+Do not hard-code concrete tool-name routing into generic specialist prompts. Managed execution prompts should stay abstract and worker-scoped; put concrete remote/managed tool choices in skills, tool schemas/descriptions, allowlists, and registry wiring. Coordinator specialists should know that worker-owned managed execution exists and should delegate to the worker, but they should not receive detailed remote tool-selection contracts for tools they cannot call.
 
 ## 7) Tool conventions
 
@@ -243,8 +237,8 @@ Remote or managed execution tools are part of the platform capability surface, e
 
 When developing or expanding DPDispatcher-backed or other managed execution tools:
 
-- update the relevant specialist/worker prompts in `catmaster/specialists/runtime.py` in the same change
-- state clearly when a capability should be treated as available through registered tools rather than local shell binaries
+- update the relevant skills, tool schemas/descriptions, allowlists, and registry wiring in the same change
+- keep any runtime prompt language abstract: state capability boundaries and ownership, not concrete tool-selection playbooks
 - for heterogeneous ML tasks, prefer managed tools when they fit, but do not let missing tool coverage block local script-based execution
 
 ### Paths

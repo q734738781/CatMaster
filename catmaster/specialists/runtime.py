@@ -27,8 +27,6 @@ from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError, c
 from catmaster.runtime.usage_stats import write_usage_summary_from_metadata
 from catmaster.runtime.workspace_python_env import workspace_python_env_overrides
 from catmaster.tools.base import system_root, workspace_root, workspace_scope
-from catmaster.tools.execution.machine_registry import MachineRegister
-from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.registry import get_tool_registry
 from catmaster.ui import make_event
 from catmaster.ui.reporters import NullReporter, Reporter
@@ -1028,7 +1026,7 @@ class SpecialistRunner:
         CompiledSubAgent = self._load_compiled_subagent()
         return CompiledSubAgent(
             name="litreview_agent",
-            description="Orchestrate literature review by combining `web_search`, public-page inspection, and exact DOI/venue/author resolution via `metadata_agent`.",
+            description="Orchestrate literature review by combining public-source inspection and exact DOI/venue/author resolution via `metadata_agent`.",
             runnable=self._build_litreview_agent(runtime=runtime),
         )
 
@@ -1145,7 +1143,7 @@ class SpecialistRunner:
             subagents=[
                 self._compiled_worker_subagent(
                     name="literature_agent",
-                    description="Use `web_search`, `open_public_page`, and `find_in_page` for broader literature review, background grounding, and public-source synthesis.",
+                    description="Handle broader literature review, background grounding, public-page inspection, and public-source synthesis.",
                     model_role="literature_synthesizer",
                     system_prompt=self._litreview_agent_prompt(),
                     tools=self._augment_with_default_autonomous_tools(
@@ -1425,8 +1423,6 @@ class SpecialistRunner:
         allow_memory_write: bool = True,
     ) -> str:
         execution_contract = ""
-        if entrypoint in {"research", "experiment"}:
-            execution_contract = self._execution_capability_contract(audience=entrypoint)
         return self._base_system_prompt(
             entrypoint,
             thread_id=thread_id,
@@ -1437,126 +1433,31 @@ class SpecialistRunner:
     def _execution_capability_contract(
         self,
         *,
-        audience: Literal["research", "experiment", "materials_worker", "ml_worker", "orca_xtb_worker"],
+        audience: Literal["materials_worker", "ml_worker", "orca_xtb_worker"],
     ) -> str:
-        available = set(self.registry.tools.keys())
-        managed_tools = [
-            name
-            for name in (
-                "vasp_execute_batch",
-                "mace_neb_batch",
-                "mace_relax_batch",
-                "mace_md_batch",
-                "mace_sp_batch",
-                "mace_train",
-                "mace_evaluate",
-                "xtb_run_batch",
-                "crest_conformer_search",
-                "orca_execute_batch",
-            )
-            if name in available
-        ]
-        prepare_tools = [
-            name
-            for name in (
-                "vasp_prepare",
-                "vasp_band_prepare",
-                "vasp_neb_prepare",
-                "build_dataset_from_runs",
-                "orca_prepare",
-                "orca_scan_prepare",
-                "orca_optts_prepare",
-                "orca_nebts_prepare",
-                "orca_irc_prepare",
-            )
-            if name in available
-        ]
-        machine_names: list[str] = []
-        resource_names: list[str] = []
-        task_names: list[str] = []
-        try:
-            machine_register = MachineRegister()
-            machine_names = sorted(machine_register.list_machines().keys())
-            resource_names = sorted(machine_register.list_resources().keys())
-        except Exception:
-            machine_names = []
-            resource_names = []
-        try:
-            task_registry = TaskRegistry()
-            task_names = sorted(task_registry.list_tasks().keys())
-        except Exception:
-            task_names = []
-
         lines = [
             "Execution capability contract: distinguish local interactive availability from managed execution availability.",
-            "Do not infer managed-execution availability from local shell probing alone. If a registered submission tool exists, treat that capability as available through the platform unless the tool itself fails at runtime.",
-            "Remote-first execution rule: when a registered managed-execution tool covers the requested computation, call that tool before using `execute`, local Python, or ad hoc shell scripts for the same computation.",
-            "Use `execute` and local Python for input preparation, lightweight inspection, glue logic, and post-processing; do not use them to replace a fitting managed remote execution tool unless the user explicitly asks for a local-only run or the managed tool has already failed for a task-specific reason.",
-            "Your current tool surface is not the whole platform surface; some managed execution, resource visibility, or environment checks exist only behind delegated specialists or workers.",
-            "If a bounded local task needs a missing Python package, `execute` may install it with `python -m pip install ...` when that is the most direct way to complete the step.",
+            "Do not infer managed-execution availability from local shell probing alone. If a registered managed execution tool in your current worker surface covers the requested computation, treat that capability as available through the platform unless that tool itself fails at runtime.",
+            "Remote-first execution rule: use a fitting registered managed execution tool before replacing the same computation with local Python, local shell, or an ad hoc wrapper.",
+            "Use local commands and Python for input preparation, lightweight inspection, glue logic, post-processing, and capabilities not covered by the worker's current managed tools.",
+            "Tool schemas and mounted skills determine which registered tool fits a task; keep prompt contracts generic instead of encoding concrete tool-name routing.",
+            "If a bounded local task needs a missing Python package, the local command capability may install it when that is the most direct way to complete the step.",
         ]
-        if audience == "research":
+        if audience == "materials_worker":
             lines.append(
-                "When a bounded experiment stage needs periodic DFT or other managed compute, route it to ExperimentSpecialist instead of downgrading it to literature-only validation because no local executable is visible in the shell."
+                "For periodic electronic-structure and ML-potential materials workloads, prepare inputs locally, submit through the registered managed path when it fits, then analyze returned artifacts; do not require the local shell to expose the production engine first."
             )
+        if audience == "ml_worker":
             lines.append(
-                "If execution-path, managed-resource, or remote-environment availability matters and the relevant capability is not visible in your own tool surface, delegate a bounded probe to ExperimentSpecialist instead of concluding the capability is unavailable."
+                "For model training, fine-tuning, and evaluation workloads, prefer registered managed training/evaluation paths when they fit; keep custom local scripts for uncovered data processing, analysis, or workflow logic."
             )
-        else:
+        if audience == "orca_xtb_worker":
             lines.append(
-                "Treat local shell checks as relevant only for local interactive steps; use the registered remote-execution tools for managed runs."
+                "For molecular preoptimization, conformer search, and quantum-chemistry workloads, prefer registered managed batch/execution paths when they fit; do not block on local engine visibility when the worker's managed path is available."
             )
+        if audience in {"materials_worker", "ml_worker", "orca_xtb_worker"}:
             lines.append(
-                "If execution-path, managed-resource, or remote-environment availability matters and the relevant capability is not visible in your current tool surface, delegate a bounded probe to the most relevant downstream worker instead of trying to prove absence from the current thread."
-            )
-        if prepare_tools:
-            lines.append(f"Local preparation/analysis tools here: {', '.join(f'`{name}`' for name in prepare_tools)}.")
-        if managed_tools:
-            lines.append(f"Managed execution tools here: {', '.join(f'`{name}`' for name in managed_tools)}.")
-        if audience in {"materials_worker", "ml_worker", "orca_xtb_worker"} and managed_tools:
-            lines.append(
-                "If a DPDispatcher-backed tool fails and reports `remote_context_id`, `submission_hash`, or `receipt_rel`, read the `dpdispatcher-remote-receipts` skill before retrying; use `execute` for focused status, download, reset, or cleanup steps."
-            )
-        elif audience == "experiment" and managed_tools:
-            lines.append(
-                "If a worker reports DPDispatcher `remote_context_id`, `submission_hash`, or `receipt_rel`, send a focused follow-up to that worker for receipt-guided recovery instead of blindly rerunning the calculation."
-            )
-        if machine_names or resource_names or task_names:
-            facts: list[str] = []
-            if machine_names:
-                facts.append(f"machines={', '.join(f'`{name}`' for name in machine_names)}")
-            if resource_names:
-                facts.append(f"resources={', '.join(f'`{name}`' for name in resource_names)}")
-            if task_names:
-                facts.append(f"tasks={', '.join(f'`{name}`' for name in task_names)}")
-            lines.append("DPDispatcher config visible here: " + "; ".join(facts) + ".")
-        if audience in {"experiment", "materials_worker"} and "vasp_execute_batch" in available:
-            lines.append(
-                "For periodic DFT, the intended path is to prepare inputs locally, submit via `vasp_execute_batch`, then analyze the returned results; do not require a local periodic DFT engine to be directly runnable first."
-            )
-        if audience in {"experiment", "orca_xtb_worker"} and "xtb_run_batch" in available:
-            lines.append(
-                "For molecular preoptimization, quick screening, or conformer refinement, use `xtb_run_batch`; do not block on local xTB visibility when the registered submission tool is available."
-            )
-        if audience in {"experiment", "orca_xtb_worker"} and "crest_conformer_search" in available:
-            lines.append(
-                "For broad conformer/rotamer exploration, prefer `crest_conformer_search` over ad hoc shell wrappers when the task is naturally a CREST batch."
-            )
-        if audience in {"experiment", "orca_xtb_worker"} and "orca_execute_batch" in available:
-            lines.append(
-                "For serious molecular quantum-chemistry runs, prepare jobs locally with the ORCA preparation tools, submit them with `orca_execute_batch`, then close the loop with `analyze_orca_results`."
-            )
-        if audience in {"experiment", "materials_worker"} and any(name in available for name in ("mace_neb_batch", "mace_relax_batch", "mace_md_batch", "mace_sp_batch")):
-            lines.append(
-                "For surrogate screening or MACE-based materials workflows, use `mace_relax_batch`, `mace_sp_batch`, `mace_md_batch`, or `mace_neb_batch` before attempting local MACE calculators or ad hoc Python wrappers."
-            )
-        if audience in {"experiment", "ml_worker"} and any(name in available for name in ("mace_train", "mace_evaluate")):
-            lines.append(
-                "For MACE training/fine-tuning/evaluation, use the registered managed-execution path (`mace_train` or `mace_evaluate`) before attempting local MACE CLI/Python wrappers when the managed tool can express the run."
-            )
-        if audience in {"experiment", "ml_worker"}:
-            lines.append(
-                "ML work is especially heterogeneous: prefer the registered managed tools when they fit the task, but if no managed tool covers the needed code path, continue by writing and running local workspace scripts instead of blocking on tool coverage."
+                "If a managed submission fails and reports remote receipt/context fields, inspect the mounted execution guidance and receipt before retrying; account for possible live remote work before resubmission."
             )
         return "\n".join(lines)
 
@@ -1608,7 +1509,7 @@ class SpecialistRunner:
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
                 "You may delegate only to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
-                "Use `litreview_agent` for literature-review work that needs synthesis, source inspection, or metadata verification. It internally uses `web_search`, `open_public_page`, and `find_in_page`, and can delegate exact DOI/year/venue/authors/citation metadata resolution to `metadata_agent`.\n"
+                "Delegate literature-review work that needs synthesis, source inspection, or metadata verification to `litreview_agent`; it can combine public-source inspection with exact DOI/year/venue/authors/citation metadata resolution via `metadata_agent`.\n"
                 "If the user requests a paper, manuscript, journal-style LaTeX draft, cover letter, rebuttal-style response, or other author-facing publication artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
                 "If the user requests an experiment report, validation summary, QC note, execution-facing memo, or other report-style artifact grounded in completed workspace evidence, delegate that work to `experiment_specialist` as a bounded report-writing episode.\n"
                 "Default to not launching `peer_review_specialist`.\n"
@@ -1646,7 +1547,7 @@ class SpecialistRunner:
                 "Use DeepAgent file tools to locate the manuscript PDF only when that path is missing, ambiguous, or invalid.\n"
                 "Once you have identified the canonical manuscript PDF, delegate the bounded review episode to `peer_review_worker_agent` and pass that canonical PDF path explicitly.\n"
                 "When one worker review episode returns, actively decide whether another bounded delegate pass is needed or whether the result is ready to send upstream; do not default to closing in the specialist thread just because one worker finished.\n"
-                "Have `peer_review_worker_agent` call `peer_review_request` on that PDF exactly once per review episode and return the full review plus any saved review memo path.\n"
+                "Have `peer_review_worker_agent` run its dedicated review capability on that PDF exactly once per review episode and return the full review plus any saved review memo path.\n"
                 "Do not run experiments, do not rewrite the manuscript, and do not take over research planning.\n"
                 "Your job is to synthesize an editor decision and editor comment from the reviewer reports, then include the raw reviewer comments for ResearchSpecialist or the user.\n"
                 "Use decision language such as reject, major revision, minor revision, or conditionally acceptable only when supported by the reviewer comments and the manuscript evidence.\n"
@@ -1667,8 +1568,8 @@ class SpecialistRunner:
                 "Write from existing workspace evidence only. Do not initiate new computational experiments.\n"
                 "Do not reopen broad literature review from the writing thread.\n"
                 "This lane owns paper, manuscript, and author-facing scientific writing. It is not the default lane for experiment reports, QC summaries, or execution-facing internal reports.\n"
-                "Use `web_search` directly only for narrow background supplementation when the user explicitly asks to expand background/context, or when a paper/manuscript draft lacks the minimal external background needed for a credible introduction or discussion.\n"
-                "Keep such `web_search` use tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
+                "Use direct public-source checking only for narrow background supplementation when the user explicitly asks to expand background/context, or when a paper/manuscript draft lacks the minimal external background needed for a credible introduction or discussion.\n"
+                "Keep such public-source checking tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
                 "Your default role is coordination, not long-form drafting in the main thread.\n"
                 "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
                 "Before a substantial paper/manuscript rewrite, first condense the task into one compact inline author packet, then dispatch the section or integration brief from that packet instead of forwarding raw run logs.\n"
@@ -1682,7 +1583,7 @@ class SpecialistRunner:
                 "For the current implementation, keep Supporting Information in the same manuscript file rather than a separate SI manuscript: place it after the references as a clear supporting-information section or appendix so compilation and downstream PDF review operate on one manuscript PDF. Supporting data files may still live in separate workspace folders.\n"
                 "For LaTeX manuscripts, require figures to be inserted near their first substantive discussion rather than batched at the end. If float drift appears after compilation, require the worker to repair placement by moving the figure block closer to first mention and using conservative float controls such as `[htbp]` or `\\FloatBarrier` when the template permits.\n"
                 "Use `writing_polisher_agent` only for local prose cleanup on already drafted sections. It must not change claim strength, scientific scope, section logic, figure order, or evidence selection.\n"
-                "When a full paper/manuscript draft has been assembled and a compiled PDF is available, run `review_pdf_manuscript` once on that PDF for comment-only publication-readiness review before final reconciliation.\n"
+                "When a full paper/manuscript draft has been assembled and a compiled PDF is available, run the manuscript-review capability once on that PDF for comment-only publication-readiness review before final reconciliation.\n"
                 "After that review returns, reconcile the manuscript against the accepted suggestions and run one more bounded polishing/revision pass before treating the manuscript as final.\n"
                 "If an external-model peer review is requested from the parent, make sure the canonical manuscript PDF is clearly exposed as `ReviewTarget` in your closeout so downstream review uses the right artifact.\n"
                 "When the requested deliverable is a short note, compact summary, or quick status writeup, prioritize clarity and sufficiency over making it figure-heavy unless the user explicitly asks for visuals.\n"
@@ -1705,7 +1606,7 @@ class SpecialistRunner:
             "You are ExperimentSpecialist.\n"
             "Your default role is coordination, dispatch, and decision-making across the experiment lane, not personally executing the substantive domain work.\n"
             "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, deciding the next bounded handoff, and bounded experiment-facing summaries grounded in completed workspace evidence.\n"
-            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use `web_search` directly when a quick external check is needed.\n"
+            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct public-source checking only when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
             "In particular, general materials or surface workflows belong to `materials_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
@@ -1718,9 +1619,9 @@ class SpecialistRunner:
             "If execution-path, remote-environment, or resource availability is relevant and the relevant managed tool is not directly visible here, delegate a bounded probe to the matching worker instead of concluding the capability is absent.\n"
             "Only do the implementation directly in the specialist thread when no available worker matches the task, or when the action is a tiny coordination-only step that would not justify a delegation round.\n"
             "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
-            "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use `execute` plus Python and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
-            "If a worker needs a handy Python package for a bounded local step and it is missing, let it install that package with `execute` via `python -m pip install ...`.\n"
-            "When method settings, software behavior, or scientific best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
+            "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use local command/Python capability and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
+            "If a worker needs a handy Python package for a bounded local step and it is missing, let it install that package through its local command capability.\n"
+            "When method settings, software behavior, or scientific best practice are uncertain, use a narrow official-docs or primary-source check before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._report_packet_policy()}\n"
@@ -1810,7 +1711,7 @@ class SpecialistRunner:
             "Prefer registered builtin tools when they fit the task. "
             "Before writing custom code, first try to satisfy the task by adjusting the parameters and supported variants of a relevant builtin tool. "
             "Builtin tools often already encode validated parameter choices, implementation optimizations, and known pitfall handling, so avoid reimplementing that logic unless the builtin boundary truly does not fit. "
-            "For any code that overlaps internal tool functionality, first export the builtin tool source into the workspace with `export_builtin_tool_source` and code against that reference instead of starting from scratch; if custom code is still necessary, inspect that exported source carefully and preserve its validated behavior rather than writing an approximate look-alike from memory."
+            "For any code that overlaps internal tool functionality, first inspect the builtin tool source through the available source-inspection capability and code against that reference instead of starting from scratch; if custom code is still necessary, preserve validated behavior rather than writing an approximate look-alike from memory."
         )
 
     @staticmethod
@@ -1830,7 +1731,7 @@ class SpecialistRunner:
             "Treat `/` only as the workspace virtual root, not as a host filesystem root. "
             "If you see a host absolute path like `/home/...`, convert it back to a workspace-relative path and never recreate host absolute path segments inside the workspace. "
             "Do not pass guessed input paths into tools: if a structure or dataset does not already exist under the workspace files root, create or fetch it first, then reuse that exact returned path. "
-            "For shell or `execute` commands, never use leading-slash workspace paths like `/writing/...`; use workspace-relative paths such as `writing/...` instead. "
+            "For shell or local-command calls, never use leading-slash workspace paths like `/writing/...`; use workspace-relative paths such as `writing/...` instead. "
             "Keep transient observations in the conversation/tool stream unless persistence is needed. Only persist key constraints, decisive results, reusable handoff material, or user-requested deliverables. "
             "Prefer a topic-centric layout: `literature/` for grounding material, `structures/` for geometry/setup artifacts, `calculations/` for execution outputs, `scripts/` for reusable code, `notes/` for compact saved notes, and `writing/` for manuscript outputs. "
             "If the workspace already has a clear established layout, extend it instead of creating a parallel scheme."
@@ -1845,7 +1746,7 @@ class SpecialistRunner:
     @staticmethod
     def _soft_reporting_contract() -> str:
         return (
-            "For multi-step work, use `write_todos` early and keep it updated when the plan changes. "
+            "For multi-step work, use the available task-tracking capability early and keep it updated when the plan changes. "
             "For durable multi-step closeouts, it is helpful but not mandatory to use three markdown sections in this order: `Summary`, `Facts`, and `Files`; follow the user's requested response shape when it conflicts with this archival convention. "
             "`Summary`, when used, should directly answer the user's actual question with the key result and conclusion; do not say only that a report was written. "
             "`Facts`, when used, should be a short flat list of the most important archival facts. "
@@ -1857,7 +1758,7 @@ class SpecialistRunner:
     @staticmethod
     def _writing_reporting_contract() -> str:
         return (
-            "For multi-step work, use `write_todos` early and keep it updated when the plan changes. "
+            "For multi-step work, use the available task-tracking capability early and keep it updated when the plan changes. "
             "When you finish, reply in the shape the user requested; a concise `Summary` section is recommended for durable writing closeouts but is not required. "
             "`Summary`, when used, should directly answer the user's current writing request by stating what was drafted, revised, or recommended and the current manuscript status. "
             "Include a `Files` section only when you created or materially updated durable workspace artifacts that the parent should inspect. "
@@ -1904,12 +1805,12 @@ class SpecialistRunner:
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
             "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis when those steps serve one materials workflow.\n"
-            "For MACE relaxations, single-points, MD, and NEB, call the registered `mace_*_batch` managed tools first when they fit; do not run MACE calculators directly in local Python just because the package is importable.\n"
-            "When no dedicated tool covers a bounded materials task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "For MACE or other ML-potential relaxations, single-points, MD, and path calculations, use the registered managed batch path first when it fits; do not run local calculators just because the package is importable.\n"
+            "When no dedicated tool covers a bounded materials task, use local command/Python capability with mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
-            "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
-            "When configuration details, package behavior, or methodological best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before finalizing the workflow.\n"
-            "For heavier custom logic such as high-throughput screening helpers, large batch post-processing, or multi-step deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
+            "If a handy Python package is missing for a bounded local step, install it through the local command capability.\n"
+            "When configuration details, package behavior, or methodological best practice are uncertain, use a narrow official-docs or primary-source check before finalizing the workflow.\n"
+            "For heavier custom logic such as high-throughput screening helpers, large batch post-processing, or multi-step deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
@@ -1930,20 +1831,20 @@ class SpecialistRunner:
             "This worker owns dataset/model lifecycle tasks: dataset building, model training, benchmark evaluation, and active-learning candidate selection.\n"
             "Start here when the primary artifact is a curated dataset, a training/evaluation run, a model checkpoint, or an active-learning selection ledger.\n"
             "When a registered managed ML tool fits the task, prefer that managed path first.\n"
-            "For MACE dataset curation, training, and benchmark evaluation, prefer `build_dataset_from_runs`, `mace_train`, and `mace_evaluate` over ad hoc local wrapper scripts.\n"
-            "Do not create or run a local `mace_run_train` wrapper when `mace_train` already fits the request; use the managed remote training path instead.\n"
-            "Do not replace `mace_train` or `mace_evaluate` with local MACE CLI/Python execution unless the user explicitly requested a local-only dry run or the managed tool cannot express the required workflow.\n"
+            "For MACE dataset curation, training, and benchmark evaluation, prefer the registered managed dataset/training/evaluation path over ad hoc local wrapper scripts.\n"
+            "Do not create or run a local training wrapper when the managed training path already fits the request.\n"
+            "Do not replace managed MACE training or evaluation with local CLI/Python execution unless the user explicitly requested a local-only dry run or the managed tool cannot express the required workflow.\n"
             "Prefer using libraries already available in the environment and reusable workspace code before introducing new dependencies or parallel implementations.\n"
             "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`; prefer them first unless the task clearly needs something else.\n"
-            "If a handy Python package is still missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
+            "If a handy Python package is still missing for a bounded local step, install it through the local command capability.\n"
             "If the ML logic is longer than a short throwaway snippet and no managed tool covers it, materialize it as a script instead of keeping it inline in the conversation or a one-off command.\n"
             "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`, and use shared `scripts/` only for genuinely cross-topic utilities.\n"
-            "When no dedicated tool covers a bounded ML task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "When no dedicated tool covers a bounded ML task, use local command/Python capability with mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts rather than burying them in one-off shell snippets.\n"
             "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; MACE training/fine-tuning normally falls into this category.\n"
             "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate. If the current ML task is not covered by those managed tools, keep going locally with reusable scripts under `scripts/` instead of stopping.\n"
-            "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before locking the workflow.\n"
-            "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
+            "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use a narrow official-docs or primary-source check before locking the workflow.\n"
+            "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
             "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
             f"{cls._tool_policy()}\n"
@@ -1961,17 +1862,17 @@ class SpecialistRunner:
             "You are orca_xtb_worker for ExperimentSpecialist.\n"
             "Handle a bounded molecular quantum-chemistry subtask autonomously inside the workspace.\n"
             "This worker owns molecule/cluster workflows: SMILES-to-3D conversion, conformer generation and pruning, xTB or CREST preoptimization/screening, ORCA preparation/execution, and molecular post-analysis for optimization, frequencies, scans, TS/IRC, TDDFT, or NMR-style jobs.\n"
-            "Prefer the dedicated managed tools when they fit: `create_molecule_from_smiles`, `enumerate_molecular_conformers`, `filter_conformer_ensemble`, `crest_conformer_search`, `xtb_run_batch`, `orca_prepare`, `orca_scan_prepare`, `orca_optts_prepare`, `orca_nebts_prepare`, `orca_irc_prepare`, `orca_execute_batch`, `analyze_xtb_results`, and `analyze_orca_results`.\n"
+            "Prefer the dedicated managed tools when they fit for molecule creation, conformer handling, xTB/CREST screening, ORCA preparation/execution, and molecular post-analysis.\n"
             "If the user names a small molecule or cluster but does not provide a structure file, first create the structure under `<topic>/structures/` and only then launch xTB/CREST/ORCA tools against that exact workspace-relative path.\n"
-            "Do not guess that a path like `<topic>/structures/<name>.xyz` already exists; verify it exists or create it before calling `xtb_run_batch`, `crest_conformer_search`, or any ORCA preparation tool.\n"
+            "Do not guess that a path like `<topic>/structures/<name>.xyz` already exists; verify it exists or create it before calling managed batch or preparation tools.\n"
             "Treat xTB/CREST as the fast exploration layer and ORCA as the higher-fidelity molecular quantum layer unless the task explicitly calls for a different partition.\n"
-            "For cheap preoptimization, conformer cleanup, low-cost screening, or geometry relaxation before higher-level ORCA work, default to `xtb_run_batch` or `crest_conformer_search` instead of `orca_prepare(method=XTB1/XTB2)`.\n"
-            "Use ORCA with XTB-family methods only when the request explicitly needs an ORCA-native XTB workflow or another ORCA-side feature that `xtb_run_batch` does not cover; do not choose ORCA-XTB as the default fallback for routine preopt steps.\n"
+            "For cheap preoptimization, conformer cleanup, low-cost screening, or geometry relaxation before higher-level ORCA work, default to the dedicated xTB/CREST managed path instead of forcing an ORCA-native semiempirical setup.\n"
+            "Use ORCA with XTB-family methods only when the request explicitly needs an ORCA-native XTB workflow or another ORCA-side feature that the dedicated xTB/CREST path does not cover; do not choose ORCA-XTB as the default fallback for routine preopt steps.\n"
             "When the request is about one mechanistic step or one catalyst-side molecular episode, keep the run on the molecular lane instead of trying to translate it into a periodic workflow.\n"
-            "When no dedicated tool covers a bounded molecular task, use `execute` to implement the missing step with Python and mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
-            "If a handy Python package is missing for a bounded local step, install it with `execute` via `python -m pip install ...`.\n"
-            "For heavier custom logic such as ensemble post-processing, Boltzmann aggregation, or multi-step deterministic screening helpers, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one `execute` call.\n"
-            "When configuration details, software behavior, or methodological best practice are uncertain, use `web_search` for a narrow official-docs or primary-source check before finalizing the workflow.\n"
+            "When no dedicated tool covers a bounded molecular task, use local command/Python capability with mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
+            "If a handy Python package is missing for a bounded local step, install it through the local command capability.\n"
+            "For heavier custom logic such as ensemble post-processing, Boltzmann aggregation, or multi-step deterministic screening helpers, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
+            "When configuration details, software behavior, or methodological best practice are uncertain, use a narrow official-docs or primary-source check before finalizing the workflow.\n"
             "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
             f"{cls._tool_policy()}\n"
@@ -1987,7 +1888,7 @@ class SpecialistRunner:
     def _litreview_agent_prompt(cls) -> str:
         return (
             "You are literature_agent.\n"
-            "Use `web_search`, `open_public_page`, and `find_in_page` to gather external literature grounding, benchmark conventions, broader background evidence, and public-source synthesis.\n"
+            "Gather external literature grounding, benchmark conventions, broader background evidence, and public-source synthesis through the available public-source inspection capabilities.\n"
             "You are the broad-review and orientation layer, not the exact scholarly metadata resolver. If exact DOI/year/venue/authors/citation details are missing or uncertain, the parent LitReview Agent should delegate that part to `metadata_agent`.\n"
             "Stay focused on representative, decision-relevant sources instead of broad browsing.\n"
             "You may write concise reusable literature artifacts into the workspace when helpful, such as notes, evidence summaries, source lists, or background briefs.\n"
@@ -2009,7 +1910,7 @@ class SpecialistRunner:
         return (
             "You are litreview_agent.\n"
             "You are the top-level literature-review orchestrator used by ResearchSpecialist and the direct Literature Review lane.\n"
-            "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`, which uses `web_search`, `open_public_page`, and `find_in_page`.\n"
+            "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`.\n"
             "Delegate exact DOI/year/venue/authors/citation verification and scholarly record disambiguation to `metadata_agent`.\n"
             "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
             "Keep the final answer compact and decision-relevant. Save a reusable note under `/notes/literature/` or another stable workspace path only when the user asked for it or when a durable handoff artifact is clearly justified.\n"
@@ -2309,7 +2210,7 @@ class SpecialistRunner:
             "Handle one bounded peer-review execution episode over one canonical manuscript PDF.\n"
             "If the parent gives you an explicit `ReviewTarget` or manuscript PDF path, treat that as the canonical review target.\n"
             "Use DeepAgent file tools to locate the manuscript PDF only when that path is missing, ambiguous, or invalid.\n"
-            "Once the canonical manuscript PDF is identified, call `peer_review_request` on that PDF exactly once for this episode.\n"
+            "Once the canonical manuscript PDF is identified, run the dedicated peer-review request capability on that PDF exactly once for this episode.\n"
             "Do not run experiments, do not rewrite the manuscript, and do not broaden the task into research planning.\n"
             "Your job is to collect the reviewer-style reports, synthesize an editor decision and editor comment grounded in those reports, and preserve the raw reviewer comments for the parent specialist.\n"
             "Use decision language such as reject, major revision, minor revision, or conditionally acceptable only when supported by the reviewer comments and manuscript evidence.\n"

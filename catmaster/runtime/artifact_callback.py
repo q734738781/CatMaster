@@ -4,7 +4,7 @@ and UI event emission.
 
 These handlers reproduce the persistence behaviour previously embedded in
 LocalToolBackend and ToolCallingTaskStepper, decoupling it from the
-orchestration layer so that LangGraph nodes get tracing for free via
+orchestration layer so graph-based runners get tracing via
 ``config={"callbacks": [...]}``.
 """
 from __future__ import annotations
@@ -677,7 +677,7 @@ class LLMTracingHandler(BaseCallbackHandler):
 
 
 class LangChainStepLogger(BaseCallbackHandler):
-    """Compact step-level runtime logging for LangChain/LangGraph execution."""
+    """Compact step-level runtime logging for LangChain callback execution."""
 
     def __init__(self, *, run_id: str = "", logger_name: str = "catmaster.langchain") -> None:
         super().__init__()
@@ -816,7 +816,7 @@ class LangChainStepLogger(BaseCallbackHandler):
 
 
 class UIEventHandler(BaseCallbackHandler):
-    """Bridge LangGraph execution events to the CatMaster Reporter/UIEvent system.
+    """Bridge LangChain callback events to the CatMaster Reporter/UIEvent system.
 
     Emits UIEvent objects for tool starts/ends and LLM calls so that the
     WebUI can display live progress without the graph nodes having to call

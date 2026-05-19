@@ -33,6 +33,7 @@ Script options:
   --help         Show this help.
 
 All other arguments are passed through to \`python -m catmaster.webui\`.
+Example: ./start_webui.sh --foreground --no-login
 EOF
 }
 

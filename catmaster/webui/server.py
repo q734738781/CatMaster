@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 import zipfile
+from contextvars import ContextVar
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -18,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 import uvicorn
 
+from .auth import AuthIdentity, AuthManager, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from .session_registry import SessionRegistry
 
 TEXT_PREVIEW_LIMIT_BYTES = 160_000
@@ -58,6 +60,8 @@ TEXTLIKE_SUFFIXES = {
     ".yaml",
     ".yml",
 } | MARKDOWN_SUFFIXES | JSON_SUFFIXES
+
+_AUTH_IDENTITY: ContextVar[AuthIdentity | None] = ContextVar("catmaster_webui_auth_identity", default=None)
 
 
 def _serialize_choices(choices: list[tuple[str, str]]) -> list[dict[str, str]]:
@@ -104,11 +108,11 @@ def _workspace_for_request(registry: SessionRegistry, session, project_space: st
         ok, message = session.open_workspace(str(target), create=create, set_current=False)
         if not ok:
             raise HTTPException(status_code=404 if not create else 400, detail=message)
-        return target.expanduser().resolve(), registry._project_space_name_from_path(str(target)) or value
+        return target.expanduser().resolve(), registry._project_space_name_from_path(str(target), root=session.workspace_root) or value
     current = str(session.current_workspace_path() or "").strip()
     if current:
         target = Path(current).expanduser().resolve()
-        return target, registry._project_space_name_from_path(str(target)) or target.name
+        return target, registry._project_space_name_from_path(str(target), root=session.workspace_root) or target.name
     return None, ""
 
 
@@ -953,11 +957,12 @@ def _build_snapshot(
     *,
     registry: SessionRegistry,
     ctx: str,
+    username: str = "admin",
     lane: str = "research",
     run_name: str = "",
     project_space: str = "",
 ) -> dict[str, Any]:
-    session = registry.get_session(ctx)
+    session = registry.get_session(ctx, username=username)
     workspace, workspace_name = _workspace_for_request(registry, session, project_space)
     selected_run = _pick_selected_run(session, run_name, lane=lane, workspace=workspace)
     run_dir = session.get_selected_run_dir(workspace=workspace)
@@ -983,7 +988,8 @@ def _build_snapshot(
     cards = _serialize_cards(session.list_run_cards(workspace=workspace))
     return {
         "ctx": ctx,
-        "workspace_root": str(registry.default_project_space_root),
+        "workspace_root": str(session.workspace_root or registry.default_project_space_root),
+        "workspace_root_locked": True,
         "workspace_path": str(workspace or ""),
         "workspace_name": workspace_name,
         "workspaces": _serialize_choices(session.list_workspaces()),
@@ -1032,8 +1038,8 @@ def _apply_chat_session_view(snapshot: dict[str, Any], *, active_run: str = "") 
     return snapshot
 
 
-def _build_details(*, registry: SessionRegistry, ctx: str, run_name: str, project_space: str = "") -> dict[str, Any]:
-    session = registry.get_session(ctx)
+def _build_details(*, registry: SessionRegistry, ctx: str, username: str = "admin", run_name: str, project_space: str = "") -> dict[str, Any]:
+    session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
     run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
     artifacts = session.read_artifacts(workspace=workspace)
@@ -1057,13 +1063,14 @@ def _build_events(
     *,
     registry: SessionRegistry,
     ctx: str,
+    username: str = "admin",
     run_name: str,
     project_space: str = "",
     limit: int = 200,
     before_seq: int = 0,
     after_seq: int = 0,
 ) -> dict[str, Any]:
-    session = registry.get_session(ctx)
+    session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
     run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
     page = session.read_ui_events(run_dir, limit=limit, before_seq=before_seq, after_seq=after_seq)
@@ -1071,8 +1078,8 @@ def _build_events(
     return page
 
 
-def _build_memory(*, registry: SessionRegistry, ctx: str, run_name: str = "", source: str = "all", project_space: str = "") -> dict[str, Any]:
-    session = registry.get_session(ctx)
+def _build_memory(*, registry: SessionRegistry, ctx: str, username: str = "admin", run_name: str = "", source: str = "all", project_space: str = "") -> dict[str, Any]:
+    session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
     _run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
     return {
@@ -1142,12 +1149,126 @@ def _static_file_response(*, static_dir: Path, file_name: str) -> FileResponse:
     return FileResponse(candidate)
 
 
-def create_app(*, project_space_root: str) -> FastAPI:
+def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     default_project_space_root = str(Path(project_space_root).expanduser().resolve())
     registry = SessionRegistry(default_project_space_root=default_project_space_root)
+    auth = AuthManager(auth_root=Path(default_project_space_root) / ".webui_auth", enabled=not no_login)
     app = FastAPI(title="CatMaster WebUI")
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    def _identity_or_401() -> AuthIdentity:
+        identity = _AUTH_IDENTITY.get()
+        if identity is None or not identity.authenticated:
+            raise HTTPException(status_code=401, detail="Authentication required.")
+        return identity
+
+    def _locked_user_root(identity: AuthIdentity) -> Path:
+        if not auth.enabled:
+            return registry.default_project_space_root
+        return auth.user_root(identity.username, base_project_space_root=registry.default_project_space_root)
+
+    def _bound_session(ctx: str):
+        identity = _identity_or_401()
+        session = registry.get_session(ctx, username=identity.username)
+        ok, message, _choices = session.set_workspace_root(str(_locked_user_root(identity)))
+        if not ok:
+            raise HTTPException(status_code=500, detail=message)
+        return identity, session
+
+    def _with_auth(snapshot: dict[str, Any], identity: AuthIdentity) -> dict[str, Any]:
+        snapshot["auth"] = auth.public_status(identity)
+        snapshot["workspace_root_locked"] = True
+        return snapshot
+
+    def _session_cookie_response(payload: dict[str, Any], token: str) -> JSONResponse:
+        response = JSONResponse(payload)
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=SESSION_TTL_SECONDS,
+        )
+        return response
+
+    @app.middleware("http")
+    async def _auth_middleware(request: Request, call_next):
+        path = str(request.url.path or "")
+        token = None
+        identity: AuthIdentity | None = None
+        if path.startswith("/api/") and not path.startswith("/api/auth/"):
+            if auth.enabled:
+                identity = auth.identity_for_token(str(request.cookies.get(SESSION_COOKIE_NAME) or ""))
+                if identity is None:
+                    return JSONResponse({"detail": "Authentication required."}, status_code=401)
+            else:
+                identity = auth.default_identity()
+            token = _AUTH_IDENTITY.set(identity)
+            request.state.auth_identity = identity
+        try:
+            return await call_next(request)
+        finally:
+            if token is not None:
+                _AUTH_IDENTITY.reset(token)
+
+    @app.get("/api/auth/status")
+    def _auth_status(request: Request):
+        if not auth.enabled:
+            return JSONResponse(auth.public_status(auth.default_identity()))
+        identity = auth.identity_for_token(str(request.cookies.get(SESSION_COOKIE_NAME) or ""))
+        return JSONResponse(auth.public_status(identity))
+
+    @app.get("/api/auth/captcha")
+    def _auth_captcha():
+        if not auth.enabled:
+            return JSONResponse({"captcha_id": "", "question": ""})
+        return JSONResponse(auth.create_captcha())
+
+    @app.post("/api/auth/register")
+    async def _auth_register(request: Request):
+        if not auth.enabled:
+            return JSONResponse(auth.public_status(auth.default_identity()))
+        payload = await _json_body(request)
+        try:
+            username = auth.register_user(
+                username=str(payload.get("username") or ""),
+                password=str(payload.get("password") or ""),
+                captcha_id=str(payload.get("captcha_id") or ""),
+                captcha_answer=str(payload.get("captcha_answer") or ""),
+            )
+            token_value = auth.create_session(username)
+            identity = AuthIdentity(username=username, authenticated=True, auth_enabled=True)
+            _locked_user_root(identity).mkdir(parents=True, exist_ok=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _session_cookie_response(auth.public_status(identity), token_value)
+
+    @app.post("/api/auth/login")
+    async def _auth_login(request: Request):
+        if not auth.enabled:
+            return JSONResponse(auth.public_status(auth.default_identity()))
+        payload = await _json_body(request)
+        try:
+            username = auth.authenticate_user(
+                username=str(payload.get("username") or ""),
+                password=str(payload.get("password") or ""),
+            )
+            token_value = auth.create_session(username)
+            identity = AuthIdentity(username=username, authenticated=True, auth_enabled=True)
+            _locked_user_root(identity).mkdir(parents=True, exist_ok=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        return _session_cookie_response(auth.public_status(identity), token_value)
+
+    @app.post("/api/auth/logout")
+    async def _auth_logout(request: Request):
+        if auth.enabled:
+            auth.revoke_session(str(request.cookies.get(SESSION_COOKIE_NAME) or ""))
+        response = JSONResponse(auth.public_status(None))
+        response.delete_cookie(SESSION_COOKIE_NAME)
+        return response
 
     @app.get("/asset-{asset_path:path}", include_in_schema=False)
     def _root_asset(asset_path: str):
@@ -1195,19 +1316,42 @@ def create_app(*, project_space_root: str) -> FastAPI:
         run: Optional[str] = None,
         lane: str = "research",
     ):
-        state = registry.bootstrap(ctx=ctx, project_space=project_space, run=run)
-        snapshot = _build_snapshot(registry=registry, ctx=state.ctx, lane=lane, run_name=state.run_name, project_space=state.project_space_name)
+        identity = _identity_or_401()
+        state = registry.bootstrap(
+            ctx=ctx,
+            project_space=project_space,
+            run=run,
+            username=identity.username,
+            project_space_root=_locked_user_root(identity),
+            default_project_space="admin" if not auth.enabled else "default",
+            auto_open_default=True,
+        )
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=state.ctx,
+            username=identity.username,
+            lane=lane,
+            run_name=state.run_name,
+            project_space=state.project_space_name,
+        )
         snapshot["status_message"] = state.status
         snapshot["workspace_root"] = state.project_space_root
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.get("/api/session/{ctx}/snapshot")
     def _session_snapshot(ctx: str, lane: str = "research", run: str = "", project_space: str = ""):
-        return JSONResponse(_build_snapshot(registry=registry, ctx=ctx, lane=lane, run_name=run, project_space=project_space))
+        identity, _session = _bound_session(ctx)
+        return JSONResponse(
+            _with_auth(
+                _build_snapshot(registry=registry, ctx=ctx, username=identity.username, lane=lane, run_name=run, project_space=project_space),
+                identity,
+            )
+        )
 
     @app.get("/api/session/{ctx}/details")
     def _session_details(ctx: str, run: str = "", project_space: str = ""):
-        return JSONResponse(_build_details(registry=registry, ctx=ctx, run_name=run, project_space=project_space))
+        identity, _session = _bound_session(ctx)
+        return JSONResponse(_build_details(registry=registry, ctx=ctx, username=identity.username, run_name=run, project_space=project_space))
 
     @app.get("/api/session/{ctx}/events")
     def _session_events(
@@ -1218,10 +1362,12 @@ def create_app(*, project_space_root: str) -> FastAPI:
         before_seq: int = 0,
         after_seq: int = 0,
     ):
+        identity, _session = _bound_session(ctx)
         return JSONResponse(
             _build_events(
                 registry=registry,
                 ctx=ctx,
+                username=identity.username,
                 run_name=run,
                 project_space=project_space,
                 limit=limit,
@@ -1232,11 +1378,12 @@ def create_app(*, project_space_root: str) -> FastAPI:
 
     @app.get("/api/session/{ctx}/memory")
     def _session_memory(ctx: str, run: str = "", source: str = "all", project_space: str = ""):
-        return JSONResponse(_build_memory(registry=registry, ctx=ctx, run_name=run, source=source, project_space=project_space))
+        identity, _session = _bound_session(ctx)
+        return JSONResponse(_build_memory(registry=registry, ctx=ctx, username=identity.username, run_name=run, source=source, project_space=project_space))
 
     @app.get("/api/session/{ctx}/files/tree")
     def _session_files_tree(ctx: str, path: str = "", project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, workspace_name = _workspace_for_request(registry, session, project_space)
         workspace_root, directory, normalized_path = _resolve_workspace_entry(session, path, workspace=workspace)
         if not directory.is_dir():
@@ -1252,31 +1399,31 @@ def create_app(*, project_space_root: str) -> FastAPI:
 
     @app.get("/api/session/{ctx}/files/content")
     def _session_file_content(ctx: str, path: str, project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return JSONResponse(_file_content_payload(ctx=ctx, session=session, rel_path=path, workspace=workspace))
 
     @app.get("/api/session/{ctx}/files/structure-animation")
     def _session_structure_animation(ctx: str, path: str, project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return _structure_animation_response(session=session, rel_path=path, workspace=workspace)
 
     @app.get("/api/session/{ctx}/files/view")
     def _session_structure_view(ctx: str, path: str, project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return _structure_view_response(session=session, rel_path=path, workspace=workspace)
 
     @app.get("/api/session/{ctx}/files/structure-vibration")
     def _session_structure_vibration(ctx: str, path: str, mode: int = -1, project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return _structure_vibration_response(session=session, rel_path=path, mode_index=mode, workspace=workspace)
 
     @app.get("/api/session/{ctx}/files/download")
     def _session_file_download(ctx: str, path: str, project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         _workspace_root, candidate, _normalized_path = _resolve_workspace_entry(session, path, workspace=workspace)
         if not candidate.is_file():
@@ -1285,7 +1432,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
 
     @app.get("/api/session/{ctx}/files/archive")
     def _session_file_archive(ctx: str, path: str = "", project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return _archive_workspace_entry(session=session, rel_path=path, workspace=workspace)
 
@@ -1299,7 +1446,7 @@ def create_app(*, project_space_root: str) -> FastAPI:
         unzip: bool = False,
         project_space: str = "",
     ):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return JSONResponse(
             await _upload_workspace_file(
@@ -1315,96 +1462,117 @@ def create_app(*, project_space_root: str) -> FastAPI:
 
     @app.delete("/api/session/{ctx}/files/delete")
     def _session_file_delete(ctx: str, path: str, project_space: str = ""):
-        session = registry.get_session(ctx)
+        _identity, session = _bound_session(ctx)
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         return JSONResponse(_delete_workspace_entry(session=session, rel_path=path, workspace=workspace))
 
     @app.post("/api/session/{ctx}/workspace/open")
     async def _workspace_open(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
-        root_path = str(payload.get("root_path") or registry.default_project_space_root)
-        session.set_workspace_root(root_path)
+        identity, session = _bound_session(ctx)
         project_space = str(payload.get("workspace") or "")
         ok, message = session.open_workspace_by_name(project_space, set_current=False)
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space if ok else "")
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            username=identity.username,
+            lane=str(payload.get("lane") or "research"),
+            project_space=project_space if ok else "",
+        )
         snapshot["ok"] = ok
         snapshot["status_message"] = message
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/workspace/refresh")
     async def _workspace_refresh(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
-        ok, message, _choices = session.set_workspace_root(str(payload.get("root_path") or registry.default_project_space_root))
+        identity, _session = _bound_session(ctx)
         snapshot = _build_snapshot(
             registry=registry,
             ctx=ctx,
+            username=identity.username,
             lane=str(payload.get("lane") or "research"),
             project_space=str(payload.get("workspace") or payload.get("project_space") or ""),
         )
-        snapshot["ok"] = ok
-        snapshot["status_message"] = message
-        return JSONResponse(snapshot)
+        snapshot["ok"] = True
+        snapshot["status_message"] = f"Project-space root is locked to {snapshot.get('workspace_root') or _locked_user_root(identity)}"
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/workspace/create")
     async def _workspace_create(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
-        root_path = str(payload.get("root_path") or registry.default_project_space_root)
-        session.set_workspace_root(root_path)
+        identity, session = _bound_session(ctx)
         project_space = str(payload.get("workspace") or "")
         ok, message = session.create_workspace(project_space, set_current=False)
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space if ok else "")
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            username=identity.username,
+            lane=str(payload.get("lane") or "research"),
+            project_space=project_space if ok else "",
+        )
         snapshot["ok"] = ok
         snapshot["status_message"] = message
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/run/select")
     async def _run_select(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
+        identity, session = _bound_session(ctx)
         project_space = str(payload.get("project_space") or payload.get("workspace") or "")
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         message = session.select_run(str(payload.get("run_name") or ""), workspace=workspace)
         snapshot = _build_snapshot(
             registry=registry,
             ctx=ctx,
+            username=identity.username,
             lane=str(payload.get("lane") or "research"),
             run_name=str(payload.get("run_name") or ""),
             project_space=project_space,
         )
         snapshot["status_message"] = message
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/chat/create")
     async def _chat_create(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
+        identity, session = _bound_session(ctx)
         project_space = str(payload.get("project_space") or payload.get("workspace") or "")
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         session_id = session.create_chat_session(workspace=workspace)
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            username=identity.username,
+            lane=str(payload.get("lane") or "research"),
+            project_space=project_space,
+        )
         snapshot = _apply_chat_session_view(snapshot)
         snapshot["status_message"] = f"Started new chat session: {session_id}"
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/chat/select")
     async def _chat_select(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
+        identity, session = _bound_session(ctx)
         project_space = str(payload.get("project_space") or payload.get("workspace") or "")
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         session_id = session.select_chat_session(str(payload.get("session_id") or ""), workspace=workspace)
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            username=identity.username,
+            lane=str(payload.get("lane") or "research"),
+            project_space=project_space,
+        )
         snapshot = _apply_chat_session_view(snapshot)
         snapshot["status_message"] = f"Switched to chat session: {session_id}" if session_id else "Chat session not found."
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/run/start")
     async def _run_start(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
+        identity, session = _bound_session(ctx)
         project_space = str(payload.get("project_space") or payload.get("workspace") or "")
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         message = session.start_run(
@@ -1427,20 +1595,32 @@ def create_app(*, project_space_root: str) -> FastAPI:
             allow_deep_report=bool(payload.get("allow_deep_report", False)),
             workspace=workspace,
         )
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            username=identity.username,
+            lane=str(payload.get("lane") or "research"),
+            project_space=project_space,
+        )
         snapshot["status_message"] = message
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/run/interrupt")
     async def _run_interrupt(ctx: str, request: Request):
         payload = await _json_body(request)
-        session = registry.get_session(ctx)
+        identity, session = _bound_session(ctx)
         project_space = str(payload.get("project_space") or payload.get("workspace") or "")
         workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
         message = session.request_interrupt_current_run(note=str(payload.get("note") or ""), workspace=workspace)
-        snapshot = _build_snapshot(registry=registry, ctx=ctx, lane=str(payload.get("lane") or "research"), project_space=project_space)
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            username=identity.username,
+            lane=str(payload.get("lane") or "research"),
+            project_space=project_space,
+        )
         snapshot["status_message"] = message
-        return JSONResponse(snapshot)
+        return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/prompt/respond")
     async def _prompt_respond(ctx: str, request: Request):
@@ -1449,12 +1629,16 @@ def create_app(*, project_space_root: str) -> FastAPI:
 
     @app.get("/api/session/{ctx}/stream")
     async def _session_stream(ctx: str, request: Request, last_seq: str = "0", project_space: str = ""):
+        identity, _session = _bound_session(ctx)
+        username = identity.username
+
         async def _event_stream():
             seq = _coerce_int(last_seq, 0)
             while True:
                 if await request.is_disconnected():
                     break
-                session = registry.get_session(ctx)
+                session = registry.get_session(ctx, username=username)
+                session.set_workspace_root(str(_locked_user_root(identity)))
                 try:
                     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
                 except HTTPException:
@@ -1491,12 +1675,13 @@ def launch(
     host: str = "127.0.0.1",
     port: int = 7860,
     project_space_root: Optional[str] = None,
+    no_login: bool = False,
     timeout_keep_alive: int = 0,
     timeout_graceful_shutdown: int = 0,
 ) -> None:
     if project_space_root is None:
         project_space_root = str(Path.cwd() / "project_space")
-    app = create_app(project_space_root=project_space_root)
+    app = create_app(project_space_root=project_space_root, no_login=no_login)
     run_kwargs = {
         "host": host,
         "port": port,

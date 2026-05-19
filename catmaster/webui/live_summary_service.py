@@ -4,7 +4,7 @@ import json
 import threading
 from typing import Any, Dict
 
-from catmaster.agents.llm_utils import llm_text
+from catmaster.llm import llm_text
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
 

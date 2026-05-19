@@ -6,7 +6,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from catmaster.agents.llm_utils import llm_text
+from catmaster.llm import llm_text
 from catmaster.llm.config import LLMConfig, LLMProfile
 from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError

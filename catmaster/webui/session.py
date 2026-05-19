@@ -472,6 +472,10 @@ class WebSession:
                 target = raw.resolve()
             else:
                 target = (root / candidate).resolve()
+        try:
+            target.relative_to(root.resolve())
+        except ValueError:
+            return None
         return target
 
     def open_workspace_by_name(self, name: str, *, set_current: bool = True) -> Tuple[bool, str]:
@@ -491,7 +495,15 @@ class WebSession:
             return False, "Project-space root not set."
         if not name:
             return False, "Project-space name is required."
-        target = (root / name).resolve()
+        raw_name = str(name or "").strip().replace("\\", "/")
+        parts = Path(raw_name).parts
+        if not parts or any(part in {"", ".", ".."} for part in parts):
+            return False, "Project-space name is invalid."
+        target = root.joinpath(*parts).resolve()
+        try:
+            target.relative_to(root.resolve())
+        except ValueError:
+            return False, "Project-space path escapes the locked root."
         return self.open_workspace(str(target), create=True, set_current=set_current)
 
     def clear_workspace(self) -> Tuple[bool, str]:
