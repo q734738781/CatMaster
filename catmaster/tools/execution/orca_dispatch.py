@@ -17,6 +17,8 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     TaskSpec,
     dispatch_submission,
     make_work_base,
+    remote_context_from_exception,
+    remote_context_from_result,
 )
 from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_payloads import render_task_fields
@@ -204,6 +206,7 @@ def orca_execute_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="orca_execute_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -254,6 +257,7 @@ def orca_execute_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
                 "outputs": outputs,
+                **remote_context_from_exception(dispatch_error),
             },
             warnings=warnings,
             error_code="dispatch_failed",
@@ -269,6 +273,7 @@ def orca_execute_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         "task_states": result.task_states if result else [],
         "work_base": result.work_base if result else work_base,
+        **remote_context_from_result(result),
     }
     content = (
         "orca_execute_batch completed.\n"

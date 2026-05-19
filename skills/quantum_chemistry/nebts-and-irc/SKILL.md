@@ -1,9 +1,6 @@
 ---
 name: nebts-and-irc
 description: Use this skill for bounded molecular NEB-TS and IRC workflows in ORCA when the task already has explicit reactant/product or TS-side starting structures.
-license: project-local
-compatibility: local
-allowed-tools: "orca_nebts_prepare orca_irc_prepare orca_execute_batch analyze_orca_results"
 ---
 
 # nebts-and-irc

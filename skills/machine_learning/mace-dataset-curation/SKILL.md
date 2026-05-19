@@ -1,9 +1,6 @@
 ---
 name: mace-dataset-curation
 description: Use this skill for turning VASP result trees into extxyz training datasets that follow the validated reference-script conventions for REF labels, optional head/config_type tags, and fixed split artifacts before MACE training.
-license: project-local
-compatibility: local
-allowed-tools: "build_dataset_from_runs"
 ---
 
 # mace-dataset-curation

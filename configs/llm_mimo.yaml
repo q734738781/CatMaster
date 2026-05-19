@@ -2,9 +2,9 @@
 # Secrets (API keys) should come from environment variables.
 
 models:
-  "openai/gpt-5.4:medium":
+  "openai/gpt-5.5:medium":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -16,9 +16,9 @@ models:
     base_url: "https://openrouter.ai/api/v1"
     default_headers: {}
 
-  "openai/gpt-5.4:xhigh":
+  "openai/gpt-5.5:xhigh":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -30,9 +30,9 @@ models:
     base_url: "https://openrouter.ai/api/v1"
     default_headers: {}
 
-  "openai/gpt-5.4:online-high":
+  "openai/gpt-5.5:high":
     provider: openrouter
-    model: openai/gpt-5.4:online
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -43,24 +43,9 @@ models:
     api_key: null
     base_url: "https://openrouter.ai/api/v1"
     default_headers: {}
-
-  "openai/gpt-5.4:online-xhigh":
+  "openai/gpt-5.3-codex:high":
     provider: openrouter
-    model: openai/gpt-5.4:online
-    temperature: 1.0
-    top_p: null
-    max_tokens: null
-    max_output_tokens: null
-    reasoning:
-      effort: xhigh
-    api_key_env: OPENROUTER_API_KEY
-    api_key: null
-    base_url: "https://openrouter.ai/api/v1"
-    default_headers: {}
-
-  "openai/gpt-5.3-codex:online-high":
-    provider: openrouter
-    model: openai/gpt-5.3-codex:online
+    model: openai/gpt-5.3-codex
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -71,24 +56,9 @@ models:
     api_key: null
     base_url: "https://openrouter.ai/api/v1"
     default_headers: {}
-
-  "openai/gpt-5.4:online-medium":
+  "openai/gpt-5.5:minimal":
     provider: openrouter
-    model: openai/gpt-5.4:online
-    temperature: 1.0
-    top_p: null
-    max_tokens: null
-    max_output_tokens: null
-    reasoning:
-      effort: medium
-    api_key_env: OPENROUTER_API_KEY
-    api_key: null
-    base_url: "https://openrouter.ai/api/v1"
-    default_headers: {}
-
-  "openai/gpt-5.4:online-minimal":
-    provider: openrouter
-    model: openai/gpt-5.4:online
+    model: openai/gpt-5.5
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -111,7 +81,7 @@ models:
 
   "google/gemini-3-flash-preview":
     provider: openrouter
-    model: google/gemini-3-flash-preview:online
+    model: google/gemini-3-flash-preview
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
@@ -120,7 +90,7 @@ models:
 
   "google/gemini-3.1-pro-preview":
     provider: openrouter
-    model: google/gemini-3.1-pro-preview:online
+    model: google/gemini-3.1-pro-preview
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
@@ -154,17 +124,17 @@ agents:
   proposal: "xiaomi/mimo-v2-pro:high"
   director: "xiaomi/mimo-v2-pro:high"
   task_runner: "xiaomi/mimo-v2-pro:high"
-  research_lead: "openai/gpt-5.4:online-high"
-  research_state_updater: "openai/gpt-5.4:online-high"
-  write_director: "openai/gpt-5.4:online-high"
+  research_lead: "openai/gpt-5.5:high"
+  research_state_updater: "openai/gpt-5.5:high"
+  write_director: "openai/gpt-5.5:high"
   section_writer: "xiaomi/mimo-v2-pro:high"
-  write_reviewer: "openai/gpt-5.4:online-medium"
+  write_reviewer: "openai/gpt-5.5:medium"
   academic_polisher: "google/gemini-3.1-pro-preview"
-  tex_compile_fixer: "openai/gpt-5.4:online-medium"
-  image_analyzer: "openai/gpt-5.4:online-medium"
-  literature_synthesizer: "openai/gpt-5.4:medium"
-  literature_deep_research: "openai/gpt-5.4:online-high"
-  memory_patch: "openai/gpt-5.4:online-medium"
+  tex_compile_fixer: "openai/gpt-5.5:medium"
+  image_analyzer: "openai/gpt-5.5:medium"
+  literature_synthesizer: "openai/gpt-5.5:medium"
+  literature_deep_research: "openai/gpt-5.5:high"
+  memory_patch: "openai/gpt-5.5:medium"
   tool_selector: "openai/gpt-5.4-mini"
   summary: "google/gemini-3-flash-preview"
 
@@ -182,7 +152,6 @@ writing:
 agent_runtime:
   recursion_limit: 9999
   max_tool_calls: 120
-  max_model_calls: 120
   print_state_messages: true
   print_http_raw_post: false
 

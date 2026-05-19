@@ -12,12 +12,13 @@ matplotlib
 dpdispatcher
 pyyaml
 httpx
-langchain-openrouter
-openrouter
+langchain-openrouter>=0.2.1
+langchain-anthropic
+langchain-codex-oauth>=1.0,<1.1
+openrouter>=0.9.1
 tavily-python
 faiss-cpu
-deepagents
-langmem
+deepagents==0.5.6
 langgraph-checkpoint-sqlite>=3.0.3
 aiosqlite
 

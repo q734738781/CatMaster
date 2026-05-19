@@ -53,6 +53,7 @@ class ToolRegistry:
             place_adsorbate,
             generate_batch_adsorption_structures,
             estimate_neb_image_count,
+            remap_neb_endpoint_atoms,
             make_neb_geometry,
             generate_strained_structures,
             generate_kpath,
@@ -88,6 +89,7 @@ class ToolRegistry:
             PlaceAdsorbateInput,
             GenerateBatchAdsorptionStructuresInput,
             EstimateNebImageCountInput,
+            RemapNebEndpointAtomsInput,
             MakeNebGeometryInput,
             GenerateStrainedStructuresInput,
             GenerateKpathInput,
@@ -103,6 +105,7 @@ class ToolRegistry:
         from catmaster.tools.execution import (
             mace_relax_batch,
             mace_sp_batch,
+            mace_md_batch,
             mace_neb_batch,
             vasp_execute_batch,
             xtb_run_batch,
@@ -112,6 +115,7 @@ class ToolRegistry:
         from catmaster.tools.execution import (
             MaceRelaxBatchInput,
             MaceSPBatchInput,
+            MaceMDBatchInput,
             MaceNebBatchInput,
             VaspExecuteBatchInput,
             XtbRunBatchInput,
@@ -120,7 +124,6 @@ class ToolRegistry:
         )
         from catmaster.tools.analysis import (
             compile_text,
-            analyze_images,
             analyze_vasp_neb_results,
             analyze_orca_results,
             analyze_trajectory,
@@ -132,11 +135,9 @@ class ToolRegistry:
             peer_review_request,
             polish_academic_prose,
             review_pdf_manuscript,
-            render_structure_views,
             vaspkit_adsorbate_thermo_correction,
             vaspkit_gas_thermo_correction,
             CompileTextInput,
-            AnalyzeImagesInput,
             AnalyzeVaspNebResultsInput,
             AnalyzeOrcaResultsInput,
             AnalyzeTrajectoryInput,
@@ -148,7 +149,6 @@ class ToolRegistry:
             PeerReviewRequestInput,
             PolishAcademicProseInput,
             ReviewPdfManuscriptInput,
-            RenderStructureViewsInput,
             VaspkitAdsorbateThermoCorrectionInput,
             VaspkitGasThermoCorrectionInput,
         )
@@ -168,9 +168,10 @@ class ToolRegistry:
             GetSemanticScholarRecordInput,
             OpenPublicPageInput,
             RecommendSemanticScholarInput,
+            WebSearchInput,
             run_literature_research,
+            web_search,
             search_openalex,
-            search_public_web,
             search_semantic_scholar,
             get_openalex_record,
             get_semantic_scholar_record,
@@ -179,7 +180,6 @@ class ToolRegistry:
             find_in_page,
             RunLiteratureResearchInput,
             SearchOpenAlexInput,
-            SearchPublicWebInput,
             SearchSemanticScholarInput,
         )
 
@@ -196,6 +196,10 @@ class ToolRegistry:
             apply_aider_edits,
             ApplyAiderEditsInput,
         )
+        from catmaster.tools.misc.export_builtin_tool_source import (
+            export_builtin_tool_source,
+            ExportBuiltinToolSourceInput,
+        )
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("enumerate_molecular_conformers", enumerate_molecular_conformers, EnumerateMolecularConformersInput)
@@ -208,6 +212,7 @@ class ToolRegistry:
         self.register_tool("orca_irc_prepare", orca_irc_prepare, OrcaIRCPrepareInput)
         self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
         self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
+        self.register_tool("mace_md_batch", mace_md_batch, MaceMDBatchInput)
         self.register_tool("mace_neb_batch", mace_neb_batch, MaceNebBatchInput)
         self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
         self.register_tool("vasp_band_prepare", vasp_band_prepare, VaspBandPrepareInput)
@@ -224,6 +229,7 @@ class ToolRegistry:
         self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
         self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
         self.register_tool("estimate_neb_image_count", estimate_neb_image_count, EstimateNebImageCountInput)
+        self.register_tool("remap_neb_endpoint_atoms", remap_neb_endpoint_atoms, RemapNebEndpointAtomsInput)
         self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
         self.register_tool("generate_strained_structures", generate_strained_structures, GenerateStrainedStructuresInput)
         self.register_tool("generate_kpath", generate_kpath, GenerateKpathInput)
@@ -239,8 +245,6 @@ class ToolRegistry:
         self.register_tool("orca_execute_batch", orca_execute_batch, OrcaExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
-        self.register_tool("render_structure_views", render_structure_views, RenderStructureViewsInput)
-        self.register_tool("analyze_images", analyze_images, AnalyzeImagesInput)
         self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
         self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
         self.register_tool("analyze_vasp_neb_results", analyze_vasp_neb_results, AnalyzeVaspNebResultsInput)
@@ -270,10 +274,12 @@ class ToolRegistry:
         self.register_tool("get_openalex_record", get_openalex_record, GetOpenAlexRecordInput)
         self.register_tool("get_semantic_scholar_record", get_semantic_scholar_record, GetSemanticScholarRecordInput)
         self.register_tool("recommend_semantic_scholar", recommend_semantic_scholar, RecommendSemanticScholarInput)
-        self.register_tool("search_public_web", search_public_web, SearchPublicWebInput)
+        self.register_tool("web_search", web_search, WebSearchInput)
+        self.register_alias("search_public_web", "web_search")
         self.register_tool("open_public_page", open_public_page, OpenPublicPageInput)
         self.register_tool("find_in_page", find_in_page, FindInPageInput)
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
+        self.register_tool("export_builtin_tool_source", export_builtin_tool_source, ExportBuiltinToolSourceInput)
         self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
         self.register_tool("mace_train", mace_train, MaceTrainInput)
         self.register_tool("mace_evaluate", mace_evaluate, MaceEvaluateInput)
@@ -522,6 +528,9 @@ def _make_langchain_tool(
         _awrapper.__name__ = f"{name}_async"
     description = (input_model.__doc__ or f"Input for {name}").strip()
     args_schema = sanitize_json_schema(input_model.model_json_schema())
+    # The model docstring is already sent as the function description. Keeping
+    # the same text in parameters.description duplicates tokens for every tool.
+    args_schema.pop("description", None)
 
     return StructuredTool.from_function(
         func=_wrapper if func is not None else None,
@@ -542,6 +551,8 @@ def sanitize_json_schema(schema: dict) -> dict:
 
     cleaned: dict = {}
     for key, value in schema.items():
+        if key in {"title", "examples"}:
+            continue
         if isinstance(value, dict):
             cleaned[key] = sanitize_json_schema(value)
         elif isinstance(value, list):

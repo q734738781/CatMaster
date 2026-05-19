@@ -12,56 +12,79 @@ from catmaster.llm.config import LLMConfig
 _logger = logging.getLogger(__name__)
 
 
-def _patch_langchain_openrouter_file_wrapper() -> None:
-    """Patch langchain_openrouter so file-block messages retain `role`.
+def _openrouter_text_block(text: str) -> dict[str, str]:
+    return {"type": "text", "text": str(text or "").strip() or "[non-text content omitted]"}
 
-    langchain_openrouter currently wraps file-block messages with SDK Pydantic
-    models via `model_construct(**fields)` after removing the `role` key. The
-    resulting serialized payload omits `role`, which OpenRouter rejects with
-    "Could not find discriminator field role". Keep the full dict so the SDK
-    models still dump `role` correctly.
-    """
-    try:
-        from langchain_openrouter import chat_models as chat_models_mod  # type: ignore
-    except Exception:
-        return
 
-    if getattr(chat_models_mod, "_catmaster_file_wrapper_patched", False):
-        return
+def _unsupported_openrouter_block_text(block: dict[str, Any]) -> str:
+    block_type = str(block.get("type") or "content").strip() or "content"
+    details: list[str] = []
+    for key in ("id", "mime_type", "filename", "name"):
+        value = str(block.get(key) or "").strip()
+        if value:
+            details.append(f"{key}={value}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    return f"[{block_type} block omitted from replayed message{suffix}]"
 
-    original = getattr(chat_models_mod, "_wrap_messages_for_sdk", None)
-    has_file_blocks = getattr(chat_models_mod, "_has_file_content_blocks", None)
-    if not callable(original) or not callable(has_file_blocks):
-        return
 
-    def _fixed_wrap_messages_for_sdk(message_dicts: list[dict[str, Any]]) -> list[dict[str, Any]] | list[Any]:
-        if not has_file_blocks(message_dicts):
-            return message_dicts
+def _sanitize_openrouter_content(content: Any, *, role: str | None = None) -> Any:
+    """Normalize replayed message blocks to the current OpenRouter SDK schema."""
+    if not isinstance(content, list):
+        return content
 
-        try:
-            from openrouter import components  # type: ignore  # noqa: PLC0415
-        except Exception:
-            return message_dicts
+    sanitized: list[Any] = []
+    for item in content:
+        if isinstance(item, str):
+            if item.strip():
+                sanitized.append(_openrouter_text_block(item))
+            continue
+        if not isinstance(item, dict):
+            sanitized.append(_openrouter_text_block(f"[{type(item).__name__} content omitted from replayed message]"))
+            continue
 
-        role_to_model: dict[str, Any] = {
-            "user": components.UserMessage,
-            "system": components.SystemMessage,
-            "assistant": components.AssistantMessage,
-            "tool": components.ToolResponseMessage,
-            "developer": components.DeveloperMessage,
-        }
-
-        wrapped: list[Any] = []
-        for msg in message_dicts:
-            model_cls = role_to_model.get(str(msg.get("role", "") or ""))
-            if model_cls is None:
-                wrapped.append(msg)
+        block = dict(item)
+        block_type = str(block.get("type") or "").strip().lower()
+        if role == "tool" and block_type != "text":
+            sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
+            continue
+        if block_type in {"text", "file", "image_url", "input_audio", "input_video", "video_url"}:
+            sanitized.append(block)
+            continue
+        if block_type == "image":
+            image_url = block.get("image_url")
+            if isinstance(image_url, dict) and image_url.get("url"):
+                block["type"] = "image_url"
+                sanitized.append(block)
                 continue
-            wrapped.append(model_cls.model_construct(**dict(msg)))
-        return wrapped
+            url = str(block.get("url") or "").strip()
+            if url:
+                sanitized.append({"type": "image_url", "image_url": {"url": url}})
+                continue
+            sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
+            continue
 
-    chat_models_mod._wrap_messages_for_sdk = _fixed_wrap_messages_for_sdk
-    chat_models_mod._catmaster_file_wrapper_patched = True
+        text = str(block.get("text") or "").strip()
+        if text:
+            sanitized.append(_openrouter_text_block(text))
+        else:
+            sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
+    return sanitized
+
+
+def _sanitize_openrouter_message_dicts(message_dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for message in message_dicts:
+        if not isinstance(message, dict):
+            sanitized.append(message)
+            continue
+        content = message.get("content")
+        role = str(message.get("role") or "").strip().lower() or None
+        new_content = _sanitize_openrouter_content(content, role=role)
+        if new_content is content:
+            sanitized.append(message)
+        else:
+            sanitized.append({**message, "content": new_content})
+    return sanitized
 
 
 def _suppress_openrouter_file_block_serializer_warnings() -> None:
@@ -70,8 +93,9 @@ def _suppress_openrouter_file_block_serializer_warnings() -> None:
     The OpenRouter API accepts file content blocks, but the current SDK type
     declarations lag behind and emit noisy `Pydantic serializer warnings`
     during request serialization. These are not actionable for callers once the
-    payload is patched to include `role` correctly, so suppress this specific
-    warning family while leaving real API failures untouched.
+    payload is produced by the current langchain-openrouter/openrouter stack, so
+    suppress this specific warning family while leaving real API failures
+    untouched.
     """
     warnings.filterwarnings(
         "ignore",
@@ -217,6 +241,20 @@ def _provider_options_for(cfg: LLMConfig, provider: str | None = None) -> Dict[s
         return {}
     options = cfg.provider_options.get(key)
     return dict(options) if isinstance(options, dict) else {}
+
+
+def _provider_chat_kwargs_for(cfg: LLMConfig, provider: str | None = None) -> Dict[str, Any]:
+    key = str(provider or cfg.provider or "").strip().lower()
+    options = _provider_options_for(cfg, key)
+    kwargs: Dict[str, Any] = {}
+    for field in ("kwargs", "chat_kwargs"):
+        raw = options.get(field)
+        if raw is None:
+            continue
+        if not isinstance(raw, dict):
+            raise ValueError(f"models.*.provider_options.{key}.{field} must be a mapping")
+        kwargs.update(raw)
+    return kwargs
 
 
 def _resolve_extra_body(cfg: LLMConfig) -> Dict[str, Any]:
@@ -372,10 +410,11 @@ def _resolve_openrouter_request_kwargs(cfg: LLMConfig) -> dict[str, Any]:
 
 
 def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> None:
-    if str(cfg.provider or "").strip().lower() != "openai":
+    provider = str(cfg.provider or "").strip().lower()
+    if provider not in {"openai", "deepseek"}:
         return
 
-    request_options = _provider_options_for(cfg, "openai").get("request_options")
+    request_options = _provider_options_for(cfg, provider).get("request_options")
     if request_options is None:
         return
     if not isinstance(request_options, dict):
@@ -419,7 +458,6 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         from langchain_openrouter import ChatOpenRouter
         from langchain_core.messages import BaseMessage
 
-        _patch_langchain_openrouter_file_wrapper()
         _suppress_openrouter_file_block_serializer_warnings()
         api_key = _require_api_key(cfg)
         kwargs = _resolve_openrouter_request_kwargs(cfg)
@@ -452,6 +490,7 @@ def build_chat_model(cfg: LLMConfig) -> Any:
                     message_dicts,
                     self.content_cache_control,
                 )
+                message_dicts = _sanitize_openrouter_message_dicts(message_dicts)
                 return message_dicts, params
 
         return CatMasterChatOpenRouter(
@@ -465,8 +504,122 @@ def build_chat_model(cfg: LLMConfig) -> Any:
             **kwargs,
         )
 
+    if cfg.provider == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError as exc:  # pragma: no cover - dependency guidance
+            raise RuntimeError(
+                "provider=anthropic requires langchain-anthropic. "
+                "Install it with `python -m pip install langchain-anthropic`."
+            ) from exc
+
+        kwargs = _provider_chat_kwargs_for(cfg, "anthropic")
+        api_key = _require_api_key(cfg)
+        kwargs.setdefault("api_key", api_key)
+        if cfg.base_url:
+            kwargs.setdefault("base_url", cfg.base_url)
+        if cfg.default_headers:
+            kwargs.setdefault("default_headers", cfg.default_headers)
+        if cfg.timeout_s is not None:
+            kwargs.setdefault("timeout", cfg.timeout_s)
+        if cfg.max_retries is not None:
+            kwargs.setdefault("max_retries", cfg.max_retries)
+        if cfg.top_p is not None:
+            kwargs.setdefault("top_p", cfg.top_p)
+        max_tokens = cfg.max_tokens
+        if max_tokens is None and cfg.max_output_tokens is not None:
+            max_tokens = cfg.max_output_tokens
+        if max_tokens is not None:
+            kwargs.setdefault("max_tokens", max_tokens)
+        kwargs.setdefault("model", cfg.model)
+        if cfg.temperature is not None:
+            kwargs.setdefault("temperature", cfg.temperature)
+        kwargs.setdefault("streaming", False)
+
+        return ChatAnthropic(**kwargs)
+
+    if cfg.provider == "codex_oauth":
+        try:
+            from langchain_codex_oauth import ChatCodexOAuth
+        except ImportError as exc:  # pragma: no cover - dependency guidance
+            raise RuntimeError(
+                "provider=codex_oauth requires langchain-codex-oauth. "
+                "Install it with `python -m pip install langchain-codex-oauth`."
+            ) from exc
+
+        kwargs = _provider_chat_kwargs_for(cfg, "codex_oauth")
+        if cfg.base_url:
+            kwargs.setdefault("base_url", cfg.base_url)
+        if cfg.timeout_s is not None:
+            kwargs.setdefault("timeout", cfg.timeout_s)
+        if cfg.max_retries is not None:
+            kwargs.setdefault("max_retries", cfg.max_retries)
+        if cfg.temperature is not None:
+            kwargs.setdefault("temperature", cfg.temperature)
+        max_tokens = cfg.max_tokens
+        if max_tokens is None and cfg.max_output_tokens is not None:
+            max_tokens = cfg.max_output_tokens
+        if max_tokens is not None:
+            kwargs.setdefault("max_tokens", max_tokens)
+        kwargs.setdefault("model", cfg.model)
+
+        return ChatCodexOAuth(**kwargs)
+
     if cfg.provider in ("openai", "oai_compatible", "deepseek"):
-        from langchain_openai import ChatOpenAI
+        if cfg.provider == "deepseek":
+            from langchain_deepseek import ChatDeepSeek as ChatModel
+            from langchain_core.messages import AIMessage
+
+            class CatMasterChatDeepSeek(ChatModel):
+                @staticmethod
+                def _thinking_enabled_for_extra_body(*extra_bodies: Any) -> bool:
+                    extra_body: dict[str, Any] = {}
+                    for candidate in extra_bodies:
+                        if isinstance(candidate, dict):
+                            extra_body.update(candidate)
+                    thinking = extra_body.get("thinking")
+                    if isinstance(thinking, dict):
+                        return str(thinking.get("type") or "").strip().lower() != "disabled"
+                    return True
+
+                def _get_request_payload(
+                    self,
+                    input_: Any,
+                    *,
+                    stop: list[str] | None = None,
+                    **kwargs: Any,
+                ) -> dict[str, Any]:
+                    payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+                    message_dicts = payload.get("messages")
+                    if not isinstance(message_dicts, list):
+                        return payload
+
+                    messages = self._convert_input(input_).to_messages()
+                    thinking_enabled = self._thinking_enabled_for_extra_body(
+                        _resolve_extra_body(cfg),
+                        kwargs.get("extra_body"),
+                        payload.get("extra_body"),
+                    )
+                    for message, message_dict in zip(messages, message_dicts):
+                        if not isinstance(message, AIMessage) or not isinstance(message_dict, dict):
+                            continue
+                        if message_dict.get("role") != "assistant" or not message_dict.get("tool_calls"):
+                            continue
+                        if not thinking_enabled:
+                            continue
+                        # Backport langchain-ai/langchain PRs #34438/#35094:
+                        # DeepSeek thinking-mode tool loops require only
+                        # assistant tool-call messages to replay
+                        # reasoning_content at the top level. Keep this as an
+                        # outbound payload adaptation; do not mutate LangChain
+                        # messages or add reasoning to normal assistant turns.
+                        reasoning_content = message.additional_kwargs.get("reasoning_content")
+                        message_dict["reasoning_content"] = reasoning_content or ""
+                    return payload
+
+            ChatModel = CatMasterChatDeepSeek
+        else:
+            from langchain_openai import ChatOpenAI as ChatModel
 
         api_key = _require_api_key(cfg)
         kwargs: dict[str, Any] = {}
@@ -505,15 +658,23 @@ def build_chat_model(cfg: LLMConfig) -> Any:
                 cfg.model,
             )
 
-        return ChatOpenAI(
+        provider = str(cfg.provider or "").strip().lower()
+        use_responses_api = provider == "openai"
+        init_kwargs: dict[str, Any] = {}
+        if use_responses_api:
+            init_kwargs["reasoning"] = reasoning_config
+        elif cfg.reasoning_effort:
+            init_kwargs["reasoning_effort"] = cfg.reasoning_effort
+
+        return ChatModel(
             model=cfg.model,
             api_key=api_key,
             temperature=cfg.temperature,
-            reasoning=reasoning_config,
             model_kwargs=model_kwargs,
             streaming=False,
             disable_streaming=True,
-            use_responses_api=True,
+            use_responses_api=use_responses_api,
+            **init_kwargs,
             **kwargs,
         )
 

@@ -125,34 +125,13 @@ class PlaceAdsorbateInput(BaseModel):
 
 
 class GenerateBatchAdsorptionStructuresInput(BaseModel):
-    """
-    [adsorption/modeling] Generate multiple adsorbed structures up to max_structures. This is a convenience wrapper for large-scale placement.
-    This tool keeps selective dynamics of the original slab structure and allows adsorbate to move freely.
-    Input can be a single slab file (slab_file) or a directory of slab files (slab_dir).
-    When slab_dir is used, each slab gets its own subdirectory under output_dir. Max_structures applies per slab.
-    For nested slab_dir layouts, slab_id encodes the relative path (without suffix) using '__'.
-
-    The tool writes a JSON list to output_dir/batch_structures.json and a per-structure
-    metadata sidecar <output>.meta.json with ads_indices.
-    It also writes output_dir/ads_indices.json as an index file:
-    [
-      {
-        "slab_file_rel": "slabs/fe111.vasp",
-        "slab_id": "fe111",
-        "label": "ontop_0",
-        "output_poscar_rel": "adsorption/batch/fe111/ontop_0.vasp",
-        "ads_indices_added": [36],
-        "ads_indices": [36]
-      }
-    ]
-    The returned tool data replaces "structures" with the workspace-relative path to this JSON file.
-    """
+    """[adsorption/modeling] Generate a capped batch of adsorbed structures from one slab file or a slab directory."""
 
     slab_file: Optional[str] = Field(None, description="Slab structure file (POSCAR/CONTCAR/CIF).")
     slab_dir: Optional[str] = Field(None, description="Directory containing slab files for high-throughput placement.")
-    adsorbate_file: str = Field(..., description="Adsorbate molecule file (XYZ). Internal relative geometry is preserved; no automatic reorientation is applied.")
+    adsorbate_file: str = Field(..., description="Adsorbate molecule file, usually XYZ; geometry is translated without automatic reorientation.")
     mode: str = Field("all", description="all|ontop|bridge|hollow")
-    distance: float = Field(2.0, ge=0.0, description="Height above the surface used when enumerating adsorption site coordinates (Å). The molecule is translated so its placement reference point lands on each site coordinate.")
+    distance: float = Field(2.0, ge=0.0, description="Height above the surface used for site coordinates (Å).")
     max_structures: int = Field(1000, ge=1, description="Maximum number of adsorbed structures to generate.")
     output_dir: str = Field("adsorption/batch", description="Directory to write batch POSCARs.")
 

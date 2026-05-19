@@ -2,11 +2,8 @@
 
 This repository now uses a DeepAgent-native specialist runtime as the active path. Treat the current implementation under `catmaster/specialists/` as the source of truth.
 
-Legacy note:
-
-- Older orchestrator / director-style code under `catmaster/agents/` is deprecated but still present in the repo.
-- Unless you are explicitly maintaining that legacy stack, do not use it as the source of truth for current prompts, routing, tool policy, or runtime behavior.
-- When active-path behavior and legacy code disagree, follow `catmaster/specialists/runtime.py` and the active specialist tests.
+Maintainer notes for CatMaster's non-standard DeepAgents/LangChain/OpenRouter
+interaction layers are in [deepagents_interactions.md](/home/chenhh/python_projects/CatMaster/docs/deepagents_interactions.md).
 
 ## 1) Active architecture
 
@@ -27,22 +24,23 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
   - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
 - `ExperimentSpecialist`
   - Bounded execution specialist.
-  - May delegate only to `materials_worker`, `ml_worker`, and a lightweight `literature_agent`.
-  - For narrow best-practice checks during implementation, may rely on the online model's built-in web-browsing capability instead of waiting for a dedicated search tool. Keep this limited to official docs / primary-source verification, not broad review.
+  - May delegate only to `materials_worker`, `ml_worker`, and `orca_xtb_worker`.
+  - Uses the default `web_search` tool directly for narrow best-practice checks, official docs, or primary-source verification. Keep this limited to focused implementation grounding, not broad review.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
-  - May use the lightweight `literature_agent` only for tightly bounded background supplementation needed by the current manuscript or note.
+  - Uses the default `web_search` tool directly only for tightly bounded background supplementation needed by the current manuscript or note.
 
 Execution guidance for the active experiment path:
 
 - If a dedicated tool does not cover a bounded execution task, prefer implementing the missing step with `execute`, Python, and mature third-party libraries inside the workspace over stopping at the tool boundary.
-- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow built-in web check through the online model to align with current official documentation or primary sources before improvising. Do not turn that into a broad literature campaign.
+- Local `execute` commands run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there with `python -m pip install ...` instead of modifying the main environment.
+- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow `web_search` check against current official documentation or primary sources before improvising. Do not turn that into a broad literature campaign.
 - If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
 
-Do not design new features around the old `director -> task runner -> memory patch` stack unless you are explicitly maintaining legacy code. The active path is the DeepAgent specialist runtime.
-
 ## 2) Current literature architecture
+
+All agent-visible public web search should flow through the unified `web_search` tool.
 
 Literature support is split into two forms:
 
@@ -50,12 +48,13 @@ Literature support is split into two forms:
   - Used by `research`
   - A compiled DeepAgent subagent
   - Internally delegates to:
-    - `literature_agent` for broad Tavily-backed public-web review
+    - `literature_agent` for broad public-web review using `web_search`, `open_public_page`, and `find_in_page`
     - `metadata_agent` for exact scholarly metadata
-- lightweight `literature_agent`
-  - Used by `experiment`
-  - Also used by `writing` for narrow background/context supplementation only
-  - Exposes only a lightweight Tavily-backed `internet_search` tool for quick external grounding
+
+All autonomous specialists and workers also receive `web_search` as a default tool. That means:
+
+- `ExperimentSpecialist`, `WritingSpecialist`, and worker agents may run their own narrow web checks directly.
+- Broad review, source inspection, and citation-grade reconciliation still belong to `litreview_agent`.
 
 The metadata side is intentionally separate from broad review:
 
@@ -73,7 +72,7 @@ These are for exact paper metadata, DOI/year/venue/authors/citation resolution, 
 
 The active runtime writes `run_state.json` in the run directory. This is the active run snapshot used by the WebUI and resume flow.
 
-Active multi-turn continuity for specialists comes from the DeepAgent `thread_id` bound to the chat session. Do not manually inject chat-history summaries or reconstructed transcript text into active specialist prompts unless you are explicitly maintaining legacy code or a separate non-specialist flow.
+Active multi-turn continuity for specialists comes from the DeepAgent `thread_id` bound to the chat session. Do not manually inject chat-history summaries or reconstructed transcript text into active specialist prompts.
 
 Do not add new active-path features that depend on:
 
@@ -82,8 +81,6 @@ Do not add new active-path features that depend on:
 - `MEMORY/**`
 - `update_memory`
 - memory patch flows
-
-Those belong to the legacy orchestration stack and are no longer the primary runtime contract.
 
 ### Threading and memory
 
@@ -121,11 +118,11 @@ Maintenance rules for active-path code:
 - Keep long-lived `tool` message history text-first. Prefer concise textual tool outputs plus workspace artifact paths over inline base64 image/file payloads.
 - If a tool naturally returns binary or multimodal content, persist the artifact as a file and keep only a short textual summary, file path, and MIME hint in model-visible history when possible.
 - Do not depend on LangChain-standard multimodal blocks like `{"type": "image", ...}` being replay-safe for provider-backed `tool` history. Provider wire formats may require provider-native blocks such as OpenAI-style `image_url`, and some bridges reject non-text `tool.content`.
-- When a later turn needs image or file understanding, re-open the artifact in that turn or use a dedicated analysis tool to turn it into textual findings. Do not rely on old inline image tool payloads surviving indefinitely inside the thread store.
+- When a later turn needs image, PDF, or PPT/PPTX understanding, re-open the artifact with `read_file` for small or moderate files. Do not rely on old inline image or file payloads surviving indefinitely inside the thread store.
 - Prefer attachments, file IDs, file paths, or generated artifact URLs over embedding large base64 blobs in multi-turn history.
 - If runtime compatibility is uncertain, sanitize non-text `tool` messages before model invocation instead of dropping the whole thread. Preserve only the minimum textual placeholder needed for continuity.
 
-This is a compatibility rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while avoiding provider/schema failures from replaying raw multimodal `tool` history across turns.
+This is a replay-safety rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while avoiding provider/schema failures from replaying raw multimodal `tool` history across turns.
 
 ## 4) Research Kernel
 
@@ -160,7 +157,7 @@ Final specialist responses should contain only these sections:
 - `Facts`
 - `Files`
 
-Do not reintroduce heavy structured task-era payloads like:
+Do not reintroduce heavy structured payloads like:
 
 - `constraints`
 - `open_questions`
@@ -176,17 +173,21 @@ Proposal review is the exception: proposal checkpoints still use a structured `P
 
 The active skill layout is:
 
-- `skills/experiment/*`
+- `skills/materials/*`
 - `skills/machine_learning/*`
+- `skills/quantum_chemistry/*`
+- `skills/execution/*`
 - `skills/writing/*`
 
 At runtime they are staged into:
 
-- `files/.deepagents/skills/experiment`
+- `files/.deepagents/skills/materials`
 - `files/.deepagents/skills/machine_learning`
+- `files/.deepagents/skills/quantum_chemistry`
+- `files/.deepagents/skills/execution`
 - `files/.deepagents/skills/writing`
 
-Specialists bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime.
+Worker agents bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime. Coordinator specialists do not mount skill roots directly.
 
 ### Skill authoring
 
@@ -284,17 +285,15 @@ The active runtime uses LangChain step logging and UI event callbacks. Avoid rei
 
 ### WebUI
 
-The WebUI is run-state and SSE driven. Active-path UI work should align with the current streaming model rather than polling-only or legacy task-state assumptions.
+The WebUI is run-state and SSE driven. Active-path UI work should align with the current streaming model.
 
-## 10) Legacy code policy
-
-This repository still contains legacy orchestration code under areas like `catmaster/agents/`, but it is not the primary architecture.
+## 10) Code policy
 
 When making changes:
 
 - prefer `catmaster/specialists/` for active-path behavior
-- prefer DeepAgent-native mechanisms over custom compatibility layers
-- do not add new task-era compatibility shims unless a change explicitly targets legacy support
+- prefer DeepAgent-native mechanisms over provider-specific shims
+- do not add new provider-specific shims unless the change explicitly needs them
 
 ## 11) Testing guidance
 

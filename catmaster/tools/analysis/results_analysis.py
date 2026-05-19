@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional
 
@@ -19,6 +20,13 @@ from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 _RUN_MARKERS = ("vasprun.xml", "OUTCAR", "OSZICAR", "CONTCAR")
+
+
+@dataclass(frozen=True)
+class TrajectoryFrames:
+    frames: list[Atoms]
+    positions_are_wrapped: bool
+    coordinate_mode: Literal["wrapped_fractional", "unwrapped_cartesian"]
 
 
 def _error(tool_name: str, message: str, *, data: dict[str, Any] | None = None, error_code: str = "") -> None:
@@ -283,10 +291,43 @@ def _scan_neb_images(result_dir: Path) -> tuple[list[dict[str, Any]], list[str]]
     return records, issues
 
 
-def _read_trajectory_frames(path: Path) -> list[Atoms]:
+def _neb_missing_endpoint_outcar_hint(issues: list[str]) -> str | None:
+    missing_endpoint_images: list[str] = []
+    for issue in issues:
+        if issue.startswith("image 00: no energy parsed from OUTCAR"):
+            missing_endpoint_images.append("00")
+        elif issue.startswith("image 0: no energy parsed from OUTCAR"):
+            missing_endpoint_images.append("00")
+        elif issue.startswith("image "):
+            image_label = issue.split(":", 1)[0].replace("image", "").strip()
+            if image_label.isdigit() and issue.endswith("no energy parsed from OUTCAR"):
+                missing_endpoint_images.append(image_label.zfill(2))
+    if len(missing_endpoint_images) < 2:
+        return None
+    normalized = sorted(set(missing_endpoint_images), key=int)
+    first = normalized[0]
+    last = normalized[-1]
+    if first != "00":
+        return None
+    return (
+        f"hint=VASP NEB endpoint images do not produce their own OUTCAR energies. Copy the original relax OUTCAR files into "
+        f"{first}/OUTCAR and {last}/OUTCAR under result_dir, "
+        "then rerun analyze_vasp_neb_results."
+    )
+
+
+def _read_trajectory_frames(path: Path) -> TrajectoryFrames:
     if path.name == "XDATCAR":
-        return list(ase_read(str(path), index=":", format="vasp-xdatcar"))
-    return list(ase_read(str(path), index=":"))
+        return TrajectoryFrames(
+            frames=list(ase_read(str(path), index=":", format="vasp-xdatcar")),
+            positions_are_wrapped=True,
+            coordinate_mode="wrapped_fractional",
+        )
+    return TrajectoryFrames(
+        frames=list(ase_read(str(path), index=":")),
+        positions_are_wrapped=False,
+        coordinate_mode="unwrapped_cartesian",
+    )
 
 
 def _unwrap_positions(frames: list[Atoms]) -> np.ndarray:
@@ -319,6 +360,7 @@ def _mean_square_displacement(
     species: Optional[str],
     *,
     axes: tuple[int, ...],
+    positions_are_wrapped: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     if not frames:
         return np.array([]), np.array([])
@@ -329,9 +371,12 @@ def _mean_square_displacement(
             raise ValueError(f"No atoms with species={species!r} found in trajectory.")
     else:
         mask = np.ones(len(symbols), dtype=bool)
-    unwrapped = _unwrap_positions(frames)
-    reference = unwrapped[0, mask, :]
-    delta = unwrapped[:, mask, :] - reference[None, :, :]
+    positions = _unwrap_positions(frames) if positions_are_wrapped else np.asarray(
+        [atoms.get_positions() for atoms in frames],
+        dtype=float,
+    )
+    reference = positions[0, mask, :]
+    delta = positions[:, mask, :] - reference[None, :, :]
     msd = np.mean(np.sum(delta[:, :, axes] ** 2, axis=2), axis=1)
     return np.arange(len(frames), dtype=float), msd
 
@@ -511,9 +556,13 @@ def analyze_vasp_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, An
         output_dir.mkdir(parents=True, exist_ok=True)
         records, issues = _scan_neb_images(result_dir)
         if issues:
+            hint = _neb_missing_endpoint_outcar_hint(issues)
+            message = "Incomplete NEB image energies; refusing to report a barrier.\nissues=" + "; ".join(issues)
+            if hint:
+                message += "\n" + hint
             _error(
                 "analyze_vasp_neb_results",
-                "Incomplete NEB image energies; refusing to report a barrier.\nissues=" + "; ".join(issues),
+                message,
                 data={"result_dir_rel": workspace_relpath(result_dir)},
                 error_code="incomplete_neb_profile",
             )
@@ -591,10 +640,10 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         source_path = resolve_workspace_path(params.path, must_exist=True)
         if source_path.is_dir():
             candidates = [
+                source_path / "md.traj",
                 source_path / "XDATCAR",
                 source_path / "trajectory.traj",
                 source_path / "opt.traj",
-                source_path / "md.traj",
             ]
             trajectory_path = next((path for path in candidates if path.exists()), None)
             if trajectory_path is None:
@@ -618,7 +667,8 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        frames = _read_trajectory_frames(trajectory_path)
+        trajectory = _read_trajectory_frames(trajectory_path)
+        frames = trajectory.frames
         if len(frames) < 2:
             _error(
                 "analyze_trajectory",
@@ -627,7 +677,12 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 error_code="too_few_frames",
             )
         axes = _axes_for_dimension(params.diffusion_dimension)
-        indices, msd = _mean_square_displacement(frames, params.species, axes=axes)
+        indices, msd = _mean_square_displacement(
+            frames,
+            params.species,
+            axes=axes,
+            positions_are_wrapped=trajectory.positions_are_wrapped,
+        )
         time_ps = indices * params.timestep_fs / 1000.0
         fit_start = max(1, int(math.floor(len(msd) * params.fit_fraction_start)))
         fit_x = time_ps[fit_start:]
@@ -695,6 +750,8 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
         summary = {
             "trajectory_rel": workspace_relpath(trajectory_path),
+            "coordinate_mode": trajectory.coordinate_mode,
+            "positions_are_wrapped": trajectory.positions_are_wrapped,
             "result_dir_rel": workspace_relpath(result_dir),
             "nframes": len(frames),
             "natoms": len(frames[0]),
@@ -719,6 +776,8 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "csv_rel": workspace_relpath(msd_csv),
             "png_rel": workspace_relpath(msd_png),
             "nframes": len(frames),
+            "coordinate_mode": trajectory.coordinate_mode,
+            "positions_are_wrapped": trajectory.positions_are_wrapped,
             "diffusion_coefficient_a2_per_ps": diffusion,
         }
         content = (

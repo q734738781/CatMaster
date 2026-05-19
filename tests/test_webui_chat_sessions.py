@@ -5,6 +5,7 @@ import json
 import sqlite3
 import shutil
 import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -43,6 +44,7 @@ def _write_completed_run(
     final_answer: str = "Agent answer.",
     summary: str = "Run finished.",
     chat_session_id: str = "",
+    user_prompt: str = "",
 ) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / RUN_STATE_FILE).write_text(
@@ -56,6 +58,7 @@ def _write_completed_run(
                 "facts": ["fact one"],
                 "artifacts": [{"path": "outputs/result.txt", "kind": "file", "description": "reported file"}],
                 "chat_session_id": chat_session_id,
+                "user_prompt": user_prompt,
             }
         ),
         encoding="utf-8",
@@ -125,7 +128,7 @@ def test_chat_session_store_excludes_run_errors_from_chat_and_history(tmp_path: 
     assert "Run crashed badly." not in str(session_payload.get("summary_text") or "")
 
 
-def test_websession_binds_chat_session_as_deepagent_thread_for_experiment_lane(tmp_path: Path, monkeypatch) -> None:
+def test_websession_starts_new_thread_and_replays_chat_history_for_experiment_lane(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "ws"
     session = WebSession()
     session.set_workspace_root(str(tmp_path))
@@ -145,6 +148,12 @@ def test_websession_binds_chat_session_as_deepagent_thread_for_experiment_lane(t
             captured["entrypoint"] = str(kwargs.get("entrypoint") or "")
             captured["chat_session_id"] = str(kwargs.get("chat_session_id") or "")
             captured["thread_id"] = str(kwargs.get("thread_id") or "")
+            captured["conversation_messages"] = list(kwargs.get("conversation_messages") or [])
+            initial_state = json.loads((run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+            assert initial_state["status"] == "running"
+            assert initial_state["entrypoint"] == "experiment"
+            assert initial_state["user_prompt"] == "Current request."
+            assert initial_state["chat_session_id"] == captured["chat_session_id"]
             _write_completed_run(
                 run_dir,
                 entrypoint="experiment",
@@ -177,11 +186,124 @@ def test_websession_binds_chat_session_as_deepagent_thread_for_experiment_lane(t
     assert captured["entrypoint"] == "experiment"
     assert "Current request." in captured["prompt"]
     assert captured["chat_session_id"] == session.current_chat_session_id()
-    assert captured["thread_id"] == session.current_chat_session_id()
+    assert captured["thread_id"] == "run_test"
+    assert captured["conversation_messages"] == [
+        {"role": "user", "content": "Earlier user question."},
+        {"role": "assistant", "content": "Earlier assistant answer."},
+    ]
     chat_messages = session.get_chat_messages()
     assert [item["role"] for item in chat_messages[-2:]] == ["user", "assistant"]
     assert [item["kind"] for item in chat_messages[-2:]] == ["chat", "run_result"]
     assert str(chat_messages[-1]["source_run_id"]) == "run_test"
+
+
+def test_websession_allows_one_running_run_per_workspace(tmp_path: Path, monkeypatch) -> None:
+    session = WebSession()
+    session.set_workspace_root(str(tmp_path))
+    _install_dummy_llm_profile(monkeypatch)
+
+    started: dict[str, threading.Event] = {}
+    release: dict[str, threading.Event] = {}
+    created_run_dirs: dict[str, Path] = {}
+
+    class BlockingRunner:
+        def __init__(self, *, workspace_name: str, run_dir: Path):
+            self.workspace_name = workspace_name
+            self.run_dir = run_dir
+
+        async def arun(self, prompt: str, **kwargs):
+            started[self.workspace_name].set()
+            await asyncio.to_thread(release[self.workspace_name].wait)
+            _write_completed_run(
+                self.run_dir,
+                entrypoint="experiment",
+                final_answer=f"{self.workspace_name} finished.",
+                chat_session_id=str(kwargs.get("chat_session_id") or ""),
+                user_prompt=prompt,
+            )
+            return {"status": "done"}
+
+    def fake_build_specialist_runner(**kwargs):
+        workspace = Path(kwargs["workspace"])
+        workspace_name = workspace.name
+        run_dir = system_root(workspace=workspace) / "runs" / f"run_{workspace_name}"
+        created_run_dirs[workspace_name] = run_dir
+        return SimpleNamespace(
+            runner=BlockingRunner(workspace_name=workspace_name, run_dir=run_dir),
+            run_context=SimpleNamespace(run_id=run_dir.name, run_dir=run_dir, model_name="task-model"),
+        )
+
+    monkeypatch.setattr(specialists_mod, "build_specialist_runner", fake_build_specialist_runner)
+
+    for name in ("ws_a", "ws_b"):
+        started[name] = threading.Event()
+        release[name] = threading.Event()
+
+    ok, _ = session.open_workspace(str(tmp_path / "ws_a"), create=True)
+    assert ok
+    assert session.start_run(
+        prompt="Run A.",
+        lane="experiment",
+        run_mode="new_run",
+        resume_run_name="",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    ) == "Run started."
+    assert started["ws_a"].wait(timeout=5)
+    thread_a = session.run_thread
+    assert thread_a is not None and thread_a.is_alive()
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_b"), create=True)
+    assert ok, msg
+    assert session.run_thread is None
+    assert session.start_run(
+        prompt="Run B.",
+        lane="experiment",
+        run_mode="new_run",
+        resume_run_name="",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    ) == "Run started."
+    assert started["ws_b"].wait(timeout=5)
+    thread_b = session.run_thread
+    assert thread_b is not None and thread_b.is_alive()
+    assert thread_b is not thread_a
+
+    assert session.start_run(
+        prompt="Second B.",
+        lane="experiment",
+        run_mode="new_run",
+        resume_run_name="",
+        proposal_review=False,
+        log_llm=False,
+        full_auto_major=False,
+    ) == "Run already in progress for this project space."
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_a"), create=False)
+    assert ok, msg
+    assert session.run_thread is thread_a
+    assert session.get_selected_run_dir() == created_run_dirs["ws_a"]
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_b"), create=False)
+    assert ok, msg
+    release["ws_a"].set()
+    release["ws_b"].set()
+    thread_a.join(timeout=5)
+    thread_b.join(timeout=5)
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_a"), create=False)
+    assert ok, msg
+    assert session.run_status == "done"
+    assert session.read_result_text(created_run_dirs["ws_a"]) == "ws_a finished."
+
+    ok, msg = session.open_workspace(str(tmp_path / "ws_b"), create=False)
+    assert ok, msg
+    assert session.run_status == "done"
+    assert session.read_result_text(created_run_dirs["ws_b"]) == "ws_b finished."
 
 
 def test_websession_builds_thread_binding_for_research_lane(tmp_path: Path) -> None:
@@ -195,7 +317,8 @@ def test_websession_builds_thread_binding_for_research_lane(tmp_path: Path) -> N
     session._append_chat_message(role="assistant", content="Earlier assistant answer.", kind="run_result")
     pack = session.build_thread_binding(lane="research")
     assert pack["session_id"]
-    assert pack["thread_id"] == pack["session_id"]
+    assert pack["thread_id"] == ""
+    assert pack["history_messages"] == 2
 
 
 def test_websession_entry_context_status_reports_deepagent_thread(tmp_path: Path) -> None:
@@ -212,7 +335,8 @@ def test_websession_entry_context_status_reports_deepagent_thread(tmp_path: Path
     status = session.entry_context_status_text(lane="experiment")
     current_session = session.current_chat_session_id()
     assert f"Session `{current_session}`" in status
-    assert f"deepagent thread `{current_session}`" in status
+    assert "new deepagent thread per run" in status
+    assert "replay last `5` turns" in status
 
 
 def test_websession_backfills_missing_run_results_from_run_state(tmp_path: Path) -> None:
@@ -232,22 +356,24 @@ def test_websession_backfills_missing_run_results_from_run_state(tmp_path: Path)
         entrypoint="research",
         final_answer="Recovered result one.",
         chat_session_id=active_session_id,
+        user_prompt="Prompt one.",
     )
     _write_completed_run(
         runs_root / "run_20260321_120100_efgh34",
         entrypoint="research",
         final_answer="Recovered result two.",
         chat_session_id=active_session_id,
+        user_prompt="Prompt two.",
     )
 
     chat_messages = session.get_chat_messages()
     assert [item["content"] for item in chat_messages] == [
         "Prompt one.",
-        "Prompt two.",
         "Recovered result one.",
+        "Prompt two.",
         "Recovered result two.",
     ]
-    assert [item["kind"] for item in chat_messages] == ["chat", "chat", "run_result", "run_result"]
+    assert [item["kind"] for item in chat_messages] == ["chat", "run_result", "chat", "run_result"]
 
 
 def test_websession_interrupt_cancels_active_async_run(tmp_path: Path, monkeypatch) -> None:
@@ -306,6 +432,9 @@ def test_websession_interrupt_cancels_active_async_run(tmp_path: Path, monkeypat
     interrupt = session.interrupt_status()["interrupt"]
     assert interrupt.get("requested") is True
     assert interrupt.get("acked") is True
+    run_state = json.loads((run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
+    assert run_state["status"] == "interrupted_paused"
+    assert run_state["phase"] == "interrupted"
 
 
 def test_websession_lists_and_switches_chat_sessions(tmp_path: Path) -> None:
@@ -389,35 +518,9 @@ def test_websession_reads_persistent_memory_index(tmp_path: Path) -> None:
 
     text = session.read_memory_index()
     assert "Persistent Memory" in text
-    assert "Source: `all`" in text
+    assert "Source: `deepagents`" in text
     assert "Prefer MACE screening before VASP" in text
     assert "catmaster." in text
-
-
-def test_websession_reads_langmem_long_term_memory_index(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    session = WebSession()
-    session.set_workspace_root(str(tmp_path))
-    ok, _ = session.open_workspace(str(ws), create=True)
-    assert ok
-
-    db_path = system_root(workspace=ws) / "deepagent_memory.sqlite"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE store (prefix TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL)")
-    project_id = session._project_id_for_workspace(ws)
-    prefix = ".".join(("catmaster", project_id, "long_term_memory"))
-    payload = {"content": "Pt(111) 1/4 ML benchmark was validated under a consistent slab setup."}
-    conn.execute(
-        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
-        (prefix, "memory-001", json.dumps(payload).encode("utf-8")),
-    )
-    conn.commit()
-    conn.close()
-
-    text = session.read_memory_index(source="langmem")
-    assert "long_term_memory" in text
-    assert "Source: `langmem`" in text
-    assert "Pt(111) 1/4 ML benchmark was validated" in text
 
 
 def test_websession_reads_instruction_memory_only_when_requested(tmp_path: Path) -> None:
@@ -439,21 +542,12 @@ def test_websession_reads_instruction_memory_only_when_requested(tmp_path: Path)
             json.dumps({"content": "Use MACE before VASP when screening."}).encode("utf-8"),
         ),
     )
-    conn.execute(
-        "INSERT INTO store(prefix, key, value) VALUES (?, ?, ?)",
-        (
-            ".".join(("catmaster", project_id, "long_term_memory")),
-            "memory-001",
-            json.dumps({"content": "Durable benchmark fact."}).encode("utf-8"),
-        ),
-    )
     conn.commit()
     conn.close()
 
     text = session.read_memory_index(source="instruction")
-    assert "Source: `instruction`" in text
+    assert "Source: `deepagents`" in text
     assert "Use MACE before VASP when screening." in text
-    assert "Durable benchmark fact." not in text
 
 
 def test_websession_reads_persistent_memory_index_when_workspace_path_changes(tmp_path: Path) -> None:

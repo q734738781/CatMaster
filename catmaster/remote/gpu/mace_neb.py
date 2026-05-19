@@ -244,7 +244,12 @@ def _write_profile_outputs(*, rows: list[dict[str, Any]], forcefit: Any, energie
         writer.writerows(rows)
 
     fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
-    forcefit.plot(ax=ax)
+    path = [float(row["path_A"]) for row in rows]
+    relative = [float(row["relative_energy_eV"]) for row in rows]
+    ax.plot(path, relative, "-o", color="C0", linewidth=1.6, markersize=4.5)
+    ax.set_xlabel("Reaction coordinate (A)")
+    ax.set_ylabel("Relative energy (eV)")
+    ax.grid(True, alpha=0.25)
     fig.tight_layout()
     fig.savefig(profile_png)
     plt.close(fig)

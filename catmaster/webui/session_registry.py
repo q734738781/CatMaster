@@ -53,17 +53,20 @@ class SessionRegistry:
         status_parts = [root_msg]
         project_space_name = ""
         project_space_path = session.current_workspace_path()
+        missing_requested_project_space = False
 
         project_space_value = (project_space or "").strip()
         if project_space_value:
-            target_path, project_space_name = self._resolve_project_space_target(project_space_value)
+            target_path, resolved_project_space_name = self._resolve_project_space_target(project_space_value)
             if target_path is None:
+                missing_requested_project_space = True
                 status_parts.append(f"Project space does not exist: {project_space_value}")
             else:
-                ok, msg = session.open_workspace(str(target_path), create=False)
+                project_space_name = resolved_project_space_name
+                ok, msg = session.open_workspace(str(target_path), create=False, set_current=True)
                 status_parts.append(msg)
                 if ok:
-                    project_space_path = session.current_workspace_path()
+                    project_space_path = str(target_path.resolve())
                     project_space_name = self._project_space_name_from_path(project_space_path) or project_space_name
 
         run_name = (run or "").strip()
@@ -72,14 +75,14 @@ class SessionRegistry:
             if run_msg:
                 status_parts.append(run_msg)
 
-        if not project_space_name:
+        if not project_space_name and not missing_requested_project_space:
             project_space_name = self._project_space_name_from_path(session.current_workspace_path()) or ""
 
         return BootstrapState(
             ctx=key,
             project_space_root=str(self.default_project_space_root),
             project_space_name=project_space_name,
-            project_space_path=session.current_workspace_path(),
+            project_space_path=project_space_path,
             run_name=run_name,
             status="\n".join([part for part in status_parts if part]).strip(),
         )
@@ -118,7 +121,9 @@ class SessionRegistry:
         try:
             resolved = Path(path).expanduser().resolve()
             if resolved == self.default_project_space_root:
-                return self.default_project_space_root.name
+                if self._looks_like_project_space(resolved):
+                    return self.default_project_space_root.name
+                return ""
             return str(resolved.relative_to(self.default_project_space_root))
         except Exception:
             return Path(path).name if path else None

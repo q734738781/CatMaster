@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,13 +36,44 @@ from .chat_sessions import ChatSessionStore
 from .live_state import apply_events, new_live_state, should_refresh_live_summary
 from .live_summary_service import summarize_live_state
 from .summary_service import snapshot_summary, summarize_run
-from .web_reporter import PromptBroker, WebReporter
+from .web_reporter import WebReporter
 
 RUN_MODE_NEW = "new_run"
 RUN_MODE_RESUME_SELECTED = "resume_selected_run"
-SUPPORTED_LANES = {"research", "experiment", "writing", "peer_review"}
+SUPPORTED_LANES = {"research", "experiment", "writing", "peer_review", "literature_review"}
+LANE_ALIASES = {
+    "litreview": "literature_review",
+    "literature": "literature_review",
+}
 
-_RECENT_SESSION_TURNS = 3
+_CHAT_HISTORY_MAX_MESSAGES = 60
+
+
+@dataclass
+class WorkspaceRuntime:
+    workspace: Optional[Path] = None
+    reporter: Optional[WebReporter] = None
+    run_thread: Optional[threading.Thread] = None
+    run_control: Optional[RunControl] = None
+    run_loop: Optional[asyncio.AbstractEventLoop] = None
+    run_task: Optional[asyncio.Task[Any]] = None
+    run_status: str = "idle"
+    run_error: str = ""
+    run_info: Dict[str, Any] = field(default_factory=dict)
+    selected_run_dir: Optional[Path] = None
+    last_event_seq: int = 0
+    event_lines: List[str] = field(default_factory=list)
+    live_state_by_run: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    active_chat_session_id: str = ""
+    sidebar_cache: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "workspace": "",
+            "runs": [],
+            "cards": [],
+            "generated_at": 0.0,
+        }
+    )
+    sidebar_cache_dirty: bool = True
 
 
 def _estimate_tokens(text: str) -> int:
@@ -80,46 +112,213 @@ def _format_exception_for_ui(exc: BaseException, *, max_items: int = 6, max_dept
 
 
 def _entry_system_prompt(lane: str) -> str:
-    target = str(lane or "research").strip() or "research"
+    raw_target = str(lane or "research").strip() or "research"
+    target = LANE_ALIASES.get(raw_target, raw_target)
     if target == "research":
         return "ResearchSpecialist entry context."
     if target == "writing":
         return "WritingSpecialist entry context."
     if target == "peer_review":
         return "PeerReviewSpecialist entry context."
+    if target == "literature_review":
+        return "LitReviewAgent entry context."
     return "ExperimentSpecialist entry context."
 
 
 class WebSession:
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.workspace_root: Optional[Path] = None
         self.workspace: Optional[Path] = None
-        self.reporter: Optional[WebReporter] = None
-        self.broker: Optional[PromptBroker] = None
-        self.run_thread: Optional[threading.Thread] = None
-        self.run_control: Optional[RunControl] = None
-        self._run_loop: Optional[asyncio.AbstractEventLoop] = None
-        self._run_task: Optional[asyncio.Task[Any]] = None
-        self.run_status: str = "idle"
-        self.run_error: str = ""
-        self.run_info: Dict[str, Any] = {}
-        self.selected_run_dir: Optional[Path] = None
+        self._fallback_runtime = WorkspaceRuntime()
+        self._workspace_runtimes: Dict[str, WorkspaceRuntime] = {}
         self.last_event_seq: int = 0
         self.current_prompt_id: str = ""
         self._last_submitted_prompt_ts: float = 0.0
-        self.event_lines: List[str] = []
-        self.live_state_by_run: Dict[str, Dict[str, Any]] = {}
-        self.active_chat_session_id: str = ""
-        self._sidebar_cache: Dict[str, Any] = {
-            "workspace": "",
-            "runs": [],
-            "cards": [],
-            "generated_at": 0.0,
-        }
-        self._sidebar_cache_dirty: bool = True
         self._bg_refresh_thread: Optional[threading.Thread] = None
         self._bg_refresh_stop = threading.Event()
+
+    def _runtime_key(self, workspace: Path) -> str:
+        try:
+            return str(workspace.expanduser().resolve())
+        except Exception:
+            return str(workspace)
+
+    def _runtime_for_workspace_unlocked(self, workspace: Optional[Path], *, create: bool = True) -> WorkspaceRuntime:
+        if workspace is None:
+            return self._fallback_runtime
+        resolved = workspace.expanduser().resolve()
+        key = self._runtime_key(resolved)
+        runtime = self._workspace_runtimes.get(key)
+        if runtime is None:
+            if not create:
+                return self._fallback_runtime
+            runtime = WorkspaceRuntime(workspace=resolved)
+            self._workspace_runtimes[key] = runtime
+        elif runtime.workspace is None:
+            runtime.workspace = resolved
+        return runtime
+
+    def _runtime_for_workspace(self, workspace: Optional[Path] = None, *, create: bool = True) -> WorkspaceRuntime:
+        with self._lock:
+            target = workspace if workspace is not None else self.workspace
+            return self._runtime_for_workspace_unlocked(target, create=create)
+
+    def _current_runtime_unlocked(self) -> WorkspaceRuntime:
+        return self._runtime_for_workspace_unlocked(self.workspace, create=True)
+
+    @property
+    def reporter(self) -> Optional[WebReporter]:
+        with self._lock:
+            return self._current_runtime_unlocked().reporter
+
+    @reporter.setter
+    def reporter(self, value: Optional[WebReporter]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().reporter = value
+
+    @property
+    def run_thread(self) -> Optional[threading.Thread]:
+        with self._lock:
+            return self._current_runtime_unlocked().run_thread
+
+    @run_thread.setter
+    def run_thread(self, value: Optional[threading.Thread]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().run_thread = value
+
+    @property
+    def run_control(self) -> Optional[RunControl]:
+        with self._lock:
+            return self._current_runtime_unlocked().run_control
+
+    @run_control.setter
+    def run_control(self, value: Optional[RunControl]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().run_control = value
+
+    @property
+    def _run_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        with self._lock:
+            return self._current_runtime_unlocked().run_loop
+
+    @_run_loop.setter
+    def _run_loop(self, value: Optional[asyncio.AbstractEventLoop]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().run_loop = value
+
+    @property
+    def _run_task(self) -> Optional[asyncio.Task[Any]]:
+        with self._lock:
+            return self._current_runtime_unlocked().run_task
+
+    @_run_task.setter
+    def _run_task(self, value: Optional[asyncio.Task[Any]]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().run_task = value
+
+    @property
+    def run_status(self) -> str:
+        with self._lock:
+            return self._current_runtime_unlocked().run_status
+
+    @run_status.setter
+    def run_status(self, value: str) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().run_status = str(value or "")
+
+    @property
+    def run_error(self) -> str:
+        with self._lock:
+            return self._current_runtime_unlocked().run_error
+
+    @run_error.setter
+    def run_error(self, value: str) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().run_error = str(value or "")
+
+    @property
+    def run_info(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._current_runtime_unlocked().run_info
+
+    @run_info.setter
+    def run_info(self, value: Dict[str, Any]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().run_info = dict(value or {})
+
+    @property
+    def selected_run_dir(self) -> Optional[Path]:
+        with self._lock:
+            return self._current_runtime_unlocked().selected_run_dir
+
+    @selected_run_dir.setter
+    def selected_run_dir(self, value: Optional[Path]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().selected_run_dir = value
+
+    @property
+    def last_event_seq(self) -> int:
+        with self._lock:
+            return int(self._current_runtime_unlocked().last_event_seq or 0)
+
+    @last_event_seq.setter
+    def last_event_seq(self, value: int) -> None:
+        with self._lock:
+            try:
+                self._current_runtime_unlocked().last_event_seq = int(value or 0)
+            except Exception:
+                self._current_runtime_unlocked().last_event_seq = 0
+
+    @property
+    def event_lines(self) -> List[str]:
+        with self._lock:
+            return self._current_runtime_unlocked().event_lines
+
+    @event_lines.setter
+    def event_lines(self, value: List[str]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().event_lines = list(value or [])
+
+    @property
+    def live_state_by_run(self) -> Dict[str, Dict[str, Any]]:
+        with self._lock:
+            return self._current_runtime_unlocked().live_state_by_run
+
+    @live_state_by_run.setter
+    def live_state_by_run(self, value: Dict[str, Dict[str, Any]]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().live_state_by_run = dict(value or {})
+
+    @property
+    def active_chat_session_id(self) -> str:
+        with self._lock:
+            return self._current_runtime_unlocked().active_chat_session_id
+
+    @active_chat_session_id.setter
+    def active_chat_session_id(self, value: str) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().active_chat_session_id = str(value or "")
+
+    @property
+    def _sidebar_cache(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._current_runtime_unlocked().sidebar_cache
+
+    @_sidebar_cache.setter
+    def _sidebar_cache(self, value: Dict[str, Any]) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().sidebar_cache = dict(value or {})
+
+    @property
+    def _sidebar_cache_dirty(self) -> bool:
+        with self._lock:
+            return bool(self._current_runtime_unlocked().sidebar_cache_dirty)
+
+    @_sidebar_cache_dirty.setter
+    def _sidebar_cache_dirty(self, value: bool) -> None:
+        with self._lock:
+            self._current_runtime_unlocked().sidebar_cache_dirty = bool(value)
 
     def set_workspace_root(self, path: str) -> Tuple[bool, str, List[Tuple[str, str]]]:
         try:
@@ -131,9 +330,9 @@ class WebSession:
             self.workspace_root = root
         return True, f"Project-space root: {root}", self._list_workspace_choices(root)
 
-    def _mark_sidebar_cache_dirty(self) -> None:
+    def _mark_sidebar_cache_dirty(self, *, workspace: Optional[Path] = None) -> None:
         with self._lock:
-            self._sidebar_cache_dirty = True
+            self._runtime_for_workspace_unlocked(workspace or self.workspace, create=True).sidebar_cache_dirty = True
 
     def _compute_sidebar_snapshot(self, workspace: Path) -> Dict[str, Any]:
         runs_root = system_root(workspace=workspace) / "runs"
@@ -177,28 +376,40 @@ class WebSession:
             "generated_at": time.time(),
         }
 
-    def _refresh_sidebar_cache_if_needed(self, *, force: bool = False) -> None:
-        ws = self._workspace_path()
+    def _refresh_sidebar_cache_if_needed(self, *, force: bool = False, workspace: Optional[Path] = None) -> None:
+        ws = self._workspace_path(workspace)
         if ws is None:
             with self._lock:
-                self._sidebar_cache = {"workspace": "", "runs": [], "cards": [], "generated_at": time.time()}
-                self._sidebar_cache_dirty = False
+                runtime = self._runtime_for_workspace_unlocked(workspace or self.workspace, create=True)
+                runtime.sidebar_cache = {"workspace": "", "runs": [], "cards": [], "generated_at": time.time()}
+                runtime.sidebar_cache_dirty = False
             return
         with self._lock:
-            stale = (time.time() - float(self._sidebar_cache.get("generated_at") or 0.0)) >= max(2, SIDEBAR_POLL_INTERVAL)
-            dirty = self._sidebar_cache_dirty
-            cached_ws = str(self._sidebar_cache.get("workspace") or "")
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
+            stale = (time.time() - float(runtime.sidebar_cache.get("generated_at") or 0.0)) >= max(2, SIDEBAR_POLL_INTERVAL)
+            dirty = runtime.sidebar_cache_dirty
+            cached_ws = str(runtime.sidebar_cache.get("workspace") or "")
         if not force and not dirty and not stale and cached_ws == str(ws):
             return
         snapshot = self._compute_sidebar_snapshot(ws)
         with self._lock:
-            self._sidebar_cache = snapshot
-            self._sidebar_cache_dirty = False
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
+            runtime.sidebar_cache = snapshot
+            runtime.sidebar_cache_dirty = False
 
     def _background_refresh_loop(self) -> None:
         while not self._bg_refresh_stop.wait(timeout=1.0):
             try:
-                self._refresh_sidebar_cache_if_needed(force=False)
+                with self._lock:
+                    workspaces = [
+                        runtime.workspace
+                        for runtime in self._workspace_runtimes.values()
+                        if isinstance(runtime.workspace, Path)
+                    ]
+                    if isinstance(self.workspace, Path):
+                        workspaces.append(self.workspace)
+                for workspace in {self._runtime_key(path): path for path in workspaces}.values():
+                    self._refresh_sidebar_cache_if_needed(force=False, workspace=workspace)
             except Exception:
                 continue
 
@@ -212,17 +423,17 @@ class WebSession:
             self._bg_refresh_thread = thread
         thread.start()
 
-    def get_sidebar_snapshot(self) -> Dict[str, Any]:
-        self._refresh_sidebar_cache_if_needed(force=False)
+    def get_sidebar_snapshot(self, *, workspace: Optional[Path] = None) -> Dict[str, Any]:
+        ws = self._workspace_path(workspace)
+        self._refresh_sidebar_cache_if_needed(force=False, workspace=ws)
         with self._lock:
-            snapshot = dict(self._sidebar_cache)
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
+            snapshot = dict(runtime.sidebar_cache)
             snapshot["runs"] = list(snapshot.get("runs") or [])
             snapshot["cards"] = list(snapshot.get("cards") or [])
         return snapshot
 
-    def open_workspace(self, path: str, *, create: bool = True) -> Tuple[bool, str]:
-        if self.run_thread and self.run_thread.is_alive():
-            return False, "Run in progress; stop it before switching project space."
+    def open_workspace(self, path: str, *, create: bool = True, set_current: bool = True) -> Tuple[bool, str]:
         try:
             ws = Path(path).expanduser().resolve()
             if ws.exists():
@@ -236,27 +447,22 @@ class WebSession:
         except Exception as exc:
             return False, f"Failed to open project space: {exc}"
         with self._lock:
-            self.workspace = ws
-            self.selected_run_dir = None
-            self.last_event_seq = 0
-            self.event_lines = []
-            self.live_state_by_run = {}
-            self.run_info = {}
-            self.run_control = None
-            self.active_chat_session_id = ""
-            if self.run_status != "running":
-                self.run_status = "idle"
-            self._sidebar_cache_dirty = True
-        self.ensure_active_chat_session()
+            if set_current:
+                self.workspace = ws
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
+            if runtime.run_status != "running" and not (runtime.run_thread and runtime.run_thread.is_alive()):
+                runtime.run_status = runtime.run_status or "idle"
+            runtime.sidebar_cache_dirty = True
+        self.ensure_active_chat_session(workspace=ws)
         self._ensure_background_refresh_thread()
         return True, f"Project space: {ws}"
 
-    def open_workspace_by_name(self, name: str) -> Tuple[bool, str]:
+    def resolve_workspace_by_name(self, name: str) -> Optional[Path]:
         root = self.workspace_root
         if root is None:
-            return False, "Project-space root not set."
+            return None
         if not name:
-            return False, "Select a project space first."
+            return None
         candidate = str(name or "").strip()
         if candidate in {".", root.name} and self._looks_like_project_space(root):
             target = root.resolve()
@@ -266,16 +472,27 @@ class WebSession:
                 target = raw.resolve()
             else:
                 target = (root / candidate).resolve()
-        return self.open_workspace(str(target), create=False)
+        return target
 
-    def create_workspace(self, name: str) -> Tuple[bool, str]:
+    def open_workspace_by_name(self, name: str, *, set_current: bool = True) -> Tuple[bool, str]:
+        root = self.workspace_root
+        if root is None:
+            return False, "Project-space root not set."
+        if not name:
+            return False, "Select a project space first."
+        target = self.resolve_workspace_by_name(name)
+        if target is None:
+            return False, "Select a project space first."
+        return self.open_workspace(str(target), create=False, set_current=set_current)
+
+    def create_workspace(self, name: str, *, set_current: bool = True) -> Tuple[bool, str]:
         root = self.workspace_root
         if root is None:
             return False, "Project-space root not set."
         if not name:
             return False, "Project-space name is required."
         target = (root / name).resolve()
-        return self.open_workspace(str(target), create=True)
+        return self.open_workspace(str(target), create=True, set_current=set_current)
 
     def clear_workspace(self) -> Tuple[bool, str]:
         with self._lock:
@@ -321,15 +538,15 @@ class WebSession:
             return []
         return self._list_workspace_choices(root)
 
-    def list_runs(self) -> List[Tuple[str, str]]:
-        snapshot = self.get_sidebar_snapshot()
+    def list_runs(self, *, workspace: Optional[Path] = None) -> List[Tuple[str, str]]:
+        snapshot = self.get_sidebar_snapshot(workspace=workspace)
         runs = snapshot.get("runs")
         return list(runs) if isinstance(runs, list) else []
 
-    def select_run(self, run_name: str) -> str:
+    def select_run(self, run_name: str, *, workspace: Optional[Path] = None) -> str:
         if not run_name:
             return ""
-        ws = self._workspace_path()
+        ws = self._workspace_path(workspace)
         if ws is None:
             return "Open a project space first."
         runs_root = system_root(workspace=ws) / "runs"
@@ -342,17 +559,18 @@ class WebSession:
         if not candidate.exists():
             return "Invalid run selection"
         with self._lock:
-            if self.selected_run_dir is not None:
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
+            if runtime.selected_run_dir is not None:
                 try:
-                    current = self.selected_run_dir.resolve()
+                    current = runtime.selected_run_dir.resolve()
                 except Exception:
-                    current = self.selected_run_dir
+                    current = runtime.selected_run_dir
                 if current == candidate:
                     return f"Selected run: {candidate.name}"
-            self.selected_run_dir = candidate
-            self.last_event_seq = 0
-            self.event_lines = []
-            self._sidebar_cache_dirty = True
+            runtime.selected_run_dir = candidate
+            runtime.last_event_seq = 0
+            runtime.event_lines = []
+            runtime.sidebar_cache_dirty = True
         return f"Selected run: {candidate.name}"
 
     def start_run(
@@ -378,26 +596,29 @@ class WebSession:
         max_fast_runs: int = 3,
         max_standard_runs: int = 2,
         allow_deep_report: bool = False,
+        workspace: Optional[Path] = None,
     ) -> str:
         mode = str(run_mode or RUN_MODE_NEW).strip()
         if mode not in {RUN_MODE_NEW, RUN_MODE_RESUME_SELECTED}:
             return f"Invalid run mode: {mode}"
-        requested_lane = str(lane or "research").strip() or "research"
+        raw_lane = str(lane or "research").strip() or "research"
+        requested_lane = LANE_ALIASES.get(raw_lane, raw_lane)
         if requested_lane not in SUPPORTED_LANES:
             requested_lane = "research"
         is_resume = mode == RUN_MODE_RESUME_SELECTED
-        resume_feedback = (prompt or "").strip() if is_resume else ""
         session_user_prompt = str(prompt or "")
-        effective_prompt_text = session_user_prompt
-        thread_binding = {"session_id": "", "thread_id": ""}
         message_session_id = ""
+        conversation_messages: list[dict[str, str]] = []
+        resume_guidance = ""
+        resume_payload: Dict[str, Any] = {}
 
         with self._lock:
-            ws = self.workspace
+            ws = self._workspace_path(workspace)
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
             if ws is None:
                 return "Open a project space first."
-            if self.run_thread and self.run_thread.is_alive():
-                return "Run already in progress."
+            if runtime.run_thread and runtime.run_thread.is_alive():
+                return "Run already in progress for this project space."
 
         resume_dir: Optional[str] = None
         effective_lane = requested_lane
@@ -411,29 +632,35 @@ class WebSession:
                 return err
             resume_dir = str(resume_target) if resume_target else None
             effective_lane = resume_lane or "research"
-        if not is_resume:
-            thread_binding = self.build_thread_binding(lane=effective_lane)
-            effective_prompt_text = session_user_prompt
-            message_session_id = str(thread_binding.get("session_id") or "").strip()
-        else:
-            effective_prompt_text = resume_feedback
             if resume_target is not None:
                 resume_payload = self._read_run_state_payload(resume_target)
+                resume_status = str(resume_payload.get("status") or "").strip().lower()
+                if resume_status in {"done", "failure"}:
+                    return "Selected run is already finished."
                 message_session_id = str(resume_payload.get("chat_session_id") or "").strip()
+                resume_guidance = session_user_prompt.strip() or "Continue the previous interrupted request."
+        else:
+            message_session_id = self.ensure_active_chat_session(workspace=ws)
+            conversation_messages = self._conversation_messages_for_session(
+                session_id=message_session_id,
+                max_messages=_CHAT_HISTORY_MAX_MESSAGES,
+                workspace=ws,
+            )
         if not message_session_id:
-            message_session_id = self.ensure_active_chat_session()
+            message_session_id = self.ensure_active_chat_session(workspace=ws)
+        if is_resume and message_session_id:
+            self.select_chat_session(message_session_id, workspace=ws)
 
         with self._lock:
-            self.run_status = "starting"
-            self.run_error = ""
-            self.last_event_seq = 0
-            self.event_lines = []
-            self.live_state_by_run = {}
-            self.broker = PromptBroker()
-            self.reporter = WebReporter(broker=self.broker, max_events=2000)
-            self.run_control = RunControl()
+            runtime.run_status = "starting"
+            runtime.run_error = ""
+            runtime.last_event_seq = 0
+            runtime.event_lines = []
+            runtime.live_state_by_run = {}
+            runtime.reporter = WebReporter(max_events=2000)
+            runtime.run_control = RunControl()
             if resume_target is not None:
-                self.selected_run_dir = resume_target
+                runtime.selected_run_dir = resume_target
         def _run() -> None:
             run_dir: Optional[Path] = None
             run_error = ""
@@ -441,9 +668,10 @@ class WebSession:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             with self._lock:
-                self._run_loop = loop
+                runtime.run_loop = loop
 
             async def _execute() -> Dict[str, Any]:
+                nonlocal run_dir
                 llm_cfg_mod = sys.modules.get("catmaster.llm.config")
                 if llm_cfg_mod is None:
                     llm_cfg_mod = importlib.import_module("catmaster.llm.config")
@@ -455,8 +683,8 @@ class WebSession:
                 built = build_specialist_runner(
                     workspace=ws,
                     llm_profile=llm_profile,
-                    reporter=self.reporter,
-                    run_control=self.run_control,
+                    reporter=runtime.reporter,
+                    run_control=runtime.run_control,
                     project_id=project_id,
                     run_dir=Path(resume_dir) if resume_dir else None,
                     preferred_entrypoint=effective_lane,
@@ -465,66 +693,101 @@ class WebSession:
                 run_ctx = built.run_context
                 run_dir = run_ctx.run_dir
                 with self._lock:
-                    self.run_status = "running"
-                    self.run_info = {
+                    runtime.run_status = "running"
+                    runtime.run_info = {
                         "run_id": run_ctx.run_id,
                         "run_dir": str(run_dir),
                         "model_name": run_ctx.model_name,
                     }
-                    self.selected_run_dir = run_dir
-                    self.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
-                if self.reporter:
-                    self.reporter.set_run_dir(run_dir)
+                    runtime.selected_run_dir = run_dir
+                    runtime.live_state_by_run[self._run_key(run_dir)] = new_live_state(run_id=run_dir.name)
+                if runtime.reporter:
+                    runtime.reporter.set_run_dir(run_dir)
+                run_thread_id = str(
+                    (
+                        resume_payload.get("thread_id")
+                        if is_resume
+                        else run_ctx.run_id
+                    )
+                    or run_ctx.run_id
+                    or run_dir.name
+                ).strip()
                 self._write_active_runs(effective_lane, run_dir, workspace=ws)
                 self._save_ui_prompt(run_dir, session_user_prompt, is_resume=is_resume)
-                self._mark_sidebar_cache_dirty()
+                self._write_initial_run_state(
+                    run_dir,
+                    entrypoint=effective_lane,
+                    user_prompt=session_user_prompt,
+                    chat_session_id=message_session_id,
+                    thread_id=run_thread_id,
+                    is_resume=is_resume,
+                )
+                self._mark_sidebar_cache_dirty(workspace=ws)
                 if is_resume:
                     if hasattr(runner, "aresume"):
-                        result = await runner.aresume(human_feedback=resume_feedback)
+                        result = await runner.aresume(human_feedback=resume_guidance)
                     else:
-                        result = await asyncio.to_thread(runner.resume, human_feedback=resume_feedback)
+                        result = await asyncio.to_thread(runner.resume, human_feedback=resume_guidance)
                 elif hasattr(runner, "arun"):
                     result = await runner.arun(
-                        effective_prompt_text,
+                        session_user_prompt,
                         entrypoint=effective_lane,
                         proposal_review=proposal_review,
-                        chat_session_id=str(thread_binding.get("session_id") or ""),
-                        thread_id=str(thread_binding.get("thread_id") or ""),
+                        chat_session_id=message_session_id,
+                        thread_id=run_thread_id,
+                        conversation_messages=conversation_messages,
                     )
                 else:
                     result = await asyncio.to_thread(
                         runner.run,
-                        effective_prompt_text,
+                        session_user_prompt,
                         entrypoint=effective_lane,
                         proposal_review=proposal_review,
-                        chat_session_id=str(thread_binding.get("session_id") or ""),
-                        thread_id=str(thread_binding.get("thread_id") or ""),
+                        chat_session_id=message_session_id,
+                        thread_id=run_thread_id,
+                        conversation_messages=conversation_messages,
                     )
                 return result
 
             try:
                 task = loop.create_task(_execute())
                 with self._lock:
-                    self._run_task = task
+                    runtime.run_task = task
                 try:
                     result = loop.run_until_complete(task)
                 except asyncio.CancelledError:
                     result = {"status": "interrupted_paused"}
+                    if run_dir is not None:
+                        self._write_interrupted_run_state(
+                            run_dir,
+                            entrypoint=effective_lane,
+                            user_prompt=session_user_prompt,
+                            chat_session_id=message_session_id,
+                        )
+                    if runtime.reporter:
+                        runtime.reporter.emit(
+                            make_event(
+                                "RUN_PAUSED",
+                                category="run",
+                                payload={"status": "interrupted_paused", "phase": "task_cancelled"},
+                                run_id=run_dir.name if run_dir is not None else None,
+                            )
+                        )
                 with self._lock:
                     run_status = str((result or {}).get("status") or "done")
                     if run_status == "done":
-                        self.run_status = "done"
+                        runtime.run_status = "done"
                     else:
-                        self.run_status = run_status
+                        runtime.run_status = run_status
                         if run_status == "interrupted_paused" and not run_error:
-                            self.run_error = ""
+                            runtime.run_error = ""
             except Exception as exc:
                 run_error = _format_exception_for_ui(exc)
                 with self._lock:
-                    self.run_status = "error"
-                    self.run_error = run_error
-                if self.reporter:
-                    self.reporter.emit(make_event(
+                    runtime.run_status = "error"
+                    runtime.run_error = run_error
+                if runtime.reporter:
+                    runtime.reporter.emit(make_event(
                         "RUN_END",
                         level="error",
                         category="run",
@@ -532,8 +795,8 @@ class WebSession:
                         ))
             finally:
                 with self._lock:
-                    self._run_task = None
-                    self._run_loop = None
+                    runtime.run_task = None
+                    runtime.run_loop = None
                 try:
                     loop.run_until_complete(loop.shutdown_asyncgens())
                 except Exception:
@@ -549,6 +812,7 @@ class WebSession:
                             kind="run_error",
                             source_run_id=run_dir.name,
                             session_id=message_session_id,
+                            workspace=ws,
                         )
                     else:
                         response_text = self._read_chat_result_text(run_dir)
@@ -559,30 +823,34 @@ class WebSession:
                                 kind="run_result",
                                 source_run_id=run_dir.name if run_dir else "",
                                 session_id=message_session_id,
+                                workspace=ws,
                             )
-                    if self.reporter:
-                        self.reporter.emit(make_event(
+                    if runtime.reporter:
+                        runtime.reporter.emit(make_event(
                             "RUN_SNAPSHOT_READY",
                             category="run",
                             payload={
-                                "status": str(self.run_status or ""),
+                                "status": str(runtime.run_status or ""),
                                 "run_id": run_dir.name,
                             },
                             run_id=run_dir.name,
                         ))
-                if self.reporter:
-                    self.reporter.close()
-                self._mark_sidebar_cache_dirty()
+                if runtime.reporter:
+                    runtime.reporter.close()
+                self._mark_sidebar_cache_dirty(workspace=ws)
 
         self._append_chat_message(
             role="user",
-            content=session_user_prompt,
-            kind="hitl" if is_resume else "chat",
+            content=resume_guidance if is_resume else session_user_prompt,
+            kind="chat",
             source_run_id=resume_target.name if is_resume and resume_target is not None else "",
             session_id=message_session_id,
+            workspace=ws,
         )
-        self.run_thread = threading.Thread(target=_run, daemon=True)
-        self.run_thread.start()
+        thread = threading.Thread(target=_run, daemon=True)
+        with self._lock:
+            runtime.run_thread = thread
+        thread.start()
         return "Run started."
 
     def _resolve_resume_target(
@@ -599,7 +867,7 @@ class WebSession:
                 return None, None, "Invalid run selection"
         else:
             with self._lock:
-                selected = self.selected_run_dir
+                selected = self._runtime_for_workspace_unlocked(workspace, create=True).selected_run_dir
             if isinstance(selected, Path):
                 sys_root = system_root(workspace=workspace).resolve()
                 try:
@@ -626,7 +894,8 @@ class WebSession:
             return None, f"Invalid {RUN_STATE_FILE} in selected run: {exc}"
         if not isinstance(data, dict):
             return None, f"Invalid {RUN_STATE_FILE} in selected run: expected JSON object"
-        lane = str(data.get("entrypoint") or "research").strip() or "research"
+        raw_lane = str(data.get("entrypoint") or "research").strip() or "research"
+        lane = LANE_ALIASES.get(raw_lane, raw_lane)
         if lane not in SUPPORTED_LANES:
             return None, f"Invalid entrypoint in selected run {RUN_STATE_FILE}: {lane}"
         return lane, None
@@ -647,28 +916,15 @@ class WebSession:
             return None
         return candidate
 
-    def submit_prompt(self, prompt_id: str, text: str) -> str:
-        if not prompt_id:
-            return "No active prompt."
-        ok = False
-        reporter = self.reporter
-        if reporter is not None:
-            ok = reporter.submit_prompt(prompt_id, text)
-        elif self.broker:
-            ok = self.broker.submit(prompt_id, text)
-        if ok:
-            with self._lock:
-                self._last_submitted_prompt_ts = time.time()
-        return "Submitted." if ok else "Prompt not found."
-
-    def request_interrupt_current_run(self, *, note: str = "") -> str:
+    def request_interrupt_current_run(self, *, note: str = "", workspace: Optional[Path] = None) -> str:
         with self._lock:
-            run_thread = self.run_thread
-            run_control = self.run_control
-            reporter = self.reporter
-            info = dict(self.run_info)
-            run_loop = self._run_loop
-            run_task = self._run_task
+            runtime = self._runtime_for_workspace_unlocked(self._workspace_path(workspace), create=True)
+            run_thread = runtime.run_thread
+            run_control = runtime.run_control
+            reporter = runtime.reporter
+            info = dict(runtime.run_info)
+            run_loop = runtime.run_loop
+            run_task = runtime.run_task
         if not run_thread or not run_thread.is_alive():
             return "No running run to interrupt."
         if run_control is None:
@@ -712,38 +968,23 @@ class WebSession:
                 pass
         return "Interrupt requested."
 
-    def interrupt_status(self) -> Dict[str, Any]:
+    def interrupt_status(self, *, workspace: Optional[Path] = None) -> Dict[str, Any]:
         with self._lock:
-            run_control = self.run_control
-            running = bool(self.run_thread and self.run_thread.is_alive())
-            status = self.run_status
+            runtime = self._runtime_for_workspace_unlocked(self._workspace_path(workspace), create=True)
+            run_control = runtime.run_control
+            running = bool(runtime.run_thread and runtime.run_thread.is_alive())
+            status = runtime.run_status
         if run_control is None:
             return {"running": running, "run_status": status, "interrupt": {}}
         snap = run_control.snapshot()
         return {"running": running, "run_status": status, "interrupt": snap}
 
     def get_prompt(self) -> Optional[Dict[str, Any]]:
-        if self._in_submit_grace_period():
-            return None
-        run_dir = self.get_selected_run_dir()
-        broker = self.broker
-        if broker:
-            pending = broker.get_pending()
-            if isinstance(pending, dict):
-                return self._annotate_prompt_payload(run_dir, pending)
-        if run_dir is not None:
-            pending = self._load_prompt_from_run_dir(run_dir)
-            return pending
         return None
 
-    _SUBMIT_GRACE_SEC = 15
-
-    def _in_submit_grace_period(self) -> bool:
-        with self._lock:
-            ts = self._last_submitted_prompt_ts
-        if ts <= 0:
-            return False
-        return time.time() - ts < self._SUBMIT_GRACE_SEC
+    def submit_prompt(self, prompt_id: str, text: str) -> str:
+        _ = (prompt_id, text)
+        return "Prompt-response HITL interface has been removed."
 
     def get_events(self) -> Tuple[List[Dict[str, Any]], int]:
         reporter = self.reporter
@@ -753,36 +994,38 @@ class WebSession:
         self.last_event_seq = seq
         return events, seq
 
-    def run_status_text(self) -> str:
+    def run_status_text(self, *, workspace: Optional[Path] = None) -> str:
         with self._lock:
-            status = self.run_status
-            error = self.run_error
-            info = self.run_info
-            selected_run = self.selected_run_dir
+            runtime = self._runtime_for_workspace_unlocked(self._workspace_path(workspace), create=True)
+            status = runtime.run_status
+            error = runtime.run_error
+            info = runtime.run_info
+            selected_run = runtime.selected_run_dir
         status = self._display_status(status, selected_run)
         if info:
             parts = [f"run_id={info.get('run_id','')}", f"model={info.get('model_name','')}"]
             return f"{status} | {' '.join(parts)}{(' | ' + error) if error else ''}"
         return f"{status}{(' | ' + error) if error else ''}"
 
-    def get_selected_run_dir(self) -> Optional[Path]:
+    def get_selected_run_dir(self, *, workspace: Optional[Path] = None) -> Optional[Path]:
         with self._lock:
-            return self.selected_run_dir
+            return self._runtime_for_workspace_unlocked(self._workspace_path(workspace), create=True).selected_run_dir
 
     def current_workspace_path(self) -> str:
         with self._lock:
             return str(self.workspace) if self.workspace else ""
 
-    def _chat_store(self) -> Optional[ChatSessionStore]:
-        ws = self._workspace_path()
+    def _chat_store(self, *, workspace: Optional[Path] = None) -> Optional[ChatSessionStore]:
+        ws = self._workspace_path(workspace)
         if ws is None:
             return None
         return ChatSessionStore(workspace=ws)
 
-    def ensure_active_chat_session(self) -> str:
+    def ensure_active_chat_session(self, *, workspace: Optional[Path] = None) -> str:
+        ws = self._workspace_path(workspace)
         with self._lock:
-            current = str(self.active_chat_session_id or "").strip()
-        store = self._chat_store()
+            current = str(self._runtime_for_workspace_unlocked(ws, create=True).active_chat_session_id or "").strip()
+        store = self._chat_store(workspace=ws)
         if store is None:
             return ""
         if current:
@@ -790,11 +1033,11 @@ class WebSession:
             return current
         session_id = store.get_active_session_id()
         with self._lock:
-            self.active_chat_session_id = session_id
+            self._runtime_for_workspace_unlocked(ws, create=True).active_chat_session_id = session_id
         return session_id
 
-    def list_chat_sessions(self) -> List[Tuple[str, str]]:
-        store = self._chat_store()
+    def list_chat_sessions(self, *, workspace: Optional[Path] = None) -> List[Tuple[str, str]]:
+        store = self._chat_store(workspace=workspace)
         if store is None:
             return []
         out: List[Tuple[str, str]] = []
@@ -807,37 +1050,40 @@ class WebSession:
             out.append((f"{title}{suffix}", session_id))
         return out
 
-    def create_chat_session(self) -> str:
-        store = self._chat_store()
+    def create_chat_session(self, *, workspace: Optional[Path] = None) -> str:
+        ws = self._workspace_path(workspace)
+        store = self._chat_store(workspace=ws)
         if store is None:
             return ""
         session_id = store.create_active_session()
         with self._lock:
-            self.active_chat_session_id = session_id
+            self._runtime_for_workspace_unlocked(ws, create=True).active_chat_session_id = session_id
         return session_id
 
-    def select_chat_session(self, session_id: str) -> str:
+    def select_chat_session(self, session_id: str, *, workspace: Optional[Path] = None) -> str:
         sid = str(session_id or "").strip()
         if not sid:
             return ""
-        store = self._chat_store()
+        ws = self._workspace_path(workspace)
+        store = self._chat_store(workspace=ws)
         if store is None:
             return ""
         store.set_active_session_id(sid)
         with self._lock:
-            self.active_chat_session_id = sid
+            self._runtime_for_workspace_unlocked(ws, create=True).active_chat_session_id = sid
         return sid
 
-    def get_chat_messages(self, *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        session_id = self.ensure_active_chat_session()
-        store = self._chat_store()
+    def get_chat_messages(self, *, limit: Optional[int] = None, workspace: Optional[Path] = None) -> List[Dict[str, Any]]:
+        ws = self._workspace_path(workspace)
+        session_id = self.ensure_active_chat_session(workspace=ws)
+        store = self._chat_store(workspace=ws)
         if store is None or not session_id:
             return []
         persisted = store.chat_messages(session_id, limit=limit)
-        return self._merge_missing_run_results(session_id=session_id, persisted_messages=persisted)
+        return self._merge_missing_run_results(session_id=session_id, persisted_messages=persisted, workspace=ws)
 
-    def current_chat_session_id(self) -> str:
-        return self.ensure_active_chat_session()
+    def current_chat_session_id(self, *, workspace: Optional[Path] = None) -> str:
+        return self.ensure_active_chat_session(workspace=workspace)
 
     def _append_chat_message(
         self,
@@ -849,9 +1095,10 @@ class WebSession:
         source_prompt_id: str = "",
         meta: Optional[Dict[str, Any]] = None,
         session_id: str = "",
+        workspace: Optional[Path] = None,
     ) -> None:
-        target_session_id = str(session_id or "").strip() or self.ensure_active_chat_session()
-        store = self._chat_store()
+        target_session_id = str(session_id or "").strip() or self.ensure_active_chat_session(workspace=workspace)
+        store = self._chat_store(workspace=workspace)
         if store is None or not target_session_id:
             return
         try:
@@ -867,79 +1114,30 @@ class WebSession:
         except Exception:
             return
 
-    def _ensure_prompt_logged_to_chat(self, pending: Optional[Dict[str, Any]]) -> None:
-        if not isinstance(pending, dict):
-            return
-        prompt_id = str(pending.get("prompt_id") or "")
-        if not prompt_id:
-            return
-        payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
-        kind = str(pending.get("kind") or "").strip() or "hitl"
-        body_parts = [str(payload.get("title") or "").strip(), str(payload.get("body") or "").strip()]
-        # Prompt display text is rendered in components; store the raw payload body here.
-        title = ""
-        if kind == "proposal_review":
-            title = "Revised Proposal Review" if bool(payload.get("is_revised")) else "Proposal Review"
-            body_parts = [str(payload.get("proposal_description") or "").strip()]
-            meta_lines: List[str] = []
-            if payload.get("run_id"):
-                label = "same run" if bool(payload.get("is_revised")) else "run"
-                meta_lines.append(f"{label}: {payload.get('run_id')}")
-            if payload.get("reason"):
-                meta_lines.append(f"reason: {payload.get('reason')}")
-            todo = payload.get("todo") if isinstance(payload.get("todo"), list) else []
-            if todo:
-                meta_lines.append("work packages:")
-                meta_lines.extend(f"{idx + 1}. {item}" for idx, item in enumerate(todo))
-            if meta_lines:
-                body_parts.append("\n".join(meta_lines))
-        elif kind == "hitl":
-            title = "HITL Feedback Required"
-            report_text = str(payload.get("report_text") or "").strip()
-            report_path = str(payload.get("report_path") or "").strip()
-            body_parts = [report_text]
-            if report_path:
-                body_parts.append(f"report: {report_path}")
-        elif kind == "interrupt_feedback":
-            title = "Interrupt Guidance Required"
-            body_parts = [str(payload.get("guidance") or "").strip()]
-        content = title.strip()
-        body_text = "\n\n".join(part for part in body_parts if part)
-        if body_text:
-            content = f"{content}\n\n{body_text}" if content else body_text
-        session_id = self.ensure_active_chat_session()
-        store = self._chat_store()
-        if store is None or not session_id:
-            return
-        try:
-            store.ensure_prompt_message(
-                session_id,
-                prompt_id=prompt_id,
-                title=title,
-                body=body_text,
-                meta_text="",
-                run_id=str(payload.get("run_id") or ""),
-            )
-        except Exception:
-            return
-
-    def build_thread_binding(self, *, lane: str) -> Dict[str, Any]:
-        session_id = self.ensure_active_chat_session()
+    def build_thread_binding(self, *, lane: str, workspace: Optional[Path] = None) -> Dict[str, Any]:
+        session_id = self.ensure_active_chat_session(workspace=workspace)
+        history = self._conversation_messages_for_session(
+            session_id=session_id,
+            max_messages=_CHAT_HISTORY_MAX_MESSAGES,
+            workspace=workspace,
+        )
         return {
             "session_id": session_id,
-            "thread_id": session_id,
+            "thread_id": "",
+            "history_messages": len(history),
+            "history_turns": len(history) // 2,
         }
 
-    def entry_context_status_text(self, *, lane: str, current_prompt: str = "") -> str:
+    def entry_context_status_text(self, *, lane: str, current_prompt: str = "", workspace: Optional[Path] = None) -> str:
         _ = current_prompt
-        pack = self.build_thread_binding(lane=lane)
-        session_id = str(pack.get("session_id") or self.ensure_active_chat_session()).strip()
-        thread_id = str(pack.get("thread_id") or session_id).strip()
+        pack = self.build_thread_binding(lane=lane, workspace=workspace)
+        session_id = str(pack.get("session_id") or self.ensure_active_chat_session(workspace=workspace)).strip()
         lane_text = str(lane or "research").strip() or "research"
-        return f"Session `{session_id}` | deepagent thread `{thread_id}` | lane `{lane_text}`"
+        history_turns = int(pack.get("history_turns") or 0)
+        return f"Session `{session_id}` | new deepagent thread per run | replay last `{history_turns}` turns | lane `{lane_text}`"
 
-    def read_memory_index(self, *, source: str = "all") -> str:
-        workspace = self._workspace_path()
+    def read_memory_index(self, *, source: str = "all", workspace: Optional[Path] = None) -> str:
+        workspace = self._workspace_path(workspace)
         if workspace is None:
             return ""
         db_path = system_root(workspace=workspace) / "deepagent_memory.sqlite"
@@ -987,7 +1185,7 @@ class WebSession:
         sections: List[str] = []
         sections.append(f"# Persistent Memory\n")
         sections.append(f"Workspace: `{workspace.name}`")
-        sections.append(f"Source: `{str(source or 'all').strip().lower() or 'all'}`")
+        sections.append("Source: `deepagents`")
         sections.append("Namespace(s):")
         for prefix in selected_prefixes:
             sections.append(f"- `{prefix}`")
@@ -1005,15 +1203,15 @@ class WebSession:
             last_prefix = prefix
         return "\n".join(sections).strip()
 
-    def read_artifacts(self):
-        run_dir = self.get_selected_run_dir()
+    def read_artifacts(self, *, workspace: Optional[Path] = None):
+        run_dir = self.get_selected_run_dir(workspace=workspace)
         if run_dir is None:
             return []
         state = self._read_run_state_payload(run_dir)
         return list(state.get("artifacts") or [])
 
-    def read_task_state(self, run_dir: Optional[Path]) -> str:
-        ws = self._workspace_path()
+    def read_task_state(self, run_dir: Optional[Path], *, workspace: Optional[Path] = None) -> str:
+        ws = self._workspace_path(workspace)
         if ws is None or not run_dir:
             return ""
         return io.read_json_pretty(
@@ -1023,8 +1221,8 @@ class WebSession:
             max_chars=MAX_TEXT_PREVIEW_CHARS,
         )
 
-    def read_proposal(self, run_dir: Optional[Path]) -> str:
-        ws = self._workspace_path()
+    def read_proposal(self, run_dir: Optional[Path], *, workspace: Optional[Path] = None) -> str:
+        ws = self._workspace_path(workspace)
         if ws is None or not run_dir:
             return ""
         return io.read_text(
@@ -1101,8 +1299,8 @@ class WebSession:
             return {}
         return payload if isinstance(payload, dict) else {}
 
-    def read_trace(self, run_dir: Optional[Path], trace_name: str) -> str:
-        ws = self._workspace_path()
+    def read_trace(self, run_dir: Optional[Path], trace_name: str, *, workspace: Optional[Path] = None) -> str:
+        ws = self._workspace_path(workspace)
         if ws is None or not run_dir:
             return ""
         return io.tail_jsonl(run_dir / trace_name, project_space=ws, max_lines=MAX_TRACE_LINES)
@@ -1115,16 +1313,76 @@ class WebSession:
         except Exception:
             return {}
 
+    def read_ui_events(
+        self,
+        run_dir: Optional[Path],
+        *,
+        limit: int = 200,
+        before_seq: int = 0,
+        after_seq: int = 0,
+    ) -> Dict[str, Any]:
+        if not run_dir:
+            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+        path = Path(run_dir) / "ui_events.jsonl"
+        if not path.exists():
+            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+        capped_limit = min(1000, max(1, int(limit or 200)))
+        rows: List[Dict[str, Any]] = []
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for index, line in enumerate(handle, start=1):
+                    text = line.strip()
+                    if not text:
+                        continue
+                    try:
+                        item = json.loads(text)
+                    except Exception:
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        seq = int(item.get("seq") or index)
+                    except Exception:
+                        seq = index
+                    item["seq"] = seq
+                    rows.append(item)
+        except Exception:
+            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+
+        rows.sort(key=lambda item: int(item.get("seq") or 0))
+        if after_seq > 0:
+            matching = [item for item in rows if int(item.get("seq") or 0) > int(after_seq)]
+            page = matching[:capped_limit]
+            has_more = len(matching) > len(page)
+        elif before_seq > 0:
+            matching = [item for item in rows if int(item.get("seq") or 0) < int(before_seq)]
+            page = matching[-capped_limit:]
+            has_more = len(matching) > len(page)
+        else:
+            matching = rows
+            page = matching[-capped_limit:]
+            has_more = len(matching) > len(page)
+        return {
+            "events": page,
+            "has_more": has_more,
+            "min_seq": int(page[0].get("seq") or 0) if page else 0,
+            "max_seq": int(page[-1].get("seq") or 0) if page else 0,
+        }
+
     def update_live_state(
         self,
         run_dir: Optional[Path],
         events: List[Dict[str, Any]],
         *,
         live_llm_enabled: bool,
+        workspace: Optional[Path] = None,
     ) -> Dict[str, Any]:
         if run_dir is None:
             return {}
-        reporter = self.reporter
+        ws = self._workspace_path(workspace)
+        with self._lock:
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
+            reporter = runtime.reporter
         active_run = reporter.get_run_dir() if reporter else None
         if reporter and active_run and active_run == run_dir:
             snapshot = reporter.get_snapshot()
@@ -1132,7 +1390,7 @@ class WebSession:
             return dict(live_state) if isinstance(live_state, dict) else {}
         key = self._run_key(run_dir)
         with self._lock:
-            state = self.live_state_by_run.get(key)
+            state = runtime.live_state_by_run.get(key)
         if state is None:
             state = new_live_state(run_id=run_dir.name)
         state, changed = apply_events(
@@ -1183,13 +1441,16 @@ class WebSession:
         if events:
             self._update_active_tool_elapsed(state)
         with self._lock:
-            self.live_state_by_run[key] = state
+            self._runtime_for_workspace_unlocked(ws, create=True).live_state_by_run[key] = state
         return self._public_live_state(state)
 
-    def snapshot_live_state(self, run_dir: Optional[Path]) -> Dict[str, Any]:
+    def snapshot_live_state(self, run_dir: Optional[Path], *, workspace: Optional[Path] = None) -> Dict[str, Any]:
         if run_dir is None:
             return {}
-        reporter = self.reporter
+        ws = self._workspace_path(workspace)
+        with self._lock:
+            runtime = self._runtime_for_workspace_unlocked(ws, create=True)
+            reporter = runtime.reporter
         active_run = reporter.get_run_dir() if reporter else None
         if reporter and active_run and active_run == run_dir:
             snapshot = reporter.get_snapshot()
@@ -1202,7 +1463,7 @@ class WebSession:
             self._apply_terminal_status(state, terminal_status)
         key = self._run_key(run_dir)
         with self._lock:
-            cached = self.live_state_by_run.get(key)
+            cached = runtime.live_state_by_run.get(key)
         if isinstance(cached, dict) and isinstance(cached.get("live_summary"), dict):
             state["live_summary"] = cached.get("live_summary")
         else:
@@ -1230,6 +1491,9 @@ class WebSession:
             return
         if not isinstance(payload, dict):
             return
+        status = str(payload.get("status") or "").strip().lower()
+        if status:
+            state["status"] = status
         work_label = str(payload.get("text_preview") or "").strip()
         if work_label and not str(state.get("current_task_goal") or "").strip():
             state["current_task_goal"] = work_label
@@ -1282,8 +1546,8 @@ class WebSession:
             return
         state["current_phase"] = "finalizing"
 
-    def list_run_cards(self) -> List[Dict[str, Any]]:
-        snapshot = self.get_sidebar_snapshot()
+    def list_run_cards(self, *, workspace: Optional[Path] = None) -> List[Dict[str, Any]]:
+        snapshot = self.get_sidebar_snapshot(workspace=workspace)
         cards = snapshot.get("cards")
         return list(cards) if isinstance(cards, list) else []
 
@@ -1292,7 +1556,7 @@ class WebSession:
 
         # Priority 1: explicit selected run in UI.
         with self._lock:
-            selected = self.selected_run_dir
+            selected = self._runtime_for_workspace_unlocked(workspace, create=True).selected_run_dir
         if isinstance(selected, Path):
             try:
                 selected_resolved = selected.expanduser().resolve()
@@ -1353,6 +1617,89 @@ class WebSession:
         except Exception:
             return
 
+    def _write_initial_run_state(
+        self,
+        run_dir: Path,
+        *,
+        entrypoint: str,
+        user_prompt: str,
+        chat_session_id: str,
+        thread_id: str,
+        is_resume: bool,
+    ) -> None:
+        if not run_dir:
+            return
+        try:
+            run_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return
+        payload = self._read_run_state_payload(run_dir)
+        if str(payload.get("status") or "").strip().lower() in {
+            "done",
+            "failure",
+            "error",
+            "needs_intervention",
+        }:
+            return
+        payload.update(
+            {
+                "schema_version": int(payload.get("schema_version") or 1),
+                "entrypoint": str(payload.get("entrypoint") or entrypoint or "research").strip() or "research",
+                "status": "running",
+                "phase": "executing" if is_resume else str(payload.get("phase") or "executing"),
+                "user_prompt": str(payload.get("user_prompt") or user_prompt or ""),
+                "chat_session_id": str(payload.get("chat_session_id") or chat_session_id or ""),
+                "thread_id": str(payload.get("thread_id") or thread_id or ""),
+                "text_preview": str(payload.get("text_preview") or user_prompt or "")[:280],
+                "proposal_review": bool(payload.get("proposal_review") or False),
+                "resume": bool(is_resume),
+            }
+        )
+        try:
+            (run_dir / RUN_STATE_FILE).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
+    def _write_interrupted_run_state(
+        self,
+        run_dir: Path,
+        *,
+        entrypoint: str,
+        user_prompt: str,
+        chat_session_id: str,
+    ) -> None:
+        if not run_dir:
+            return
+        payload = self._read_run_state_payload(run_dir)
+        if str(payload.get("status") or "").strip().lower() in {
+            "done",
+            "failure",
+            "error",
+            "needs_intervention",
+        }:
+            return
+        payload.update(
+            {
+                "schema_version": int(payload.get("schema_version") or 1),
+                "entrypoint": str(payload.get("entrypoint") or entrypoint or "research").strip() or "research",
+                "status": "interrupted_paused",
+                "phase": "interrupted",
+                "pending_human_input": None,
+                "proposal_review": False,
+                "proposal_revision_count": 0,
+                "text_preview": "Run interrupted by user.",
+                "user_prompt": str(payload.get("user_prompt") or user_prompt or ""),
+                "chat_session_id": str(payload.get("chat_session_id") or chat_session_id or ""),
+                "final_answer": "",
+                "summary": "Run interrupted by user.",
+                "facts": [],
+            }
+        )
+        try:
+            (run_dir / RUN_STATE_FILE).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
     def _list_workspace_choices(self, root: Path) -> List[Tuple[str, str]]:
         choices: List[Tuple[str, str]] = []
         if not root.exists():
@@ -1404,11 +1751,8 @@ class WebSession:
     @staticmethod
     def _memory_source_kinds(source: str) -> tuple[str, ...]:
         token = str(source or "all").strip().lower()
-        if token == "langmem":
-            return ("long_term_memory",)
-        if token == "instruction":
-            return ("filesystem",)
-        return ("filesystem", "long_term_memory")
+        _ = token
+        return ("filesystem",)
 
     def _memory_prefixes_for_workspace(
         self,
@@ -1419,7 +1763,7 @@ class WebSession:
     ) -> List[str]:
         candidates: List[str] = []
         seen: set[str] = set()
-        selected_kinds = tuple(kinds or ("filesystem", "long_term_memory"))
+        selected_kinds = tuple(kinds or ("filesystem",))
 
         def _append_project_id(project_id: str) -> None:
             pid = str(project_id or "").strip()
@@ -1432,7 +1776,7 @@ class WebSession:
                     seen.add(prefix)
 
         with self._lock:
-            selected_run = self.selected_run_dir
+            selected_run = self._runtime_for_workspace_unlocked(workspace, create=True).selected_run_dir
         selected_meta = self._read_run_meta_payload(selected_run)
         _append_project_id(str(selected_meta.get("project_id") or ""))
 
@@ -1488,7 +1832,9 @@ class WebSession:
             public[key] = value
         return public
 
-    def _workspace_path(self) -> Optional[Path]:
+    def _workspace_path(self, workspace: Optional[Path] = None) -> Optional[Path]:
+        if isinstance(workspace, Path):
+            return workspace.expanduser().resolve()
         with self._lock:
             ws = self.workspace
         return ws.resolve() if isinstance(ws, Path) else None
@@ -1498,9 +1844,10 @@ class WebSession:
         *,
         session_id: str,
         persisted_messages: List[Dict[str, Any]],
+        workspace: Optional[Path] = None,
     ) -> List[Dict[str, Any]]:
         rows = [dict(item) for item in (persisted_messages or []) if isinstance(item, dict)]
-        ws = self._workspace_path()
+        ws = self._workspace_path(workspace)
         if ws is None:
             return rows
         runs_root = system_root(workspace=ws) / "runs"
@@ -1532,11 +1879,73 @@ class WebSession:
                     "kind": "run_result",
                     "created_at": None,
                     "source_run_id": run_id,
+                    "__user_prompt": str(payload.get("user_prompt") or ""),
                 }
             )
         if not synthetic:
             return rows
-        return rows + synthetic
+        return self._insert_synthetic_run_results(rows, synthetic)
+
+    @staticmethod
+    def _normalize_chat_pair_text(value: Any) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    @staticmethod
+    def _user_message_has_run_result(rows: List[Dict[str, Any]], user_index: int) -> bool:
+        for item in rows[user_index + 1:]:
+            if str(item.get("role") or "") == "user":
+                return False
+            if str(item.get("kind") or "").strip() == "run_result":
+                return True
+        return False
+
+    def _insert_synthetic_run_results(
+        self,
+        rows: List[Dict[str, Any]],
+        synthetic: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        out = [dict(item) for item in rows]
+        for result in synthetic:
+            prompt_text = self._normalize_chat_pair_text(result.get("__user_prompt"))
+            insert_after = -1
+            if prompt_text:
+                for idx, item in enumerate(out):
+                    if item.get("__paired_synthetic_run_result"):
+                        continue
+                    if str(item.get("role") or "") != "user":
+                        continue
+                    if self._user_message_has_run_result(out, idx):
+                        continue
+                    if self._normalize_chat_pair_text(item.get("content")) == prompt_text:
+                        insert_after = idx
+                        break
+            if insert_after < 0:
+                for idx, item in enumerate(out):
+                    if item.get("__paired_synthetic_run_result"):
+                        continue
+                    if str(item.get("role") or "") == "user":
+                        if self._user_message_has_run_result(out, idx):
+                            continue
+                        insert_after = idx
+                        break
+            clean_result = {
+                key: value
+                for key, value in result.items()
+                if not str(key).startswith("__")
+            }
+            if insert_after < 0:
+                out.append(clean_result)
+                continue
+            out[insert_after]["__paired_synthetic_run_result"] = True
+            out.insert(insert_after + 1, clean_result)
+        return [
+            {
+                key: value
+                for key, value in item.items()
+                if not str(key).startswith("__")
+            }
+            for item in out
+        ]
 
     @staticmethod
     def _decode_memory_store_value(raw: Any) -> str:
@@ -1567,11 +1976,8 @@ class WebSession:
 
     def _display_status(self, base_status: str, selected_run: Optional[Path]) -> str:
         status = str(base_status or "").strip() or "unknown"
-        if status not in {"running", "starting", "paused"}:
+        if status in {"starting", "running", "interrupting"}:
             return status
-        pending = self.get_prompt()
-        if isinstance(pending, dict):
-            return "awaiting_human_feedback"
         run_status = self._load_task_state_status(selected_run)
         if run_status:
             return run_status
@@ -1597,71 +2003,17 @@ class WebSession:
             "starting",
             "done",
             "blocked",
+            "error",
+            "failure",
+            "needs_intervention",
+            "interrupted_paused",
         }:
             return status
         return ""
 
     def _load_prompt_from_run_dir(self, run_dir: Path) -> Optional[Dict[str, Any]]:
-        state_path = run_dir / RUN_STATE_FILE
-        if not state_path.exists():
-            return None
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if not isinstance(state, dict):
-            return None
-        status = str(state.get("status") or "").strip().lower()
-        if status != "awaiting_human_feedback":
-            return None
-        pending_input = state.get("pending_human_input")
-        if not isinstance(pending_input, dict):
-            return None
-
-        interrupt_type = str(pending_input.get("kind") or "")
-        prompt_kind = "interrupt_feedback"
-        payload: Dict[str, Any]
-        if interrupt_type == "proposal_review":
-            prompt_kind = "proposal_review"
-            payload = {
-                "todo": list(state.get("todo_items") or []),
-                "proposal_description": self.read_proposal(run_dir),
-                "approval_token": str(pending_input.get("approval_token") or "approve"),
-                "revision_count": max(
-                    0,
-                    int(
-                        pending_input.get("revision_count")
-                        or state.get("proposal_revision_count")
-                        or 0
-                    ),
-                ),
-            }
-        elif interrupt_type == "peer_review":
-            payload = {
-                "report_text": str(pending_input.get("review_text") or ""),
-                "report_path": str(pending_input.get("review_target") or ""),
-                "guidance": str(
-                    pending_input.get("guidance")
-                    or 'Type "continue" to revise, or "approve" to keep the current draft.'
-                ),
-                "run_id": str(self.run_info.get("run_id") or run_dir.name),
-                "phase": interrupt_type,
-            }
-        else:
-            payload = {
-                "guidance": "Provide feedback.",
-                "run_id": str(self.run_info.get("run_id") or run_dir.name),
-                "phase": interrupt_type,
-            }
-
-        prompt_id = f"snapshot::{run_dir.name}::{interrupt_type or 'interrupt'}"
-        return self._annotate_prompt_payload(run_dir, {
-            "prompt_id": prompt_id,
-            "kind": prompt_kind,
-            "payload": payload,
-            "created_at": time.time(),
-            "source": "run_state_snapshot",
-        })
+        _ = run_dir
+        return None
 
     @staticmethod
     def _read_task_state_payload(run_dir: Optional[Path]) -> Dict[str, Any]:
@@ -1681,57 +2033,30 @@ class WebSession:
         run_dir: Optional[Path],
         pending: Dict[str, Any],
     ) -> Dict[str, Any]:
-        annotated = dict(pending)
-        payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
-        payload = dict(payload)
-        run_id = run_dir.name if run_dir is not None else ""
-        prompt_id = str(pending.get("prompt_id") or "")
-        if run_id and not payload.get("run_id"):
-            payload["run_id"] = run_id
-        if prompt_id and not payload.get("prompt_id"):
-            payload["prompt_id"] = prompt_id
+        _ = run_dir
+        return dict(pending)
 
-        if str(pending.get("kind") or "") == "proposal_review":
-            state = self._read_task_state_payload(run_dir)
-            pending_input = state.get("pending_human_input") if isinstance(state.get("pending_human_input"), dict) else {}
-            approval_token = str(
-                payload.get("approval_token")
-                or pending_input.get("approval_token")
-                or "approve"
-            ).strip() or "approve"
-            revision_count = max(
-                0,
-                int(
-                    payload.get("revision_count")
-                    or pending_input.get("revision_count")
-                    or state.get("proposal_revision_count")
-                    or 0
-                ),
-            )
-            payload["approval_token"] = approval_token
-            payload["revision_count"] = revision_count
-            payload.setdefault(
-                "guidance",
-                f'Type "{approval_token}" to continue. Any other input requests a revised proposal.',
-            )
-            if revision_count > 0:
-                payload["is_revised"] = True
-                payload.setdefault(
-                    "reason",
-                    "human review revision" if revision_count == 1 else f"human review revision {revision_count}",
-                )
-            history = list(state.get("hitl_history") or [])
-            had_task_intervention = any(
-                isinstance(item, dict)
-                and (str(item.get("interrupt_type") or "") == "task_intervention" or bool(item.get("task_id")))
-                for item in history
-            )
-            if had_task_intervention and not payload.get("is_revised"):
-                payload["is_revised"] = True
-                payload.setdefault("reason", "replanning after HITL")
-
-        annotated["payload"] = payload
-        return annotated
+    def _conversation_messages_for_session(
+        self,
+        *,
+        session_id: str,
+        max_messages: int,
+        workspace: Optional[Path] = None,
+    ) -> List[Dict[str, str]]:
+        store = self._chat_store(workspace=workspace)
+        if store is None or not session_id:
+            return []
+        pack = store.build_history_pack(session_id, recent_messages=max_messages)
+        out: List[Dict[str, str]] = []
+        for item in pack.recent_messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            out.append({"role": role, "content": content})
+        return out
 
     @staticmethod
     def _submit_prompt_via_file(run_dir: Path, *, prompt_id: str, text: str) -> bool:

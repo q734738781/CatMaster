@@ -8,9 +8,7 @@ from .context_guides import (
     render_write_director_skill_guide,
     render_write_reviewer_skill_guide,
 )
-from .middleware import CatMasterSkillsMiddleware
 from .models import SkillCatalogEntry, SkillMeta
-from .prompt_addendum import render_skills_addendum
 from .role_skills import ROLE_SKILL_NAMES, role_visible_skill_names
 
 __all__ = [
@@ -20,7 +18,6 @@ __all__ = [
     "CatMasterSkillsRuntime",
     "ROLE_SKILL_NAMES",
     "role_visible_skill_names",
-    "render_skills_addendum",
     "render_proposal_skill_guide",
     "render_director_skill_guide",
     "render_fast_director_skill_guide",
@@ -28,5 +25,4 @@ __all__ = [
     "render_write_director_skill_guide",
     "render_section_writer_skill_guide",
     "render_write_reviewer_skill_guide",
-    "CatMasterSkillsMiddleware",
 ]

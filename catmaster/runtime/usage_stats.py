@@ -147,7 +147,7 @@ def summarize_usage_from_metadata(
             input_cache_write_tokens=cache_write_tok,
             output_tokens=out_tok,
             reasoning_tokens=reasoning_tok,
-            exact_cost=None,
+            exact_cost=_extract_exact_cost(usage),
         )
         if call_summary["exact_cost"] is not None:
             exact_cost_usd += float(call_summary["exact_cost"])
@@ -207,7 +207,7 @@ def summarize_usage_from_metadata(
                 input_cache_write_tokens=cache_write_tok,
                 output_tokens=out_tok,
                 reasoning_tokens=reasoning_tok,
-                exact_cost=None,
+                exact_cost=_extract_exact_cost(usage),
             )
             if call_summary_for_role is None:
                 call_summary_for_role = item_call_summary
@@ -295,6 +295,21 @@ def _to_float(value: Any) -> float | None:
         return float(str(value).strip())
     except Exception:
         return None
+
+
+def _extract_exact_cost(usage: Dict[str, Any]) -> float | None:
+    if not isinstance(usage, dict):
+        return None
+    for key in ("cost", "cost_usd", "total_cost", "total_cost_usd"):
+        value = _to_float(usage.get(key))
+        if value is not None:
+            return value
+    details = usage.get("cost_details") if isinstance(usage.get("cost_details"), dict) else {}
+    for key in ("cost", "cost_usd", "total_cost", "total_cost_usd"):
+        value = _to_float(details.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _call_cost_summary(

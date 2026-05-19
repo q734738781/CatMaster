@@ -3,9 +3,9 @@
 # For a full provider-by-provider template, see `configs/llm.template.yaml`.
 
 models:
-  "openai/gpt-5.4:medium":
+  "openai/gpt-5.5:medium":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
 
     temperature: 1.0
     top_p: null
@@ -22,9 +22,9 @@ models:
 
 
 
-  "openai/gpt-5.4:xhigh":
+  "openai/gpt-5.5:xhigh":
     provider: openrouter
-    model: openai/gpt-5.4
+    model: openai/gpt-5.5
 
     temperature: 1.0
     top_p: null
@@ -41,9 +41,9 @@ models:
 
 
 
-  "openai/gpt-5.4:online-high":
+  "openai/gpt-5.5:high":
     provider: openrouter
-    model: openai/gpt-5.4:online
+    model: openai/gpt-5.5
 
     # Sampling / reasoning
     temperature: 1.0
@@ -62,34 +62,9 @@ models:
     default_headers: {}
 
     # Provider-bound options
-
-
-  "openai/gpt-5.4:online-xhigh":
+  "openai/gpt-5.3-codex:high":
     provider: openrouter
-    model: openai/gpt-5.4:online
-
-    # Sampling / reasoning
-    temperature: 1.0
-    top_p: null
-    max_tokens: null
-    max_output_tokens: null
-    reasoning:
-      effort: xhigh
-
-    # OpenAI-compatible endpoint config
-    api_key_env: OPENROUTER_API_KEY
-    api_key: null
-    base_url: "https://openrouter.ai/api/v1"
-
-    # Optional OpenRouter headers
-    default_headers: {}
-
-    # Provider-bound options
-
-
-  "openai/gpt-5.3-codex:online-high":
-    provider: openrouter
-    model: openai/gpt-5.3-codex:online
+    model: openai/gpt-5.3-codex
 
     # Sampling / reasoning
     temperature: 1.0
@@ -108,34 +83,9 @@ models:
     default_headers: {}
 
     # Provider-bound options
-
-
-  "openai/gpt-5.4:online-medium":
+  "openai/gpt-5.5:minimal":
     provider: openrouter
-    model: openai/gpt-5.4:online
-
-    # Sampling / reasoning
-    temperature: 1.0
-    top_p: null
-    max_tokens: null
-    max_output_tokens: null
-    reasoning:
-      effort: medium
-
-    # OpenAI-compatible endpoint config
-    api_key_env: OPENROUTER_API_KEY
-    api_key: null
-    base_url: "https://openrouter.ai/api/v1"
-
-    # Optional OpenRouter headers
-    default_headers: {}
-
-    # Provider-bound options
-
-
-  "openai/gpt-5.4:online-minimal":
-    provider: openrouter
-    model: openai/gpt-5.4:online
+    model: openai/gpt-5.5
 
     temperature: 1.0
     top_p: null
@@ -164,7 +114,7 @@ models:
   
   "google/gemini-3-flash-preview":
     provider: openrouter
-    model: google/gemini-3-flash-preview:online
+    model: google/gemini-3-flash-preview
     temperature: 1.0
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
@@ -173,7 +123,7 @@ models:
 
   "google/gemini-3.1-pro-preview":
     provider: openrouter
-    model: google/gemini-3.1-pro-preview:online
+    model: google/gemini-3.1-pro-preview
     temperature: 0.2
     api_key_env: OPENROUTER_API_KEY
     base_url: "https://openrouter.ai/api/v1"
@@ -190,24 +140,27 @@ models:
 
 
 agents:
-  # Main Track Agents
-  proposal: "openai/gpt-5.4:online-high"
-  director: "openai/gpt-5.4:online-high"
-  task_runner: "openai/gpt-5.4:online-high"
-  research_lead: "openai/gpt-5.4:online-high"
-  research_state_updater: "openai/gpt-5.4:online-high"
-  write_director: "openai/gpt-5.4:online-high"
-  section_writer: "openai/gpt-5.4:online-medium"
-  write_reviewer: "openai/gpt-5.4:online-medium"
-  academic_polisher: "google/gemini-3.1-pro-preview"
-  tex_compile_fixer: "openai/gpt-5.4:online-medium"
-  # Tool Agent Models
-  image_analyzer: "openai/gpt-5.4:online-medium"
-  literature_synthesizer: "openai/gpt-5.4:medium"
-  literature_deep_research: "openai/gpt-5.4:online-high"
-  memory_patch: "openai/gpt-5.4:online-medium"
-  tool_selector: "openai/gpt-5.4-mini"
-  summary: "google/gemini-3-flash-preview"
+  # Current runtime entry specialists
+  proposal_agent: "openai/gpt-5.5:high"
+  planning_director: "openai/gpt-5.5:high"
+  experiment_specialist: "openai/gpt-5.5:high"
+  research_specialist: "openai/gpt-5.5:high"
+  research_kernel_updater: "openai/gpt-5.5:high"
+  writing_specialist: "openai/gpt-5.5:high"
+  peer_review_specialist: "openai/gpt-5.5:medium"
+
+  # Current runtime worker / helper agents
+  writing_worker_agent: "openai/gpt-5.5:medium"
+  writing_polisher_agent: "google/gemini-3.1-pro-preview"
+  literature_agent: "openai/gpt-5.5:medium"
+  litreview_agent: "openai/gpt-5.5:medium"
+
+  # Internal utility roles
+  latex_fixer: "openai/gpt-5.5:medium"
+  image_analyzer: "openai/gpt-5.5:medium"
+  memory_patcher: "openai/gpt-5.5:medium"
+  tool_router: "openai/gpt-5.4-mini"
+  run_summary: "google/gemini-3-flash-preview"
 
 peer_review_models:
   - "google/gemini-3.1-pro-preview"
@@ -223,7 +176,6 @@ writing:
 agent_runtime:
   recursion_limit: 9999
   max_tool_calls: 120
-  max_model_calls: 120
   print_state_messages: true
   print_http_raw_post: false
 
@@ -234,15 +186,15 @@ agent_policies:
 literature:
   auto_default_depth: quick
   role_auto_max:
-    proposal: standard
-    director: focused
-    fast_director: focused
-    task_runner: none
-    research_lead: deep_report
-    research_state_updater: deep_report
-    write_director: none
-    section_writer: standard
-    write_reviewer: none
+    proposal_agent: standard
+    planning_director: focused
+    research_specialist_fast_lane: focused
+    experiment_specialist: none
+    research_specialist: deep_report
+    research_kernel_updater: deep_report
+    writing_specialist: none
+    writing_worker_agent: standard
+    peer_review_specialist: none
   public_web_on_search_failure: true
   summary_key_paper_count: 5
   semantic_scholar_retry_429_attempts: 5

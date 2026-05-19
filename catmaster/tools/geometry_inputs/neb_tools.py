@@ -12,6 +12,7 @@ from ase.geometry import find_mic
 from ase.io import read as ase_read, write as ase_write
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pymatgen.io.ase import AseAtomsAdaptor
+from pymatgen.io.vasp.inputs import Poscar
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
@@ -64,29 +65,20 @@ class MakeNebGeometryInput(BaseModel):
     final_path: str | None = Field(None, description="Final structure file (POSCAR/CONTCAR/.vasp/.cif).")
     input_root: str | None = Field(
         None,
-        description=(
-            "Optional batch root containing task subdirectories. Each task directory must contain one initial-state "
-            "structure file named IS(.vasp/.cif/...) and one final-state file named FS(.vasp/.cif/...)."
-        ),
+        description="Optional batch root; each task subdir contains IS and FS structure files.",
     )
     output_root: str | None = Field(
         None,
-        description="Batch output root used only with input_root. Outputs are written to output_root/<task_id>/00.vasp...",
+        description="Batch output root used only with input_root.",
     )
     n_images: int = Field(
         ...,
         ge=1,
-        description=(
-            "Number of intermediate images (NI). For routine local events, prefer about 4-8 intermediate images. "
-            "If no better prior exists, estimate with ceil(sqrt(sum_i ||Δr_i||^2) / 0.8 Å) after fixing atom "
-            "matching and periodic minimum-image displacements. If that path-scale estimate exceeds about 6 Å or "
-            "suggests more than about 8 intermediate images, reconsider whether the endpoints describe an overlong "
-            "non-primitive migration."
-        ),
+        description="Number of intermediate images (NI). Use neb-prepare skill for the image-count heuristic.",
     )
     output_dir: str = Field(
         "neb_images",
-        description="Single-case output directory for a flat numbered image-file tree such as 00.vasp, 01.vasp, ... (workspace-relative).",
+        description="Single-case output directory for a flat numbered image-file tree.",
     )
     interp_mode: str = Field(
         "direct",
@@ -127,31 +119,17 @@ class VaspNebPrepareInput(BaseModel):
     final_path: str | None = Field(None, description="Final endpoint structure path.")
     input_root: str | None = Field(
         None,
-        description=(
-            "Optional batch root containing task subdirectories. Each task directory must contain one image tree "
-            "using flat image files 00.vasp, 01.vasp, ... or legacy 00/POSCAR, 01/POSCAR, ... . "
-            "Each task directory must also contain endpoint OUTCAR files named IS_OUTCAR and FS_OUTCAR."
-        ),
+        description="Optional batch root containing task subdirectories with one NEB image tree each.",
     )
     images_root: str | None = Field(
         None,
-        description=(
-            "Existing image-tree root. Preferred form is a flat numbered file tree such as 00.vasp, 01.vasp, ... . "
-            "Legacy numbered directories such as 00/POSCAR, 01/POSCAR, ... are also accepted. "
-            "The same directory must also contain IS_OUTCAR and FS_OUTCAR."
-        ),
+        description="Existing NEB image-tree root; flat numbered files or legacy numbered POSCAR dirs are accepted.",
     )
     output_root: str = Field(..., description="Target NEB job root. Image directories and root VASP files are written here.")
     n_images: int = Field(
         5,
         ge=1,
-        description=(
-            "Number of intermediate images when generating from endpoints. For routine local events, prefer about "
-            "4-8 intermediate images. If no better prior exists, estimate with ceil(sqrt(sum_i ||Δr_i||^2) / 0.8 Å) "
-            "after fixing atom matching and periodic minimum-image displacements. If that path-scale estimate "
-            "exceeds about 6 Å or suggests more than about 8 intermediate images, reconsider whether the endpoints "
-            "describe an overlong non-primitive migration."
-        ),
+        description="Number of intermediate images when generating from endpoints.",
     )
     output_filename: str = Field("POSCAR", description="Filename for generated/copied image structures.")
     interp_mode: str = Field(
@@ -242,6 +220,33 @@ class EstimateNebImageCountInput(BaseModel):
     )
 
 
+class RemapNebEndpointAtomsInput(BaseModel):
+    """[neb/modeling] Reorder one endpoint onto the other by minimizing same-species displacement on the mobile subset."""
+
+    initial_path: str = Field(..., description="Reference endpoint structure file path (POSCAR/CONTCAR/.vasp/.cif).")
+    final_path: str = Field(..., description="Endpoint structure file to reorder onto the reference atom order.")
+    output_path: str | None = Field(
+        None,
+        description=(
+            "Workspace-relative output path for the reordered final structure. Defaults to "
+            "mapped_structures/<final_stem>_mapped<suffix>. Selective dynamics are preserved for VASP-style outputs."
+        ),
+    )
+    mic: bool = Field(
+        True,
+        description="If true, minimize squared endpoint displacements under the periodic minimum image convention.",
+    )
+    lock_if_current_displacement_below_angstrom: float = Field(
+        0.5,
+        ge=0.0,
+        description=(
+            "Mobile atoms whose current-order endpoint displacement is already below this threshold are locked and "
+            "excluded from remapping. Default: 0.5 Å."
+        ),
+    )
+    overwrite: bool = Field(False, description="If true, overwrite output_path if it already exists.")
+
+
 def _read_atoms(path: Path):
     return ase_read(str(path))
 
@@ -253,6 +258,18 @@ def _validate_structures(initial, final) -> Optional[str]:
         return "Initial and final structures have different element sequences."
     if not np.allclose(initial.cell.array, final.cell.array, rtol=_CELL_TOL, atol=_CELL_TOL):
         return "Initial and final lattices differ beyond tolerance."
+    return None
+
+
+def _validate_structure_pair_for_mapping(initial, final) -> Optional[str]:
+    if len(initial) != len(final):
+        return "Initial and final structures have different atom counts."
+    if not np.array_equal(np.sort(initial.get_atomic_numbers()), np.sort(final.get_atomic_numbers())):
+        return "Initial and final structures have different element counts."
+    if not np.allclose(initial.cell.array, final.cell.array, rtol=_CELL_TOL, atol=_CELL_TOL):
+        return "Initial and final lattices differ beyond tolerance."
+    if not np.array_equal(np.asarray(initial.pbc, dtype=bool), np.asarray(final.pbc, dtype=bool)):
+        return "Initial and final periodic-boundary-condition flags differ."
     return None
 
 
@@ -287,6 +304,304 @@ def _build_neb_image_count_guidance(
             "one local elementary event or a longer path that should be decomposed."
         )
     return warnings
+
+
+def _default_mapped_output_path(final_path: Path) -> Path:
+    suffix = final_path.suffix or ".vasp"
+    return resolve_workspace_path(f"mapped_structures/{final_path.stem}_mapped{suffix}")
+
+
+def _pairwise_squared_displacements(
+    initial_positions: np.ndarray,
+    final_positions: np.ndarray,
+    *,
+    cell: Any,
+    pbc: Any,
+    mic: bool,
+) -> np.ndarray:
+    deltas = np.asarray(final_positions[None, :, :] - initial_positions[:, None, :], dtype=float)
+    if mic:
+        remapped, _ = find_mic(deltas.reshape(-1, 3), cell=cell, pbc=pbc)
+        deltas = np.asarray(remapped, dtype=float).reshape(deltas.shape)
+    return np.einsum("ijk,ijk->ij", deltas, deltas)
+
+
+def _solve_assignment(cost_matrix: np.ndarray) -> np.ndarray:
+    size = int(cost_matrix.shape[0])
+    if size <= 1:
+        return np.zeros(size, dtype=int)
+    preferences = np.argsort(cost_matrix, axis=1)
+    assignment = _stable_local_assignment(cost_matrix, preferences)
+    return _improve_assignment_by_swaps(cost_matrix, assignment)
+
+
+def _stable_local_assignment(cost_matrix: np.ndarray, preferences: np.ndarray) -> np.ndarray:
+    size = int(cost_matrix.shape[0])
+    assignment = np.full(size, -1, dtype=int)
+    owner_by_col = np.full(size, -1, dtype=int)
+    next_choice = np.zeros(size, dtype=int)
+    proposal_gap = []
+    for row in range(size):
+        ordered = cost_matrix[row, preferences[row]]
+        gap = float(ordered[1] - ordered[0]) if size > 1 else float("inf")
+        proposal_gap.append((gap, row))
+    pending = [row for _gap, row in sorted(proposal_gap, reverse=True)]
+    while pending:
+        row = pending.pop(0)
+        while assignment[row] < 0:
+            choice_rank = int(next_choice[row])
+            if choice_rank >= size:
+                raise ValueError("Failed to find a complete local assignment.")
+            col = int(preferences[row, choice_rank])
+            next_choice[row] = choice_rank + 1
+            current_owner = int(owner_by_col[col])
+            if current_owner < 0:
+                owner_by_col[col] = row
+                assignment[row] = col
+                break
+            if float(cost_matrix[row, col]) + 1e-12 < float(cost_matrix[current_owner, col]):
+                assignment[current_owner] = -1
+                owner_by_col[col] = row
+                assignment[row] = col
+                pending.append(current_owner)
+                break
+    return assignment
+
+
+def _improve_assignment_by_swaps(cost_matrix: np.ndarray, assignment: np.ndarray) -> np.ndarray:
+    improved = True
+    size = int(len(assignment))
+    while improved:
+        improved = False
+        for i in range(size):
+            for j in range(i + 1, size):
+                current = float(cost_matrix[i, assignment[i]] + cost_matrix[j, assignment[j]])
+                swapped = float(cost_matrix[i, assignment[j]] + cost_matrix[j, assignment[i]])
+                if swapped + 1e-12 < current:
+                    assignment[i], assignment[j] = int(assignment[j]), int(assignment[i])
+                    improved = True
+    return assignment
+
+
+def _infer_mobile_indices(input_path: Path, atoms: Any) -> tuple[list[int], str]:
+    atom_count = int(len(atoms))
+    try:
+        poscar = Poscar.from_file(str(input_path))
+    except Exception:
+        poscar = None
+    if poscar is not None:
+        selective_dynamics = getattr(poscar, "selective_dynamics", None)
+        if selective_dynamics is not None:
+            mask = np.asarray(selective_dynamics, dtype=bool)
+            if mask.shape == (atom_count, 3):
+                active = [idx for idx, row in enumerate(mask) if bool(np.any(row))]
+                return active, "selective_dynamics"
+
+    raw_constraints = getattr(atoms, "constraints", None)
+    if raw_constraints:
+        constraints = raw_constraints if isinstance(raw_constraints, (list, tuple)) else [raw_constraints]
+        fixed: set[int] = set()
+        for constraint in constraints:
+            if type(constraint).__name__ != "FixAtoms":
+                continue
+            indices = getattr(constraint, "index", None)
+            if indices is None:
+                continue
+            fixed.update(int(idx) for idx in np.asarray(indices, dtype=int).reshape(-1))
+        if fixed:
+            return [idx for idx in range(atom_count) if idx not in fixed], "fixatoms_constraint"
+
+    return list(range(atom_count)), "all_atoms"
+
+
+def _build_reordered_final(
+    initial,
+    final,
+    *,
+    mic: bool,
+    remap_indices: list[int],
+) -> tuple[Any, np.ndarray]:
+    initial_numbers = np.asarray(initial.get_atomic_numbers(), dtype=int)
+    final_numbers = np.asarray(final.get_atomic_numbers(), dtype=int)
+    assignment = np.arange(len(initial_numbers), dtype=int)
+    mobile_idx_arr = np.asarray(sorted(int(idx) for idx in remap_indices), dtype=int)
+    if mobile_idx_arr.size == 0:
+        return final.copy(), assignment
+    for atomic_number in np.unique(initial_numbers[mobile_idx_arr]):
+        init_idx = mobile_idx_arr[initial_numbers[mobile_idx_arr] == atomic_number]
+        final_idx = mobile_idx_arr[final_numbers[mobile_idx_arr] == atomic_number]
+        cost_matrix = _pairwise_squared_displacements(
+            np.asarray(initial.get_positions()[init_idx], dtype=float),
+            np.asarray(final.get_positions()[final_idx], dtype=float),
+            cell=initial.cell,
+            pbc=initial.pbc,
+            mic=mic,
+        )
+        local_assignment = _solve_assignment(cost_matrix)
+        assignment[init_idx] = final_idx[local_assignment]
+    reordered = final[assignment.tolist()]
+    return reordered, assignment
+
+
+def _write_structure_output(path: Path, atoms: Any) -> None:
+    suffix = path.suffix.lower()
+    if suffix in {"", ".vasp", ".poscar", ".contcar"}:
+        ase_write(str(path), atoms, format="vasp", direct=True, vasp5=True)
+        return
+    ase_write(str(path), atoms)
+
+
+def _write_reordered_structure_output(path: Path, atoms: Any, *, source_path: Path, assignment: np.ndarray) -> None:
+    suffix = path.suffix.lower()
+    if suffix not in {"", ".vasp", ".poscar", ".contcar"}:
+        _write_structure_output(path, atoms)
+        return
+    try:
+        poscar = Poscar.from_file(str(source_path))
+    except Exception:
+        _write_structure_output(path, atoms)
+        return
+    selective_dynamics = getattr(poscar, "selective_dynamics", None)
+    reordered_sd = None
+    if selective_dynamics is not None:
+        sd_arr = np.asarray(selective_dynamics, dtype=bool)
+        if sd_arr.shape == (len(assignment), 3):
+            reordered_sd = sd_arr[np.asarray(assignment, dtype=int)].tolist()
+    pmg_structure = AseAtomsAdaptor.get_structure(atoms)
+    Poscar(
+        pmg_structure,
+        comment=getattr(poscar, "comment", None),
+        selective_dynamics=reordered_sd,
+        sort_structure=False,
+    ).write_file(str(path))
+
+
+def remap_neb_endpoint_atoms(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[neb/modeling] Reorder the final endpoint onto the initial atom order on the mobile subset while leaving frozen atoms untouched."""
+    params = RemapNebEndpointAtomsInput(**payload)
+    init_path = resolve_workspace_path(params.initial_path, must_exist=True)
+    final_path = resolve_workspace_path(params.final_path, must_exist=True)
+    output_path = resolve_workspace_path(params.output_path) if params.output_path else _default_mapped_output_path(final_path)
+    if output_path.exists() and not params.overwrite:
+        _fail(
+            "remap_neb_endpoint_atoms",
+            message=f"output_path already exists: {workspace_relpath(output_path)}. Set overwrite=true to replace.",
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+                "output_dir": workspace_relpath(output_path),
+            },
+            error_code="output_exists",
+        )
+
+    try:
+        initial = _read_atoms(init_path)
+        final = _read_atoms(final_path)
+    except Exception as exc:
+        _fail(
+            "remap_neb_endpoint_atoms",
+            message=f"Failed to read initial/final structures: {exc}",
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+                "output_dir": workspace_relpath(output_path),
+            },
+            error_code="read_failed",
+        )
+
+    error = _validate_structure_pair_for_mapping(initial, final)
+    if error:
+        _fail(
+            "remap_neb_endpoint_atoms",
+            message=error,
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+                "output_dir": workspace_relpath(output_path),
+            },
+            error_code="invalid_neb_pair",
+        )
+
+    mobile_indices, mobile_source = _infer_mobile_indices(init_path, initial)
+    if not mobile_indices:
+        _fail(
+            "remap_neb_endpoint_atoms",
+            message="No mobile atoms were inferred from the reference structure; nothing can be remapped.",
+            data={
+                "initial_rel": workspace_relpath(init_path),
+                "final_rel": workspace_relpath(final_path),
+                "output_dir": workspace_relpath(output_path),
+            },
+            error_code="no_mobile_atoms",
+        )
+    fixed_indices = [idx for idx in range(len(initial)) if idx not in set(mobile_indices)]
+    if fixed_indices:
+        initial_numbers = np.asarray(initial.get_atomic_numbers(), dtype=int)
+        final_numbers = np.asarray(final.get_atomic_numbers(), dtype=int)
+        if not np.array_equal(initial_numbers[fixed_indices], final_numbers[fixed_indices]):
+            _fail(
+                "remap_neb_endpoint_atoms",
+                message=(
+                    "Frozen atoms are excluded from remapping, but the fixed-index element sequence already differs "
+                    "between initial and final. Reorder or regenerate the endpoints before using this tool."
+                ),
+                data={
+                    "initial_rel": workspace_relpath(init_path),
+                    "final_rel": workspace_relpath(final_path),
+                    "output_dir": workspace_relpath(output_path),
+                },
+                error_code="fixed_atom_order_mismatch",
+            )
+
+    current_vectors, current_norms = _compute_endpoint_displacements(initial, final, mic=params.mic)
+    initial_numbers = np.asarray(initial.get_atomic_numbers(), dtype=int)
+    final_numbers = np.asarray(final.get_atomic_numbers(), dtype=int)
+    locked_small_displacement_indices = [
+        int(idx)
+        for idx in mobile_indices
+        if initial_numbers[idx] == final_numbers[idx]
+        and float(current_norms[idx]) < float(params.lock_if_current_displacement_below_angstrom)
+    ]
+    remap_indices = [int(idx) for idx in mobile_indices if idx not in set(locked_small_displacement_indices)]
+    reordered_final, assignment = _build_reordered_final(initial, final, mic=params.mic, remap_indices=remap_indices)
+    reordered_vectors, reordered_norms = _compute_endpoint_displacements(initial, reordered_final, mic=params.mic)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_reordered_structure_output(output_path, reordered_final, source_path=final_path, assignment=assignment)
+
+    mapping_changed = not np.array_equal(assignment, np.arange(len(assignment), dtype=int))
+    data = {
+        "initial_rel": workspace_relpath(init_path),
+        "final_rel": workspace_relpath(final_path),
+        "mapped_final_rel": workspace_relpath(output_path),
+        "mic": bool(params.mic),
+        "atom_count": int(len(initial)),
+        "mapping_algorithm": "local_preference_matching_plus_swap_refinement",
+        "mobile_atom_indices": [int(idx) for idx in mobile_indices],
+        "mobile_atom_indices_source": mobile_source,
+        "locked_small_displacement_indices": locked_small_displacement_indices,
+        "lock_if_current_displacement_below_angstrom": float(params.lock_if_current_displacement_below_angstrom),
+        "remap_candidate_indices": remap_indices,
+        "element_sequence_matches_before_mapping": bool(
+            np.array_equal(initial.get_atomic_numbers(), final.get_atomic_numbers())
+        ),
+        "mapping_changed": bool(mapping_changed),
+        "assigned_final_indices_for_initial_order": [int(idx) for idx in assignment.tolist()],
+        "rss_displacement_current_order_angstrom": float(np.linalg.norm(current_vectors.reshape(-1))),
+        "rss_displacement_mapped_order_angstrom": float(np.linalg.norm(reordered_vectors.reshape(-1))),
+        "max_atom_displacement_current_order_angstrom": float(np.max(current_norms)) if len(current_norms) else 0.0,
+        "max_atom_displacement_mapped_order_angstrom": float(np.max(reordered_norms)) if len(reordered_norms) else 0.0,
+        "per_atom_displacements_mapped_angstrom": [float(value) for value in reordered_norms.tolist()],
+    }
+    lines = [
+        "remap_neb_endpoint_atoms completed.",
+        f"mapped_final_rel={data['mapped_final_rel']}",
+        f"mapping_changed={str(bool(mapping_changed)).lower()}",
+        f"rss_displacement_current_order_angstrom={data['rss_displacement_current_order_angstrom']:.6f}",
+        f"rss_displacement_mapped_order_angstrom={data['rss_displacement_mapped_order_angstrom']:.6f}",
+        f"locked_small_displacement_count={len(locked_small_displacement_indices)}",
+        f"mic={str(bool(params.mic)).lower()}",
+    ]
+    return _success("remap_neb_endpoint_atoms", content="\n".join(lines), data=data)
 
 
 def estimate_neb_image_count(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -750,6 +1065,10 @@ class VaspNebWriter:
             f"output_root_rel={data['output_root_rel']}",
             f"output_incar_path={data['output_incar_path']}",
         ]
+        if params.images_root:
+            lines.append(
+                "note=image-tree mode does not infer endpoint energies; copy the original relax OUTCAR files into the endpoint image directories before NEB analysis."
+            )
         if data["diff_json_rel"]:
             lines.append(f"diff_json_rel={data['diff_json_rel']}")
         return _success(
@@ -775,6 +1094,7 @@ class VaspNebWriter:
                 error_code="invalid_batch_root",
             )
         task_results: list[dict[str, Any]] = []
+        batch_warnings: list[str] = []
         for task_dir in task_dirs:
             task_payload = params.model_dump(exclude_none=True)
             task_payload.pop("input_root", None)
@@ -782,6 +1102,8 @@ class VaspNebWriter:
             task_payload["output_root"] = workspace_relpath(output_root / task_dir.name)
             _content, artifact = self.prepare(VaspNebPrepareInput(**task_payload))
             task_results.append({"task_id": task_dir.name, **artifact["data"]})
+            for warning in artifact.get("warnings", []) or []:
+                batch_warnings.append(f"{task_dir.name}: {warning}")
         batch_summary_path = output_root / "batch_summary.json"
         batch_summary = {
             "input_root_rel": workspace_relpath(input_root),
@@ -799,9 +1121,10 @@ class VaspNebWriter:
         content = (
             "vasp_neb_prepare completed.\n"
             f"task_count={len(task_results)} output_root_rel={data['output_root_rel']} "
-            f"batch_summary_rel={data['batch_summary_rel']}"
+            f"batch_summary_rel={data['batch_summary_rel']}\n"
+            "note=batch image-tree mode does not infer endpoint energies; copy the original relax OUTCAR files into the endpoint image directories before NEB analysis."
         )
-        return _success("vasp_neb_prepare", content=content, data=data)
+        return _success("vasp_neb_prepare", content=content, data=data, warnings=batch_warnings)
 
     @staticmethod
     def _prepare_output_root(*, output_root: Path, overwrite: bool) -> None:
@@ -997,11 +1320,15 @@ class VaspNebWriter:
         final_outcar = final_path.parent / "OUTCAR"
         if not _copy_if_exists(initial_outcar, first_dir / "OUTCAR"):
             warnings.append(
-                f"endpoint support file not found for initial image: {workspace_relpath(initial_outcar)}"
+                "initial endpoint OUTCAR not found. "
+                f"Copy the original relax OUTCAR into {workspace_relpath(first_dir / 'OUTCAR')} "
+                f"before NEB analysis. Missing source path: {workspace_relpath(initial_outcar)}"
             )
         if not _copy_if_exists(final_outcar, last_dir / "OUTCAR"):
             warnings.append(
-                f"endpoint support file not found for final image: {workspace_relpath(final_outcar)}"
+                "final endpoint OUTCAR not found. "
+                f"Copy the original relax OUTCAR into {workspace_relpath(last_dir / 'OUTCAR')} "
+                f"before NEB analysis. Missing source path: {workspace_relpath(final_outcar)}"
             )
         return warnings
 
@@ -1014,27 +1341,14 @@ class VaspNebWriter:
     ) -> list[str]:
         if total_images < 2:
             return []
-        initial_outcar = images_root / "IS_OUTCAR"
-        final_outcar = images_root / "FS_OUTCAR"
-        if not initial_outcar.is_file():
-            _fail(
-                "vasp_neb_prepare",
-                message=f"images_root is missing required endpoint OUTCAR file: {workspace_relpath(initial_outcar)}",
-                data={"images_root_rel": workspace_relpath(images_root), "output_root_rel": workspace_relpath(output_root)},
-                error_code="missing_image_tree_outcar",
-            )
-        if not final_outcar.is_file():
-            _fail(
-                "vasp_neb_prepare",
-                message=f"images_root is missing required endpoint OUTCAR file: {workspace_relpath(final_outcar)}",
-                data={"images_root_rel": workspace_relpath(images_root), "output_root_rel": workspace_relpath(output_root)},
-                error_code="missing_image_tree_outcar",
-            )
         first_dir = output_root / "00"
         last_dir = output_root / f"{max(0, total_images - 1):02d}"
-        shutil.copy2(initial_outcar, first_dir / "OUTCAR")
-        shutil.copy2(final_outcar, last_dir / "OUTCAR")
-        return []
+        return [
+            "initial endpoint OUTCAR not provided for image-tree input. "
+            f"Copy the original relax OUTCAR into {workspace_relpath(first_dir / 'OUTCAR')} before NEB analysis.",
+            "final endpoint OUTCAR not provided for image-tree input. "
+            f"Copy the original relax OUTCAR into {workspace_relpath(last_dir / 'OUTCAR')} before NEB analysis.",
+        ]
 
     def _write_neb_support_files(
         self,
@@ -1177,8 +1491,10 @@ def vasp_neb_prepare(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 __all__ = [
     "EstimateNebImageCountInput",
     "MakeNebGeometryInput",
+    "RemapNebEndpointAtomsInput",
     "VaspNebPrepareInput",
     "estimate_neb_image_count",
     "make_neb_geometry",
+    "remap_neb_endpoint_atoms",
     "vasp_neb_prepare",
 ]

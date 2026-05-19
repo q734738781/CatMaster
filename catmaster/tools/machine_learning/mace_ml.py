@@ -20,6 +20,8 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     TaskSpec,
     dispatch_submission,
     make_work_base,
+    remote_context_from_exception,
+    remote_context_from_result,
 )
 from catmaster.tools.execution.mace_dispatch import (
     _collect_mace_outputs,
@@ -288,7 +290,7 @@ class MaceTrainInput(BaseModel):
     )
     compute_stress: bool = Field(True, description="Whether to train with stress labels, passed to --compute_stress.")
     energy_weight: float = Field(1.0, ge=0.0, description="Energy loss weight.")
-    forces_weight: float = Field(100.0, ge=0.0, description="Forces loss weight.")
+    forces_weight: float = Field(10.0, ge=0.0, description="Forces loss weight.")
     stress_weight: float = Field(1.0, ge=0.0, description="Stress loss weight.")
     max_num_epochs: int = Field(25, ge=1, description="Maximum training epochs passed to the MACE training CLI.")
     batch_size: int = Field(4, ge=1, description="Batch size passed to the MACE training CLI.")
@@ -582,6 +584,7 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         tasks=[task],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="mace_train",
     )
     state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": 1})
     dispatch_error = None
@@ -615,6 +618,7 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
                 "work_base": work_base,
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             warnings=collect_warnings,
@@ -633,6 +637,7 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "atomic_numbers": atomic_numbers,
         "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        **remote_context_from_result(result),
         **collect_info,
     }
     content = (
@@ -709,6 +714,7 @@ def mace_evaluate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         tasks=[task],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="mace_evaluate",
     )
     state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": 1})
     dispatch_error = None
@@ -742,6 +748,7 @@ def mace_evaluate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
                 "work_base": work_base,
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             warnings=collect_warnings,
@@ -755,6 +762,7 @@ def mace_evaluate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "model": params.model,
         "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        **remote_context_from_result(result),
         **collect_info,
     }
     content = (

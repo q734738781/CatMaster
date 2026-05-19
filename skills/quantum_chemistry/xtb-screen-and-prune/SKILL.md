@@ -1,9 +1,6 @@
 ---
 name: xtb-screen-and-prune
 description: Use this skill for bounded xTB screening, optimization, Hessian checking, and ensemble pruning when the main objective is to cheaply rank or clean up molecular candidates before higher-level calculations.
-license: project-local
-compatibility: local
-allowed-tools: "xtb_run_batch analyze_xtb_results filter_conformer_ensemble extract_optimized_molecules"
 ---
 
 # xtb-screen-and-prune

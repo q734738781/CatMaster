@@ -147,9 +147,9 @@ def test_starter_skills_use_standard_sections_and_consistent_allowed_tools() -> 
         "## References",
     ]
 
-    skill_root = repo_root / "skills" / "experiment"
+    skill_root = repo_root / "skills" / "materials"
     skill_paths = sorted(path for path in skill_root.glob("*/SKILL.md"))
-    assert skill_paths, "expected starter skills under skills/experiment/*/SKILL.md"
+    assert skill_paths, "expected starter skills under skills/materials/*/SKILL.md"
 
     for path in skill_paths:
         name = path.parent.name
@@ -172,11 +172,13 @@ def test_method_critical_defaults_sections_exist_for_targeted_skills() -> None:
         "mace-screening-and-relaxation",
         "vasp-input-preparation",
         "thermo-free-energy-and-reporting",
-        "transition-state-neb",
+        "neb-prepare",
+        "neb-calculation",
+        "neb-analysis",
         "adsorption-site-screening",
     ]
     for name in targeted:
-        path = repo_root / "skills" / "experiment" / name / "SKILL.md"
+        path = repo_root / "skills" / "materials" / name / "SKILL.md"
         text = path.read_text(encoding="utf-8")
         assert "## Method-critical defaults" in text, f"{path} missing method-critical defaults section"
 

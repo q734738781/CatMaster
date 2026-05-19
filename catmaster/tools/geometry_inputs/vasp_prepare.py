@@ -67,10 +67,7 @@ class VaspPrepareInput(BaseModel):
     )
     preset: Literal["relax", "static", "freq", "dos", "md"] = Field(
         ...,
-        description=(
-            "Canonical VASP job preset. Use relax for ionic relaxation, static for a single-point total-energy job, "
-            "freq for finite-difference vibrations, dos for density-of-states jobs, and md for Nose-Hoover molecular dynamics."
-        ),
+        description="Canonical VASP preset: relax, static, freq, dos, or md.",
     )
     regime: Literal["bulk", "slab", "gas"] = Field(
         ...,
@@ -83,7 +80,7 @@ class VaspPrepareInput(BaseModel):
     k_product: int = Field(
         35,
         ge=1,
-        description="Target k-mesh density via k_i~round(k_product/L_i), minimum 1 and odd Gamma-centered mesh.",
+        description="Target k-mesh density; minimum 1 and odd Gamma-centered mesh.",
     )
     use_d3: bool = Field(False, description="Enable DFT-D3(BJ) correction (IVDW=12).")
     use_dft_plus_u: bool = Field(False, description="Enable DFT+U baseline toggle (LDAU=True).")
@@ -93,34 +90,19 @@ class VaspPrepareInput(BaseModel):
     )
     compute_dos: bool = Field(
         False,
-        description=(
-            "Enable DOS/projection output by setting LORBIT=11 for non-dos presets. "
-            "When preset='dos', the tool enables the required DOS output automatically."
-        ),
+        description="Enable DOS/projection output for non-dos presets.",
     )
     dos_charge_density_path: str | None = Field(
         None,
-        description=(
-            "Only used when preset='dos'. Optional CHGCAR path for a non-self-consistent DOS run. "
-            "When provided, the tool copies it into output_root/CHGCAR, sets ICHARG=11, "
-            "and applies a recommended LMAXMIX baseline when absent."
-        ),
+        description="Optional CHGCAR path for preset='dos' non-self-consistent DOS.",
     )
     user_incar_patch: Dict[str, Any] = Field(
         default_factory=dict,
-        description=(
-            "Targeted INCAR patch object. For preset='dos' or preset='md', use this as the main in-call customization hook for "
-            "job-specific controls such as NEDOS, ISMEAR, TEBEG, TEEND, POTIM, NSW, SMASS, or MDALGO. "
-            "MAGMOM/LDAUU/LDAUJ must be symbol:value maps. Use null to request removal of a key from the final INCAR."
-        ),
+        description="Targeted INCAR patch. MAGMOM/LDAUU/LDAUJ must be element maps; null removes a key.",
     )
     patch_policy: Literal["safe", "force"] = Field(
         "safe",
-        description=(
-            "safe: reject user patches only for a small protected set of preset/regime-bound INCAR keys. "
-            "For dos/md, safe keeps only the preset identity keys protected so most method knobs can still be overridden in one call. "
-            "force: apply the user patch after canonical defaults."
-        ),
+        description="safe protects preset/regime identity keys; force applies the patch after canonical defaults.",
     )
 
     @field_validator("user_incar_patch")

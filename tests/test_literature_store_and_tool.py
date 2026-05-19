@@ -20,8 +20,9 @@ from catmaster.runtime.literature.tools import (
     open_public_page,
     run_literature_research,
     search_openalex,
-    search_public_web,
     search_semantic_scholar,
+    search_public_web,
+    web_search,
 )
 from catmaster.tools.base import workspace_scope
 
@@ -129,7 +130,7 @@ def test_direct_search_openalex_tool_returns_normalized_json(monkeypatch) -> Non
     assert artifact["tool_name"] == "search_openalex"
 
 
-def test_direct_search_public_web_tool_returns_hits(monkeypatch) -> None:
+def test_direct_web_search_tool_returns_hits(monkeypatch) -> None:
     class _FakeWeb:
         def search_public_web(self, query: str, max_results: int = 5):
             assert query == "CO adsorption Fe surfaces"
@@ -153,12 +154,15 @@ def test_direct_search_public_web_tool_returns_hits(monkeypatch) -> None:
         lambda: (object(), object(), object(), _FakeWeb()),
     )
 
-    content, artifact = search_public_web({"query": "CO adsorption Fe surfaces", "max_results": 2})
-    payload = json.loads(content)
-    assert payload["source"] == "public_web"
-    assert payload["count"] == 1
-    assert payload["hits"][0]["title"] == "Result"
-    assert artifact["tool_name"] == "search_public_web"
+    content, artifact = web_search({"query": "CO adsorption Fe surfaces", "max_results": 2})
+    assert "Query: CO adsorption Fe surfaces" in content
+    assert "Top results:" in content
+    assert "Result" in content
+    assert "https://example.org" in content
+    assert artifact["tool_name"] == "web_search"
+    assert artifact["data"]["source"] == "public_web"
+    assert artifact["data"]["count"] == 1
+    assert artifact["data"]["hits"][0]["title"] == "Result"
 
 
 def test_literature_subagent_run_persists_agent_result(monkeypatch, tmp_path: Path) -> None:
@@ -253,7 +257,7 @@ def test_literature_subagent_uses_configured_budgets(tmp_path: Path) -> None:
 
     json.loads(tools["search_semantic_scholar"].invoke({"query": "CO adsorption Fe surfaces"}))
     json.loads(tools["recommend_semantic_scholar"].invoke({"seed_paper_ids": ["S2-1"]}))
-    json.loads(tools["search_public_web"].invoke({"query": "CO adsorption Fe surfaces"}))
+    tools["web_search"].invoke({"query": "CO adsorption Fe surfaces"})
 
     assert observed["search_limit"] == 7
     assert observed["recommendation_limit"] == 2
@@ -403,7 +407,7 @@ def test_get_semantic_scholar_record_tool_soft_fails_on_not_found(monkeypatch) -
     assert artifact["tool_name"] == "get_semantic_scholar_record"
 
 
-def test_search_public_web_tool_soft_fails_without_tavily_key(monkeypatch) -> None:
+def test_web_search_tool_soft_fails_without_tavily_key(monkeypatch) -> None:
     class _UnavailableWeb:
         def search_public_web(self, query: str, max_results: int = 5):
             _ = (query, max_results)
@@ -414,12 +418,12 @@ def test_search_public_web_tool_soft_fails_without_tavily_key(monkeypatch) -> No
         lambda: (object(), object(), object(), _UnavailableWeb()),
     )
 
-    content, artifact = search_public_web({"query": "CO adsorption Fe surfaces"})
+    content, artifact = web_search({"query": "CO adsorption Fe surfaces"})
     payload = json.loads(content)
 
     assert payload["status"] == "unavailable"
     assert payload["source"] == "public_web"
-    assert artifact["tool_name"] == "search_public_web"
+    assert artifact["tool_name"] == "web_search"
 
 
 def test_open_public_page_tool_soft_fails_on_invalid_url(monkeypatch) -> None:
@@ -441,7 +445,7 @@ def test_open_public_page_tool_soft_fails_on_invalid_url(monkeypatch) -> None:
     assert artifact["tool_name"] == "open_public_page"
 
 
-def test_literature_subagent_hides_search_public_web_without_tavily_key(tmp_path: Path) -> None:
+def test_literature_subagent_hides_web_search_without_tavily_key(tmp_path: Path) -> None:
     subagent = LiteratureSubagent(
         openalex=None,
         semanticscholar=object(),
@@ -452,9 +456,21 @@ def test_literature_subagent_hides_search_public_web_without_tavily_key(tmp_path
 
     tools = {tool.name: tool for tool in subagent._build_search_tools(budget=subagent.config.budget_for_depth("quick"), topic="CO adsorption")}
 
-    assert "search_public_web" not in tools
+    assert "web_search" not in tools
     assert "open_public_page" in tools
     assert "find_in_page" in tools
+
+
+def test_search_public_web_alias_uses_web_search(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools.web_search",
+        lambda payload: ("alias ok", {"tool_name": "web_search", "data": payload}),
+    )
+
+    content, artifact = search_public_web({"query": "alias"})
+
+    assert content == "alias ok"
+    assert artifact["tool_name"] == "web_search"
 
 
 def test_literature_subagent_invoke_research_agent_uses_internal_agent(monkeypatch, tmp_path: Path) -> None:

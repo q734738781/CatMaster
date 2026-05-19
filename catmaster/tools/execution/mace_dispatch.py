@@ -17,6 +17,8 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     DispatchRequest,
     dispatch_task,
     dispatch_submission,
+    remote_context_from_exception,
+    remote_context_from_result,
     TaskSpec,
     BatchDispatchRequest,
     make_work_base,
@@ -25,7 +27,7 @@ from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 BATCH_STATE_FILENAME = "_BATCH_STATE.json"
 _LOCAL_MODEL_FILE_SUFFIXES = {".model", ".pt", ".pth", ".ckpt"}
@@ -87,23 +89,13 @@ class MaceRelaxBatchInput(BaseModel):
     )
     output_root: str = Field(
         ...,
-        description=(
-            "Root directory to store batch outputs. Results mirror the input directory structure; each input file "
-            "expands to a folder without suffix (e.g. input_dir/a/c.vasp -> output_root/a/c/opt.vasp). "
-            "Must be outside input_dir."
-        ),
+        description="Output root for mirrored batch results. Must be outside input_dir.",
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
     maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
     model: str = Field(
         "mh-1",
-        description=(
-            "MACE model identifier or workspace-local trained-model path. "
-            "Recommended pretrained options: "
-            "'mh-1' (slower, higher accuracy) or "
-            "'medium-mpa-0' (faster, lower accuracy). "
-            "Local paths may point to one model file or to a directory containing a unique preferred model artifact."
-        ),
+        description="MACE model identifier or workspace-local trained-model path.",
         examples=["mh-1", "medium-mpa-0"],
     )
     head: Optional[str] = Field(
@@ -116,7 +108,7 @@ class MaceRelaxBatchInput(BaseModel):
     )
     default_dtype: Literal["float32", "float64"] = Field(
         "float64",
-        description="Floating-point precision passed to the MACE calculator. Keep the default float64 for geometry optimization unless a cheaper float32 screening pass is explicitly intended.",
+        description="MACE calculator precision.",
     )
     relax_lattice: bool = Field(
         False,
@@ -154,9 +146,53 @@ class MaceSPBatchInput(BaseModel):
     )
     default_dtype: Literal["float32", "float64"] = Field(
         "float64",
-        description="Floating-point precision passed to the MACE calculator. float64 is the default conservative choice; use float32 only when a cheaper screening pass is acceptable.",
+        description="MACE calculator precision.",
     )
     check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
+
+
+class MaceMDBatchInput(BaseModel):
+    """[mace/execute] Run ASE-backed MACE MD for structures under one directory."""
+
+    input_dir: str = Field(
+        ...,
+        description="Input directory containing periodic structures or molecules (POSCAR/CONTCAR/.vasp/.poscar/.cif/.xyz).",
+    )
+    output_root: str = Field(
+        ...,
+        description="Output root for MD trajectories, logs, final structures, and per-structure summaries. Must be outside input_dir.",
+    )
+    model: str = Field(
+        "mh-1",
+        description="MACE model identifier or workspace-local trained-model path.",
+        examples=["mh-1", "medium-mpa-0", "models/best.model"],
+    )
+    head: Optional[str] = Field(
+        "omat_pbe",
+        description="Model head for multi-head models. Use empty string to disable.",
+    )
+    dispersion: bool = Field(False, description="Enable dispersion correction.")
+    default_dtype: Literal["float32", "float64"] = Field(
+        "float32",
+        description="Floating-point precision passed to the MACE calculator. MD defaults to float32 for throughput.",
+    )
+    md_config: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Free-form MD config object. Keep it minimal; for example "
+            "{'dynamics': {'ensemble': 'nve'}} or "
+            "{'dynamics': {'ensemble': 'nvt'}, 'thermostat': {'type': 'langevin'}}. "
+            "Use the MACE MD skill for full ASE parameter templates."
+        ),
+    )
+    check_interval: int = Field(30, description="Polling interval in seconds when waiting.")
+
+    @field_validator("md_config")
+    @classmethod
+    def _validate_md_config_is_object(cls, value: Any) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError("md_config must be an object.")
+        return value
 
 
 def _resolve_machine_for_resources(resources_key: str) -> str:
@@ -333,13 +369,16 @@ def mace_relax(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         error_code="deprecated_single_mode",
     )
 
-def _is_structure_file(path: Path) -> bool:
+def _is_structure_file(path: Path, *, allow_xyz: bool = False) -> bool:
     if not path.is_file():
         return False
     name = path.name
     if name in {"POSCAR", "CONTCAR"}:
         return True
-    return path.suffix.lower() in {".vasp", ".poscar", ".cif"}
+    suffixes = {".vasp", ".poscar", ".cif"}
+    if allow_xyz:
+        suffixes.add(".xyz")
+    return path.suffix.lower() in suffixes
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -350,9 +389,14 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) -> list[Path]:
+def _collect_structure_files(
+    root: Path,
+    *,
+    exclude_root: Path | None = None,
+    allow_xyz: bool = False,
+) -> list[Path]:
     files: list[Path] = []
-    skip_prefixes = ("mace_batch_", "mace_sp_batch_", "vasp_batch_")
+    skip_prefixes = ("mace_batch_", "mace_sp_batch_", "mace_md_batch_", "vasp_batch_")
     internal_dirs = {"metadata", ".catmaster"}
     for dirpath, dirnames, filenames in os.walk(root):
         path = Path(dirpath)
@@ -374,7 +418,7 @@ def _collect_structure_files(root: Path, *, exclude_root: Path | None = None) ->
         ]
         for fname in filenames:
             p = path / fname
-            if _is_structure_file(p):
+            if _is_structure_file(p, allow_xyz=allow_xyz):
                 files.append(p)
     return sorted(files, key=lambda p: str(p))
 
@@ -543,6 +587,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="mace_relax_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -583,6 +628,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "input_root_rel": workspace_relpath(input_root),
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             error_code="dispatch_failed",
@@ -605,6 +651,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "dispersion": dispersion,
         "default_dtype": params.default_dtype,
         "relax_lattice": relax_lattice,
+        **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
@@ -668,11 +715,11 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             error_code="output_inside_input",
         )
     output_root.mkdir(parents=True, exist_ok=True)
-    structures = _collect_structure_files(input_root, exclude_root=None)
+    structures = _collect_structure_files(input_root, exclude_root=None, allow_xyz=True)
     if not structures:
         _fail(
             "mace_sp_batch",
-            message="No structure files found in input_dir (expected POSCAR/CONTCAR/.vasp/.poscar/.cif files).",
+            message="No structure files found in input_dir (expected POSCAR/CONTCAR/.vasp/.poscar/.cif/.xyz files).",
             error_code="no_structures",
         )
 
@@ -733,6 +780,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         backward_common_files=[],
         clean_remote=False,
         check_interval=params.check_interval,
+        tool_name="mace_sp_batch",
     )
 
     dispatch_error: Exception | None = None
@@ -773,6 +821,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "input_root_rel": workspace_relpath(input_root),
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
                 **collect_info,
             },
             error_code="dispatch_failed",
@@ -794,6 +843,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "head": head,
         "dispersion": dispersion,
         "default_dtype": params.default_dtype,
+        **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
@@ -816,6 +866,208 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     content = "\n".join(lines)
     return _success(
         "mace_sp_batch",
+        content=content,
+        warnings=collect_warnings,
+        data=data,
+        execution_time=result.duration_s if result else None,
+    )
+
+
+def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """[mace/execute] Submit a directory batch of MACE MD jobs through DPDispatcher."""
+    params = MaceMDBatchInput(**payload)
+    reg = TaskRegistry()
+    cfg = reg.get("mace_md_dir")
+    resources_key = cfg.resources
+    if not resources_key:
+        raise KeyError("mace_md_dir missing resources in task config")
+    machine = _resolve_machine_for_resources(resources_key)
+    head = _resolve_mace_head(params.head)
+    dispersion = bool(params.dispersion)
+
+    input_root = resolve_workspace_path(params.input_dir, must_exist=True)
+    if not input_root.is_dir():
+        _fail(
+            "mace_md_batch",
+            message=f"input_dir is not a directory: {input_root}",
+            error_code="invalid_input_dir",
+        )
+    output_root = resolve_workspace_path(params.output_root)
+    if output_root.exists() and not output_root.is_dir():
+        _fail(
+            "mace_md_batch",
+            message=f"output_root is not a directory: {output_root}",
+            error_code="invalid_output_root",
+        )
+    if _is_within(output_root, input_root):
+        _fail(
+            "mace_md_batch",
+            message="output_root must not be inside input_dir to avoid mixing inputs with outputs.",
+            error_code="output_inside_input",
+        )
+    output_root.mkdir(parents=True, exist_ok=True)
+    structures = _collect_structure_files(input_root, exclude_root=None, allow_xyz=True)
+    if not structures:
+        _fail(
+            "mace_md_batch",
+            message="No structure files found in input_dir (expected POSCAR/CONTCAR/.vasp/.poscar/.cif/.xyz files).",
+            error_code="no_structures",
+        )
+
+    work_base = make_work_base("mace_md_batch")
+    stage_root = output_root / work_base
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+    stage_input = stage_root / "input"
+    stage_output = stage_root / "output"
+    shutil.copytree(input_root, stage_input)
+    stage_output.mkdir(parents=True, exist_ok=True)
+    script_src = Path(__file__).resolve().parents[2] / "remote" / "gpu" / "mace_md.py"
+    if not script_src.is_file():
+        raise FileNotFoundError(f"Missing MACE MD remote script: {script_src}")
+    script_dst = stage_root / "task_script" / "mace_md.py"
+    script_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(script_src, script_dst)
+
+    try:
+        model_spec = _stage_mace_model(params.model, stage_root=stage_root)
+    except Exception as exc:
+        _fail(
+            "mace_md_batch",
+            message=f"Invalid model specification {params.model!r}: {exc}",
+            data={
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+            },
+            error_code="invalid_model",
+        )
+
+    params_dir = stage_root / "params"
+    params_dir.mkdir(parents=True, exist_ok=True)
+    params_path = params_dir / "md_params.json"
+    params_payload = {
+        "schema_version": 2,
+        "model": model_spec.command_arg,
+        "head": head,
+        "dispersion": dispersion,
+        "default_dtype": params.default_dtype,
+        "md_config": params.md_config,
+    }
+    params_path.write_text(json.dumps(params_payload, indent=2) + "\n", encoding="utf-8")
+
+    ctx = {
+        "input_path": "input",
+        "output_root": "output",
+        "params_path": "params/md_params.json",
+    }
+    rendered = render_task_fields(cfg, ctx, stage_root)
+    if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
+        rendered["forward_files"].append(model_spec.asset_dir_rel)
+    task = TaskSpec(
+        command=rendered["command"],
+        task_work_path=".",
+        forward_files=rendered["forward_files"],
+        backward_files=rendered["backward_files"],
+    )
+
+    batch_req = BatchDispatchRequest(
+        machine=machine,
+        resources=resources_key,
+        work_base=work_base,
+        local_root=str(output_root),
+        tasks=[task],
+        forward_common_files=[],
+        backward_common_files=[],
+        clean_remote=False,
+        check_interval=params.check_interval,
+        tool_name="mace_md_batch",
+    )
+
+    dispatch_error: Exception | None = None
+    result = None
+    collect_info: Dict[str, Any] = {}
+    collect_warnings: list[str] = []
+    state_path = _write_batch_state(output_root, work_base=work_base, state="submitted", details={"tasks": 1})
+    try:
+        _write_batch_state(output_root, work_base=work_base, state="running", details={"tasks": 1})
+        result = dispatch_submission(batch_req)
+    except Exception as exc:
+        dispatch_error = exc
+    finally:
+        collect_info, collect_warnings = _collect_mace_outputs(stage_root, stage_output, output_root)
+        final_state = "collected_partial" if dispatch_error else "collected_complete"
+        _write_batch_state(
+            output_root,
+            work_base=work_base,
+            state=final_state,
+            details={
+                "tasks": 1,
+                "errors": [str(dispatch_error)] if dispatch_error else [],
+            },
+        )
+        if stage_root.exists():
+            try:
+                shutil.rmtree(stage_root)
+            except Exception as exc:
+                collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
+
+    if dispatch_error is not None:
+        _fail(
+            "mace_md_batch",
+            message=f"DPDispatcher submission failed: {dispatch_error}",
+            warnings=collect_warnings,
+            data={
+                "work_base": work_base,
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "batch_state_rel": workspace_relpath(state_path),
+                **remote_context_from_exception(dispatch_error),
+                **collect_info,
+            },
+            error_code="dispatch_failed",
+        )
+
+    data = {
+        "task_states": result.task_states if result else [],
+        "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        "work_base": result.work_base if result else work_base,
+        "input_root_rel": workspace_relpath(input_root),
+        "output_root_rel": workspace_relpath(output_root),
+        "batch_state_rel": workspace_relpath(state_path),
+        "structures_found": len(structures),
+        "model": model_spec.requested,
+        "model_command_arg": model_spec.command_arg,
+        "model_source_kind": model_spec.source_kind,
+        "model_source_rel": model_spec.source_rel,
+        "model_asset_rel": model_spec.asset_model_rel,
+        "head": head,
+        "dispersion": dispersion,
+        "default_dtype": params.default_dtype,
+        "md_config": params.md_config,
+        "params_file_rel": workspace_relpath(params_path),
+        **remote_context_from_result(result),
+        **collect_info,
+    }
+    lines = [
+        "mace_md_batch completed.",
+        f"structures_found={len(structures)} task_states={len(data['task_states'])}",
+        f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
+    ]
+    status_file_rel = str(data.get("status_file_rel") or "")
+    stdout_file_rel = str(data.get("stdout_file_rel") or "")
+    stderr_file_rel = str(data.get("stderr_file_rel") or "")
+    if status_file_rel:
+        lines.append(f"status_file_rel={status_file_rel}")
+    if stdout_file_rel:
+        lines.append(f"stdout_file_rel={stdout_file_rel}")
+    if stderr_file_rel:
+        lines.append(f"stderr_file_rel={stderr_file_rel}")
+    batch_summary_rel = str(data.get("batch_summary_rel") or "")
+    if batch_summary_rel:
+        lines.append(f"batch_summary_rel={batch_summary_rel}")
+    content = "\n".join(lines)
+    return _success(
+        "mace_md_batch",
         content=content,
         warnings=collect_warnings,
         data=data,
@@ -883,6 +1135,8 @@ __all__ = [
     "MaceRelaxInput",
     "MaceRelaxBatchInput",
     "MaceSPBatchInput",
+    "MaceMDBatchInput",
     "mace_relax_batch",
     "mace_sp_batch",
+    "mace_md_batch",
 ]

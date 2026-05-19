@@ -1,9 +1,6 @@
 ---
 name: scan-to-ts
 description: Use this skill for a bounded molecular reaction-coordinate workflow that starts from a relaxed scan, identifies a TS-side guess, and refines it with ORCA OptTS.
-license: project-local
-compatibility: local
-allowed-tools: "orca_scan_prepare orca_optts_prepare orca_execute_batch analyze_orca_results"
 ---
 
 # scan-to-ts

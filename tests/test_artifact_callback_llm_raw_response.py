@@ -45,7 +45,7 @@ def test_llm_tracing_handler_persists_raw_response_and_toolcall_arguments(tmp_pa
     )
 
     handler.on_llm_start(
-        serialized={"kwargs": {"model_name": "openai/gpt-5.2:online"}},
+        serialized={"kwargs": {"model_name": "openai/gpt-5.2"}},
         prompts=["prompt text"],
         run_id=rid,
     )

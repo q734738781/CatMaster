@@ -10,7 +10,7 @@ def test_llm_config_parses_reasoning_and_provider_options() -> None:
     cfg = LLMConfig.from_dict(
         {
             "provider": "openrouter",
-            "model": "openai/gpt-5.2:online",
+            "model": "openai/gpt-5.2",
             "reasoning": {"effort": "high"},
             "provider_options": {
                 "openrouter": {
@@ -32,11 +32,27 @@ def test_llm_config_parses_reasoning_and_provider_options() -> None:
 
 def test_llm_config_env_fallback_sets_reasoning_effort(monkeypatch) -> None:
     monkeypatch.setenv("CATMASTER_REASONING_EFFORT", "medium")
-    cfg = LLMConfig(provider="openrouter", model="openai/gpt-5.2:online")
+    cfg = LLMConfig(provider="openrouter", model="openai/gpt-5.2")
 
     cfg.apply_env_fallbacks()
 
     assert cfg.reasoning == {"effort": "medium"}
+
+
+def test_llm_config_env_fallback_sets_anthropic_key_env() -> None:
+    cfg = LLMConfig(provider="anthropic", model="claude-sonnet-4-5-20250929")
+
+    cfg.apply_env_fallbacks()
+
+    assert cfg.api_key_env == "ANTHROPIC_API_KEY"
+
+
+def test_llm_config_env_fallback_leaves_codex_oauth_keyless() -> None:
+    cfg = LLMConfig(provider="codex_oauth", model="gpt-5.2-codex")
+
+    cfg.apply_env_fallbacks()
+
+    assert cfg.api_key_env == ""
 
 
 def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
@@ -45,9 +61,9 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "    reasoning:",
                 "      effort: high",
                 "    provider_options:",
@@ -58,10 +74,10 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
                 "  summary: 'openai/gpt-5-nano'",
                 "agent_policies:",
                 "  proposal:",
@@ -69,7 +85,6 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
                 "agent_runtime:",
                 "  recursion_limit: 512",
                 "  max_tool_calls: 72",
-                "  max_model_calls: 144",
                 "  print_state_messages: true",
                 "  print_http_raw_post: true",
                 "writing:",
@@ -92,11 +107,49 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert profile.agent_policies.proposal.browse_tools_enabled is False
     assert profile.agent_runtime.recursion_limit == 512
     assert profile.agent_runtime.max_tool_calls == 72
-    assert profile.agent_runtime.max_model_calls == 144
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
     assert profile.writing.author_name == "CatMaster"
     assert profile.peer_review_models == ["openai/gpt-5-nano"]
+
+
+def test_llm_profile_accepts_current_specialist_alias_role_names(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'main-online':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.4",
+                "  'summary-mini':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.4-mini",
+                "agents:",
+                "  proposal_agent: 'main-online'",
+                "  planning_director: 'main-online'",
+                "  experiment_specialist: 'main-online'",
+                "  research_specialist: 'main-online'",
+                "  writing_specialist: 'main-online'",
+                "  writing_worker_agent: 'main-online'",
+                "  peer_review_specialist: 'main-online'",
+                "  literature_agent: 'main-online'",
+                "  litreview_agent: 'main-online'",
+                "  memory_patcher: 'main-online'",
+                "  run_summary: 'summary-mini'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.config_for_role("experiment_specialist").model == "openai/gpt-5.4"
+    assert profile.config_for_role("task_runner").model == "openai/gpt-5.4"
+    assert profile.config_for_role("literature_agent").model == "openai/gpt-5.4"
+    assert profile.config_for_role("literature_synthesizer").model == "openai/gpt-5.4"
+    assert profile.label_for_role("run_summary") == "summary-mini"
+    assert profile.summary.model == "openai/gpt-5.4-mini"
 
 
 def test_llm_profile_peer_review_models_must_reference_explicit_model_labels(tmp_path: Path) -> None:
@@ -110,7 +163,7 @@ def test_llm_profile_peer_review_models_must_reference_explicit_model_labels(tmp
                 "    model: google/gemini-3.1-pro",
                 "  'peer-b':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.4:online",
+                "    model: openai/gpt-5.4",
                 "agents:",
                 "  proposal: 'peer-a'",
                 "  director: 'peer-a'",
@@ -163,18 +216,18 @@ def test_llm_profile_tool_selector_fallbacks_to_task_runner(tmp_path: Path) -> N
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'openai/gpt-5-nano':",
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
                 "  task_runner: 'openai/gpt-5-nano'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -190,19 +243,19 @@ def test_llm_profile_tool_selector_can_use_dedicated_model(tmp_path: Path) -> No
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'openai/gpt-5-nano':",
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
                 "  tool_selector: 'openai/gpt-5-nano'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -218,18 +271,18 @@ def test_llm_profile_image_analyzer_fallbacks_to_task_runner(tmp_path: Path) -> 
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'openai/gpt-5-nano':",
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
                 "  task_runner: 'openai/gpt-5-nano'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -245,19 +298,19 @@ def test_llm_profile_image_analyzer_can_use_dedicated_model(tmp_path: Path) -> N
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'openai/gpt-5-nano':",
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
                 "  image_analyzer: 'openai/gpt-5-nano'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -273,18 +326,18 @@ def test_llm_profile_image_generation_can_use_dedicated_model_and_yaml_image_con
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'google/gemini-2.5-flash-image-preview':",
                 "    provider: openrouter",
                 "    model: google/gemini-2.5-flash-image-preview",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
                 "image_generation:",
                 "  model_label: 'google/gemini-2.5-flash-image-preview'",
                 "  image_config:",
@@ -305,19 +358,19 @@ def test_llm_profile_image_generation_falls_back_to_image_analyzer_when_omitted(
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'openai/gpt-5-nano':",
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
                 "  image_analyzer: 'openai/gpt-5-nano'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -334,18 +387,18 @@ def test_llm_profile_literature_synthesizer_fallbacks_to_director(tmp_path: Path
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'openai/gpt-5-nano':",
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
                 "  director: 'openai/gpt-5-nano'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -361,19 +414,19 @@ def test_llm_profile_literature_deep_research_fallbacks_to_synthesizer(tmp_path:
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "  'openai/gpt-5-nano':",
                 "    provider: openrouter",
                 "    model: openai/gpt-5-nano",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
                 "  literature_synthesizer: 'openai/gpt-5-nano'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -389,15 +442,15 @@ def test_llm_profile_agent_runtime_legacy_keys_are_rejected(tmp_path: Path) -> N
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
                 "agent_runtime:",
                 "  termination_mode: control_tools",
                 "  strict_control_contract: false",
@@ -419,15 +472,15 @@ def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) 
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
                 "agent_runtime:",
                 "  recursion_limit: 0",
                 "  print_state_messages: false",
@@ -440,7 +493,6 @@ def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.agent_runtime.recursion_limit == 1_000_000
     assert profile.agent_runtime.max_tool_calls == 120
-    assert profile.agent_runtime.max_model_calls == 120
     assert profile.agent_runtime.print_state_messages is False
     assert profile.agent_runtime.print_http_raw_post is False
 
@@ -452,14 +504,12 @@ def test_llm_profile_from_env_ignores_legacy_runtime_env(monkeypatch: pytest.Mon
     monkeypatch.setenv("CATMASTER_STRICT_CONTROL_CONTRACT", "false")
     monkeypatch.setenv("CATMASTER_RECURSION_LIMIT", "256")
     monkeypatch.setenv("CATMASTER_MAX_TOOL_CALLS", "66")
-    monkeypatch.setenv("CATMASTER_MAX_MODEL_CALLS", "132")
     monkeypatch.setenv("CATMASTER_PRINT_HTTP_RAW_POST", "true")
 
     profile = LLMProfile.from_env()
 
     assert profile.agent_runtime.recursion_limit == 256
     assert profile.agent_runtime.max_tool_calls == 66
-    assert profile.agent_runtime.max_model_calls == 132
     assert profile.agent_runtime.print_http_raw_post is True
 
 
@@ -472,15 +522,15 @@ def test_llm_profile_rejects_legacy_tool_calling_profiles(tmp_path: Path) -> Non
                 "  legacy:",
                 "    driver: openai_chat_completions",
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -496,17 +546,17 @@ def test_llm_profile_rejects_legacy_model_tool_calling(tmp_path: Path) -> None:
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "    tool_calling:",
                 "      profile: legacy",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -516,29 +566,30 @@ def test_llm_profile_rejects_legacy_model_tool_calling(tmp_path: Path) -> None:
         LLMProfile.from_env_or_file(str(cfg))
 
 
-def test_llm_profile_rejects_legacy_reasoning_effort(tmp_path: Path) -> None:
+def test_llm_profile_accepts_official_reasoning_effort(tmp_path: Path) -> None:
     cfg = tmp_path / "llm.yaml"
     cfg.write_text(
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
-                "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "  'deepseek-v4-pro':",
+                "    provider: oai_compatible",
+                "    model: deepseek-v4-pro",
                 "    reasoning_effort: high",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  proposal: 'deepseek-v4-pro'",
+                "  director: 'deepseek-v4-pro'",
+                "  task_runner: 'deepseek-v4-pro'",
+                "  memory_patch: 'deepseek-v4-pro'",
+                "  summary: 'deepseek-v4-pro'",
             ]
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="reasoning_effort"):
-        LLMProfile.from_env_or_file(str(cfg))
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.config_for_role("task_runner").reasoning_effort == "high"
 
 
 def test_llm_profile_rejects_model_level_extra_body(tmp_path: Path) -> None:
@@ -547,17 +598,17 @@ def test_llm_profile_rejects_model_level_extra_body(tmp_path: Path) -> None:
         "\n".join(
             [
                 "models:",
-                "  'openai/gpt-5.2:online':",
+                "  'openai/gpt-5.2':",
                 "    provider: openrouter",
-                "    model: openai/gpt-5.2:online",
+                "    model: openai/gpt-5.2",
                 "    extra_body:",
                 "      prompt_cache_retention: 24h",
                 "agents:",
-                "  proposal: 'openai/gpt-5.2:online'",
-                "  director: 'openai/gpt-5.2:online'",
-                "  task_runner: 'openai/gpt-5.2:online'",
-                "  memory_patch: 'openai/gpt-5.2:online'",
-                "  summary: 'openai/gpt-5.2:online'",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
             ]
         ),
         encoding="utf-8",
@@ -574,7 +625,7 @@ def test_llm_profile_rejects_legacy_main_summary_schema(tmp_path: Path) -> None:
             [
                 "main:",
                 "  provider: openrouter",
-                "  model: openai/gpt-5.2:online",
+                "  model: openai/gpt-5.2",
                 "summary:",
                 "  provider: openrouter",
                 "  model: openai/gpt-5-nano",

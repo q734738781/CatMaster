@@ -1,0 +1,14 @@
+ +-------------------------- Summary ----------------------------+
+ Neglect PV contribution to translation for adsorbed molecules.
+ To avoid abnormal entropy contribution,
+ frequencies less than 50 cm-1 are set to 50 cm-1.
+ U(T) = H(T) = ZPE + Delat_U(0->T)
+ G(T) = H(T) - TS = ZPE + Delat_U(0->T) - TS
+
+ Temperature (T): 623.0 K
+ Zero-point energy E_ZPE   :      95.738 kcal/mol    4.151605 eV
+ Thermal correction to U(T):     117.187 kcal/mol    5.081731 eV
+ Thermal correction to H(T):     117.187 kcal/mol    5.081731 eV
+ Thermal correction to G(T):      71.478 kcal/mol    3.099589 eV
+ Entropy S                 :     306.978 J/(mol*K)   0.003182 eV/K
+ Entropy contribution T*S  :  191247.517 J/(mol)     1.982141 eV

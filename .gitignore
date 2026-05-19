@@ -22,3 +22,5 @@ tmp*
 /catmaster/webui/static/vendor/
 benchmark*
 fix_sonnet*
+.gitignore
+/.runtime

@@ -4,13 +4,15 @@ This directory contains CatMaster starter skills grouped by lane. A skill here i
 
 The active runtime loads these skills through DeepAgent skill roots:
 
-- `skills/experiment/*`
+- `skills/materials/*`
 - `skills/machine_learning/*`
+- `skills/quantum_chemistry/*`
+- `skills/execution/*`
 - `skills/writing/*`
 
 ## Required format
 
-Each skill must live at `skills/experiment/<skill-name>/SKILL.md`, `skills/machine_learning/<skill-name>/SKILL.md`, or `skills/writing/<skill-name>/SKILL.md` and must satisfy all of the following:
+Each skill must live at `skills/materials/<skill-name>/SKILL.md`, `skills/machine_learning/<skill-name>/SKILL.md`, `skills/quantum_chemistry/<skill-name>/SKILL.md`, `skills/execution/<skill-name>/SKILL.md`, or `skills/writing/<skill-name>/SKILL.md` and must satisfy all of the following:
 
 - YAML frontmatter at the top.
 - `name` must exactly match the directory name.

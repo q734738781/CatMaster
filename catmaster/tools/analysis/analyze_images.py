@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Deprecated image-analysis workaround.
+
+Prefer the current agent's built-in multimodal path for images.
+This module remains only for backward-compatible direct imports.
+"""
+
 import base64
 from dataclasses import replace
 from pathlib import Path

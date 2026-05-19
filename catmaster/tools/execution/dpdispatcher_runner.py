@@ -4,12 +4,15 @@ import shlex
 import time
 import uuid
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field
 import re
 from dpdispatcher import Machine, Resources, Task, Submission
+from dpdispatcher.utils.job_status import JobStatus
+from catmaster.tools.base import workspace_relpath, workspace_root
 from catmaster.tools.execution.machine_registry import MachineRegister
 
 STATUS_FILE_NAME = "status.json"
@@ -66,6 +69,7 @@ class DispatchRequest(BaseModel):
     wait: bool = Field(True, description="Wait for task completion")
     clean_remote: bool = Field(False, description="Remove remote work dir after download")
     check_interval: int = Field(30, description="Polling interval seconds when waiting")
+    tool_name: str = Field("dpdispatcher", description="CatMaster tool name creating this submission")
 
 
 class DispatchResult(BaseModel):
@@ -77,6 +81,12 @@ class DispatchResult(BaseModel):
     task_states: List[str]
     submission_dir: str
     duration_s: float
+    remote_context_id: str = ""
+    receipt_rel: str = ""
+    submission_hash: str = ""
+    jobs: List[Dict[str, Any]] = Field(default_factory=list)
+    job_status_counts: Dict[str, int] = Field(default_factory=dict)
+    remote_context: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskSpec(BaseModel):
@@ -100,6 +110,29 @@ class BatchDispatchRequest(BaseModel):
     backward_common_files: List[str] = Field(default_factory=list)
     clean_remote: bool = Field(False, description="Remove remote work dir after download")
     check_interval: int = Field(30, description="Polling interval seconds when waiting")
+    tool_name: str = Field("dpdispatcher", description="CatMaster tool name creating this submission")
+
+
+class DPDispatcherDispatchError(RuntimeError):
+    """DPDispatcher failure carrying the receipt context that reached the agent."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        remote_context: Dict[str, Any] | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        self.remote_context = dict(remote_context or {})
+        self.cause = cause
+        detail_lines = []
+        for key in ("remote_context_id", "submission_hash", "receipt_rel"):
+            value = self.remote_context.get(key)
+            if value not in (None, "", [], {}):
+                detail_lines.append(f"{key}={value}")
+        if detail_lines:
+            message = str(message).rstrip() + "\n" + "\n".join(detail_lines)
+        super().__init__(message)
 
 
 def _build_machine(cfg: Dict, local_root: Path) -> Machine:
@@ -134,6 +167,129 @@ def _task_state(task: Task) -> str:
             val = getattr(task, attr)
             return str(val)
     return "unknown"
+
+
+def _now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _status_code_and_name(value: Any) -> tuple[int | None, str]:
+    if value is None:
+        value = JobStatus.unsubmitted
+    if isinstance(value, JobStatus):
+        return int(value), value.name
+    try:
+        status = JobStatus(int(value))
+        return int(status), status.name
+    except Exception:
+        text = str(value or "unknown").strip() or "unknown"
+        return None, text
+
+
+def _job_records(submission: Submission) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for job in list(getattr(submission, "belonging_jobs", []) or []):
+        status_code, status_name = _status_code_and_name(getattr(job, "job_state", None))
+        records.append(
+            {
+                "job_hash": str(getattr(job, "job_hash", "") or ""),
+                "job_id": str(getattr(job, "job_id", "") or ""),
+                "status_code": status_code,
+                "status": status_name,
+            }
+        )
+    return records
+
+
+def _job_status_counts(jobs: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for job in jobs:
+        key = str(job.get("status") or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _context_id_for_submission(submission_hash: str) -> str:
+    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    token = (submission_hash or uuid.uuid4().hex)[:8]
+    return f"dp_{stamp}_{token}"
+
+
+def _write_remote_receipt(
+    *,
+    submission: Submission,
+    tool_name: str,
+    receipt: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    submission_hash = str(getattr(submission, "submission_hash", "") or "")
+    now = _now_iso()
+    context_id = str((receipt or {}).get("context_id") or _context_id_for_submission(submission_hash))
+    submitted_at = str((receipt or {}).get("submitted_at") or now)
+    receipt_dir = workspace_root() / ".deepagents" / "dpdispatcher" / "receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = receipt_dir / f"{context_id}.json"
+    jobs = _job_records(submission)
+    payload: dict[str, Any] = {
+        "context_id": context_id,
+        "submitted_at": submitted_at,
+        "updated_at": now,
+        "tool_name": str(tool_name or "dpdispatcher"),
+        "submission_hash": submission_hash,
+        "jobs": jobs,
+        "job_status_counts": _job_status_counts(jobs),
+        "receipt_rel": workspace_relpath(receipt_path),
+    }
+    receipt_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return payload
+
+
+def _public_remote_context(
+    receipt: dict[str, Any] | None,
+    *,
+    include_jobs: bool = False,
+) -> dict[str, Any]:
+    if not receipt:
+        return {}
+    context = {
+        "remote_context_id": receipt.get("context_id") or "",
+        "submitted_at": receipt.get("submitted_at") or "",
+        "updated_at": receipt.get("updated_at") or "",
+        "submission_hash": receipt.get("submission_hash") or "",
+        "receipt_rel": receipt.get("receipt_rel") or "",
+    }
+    if include_jobs:
+        context["jobs"] = list(receipt.get("jobs") or [])
+        context["job_status_counts"] = dict(receipt.get("job_status_counts") or {})
+    return context
+
+
+def remote_context_from_result(result: Any) -> dict[str, Any]:
+    """Return the agent-facing remote context from a DispatchResult-like value."""
+    context = getattr(result, "remote_context", None)
+    if isinstance(context, dict) and context:
+        return dict(context)
+    out: dict[str, Any] = {}
+    for key in (
+        "remote_context_id",
+        "submitted_at",
+        "updated_at",
+        "submission_hash",
+        "receipt_rel",
+    ):
+        value = getattr(result, key, None)
+        if value not in (None, "", [], {}):
+            out[key] = value
+    return out
+
+
+def remote_context_from_exception(exc: Exception | None) -> dict[str, Any]:
+    """Return the agent-facing remote context from a dispatch exception."""
+    if exc is None:
+        return {}
+    context = getattr(exc, "remote_context", None)
+    if isinstance(context, dict) and context:
+        return dict(context)
+    return {}
 
 
 def _ensure_status_backward_files(files: List[str]) -> List[str]:
@@ -305,20 +461,56 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
         forward_common_files=request.forward_common_files,
         backward_common_files=request.backward_common_files,
     )
+    if not submission.belonging_jobs:
+        submission.generate_jobs()
+    receipt = _write_remote_receipt(
+        submission=submission,
+        tool_name=request.tool_name,
+    )
 
     t0 = time.time()
-    submission.run_submission(clean=request.clean_remote, check_interval=request.check_interval)
+    try:
+        submission.run_submission(clean=request.clean_remote, check_interval=request.check_interval)
+    except Exception as exc:
+        receipt = _write_remote_receipt(
+            submission=submission,
+            tool_name=request.tool_name,
+            receipt=receipt,
+        )
+        raise DPDispatcherDispatchError(
+            f"{type(exc).__name__}: {exc}",
+            remote_context=_public_remote_context(receipt, include_jobs=True),
+            cause=exc,
+        ) from exc
     duration = time.time() - t0
+    receipt = _write_remote_receipt(
+        submission=submission,
+        tool_name=request.tool_name,
+        receipt=receipt,
+    )
 
     work_base_dir = Path(machine.context.init_local_root) / request.work_base
     status_records = [
         _status_details_for_task(work_base_dir, task_index=0, task_work_path=request.task_work_path)
     ]
-    _assert_remote_success(status_records)
+    try:
+        _assert_remote_success(status_records)
+    except Exception as exc:
+        receipt = _write_remote_receipt(
+            submission=submission,
+            tool_name=request.tool_name,
+            receipt=receipt,
+        )
+        raise DPDispatcherDispatchError(
+            f"{type(exc).__name__}: {exc}",
+            remote_context=_public_remote_context(receipt, include_jobs=True),
+            cause=exc,
+        ) from exc
 
     states = [_task_state(t) for t in task_list]
     output_dir = Path(machine.context.init_local_root) / request.work_base / request.task_work_path
     cleanup_dpdispatcher_artifacts(output_dir)
+    remote_context = _public_remote_context(receipt)
 
     return DispatchResult(
         work_base=request.work_base,
@@ -327,6 +519,10 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
         task_states=states,
         submission_dir=str(Path(machine.context.init_local_root) / request.work_base),
         duration_s=duration,
+        remote_context_id=str(remote_context.get("remote_context_id") or ""),
+        receipt_rel=str(remote_context.get("receipt_rel") or ""),
+        submission_hash=str(remote_context.get("submission_hash") or ""),
+        remote_context=remote_context,
     )
 
 
@@ -366,17 +562,52 @@ def dispatch_submission(
         forward_common_files=batch.forward_common_files,
         backward_common_files=batch.backward_common_files,
     )
+    if not submission.belonging_jobs:
+        submission.generate_jobs()
+    receipt = _write_remote_receipt(
+        submission=submission,
+        tool_name=batch.tool_name,
+    )
 
     t0 = time.time()
-    submission.run_submission(clean=batch.clean_remote, check_interval=batch.check_interval)
+    try:
+        submission.run_submission(clean=batch.clean_remote, check_interval=batch.check_interval)
+    except Exception as exc:
+        receipt = _write_remote_receipt(
+            submission=submission,
+            tool_name=batch.tool_name,
+            receipt=receipt,
+        )
+        raise DPDispatcherDispatchError(
+            f"{type(exc).__name__}: {exc}",
+            remote_context=_public_remote_context(receipt, include_jobs=True),
+            cause=exc,
+        ) from exc
     duration = time.time() - t0
+    receipt = _write_remote_receipt(
+        submission=submission,
+        tool_name=batch.tool_name,
+        receipt=receipt,
+    )
 
     work_base_dir = Path(machine.context.init_local_root) / batch.work_base
     status_records = [
         _status_details_for_task(work_base_dir, task_index=i, task_work_path=t.task_work_path)
         for i, t in enumerate(batch.tasks)
     ]
-    _assert_remote_success(status_records)
+    try:
+        _assert_remote_success(status_records)
+    except Exception as exc:
+        receipt = _write_remote_receipt(
+            submission=submission,
+            tool_name=batch.tool_name,
+            receipt=receipt,
+        )
+        raise DPDispatcherDispatchError(
+            f"{type(exc).__name__}: {exc}",
+            remote_context=_public_remote_context(receipt, include_jobs=True),
+            cause=exc,
+        ) from exc
 
     states = [_task_state(t) for t in task_list]
     # If all tasks share the same task_work_path, surface that in output_dir
@@ -384,6 +615,7 @@ def dispatch_submission(
     suffix = work_suffixes.pop() if len(work_suffixes) == 1 else ""
     output_dir = Path(machine.context.init_local_root) / batch.work_base / suffix
     cleanup_dpdispatcher_artifacts(output_dir)
+    remote_context = _public_remote_context(receipt)
 
     return DispatchResult(
         work_base=batch.work_base,
@@ -392,6 +624,10 @@ def dispatch_submission(
         task_states=states,
         submission_dir=str(Path(machine.context.init_local_root) / batch.work_base),
         duration_s=duration,
+        remote_context_id=str(remote_context.get("remote_context_id") or ""),
+        receipt_rel=str(remote_context.get("receipt_rel") or ""),
+        submission_hash=str(remote_context.get("submission_hash") or ""),
+        remote_context=remote_context,
     )
 
 

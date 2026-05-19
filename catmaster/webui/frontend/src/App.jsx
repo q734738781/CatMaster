@@ -7,6 +7,17 @@ import {
   useState,
 } from "react";
 import { Grid } from "gridjs-react";
+import * as Tooltip from "@radix-ui/react-tooltip";
+import {
+  Bot,
+  Files,
+  FolderOpen,
+  MemoryStick,
+  MonitorDot,
+  RefreshCw,
+  Send,
+  Square,
+} from "lucide-react";
 import Papa from "papaparse";
 import Markdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -22,8 +33,27 @@ function escapePath(value) {
   return encodeURIComponent(String(value));
 }
 
+function parentPath(path) {
+  const text = String(path || "").replace(/^\/+|\/+$/g, "");
+  if (!text || !text.includes("/")) {
+    return "";
+  }
+  return text.split("/").slice(0, -1).join("/");
+}
+
+function defaultUploadDirectory(treeNodes, preview, selectedPath) {
+  if (preview?.node_type === "directory") {
+    return String(preview.path || "");
+  }
+  if (selectedPath) {
+    return parentPath(selectedPath);
+  }
+  const roots = Array.isArray(treeNodes?.[""]) ? treeNodes[""] : [];
+  return roots.some((node) => node?.node_type === "directory" && node?.name === "files") ? "files" : "";
+}
+
 function isRunActive(status) {
-  return ["running", "starting", "interrupting", "awaiting_human_feedback"].includes(String(status || "").trim());
+  return ["running", "starting", "interrupting"].includes(String(status || "").trim());
 }
 
 async function apiFetch(url, options = {}) {
@@ -302,8 +332,7 @@ function eventToChatMessage(event) {
   if (name === "LLM_CALL_END") {
     const preview = compactText(payload.text_preview || "", 900);
     const reasoning = compactText(payload.reasoning_text || "", 2400);
-    const tools = Array.isArray(payload.tool_calls) ? payload.tool_calls.filter(Boolean) : [];
-    if (!reasoning && !preview && !tools.length) {
+    if (!reasoning && !preview) {
       return null;
     }
     const parts = [];
@@ -312,9 +341,6 @@ function eventToChatMessage(event) {
     }
     if (preview) {
       parts.push(preview);
-    }
-    if (tools.length) {
-      parts.push(`Tool plan: ${tools.join(", ")}`);
     }
     return {
       role: "assistant",
@@ -325,32 +351,21 @@ function eventToChatMessage(event) {
     };
   }
   if (name === "TOOL_CALL_START") {
-    const tool = String(payload.tool || "").trim();
-    if (!tool) {
-      return null;
-    }
-    const params = compactText(payload.params_compact || "", 320);
-    return {
-      role: "assistant",
-      kind: "tool_event",
-      badge: "tool",
-      status: tsText,
-      content: [`Running ${tool}.`, params ? `Args: ${params}` : ""].filter(Boolean).join("\n"),
-    };
+    return null;
   }
   if (name === "TOOL_CALL_END") {
     const tool = String(payload.tool || "").trim();
-    if (!tool) {
+    const status = String(payload.status || "done").trim().toLowerCase();
+    const error = compactText(payload.error || "", 900);
+    if (!tool || (!error && ["success", "done"].includes(status))) {
       return null;
     }
-    const status = String(payload.status || "done").trim();
-    const summary = compactText(payload.highlights || "", 420);
     return {
       role: "assistant",
       kind: "tool_event",
-      badge: status === "success" ? "done" : status,
+      badge: status || "tool",
       status: tsText,
-      content: [`${tool}: ${status}.`, summary].filter(Boolean).join("\n"),
+      content: [`${tool}: ${status || "done"}.`, error].filter(Boolean).join("\n"),
     };
   }
   if (name === "PROMPT_REQUESTED") {
@@ -388,6 +403,45 @@ function buildEventMessages(events) {
       return eventToChatMessage(event);
     })
     .filter(Boolean);
+}
+
+function buildLatestLlmEndMessage(snapshot, events, agentTab = "ALL") {
+  const live = snapshot?.live_state || {};
+  const status = String(snapshot?.run_status || live.status || "").trim();
+  if (!isRunActive(status)) {
+    return null;
+  }
+  const candidates = (Array.isArray(events) ? events : [])
+    .filter((event) => String(event?.name || "") === "LLM_CALL_END")
+    .sort((left, right) => Number(right?.seq || right?.ts || 0) - Number(left?.seq || left?.ts || 0));
+  const scopedCandidates = agentTab === "ALL"
+    ? candidates
+    : candidates.filter((event) => String(event?.payload?.agent_name || "").trim() === agentTab);
+  const messageCandidates = scopedCandidates.length ? scopedCandidates : candidates;
+  let selectedEvent = null;
+  let message = null;
+  for (const candidate of messageCandidates) {
+    if (!candidate) {
+      continue;
+    }
+    const nextMessage = eventToChatMessage(candidate);
+    if (nextMessage) {
+      selectedEvent = candidate;
+      message = nextMessage;
+      break;
+    }
+  }
+  if (!message || !selectedEvent) {
+    return null;
+  }
+  const payload = selectedEvent?.payload || {};
+  const meta = joinItems([payload.agent_name, payload.model, formatTime(selectedEvent?.ts)]);
+  return {
+    ...message,
+    kind: "live_assistant",
+    badge: "latest",
+    status: meta || message.status || "LLM CALL END",
+  };
 }
 
 function messageMatchesResult(message, resultText) {
@@ -611,17 +665,22 @@ const LANE_GUIDE = {
   experiment: {
     title: "Experiment",
     summary: "Run bounded computational execution and return concise evidence with files.",
-    subagents: ["materials_worker", "ml_worker", "literature_agent"],
+    subagents: ["materials_worker", "ml_worker", "orca_xtb_worker"],
   },
   research: {
     title: "Research",
     summary: "Coordinate broader investigation and delegate experiment, writing, literature, or publication-grade peer review only when needed.",
     subagents: ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"],
   },
+  literature_review: {
+    title: "Literature Review",
+    summary: "Launch LitReview Agent directly for source-grounded literature synthesis, public evidence inspection, and citation metadata checks.",
+    subagents: ["literature_agent", "metadata_agent"],
+  },
   writing: {
     title: "Writing",
     summary: "Draft or revise deliverables from existing evidence and compile when needed.",
-    subagents: ["writing_worker_agent", "literature_agent"],
+    subagents: ["writing_worker_agent", "writing_polisher_agent"],
   },
   peer_review: {
     title: "Peer Review",
@@ -694,6 +753,35 @@ function formatDateTime(value) {
   }
 }
 
+function ActionContent({ icon: Icon, children }) {
+  return (
+    <span className="action-content">
+      {Icon ? <Icon size={15} strokeWidth={2} aria-hidden="true" /> : null}
+      <span>{children}</span>
+    </span>
+  );
+}
+
+function IconButton({ icon: Icon, label, className = "ghost-btn", ...props }) {
+  return (
+    <Tooltip.Provider delayDuration={250}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button type="button" className={`icon-btn ${className || ""}`} aria-label={label} {...props}>
+            {Icon ? <Icon size={16} strokeWidth={2} aria-hidden="true" /> : null}
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content className="tooltip-content" sideOffset={6}>
+            {label}
+            <Tooltip.Arrow className="tooltip-arrow" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  );
+}
+
 function StatusPill({ status }) {
   return <span className={`status-pill status-${String(status || "idle").replaceAll("_", "-")}`}>{status || "idle"}</span>;
 }
@@ -730,24 +818,48 @@ function RunCard({ card, active, onSelect }) {
   );
 }
 
-function EventFeed({ events }) {
+function EventFeed({ events, hasMore, loadingOlder, onLoadOlder }) {
   const containerRef = useRef(null);
+  const lastMaxSeqRef = useRef(0);
   const hiddenNames = new Set(["LLM_CALL_START", "LLM_TOKEN_DELTA", "LLM_REASONING_DELTA"]);
+  const visibleRows = (Array.isArray(events) ? events : []).filter((event) => {
+    if (hiddenNames.has(String(event?.name || ""))) {
+      return false;
+    }
+    const payload = event.payload || {};
+    const body =
+      payload.text ||
+      payload.summary_snippet ||
+      payload.reasoning_text ||
+      payload.error ||
+      payload.text_preview ||
+      payload.goal ||
+      payload.status ||
+      "";
+    return Boolean(body);
+  });
 
   useEffect(() => {
     const node = containerRef.current;
-    if (node) {
+    const nextMaxSeq = (Array.isArray(events) ? events : []).reduce(
+      (maxSeq, event) => Math.max(maxSeq, Number(event?.seq || 0)),
+      0,
+    );
+    if (node && (lastMaxSeqRef.current === 0 || nextMaxSeq > lastMaxSeqRef.current)) {
       node.scrollTop = node.scrollHeight;
     }
+    lastMaxSeqRef.current = nextMaxSeq;
   }, [events]);
 
   return (
     <div ref={containerRef} className="feed-list">
-      {(events || []).slice(-120).map((event) => {
+      {hasMore ? (
+        <button type="button" className="feed-load-more" onClick={onLoadOlder} disabled={loadingOlder}>
+          {loadingOlder ? "Loading..." : "Load older events"}
+        </button>
+      ) : null}
+      {visibleRows.length ? visibleRows.map((event) => {
         const payload = event.payload || {};
-        if (hiddenNames.has(String(event?.name || ""))) {
-          return null;
-        }
         const title = joinItems([event.category, event.name, payload.tool || payload.model || payload.node]);
         const body =
           payload.text ||
@@ -758,9 +870,6 @@ function EventFeed({ events }) {
           payload.goal ||
           payload.status ||
           "";
-        if (!body) {
-          return null;
-        }
         return (
           <article key={event.seq || `${event.name}-${event.ts}`} className="feed-item">
             <div className="feed-meta">
@@ -770,7 +879,7 @@ function EventFeed({ events }) {
             <p>{body || "(no body)"}</p>
           </article>
         );
-      })}
+      }) : <div className="todo-empty">No persisted events for this run yet.</div>}
     </div>
   );
 }
@@ -2195,8 +2304,16 @@ function FileTree({
   treeLoading,
   selectedPath,
   error,
+  uploadTarget,
+  uploadStatus,
+  uploadOverwrite,
+  uploadUnzip,
+  uploadDisabled,
   onToggle,
   onSelect,
+  onChooseUpload,
+  onUploadOverwriteChange,
+  onUploadUnzipChange,
 }) {
   const roots = treeNodes[""] || [];
   return (
@@ -2206,6 +2323,34 @@ function FileTree({
           <div className="section-label">Tree</div>
           <h3 className="section-title">Workspace files</h3>
         </div>
+      </div>
+      <div className="file-upload-panel">
+        <div className="file-upload-target">
+          <span>Upload target</span>
+          <code>{uploadTarget || "."}</code>
+        </div>
+        <div className="file-upload-actions">
+          <button type="button" className="ghost-btn" onClick={onChooseUpload} disabled={uploadDisabled}>
+            Upload
+          </button>
+          <label className="toggle-line file-upload-overwrite">
+            <input
+              type="checkbox"
+              checked={Boolean(uploadOverwrite)}
+              onChange={(event) => onUploadOverwriteChange(event.target.checked)}
+            />
+            overwrite
+          </label>
+          <label className="toggle-line file-upload-overwrite">
+            <input
+              type="checkbox"
+              checked={Boolean(uploadUnzip)}
+              onChange={(event) => onUploadUnzipChange(event.target.checked)}
+            />
+            unzip
+          </label>
+        </div>
+        {uploadStatus ? <div className="file-upload-status">{uploadStatus}</div> : null}
       </div>
       {error ? <div className="memory-drawer-note error">{error}</div> : null}
       {!error && !roots.length && !treeLoading[""] ? (
@@ -2230,7 +2375,7 @@ function FileTree({
   );
 }
 
-function FilePreviewPanel({ preview, loading, error, onRefresh }) {
+function FilePreviewPanel({ ctx, projectSpace, preview, loading, error, deleteBusy, onRefresh, onDelete }) {
   const directoryChildren = Array.isArray(preview?.children) ? preview.children : [];
   const structure = preview?.structure && typeof preview.structure === "object" ? preview.structure : null;
   const csvPreview = isCsvPreview(preview);
@@ -2250,6 +2395,16 @@ function FilePreviewPanel({ preview, loading, error, onRefresh }) {
             <a className="ghost-btn file-download-link" href={preview.download_url}>
               Download
             </a>
+          ) : null}
+          {ctx && preview?.path !== undefined ? (
+            <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive?path=${escapePath(preview.path || "")}&project_space=${escapePath(projectSpace || "")}`}>
+              Download ZIP
+            </a>
+          ) : null}
+          {preview?.path ? (
+            <button type="button" className="ghost-btn danger" onClick={onDelete} disabled={loading || deleteBusy}>
+              Delete
+            </button>
           ) : null}
         </div>
       </div>
@@ -2460,15 +2615,6 @@ function MemoryDrawer({ open, workspaceName, loading, error, text, source, onSou
             <h3>{workspaceName ? `${workspaceName} memory` : "Project memory"}</h3>
           </div>
           <div className="inline-actions">
-            <button type="button" className={`ghost-btn ${source === "all" ? "active" : ""}`} onClick={() => onSourceChange("all")} disabled={loading}>
-              All
-            </button>
-            <button type="button" className={`ghost-btn ${source === "langmem" ? "active" : ""}`} onClick={() => onSourceChange("langmem")} disabled={loading}>
-              LangMem
-            </button>
-            <button type="button" className={`ghost-btn ${source === "instruction" ? "active" : ""}`} onClick={() => onSourceChange("instruction")} disabled={loading}>
-              AGENTS
-            </button>
             <button type="button" className="ghost-btn" onClick={onRefresh} disabled={loading}>
               Refresh
             </button>
@@ -2485,10 +2631,86 @@ function MemoryDrawer({ open, workspaceName, loading, error, text, source, onSou
   );
 }
 
+const WEBUI_SESSION_STORAGE_KEY = "catmaster.webui.session";
+
+function readStoredWebuiSession() {
+  try {
+    const raw = window.localStorage.getItem(WEBUI_SESSION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function forgetWebuiSession() {
+  try {
+    window.localStorage.removeItem(WEBUI_SESSION_STORAGE_KEY);
+  } catch {
+    return;
+  }
+}
+
+function rememberWebuiSession(data, lane) {
+  if (!data || typeof data !== "object") {
+    return;
+  }
+  const ctx = String(data.ctx || "").trim();
+  const projectSpace = String(data.workspace_name || "").trim();
+  const nextLane = String(lane || "").trim() || "experiment";
+  if (!ctx) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      WEBUI_SESSION_STORAGE_KEY,
+      JSON.stringify({
+        ctx,
+        project_space: projectSpace,
+        lane: nextLane,
+      }),
+    );
+  } catch {
+    return;
+  }
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("ctx", ctx);
+    if (projectSpace) {
+      url.searchParams.set("project_space", projectSpace);
+    } else {
+      url.searchParams.delete("project_space");
+    }
+    if (!String(data.selected_run || "").trim()) {
+      url.searchParams.delete("run");
+    }
+    url.searchParams.set("lane", nextLane);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // The remembered session is still enough for the next bootstrap.
+  }
+}
+
+function buildBootstrapParams({ useStored = true } = {}) {
+  const urlParams = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(urlParams);
+  const stored = useStored ? readStoredWebuiSession() : {};
+  const usedStoredCtx = !urlParams.get("ctx") && Boolean(stored.ctx);
+  const usedStoredProjectSpace = !urlParams.get("project_space") && Boolean(stored.project_space);
+  if (usedStoredCtx) {
+    params.set("ctx", String(stored.ctx));
+  }
+  if (usedStoredProjectSpace) {
+    params.set("project_space", String(stored.project_space));
+  }
+  const nextLane = params.get("lane") || String(stored.lane || "") || "experiment";
+  params.set("lane", nextLane);
+  return { params, lane: nextLane, usedStoredCtx, usedStoredProjectSpace };
+}
+
 function App({ boot }) {
   const view = ["home", "monitor", "files"].includes(boot?.view) ? boot.view : "home";
   const [snapshot, setSnapshot] = useState(null);
-  const [details, setDetails] = useState(null);
   const [ctx, setCtx] = useState("");
   const [lane, setLane] = useState("experiment");
   const [selectedRun, setSelectedRun] = useState("");
@@ -2497,8 +2719,7 @@ function App({ boot }) {
   const [search, setSearch] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [events, setEvents] = useState([]);
-  const [promptResponse, setPromptResponse] = useState("");
-  const [monitorTab, setMonitorTab] = useState("result");
+  const [eventPage, setEventPage] = useState({ has_more: false, min_seq: 0, max_seq: 0, loading: false });
   const [agentTab, setAgentTab] = useState("ALL");
   const [streamNonce, setStreamNonce] = useState(0);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -2517,6 +2738,11 @@ function App({ boot }) {
   const [fileTreeError, setFileTreeError] = useState("");
   const [filePreviewError, setFilePreviewError] = useState("");
   const [filePreviewLoading, setFilePreviewLoading] = useState(false);
+  const [fileUploadStatus, setFileUploadStatus] = useState("");
+  const [fileUploadBusy, setFileUploadBusy] = useState(false);
+  const [fileUploadOverwrite, setFileUploadOverwrite] = useState(false);
+  const [fileUploadUnzip, setFileUploadUnzip] = useState(false);
+  const [fileDeleteBusy, setFileDeleteBusy] = useState(false);
   const [form, setForm] = useState({
     prompt: "",
     run_mode: "new_run",
@@ -2525,31 +2751,61 @@ function App({ boot }) {
   const deferredSearch = useDeferredValue(search);
   const eventSourceRef = useRef(null);
   const latestSeqRef = useRef(0);
+  const fileUploadInputRef = useRef(null);
+  const currentProjectSpace = String(snapshot?.workspace_name || "").trim();
 
   useEffect(() => {
     let cancelled = false;
-    const params = new URLSearchParams(window.location.search);
-    const nextLane = params.get("lane") || "experiment";
-    if (!params.get("lane")) {
-      params.set("lane", nextLane);
+    function applyBootstrapData(data, nextLane) {
+      rememberWebuiSession(data, nextLane);
+      startTransition(() => {
+        setCtx(data.ctx || "");
+        setWorkspaceRoot(data.workspace_root || "");
+        setSelectedRun(data.selected_run || "");
+        setSnapshot(data);
+        setStatusMessage(data.status_message || "");
+        setEvents(Array.isArray(data.events) ? data.events : []);
+        setEventPage({
+          has_more: Boolean(data.events_page?.has_more),
+          min_seq: Number(data.events_page?.min_seq || 0),
+          max_seq: Number(data.events_page?.max_seq || 0),
+          loading: false,
+        });
+        latestSeqRef.current = Number(data.runtime?.seq || 0);
+      });
     }
-    setLane(nextLane);
+
+    const initialBootstrap = buildBootstrapParams();
+    setLane(initialBootstrap.lane);
     (async () => {
       try {
-        const data = await apiFetch(`/api/bootstrap?${params.toString()}`);
+        const data = await apiFetch(`/api/bootstrap?${initialBootstrap.params.toString()}`);
         if (cancelled) {
           return;
         }
-        startTransition(() => {
-          setCtx(data.ctx || "");
-          setWorkspaceRoot(data.workspace_root || "");
-          setSelectedRun(data.selected_run || "");
-          setSnapshot(data);
-          setStatusMessage(data.status_message || "");
-          setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
-          latestSeqRef.current = Number(data.runtime?.seq || 0);
-        });
+        applyBootstrapData(data, initialBootstrap.lane);
       } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        if (initialBootstrap.usedStoredCtx || initialBootstrap.usedStoredProjectSpace) {
+          forgetWebuiSession();
+          const fallbackBootstrap = buildBootstrapParams({ useStored: false });
+          setLane(fallbackBootstrap.lane);
+          try {
+            const data = await apiFetch(`/api/bootstrap?${fallbackBootstrap.params.toString()}`);
+            if (cancelled) {
+              return;
+            }
+            applyBootstrapData(data, fallbackBootstrap.lane);
+            return;
+          } catch (fallbackError) {
+            if (!cancelled) {
+              setStatusMessage(String(fallbackError?.message || fallbackError));
+            }
+            return;
+          }
+        }
         if (!cancelled) {
           setStatusMessage(String(error?.message || error));
         }
@@ -2561,37 +2817,13 @@ function App({ boot }) {
   }, []);
 
   useEffect(() => {
-    if (view !== "monitor" || !ctx || !selectedRun) {
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(selectedRun)}`);
-        if (!cancelled) {
-          startTransition(() => {
-            setDetails(data);
-          });
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setStatusMessage(String(error?.message || error));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ctx, selectedRun, view]);
-
-  useEffect(() => {
     if (!ctx) {
       return undefined;
     }
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
     }
-    const source = new EventSource(`/api/session/${escapePath(ctx)}/stream?last_seq=${escapePath(latestSeqRef.current)}`);
+    const source = new EventSource(`/api/session/${escapePath(ctx)}/stream?last_seq=${escapePath(latestSeqRef.current)}&project_space=${escapePath(currentProjectSpace)}`);
     eventSourceRef.current = source;
 
     source.onmessage = (message) => {
@@ -2610,7 +2842,17 @@ function App({ boot }) {
             setSelectedRun(streamRunName);
           }
           if (shouldRecordEvent(event)) {
-            setEvents((prev) => [...prev, event].slice(-120));
+            setEvents((prev) => {
+              const key = String(event?.seq || `${event?.name || "event"}-${event?.ts || ""}`);
+              if (prev.some((item) => String(item?.seq || `${item?.name || "event"}-${item?.ts || ""}`) === key)) {
+                return prev;
+              }
+              return [...prev, event];
+            });
+            setEventPage((prev) => ({
+              ...prev,
+              max_seq: Math.max(Number(prev.max_seq || 0), Number(event?.seq || 0)),
+            }));
           }
           setSnapshot((prev) => {
             if (!prev) {
@@ -2624,31 +2866,17 @@ function App({ boot }) {
               live_state: runtime.live_state || prev.live_state || {},
               llm: runtime.llm || prev.llm || {},
               graph: runtime.graph || prev.graph || {},
-              prompt: runtime.prompt ?? prev.prompt ?? null,
               usage_summary: data.usage_summary || runtime.usage_totals || prev.usage_summary || {},
               chat_messages: data.chat_messages || prev.chat_messages || [],
               cards: data.cards || prev.cards || [],
               todo_items: data.todo_items || prev.todo_items || [],
               result_text: data.result_text ?? prev.result_text ?? "",
               proposal: data.proposal ?? prev.proposal ?? "",
-              can_submit_prompt: Boolean(runtime.prompt),
               run_status: data.run_status || prev.run_status,
               run_status_text: data.run_status_text || prev.run_status_text,
             };
           });
         });
-      }
-      if (view === "monitor" && ["RUN_SNAPSHOT_READY", "PROMPT_REQUESTED", "PROMPT_RESOLVED"].includes(String(event.name || ""))) {
-        const nextRun = streamRunName || selectedRun;
-        if (nextRun) {
-          apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(nextRun)}`)
-            .then((detailData) => {
-              startTransition(() => {
-                setDetails(detailData);
-              });
-            })
-            .catch(() => {});
-        }
       }
     };
 
@@ -2668,7 +2896,7 @@ function App({ boot }) {
       source.close();
       eventSourceRef.current = null;
     };
-  }, [ctx, selectedRun, streamNonce]);
+  }, [ctx, selectedRun, streamNonce, currentProjectSpace]);
 
   useEffect(() => {
     if (view !== "home" || !memoryOpen || !ctx) {
@@ -2684,7 +2912,7 @@ function App({ boot }) {
         error: "",
       }));
     });
-    apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}`)
+    apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}&project_space=${escapePath(currentProjectSpace)}`)
       .then((data) => {
         if (cancelled) {
           return;
@@ -2715,7 +2943,7 @@ function App({ boot }) {
     return () => {
       cancelled = true;
     };
-  }, [ctx, memoryOpen, selectedRun, snapshot?.workspace_name, view, memoryPanel.source]);
+  }, [ctx, memoryOpen, selectedRun, currentProjectSpace, view, memoryPanel.source]);
 
   useEffect(() => {
     if (view !== "files" || !ctx) {
@@ -2731,8 +2959,11 @@ function App({ boot }) {
       setFileTreeError("");
       setFilePreviewError("");
       setFilePreviewLoading(false);
+      setFileUploadStatus("");
+      setFileUploadBusy(false);
+      setFileDeleteBusy(false);
     });
-    apiFetch(`/api/session/${escapePath(ctx)}/files/tree`)
+    apiFetch(`/api/session/${escapePath(ctx)}/files/tree?project_space=${escapePath(currentProjectSpace)}`)
       .then((data) => {
         if (cancelled) {
           return;
@@ -2755,7 +2986,7 @@ function App({ boot }) {
     return () => {
       cancelled = true;
     };
-  }, [ctx, snapshot?.workspace_path, view]);
+  }, [ctx, snapshot?.workspace_path, view, currentProjectSpace]);
 
   useEffect(() => {
     const live = snapshot?.live_state || {};
@@ -2770,14 +3001,57 @@ function App({ boot }) {
       return;
     }
     const data = await apiFetch(
-      `/api/session/${escapePath(ctx)}/snapshot?lane=${escapePath(lane)}&run=${escapePath(runName || "")}`,
+      `/api/session/${escapePath(ctx)}/snapshot?lane=${escapePath(lane)}&run=${escapePath(runName || "")}&project_space=${escapePath(currentProjectSpace)}`,
     );
     startTransition(() => {
       setSnapshot(data);
       setSelectedRun(data.selected_run || "");
-      setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
-      latestSeqRef.current = Number(data.runtime?.seq || latestSeqRef.current || 0);
+      setEvents(Array.isArray(data.events) ? data.events : []);
+      setEventPage({
+        has_more: Boolean(data.events_page?.has_more),
+        min_seq: Number(data.events_page?.min_seq || 0),
+        max_seq: Number(data.events_page?.max_seq || 0),
+        loading: false,
+      });
+      latestSeqRef.current = Number(data.runtime?.seq ?? 0);
     });
+  }
+
+  async function loadOlderEvents() {
+    if (!ctx || !selectedRun || eventPage.loading) {
+      return;
+    }
+    const beforeSeq = Number(eventPage.min_seq || 0);
+    if (!beforeSeq) {
+      return;
+    }
+    startTransition(() => {
+      setEventPage((prev) => ({ ...prev, loading: true }));
+    });
+    try {
+      const data = await apiFetch(
+        `/api/session/${escapePath(ctx)}/events?run=${escapePath(selectedRun)}&project_space=${escapePath(currentProjectSpace)}&limit=200&before_seq=${escapePath(beforeSeq)}`,
+      );
+      const older = Array.isArray(data.events) ? data.events : [];
+      startTransition(() => {
+        setEvents((prev) => {
+          const seen = new Set(older.map((event) => String(event?.seq || `${event?.name || "event"}-${event?.ts || ""}`)));
+          const rest = prev.filter((event) => !seen.has(String(event?.seq || `${event?.name || "event"}-${event?.ts || ""}`)));
+          return [...older, ...rest];
+        });
+        setEventPage({
+          has_more: Boolean(data.has_more),
+          min_seq: Number(data.min_seq || beforeSeq),
+          max_seq: Math.max(Number(eventPage.max_seq || 0), Number(data.max_seq || 0)),
+          loading: false,
+        });
+      });
+    } catch (error) {
+      startTransition(() => {
+        setStatusMessage(String(error?.message || error));
+        setEventPage((prev) => ({ ...prev, loading: false }));
+      });
+    }
   }
 
   async function refreshMemoryPanel() {
@@ -2793,7 +3067,7 @@ function App({ boot }) {
       }));
     });
     try {
-      const data = await apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}`);
+      const data = await apiFetch(`/api/session/${escapePath(ctx)}/memory?run=${escapePath(selectedRun || "")}&source=${escapePath(memorySource)}&project_space=${escapePath(currentProjectSpace)}`);
       startTransition(() => {
         setMemoryPanel({
           text: String(data.memory || "").trim(),
@@ -2828,7 +3102,7 @@ function App({ boot }) {
       setFileTreeError("");
     });
     try {
-      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/tree?path=${escapePath(targetPath)}`);
+      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/tree?path=${escapePath(targetPath)}&project_space=${escapePath(currentProjectSpace)}`);
       startTransition(() => {
         setTreeNodes((prev) => ({ ...prev, [targetPath]: Array.isArray(data.children) ? data.children : [] }));
         setTreeLoading((prev) => ({ ...prev, [targetPath]: false }));
@@ -2852,7 +3126,7 @@ function App({ boot }) {
       setFilePreviewError("");
     });
     try {
-      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/content?path=${escapePath(targetPath)}`);
+      const data = await apiFetch(`/api/session/${escapePath(ctx)}/files/content?path=${escapePath(targetPath)}&project_space=${escapePath(currentProjectSpace)}`);
       startTransition(() => {
         setFilePreview(data);
         setFilePreviewLoading(false);
@@ -2903,37 +3177,140 @@ function App({ boot }) {
     }
   }
 
+  async function handleUploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!ctx || !files.length) {
+      return;
+    }
+    const targetDir = defaultUploadDirectory(treeNodes, filePreview, selectedFilePath);
+    startTransition(() => {
+      setFileUploadBusy(true);
+      setFileUploadStatus(`Uploading ${files.length} file${files.length === 1 ? "" : "s"} to ${targetDir || "."}...`);
+      setFileTreeError("");
+    });
+    let lastUploadedPath = "";
+    try {
+      for (const file of files) {
+        const response = await fetch(
+          `/api/session/${escapePath(ctx)}/files/upload?path=${escapePath(targetDir)}&filename=${escapePath(file.name)}&overwrite=${fileUploadOverwrite ? "true" : "false"}&unzip=${fileUploadUnzip ? "true" : "false"}&project_space=${escapePath(currentProjectSpace)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": file.type || "application/octet-stream" },
+            body: file,
+          },
+        );
+        if (!response.ok) {
+          throw new Error((await response.text()) || `Upload failed: ${response.status}`);
+        }
+        const payload = await response.json();
+        lastUploadedPath = String(payload?.unzipped ? targetDir : (payload?.path || lastUploadedPath || ""));
+      }
+      await loadDirectory(targetDir, { force: true });
+      if (targetDir) {
+        startTransition(() => {
+          setExpandedDirs((prev) => ({ ...prev, [targetDir]: true }));
+        });
+      }
+      if (lastUploadedPath && !fileUploadUnzip) {
+        await loadFilePreview(lastUploadedPath);
+      } else if (fileUploadUnzip) {
+        await loadFilePreview(targetDir);
+      }
+      startTransition(() => {
+        setFileUploadStatus(`${fileUploadUnzip ? "Unzipped" : "Uploaded"} ${files.length} file${files.length === 1 ? "" : "s"} to ${targetDir || "."}.`);
+      });
+    } catch (error) {
+      startTransition(() => {
+        setFileUploadStatus(String(error?.message || error));
+      });
+    } finally {
+      startTransition(() => {
+        setFileUploadBusy(false);
+      });
+      if (fileUploadInputRef.current) {
+        fileUploadInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function handleDeleteSelectedFile() {
+    if (!ctx || !filePreview?.path) {
+      return;
+    }
+    const targetPath = String(filePreview.path || "");
+    const confirmed = window.confirm(`Delete ${targetPath}? This cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+    const parent = parentPath(targetPath);
+    startTransition(() => {
+      setFileDeleteBusy(true);
+      setFilePreviewError("");
+    });
+    try {
+      const response = await fetch(`/api/session/${escapePath(ctx)}/files/delete?path=${escapePath(targetPath)}&project_space=${escapePath(currentProjectSpace)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()) || `Delete failed: ${response.status}`);
+      }
+      await loadDirectory(parent, { force: true });
+      await loadDirectory("", { force: true });
+      startTransition(() => {
+        setSelectedFilePath("");
+        setFilePreview(null);
+        setFileUploadStatus(`Deleted ${targetPath}.`);
+      });
+    } catch (error) {
+      startTransition(() => {
+        setFilePreviewError(String(error?.message || error));
+      });
+    } finally {
+      startTransition(() => {
+        setFileDeleteBusy(false);
+      });
+    }
+  }
+
   async function postAndApply(url, payload, { loadDetails = false } = {}) {
     if (!ctx) {
       return;
     }
+    const scopedPayload = {
+      ...(payload || {}),
+      project_space: payload?.project_space ?? currentProjectSpace,
+    };
     const data = await apiFetch(url, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(scopedPayload),
     });
+    rememberWebuiSession(data, scopedPayload?.lane || lane);
     startTransition(() => {
       setSnapshot(data);
       setStatusMessage(data.status_message || "");
       setWorkspaceRoot(data.workspace_root || workspaceRoot);
       setSelectedRun(data.selected_run || data.runtime?.run_name || "");
-      setEvents(Array.isArray(data.events) ? data.events.slice(-120) : []);
-      latestSeqRef.current = Number(data.runtime?.seq || latestSeqRef.current || 0);
+      setEvents(Array.isArray(data.events) ? data.events : []);
+      setEventPage({
+        has_more: Boolean(data.events_page?.has_more),
+        min_seq: Number(data.events_page?.min_seq || 0),
+        max_seq: Number(data.events_page?.max_seq || 0),
+        loading: false,
+      });
+      latestSeqRef.current = Number(data.runtime?.seq ?? 0);
       if (data.selected_run || data.runtime?.run_name) {
         setForm((prev) => ({ ...prev, resume_run_name: data.selected_run || data.runtime?.run_name || "" }));
       }
     });
-    if (loadDetails && data.selected_run) {
-      const detailData = await apiFetch(`/api/session/${escapePath(ctx)}/details?run=${escapePath(data.selected_run)}`);
-      startTransition(() => {
-        setDetails(detailData);
-      });
-    }
+    setStreamNonce((value) => value + 1);
+    void loadDetails;
   }
 
   async function handleWorkspaceRefresh() {
     await postAndApply(`/api/session/${escapePath(ctx)}/workspace/refresh`, {
       root_path: workspaceRoot,
       lane,
+      workspace: currentProjectSpace,
     });
   }
 
@@ -2985,26 +3362,13 @@ function App({ boot }) {
   }
 
   async function handleInterrupt() {
-    await postAndApply(`/api/session/${escapePath(ctx)}/run/interrupt`, { lane });
-  }
-
-  async function handlePromptSubmit() {
-    const prompt = snapshot?.prompt;
-    if (!prompt) {
-      return;
-    }
-    await postAndApply(`/api/session/${escapePath(ctx)}/prompt/respond`, {
-      prompt_id: prompt.prompt_id || prompt.payload?.prompt_id || "",
-      text: promptResponse,
-      lane,
-      run_name: selectedRun,
-    }, { loadDetails: view === "monitor" });
-    setPromptResponse("");
+    await postAndApply(`/api/session/${escapePath(ctx)}/run/interrupt`, { lane, project_space: snapshot?.workspace_name || "" });
   }
 
   const workspaceOptions = snapshot?.workspaces || [];
   const chatSessionOptions = snapshot?.chat_sessions || [];
   const runOptions = snapshot?.runs || [];
+  const fileUploadTarget = defaultUploadDirectory(treeNodes, filePreview, selectedFilePath);
   const cards = (snapshot?.cards || []).filter((card) => {
     if (!deferredSearch.trim()) {
       return true;
@@ -3016,7 +3380,8 @@ function App({ boot }) {
   const graph = snapshot?.graph || {};
   const usage = snapshot?.usage_summary || {};
   const visibleEvents = view === "monitor" ? events : [];
-  const liveAssistantMessage = buildLiveAssistantMessage(snapshot, agentTab);
+  const latestLlmMessage = buildLatestLlmEndMessage(snapshot, events, agentTab);
+  const liveAssistantMessage = latestLlmMessage || buildLiveAssistantMessage(snapshot, agentTab);
   const chatMessages = buildChatTimeline(snapshot, events, liveAssistantMessage);
   const laneGuide = LANE_GUIDE[lane] || LANE_GUIDE.experiment;
   const todoRows = Array.isArray(live?.todo_rows) && live.todo_rows.length
@@ -3069,13 +3434,13 @@ function App({ boot }) {
         </div>
         <nav className="topbar-nav">
           <a className={view === "home" ? "active" : ""} href={homeHref}>
-            Home
+            <ActionContent icon={Bot}>Home</ActionContent>
           </a>
           <a className={view === "monitor" ? "active" : ""} href={monitorHref}>
-            Monitor
+            <ActionContent icon={MonitorDot}>Monitor</ActionContent>
           </a>
           <a className={view === "files" ? "active" : ""} href={filesHref}>
-            Files
+            <ActionContent icon={Files}>Files</ActionContent>
           </a>
         </nav>
       </header>
@@ -3091,7 +3456,7 @@ function App({ boot }) {
           <div className="control-stack">
             <div className="section-head">
               <div className="section-label">Workspace</div>
-              <button type="button" className="ghost-btn" onClick={handleWorkspaceRefresh}>Refresh</button>
+              <IconButton icon={RefreshCw} label="Refresh workspace" onClick={handleWorkspaceRefresh} />
             </div>
             <label>
               <span>Root</span>
@@ -3117,14 +3482,18 @@ function App({ boot }) {
               </select>
             </label>
             <div className="btn-row">
-              <button type="button" onClick={handleWorkspaceOpen}>Open</button>
+              <button type="button" onClick={handleWorkspaceOpen}>
+                <ActionContent icon={FolderOpen}>Open</ActionContent>
+              </button>
               <button type="button" className="ghost-btn" onClick={() => setWorkspaceName(snapshot?.workspace_name || "")}>Mirror</button>
             </div>
             <label>
               <span>New workspace</span>
               <input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="new workspace" />
             </label>
-            <button type="button" onClick={handleWorkspaceCreate}>Create Workspace</button>
+            <button type="button" onClick={handleWorkspaceCreate}>
+              <ActionContent icon={FolderOpen}>Create Workspace</ActionContent>
+            </button>
           </div>
 
           <div className="divider" />
@@ -3132,7 +3501,7 @@ function App({ boot }) {
           <div className="control-stack">
             <div className="section-head">
               <div className="section-label">Chat Sessions</div>
-              <button type="button" className="ghost-btn" onClick={handleChatCreate}>New Chat</button>
+              <IconButton icon={Bot} label="New chat" onClick={handleChatCreate} />
             </div>
             <label>
               <span>Current chat</span>
@@ -3178,14 +3547,26 @@ function App({ boot }) {
         <section className="center-stage">
           {view === "files" ? (
             <div className="center-content files-content">
+              <input
+                ref={fileUploadInputRef}
+                type="file"
+                multiple
+                className="file-upload-input"
+                onChange={(event) => handleUploadFiles(event.target.files)}
+              />
               <div className="center-header">
                 <div className="center-header-left">
                   <h2>{centerTitle}</h2>
                   <span className="section-label">{snapshot?.workspace_name || "No workspace"}</span>
                 </div>
                 <div className="inline-actions">
+                  {ctx ? (
+                    <a className="ghost-btn file-download-link" href={`/api/session/${escapePath(ctx)}/files/archive?project_space=${escapePath(currentProjectSpace)}`}>
+                      Workspace ZIP
+                    </a>
+                  ) : null}
                   <button type="button" className="ghost-btn" onClick={refreshFilesView}>
-                    Refresh
+                    <ActionContent icon={RefreshCw}>Refresh</ActionContent>
                   </button>
                 </div>
               </div>
@@ -3197,18 +3578,30 @@ function App({ boot }) {
                   treeLoading={treeLoading}
                   selectedPath={selectedFilePath}
                   error={fileTreeError}
+                  uploadTarget={fileUploadTarget}
+                  uploadStatus={fileUploadStatus}
+                  uploadOverwrite={fileUploadOverwrite}
+                  uploadUnzip={fileUploadUnzip}
+                  uploadDisabled={!ctx || fileUploadBusy}
                   onToggle={handleDirectoryToggle}
                   onSelect={handleFileSelect}
+                  onChooseUpload={() => fileUploadInputRef.current?.click()}
+                  onUploadOverwriteChange={setFileUploadOverwrite}
+                  onUploadUnzipChange={setFileUploadUnzip}
                 />
                 <FilePreviewPanel
+                  ctx={ctx}
+                  projectSpace={currentProjectSpace}
                   preview={filePreview}
                   loading={filePreviewLoading}
                   error={filePreviewError}
+                  deleteBusy={fileDeleteBusy}
                   onRefresh={() => {
                     if (selectedFilePath) {
                       loadFilePreview(selectedFilePath);
                     }
                   }}
+                  onDelete={handleDeleteSelectedFile}
                 />
               </div>
             </div>
@@ -3224,18 +3617,18 @@ function App({ boot }) {
                     {view === "home" ? (
                       <button
                         type="button"
-                        className={`ghost-btn ${memoryOpen ? "active" : ""}`}
-                        onClick={() => setMemoryOpen((prev) => !prev)}
-                      >
-                        {memoryOpen ? "Hide Memory" : "Memory"}
+                      className={`ghost-btn ${memoryOpen ? "active" : ""}`}
+                      onClick={() => setMemoryOpen((prev) => !prev)}
+                    >
+                        <ActionContent icon={MemoryStick}>{memoryOpen ? "Hide Memory" : "Memory"}</ActionContent>
                       </button>
                     ) : null}
                     <button type="button" className="ghost-btn danger" onClick={handleInterrupt}>
-                      Interrupt
+                      <ActionContent icon={Square}>Interrupt</ActionContent>
                     </button>
                     {view === "monitor" ? (
                       <button type="button" className="ghost-btn" onClick={() => refreshSnapshot(selectedRun)}>
-                        Refresh
+                        <ActionContent icon={RefreshCw}>Refresh</ActionContent>
                       </button>
                     ) : null}
                   </div>
@@ -3253,14 +3646,6 @@ function App({ boot }) {
                   </div>
                 ) : null}
 
-                <PromptPanel
-                  prompt={snapshot?.prompt}
-                  value={promptResponse}
-                  onChange={setPromptResponse}
-                  onSubmit={handlePromptSubmit}
-                  disabled={!snapshot?.can_submit_prompt}
-                />
-
                 {view === "home" ? (
                   <>
                     <p className="lane-info">{laneGuide.summary}</p>
@@ -3269,7 +3654,12 @@ function App({ boot }) {
                 ) : (
                   <div className="monitor-grid">
                     <div className="section-label">Events</div>
-                    <EventFeed events={visibleEvents} />
+                    <EventFeed
+                      events={visibleEvents}
+                      hasMore={eventPage.has_more}
+                      loadingOlder={eventPage.loading}
+                      onLoadOlder={loadOlderEvents}
+                    />
                   </div>
                 )}
               </div>
@@ -3280,8 +3670,8 @@ function App({ boot }) {
                     <label>
                       <span>Lane</span>
                       <select value={lane} onChange={(event) => setLane(event.target.value)}>
-                        {["experiment", "research", "writing", "peer_review"].map((item) => (
-                          <option key={item} value={item}>{item}</option>
+                        {["experiment", "research", "literature_review", "writing", "peer_review"].map((item) => (
+                          <option key={item} value={item}>{LANE_GUIDE[item]?.title || item}</option>
                         ))}
                       </select>
                     </label>
@@ -3316,11 +3706,18 @@ function App({ boot }) {
                     </label>
                   </div>
                   <div className="btn-row">
-                    <button type="button" onClick={handleStartRun}>Start Run</button>
+                    <button type="button" onClick={handleStartRun}>
+                      <ActionContent icon={Send}>Start Run</ActionContent>
+                    </button>
                     <button
                       type="button"
                       className="ghost-btn"
-                      onClick={() => setForm((prev) => ({ ...prev, resume_run_name: selectedRun }))}
+                      onClick={() => setForm((prev) => ({
+                        ...prev,
+                        run_mode: "resume_selected_run",
+                        resume_run_name: selectedRun,
+                      }))}
+                      disabled={!selectedRun}
                     >
                       Use selected run for resume
                     </button>
@@ -3330,40 +3727,6 @@ function App({ boot }) {
             </>
           )}
         </section>
-
-        {view === "monitor" ? (
-          <aside className="right-rail">
-            <div className="section-head">
-              <div>
-                <div className="section-label">Run details</div>
-                <h3 className="section-title">Artifacts & Traces</h3>
-              </div>
-              <button type="button" className="ghost-btn" onClick={() => refreshSnapshot(selectedRun)}>
-                Pull latest
-              </button>
-            </div>
-
-            <MonitorTabs tab={monitorTab} onChange={setMonitorTab} />
-            {monitorTab === "result" ? (
-              <CodePane title="Recorded result" helper="run_state result" text={snapshot?.result_text || ""} />
-            ) : null}
-            {monitorTab === "task" ? (
-              <CodePane title="Run state" helper="run_state.json" text={details?.task_state || ""} />
-            ) : null}
-            {monitorTab === "trace" ? (
-              <CodePane
-                title="Trace bundle"
-                helper="event/tool/patch trace"
-                text={[details?.trace_event, details?.trace_tool, details?.trace_patch].filter(Boolean).join("\n\n")}
-              />
-            ) : null}
-            {monitorTab === "artifacts" ? (
-              <CodePane title="Artifacts JSON" helper="run_state.artifacts" text={JSON.stringify(details?.artifacts || [], null, 2)} />
-            ) : null}
-            <UsagePanel usage={usage} />
-            <ArtifactPanel details={details} />
-          </aside>
-        ) : null}
 
         {view === "home" ? (
           <aside className="right-rail home-sidecar">

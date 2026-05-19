@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
@@ -8,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from catmaster.runtime.usage_stats import summarize_usage_from_metadata, write_usage_summary_from_metadata
 from catmaster.ui import Reporter
 from catmaster.ui.events import UIEvent, make_event
 
@@ -42,6 +44,27 @@ def _copy_usage(usage: Dict[str, Any]) -> Dict[str, int]:
         elif isinstance(value, int):
             out["reasoning_tokens"] = value
     return out
+
+
+def _merge_usage_payload(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base or {})
+    for key, value in (update or {}).items():
+        if isinstance(value, dict):
+            current = merged.get(key)
+            merged[key] = _merge_usage_payload(current if isinstance(current, dict) else {}, value)
+            continue
+        if isinstance(value, bool):
+            merged[key] = int(bool(merged.get(key, 0))) + int(value)
+            continue
+        if isinstance(value, int):
+            merged[key] = int(merged.get(key, 0) or 0) + value
+            continue
+        if isinstance(value, float):
+            merged[key] = float(merged.get(key, 0.0) or 0.0) + value
+            continue
+        if value is not None:
+            merged[key] = value
+    return merged
 
 
 class PromptBroker:
@@ -97,7 +120,7 @@ class PromptBroker:
 
 
 class WebReporter(Reporter):
-    def __init__(self, *, broker: PromptBroker, max_events: int = 4000) -> None:
+    def __init__(self, *, broker: PromptBroker | None = None, max_events: int = 4000) -> None:
         self._broker = broker
         self._events: Deque[Dict[str, Any]] = deque(maxlen=max_events)
         self._lock = threading.Lock()
@@ -123,13 +146,11 @@ class WebReporter(Reporter):
             "text_preview": "",
             "last_updated_ts": 0.0,
         }
-        self._usage_totals: Dict[str, int] = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "input_cached_tokens": 0,
-            "reasoning_tokens": 0,
-        }
+        self._usage_totals: Dict[str, Any] = {}
+        self._usage_metadata_by_model: Dict[str, Dict[str, Any]] = {}
+        self._call_counts_by_model: Dict[str, int] = {}
+        self._usage_metadata_by_role: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._call_counts_by_role: Dict[str, int] = {}
 
     def start(self) -> None:
         return
@@ -147,7 +168,13 @@ class WebReporter(Reporter):
         resolved = Path(run_dir).expanduser().resolve()
         with self._cond:
             self._run_dir = resolved
+            self._seq = max(int(self._seq or 0), self._last_persisted_event_seq(resolved))
             self._live_state = new_live_state(run_id=resolved.name)
+            self._usage_totals = {}
+            self._usage_metadata_by_model = {}
+            self._call_counts_by_model = {}
+            self._usage_metadata_by_role = {}
+            self._call_counts_by_role = {}
             self._cond.notify_all()
 
     def get_run_dir(self) -> Optional[Path]:
@@ -175,6 +202,7 @@ class WebReporter(Reporter):
             payload["seq"] = self._seq
             self._apply_live_updates(payload)
             self._events.append(payload)
+            self._append_persisted_ui_event(payload)
             self._cond.notify_all()
 
     def get_events_since(self, last_seq: int) -> Tuple[List[Dict[str, Any]], int]:
@@ -202,6 +230,8 @@ class WebReporter(Reporter):
             return list(self._events)[-limit:]
 
     def prompt_proposal_feedback(self, *, todo: List[str], proposal_description: str) -> str:
+        if self._broker is None:
+            return ""
         payload = {
             "todo": list(todo),
             "proposal_description": proposal_description or "",
@@ -209,6 +239,8 @@ class WebReporter(Reporter):
         return self._request_prompt("proposal_review", payload)
 
     def prompt_hitl_feedback(self, *, report_text: str, report_path: str) -> str:
+        if self._broker is None:
+            return ""
         payload = {
             "report_text": report_text or "",
             "report_path": report_path or "",
@@ -216,6 +248,8 @@ class WebReporter(Reporter):
         return self._request_prompt("hitl", payload)
 
     def prompt_interrupt_feedback(self, *, guidance: str, run_id: str, phase: str) -> str:
+        if self._broker is None:
+            return ""
         payload = {
             "guidance": guidance or "",
             "run_id": run_id or "",
@@ -224,6 +258,8 @@ class WebReporter(Reporter):
         return self._request_prompt("interrupt_feedback", payload)
 
     def submit_prompt(self, prompt_id: str, text: str) -> bool:
+        if self._broker is None:
+            return False
         submitted = self._broker.submit(prompt_id, text)
         if submitted:
             self.emit(
@@ -237,6 +273,8 @@ class WebReporter(Reporter):
         return submitted
 
     def get_prompt(self) -> Optional[Dict[str, Any]]:
+        if self._broker is None:
+            return None
         return self._broker.get_pending()
 
     def show_final_summary(self, summary: str) -> None:
@@ -273,13 +311,15 @@ class WebReporter(Reporter):
                     "text_preview": str(self._graph_state.get("text_preview") or ""),
                     "last_updated_ts": float(self._graph_state.get("last_updated_ts") or 0.0),
                 },
-                "prompt": _clone_prompt(self._broker.get_pending()),
+                "prompt": _clone_prompt(self._broker.get_pending()) if self._broker is not None else None,
                 "final_summary": str(self._final_summary or ""),
                 "usage_totals": dict(self._usage_totals),
                 "recent_events": list(self._events)[-120:],
             }
 
     def _request_prompt(self, kind: str, payload: Dict[str, Any]) -> str:
+        if self._broker is None:
+            return ""
         text_holder: Dict[str, str] = {}
 
         def _waiter() -> None:
@@ -358,8 +398,29 @@ class WebReporter(Reporter):
                         "last_updated_ts": now_ts,
                     }
                 )
-            for key, value in compact_usage.items():
-                self._usage_totals[key] = int(self._usage_totals.get(key) or 0) + int(value)
+            model_name = str(payload.get("model") or self._llm_state.get("model") or "").strip()
+            agent_name = str(payload.get("agent_name") or "").strip()
+            if model_name and usage:
+                self._usage_metadata_by_model[model_name] = _merge_usage_payload(
+                    self._usage_metadata_by_model.get(model_name) if isinstance(self._usage_metadata_by_model.get(model_name), dict) else {},
+                    usage,
+                )
+                self._call_counts_by_model[model_name] = int(self._call_counts_by_model.get(model_name, 0)) + 1
+                if agent_name:
+                    role_bucket = self._usage_metadata_by_role.setdefault(agent_name, {})
+                    role_bucket[model_name] = _merge_usage_payload(
+                        role_bucket.get(model_name) if isinstance(role_bucket.get(model_name), dict) else {},
+                        usage,
+                    )
+                    self._call_counts_by_role[agent_name] = int(self._call_counts_by_role.get(agent_name, 0)) + 1
+                self._usage_totals = summarize_usage_from_metadata(
+                    self._usage_metadata_by_model,
+                    run_dir=self._run_dir,
+                    call_counts_by_model=self._call_counts_by_model,
+                    usage_metadata_by_role=self._usage_metadata_by_role,
+                    call_counts_by_role=self._call_counts_by_role,
+                )
+                self._persist_usage_summary()
         elif name == "GRAPH_NODE_UPDATE":
             tool_calls = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
             self._graph_state.update(
@@ -389,6 +450,58 @@ class WebReporter(Reporter):
                     "last_updated_ts": now_ts,
                 }
             )
+
+    def _append_persisted_ui_event(self, event: Dict[str, Any]) -> None:
+        run_dir = self._run_dir
+        if run_dir is None:
+            return
+        try:
+            path = Path(run_dir) / "ui_events.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            return
+
+    @staticmethod
+    def _last_persisted_event_seq(run_dir: Path) -> int:
+        path = Path(run_dir) / "ui_events.jsonl"
+        if not path.exists():
+            return 0
+        last_seq = 0
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for index, line in enumerate(handle, start=1):
+                    text = line.strip()
+                    if not text:
+                        continue
+                    try:
+                        item = json.loads(text)
+                    except Exception:
+                        continue
+                    try:
+                        last_seq = max(last_seq, int(item.get("seq") or index))
+                    except Exception:
+                        last_seq = max(last_seq, index)
+        except Exception:
+            return 0
+        return last_seq
+
+    def _persist_usage_summary(self) -> None:
+        run_dir = self._run_dir
+        if run_dir is None or not self._usage_metadata_by_model:
+            return
+        try:
+            write_usage_summary_from_metadata(
+                run_dir,
+                usage_metadata=self._usage_metadata_by_model,
+                call_counts_by_model=self._call_counts_by_model,
+                usage_metadata_by_role=self._usage_metadata_by_role,
+                call_counts_by_role=self._call_counts_by_role,
+                append=False,
+            )
+        except Exception:
+            return
 
 
 __all__ = ["PromptBroker", "WebReporter"]

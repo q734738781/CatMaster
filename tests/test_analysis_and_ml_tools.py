@@ -127,6 +127,27 @@ def test_analyze_vasp_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
         traj_summary = json.loads((tmp_path / "files" / traj_artifact["data"]["summary_json_rel"]).read_text(encoding="utf-8"))
         assert traj_summary["rdf_species"] == "Li"
         assert traj_summary["diffusion_dimension"] == "xy"
+        assert traj_summary["coordinate_mode"] == "unwrapped_cartesian"
+
+
+def test_analyze_trajectory_keeps_unwrapped_ase_traj_positions_for_msd(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        traj_dir = tmp_path / "files" / "mace_md"
+        traj_dir.mkdir(parents=True, exist_ok=True)
+        frames = [
+            Atoms("Li", positions=[[0.0, 0.0, 0.0]], cell=[5, 5, 5], pbc=True),
+            Atoms("Li", positions=[[3.0, 0.0, 0.0]], cell=[5, 5, 5], pbc=True),
+        ]
+        ase_write(str(traj_dir / "md.traj"), frames, format="traj")
+
+        _, artifact = results_analysis.analyze_trajectory(
+            {"path": "mace_md", "timestep_fs": 1.0, "species": "Li", "diffusion_dimension": "x"}
+        )
+
+        summary = json.loads((tmp_path / "files" / artifact["data"]["summary_json_rel"]).read_text(encoding="utf-8"))
+        assert summary["coordinate_mode"] == "unwrapped_cartesian"
+        assert summary["positions_are_wrapped"] is False
+        assert summary["final_msd_a2"] == pytest.approx(9.0)
 
 
 def test_build_dataset_from_runs_and_calculate_al_candidates(monkeypatch, tmp_path: Path) -> None:
@@ -282,7 +303,8 @@ def test_mace_train_and_evaluate_stage_and_collect(monkeypatch, tmp_path: Path) 
             assert payload["e0s"] == "assets/e0s/e0s/e0s.json"
             assert payload["multiheads_finetuning"] is True
             assert payload["pt_train_file"] == "assets/replay/replay/replay.pt"
-            assert payload["forces_weight"] == 100.0
+            assert payload["forces_weight"] == 10.0
+            assert payload["stress_weight"] == 1.0
             assert payload["restart_latest"] is True
             assert payload["weight_decay"] == pytest.approx(1.0e-6)
             assert payload["scheduler"] == "ReduceLROnPlateau"
@@ -618,5 +640,9 @@ def test_analyze_vasp_neb_results_requires_endpoint_outcar(tmp_path: Path) -> No
             )
         for idx in (0, 4):
             (neb_dir / f"{idx:02d}").mkdir(parents=True, exist_ok=True)
-        with pytest.raises(CatMasterToolExecutionError, match="image 00: no energy parsed from OUTCAR"):
+        with pytest.raises(CatMasterToolExecutionError) as exc_info:
             results_analysis.analyze_vasp_neb_results({"result_dir": "neb"})
+        message = str(exc_info.value)
+        assert "image 00: no energy parsed from OUTCAR" in message
+        assert "VASP NEB endpoint images do not produce their own OUTCAR energies" in message
+        assert "Copy the original relax OUTCAR files into 00/OUTCAR and 04/OUTCAR" in message

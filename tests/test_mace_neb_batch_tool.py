@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from catmaster.tools.base import workspace_scope
 from catmaster.tools.execution.dpdispatcher_runner import DispatchResult
 from catmaster.tools.execution.mace_neb import _resolve_local_model, mace_neb_batch
 from catmaster.remote.gpu.mace_neb import _discover_task_dirs as remote_discover_task_dirs
+from catmaster.remote.gpu.mace_neb import _write_profile_outputs
 from catmaster.tools.registry import ToolRegistry
 
 
@@ -396,3 +399,55 @@ def test_mace_neb_batch_rejects_mixed_root_images_and_task_dirs(tmp_path: Path) 
             )
 
     assert "mixes batch task subdirectories with root-level numbered image files" in str(excinfo.value)
+
+
+def test_write_profile_outputs_does_not_call_forcefit_plot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    class _FakeAxes:
+        def plot(self, x, y, *args, **kwargs):
+            calls["plot"] = (list(x), list(y), args, kwargs)
+
+        def set_xlabel(self, value):
+            calls["xlabel"] = value
+
+        def set_ylabel(self, value):
+            calls["ylabel"] = value
+
+        def grid(self, *args, **kwargs):
+            calls["grid"] = (args, kwargs)
+
+    class _FakeFigure:
+        def tight_layout(self):
+            calls["tight_layout"] = True
+
+        def savefig(self, path):
+            calls["savefig"] = str(path)
+
+    fake_pyplot = types.SimpleNamespace(
+        subplots=lambda **kwargs: (_FakeFigure(), _FakeAxes()),
+        close=lambda fig: calls.setdefault("closed", True),
+    )
+    fake_matplotlib = types.SimpleNamespace(pyplot=fake_pyplot)
+    monkeypatch.setitem(sys.modules, "matplotlib", fake_matplotlib)
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", fake_pyplot)
+
+    class _ForceFit:
+        def plot(self, ax=None):
+            raise AssertionError("forcefit.plot should not be called")
+
+    rows = [
+        {"image_index": 0, "path_A": 0.0, "energy_eV": -1.0, "relative_energy_eV": 0.0, "max_force_eV_per_A": 0.0, "rms_force_eV_per_A": 0.0},
+        {"image_index": 1, "path_A": 0.8, "energy_eV": -0.8, "relative_energy_eV": 0.2, "max_force_eV_per_A": 0.1, "rms_force_eV_per_A": 0.1},
+        {"image_index": 2, "path_A": 1.6, "energy_eV": -0.9, "relative_energy_eV": 0.1, "max_force_eV_per_A": 0.1, "rms_force_eV_per_A": 0.1},
+    ]
+    energies_csv = tmp_path / "image_energies.csv"
+    profile_png = tmp_path / "profile.png"
+
+    _write_profile_outputs(rows=rows, forcefit=_ForceFit(), energies_csv=energies_csv, profile_png=profile_png)
+
+    assert energies_csv.is_file()
+    assert calls["plot"][0] == [0.0, 0.8, 1.6]
+    assert calls["plot"][1] == [0.0, 0.2, 0.1]
+    assert calls["xlabel"] == "Reaction coordinate (A)"
+    assert calls["ylabel"] == "Relative energy (eV)"
