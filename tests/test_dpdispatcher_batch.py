@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Demonstrate batch tools for DPDispatcher:
-- vasp_execute_batch on prepared VASP input subdirectories
-- mace_relax_batch on a directory of structure files
+Demonstrate generic remote submission tools for DPDispatcher:
+- remote_submission_batch with task_name=vasp_execute on prepared VASP stage subdirectories
+- remote_submission_batch with task_name=mace_relax_dir on prepared MACE stage subdirectories
 
 Usage:
   python tests/test_dpdispatcher_batch.py --run   # actually submit
@@ -16,7 +16,7 @@ from pathlib import Path
 from pprint import pprint
 
 from catmaster.tools.base import resolve_workspace_path
-from catmaster.tools.execution import vasp_execute_batch, mace_relax_batch
+from catmaster.tools.execution import remote_submission_batch
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "tests" / "assets"
@@ -42,12 +42,15 @@ def stage_vasp_inputs(root: Path) -> Path:
 
 
 def stage_mace_structures(root: Path) -> Path:
-    mace_root = root / "mace_inputs"
+    mace_root = root / "mace_stage"
     if mace_root.exists():
         shutil.rmtree(mace_root)
     mace_root.mkdir(parents=True, exist_ok=True)
-    (mace_root / "CO.vasp").write_bytes((ASSETS / "CO_VASP_inputs" / "POSCAR").read_bytes())
-    (mace_root / "O2.vasp").write_bytes((ASSETS / "O2_VASP_inputs" / "POSCAR").read_bytes())
+    for name in ("CO", "O2"):
+        task_dir = mace_root / name
+        input_dir = task_dir / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        (input_dir / f"{name}.vasp").write_bytes((ASSETS / f"{name}_VASP_inputs" / "POSCAR").read_bytes())
     return mace_root
 
 
@@ -78,9 +81,9 @@ def main() -> None:
         vasp_root = stage_vasp_inputs(workspace)
         vasp_output = workspace / "vasp_outputs"
         vasp_payload = {
-            "input_dir": str(vasp_root),
-            "output_dir": str(vasp_output),
-            "check_interval": 60,
+            "work_dir": str(vasp_root),
+            "task_name": "vasp_execute",
+            "config": {"check_interval": 60},
         }
         print("\nVASP Batch Payload:")
         pprint(vasp_payload)
@@ -89,14 +92,16 @@ def main() -> None:
         mace_root = stage_mace_structures(workspace)
         mace_output = workspace / "mace_outputs"
         mace_payload = {
-            "input_dir": str(mace_root),
-            "output_root": str(mace_output),
-            "fmax": 0.05,
-            "maxsteps": 300,
-            "model": "mh-1",
-            "head": "omat_pbe",
-            "relax_lattice": args.mace_relax_lattice,
-            "check_interval": 10,
+            "work_dir": str(mace_root),
+            "task_name": "mace_relax_dir",
+            "params": {
+                "fmax": 0.05,
+                "maxsteps": 300,
+                "model": "mh-1",
+                "head": "omat_pbe",
+                "relax_lattice": args.mace_relax_lattice,
+            },
+            "config": {"check_interval": 10},
         }
         print("\nMACE Batch Payload:")
         pprint(mace_payload)
@@ -107,13 +112,13 @@ def main() -> None:
 
     if vasp_payload:
         print("\nSubmitting VASP batch...")
-        res_vasp = vasp_execute_batch(vasp_payload)
+        res_vasp = remote_submission_batch(vasp_payload)
         print("VASP batch result:")
         pprint(res_vasp)
 
     if mace_payload:
         print("\nSubmitting MACE batch...")
-        res_mace = mace_relax_batch(mace_payload)
+        res_mace = remote_submission_batch(mace_payload)
         print("MACE batch result:")
         pprint(res_mace)
 

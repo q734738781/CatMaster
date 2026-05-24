@@ -64,12 +64,15 @@ _ENTRYPOINT_ALIASES = {
     "literature": "literature_review",
 }
 
+_REMOTE_EXECUTION_TOOL_ALLOWLIST = {
+    "remote_submission",
+    "remote_submission_batch",
+    "get_avail_remote_task",
+    "get_avail_resources",
+}
 _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "create_molecule_from_smiles",
-    "mace_neb_batch",
-    "mace_relax_batch",
-    "mace_md_batch",
-    "mace_sp_batch",
+    *_REMOTE_EXECUTION_TOOL_ALLOWLIST,
     "vasp_prepare",
     "vasp_band_prepare",
     "build_slab",
@@ -95,7 +98,6 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "generate_phonon_displacements",
     "vasp_neb_prepare",
     "vasp_dimer_prepare",
-    "vasp_execute_batch",
     "mp_search_materials",
     "mp_download_structure",
     "identify_structure_fragments",
@@ -107,27 +109,24 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "export_builtin_tool_source",
 }
 _ML_WORKER_TOOL_ALLOWLIST: set[str] = {
+    *_REMOTE_EXECUTION_TOOL_ALLOWLIST,
     "build_dataset_from_runs",
-    "mace_train",
-    "mace_evaluate",
     "calculate_al_candidates",
     "export_builtin_tool_source",
 }
 _ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
+    *_REMOTE_EXECUTION_TOOL_ALLOWLIST,
     "create_molecule_from_smiles",
     "enumerate_molecular_conformers",
     "filter_conformer_ensemble",
     "extract_optimized_molecules",
     "identify_structure_fragments",
-    "crest_conformer_search",
-    "xtb_run_batch",
     "analyze_xtb_results",
     "orca_prepare",
     "orca_scan_prepare",
     "orca_optts_prepare",
     "orca_nebts_prepare",
     "orca_irc_prepare",
-    "orca_execute_batch",
     "analyze_orca_results",
     "export_builtin_tool_source",
 }
@@ -912,7 +911,8 @@ class SpecialistRunner:
                     execution_contract=self._execution_capability_contract(audience="materials_worker")
                 ),
                 tools=self._augment_with_default_autonomous_tools(
-                    self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST),
+                    self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST, audience="materials_worker"),
+                    audience="materials_worker",
                 ),
                 skills=[
                     self._skills_group_virtual_path("materials"),
@@ -928,7 +928,8 @@ class SpecialistRunner:
                     execution_contract=self._execution_capability_contract(audience="ml_worker")
                 ),
                 tools=self._augment_with_default_autonomous_tools(
-                    self._named_tools(_ML_WORKER_TOOL_ALLOWLIST),
+                    self._named_tools(_ML_WORKER_TOOL_ALLOWLIST, audience="ml_worker"),
+                    audience="ml_worker",
                 ),
                 skills=[
                     self._skills_group_virtual_path("machine_learning"),
@@ -944,7 +945,8 @@ class SpecialistRunner:
                     execution_contract=self._execution_capability_contract(audience="orca_xtb_worker")
                 ),
                 tools=self._augment_with_default_autonomous_tools(
-                    self._named_tools(_ORCA_XTB_WORKER_TOOL_ALLOWLIST),
+                    self._named_tools(_ORCA_XTB_WORKER_TOOL_ALLOWLIST, audience="orca_xtb_worker"),
+                    audience="orca_xtb_worker",
                 ),
                 skills=[
                     self._skills_group_virtual_path("quantum_chemistry"),
@@ -1251,7 +1253,7 @@ class SpecialistRunner:
             self._named_tools(requested),
         )
 
-    def _named_tools(self, requested: set[str] | list[str] | tuple[str, ...]) -> list[Any]:
+    def _named_tools(self, requested: set[str] | list[str] | tuple[str, ...], *, audience: str = "") -> list[Any]:
         requested_names = {str(name).strip() for name in requested if str(name).strip()}
         all_names = set(self.registry.tools.keys())
         missing = sorted(name for name in requested_names if name not in all_names)
@@ -1260,20 +1262,30 @@ class SpecialistRunner:
                 f"Missing registered tools: {', '.join(missing)}"
             )
         allowlist = sorted(requested_names)
-        tools = self.registry.as_langchain_tools(
-            allowlist=allowlist,
-            run_dir=str(self.run_context.run_dir),
-            workspace=str(self.run_context.workspace),
-        )
+        try:
+            tools = self.registry.as_langchain_tools(
+                allowlist=allowlist,
+                run_dir=str(self.run_context.run_dir),
+                workspace=str(self.run_context.workspace),
+                audience=audience,
+            )
+        except TypeError:
+            tools = self.registry.as_langchain_tools(
+                allowlist=allowlist,
+                run_dir=str(self.run_context.run_dir),
+                workspace=str(self.run_context.workspace),
+            )
         return [self._wrap_nonfatal_tool(tool) for tool in tools]
 
     def _augment_with_default_autonomous_tools(
         self,
         tools: list[Any],
+        *,
+        audience: str = "",
     ) -> list[Any]:
         existing = {str(getattr(tool, "name", "") or "").strip() for tool in tools}
         augmented = list(tools)
-        for tool in self._named_tools(_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES):
+        for tool in self._named_tools(_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES, audience=audience):
             name = str(getattr(tool, "name", "") or "").strip()
             if name and name not in existing:
                 augmented.append(tool)
@@ -1435,31 +1447,15 @@ class SpecialistRunner:
         *,
         audience: Literal["materials_worker", "ml_worker", "orca_xtb_worker"],
     ) -> str:
-        lines = [
-            "Execution capability contract: distinguish local interactive availability from managed execution availability.",
-            "Do not infer managed-execution availability from local shell probing alone. If a registered managed execution tool in your current worker surface covers the requested computation, treat that capability as available through the platform unless that tool itself fails at runtime.",
-            "Remote-first execution rule: use a fitting registered managed execution tool before replacing the same computation with local Python, local shell, or an ad hoc wrapper.",
-            "Use local commands and Python for input preparation, lightweight inspection, glue logic, post-processing, and capabilities not covered by the worker's current managed tools.",
-            "Tool schemas and mounted skills determine which registered tool fits a task; keep prompt contracts generic instead of encoding concrete tool-name routing.",
-            "If a bounded local task needs a missing Python package, the local command capability may install it when that is the most direct way to complete the step.",
-        ]
-        if audience == "materials_worker":
-            lines.append(
-                "For periodic electronic-structure and ML-potential materials workloads, prepare inputs locally, submit through the registered managed path when it fits, then analyze returned artifacts; do not require the local shell to expose the production engine first."
-            )
-        if audience == "ml_worker":
-            lines.append(
-                "For model training, fine-tuning, and evaluation workloads, prefer registered managed training/evaluation paths when they fit; keep custom local scripts for uncovered data processing, analysis, or workflow logic."
-            )
-        if audience == "orca_xtb_worker":
-            lines.append(
-                "For molecular preoptimization, conformer search, and quantum-chemistry workloads, prefer registered managed batch/execution paths when they fit; do not block on local engine visibility when the worker's managed path is available."
-            )
-        if audience in {"materials_worker", "ml_worker", "orca_xtb_worker"}:
-            lines.append(
-                "If a managed submission fails and reports remote receipt/context fields, inspect the mounted execution guidance and receipt before retrying; account for possible live remote work before resubmission."
-            )
-        return "\n".join(lines)
+        _ = audience
+        return "\n".join(
+            [
+                "Execution capability contract: registered managed execution in this worker is authoritative; do not replace a fitting managed path with local shell/Python just because the executable is not locally visible.",
+                "Use local commands and Python for preparation, inspection, glue logic, post-processing, dependency setup for bounded local steps, and work not covered by current managed tools.",
+                "Before low-level managed remote submission, read the task catalog or mounted execution skill, prepare and verify the declared stage layout, and do not submit raw trees unless they already match it.",
+                "If managed submission fails with receipt/context fields, read the receipt and execution guidance before retrying; account for possible live remote jobs.",
+            ]
+        )
 
     def _memory_sources(self) -> list[str]:
         return ["/.deepagents/AGENTS.md", MEMORY_FILE_PATH]

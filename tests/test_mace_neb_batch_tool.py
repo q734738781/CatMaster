@@ -22,10 +22,12 @@ def _write_neb_task(task_dir: Path, count: int = 3) -> None:
         (task_dir / f"{idx:02d}.vasp").write_text("dummy\n", encoding="utf-8")
 
 
-def test_registry_contains_mace_neb_batch() -> None:
+def test_registry_replaces_mace_neb_batch_with_generic_remote_submission() -> None:
     pytest.importorskip("pymatgen")
     registry = ToolRegistry()
-    assert "mace_neb_batch" in registry.list_tools()
+    assert "mace_neb_batch" not in registry.list_tools()
+    assert "remote_submission" in registry.list_tools()
+    assert "remote_submission_batch" in registry.list_tools()
 
 
 def test_mace_neb_batch_input_default_dtype_default_and_override() -> None:

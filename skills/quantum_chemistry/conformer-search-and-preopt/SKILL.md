@@ -11,17 +11,17 @@ Use this skill when the task is a bounded molecular preoptimization episode befo
 ## Quick Start
 1. If the input is a SMILES string, build a first 3D seed with `create_molecule_from_smiles`.
 2. Use `enumerate_molecular_conformers` for an RDKit ETKDG seed ensemble.
-3. Use `crest_conformer_search` when broad conformer-rotamer exploration is needed.
+3. Use `remote_submission_batch` with `task_name="crest_run"` when broad conformer-rotamer exploration is needed.
 4. Use `filter_conformer_ensemble` to enforce one explicit energy/RMSD pruning policy.
-5. Run `xtb_run_batch(mode="opt")` on the accepted ensemble and summarize it with `analyze_xtb_results`.
+5. Run `remote_submission_batch` with `task_name="xtb_run"` and `params.mode="opt"` on the accepted ensemble, then summarize it with `analyze_xtb_results`.
 6. Use `extract_optimized_molecules` when the next stage needs a clean set of optimized XYZ files.
 
 ## Allowed tools
 - `create_molecule_from_smiles`
 - `enumerate_molecular_conformers`
 - `filter_conformer_ensemble`
-- `crest_conformer_search`
-- `xtb_run_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_xtb_results`
 - `extract_optimized_molecules`
 
@@ -44,4 +44,3 @@ Return:
 - retained ensemble directory
 - xTB summary path
 - extracted optimized-molecule directory when generated
-

@@ -22,7 +22,8 @@ Use this skill to screen surface terminations without quietly changing slab geom
 - `fix_atoms_by_indices`
 - `supercell`
 - `vasp_prepare`
-- `vasp_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 - `execute`
 

@@ -1,6 +1,6 @@
 ---
 name: vasp-batch-execution
-description: Use this skill for dispatching prepared VASP jobs with vasp_execute_batch, choosing valid input/output layouts, avoiding nested or overlapping calc trees, and collecting clean failure evidence.
+description: Use this skill for dispatching prepared VASP jobs with remote_submission or remote_submission_batch, choosing valid stage layouts, and collecting clean failure evidence.
 ---
 
 # vasp-batch-execution
@@ -9,13 +9,15 @@ description: Use this skill for dispatching prepared VASP jobs with vasp_execute
 Use this skill to submit prepared VASP jobs without corrupting the input tree or losing failure evidence.
 
 ## Quick Start
-1. Use `vasp_execute_batch`; do not use deprecated `vasp_execute`.
+1. Prepare a low-level VASP stage layout, then use `remote_submission` or `remote_submission_batch` with `task_name="vasp_execute"`.
 2. Keep `input_dir` and `output_dir` as separate trees.
 3. Do not make the input root both a calc folder and a parent of nested calc folders.
 4. After submission or failure, check `_BATCH_STATE.json` first.
 
 ## Allowed tools
-- `vasp_execute_batch`
+- `get_avail_remote_task`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 - `execute`
 
@@ -32,7 +34,7 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 - Nested calc folders under an already-valid calc root are rejected.
 
 ### 3. Submit and collect
-- The tool stages work under the output tree, injects the bootstrap script, dispatches via DPDispatcher, then collects outputs back into the final output tree.
+- The remote submission tool expects the stage directory to already be a valid VASP calculation folder, or a batch root whose first-level children are valid VASP calculation folders.
 - Treat the final output tree as a collected snapshot, not an in-place mutation of the input tree.
 
 ### 4. Triage failures minimally

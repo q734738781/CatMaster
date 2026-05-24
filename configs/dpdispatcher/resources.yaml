@@ -1,4 +1,5 @@
 vasp_cpu:
+  audiences: [materials_worker]
   machine: cpu_server_2
   number_node: 1
   cpu_per_node: 32
@@ -10,6 +11,7 @@ vasp_cpu:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
 
 vasp_cpu_neb:
+  audiences: [materials_worker]
   machine: cpu_server_2
   number_node: 1
   cpu_per_node: 96
@@ -21,6 +23,7 @@ vasp_cpu_neb:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
 
 mace_gpu:
+  audiences: [materials_worker, ml_worker]
   machine: gpu_server
   number_node: 1
   cpu_per_node: 16
@@ -31,6 +34,7 @@ mace_gpu:
     - "#SBATCH --export=ALL"
 
 xtb_cpu:
+  audiences: [orca_xtb_worker]
   machine: cpu_server_2
   number_node: 1
   cpu_per_node: 32
@@ -42,6 +46,7 @@ xtb_cpu:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
 
 crest_cpu:
+  audiences: [orca_xtb_worker]
   machine: cpu_server_2
   number_node: 1
   cpu_per_node: 32
@@ -53,6 +58,7 @@ crest_cpu:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
 
 orca_cpu:
+  audiences: [orca_xtb_worker]
   machine: cpu_server_2
   number_node: 1
   cpu_per_node: 32

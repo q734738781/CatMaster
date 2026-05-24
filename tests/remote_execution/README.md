@@ -27,7 +27,7 @@ Run only one side when isolating a failure:
 
 ```bash
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_mace_sp_remote -s -vv
-CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_vasp_prepare_then_manual_dpdispatcher_o2_sp_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_vasp_prepare_then_remote_submission_o2_sp_remote -s -vv
 ```
 
 Prerequisites:
@@ -51,14 +51,14 @@ CATMASTER_REMOTE_VASP_TASK=vasp_execute
 
 Expected coverage:
 
-- The MACE test stages one O2 POSCAR as `O2.vasp`, calls `mace_sp_batch`
-  through `ToolRegistry.as_langchain_tools(...)`, and checks `status.json`,
-  `batch_summary.json`, finite single-point energy, `summary.json`, and
-  `sp.vasp`.
+- The MACE test stages one O2 POSCAR under a low-level `mace_sp_dir` stage,
+  calls `remote_submission` through `ToolRegistry.as_langchain_tools(...)`,
+  and checks `status.json`, `batch_summary.json`, finite single-point energy,
+  `summary.json`, and `sp.vasp`.
 - The VASP test stages the O2 POSCAR as `O2.vasp`, invokes `vasp_prepare`
   through `ToolRegistry.as_langchain_tools(...)` with `preset=static` and
   `regime=gas`, asserts `INCAR/KPOINTS/POSCAR/POTCAR` were generated, copies
-  `vasp_boot.py`, manually builds a `BatchDispatchRequest`, and checks
+  then dispatches the prepared folder with `remote_submission` and checks
   `status.json` plus at least one VASP output file (`OUTCAR`, `OSZICAR`, or
   `vasprun.xml`).
 
@@ -76,8 +76,7 @@ Failure triage:
 - Non-zero `status.json.returncode` with stderr/stdout tails means the remote
   environment launched but MACE/VASP itself failed.
 
-The MACE smoke test invokes `mace_sp_batch` through the LangChain tool wrapper,
-matching the agent-visible call path. The VASP O2 smoke test manually constructs
-a `BatchDispatchRequest` from the configured VASP task template, so failures are
-useful for diagnosing local DPDispatcher configuration and remote VASP setup
-without adding extra high-level tool behavior.
+Both smoke tests invoke the generic `remote_submission` tool through the
+LangChain tool wrapper, matching the current agent-visible call path while still
+diagnosing local DPDispatcher configuration, pymatgen POTCAR setup, and remote
+MACE/VASP environments.

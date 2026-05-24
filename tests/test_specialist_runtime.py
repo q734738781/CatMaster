@@ -306,9 +306,12 @@ def test_execution_capability_contract_is_worker_scoped_and_tool_surface_bound(t
     assert set(_MATERIALS_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
     assert set(_ML_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
     assert set(_ORCA_XTB_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
-    assert "mace_neb_batch" in _MATERIALS_WORKER_TOOL_ALLOWLIST
-    assert "mace_train" in _ML_WORKER_TOOL_ALLOWLIST
-    assert "orca_execute_batch" in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
+    assert "remote_submission" in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "remote_submission" in _ML_WORKER_TOOL_ALLOWLIST
+    assert "remote_submission" in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
+    assert "mace_neb_batch" not in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "mace_train" not in _ML_WORKER_TOOL_ALLOWLIST
+    assert "orca_execute_batch" not in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
     assert "mace_neb_batch" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
     assert "mace_train" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
     assert "orca_execute_batch" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
@@ -1024,7 +1027,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Experiment completion audit: before final closeout" in agent_kwargs["system_prompt"]
         assert "Verify that each required preparation, calculation, analysis, QC check, and requested output" in agent_kwargs["system_prompt"]
         assert "If the scope is complete, state the executed scope, key evidence paths, and residual limitations" in agent_kwargs["system_prompt"]
-        assert "mace_neb_batch" in {tool.name for tool in materials_worker_kwargs["tools"]}
+        assert "remote_submission" in {tool.name for tool in materials_worker_kwargs["tools"]}
+        assert "mace_neb_batch" not in {tool.name for tool in materials_worker_kwargs["tools"]}
         assert "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
@@ -1034,7 +1038,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "obtain POTCARs through the pymatgen interface" in materials_worker_kwargs["system_prompt"]
         assert "If a handy Python package is missing for a bounded local step" in materials_worker_kwargs["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in materials_worker_kwargs["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in materials_worker_kwargs["system_prompt"]
+        assert "registered managed execution in this worker is authoritative" in materials_worker_kwargs["system_prompt"]
+        assert "Before low-level managed remote submission, read the task catalog or mounted execution skill" in materials_worker_kwargs["system_prompt"]
+        assert "If managed submission fails with receipt/context fields" in materials_worker_kwargs["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in ml_worker_kwargs["system_prompt"]
         assert "When a registered managed ML tool fits the task, prefer that managed path first." in ml_worker_kwargs["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in ml_worker_kwargs["system_prompt"]
@@ -1048,12 +1054,12 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in ml_worker_kwargs["system_prompt"]
         assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in ml_worker_kwargs["system_prompt"]
         assert "keep going locally with reusable scripts under `scripts/` instead of stopping" in ml_worker_kwargs["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in ml_worker_kwargs["system_prompt"]
+        assert "registered managed execution in this worker is authoritative" in ml_worker_kwargs["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in ml_worker_kwargs["system_prompt"]
         assert "molecular quantum-chemistry subtask" in orca_worker_kwargs["system_prompt"]
         assert "Treat xTB/CREST as the fast exploration layer" in orca_worker_kwargs["system_prompt"]
         assert "If a handy Python package is missing for a bounded local step" in orca_worker_kwargs["system_prompt"]
-        assert "Do not infer managed-execution availability from local shell probing alone." in orca_worker_kwargs["system_prompt"]
+        assert "registered managed execution in this worker is authoritative" in orca_worker_kwargs["system_prompt"]
         assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in agent_kwargs["system_prompt"]
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"

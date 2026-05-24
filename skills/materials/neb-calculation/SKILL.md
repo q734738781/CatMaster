@@ -11,13 +11,14 @@ Use this skill once the pathway inputs are already prepared and the question is 
 ## Quick Start
 1. Decide whether the task is a NEB refinement workflow or a dimer-refinement workflow.
 2. Confirm the prepared root, execution branch, climb policy, dtype, output root, and whether the run is coarse convergence or refinement.
-3. Dispatch the prepared calculation root through `vasp_execute_batch`, normally with `task_name="vasp_execute_neb"` for VASP pathway work.
-4. For MACE pathway optimization, use `mace_neb_batch`.
+3. Dispatch the prepared calculation root through `remote_submission` or `remote_submission_batch`, normally with `task_name="vasp_execute_neb"` for VASP pathway work.
+4. For MACE pathway optimization, prepare the MACE NEB stage layout and submit with `task_name="mace_neb_dir"`.
 5. Keep coarse convergence and refinement as separate episodes instead of mixing them into one opaque run root.
 
 ## Allowed tools
-- `vasp_execute_batch`
-- `mace_neb_batch`
+- `get_avail_remote_task`
+- `remote_submission`
+- `remote_submission_batch`
 
 ## Workflow
 
@@ -41,12 +42,12 @@ Use this skill once the pathway inputs are already prepared and the question is 
 - If the initial mode guess is poor, fix the mode selection rather than blindly rerunning the same dimer job.
 
 ### 4. Dispatch details for VASP pathway jobs
-- Prefer `vasp_execute_batch(task_name="vasp_execute_neb")` for NEB or dimer-style VASP runs so they use the dedicated submission preset rather than the generic VASP one.
+- Prefer `task_name="vasp_execute_neb"` for NEB or dimer-style VASP runs so they use the dedicated submission preset rather than the generic VASP one.
 - Report the prepared root, task name, and output root together.
 - Treat launch success as only one checkpoint; it does not prove the pathway is physically meaningful.
 
 ### 5. Managed MACE NEB
-- Use `mace_neb_batch` for managed MACE NEB rather than ad hoc scripts.
+- Use `task_name="mace_neb_dir"` for managed MACE NEB rather than ad hoc scripts.
 - Keep `default_dtype=float64` by default for MACE pathway optimization.
 - Use `plain` mode for a fixed image set and `autoneb` only when the workflow explicitly benefits from adaptive image insertion.
 - Keep `climb` as an explicit decision rather than an implicit default.

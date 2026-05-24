@@ -13,16 +13,16 @@ Use this skill when the task is one ensemble-aware molecular NMR episode.
 2. Use xTB to optimize and prune the ensemble before ORCA.
 3. Extract the accepted structures into a clean directory.
 4. Prepare ORCA with `task="nmr"`.
-5. Submit with `orca_execute_batch` and summarize with `analyze_orca_results`.
+5. Submit with `remote_submission` or `remote_submission_batch` using `task_name="orca_execute"` and summarize with `analyze_orca_results`.
 
 ## Allowed tools
 - `enumerate_molecular_conformers`
 - `filter_conformer_ensemble`
-- `xtb_run_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_xtb_results`
 - `extract_optimized_molecules`
 - `orca_prepare`
-- `orca_execute_batch`
 - `analyze_orca_results`
 
 ## Output Contract
@@ -30,4 +30,3 @@ Return:
 - retained conformer directory
 - ORCA NMR batch root
 - ORCA summary path
-

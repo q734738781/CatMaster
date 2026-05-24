@@ -10,13 +10,14 @@ Use this skill when the task is one ORCA molecular batch rooted in a known struc
 
 ## Quick Start
 1. Prepare the batch with `orca_prepare`.
-2. Submit with `orca_execute_batch`.
+2. Submit the prepared ORCA stage with `remote_submission` or `remote_submission_batch` using `task_name="orca_execute"`.
 3. Close the loop with `analyze_orca_results`.
 4. If a downstream stage needs only the accepted optimized geometries, collect them with `extract_optimized_molecules`.
 
 ## Allowed tools
 - `orca_prepare`
-- `orca_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_orca_results`
 - `extract_optimized_molecules`
 
@@ -37,4 +38,3 @@ Return:
 - ORCA batch root
 - ORCA summary path
 - extracted optimized-structure directory when generated
-

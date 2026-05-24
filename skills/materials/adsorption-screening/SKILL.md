@@ -20,7 +20,8 @@ Use this skill to build, run, and rank a controlled adsorption screen while pres
 - `place_adsorbate`
 - `generate_batch_adsorption_structures`
 - `vasp_prepare`
-- `vasp_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 - `vaspkit_adsorbate_thermo_correction`
 - `execute`

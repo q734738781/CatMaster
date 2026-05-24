@@ -11,14 +11,14 @@ Use this skill to prepare an MD stage, dispatch it, and summarize the resulting 
 ## Quick Start
 1. Choose whether this is a VASP MD run or a cheaper MACE MD sampling run.
 2. For VASP, prepare inputs with `vasp_prepare(preset="md", ...)` and make controls explicit through `user_incar_patch`.
-3. For MACE, dispatch with `mace_md_batch` and place MD controls inside the free-form `md_config` object.
+3. For MACE, prepare the `mace_md_dir` stage layout and submit with `remote_submission`; place MD controls in the staged params JSON.
 4. Decide what part of the trajectory is equilibration and what part is production.
 5. Analyze the collected trajectory with `analyze_trajectory`.
 
 ## Allowed tools
 - `vasp_prepare`
-- `vasp_execute_batch`
-- `mace_md_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_trajectory`
 
 ## Workflow

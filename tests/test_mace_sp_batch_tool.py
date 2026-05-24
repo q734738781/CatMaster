@@ -11,10 +11,12 @@ from catmaster.tools.execution.mace_dispatch import MaceSPBatchInput, mace_sp_ba
 from catmaster.tools.registry import ToolRegistry
 
 
-def test_registry_contains_mace_sp_batch() -> None:
+def test_registry_replaces_mace_sp_batch_with_generic_remote_submission() -> None:
     pytest.importorskip("pymatgen")
     registry = ToolRegistry()
-    assert "mace_sp_batch" in registry.list_tools()
+    assert "mace_sp_batch" not in registry.list_tools()
+    assert "remote_submission" in registry.list_tools()
+    assert "remote_submission_batch" in registry.list_tools()
 
 
 def test_mace_sp_batch_input_default_dtype_default_and_override() -> None:

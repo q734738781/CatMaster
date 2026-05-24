@@ -22,7 +22,8 @@ Use this skill to generate primitive defect/dopant candidates and screen them co
 - `insert_interstitial_at_coords`
 - `supercell`
 - `vasp_prepare`
-- `vasp_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 
 ## Workflow

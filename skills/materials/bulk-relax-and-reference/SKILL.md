@@ -12,13 +12,14 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 1. Start from one explicit bulk structure file.
 2. Run `enumerate_unique_sites` if later defect or dopant work needs group IDs.
 3. Prepare a canonical bulk relax with `vasp_prepare`.
-4. Dispatch with `vasp_execute_batch`, then summarize with `analyze_vasp_results`.
+4. Dispatch the prepared stage with `remote_submission` or `remote_submission_batch` using `task_name="vasp_execute"`, then summarize with `analyze_vasp_results`.
 5. Only after the relaxed bulk is accepted should you branch into `generate_kpath` or downstream surface/defect workflows.
 
 ## Allowed tools
 - `enumerate_unique_sites`
 - `vasp_prepare`
-- `vasp_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 - `generate_kpath`
 
@@ -34,7 +35,7 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 - Carry the same spin, `DFT+U`, dispersion, and k-point policy into every comparison built from this reference.
 
 ### 3. Separate execution from acceptance
-- Submit the prepared root with `vasp_execute_batch`.
+- Submit the prepared root after it matches the VASP remote stage layout.
 - Accept the relaxed bulk only after `analyze_vasp_results` confirms convergence and reports the final structure path.
 - When the summary includes total energies, use `E0` as the default comparison energy.
 

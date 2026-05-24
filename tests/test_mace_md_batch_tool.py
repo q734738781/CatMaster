@@ -15,11 +15,13 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 from catmaster.tools.registry import ToolRegistry
 
 
-def test_registry_contains_mace_md_batch() -> None:
+def test_registry_replaces_mace_md_batch_with_generic_remote_submission() -> None:
     pytest.importorskip("pymatgen")
     registry = ToolRegistry()
-    assert "mace_md_batch" in registry.list_tools()
-    assert "mace_md_batch" in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "mace_md_batch" not in registry.list_tools()
+    assert "mace_md_batch" not in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "remote_submission" in registry.list_tools()
+    assert "remote_submission" in _MATERIALS_WORKER_TOOL_ALLOWLIST
 
 
 def test_mace_md_batch_input_defaults_are_generic_md() -> None:

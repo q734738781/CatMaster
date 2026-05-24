@@ -56,6 +56,10 @@ class TaskConfig(BaseModel):
 
     command: str
     resources: str | None = None
+    audiences: List[str] = Field(default_factory=list)
+    description: str = ""
+    boot_script: str | None = None
+    layout_ref: str = ""
     defaults: Dict[str, object] = Field(default_factory=dict)
     task_work_path: str = "."
     forward_files: List[str] = Field(default_factory=list)
@@ -105,8 +109,20 @@ class TaskRegistry:
             raise KeyError(f"Task '{name}' not found in task configs")
         return self.tasks[name]
 
-    def list_tasks(self) -> Dict[str, TaskConfig]:
-        return dict(self.tasks)
+    def list_tasks(self, *, audience: str | None = None) -> Dict[str, TaskConfig]:
+        audience_name = str(audience or "").strip()
+        if not audience_name:
+            return dict(self.tasks)
+        return {
+            name: cfg
+            for name, cfg in self.tasks.items()
+            if not cfg.audiences or audience_name in cfg.audiences
+        }
+
+    def task_visible_to(self, name: str, *, audience: str | None = None) -> bool:
+        cfg = self.get(name)
+        audience_name = str(audience or "").strip()
+        return not audience_name or not cfg.audiences or audience_name in cfg.audiences
 
     def describe_for_llm(self) -> str:
         if not self.tasks:

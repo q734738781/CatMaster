@@ -9,13 +9,14 @@ description: Use this skill for bounded xTB screening, optimization, Hessian che
 Use this skill when xTB is the main execution layer for one bounded molecular screening episode.
 
 ## Quick Start
-1. Run `xtb_run_batch` in the cheapest mode that can answer the current decision.
+1. Prepare the xTB stage layout and run `remote_submission` or `remote_submission_batch` with `task_name="xtb_run"` in the cheapest mode that can answer the current decision.
 2. Use `analyze_xtb_results` immediately after collection.
 3. If the task is ensemble ranking, prune with `filter_conformer_ensemble`.
 4. Extract cleaned structures with `extract_optimized_molecules` before handing off downstream.
 
 ## Allowed tools
-- `xtb_run_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_xtb_results`
 - `filter_conformer_ensemble`
 - `extract_optimized_molecules`
@@ -31,4 +32,3 @@ Return:
 - xTB result root
 - xTB summary path
 - retained structure directory if pruning was applied
-

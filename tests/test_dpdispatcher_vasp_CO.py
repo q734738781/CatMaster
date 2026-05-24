@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DPDispatcher demo: VASP relaxation of CO.
+DPDispatcher demo: VASP relaxation of CO through generic remote_submission_batch.
 - Uses prepared inputs from tests/assets/CO_VASP_inputs
 - Dry-run by default; add --run to actually submit
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 from pprint import pprint
 
 from catmaster.tools.base import resolve_workspace_path
-from catmaster.tools.execution import vasp_execute_batch
+from catmaster.tools.execution import remote_submission_batch
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "tests" / "assets"
@@ -40,9 +40,9 @@ def main() -> None:
     output_root = workspace / "vasp_outputs"
 
     payload = {
-        "input_dir": str(input_root),
-        "output_dir": str(output_root),
-        "check_interval": args.check_interval,
+        "work_dir": str(input_root),
+        "task_name": "vasp_execute",
+        "config": {"check_interval": args.check_interval},
     }
 
     print("Planned payload (CO VASP batch):")
@@ -53,7 +53,7 @@ def main() -> None:
         print("Dry-run only. Use --run to submit via DPDispatcher.")
         return
 
-    result = vasp_execute_batch(payload)
+    result = remote_submission_batch(payload)
     print("\nSubmission result:")
     pprint(result)
     print("\nOutput root:", output_root)

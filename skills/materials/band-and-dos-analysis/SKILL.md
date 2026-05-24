@@ -14,7 +14,7 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 3. For bulk DOS with a suitable 3D Gamma-centered mesh, prepare a DOS stage with `vasp_prepare(preset="dos", ...)`; add `dos_charge_density_path` only when you are intentionally doing the VASP Wiki `ICHARG=11` non-self-consistent branch.
 4. For slab, gas, unknown-gap, or tetrahedron-unsuitable meshes, override the DOS starter template with `user_incar_patch`, typically `ISMEAR=0`, `SIGMA=0.03-0.1`, and optionally `EFERMI=MIDGAP` for clearly gapped or unknown-gap systems.
 5. For bands, generate a recommended line-mode `KPOINTS` with `generate_kpath` and assemble the band job with `vasp_band_prepare`.
-6. Dispatch the resulting VASP jobs with `vasp_execute_batch`.
+6. Dispatch the resulting VASP stages with `remote_submission` or `remote_submission_batch` using `task_name="vasp_execute"`.
 7. Use `analyze_vasp_results` to summarize convergence and parsed bandgap evidence.
 8. If you also need a single total-energy value from that summary, use `E0` by default.
 
@@ -22,7 +22,8 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 - `generate_kpath`
 - `vasp_prepare`
 - `vasp_band_prepare`
-- `vasp_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 - `execute`
 

@@ -18,7 +18,8 @@ Use this skill to generate finite-displacement supercells and collect force calc
 ## Allowed tools
 - `generate_phonon_displacements`
 - `vasp_prepare`
-- `vasp_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 
 ## Workflow

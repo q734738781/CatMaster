@@ -1,4 +1,8 @@
 vasp_execute:
+  audiences: [materials_worker]
+  description: "Run one prepared VASP calculation stage."
+  boot_script: "catmaster/remote/cpu/vasp_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute"
   resources: vasp_cpu
   command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
   forward_files:
@@ -9,6 +13,10 @@ vasp_execute:
   task_work_path: "."
 
 vasp_execute_neb:
+  audiences: [materials_worker]
+  description: "Run one prepared VASP NEB/dimer-style calculation stage with the larger VASP resource preset."
+  boot_script: "catmaster/remote/cpu/vasp_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute_neb"
   resources: vasp_cpu_neb
   command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
   forward_files:
@@ -19,8 +27,22 @@ vasp_execute_neb:
   task_work_path: "."
 
 mace_relax_dir:
+  audiences: [materials_worker]
+  description: "Run MACE relaxations for structures staged under input/."
+  boot_script: "catmaster/remote/gpu/mace_relax.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_relax_dir"
   resources: mace_gpu
   command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype}"
+  defaults:
+    input_path: input
+    output_root: output
+    fmax: 0.02
+    maxsteps: 500
+    model: mh-1
+    head: omat_pbe
+    dispersion: false
+    relax_lattice: false
+    default_dtype: float64
   forward_files:
     - "input"
     - "task_script/mace_relax.py"
@@ -29,8 +51,19 @@ mace_relax_dir:
   task_work_path: "."
 
 mace_sp_dir:
+  audiences: [materials_worker]
+  description: "Run MACE single-point calculations for structures staged under input/."
+  boot_script: "catmaster/remote/gpu/mace_sp.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_sp_dir"
   resources: mace_gpu
   command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
+  defaults:
+    input_path: input
+    output_root: output
+    model: mh-1
+    head: omat_pbe
+    dispersion: false
+    default_dtype: float64
   forward_files:
     - "input"
     - "task_script/mace_sp.py"
@@ -39,8 +72,16 @@ mace_sp_dir:
   task_work_path: "."
 
 mace_md_dir:
+  audiences: [materials_worker]
+  description: "Run MACE MD for structures staged under input/."
+  boot_script: "catmaster/remote/gpu/mace_md.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_md_dir"
   resources: mace_gpu
   command: "python task_script/mace_md.py --input {input_path} --output_root {output_root} --params {params_path}"
+  defaults:
+    input_path: input
+    output_root: output
+    params_path: params/md_params.json
   forward_files:
     - "input"
     - "params"
@@ -50,8 +91,27 @@ mace_md_dir:
   task_work_path: "."
 
 mace_neb_dir:
+  audiences: [materials_worker]
+  description: "Run MACE NEB or AutoNEB for prepared path task directories staged under input/."
+  boot_script: "catmaster/remote/gpu/mace_neb.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_neb_dir"
   resources: mace_gpu
   command: "python task_script/mace_neb.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
+  defaults:
+    input_path: input
+    output_root: output
+    fmax: 0.05
+    steps: 300
+    mode: plain
+    autoneb_target_images: 0
+    autoneb_n_simul: 0
+    autoneb_space_energy_ratio: 0.5
+    autoneb_interpolate_method: idpp
+    climb: false
+    model: mh-1
+    head: omat_pbe
+    dispersion: false
+    default_dtype: float64
   forward_files:
     - "input"
     - "task_script/mace_neb.py"
@@ -60,8 +120,16 @@ mace_neb_dir:
   task_work_path: "."
 
 mace_train_dir:
+  audiences: [ml_worker]
+  description: "Run MACE training or fine-tuning from staged dataset/ and params/train_params.json."
+  boot_script: "catmaster/remote/gpu/mace_train.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_train_dir"
   resources: mace_gpu
   command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  defaults:
+    dataset_root: dataset
+    output_root: output
+    params_path: params/train_params.json
   forward_files:
     - "dataset"
     - "params"
@@ -71,8 +139,16 @@ mace_train_dir:
   task_work_path: "."
 
 mace_eval_dir:
+  audiences: [ml_worker]
+  description: "Run MACE evaluation from staged dataset/ and params/eval_params.json."
+  boot_script: "catmaster/remote/gpu/mace_evaluate.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_eval_dir"
   resources: mace_gpu
   command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  defaults:
+    dataset_root: dataset
+    output_root: output
+    params_path: params/eval_params.json
   forward_files:
     - "dataset"
     - "params"
@@ -82,8 +158,25 @@ mace_eval_dir:
   task_work_path: "."
 
 xtb_run:
+  audiences: [orca_xtb_worker]
+  description: "Run xTB for a staged molecular input file."
+  boot_script: "catmaster/remote/cpu/xtb_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#xtb_run"
   resources: xtb_cpu
   command: "python task_script/xtb_boot.py --input {input_name} --mode {mode} --gfn {gfn} --solvent-model {solvent_model} --solvent {solvent} --charge {charge} --uhf {uhf} --opt-level {opt_level} --temperature {temperature} --md-time-ps {md_time_ps} --timestep-fs {timestep_fs} --md-dump-fs {md_dump_fs}"
+  defaults:
+    input_name: input.xyz
+    mode: opt
+    gfn: gfn2
+    solvent_model: none
+    solvent: __none__
+    charge: 0
+    uhf: 0
+    opt_level: normal
+    temperature: 298.15
+    md_time_ps: 5.0
+    timestep_fs: 1.0
+    md_dump_fs: 50.0
   forward_files:
     - "*"
     - "task_script/xtb_boot.py"
@@ -92,8 +185,24 @@ xtb_run:
   task_work_path: "."
 
 crest_run:
+  audiences: [orca_xtb_worker]
+  description: "Run CREST conformer search for a staged molecular input file."
+  boot_script: "catmaster/remote/cpu/crest_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#crest_run"
   resources: crest_cpu
   command: "python task_script/crest_boot.py --input {input_name} --mode {mode} --method {method} --ewin {ewin} --rthr {rthr} --ethr {ethr} --bthr {bthr} --charge {charge} --uhf {uhf} --solvent {solvent} --constraint-file {constraint_file}"
+  defaults:
+    input_name: input.xyz
+    mode: standard
+    method: gfn2
+    ewin: 6.0
+    rthr: 0.125
+    ethr: 0.05
+    bthr: 0.01
+    charge: 0
+    uhf: 0
+    solvent: __none__
+    constraint_file: __none__
   forward_files:
     - "*"
     - "task_script/crest_boot.py"
@@ -102,6 +211,10 @@ crest_run:
   task_work_path: "."
 
 orca_execute:
+  audiences: [orca_xtb_worker]
+  description: "Run one prepared ORCA stage containing job.inp."
+  boot_script: "catmaster/remote/cpu/orca_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#orca_execute"
   resources: orca_cpu
   command: "python task_script/orca_boot.py --input job.inp"
   forward_files:

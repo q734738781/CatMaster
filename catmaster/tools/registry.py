@@ -103,24 +103,16 @@ class ToolRegistry:
         
         # Execution tools  
         from catmaster.tools.execution import (
-            mace_relax_batch,
-            mace_sp_batch,
-            mace_md_batch,
-            mace_neb_batch,
-            vasp_execute_batch,
-            xtb_run_batch,
-            crest_conformer_search,
-            orca_execute_batch,
+            get_avail_remote_task,
+            get_avail_resources,
+            remote_submission,
+            remote_submission_batch,
         )
         from catmaster.tools.execution import (
-            MaceRelaxBatchInput,
-            MaceSPBatchInput,
-            MaceMDBatchInput,
-            MaceNebBatchInput,
-            VaspExecuteBatchInput,
-            XtbRunBatchInput,
-            CrestConformerSearchInput,
-            OrcaExecuteBatchInput,
+            GetAvailRemoteTaskInput,
+            GetAvailResourcesInput,
+            RemoteSubmissionBatchInput,
+            RemoteSubmissionInput,
         )
         from catmaster.tools.analysis import (
             compile_text,
@@ -155,12 +147,8 @@ class ToolRegistry:
         from catmaster.tools.machine_learning import (
             BuildDatasetFromRunsInput,
             CalculateALCandidatesInput,
-            MaceEvaluateInput,
-            MaceTrainInput,
             build_dataset_from_runs,
             calculate_al_candidates,
-            mace_evaluate,
-            mace_train,
         )
         from catmaster.runtime.literature import (
             FindInPageInput,
@@ -210,10 +198,10 @@ class ToolRegistry:
         self.register_tool("orca_optts_prepare", orca_optts_prepare, OrcaOptTSPrepareInput)
         self.register_tool("orca_nebts_prepare", orca_nebts_prepare, OrcaNebTSPrepareInput)
         self.register_tool("orca_irc_prepare", orca_irc_prepare, OrcaIRCPrepareInput)
-        self.register_tool("mace_relax_batch", mace_relax_batch, MaceRelaxBatchInput)
-        self.register_tool("mace_sp_batch", mace_sp_batch, MaceSPBatchInput)
-        self.register_tool("mace_md_batch", mace_md_batch, MaceMDBatchInput)
-        self.register_tool("mace_neb_batch", mace_neb_batch, MaceNebBatchInput)
+        self.register_tool("remote_submission", remote_submission, RemoteSubmissionInput)
+        self.register_tool("remote_submission_batch", remote_submission_batch, RemoteSubmissionBatchInput)
+        self.register_tool("get_avail_remote_task", get_avail_remote_task, GetAvailRemoteTaskInput)
+        self.register_tool("get_avail_resources", get_avail_resources, GetAvailResourcesInput)
         self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
         self.register_tool("vasp_band_prepare", vasp_band_prepare, VaspBandPrepareInput)
         self.register_tool("build_slab", build_slab, SlabBuildInput)
@@ -239,10 +227,6 @@ class ToolRegistry:
         self.register_tool("make_dimer_mode_from_neb", make_dimer_mode_from_neb, DimerModeFromNebInput)
         self.register_tool("make_dimer_mode_from_mace", make_dimer_mode_from_mace, DimerModeFromMaceInput)
         self.register_tool("mace_analyze_frequencies", mace_analyze_frequencies, MaceAnalyzeFrequenciesInput)
-        self.register_tool("vasp_execute_batch", vasp_execute_batch, VaspExecuteBatchInput)
-        self.register_tool("xtb_run_batch", xtb_run_batch, XtbRunBatchInput)
-        self.register_tool("crest_conformer_search", crest_conformer_search, CrestConformerSearchInput)
-        self.register_tool("orca_execute_batch", orca_execute_batch, OrcaExecuteBatchInput)
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
@@ -281,8 +265,6 @@ class ToolRegistry:
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
         self.register_tool("export_builtin_tool_source", export_builtin_tool_source, ExportBuiltinToolSourceInput)
         self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
-        self.register_tool("mace_train", mace_train, MaceTrainInput)
-        self.register_tool("mace_evaluate", mace_evaluate, MaceEvaluateInput)
         self.register_tool("calculate_al_candidates", calculate_al_candidates, CalculateALCandidatesInput)
     
     def register_tool(
@@ -421,6 +403,7 @@ class ToolRegistry:
         allowlist: Optional[list[str]] = None,
         run_dir: Optional[str] = None,
         workspace: Optional[str] = None,
+        audience: Optional[str] = None,
     ) -> list[StructuredTool]:
         """Convert registered tools to LangChain StructuredTool instances.
 
@@ -449,6 +432,7 @@ class ToolRegistry:
                 input_model=info["input_model"],
                 run_dir=run_dir,
                 workspace=workspace,
+                audience=audience,
             ))
         return tools
 
@@ -460,6 +444,7 @@ def _make_langchain_tool(
     coroutine: Callable[..., Awaitable[Any]] | None = None,
     run_dir: Optional[str] = None,
     workspace: Optional[str] = None,
+    audience: Optional[str] = None,
 ) -> StructuredTool:
     """Wrap CatMaster ``func/coroutine(payload)`` as a LangChain StructuredTool."""
     if func is None and coroutine is None:
@@ -467,6 +452,7 @@ def _make_langchain_tool(
 
     resolved_workspace = workspace
     resolved_run_dir = (run_dir or "").strip()
+    resolved_audience = (audience or "").strip()
 
     def _runtime_scope(runtime: ToolRuntime | None) -> tuple[str, str]:
         toolcall_key = str(getattr(runtime, "tool_call_id", "") or "").strip()
@@ -489,7 +475,7 @@ def _make_langchain_tool(
             raise NotImplementedError(f"Tool {name} does not support sync invocation.")
         toolcall_key, runtime_run_dir = _runtime_scope(runtime)
 
-        with toolcall_context(toolcall_key, run_dir=runtime_run_dir):
+        with toolcall_context(toolcall_key, run_dir=runtime_run_dir, audience=resolved_audience):
             if resolved_workspace:
                 with workspace_scope(resolved_workspace):
                     result = func(kwargs)
@@ -508,7 +494,7 @@ def _make_langchain_tool(
             raise NotImplementedError(f"Tool {name} does not support async invocation.")
         toolcall_key, runtime_run_dir = _runtime_scope(runtime)
 
-        with toolcall_context(toolcall_key, run_dir=runtime_run_dir):
+        with toolcall_context(toolcall_key, run_dir=runtime_run_dir, audience=resolved_audience):
             if resolved_workspace:
                 with workspace_scope(resolved_workspace):
                     result = await coroutine(kwargs)

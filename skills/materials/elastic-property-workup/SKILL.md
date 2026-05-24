@@ -18,7 +18,8 @@ Use this skill to build a finite-strain screening set and collect the calculatio
 ## Allowed tools
 - `generate_strained_structures`
 - `vasp_prepare`
-- `vasp_execute_batch`
+- `remote_submission`
+- `remote_submission_batch`
 - `analyze_vasp_results`
 
 ## Workflow

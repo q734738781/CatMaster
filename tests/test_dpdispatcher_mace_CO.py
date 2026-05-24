@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DPDispatcher demo: MACE relaxation of CO.
+DPDispatcher demo: MACE relaxation of CO through generic remote_submission.
 - Starts from tests/assets/CO_VASP_inputs/POSCAR
 - Dry-run by default; add --run to actually submit
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 from pprint import pprint
 
 from catmaster.tools.base import resolve_workspace_path
-from catmaster.tools.execution import mace_relax_batch
+from catmaster.tools.execution import remote_submission
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "tests" / "assets"
@@ -28,12 +28,13 @@ def _parse_bool(text: str) -> bool:
 
 def stage_structure(workspace: Path) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
-    input_root = workspace / "mace_inputs"
-    if input_root.exists():
-        shutil.rmtree(input_root)
+    stage = workspace / "mace_stage"
+    if stage.exists():
+        shutil.rmtree(stage)
+    input_root = stage / "input"
     input_root.mkdir(parents=True, exist_ok=True)
     (input_root / "CO.vasp").write_bytes((ASSETS / "CO_VASP_inputs" / "POSCAR").read_bytes())
-    return input_root
+    return stage
 
 
 def main() -> None:
@@ -54,18 +55,19 @@ def main() -> None:
     args = parser.parse_args()
 
     workspace = resolve_workspace_path(args.workspace)
-    input_root = stage_structure(workspace)
-    output_root = workspace / "mace_outputs"
+    stage = stage_structure(workspace)
 
     payload = {
-        "input_dir": str(input_root),
-        "output_root": str(output_root),
-        "fmax": args.fmax,
-        "maxsteps": args.maxsteps,
-        "model": args.model,
-        "head": args.head,
-        "relax_lattice": args.relax_lattice,
-        "check_interval": args.check_interval,
+        "work_dir": str(stage),
+        "task_name": "mace_relax_dir",
+        "params": {
+            "fmax": args.fmax,
+            "maxsteps": args.maxsteps,
+            "model": args.model,
+            "head": args.head,
+            "relax_lattice": args.relax_lattice,
+        },
+        "config": {"check_interval": args.check_interval},
     }
 
     print("Planned payload (CO MACE batch):")
@@ -76,10 +78,10 @@ def main() -> None:
         print("Dry-run only. Use --run to submit via DPDispatcher.")
         return
 
-    result = mace_relax_batch(payload)
+    result = remote_submission(payload)
     print("\nSubmission result:")
     pprint(result)
-    print("\nOutput root:", output_root)
+    print("\nStage root:", stage)
 
 
 if __name__ == "__main__":
