@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 import importlib
+import json
 
 import pytest
 
@@ -47,14 +48,29 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "mace_train_dir" not in task_names
     first_with_resource = next(item for item in artifact["data"]["tasks"] if item.get("resources"))
     resource = first_with_resource["resources"]
+    assert "machine" not in resource
+    assert "batch_type" not in resource
+    assert "context_type" not in resource
+    assert "queue_name" not in resource
+    assert "custom_flags" not in resource
     assert "remote_root" not in resource
     assert "remote_profile" not in resource
     assert "key_filename" not in resource
 
+    with toolcall_context("catalog", audience="materials_worker"):
+        _, artifact = get_avail_resources({})
+    material_resource_names = {item["resources"] for item in artifact["data"]["resources"]}
+    assert material_resource_names == {"general_cpu", "general_gpu"}
+    general_cpu = next(item for item in artifact["data"]["resources"] if item["resources"] == "general_cpu")
+    assert general_cpu["kind"] == "general_cpu"
+    assert general_cpu["default_for_custom_boot"] is True
+    assert "machine" not in general_cpu
+    assert "custom_flags" not in general_cpu
+
     with toolcall_context("catalog", audience="orca_xtb_worker"):
         _, artifact = get_avail_resources({})
     resource_names = {item["resources"] for item in artifact["data"]["resources"]}
-    assert resource_names == {"crest_cpu", "orca_cpu", "xtb_cpu"}
+    assert resource_names == {"general_cpu"}
 
 
 def test_remote_task_catalog_references_existing_boot_scripts_and_layout_sections() -> None:
@@ -66,6 +82,9 @@ def test_remote_task_catalog_references_existing_boot_scripts_and_layout_section
     assert registry.tasks
     for task_name, cfg in registry.list_tasks().items():
         assert cfg.resources in register.resources
+        if cfg.requires:
+            capabilities = set(register.get_resources(str(cfg.resources)).get("capabilities") or [])
+            assert set(cfg.requires).issubset(capabilities), task_name
         assert cfg.boot_script, f"{task_name} should declare a boot_script"
         assert (repo_root / str(cfg.boot_script)).is_file(), task_name
         assert cfg.layout_ref, f"{task_name} should declare layout_ref"
@@ -282,6 +301,41 @@ def test_remote_submission_failure_exposes_receipt_context_in_message_and_artifa
     assert (stage / "partial.txt").read_text(encoding="utf-8") == "partial"
 
 
+def test_remote_submission_pre_dispatch_failure_writes_attempt_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = (req, register, config_path)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage"
+        stage.mkdir(parents=True)
+        with toolcall_context("submit", audience="materials_worker"):
+            with pytest.raises(CatMasterToolExecutionError) as excinfo:
+                remote_submission({"work_dir": "stage", "task_name": "vasp_execute"})
+
+        message = str(excinfo.value)
+        data = excinfo.value.artifact["data"]
+        assert "remote_context_id=" in message
+        assert "receipt_rel=" in message
+        assert data["submission_hash"] == ""
+        assert data["jobs"] == []
+
+        receipt_path = tmp_path / "files" / data["receipt_rel"]
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["context_id"] == data["remote_context_id"]
+        assert receipt["submission_hash"] == ""
+        assert receipt["jobs"] == []
+        assert receipt["task_name"] == "vasp_execute"
+        assert receipt["work_dir_rel"] == "stage"
+        assert receipt["resources"] == "vasp_cpu"
+        assert "timed out" in receipt["dispatch_error"]
+
+
 def test_remote_submission_parses_boolean_controls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -315,7 +369,7 @@ def test_remote_submission_parses_boolean_controls(monkeypatch: pytest.MonkeyPat
     assert captured["check_interval"] == 9
 
 
-def test_custom_boot_script_can_build_resource_from_visible_machine(
+def test_custom_boot_script_can_build_resource_from_machine_without_worker_audience(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -343,7 +397,7 @@ def test_custom_boot_script_can_build_resource_from_visible_machine(
         stage.mkdir(parents=True)
         script = files_root / "run_custom.sh"
         script.write_text("echo custom\n", encoding="utf-8")
-        with toolcall_context("submit", audience="materials_worker"):
+        with toolcall_context("submit"):
             remote_submission(
                 {
                     "work_dir": "stage",
@@ -390,7 +444,7 @@ def test_task_submission_can_override_machine_resource_template(
     with workspace_scope(tmp_path):
         stage = tmp_path / "files" / "neb_stage"
         stage.mkdir(parents=True)
-        with toolcall_context("submit", audience="materials_worker"):
+        with toolcall_context("submit"):
             remote_submission(
                 {
                     "work_dir": "neb_stage",
@@ -406,12 +460,12 @@ def test_task_submission_can_override_machine_resource_template(
     assert captured["resource_cfg"]["group_size"] == 5
 
 
-def test_custom_boot_script_rejects_machine_outside_worker_audience(tmp_path: Path) -> None:
+def test_worker_submission_rejects_machine_override(tmp_path: Path) -> None:
     with workspace_scope(tmp_path):
         files_root = tmp_path / "files"
         (files_root / "stage").mkdir(parents=True)
         (files_root / "run_custom.sh").write_text("echo custom\n", encoding="utf-8")
-        with toolcall_context("submit", audience="ml_worker"):
+        with toolcall_context("submit", audience="materials_worker"):
             with pytest.raises(CatMasterToolExecutionError) as excinfo:
                 remote_submission(
                     {
@@ -420,18 +474,125 @@ def test_custom_boot_script_rejects_machine_outside_worker_audience(tmp_path: Pa
                         "config": {"machine": "cpu_server_2", "cpu_per_node": 4},
                     }
                 )
-    assert "Remote machine 'cpu_server_2' is not visible to audience 'ml_worker'" in str(excinfo.value)
+    assert "config.machine is not available to worker tools" in str(excinfo.value)
 
 
-def test_custom_boot_script_requires_resources_or_machine(tmp_path: Path) -> None:
+def test_worker_registered_task_rejects_resource_card_swap(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage"
+        stage.mkdir(parents=True)
+        with toolcall_context("submit", audience="materials_worker"):
+            with pytest.raises(CatMasterToolExecutionError) as excinfo:
+                remote_submission(
+                    {
+                        "work_dir": "stage",
+                        "task_name": "vasp_execute",
+                        "config": {"resources": "general_cpu"},
+                    }
+                )
+    assert "task-bound resource card" in str(excinfo.value)
+
+
+def test_worker_custom_boot_rejects_domain_resource_card(tmp_path: Path) -> None:
     with workspace_scope(tmp_path):
         files_root = tmp_path / "files"
         (files_root / "stage").mkdir(parents=True)
         (files_root / "run_custom.sh").write_text("echo custom\n", encoding="utf-8")
         with toolcall_context("submit", audience="materials_worker"):
             with pytest.raises(CatMasterToolExecutionError) as excinfo:
-                remote_submission({"work_dir": "stage", "boot_script": "run_custom.sh"})
-    assert "config.resources or config.machine is required" in str(excinfo.value)
+                remote_submission(
+                    {
+                        "work_dir": "stage",
+                        "boot_script": "run_custom.sh",
+                        "config": {"resources": "vasp_cpu"},
+                    }
+                )
+    assert "not available for custom boot_script" in str(excinfo.value)
+
+
+def test_custom_boot_script_uses_visible_default_resource(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = (register, config_path)
+        captured["machine"] = req.machine
+        captured["resources"] = req.resources
+        captured["command"] = req.tasks[0].command
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={
+                "remote_context_id": "dp_default_custom",
+                "submission_hash": "hash_default_custom",
+                "receipt_rel": "receipt.json",
+            },
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        stage = files_root / "stage"
+        stage.mkdir(parents=True)
+        (files_root / "run_custom.sh").write_text("echo custom\n", encoding="utf-8")
+        with toolcall_context("submit", audience="materials_worker"):
+            _, artifact = remote_submission({"work_dir": "stage", "boot_script": "run_custom.sh"})
+
+    assert captured["machine"] == "cpu_server_2"
+    assert captured["resources"] == "general_cpu"
+    assert captured["command"] == "bash task_script/run_custom.sh"
+    assert artifact["data"]["resources"] == "general_cpu"
+    assert (stage / "task_script" / "run_custom.sh").is_file()
+
+
+def test_custom_boot_script_can_select_general_gpu_resource_card(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = config_path
+        captured["machine"] = req.machine
+        captured["resources"] = req.resources
+        captured["resource_cfg"] = dict(register.get_resources(req.resources))
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={
+                "remote_context_id": "dp_general_gpu",
+                "submission_hash": "hash_general_gpu",
+                "receipt_rel": "receipt.json",
+            },
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        stage = files_root / "stage"
+        stage.mkdir(parents=True)
+        (files_root / "run_custom.py").write_text("print('custom gpu')\n", encoding="utf-8")
+        with toolcall_context("submit", audience="materials_worker"):
+            _, artifact = remote_submission(
+                {
+                    "work_dir": "stage",
+                    "boot_script": "run_custom.py",
+                    "config": {"resources": "general_gpu"},
+                }
+            )
+
+    assert captured["machine"] == "gpu_server"
+    assert captured["resources"] == "general_gpu"
+    assert captured["resource_cfg"]["gpu_per_node"] == 1
+    assert artifact["data"]["resources"] == "general_gpu"
 
 
 def test_remote_submission_rejects_forbidden_resource_override(tmp_path: Path) -> None:

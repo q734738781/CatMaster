@@ -13,14 +13,13 @@ Use this skill to build a finite-strain screening set and collect the calculatio
 2. Decide up front whether the strain members will be evaluated as fixed-cell stress jobs or with an explicitly stated relaxation policy.
 3. Generate the strain family explicitly with `generate_strained_structures`.
 4. Prepare one consistent VASP stage across the whole strain set.
-5. Dispatch as a batch and summarize with `analyze_vasp_results`.
+5. Dispatch as a batch and collect stress/energy outputs with a focused `pymatgen` parser.
 
 ## Allowed tools
 - `generate_strained_structures`
 - `vasp_prepare`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 
 ## Workflow
 
@@ -39,10 +38,10 @@ Use this skill to build a finite-strain screening set and collect the calculatio
 - Keep the same k-point density, ENCUT, spin treatment, `DFT+U`, and dispersion policy across every strain member.
 
 ### 4. Collect, do not overclaim
-- `analyze_vasp_results` separates failed strain points from usable ones.
+- A focused `pymatgen` `Vasprun`/`Outcar` parser separates failed strain points from usable ones.
 - This skill stops at collected energies/forces/stresses; it does not fit elastic constants itself.
 - Keep a ledger of which strained member produced usable stress/energy output and which failed.
-- When a single total-energy scalar is needed from `analyze_vasp_results`, use `E0` by default.
+- When a single total-energy scalar is needed from structured parser output, use `E0` by default.
 
 ## Method-critical defaults
 - Keep the unstrained reference and every strained member on the same magnetic and electronic-structure footing.
@@ -54,7 +53,7 @@ Use this skill to build a finite-strain screening set and collect the calculatio
 Return:
 - strained structure batch root
 - execution root
-- VASP analysis summary path
+- stress/energy parser summary path
 - explicit strain-matrix ledger
 - whether the stage used fixed-cell stress evaluation or an explicitly relaxed protocol
 

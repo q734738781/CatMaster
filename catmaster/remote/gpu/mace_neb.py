@@ -733,6 +733,7 @@ def _cli() -> None:
     parser.add_argument("--head", default="omat_pbe")
     parser.add_argument("--dispersion", type=_parse_bool, default=False)
     parser.add_argument("--default_dtype", default="float64", choices=("float32", "float64"))
+    parser.add_argument("--device", default="auto", help="Device to use: auto|cpu|cuda|cuda:0")
     args = parser.parse_args()
     head = args.head.strip() or None
     summary = run_mace_neb_batch(
@@ -749,6 +750,7 @@ def _cli() -> None:
         model=args.model,
         head=head,
         dispersion=args.dispersion,
+        device=args.device,
         default_dtype=args.default_dtype,
     )
     print(json.dumps(summary, indent=2))

@@ -4,6 +4,7 @@ vasp_execute:
   boot_script: "catmaster/remote/cpu/vasp_boot.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute"
   resources: vasp_cpu
+  requires: [vasp]
   command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
   forward_files:
     - "*"
@@ -18,6 +19,7 @@ vasp_execute_neb:
   boot_script: "catmaster/remote/cpu/vasp_boot.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute_neb"
   resources: vasp_cpu_neb
+  requires: [vasp]
   command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
   forward_files:
     - "*"
@@ -32,7 +34,8 @@ mace_relax_dir:
   boot_script: "catmaster/remote/gpu/mace_relax.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_relax_dir"
   resources: mace_gpu
-  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype}"
+  requires: [mace]
+  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype} --device {device}"
   defaults:
     input_path: input
     output_root: output
@@ -43,6 +46,7 @@ mace_relax_dir:
     dispersion: false
     relax_lattice: false
     default_dtype: float64
+    device: auto
   forward_files:
     - "input"
     - "task_script/mace_relax.py"
@@ -56,7 +60,8 @@ mace_sp_dir:
   boot_script: "catmaster/remote/gpu/mace_sp.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_sp_dir"
   resources: mace_gpu
-  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
+  requires: [mace]
+  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
   defaults:
     input_path: input
     output_root: output
@@ -64,6 +69,7 @@ mace_sp_dir:
     head: omat_pbe
     dispersion: false
     default_dtype: float64
+    device: auto
   forward_files:
     - "input"
     - "task_script/mace_sp.py"
@@ -77,11 +83,13 @@ mace_md_dir:
   boot_script: "catmaster/remote/gpu/mace_md.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_md_dir"
   resources: mace_gpu
-  command: "python task_script/mace_md.py --input {input_path} --output_root {output_root} --params {params_path}"
+  requires: [mace]
+  command: "python task_script/mace_md.py --input {input_path} --output_root {output_root} --params {params_path} --device {device}"
   defaults:
     input_path: input
     output_root: output
     params_path: params/md_params.json
+    device: auto
   forward_files:
     - "input"
     - "params"
@@ -96,7 +104,8 @@ mace_neb_dir:
   boot_script: "catmaster/remote/gpu/mace_neb.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_neb_dir"
   resources: mace_gpu
-  command: "python task_script/mace_neb.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype}"
+  requires: [mace]
+  command: "python task_script/mace_neb.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
   defaults:
     input_path: input
     output_root: output
@@ -112,6 +121,7 @@ mace_neb_dir:
     head: omat_pbe
     dispersion: false
     default_dtype: float64
+    device: auto
   forward_files:
     - "input"
     - "task_script/mace_neb.py"
@@ -125,6 +135,7 @@ mace_train_dir:
   boot_script: "catmaster/remote/gpu/mace_train.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_train_dir"
   resources: mace_gpu
+  requires: [mace]
   command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
   defaults:
     dataset_root: dataset
@@ -144,6 +155,7 @@ mace_eval_dir:
   boot_script: "catmaster/remote/gpu/mace_evaluate.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_eval_dir"
   resources: mace_gpu
+  requires: [mace]
   command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
   defaults:
     dataset_root: dataset
@@ -163,6 +175,7 @@ xtb_run:
   boot_script: "catmaster/remote/cpu/xtb_boot.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#xtb_run"
   resources: xtb_cpu
+  requires: [xtb]
   command: "python task_script/xtb_boot.py --input {input_name} --mode {mode} --gfn {gfn} --solvent-model {solvent_model} --solvent {solvent} --charge {charge} --uhf {uhf} --opt-level {opt_level} --temperature {temperature} --md-time-ps {md_time_ps} --timestep-fs {timestep_fs} --md-dump-fs {md_dump_fs}"
   defaults:
     input_name: input.xyz
@@ -190,6 +203,7 @@ crest_run:
   boot_script: "catmaster/remote/cpu/crest_boot.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#crest_run"
   resources: crest_cpu
+  requires: [crest]
   command: "python task_script/crest_boot.py --input {input_name} --mode {mode} --method {method} --ewin {ewin} --rthr {rthr} --ethr {ethr} --bthr {bthr} --charge {charge} --uhf {uhf} --solvent {solvent} --constraint-file {constraint_file}"
   defaults:
     input_name: input.xyz
@@ -216,6 +230,7 @@ orca_execute:
   boot_script: "catmaster/remote/cpu/orca_boot.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#orca_execute"
   resources: orca_cpu
+  requires: [orca]
   command: "python task_script/orca_boot.py --input job.inp"
   forward_files:
     - "*"

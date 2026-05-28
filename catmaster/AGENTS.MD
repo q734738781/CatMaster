@@ -240,6 +240,7 @@ When developing or expanding DPDispatcher-backed or other managed execution tool
 - update the relevant skills, tool schemas/descriptions, allowlists, and registry wiring in the same change
 - keep any runtime prompt language abstract: state capability boundaries and ownership, not concrete tool-selection playbooks
 - for low-level remote submission tools, keep task-specific stage directory layouts in skills/catalog metadata and require workers to prepare and verify the declared layout before submission
+- managed execution should prioritize producing the requested result when safe: bounded automatic recovery is acceptable for likely transient remote failures, but receipts/context must be preserved so live or orphaned remote work is not ignored
 - for heterogeneous ML tasks, prefer managed tools when they fit, but do not let missing tool coverage block local script-based execution
 
 ### Paths

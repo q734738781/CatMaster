@@ -21,7 +21,7 @@ Each skill must live at `skills/materials/<skill-name>/SKILL.md`, `skills/machin
   - `# <skill-name>`
   - `## Overview`
   - `## Quick Start`
-  - `## Suggested tools`
+  - `## Allowed tools`
   - `## Workflow`
   - `## Method-critical defaults`
   - `## Output Contract`
@@ -44,10 +44,10 @@ allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height supercell"
 Rules:
 
 - `license`, `compatibility`, and `allowed-tools` should follow the DeepAgent skill frontmatter pattern.
-- `allowed-tools` is the primary field and should list concrete tool names separated by spaces.
-- The `allowed-tools` list and the body `## Suggested tools` list must agree.
+- `allowed-tools` is the primary field and should list concrete tool names separated by spaces, not commas.
+- The `allowed-tools` list and the body `## Allowed tools` list must agree.
 - If no tool should be suggested, use an empty frontmatter string and body text `- (none specified)`.
-- Suggested tool names must match real active-path tool names or DeepAgent built-ins. Do not leave legacy names such as removed tools or stale aliases in new or updated skills.
+- Allowed tool names must match real active-path tool names or DeepAgent built-ins. Do not leave legacy names such as removed tools or stale aliases in new or updated skills.
 
 ## Writing rules
 
@@ -87,7 +87,7 @@ A good skill should answer these questions quickly:
 
 - `Overview`: one tight sentence on scope.
 - `Quick Start`: the shortest correct execution path.
-- `Suggested tools`: only the tools that should genuinely be surfaced for selection.
+- `Allowed tools`: only real active-path tool names or DeepAgent built-ins that should genuinely be surfaced for selection.
 - `Workflow`: the real SOP, including non-obvious defaults and traps.
 - `Method-critical defaults`: the settings that must be chosen and reported explicitly when they affect comparability, ranking, or interpretation.
 - `Output Contract`: the minimum handoff evidence expected from a good run.

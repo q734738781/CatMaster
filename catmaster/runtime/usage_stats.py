@@ -82,6 +82,7 @@ def summarize_usage_from_metadata(
     missing_usage_calls = 0
     missing_cost_calls = 0
     input_tokens = 0
+    input_uncached_tokens = 0
     input_cached_tokens = 0
     input_cache_write_tokens = 0
     output_tokens = 0
@@ -120,6 +121,7 @@ def summarize_usage_from_metadata(
         if cache_write_tok is None:
             cache_write_tok = _to_int(input_details.get("cache_creation"))
         reasoning_tok = _to_int(output_details.get("reasoning"))
+        uncached_input_tok = _input_uncached_tokens(in_tok, in_cached_tok, cache_write_tok)
         call_count = max(1, int(counts.get(str(model_name), 0) or 0))
 
         calls += call_count
@@ -127,6 +129,7 @@ def summarize_usage_from_metadata(
             missing_usage_calls += call_count
         if in_tok is not None:
             input_tokens += in_tok
+        input_uncached_tokens += uncached_input_tok
         if in_cached_tok is not None:
             input_cached_tokens += in_cached_tok
         if cache_write_tok is not None:
@@ -165,6 +168,7 @@ def summarize_usage_from_metadata(
             key=str(model_name),
             call_summary=call_summary,
             input_tokens=in_tok,
+            input_uncached_tokens=uncached_input_tok,
             input_cached_tokens=in_cached_tok,
             input_cache_write_tokens=cache_write_tok,
             output_tokens=out_tok,
@@ -176,6 +180,7 @@ def summarize_usage_from_metadata(
             continue
         role_call_count = max(1, int(role_counts.get(str(role_name), 0) or 0))
         role_input = 0
+        role_input_uncached = 0
         role_input_cached = 0
         role_input_cache_write = 0
         role_output = 0
@@ -195,7 +200,9 @@ def summarize_usage_from_metadata(
             if cache_write_tok is None:
                 cache_write_tok = _to_int(input_details.get("cache_creation"))
             reasoning_tok = _to_int(output_details.get("reasoning"))
+            uncached_input_tok = _input_uncached_tokens(in_tok, in_cached_tok, cache_write_tok)
             role_input += int(in_tok or 0)
+            role_input_uncached += uncached_input_tok
             role_input_cached += int(in_cached_tok or 0)
             role_input_cache_write += int(cache_write_tok or 0)
             role_output += int(out_tok or 0)
@@ -230,6 +237,7 @@ def summarize_usage_from_metadata(
             key=str(role_name),
             call_summary=call_summary_for_role,
             input_tokens=role_input,
+            input_uncached_tokens=role_input_uncached,
             input_cached_tokens=role_input_cached,
             input_cache_write_tokens=role_input_cache_write,
             output_tokens=role_output,
@@ -253,7 +261,9 @@ def summarize_usage_from_metadata(
         "missing_usage_calls": missing_usage_calls,
         "missing_cost_calls": missing_cost_calls,
         "input_tokens": input_tokens,
+        "input_uncached_tokens": input_uncached_tokens,
         "input_cached_tokens": input_cached_tokens,
+        "input_cache_read_tokens": input_cached_tokens,
         "input_cache_write_tokens": input_cache_write_tokens,
         "output_tokens": output_tokens,
         "reasoning_tokens": reasoning_tokens,
@@ -347,11 +357,24 @@ def _call_cost_summary(
     }
 
 
+def _input_uncached_tokens(
+    input_tokens: int | None,
+    input_cached_tokens: int | None,
+    input_cache_write_tokens: int | None,
+) -> int:
+    return max(
+        0,
+        int(input_tokens or 0) - int(input_cached_tokens or 0) - int(input_cache_write_tokens or 0),
+    )
+
+
 def _new_bucket() -> dict[str, Any]:
     return {
         "calls": 0,
         "input_tokens": 0,
+        "input_uncached_tokens": 0,
         "input_cached_tokens": 0,
+        "input_cache_read_tokens": 0,
         "input_cache_write_tokens": 0,
         "output_tokens": 0,
         "reasoning_tokens": 0,
@@ -373,6 +396,7 @@ def _accumulate_bucket(
     key: str,
     call_summary: dict[str, Any],
     input_tokens: int | None,
+    input_uncached_tokens: int | None,
     input_cached_tokens: int | None,
     input_cache_write_tokens: int | None,
     output_tokens: int | None,
@@ -382,7 +406,9 @@ def _accumulate_bucket(
     bucket = buckets.setdefault(key, _new_bucket())
     bucket["calls"] += max(1, int(call_count or 1))
     bucket["input_tokens"] += int(input_tokens or 0)
+    bucket["input_uncached_tokens"] += int(input_uncached_tokens or 0)
     bucket["input_cached_tokens"] += int(input_cached_tokens or 0)
+    bucket["input_cache_read_tokens"] += int(input_cached_tokens or 0)
     bucket["input_cache_write_tokens"] += int(input_cache_write_tokens or 0)
     bucket["output_tokens"] += int(output_tokens or 0)
     bucket["reasoning_tokens"] += int(reasoning_tokens or 0)

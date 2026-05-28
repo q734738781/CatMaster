@@ -12,7 +12,7 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 1. Start from one explicit bulk structure file.
 2. Run `enumerate_unique_sites` if later defect or dopant work needs group IDs.
 3. Prepare a canonical bulk relax with `vasp_prepare`.
-4. Dispatch the prepared stage with `remote_submission` or `remote_submission_batch` using `task_name="vasp_execute"`, then summarize with `analyze_vasp_results`.
+4. Dispatch the prepared stage with `remote_submission` or `remote_submission_batch` using `task_name="vasp_execute"`, then accept it with a focused `pymatgen` parser.
 5. Only after the relaxed bulk is accepted should you branch into `generate_kpath` or downstream surface/defect workflows.
 
 ## Allowed tools
@@ -20,7 +20,6 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 - `vasp_prepare`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 - `generate_kpath`
 
 ## Workflow
@@ -36,7 +35,7 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 
 ### 3. Separate execution from acceptance
 - Submit the prepared root after it matches the VASP remote stage layout.
-- Accept the relaxed bulk only after `analyze_vasp_results` confirms convergence and reports the final structure path.
+- Accept the relaxed bulk only after structured parsing confirms convergence and identifies the final structure path.
 - When the summary includes total energies, use `E0` as the default comparison energy.
 
 ### 4. Branch cleanly after acceptance
@@ -52,7 +51,7 @@ Use this skill to turn a bulk structure into a traceable relaxed reference befor
 Return:
 - accepted relaxed bulk result path
 - unique-site JSON path when generated
-- convergence summary path
+- convergence/parser summary path
 - any generated band-path artifact path
 
 ## References

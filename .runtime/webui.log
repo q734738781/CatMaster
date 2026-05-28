@@ -950,3 +950,62 @@ INFO:     127.0.0.1:37356 - "GET /api/session/ctx_1876a7f22556/stream?last_seq=0
   return obj.__class__(**changes)
 Socket exception: Connection reset by peer (104)
 Socket exception: Connection reset by peer (104)
+INFO:     Started server process [3028842]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7990 (Press CTRL+C to quit)
+INFO:     127.0.0.1:48692 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48698 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48710 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48716 - "GET /api/auth/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48718 - "GET /api/auth/captcha HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40996 - "POST /api/auth/register HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:41004 - "GET /api/auth/captcha HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53336 - "POST /api/auth/register HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53346 - "GET /api/auth/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53360 - "GET /api/bootstrap?lane=experiment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53362 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=0&project_space=default HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38644 - "POST /api/session/ctx_24a1d58f2c3b/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38658 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=0&project_space=default HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38670 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=1&project_space=default HTTP/1.1" 200 OK
+<string>:31: BadInputSetWarning: Overriding the POTCAR functional is generally not recommended  as it significantly affects the results of calculations and compatibility with other calculations done with the same input set. Note that some POTCAR symbols specified in the configuration file may not be available in the selected functional.
+2026-05-28 16:56:36,088 - INFO : info:check_all_finished: False
+2026-05-28 16:56:36,089 - INFO : remote path: /public/home/chenhh/catmaster_work/ea34e4fe6ecaaccf6c02d5d3322413146564edc1
+2026-05-28 16:56:42,501 - INFO : job: 07180bb4629ad6827345ac08ca70ebd2f0e5e078 submit; job_id is 225607
+2026-05-28 16:58:44,201 - INFO : job: 07180bb4629ad6827345ac08ca70ebd2f0e5e078 225607 finished
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)
+[langchain.step] phase=llm.error run_id=run_20260528_085428_5d937f callback_run_id=019e6dd0-48be-70c0-b652-de1ad3ed54ed model=openai/gpt-5.5 error=Response validation failed: 6 validation errors for Unmarshaller body.choices Field required [type=missing, input_value={'error': {'message': 'Pr...ed error', 'code': 400}}, input_type=dict] For further information visit https://errors.p...
+INFO:     127.0.0.1:36240 - "POST /api/session/ctx_24a1d58f2c3b/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36252 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=0&project_space=o2_1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38680 - "POST /api/session/ctx_24a1d58f2c3b/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38692 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=0&project_space=o2_1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38698 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=1&project_space=o2_1 HTTP/1.1" 200 OK
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)
+[langchain.step] phase=tool.error run_id=run_20260528_091447_beea87 callback_run_id=019e6dde-b436-7642-95ae-3df7dcf6f834 tool=vasp_prepare error=vasp_prepare failed for calculations/o2_vasp/o2_start.vasp: user_incar_patch attempts to override protected INCAR key NSW under patch_policy='safe'. Use patch_policy='force' if you really need to replace preset/regime-bound defaults. out...
+<string>:31: BadInputSetWarning: Overriding the POTCAR functional is generally not recommended  as it significantly affects the results of calculations and compatibility with other calculations done with the same input set. Note that some POTCAR symbols specified in the configuration file may not be available in the selected functional.
+2026-05-28 17:16:53,296 - INFO : info:check_all_finished: False
+2026-05-28 17:16:53,297 - INFO : remote path: /public/home/chenhh/catmaster_work/74a5107797a95668eddad37a92aa69c94fb5bd4a
+2026-05-28 17:16:58,509 - INFO : job: 07180bb4629ad6827345ac08ca70ebd2f0e5e078 submit; job_id is 225608
+2026-05-28 17:19:00,261 - INFO : job: 07180bb4629ad6827345ac08ca70ebd2f0e5e078 225608 finished
+INFO:     127.0.0.1:34324 - "POST /api/session/ctx_24a1d58f2c3b/workspace/create HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34348 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=0&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60934 - "POST /api/session/ctx_24a1d58f2c3b/run/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60946 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=0&project_space=o2_2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60956 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=1&project_space=o2_2 HTTP/1.1" 200 OK
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)
+[langchain.step] phase=tool.error run_id=run_20260528_103907_bcd4de callback_run_id=019e6e2b-c408-7922-81b8-d31cfbbc7aba tool=vasp_prepare error=vasp_prepare failed for structures/o2/o2_initial.vasp: user_incar_patch attempts to override protected INCAR key NSW under patch_policy='safe'. Use patch_policy='force' if you really need to replace preset/regime-bound defaults. output_r...
+<string>:31: BadInputSetWarning: Overriding the POTCAR functional is generally not recommended  as it significantly affects the results of calculations and compatibility with other calculations done with the same input set. Note that some POTCAR symbols specified in the configuration file may not be available in the selected functional.
+2026-05-28 18:40:58,015 - INFO : info:check_all_finished: False
+2026-05-28 18:40:58,020 - INFO : remote path: /public/home/chenhh/catmaster_work/989f4f8ca32282b059aa73b305bee4bf3ab0ecc4
+[langchain.step] phase=tool.error run_id=run_20260528_103907_bcd4de callback_run_id=019e6e2c-494b-7413-87d4-2235afef2093 tool=remote_submission error=DPDispatcher submission failed: RuntimeError: Failed to run rsync -rlptDz -e 'ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no -p 31125 -q -i /home/chenhh/.ssh/id_ed25519' -q /home/chenhh/python_projects/cm_test/user...
+2026-05-28 18:41:28,470 - INFO : info:check_all_finished: False
+2026-05-28 18:41:28,471 - INFO : remote path: /public/home/chenhh/catmaster_work/0c28fe7a1e31901d13797d3b1f00133aa9103540
+2026-05-28 18:41:34,318 - INFO : job: 07180bb4629ad6827345ac08ca70ebd2f0e5e078 submit; job_id is 225609
+2026-05-28 18:43:06,187 - INFO : job: 07180bb4629ad6827345ac08ca70ebd2f0e5e078 225609 finished
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)
+/home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
+  return obj.__class__(**changes)

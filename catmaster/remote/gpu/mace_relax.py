@@ -7,6 +7,20 @@ from typing import Dict, List, Optional
 import os
 
 
+def _resolve_device(preference: str) -> str:
+    import torch
+
+    device = str(preference or "auto").strip().lower() or "auto"
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA device was requested but torch.cuda.is_available() is false; "
+            "check the remote driver/CUDA/PyTorch environment."
+        )
+    return device
+
+
 def run_mace(
     structure_file: str = "POSCAR",
     fmax: float = 0.05,
@@ -103,11 +117,9 @@ def _run_mace_single(
     from ase.io.trajectory import Trajectory
     from ase.optimize import FIRE
     import numpy as np
-    import torch
     from mace.calculators import mace_mp
 
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _resolve_device(device)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -204,9 +216,7 @@ def run_mace_path(
         raise ValueError(f"No structure files found in directory: {input_path}")
     output_root_path.mkdir(parents=True, exist_ok=True)
     from mace.calculators import mace_mp
-    import torch
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _resolve_device(device)
     kwargs = {"model": model, "dispersion": dispersion, "device": device, "default_dtype": default_dtype}
     if head:
         kwargs["head"] = head

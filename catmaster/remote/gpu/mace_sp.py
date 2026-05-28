@@ -7,6 +7,20 @@ from typing import Dict, List, Optional
 import os
 
 
+def _resolve_device(preference: str) -> str:
+    import torch
+
+    device = str(preference or "auto").strip().lower() or "auto"
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA device was requested but torch.cuda.is_available() is false; "
+            "check the remote driver/CUDA/PyTorch environment."
+        )
+    return device
+
+
 def _collect_structure_files(root: Path) -> List[Path]:
     files: List[Path] = []
     skip_prefixes = ("mace_batch_", "mace_sp_batch_", "vasp_batch_")
@@ -57,11 +71,9 @@ def _run_mace_single_point(
 ) -> Dict[str, object]:
     from ase.io import read, write
     import numpy as np
-    import torch
     from mace.calculators import mace_mp
 
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _resolve_device(device)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     atoms = read(str(structure_path))
@@ -129,9 +141,7 @@ def run_mace_sp_batch(
     output_root_path.mkdir(parents=True, exist_ok=True)
 
     from mace.calculators import mace_mp
-    import torch
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _resolve_device(device)
     kwargs = {"model": model, "dispersion": dispersion, "device": device, "default_dtype": default_dtype}
     if head:
         kwargs["head"] = head

@@ -1454,7 +1454,7 @@ class SpecialistRunner:
                 "Execution capability contract: registered managed execution in this worker is authoritative; do not replace a fitting managed path with local shell/Python just because the executable is not locally visible.",
                 "Use local commands and Python for preparation, inspection, glue logic, post-processing, dependency setup for bounded local steps, and work not covered by current managed tools.",
                 "Before low-level managed remote submission, read the task catalog or mounted execution skill, prepare and verify the declared stage layout, and do not submit raw trees unless they already match it.",
-                "If managed submission fails with receipt/context fields, read the receipt and execution guidance before retrying; account for possible live remote jobs.",
+                "If managed submission fails with receipt/context fields, bounded automatic recovery is allowed when it serves the user's output goal, but read or preserve the receipt context before retrying and account for possible live remote jobs.",
             ]
         )
 
@@ -1614,6 +1614,7 @@ class SpecialistRunner:
             "Do not personally absorb worker-owned tasks just because your own direct tool surface appears sufficient for a small piece of them; the worker boundary is part of the design contract.\n"
             "Do not assume your own specialist thread can directly verify every execution path or remote environment. Some submission or resource checks are only visible through worker-owned managed tools.\n"
             "If execution-path, remote-environment, or resource availability is relevant and the relevant managed tool is not directly visible here, delegate a bounded probe to the matching worker instead of concluding the capability is absent.\n"
+            "For likely transient managed-execution failures, you may delegate one bounded recovery attempt toward the requested output when the previous receipt/context is preserved; ask the user only when recovery would materially increase cost, queue pressure, or scientific scope.\n"
             "Only do the implementation directly in the specialist thread when no available worker matches the task, or when the action is a tiny coordination-only step that would not justify a delegation round.\n"
             "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use local command/Python capability and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
@@ -2358,7 +2359,7 @@ class SpecialistRunner:
             call_counts_by_model=call_counts_by_model if isinstance(call_counts_by_model, dict) else {},
             usage_metadata_by_role=usage_metadata_by_role if isinstance(usage_metadata_by_role, dict) else {},
             call_counts_by_role=call_counts_by_role if isinstance(call_counts_by_role, dict) else {},
-            append=True,
+            append=False,
         )
 
     def _coerce_report(self, *, raw: dict[str, Any] | Any) -> dict[str, Any]:

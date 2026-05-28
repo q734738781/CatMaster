@@ -835,9 +835,11 @@ def _merge_usage_summary(runtime_usage: dict[str, Any] | None, persisted_usage: 
     count_keys = {
         "calls",
         "input_tokens",
+        "input_uncached_tokens",
         "output_tokens",
         "total_tokens",
         "input_cached_tokens",
+        "input_cache_read_tokens",
         "input_cache_write_tokens",
         "reasoning_tokens",
         "exact_cost_calls",

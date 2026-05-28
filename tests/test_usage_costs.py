@@ -28,6 +28,7 @@ def test_usage_summary_aggregates_exact_costs(tmp_path, monkeypatch) -> None:
     assert summary["exact_cost_usd"] == 0.0
     assert summary["estimated_cost_usd"] == 0.0
     assert summary["input_tokens"] == 1000
+    assert summary["input_uncached_tokens"] == 600
     assert summary["input_cached_tokens"] == 400
     assert summary["output_tokens"] == 200
     assert summary["by_model"][0]["name"] == "openai/gpt-5.4"
@@ -86,6 +87,7 @@ def test_render_cost_card_markdown_shows_key_fields() -> None:
             "cost_source": "mixed",
             "calls": 9,
             "input_tokens": 12000,
+            "input_uncached_tokens": 7500,
             "input_cached_tokens": 4000,
             "input_cache_write_tokens": 500,
             "output_tokens": 3200,
@@ -108,5 +110,6 @@ def test_render_cost_card_markdown_shows_key_fields() -> None:
     assert "### Cost" in text
     assert "`$0.1234`" in text
     assert "Source: `mixed`" in text
+    assert "input uncached" in text
     assert "prompt uncached" in text
     assert "`task_runner`: `$0.0900`" in text

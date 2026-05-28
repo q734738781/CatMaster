@@ -83,8 +83,7 @@ def _compact_tool_params(raw_params: Any, *, max_chars: int = 220) -> tuple[str,
             for key, value in safe_params.items()
             if str(key) not in {"runtime", "callbacks", "config", "backend", "store", "checkpointer"}
         }
-        if filtered:
-            safe_params = filtered
+        safe_params = filtered
     if isinstance(safe_params, str):
         compact = _snippet(safe_params, max_chars)
         return compact, safe_params

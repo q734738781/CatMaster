@@ -15,7 +15,7 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 4. For slab, gas, unknown-gap, or tetrahedron-unsuitable meshes, override the DOS starter template with `user_incar_patch`, typically `ISMEAR=0`, `SIGMA=0.03-0.1`, and optionally `EFERMI=MIDGAP` for clearly gapped or unknown-gap systems.
 5. For bands, generate a recommended line-mode `KPOINTS` with `generate_kpath` and assemble the band job with `vasp_band_prepare`.
 6. Dispatch the resulting VASP stages with `remote_submission` or `remote_submission_batch` using `task_name="vasp_execute"`.
-7. Use `analyze_vasp_results` to summarize convergence and parsed bandgap evidence.
+7. Use task-specific `pymatgen` parsing (`Vasprun`/`BSVasprun`/DOS objects as appropriate) to summarize convergence, DOS, band, and parsed gap evidence.
 8. If you also need a single total-energy value from that summary, use `E0` by default.
 
 ## Allowed tools
@@ -24,7 +24,6 @@ Use this skill to build a controlled relax-to-static-to-band/DOS sequence instea
 - `vasp_band_prepare`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 - `execute`
 
 ## Workflow
@@ -69,7 +68,7 @@ Return:
 - DOS or band job root
 - generated `KPOINTS` path when relevant
 - DOS mode and smearing choice when DOS is in scope
-- VASP analysis summary path
+- electronic-structure parser summary path
 - any parsed bandgap value or convergence caveat
 
 ## References

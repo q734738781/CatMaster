@@ -79,6 +79,7 @@ class DispatchResult(BaseModel):
     local_root: str
     output_dir: str
     task_states: List[str]
+    task_state_counts: Dict[str, int] = Field(default_factory=dict)
     submission_dir: str
     duration_s: float
     remote_context_id: str = ""
@@ -165,7 +166,7 @@ def _task_state(task: Task) -> str:
     for attr in ("task_state", "state", "status"):
         if hasattr(task, attr):
             val = getattr(task, attr)
-            return str(val)
+            return _status_name(val)
     return "unknown"
 
 
@@ -184,6 +185,18 @@ def _status_code_and_name(value: Any) -> tuple[int | None, str]:
     except Exception:
         text = str(value or "unknown").strip() or "unknown"
         return None, text
+
+
+def _status_name(value: Any) -> str:
+    return _status_code_and_name(value)[1]
+
+
+def task_state_counts(states: List[Any]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for state in states:
+        name = _status_name(state)
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def _job_records(submission: Submission) -> list[dict[str, Any]]:
@@ -243,6 +256,43 @@ def _write_remote_receipt(
     return payload
 
 
+def write_dispatch_attempt_receipt(
+    *,
+    tool_name: str,
+    work_base: str,
+    task_name: str,
+    work_dir_rel: str,
+    resources: str,
+    submitted_at: str = "",
+    error: str = "",
+) -> dict[str, Any]:
+    """Write a CatMaster-side receipt when DPDispatcher fails before a submission hash exists."""
+
+    now = _now_iso()
+    context_id = _context_id_for_submission(uuid.uuid4().hex)
+    receipt_dir = workspace_root() / ".deepagents" / "dpdispatcher" / "receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = receipt_dir / f"{context_id}.json"
+    payload: dict[str, Any] = {
+        "context_id": context_id,
+        "submitted_at": str(submitted_at or now),
+        "updated_at": now,
+        "tool_name": str(tool_name or "dpdispatcher"),
+        "task_name": str(task_name or ""),
+        "work_dir_rel": str(work_dir_rel or ""),
+        "work_base": str(work_base or ""),
+        "resources": str(resources or ""),
+        "submission_hash": "",
+        "jobs": [],
+        "job_status_counts": {},
+        "receipt_rel": workspace_relpath(receipt_path),
+    }
+    if error:
+        payload["dispatch_error"] = str(error)
+    receipt_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return payload
+
+
 def _public_remote_context(
     receipt: dict[str, Any] | None,
     *,
@@ -261,6 +311,12 @@ def _public_remote_context(
         context["jobs"] = list(receipt.get("jobs") or [])
         context["job_status_counts"] = dict(receipt.get("job_status_counts") or {})
     return context
+
+
+def remote_context_from_receipt(receipt: dict[str, Any] | None, *, include_jobs: bool = False) -> dict[str, Any]:
+    """Return the agent-facing context fields from a receipt dictionary."""
+
+    return _public_remote_context(receipt, include_jobs=include_jobs)
 
 
 def remote_context_from_result(result: Any) -> dict[str, Any]:
@@ -433,7 +489,7 @@ def _assert_remote_success(status_records: List[Dict[str, Any]]) -> None:
 def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None, register: Optional[MachineRegister] = None) -> DispatchResult:
     """Submit a single task through DPDispatcher and wait for completion."""
 
-    reg = register or MachineRegister(extra_paths=[Path(config_path)]) if config_path else MachineRegister()
+    reg = register or (MachineRegister(extra_paths=[Path(config_path)]) if config_path else MachineRegister())
 
     machine_cfg = reg.get_machine(request.machine)
     res_cfg = reg.get_resources(request.resources)
@@ -508,6 +564,7 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
         ) from exc
 
     states = [_task_state(t) for t in task_list]
+    state_counts = task_state_counts(states)
     output_dir = Path(machine.context.init_local_root) / request.work_base / request.task_work_path
     cleanup_dpdispatcher_artifacts(output_dir)
     remote_context = _public_remote_context(receipt)
@@ -517,6 +574,7 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
         local_root=str(machine.context.init_local_root),
         output_dir=str(output_dir.resolve()),
         task_states=states,
+        task_state_counts=state_counts,
         submission_dir=str(Path(machine.context.init_local_root) / request.work_base),
         duration_s=duration,
         remote_context_id=str(remote_context.get("remote_context_id") or ""),
@@ -533,7 +591,7 @@ def dispatch_submission(
     config_path: Optional[str] = None,
 ) -> DispatchResult:
     """Submit multiple tasks as a single Submission."""
-    reg = register or MachineRegister(extra_paths=[Path(config_path)]) if config_path else MachineRegister()
+    reg = register or (MachineRegister(extra_paths=[Path(config_path)]) if config_path else MachineRegister())
 
     machine_cfg = reg.get_machine(batch.machine)
     res_cfg = reg.get_resources(batch.resources)
@@ -610,6 +668,7 @@ def dispatch_submission(
         ) from exc
 
     states = [_task_state(t) for t in task_list]
+    state_counts = task_state_counts(states)
     # If all tasks share the same task_work_path, surface that in output_dir
     work_suffixes = {t.task_work_path for t in batch.tasks}
     suffix = work_suffixes.pop() if len(work_suffixes) == 1 else ""
@@ -622,6 +681,7 @@ def dispatch_submission(
         local_root=str(machine.context.init_local_root),
         output_dir=str(output_dir.resolve()),
         task_states=states,
+        task_state_counts=state_counts,
         submission_dir=str(Path(machine.context.init_local_root) / batch.work_base),
         duration_s=duration,
         remote_context_id=str(remote_context.get("remote_context_id") or ""),

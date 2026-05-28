@@ -736,6 +736,21 @@ function formatCostNote(summary) {
   return source;
 }
 
+function usageInputUncached(summary) {
+  if (!summary || typeof summary !== "object") {
+    return 0;
+  }
+  if (summary.input_uncached_tokens !== undefined && summary.input_uncached_tokens !== null) {
+    return Number(summary.input_uncached_tokens) || 0;
+  }
+  return Math.max(
+    0,
+    Number(summary.input_tokens || 0)
+      - Number(summary.input_cached_tokens || 0)
+      - Number(summary.input_cache_write_tokens || 0),
+  );
+}
+
 function formatBytes(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) {
@@ -1151,6 +1166,8 @@ function MonitorDashboard({
   const usageSummary = data.usage_summary || usage || {};
   const taskState = data.task_state || {};
   const costValue = usageSummary.cost_usd;
+  const uncachedInput = usageInputUncached(usageSummary);
+  const cacheRead = Number(usageSummary.input_cache_read_tokens ?? usageSummary.input_cached_tokens ?? 0) || 0;
   return (
     <div className="monitor-dashboard">
       {observability?.error ? <div className="auth-error">{observability.error}</div> : null}
@@ -1160,7 +1177,7 @@ function MonitorDashboard({
         <MetricCard label="Tool calls" value={formatCount(metrics.tool_calls)} note={`${formatCount(metrics.tool_failures)} failed`} />
         <MetricCard label="Error rate" value={formatPercent(metrics.error_rate)} />
         <MetricCard label="Cost" value={formatCost(costValue)} note={formatCostNote(usageSummary)} />
-        <MetricCard label="Tokens" value={formatCount(usageSummary.total_tokens || metrics.input_tokens + metrics.output_tokens)} note={`out ${formatCount(usageSummary.output_tokens || metrics.output_tokens)} · reason ${formatCount(usageSummary.reasoning_tokens || metrics.reasoning_tokens)}`} />
+        <MetricCard label="Tokens" value={formatCount(usageSummary.total_tokens || metrics.input_tokens + metrics.output_tokens)} note={`in ${formatCount(uncachedInput)} · cache ${formatCount(cacheRead)} · out ${formatCount(usageSummary.output_tokens || metrics.output_tokens)}`} />
         <MetricCard label="Plan edits" value={formatCount(taskState.plan_revision_count || 0)} />
         <MetricCard label="DB events" value={formatCount(metrics.total_events)} note={data.db_path ? data.db_path.split("/").slice(-1)[0] : ""} />
       </div>
@@ -2832,8 +2849,10 @@ function FilePreviewPanel({ ctx, projectSpace, preview, loading, error, deleteBu
 
 function UsagePanel({ usage }) {
   const rows = [
-    ["Input", usage?.input_tokens],
-    ["Cached input", usage?.input_cached_tokens],
+    ["Input total", usage?.input_tokens],
+    ["Input uncached", usageInputUncached(usage)],
+    ["Input cache read", usage?.input_cache_read_tokens ?? usage?.input_cached_tokens],
+    ["Input cache write", usage?.input_cache_write_tokens],
     ["Output", usage?.output_tokens],
     ["Reasoning", usage?.reasoning_tokens],
     ["Total", usage?.total_tokens],

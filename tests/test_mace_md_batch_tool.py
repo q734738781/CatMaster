@@ -78,6 +78,7 @@ def test_mace_md_dir_task_command_has_no_historical_gpu_or_scale_options() -> No
     assert "--gpu_ids" not in cfg.command
     assert "--scales" not in cfg.command
     assert "--params {params_path}" in cfg.command
+    assert "--device {device}" in cfg.command
     assert "--ensemble" not in cfg.command
     assert "--temperature_K" not in cfg.command
     assert "--steps" not in cfg.command

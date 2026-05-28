@@ -28,12 +28,44 @@ def _clone_prompt(prompt: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 def _copy_usage(usage: Dict[str, Any]) -> Dict[str, int]:
     out: Dict[str, int] = {}
-    for key in ("input_tokens", "output_tokens", "total_tokens", "input_cached_tokens", "reasoning_tokens"):
+    for key in (
+        "input_tokens",
+        "input_uncached_tokens",
+        "input_cached_tokens",
+        "input_cache_read_tokens",
+        "input_cache_write_tokens",
+        "output_tokens",
+        "total_tokens",
+        "reasoning_tokens",
+    ):
         value = usage.get(key)
         if isinstance(value, bool):
             out[key] = int(value)
         elif isinstance(value, int):
             out[key] = value
+    input_details = usage.get("input_token_details") if isinstance(usage.get("input_token_details"), dict) else {}
+    prompt_details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
+    if "input_cached_tokens" not in out:
+        value = input_details.get("cache_read", prompt_details.get("cache_read"))
+        if isinstance(value, bool):
+            out["input_cached_tokens"] = int(value)
+        elif isinstance(value, int):
+            out["input_cached_tokens"] = value
+    if "input_cache_read_tokens" not in out and "input_cached_tokens" in out:
+        out["input_cache_read_tokens"] = out["input_cached_tokens"]
+    if "input_cache_write_tokens" not in out:
+        value = input_details.get("cache_write", input_details.get("cache_creation", prompt_details.get("cache_creation")))
+        if isinstance(value, bool):
+            out["input_cache_write_tokens"] = int(value)
+        elif isinstance(value, int):
+            out["input_cache_write_tokens"] = value
+    if "input_uncached_tokens" not in out:
+        out["input_uncached_tokens"] = max(
+            0,
+            int(out.get("input_tokens") or 0)
+            - int(out.get("input_cached_tokens") or 0)
+            - int(out.get("input_cache_write_tokens") or 0),
+        )
     if "reasoning_tokens" not in out:
         output_details = usage.get("output_token_details") if isinstance(usage.get("output_token_details"), dict) else {}
         completion_details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}

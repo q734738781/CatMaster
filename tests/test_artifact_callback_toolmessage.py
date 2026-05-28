@@ -235,6 +235,27 @@ def test_observability_callback_records_raw_llm_and_tool_payloads(tmp_path) -> N
     assert any(node["parent_id"] == str(llm_id) for node in snapshot["trace_tree"]["nodes"])
 
 
+def test_observability_callback_hides_injected_tool_runtime(tmp_path) -> None:
+    handler = ObservabilityCallbackHandler(tmp_path, run_id="run_x", default_agent_name="materials_worker")
+
+    class _RuntimeLike:
+        def __repr__(self) -> str:
+            return "<ToolRuntime stub>"
+
+    tool_id = uuid.uuid4()
+    handler.on_tool_start(
+        serialized={"name": "get_avail_resources"},
+        input_str="{}",
+        run_id=tool_id,
+        inputs={"runtime": _RuntimeLike()},
+    )
+
+    snapshot = ObservabilityStore(tmp_path).read_snapshot()
+    raw_input = next(event for event in snapshot["events"] if event["name"] == "TOOL_RAW_INPUT")
+    assert raw_input["payload"]["params_full"] == {}
+    assert raw_input["payload"]["params_compact"] == "{}"
+
+
 def test_ui_event_handler_reasoning_delta_emits_only_new_suffix() -> None:
     reporter = _CollectReporter()
     handler = UIEventHandler(reporter, run_id="run_x")

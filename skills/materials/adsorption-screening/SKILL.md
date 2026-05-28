@@ -13,7 +13,7 @@ Use this skill to build, run, and rank a controlled adsorption screen while pres
 2. Enumerate sites first; keep the site JSON as the ledger.
 3. Generate only the adsorption candidates you actually plan to relax.
 4. Prepare and dispatch one consistent adsorption batch.
-5. Use `analyze_vasp_results` for ranking and keep `ads_indices` metadata for any later frequency correction work.
+5. Rank with a task-specific `pymatgen` parser and keep `ads_indices` metadata for any later frequency correction work.
 
 ## Allowed tools
 - `enumerate_adsorption_sites`
@@ -22,7 +22,6 @@ Use this skill to build, run, and rank a controlled adsorption screen while pres
 - `vasp_prepare`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 - `vaspkit_adsorbate_thermo_correction`
 - `execute`
 
@@ -42,8 +41,8 @@ Use this skill to build, run, and rank a controlled adsorption screen while pres
 - Keep clean slab, gas reference, and adsorbed systems method-aligned if adsorption energies will be compared later.
 
 ### 4. Rank, then branch
-- Use `analyze_vasp_results` to detect failed or unconverged candidates before ranking.
-- For adsorption-energy ranking, read `E0` from `analyze_vasp_results` by default rather than other OUTCAR energy fields.
+- Use a focused `pymatgen` parser to detect failed or unconverged candidates before ranking.
+- For adsorption-energy ranking, read `E0` from structured parser output by default rather than other OUTCAR energy fields.
 - Run `vaspkit_adsorbate_thermo_correction` only on the retained adsorption states that genuinely need thermal corrections.
 
 ## Method-critical defaults
@@ -56,7 +55,7 @@ Return:
 - site JSON path
 - generated adsorption structure root
 - retained candidate list
-- VASP analysis summary path
+- adsorption ranking/parser summary path
 - adsorbate thermochemistry artifact path when used
 
 ## References

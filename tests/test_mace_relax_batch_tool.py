@@ -47,6 +47,7 @@ def test_mace_relax_dir_task_command_has_relax_lattice_placeholder() -> None:
     cfg = TaskRegistry().get("mace_relax_dir")
     assert "--relax_lattice {relax_lattice}" in cfg.command
     assert "--default_dtype {default_dtype}" in cfg.command
+    assert cfg.defaults["device"] == "auto"
 
 
 def test_mace_relax_batch_stages_local_model_file_for_dpdispatcher(

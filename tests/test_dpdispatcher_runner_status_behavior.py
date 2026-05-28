@@ -89,6 +89,17 @@ def test_remote_receipt_records_dpdispatcher_job_status(tmp_path: Path) -> None:
     assert (tmp_path / "files" / receipt["receipt_rel"]).is_file()
 
 
+def test_task_states_are_reported_as_readable_status_names() -> None:
+    class _Task:
+        task_state = dpr.JobStatus.finished
+
+    assert dpr._task_state(_Task()) == "finished"
+    assert dpr.task_state_counts([5, "5", dpr.JobStatus.running, "finished"]) == {
+        "finished": 3,
+        "running": 1,
+    }
+
+
 def test_public_remote_context_omits_jobs_unless_requested() -> None:
     receipt = {
         "context_id": "dp_ctx",

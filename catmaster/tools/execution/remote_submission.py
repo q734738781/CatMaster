@@ -4,7 +4,7 @@ import json
 import re
 import shlex
 import shutil
-from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -18,8 +18,11 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
     TaskSpec,
     dispatch_submission,
+    remote_context_from_receipt,
     remote_context_from_exception,
     remote_context_from_result,
+    task_state_counts,
+    write_dispatch_attempt_receipt,
 )
 from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_payloads import render_task_fields
@@ -38,6 +41,10 @@ _SAFE_RESOURCE_OVERRIDE_FIELDS = {
     "custom_flags",
     "source_list",
     "prepend_script",
+}
+_WORKER_RESOURCE_OVERRIDE_FIELDS = {
+    "cpu_per_node",
+    "gpu_per_node",
 }
 _FORBIDDEN_CONFIG_FIELDS = {
     "machines",
@@ -88,9 +95,21 @@ class RemoteSubmissionInput(BaseModel):
 
     work_dir: str = Field(..., description="Workspace-relative prepared stage directory. The remote task runs with this directory as cwd.")
     task_name: str | None = Field(None, description="Registered remote task template name. Mutually exclusive with boot_script.")
-    boot_script: str | None = Field(None, description="Workspace-relative custom boot script path. Requires config.resources or config.machine.")
+    boot_script: str | None = Field(
+        None,
+        description=(
+            "Workspace-relative custom boot script path. Uses the default general CPU resource card "
+            "unless config.resources selects another visible card such as general_gpu."
+        ),
+    )
     params: dict[str, Any] | None = Field(None, description="Task-template parameters used only for command placeholders.")
-    config: dict[str, Any] | None = Field(None, description="Optional resource preset or machine plus safe resource overrides and submission controls.")
+    config: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional resource-card override such as {'resources': 'general_gpu'}, plus safe resource "
+            "overrides and submission controls."
+        ),
+    )
 
     @model_validator(mode="after")
     def _exactly_one_task_source(self) -> "RemoteSubmissionInput":
@@ -114,7 +133,7 @@ class GetAvailRemoteTaskInput(BaseModel):
 
 
 class GetAvailResourcesInput(BaseModel):
-    """[remote/catalog] List remote resources visible to the current worker."""
+    """[remote/catalog] List general custom-boot resource cards visible to the current worker."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -286,7 +305,24 @@ def _machine_allowed(machine_key: str, *, audience: str, registry: TaskRegistry,
     return machine_key in _visible_machine_names(audience=audience, registry=registry, register=register)
 
 
-def _extract_submission_config(config: dict[str, Any] | None) -> tuple[dict[str, Any], int, bool]:
+def _default_custom_boot_resources(*, audience: str, registry: TaskRegistry, register: MachineRegister) -> str:
+    candidates: list[str] = []
+    for name, cfg in register.resources.items():
+        if not cfg.get("default_for_custom_boot"):
+            continue
+        if _resource_allowed(str(name), audience=audience, registry=registry, register=register):
+            candidates.append(str(name))
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise ValueError(
+            "config.resources is required when multiple default custom boot resources are visible: "
+            + ", ".join(sorted(candidates))
+        )
+    return ""
+
+
+def _extract_submission_config(config: dict[str, Any] | None, *, audience: str = "") -> tuple[dict[str, Any], int, bool]:
     raw = dict(config or {})
     raw.pop("audience", None)
     resources = raw.pop("resources", None)
@@ -307,12 +343,13 @@ def _extract_submission_config(config: dict[str, Any] | None) -> tuple[dict[str,
 
     check_interval = _parse_positive_int(raw.pop("check_interval", 30), field="check_interval")
     clean_remote = _parse_bool(raw.pop("clean_remote", False), field="clean_remote")
+    safe_fields = _WORKER_RESOURCE_OVERRIDE_FIELDS if audience else _SAFE_RESOURCE_OVERRIDE_FIELDS
     for key, value in raw.items():
-        if key not in _SAFE_RESOURCE_OVERRIDE_FIELDS:
+        if key not in safe_fields:
             raise ValueError(f"Unsupported remote config field: {key}")
         overrides[key] = value
     for key in overrides:
-        if key not in _SAFE_RESOURCE_OVERRIDE_FIELDS:
+        if key not in safe_fields:
             raise ValueError(f"Unsupported remote resource override field: {key}")
     if resources not in (None, ""):
         overrides["_resources_key"] = str(resources)
@@ -339,6 +376,41 @@ def _register_with_resource_override(
     return register
 
 
+def _resource_kind(resource_cfg: dict[str, Any]) -> str:
+    return str(resource_cfg.get("kind") or "").strip()
+
+
+def _resource_capabilities(resource_cfg: dict[str, Any]) -> set[str]:
+    raw = resource_cfg.get("capabilities") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return {str(item).strip() for item in raw if str(item).strip()}
+
+
+def _task_requires(cfg: TaskConfig | None) -> set[str]:
+    if cfg is None:
+        return set()
+    raw = getattr(cfg, "requires", []) or []
+    return {str(item).strip() for item in raw if str(item).strip()}
+
+
+def _resource_allows_custom_boot(resource_cfg: dict[str, Any]) -> bool:
+    kind = _resource_kind(resource_cfg)
+    return bool(resource_cfg.get("allow_custom_boot")) or kind.startswith("general")
+
+
+def _assert_resource_matches_task(*, cfg: TaskConfig | None, resource_name: str, resource_cfg: dict[str, Any]) -> None:
+    required = _task_requires(cfg)
+    if not required:
+        return
+    available = _resource_capabilities(resource_cfg)
+    missing = sorted(required - available)
+    if missing:
+        raise ValueError(
+            f"Remote resources '{resource_name}' do not satisfy task requirement(s): {', '.join(missing)}"
+        )
+
+
 def _resolve_resources_spec(
     *,
     cfg: TaskConfig | None,
@@ -349,7 +421,13 @@ def _resolve_resources_spec(
 ) -> tuple[str, dict[str, Any]]:
     override_key = str(config_overrides.get("_resources_key") or "").strip()
     machine_key = str(config_overrides.get("_machine_key") or "").strip()
+    if machine_key and audience:
+        raise PermissionError("config.machine is not available to worker tools; use config.resources resource cards.")
     default_key = str(cfg.resources or "").strip() if cfg is not None else ""
+    if cfg is not None and audience and override_key and override_key != default_key:
+        raise PermissionError(
+            "Registered remote tasks use their task-bound resource card; override cpu_per_node/gpu_per_node only."
+        )
     resources_key = override_key or default_key
     if resources_key:
         resource_cfg = dict(register.get_resources(resources_key))
@@ -358,15 +436,29 @@ def _resolve_resources_spec(
     elif machine_key:
         safe_machine = re.sub(r"[^A-Za-z0-9_.-]+", "_", machine_key).strip("._") or "machine"
         resources_key = f"custom_{safe_machine}"
-        resource_cfg = {"machine": machine_key, "number_node": 1, "cpu_per_node": 1, "group_size": 1}
+        resource_cfg = {
+            "machine": machine_key,
+            "number_node": 1,
+            "cpu_per_node": 1,
+            "group_size": 1,
+            "allow_custom_boot": True,
+        }
+    elif cfg is None:
+        resources_key = _default_custom_boot_resources(audience=audience, registry=registry, register=register)
+        if not resources_key:
+            raise ValueError("config.resources is required when using a custom boot_script without a visible default resource card.")
+        resource_cfg = dict(register.get_resources(resources_key))
     else:
-        raise ValueError("config.resources or config.machine is required when using a custom boot_script.")
+        raise ValueError("config.resources is required because this task has no default resource card.")
 
     if machine_key:
         register.get_machine(machine_key)
         if not _machine_allowed(machine_key, audience=audience, registry=registry, register=register):
             raise PermissionError(f"Remote machine '{machine_key}' is not visible to audience '{audience}'.")
         resource_cfg["machine"] = machine_key
+    if cfg is None and not _resource_allows_custom_boot(resource_cfg):
+        raise PermissionError(f"Remote resources '{resources_key}' are not available for custom boot_script submissions.")
+    _assert_resource_matches_task(cfg=cfg, resource_name=resources_key, resource_cfg=resource_cfg)
     return resources_key, resource_cfg
 
 
@@ -405,8 +497,8 @@ def _build_task_spec(
     )
 
 
-def _state_counts(states: list[str]) -> dict[str, int]:
-    return dict(Counter(str(item) for item in states))
+def _now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def _safe_submission_token(work_dir: Path) -> str:
@@ -459,6 +551,7 @@ def _submit(
     )
     dispatch_error: Exception | None = None
     result = None
+    submitted_at = _now_iso()
     try:
         result = dispatch_submission(req, register=register)
     except Exception as exc:
@@ -476,29 +569,43 @@ def _submit(
         sync_error.__cause__ = sync_exc
         dispatch_error = sync_error
     if dispatch_error is not None:
+        remote_context = remote_context_from_exception(dispatch_error)
+        if not remote_context:
+            receipt = write_dispatch_attempt_receipt(
+                tool_name=tool_name,
+                work_base=work_base,
+                task_name=task_name,
+                work_dir_rel=workspace_relpath(work_dir),
+                resources=resources_key,
+                submitted_at=submitted_at,
+                error=f"{type(dispatch_error).__name__}: {dispatch_error}",
+            )
+            remote_context = remote_context_from_receipt(receipt, include_jobs=True)
         data = {
             "task_name": task_name,
             "work_dir_rel": workspace_relpath(work_dir),
             "work_base": work_base,
             "resources": resources_key,
-            **remote_context_from_exception(dispatch_error),
+            **remote_context,
         }
         _fail(tool_name, message=f"DPDispatcher submission failed: {dispatch_error}", data=data, error_code="dispatch_failed")
 
     states = result.task_states if result else []
+    state_counts = dict(getattr(result, "task_state_counts", None) or task_state_counts(states))
     data = {
         "task_name": task_name,
         "work_dir_rel": workspace_relpath(work_dir),
         "work_base": result.work_base if result else work_dir.name,
         "resources": resources_key,
         "task_count": len(tasks),
-        "task_state_counts": _state_counts(states),
+        "task_state_counts": state_counts,
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         **remote_context_from_result(result),
     }
     content = (
         f"{tool_name} completed.\n"
         f"task_name={task_name or 'custom_boot_script'} tasks={len(tasks)} resources={resources_key}\n"
+        f"task_state_counts={json.dumps(state_counts, ensure_ascii=False, sort_keys=True)}\n"
         f"work_dir_rel={data['work_dir_rel']} remote_context_id={data.get('remote_context_id', '')}"
     )
     return _success(tool_name, content=content, data=data, execution_time=result.duration_s if result else None)
@@ -514,7 +621,7 @@ def _prepare_common(payload: RemoteSubmissionInput) -> tuple[Path, str, TaskConf
     )
     registry = TaskRegistry()
     base_register = MachineRegister()
-    overrides, check_interval, clean_remote = _extract_submission_config(config)
+    overrides, check_interval, clean_remote = _extract_submission_config(config, audience=audience)
     resources_key, resource_cfg = _resolve_resources_spec(
         cfg=cfg,
         config_overrides=overrides,
@@ -594,20 +701,20 @@ def remote_submission_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any
 
 
 def _resource_summary(name: str, cfg: dict[str, Any], *, register: MachineRegister) -> dict[str, Any]:
-    machine_name = str(cfg.get("machine") or "")
-    machine_cfg = register.machines.get(machine_name, {})
     out: dict[str, Any] = {
         "resources": name,
-        "machine": machine_name,
-        "batch_type": machine_cfg.get("batch_type") or "",
-        "context_type": machine_cfg.get("context_type") or "",
+        "kind": cfg.get("kind") or ("general" if str(name).startswith("general_") else "domain"),
     }
-    for key in ("number_node", "cpu_per_node", "gpu_per_node", "queue_name", "group_size", "custom_flags"):
+    if cfg.get("description"):
+        out["description"] = cfg.get("description")
+    for key in ("cpu_per_node", "gpu_per_node", "default_for_custom_boot"):
         if key in cfg:
             out[key] = cfg.get(key)
-    if cfg.get("source_list"):
-        out["source_list_count"] = len(list(cfg.get("source_list") or []))
     return out
+
+
+def _resource_visible_in_general_catalog(cfg: dict[str, Any]) -> bool:
+    return _resource_allows_custom_boot(cfg)
 
 
 def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -640,9 +747,28 @@ def get_avail_resources(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     resources = [
         _resource_summary(name, register.get_resources(name), register=register)
         for name in sorted(visible)
+        if _resource_visible_in_general_catalog(register.get_resources(name))
     ]
     data = {"audience": audience, "resources": resources}
-    content = f"Available remote resources: {len(resources)}"
+    if resources:
+        content_lines = [
+            "Available general remote resources: "
+            + ", ".join(str(item["resources"]) for item in resources)
+        ]
+        for item in resources:
+            details: list[str] = []
+            if item.get("description"):
+                details.append(str(item["description"]).rstrip("."))
+            for key in ("kind", "cpu_per_node", "gpu_per_node", "default_for_custom_boot"):
+                if key in item:
+                    value = item[key]
+                    if isinstance(value, bool):
+                        value = str(value).lower()
+                    details.append(f"{key}={value}")
+            content_lines.append(f"- {item['resources']}: " + "; ".join(details))
+        content = "\n".join(content_lines)
+    else:
+        content = "Available general remote resources: none"
     return _success("get_avail_resources", content=content, data=data)
 
 

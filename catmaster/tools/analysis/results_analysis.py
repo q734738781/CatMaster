@@ -792,10 +792,8 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 __all__ = [
-    "AnalyzeVaspResultsInput",
     "AnalyzeVaspNebResultsInput",
     "AnalyzeTrajectoryInput",
-    "analyze_vasp_results",
     "analyze_vasp_neb_results",
     "analyze_trajectory",
 ]

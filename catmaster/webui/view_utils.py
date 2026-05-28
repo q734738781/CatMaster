@@ -470,6 +470,7 @@ def render_cost_card_markdown(summary: Dict[str, Any]) -> str:
     cost_source = str(summary.get("cost_source") or "unavailable")
     calls = int(summary.get("calls") or 0)
     prompt_tokens = int(summary.get("input_tokens") or 0)
+    uncached_prompt_tokens = int(summary.get("input_uncached_tokens") or 0)
     cache_read_tokens = int(summary.get("input_cached_tokens") or 0)
     cache_write_tokens = int(summary.get("input_cache_write_tokens") or 0)
     completion_tokens = int(summary.get("output_tokens") or 0)
@@ -491,9 +492,10 @@ def render_cost_card_markdown(summary: Dict[str, Any]) -> str:
         [
             "",
             "#### Tokens",
-            f"- prompt total: `{prompt_tokens}`",
-            f"- cache read: `{cache_read_tokens}`",
-            f"- cache write: `{cache_write_tokens}`",
+            f"- input total: `{prompt_tokens}`",
+            f"- input uncached: `{uncached_prompt_tokens}`",
+            f"- input cache read: `{cache_read_tokens}`",
+            f"- input cache write: `{cache_write_tokens}`",
             f"- completion total: `{completion_tokens}`",
             f"- reasoning: `{reasoning_tokens}`",
         ]

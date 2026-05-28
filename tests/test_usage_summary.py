@@ -38,16 +38,20 @@ def test_usage_summary_from_langchain_metadata_aggregates_tokens_and_calls(tmp_p
     assert summary["source"] == "langchain_usage_metadata"
     assert summary["calls"] == 3
     assert summary["input_tokens"] == 1200
+    assert summary["input_uncached_tokens"] == 250
     assert summary["input_cached_tokens"] == 900
+    assert summary["input_cache_read_tokens"] == 900
     assert summary["input_cache_write_tokens"] == 50
     assert summary["output_tokens"] == 140
     assert summary["reasoning_tokens"] == 20
     assert summary["total_tokens"] == 1340
     assert summary["by_model"][0]["name"] == "openai/gpt-5.4-20260305"
     assert summary["by_model"][0]["calls"] == 3
+    assert summary["by_model"][0]["input_uncached_tokens"] == 250
     assert summary["by_role"][0]["name"] == "writing_specialist"
     assert summary["by_role"][0]["calls"] == 2
     assert summary["by_role"][0]["input_tokens"] == 400
+    assert summary["by_role"][0]["input_uncached_tokens"] == 200
     assert summary["by_role"][0]["output_tokens"] == 50
 
 
@@ -92,6 +96,7 @@ def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> 
 
     assert first["input_tokens"] == 100
     assert second["input_tokens"] == 150
+    assert second["input_uncached_tokens"] == 105
     assert second["output_tokens"] == 30
     assert second["input_cached_tokens"] == 45
     assert second["reasoning_tokens"] == 2

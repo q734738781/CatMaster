@@ -1,4 +1,7 @@
 vasp_cpu:
+  kind: domain
+  capabilities: [vasp]
+  description: "Prepared VASP single-stage CPU execution."
   audiences: [materials_worker]
   machine: cpu_server_2
   number_node: 1
@@ -11,6 +14,9 @@ vasp_cpu:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
 
 vasp_cpu_neb:
+  kind: domain
+  capabilities: [vasp]
+  description: "Prepared VASP NEB/path CPU execution."
   audiences: [materials_worker]
   machine: cpu_server_2
   number_node: 1
@@ -22,7 +28,41 @@ vasp_cpu_neb:
     - "#SBATCH --export=ALL"
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
 
+general_cpu:
+  kind: general_cpu
+  capabilities: [python, custom_boot]
+  allow_custom_boot: true
+  description: "General CPU/Python custom boot_script execution."
+  audiences: [materials_worker, ml_worker, orca_xtb_worker]
+  default_for_custom_boot: true
+  machine: cpu_server_2
+  number_node: 1
+  cpu_per_node: 4
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 02:00:00"
+    - "#SBATCH --export=ALL"
+
+general_gpu:
+  kind: general_gpu
+  capabilities: [python, gpu, custom_boot]
+  allow_custom_boot: true
+  description: "General GPU/Python custom boot_script execution."
+  audiences: [materials_worker, ml_worker]
+  machine: gpu_server
+  number_node: 1
+  cpu_per_node: 16
+  gpu_per_node: 1
+  queue_name: main
+  group_size: 1
+  custom_flags:
+    - "#SBATCH --export=ALL"
+
 mace_gpu:
+  kind: domain
+  capabilities: [mace, gpu]
+  description: "Managed MACE GPU execution."
   audiences: [materials_worker, ml_worker]
   machine: gpu_server
   number_node: 1
@@ -34,6 +74,9 @@ mace_gpu:
     - "#SBATCH --export=ALL"
 
 xtb_cpu:
+  kind: domain
+  capabilities: [xtb]
+  description: "Managed xTB CPU execution."
   audiences: [orca_xtb_worker]
   machine: cpu_server_2
   number_node: 1
@@ -46,6 +89,9 @@ xtb_cpu:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
 
 crest_cpu:
+  kind: domain
+  capabilities: [crest]
+  description: "Managed CREST CPU execution."
   audiences: [orca_xtb_worker]
   machine: cpu_server_2
   number_node: 1
@@ -58,6 +104,9 @@ crest_cpu:
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
 
 orca_cpu:
+  kind: domain
+  capabilities: [orca]
+  description: "Managed ORCA CPU execution."
   audiences: [orca_xtb_worker]
   machine: cpu_server_2
   number_node: 1

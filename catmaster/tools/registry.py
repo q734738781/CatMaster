@@ -119,7 +119,6 @@ class ToolRegistry:
             analyze_vasp_neb_results,
             analyze_orca_results,
             analyze_trajectory,
-            analyze_vasp_results,
             analyze_xtb_results,
             generate_nanobanana_figure,
             identify_structure_fragments,
@@ -133,7 +132,6 @@ class ToolRegistry:
             AnalyzeVaspNebResultsInput,
             AnalyzeOrcaResultsInput,
             AnalyzeTrajectoryInput,
-            AnalyzeVaspResultsInput,
             AnalyzeXtbResultsInput,
             GenerateNanoBananaFigureInput,
             IdentifyStructureFragmentsInput,
@@ -230,7 +228,6 @@ class ToolRegistry:
         self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
         self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
         self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
-        self.register_tool("analyze_vasp_results", analyze_vasp_results, AnalyzeVaspResultsInput)
         self.register_tool("analyze_vasp_neb_results", analyze_vasp_neb_results, AnalyzeVaspNebResultsInput)
         self.register_tool("analyze_trajectory", analyze_trajectory, AnalyzeTrajectoryInput)
         self.register_tool("analyze_xtb_results", analyze_xtb_results, AnalyzeXtbResultsInput)

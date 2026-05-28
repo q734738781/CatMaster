@@ -19,7 +19,6 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 - `get_avail_remote_task`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 - `execute`
 
 ## Workflow
@@ -45,8 +44,9 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 - Rerun only the failed subset from a clean stage directory or a batch root containing only those failed first-level children.
 
 ### 5. Hand off to structured analysis
-- After collection, prefer `analyze_vasp_results` over ad hoc manual parsing when the next step needs convergence, energy, or bandgap summaries.
-- When comparing ordinary VASP total energies from `analyze_vasp_results`, use `E0` as the default reference energy unless the workflow explicitly requires another convention.
+- After collection, prefer a task-specific VASP analysis skill/tool when available, or write a narrow `pymatgen` parser (`Vasprun`, `Outcar`, `Structure`) for the requested evidence. Do not substitute a generic VASP result-summary tool for geometry optimization, DOS/band, NEB, frequency, or force-collection work.
+- Use `grep` only as a fallback for missing/corrupted structured outputs or quick log triage.
+- When comparing ordinary VASP total energies from structured parsing, use `E0` as the default reference energy unless the workflow explicitly requires another convention.
 - Treat this skill as execution-only; dispatch success is not the same as usable scientific output.
 
 ## Method-critical defaults

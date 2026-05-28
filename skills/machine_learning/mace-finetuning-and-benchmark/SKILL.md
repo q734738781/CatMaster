@@ -13,7 +13,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 2. For the validated baseline, use `foundation_model=mh-1` or an explicit staged/local foundation-model path, and `foundation_head=omat_pbe`.
 3. Launch training by preparing the `mace_train_dir` stage layout and calling `remote_submission`, choosing `e0s="estimated"` or a fixed E0 JSON path explicitly in the staged params.
 4. Use `mace_eval_dir` through `remote_submission` only when you need an extra post-training benchmark pass; the training run itself may already include `test.extxyz`.
-5. Do not replace the managed remote training task with a local `mace_run_train` wrapper script when the catalog task already fits the job.
+5. Do not replace the managed remote training task with a local training wrapper when the catalog task already fits the job.
 
 ## Allowed tools
 - `get_avail_remote_task`
@@ -27,7 +27,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 
 ### 2. Train as one remote job
 - The training stage must contain the dataset, optional foundation model, optional E0 JSON, optional replay/statistics/local CLI assets, and `params/train_params.json`.
-- Report the collected batch state and summary artifacts, not just that the submission launched.
+- Report stage-local outputs plus receipt/context fields, not just that the submission launched.
 - The reference-validated route is replay-style finetuning with explicit `foundation_head`, `multiheads_finetuning`, `pt_train_file`, replay sampling knobs, and explicit loss weights.
 - If the user did not ask for a custom ablation, keep the validated baseline explicit: `mh-1`, `omat_pbe`, and `estimated`/fixed estimated E0s. Do not silently swap to another foundation model or another head.
 - When the user needs additional official MACE CLI knobs beyond the common first-class fields, pass them through `cli_args` rather than writing a local wrapper script.
@@ -54,7 +54,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 Return:
 - training output root
 - evaluation output root
-- collected batch-state paths
+- `remote_context_id`, `submission_hash`, `receipt_rel`, and `task_state_counts` when present
 - model artifact path(s)
 - metrics JSON / per-config CSV path(s)
 

@@ -13,7 +13,7 @@ Use this skill to generate primitive defect/dopant candidates and screen them co
 2. Enumerate symmetry-inequivalent sites first and keep the group ledger.
 3. Build the intended vacancy/substitution/interstitial candidate set.
 4. Expand to a supercell only when the defect model actually requires it.
-5. Run one standardized VASP screen and summarize with `analyze_vasp_results`.
+5. Run one standardized VASP screen and summarize with a focused `pymatgen` parser.
 
 ## Allowed tools
 - `enumerate_unique_sites`
@@ -24,7 +24,6 @@ Use this skill to generate primitive defect/dopant candidates and screen them co
 - `vasp_prepare`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 
 ## Workflow
 
@@ -42,7 +41,7 @@ Use this skill to generate primitive defect/dopant candidates and screen them co
 
 ### 4. Run one screening stage
 - Prepare and dispatch the retained candidate set under one method contract.
-- Use `analyze_vasp_results` to separate geometry/execution failure from physically interesting candidates.
+- Use a focused `pymatgen` parser to separate geometry/execution failure from physically interesting candidates.
 - If the screening compares total energies, use `E0` as the default parsed energy.
 
 ## Method-critical defaults
@@ -55,7 +54,7 @@ Return:
 - unique-site JSON path
 - generated candidate root
 - any supercell expansion path
-- VASP analysis summary path
+- screening parser summary path
 
 ## References
 - This skill builds candidate structures; deeper charged-defect methodology should be treated as a separate workflow.

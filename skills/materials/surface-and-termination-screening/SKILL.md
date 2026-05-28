@@ -13,7 +13,7 @@ Use this skill to screen surface terminations without quietly changing slab geom
 2. Generate all relevant slab terminations with one fixed thickness/vacuum contract.
 3. Apply one explicit freezing rule across the compared slabs.
 4. Prepare one uniform slab relax or static batch.
-5. Rank with `analyze_vasp_results`; only then hand off winning slabs to adsorption work.
+5. Rank with a task-specific `pymatgen` parser; only then hand off winning slabs to adsorption work.
 
 ## Allowed tools
 - `build_slab`
@@ -24,7 +24,6 @@ Use this skill to screen surface terminations without quietly changing slab geom
 - `vasp_prepare`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 - `execute`
 
 ## Workflow
@@ -44,8 +43,8 @@ Use this skill to screen surface terminations without quietly changing slab geom
 
 ### 4. Run one controlled ranking stage
 - Use one consistent `vasp_prepare` preset/regime across the termination set.
-- Dispatch as one batch and summarize with `analyze_vasp_results` before selecting survivors.
-- When ranking by total energy, use `E0` as the default energy field from `analyze_vasp_results`.
+- Dispatch as one batch and parse convergence/energy with a focused `pymatgen` parser before selecting survivors.
+- When ranking by total energy, use `E0` as the default energy field from structured parser output.
 
 ## Method-critical defaults
 - Keep thickness, vacuum, k-point density, spin treatment, and dispersion policy fixed across the termination screen unless the workflow explicitly studies those variables.
@@ -57,7 +56,7 @@ Return:
 - termination set or retained termination IDs
 - representative slab artifact path(s)
 - freezing policy used
-- batch analysis summary path
+- batch ranking/parser summary path
 
 ## References
 - Hand off accepted slabs to `adsorption-screening` rather than combining slab enumeration and adsorption placement in one campaign.

@@ -17,6 +17,20 @@ from ase.md import MDLogger
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary, ZeroRotation
 
 
+def _resolve_device(preference: str) -> str:
+    import torch
+
+    device = str(preference or "auto").strip().lower() or "auto"
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA device was requested but torch.cuda.is_available() is false; "
+            "check the remote driver/CUDA/PyTorch environment."
+        )
+    return device
+
+
 def _collect_structure_files(root: Path) -> List[Path]:
     files: List[Path] = []
     skip_prefixes = ("mace_batch_", "mace_sp_batch_", "mace_md_batch_", "vasp_batch_")
@@ -254,12 +268,10 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _make_calculator(config: dict[str, Any], *, device: str):
-    import torch
     from mace.calculators import mace_mp
 
     calc = config["calculator"]
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _resolve_device(device)
 
     kwargs: dict[str, Any] = {
         "model": calc["model"],

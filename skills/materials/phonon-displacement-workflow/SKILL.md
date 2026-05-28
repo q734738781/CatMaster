@@ -13,14 +13,13 @@ Use this skill to generate finite-displacement supercells and collect force calc
 2. Generate displaced supercells with `generate_phonon_displacements`.
 3. Prepare one consistent force-calculation stage for all displacements.
 4. Keep the displacement metadata and calculation-directory mapping explicit.
-5. Dispatch the displacement batch and summarize completion with `analyze_vasp_results`.
+5. Dispatch the displacement batch and build a force-run ledger with a narrow `pymatgen` parser before any later phonon fitting.
 
 ## Allowed tools
 - `generate_phonon_displacements`
 - `vasp_prepare`
 - `remote_submission`
 - `remote_submission_batch`
-- `analyze_vasp_results`
 
 ## Workflow
 
@@ -35,7 +34,7 @@ Use this skill to generate finite-displacement supercells and collect force calc
 - Do not mix displacement generation and phonon fitting logic in one opaque step.
 
 ### 3. Collect only accepted force runs
-- Use `analyze_vasp_results` to identify failed or unconverged force points before any later phonon fitting.
+- Use a focused `pymatgen` `Vasprun`/`Outcar` parser to identify failed or unconverged force points before any later phonon fitting.
 - If a quick energy sanity check is needed from the same summary, prefer `E0` rather than other OUTCAR energy fields.
 - Keep a displacement-to-calculation ledger so later fitting can map every force set back to its displacement ID.
 
@@ -53,7 +52,7 @@ Use this skill to generate finite-displacement supercells and collect force calc
 Return:
 - displacement metadata path
 - prepared/executed batch root
-- VASP analysis summary path
+- force-run ledger or parser summary path
 - any note about phonopy vs fallback generation
 - displacement-to-calculation mapping ledger
 

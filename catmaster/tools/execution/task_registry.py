@@ -61,6 +61,7 @@ class TaskConfig(BaseModel):
     boot_script: str | None = None
     layout_ref: str = ""
     defaults: Dict[str, object] = Field(default_factory=dict)
+    requires: List[str] = Field(default_factory=list)
     task_work_path: str = "."
     forward_files: List[str] = Field(default_factory=list)
     backward_files: List[str] = Field(default_factory=list)

@@ -33,10 +33,8 @@ from catmaster.tools.analysis.review_pdf_manuscript import (
 from catmaster.tools.analysis.results_analysis import (
     AnalyzeVaspNebResultsInput,
     AnalyzeTrajectoryInput,
-    AnalyzeVaspResultsInput,
     analyze_vasp_neb_results,
     analyze_trajectory,
-    analyze_vasp_results,
 )
 from catmaster.tools.analysis.qchem_analysis import (
     AnalyzeOrcaResultsInput,
@@ -68,12 +66,10 @@ __all__ = [
     "peer_review_request",
     "ReviewPdfManuscriptInput",
     "review_pdf_manuscript",
-    "AnalyzeVaspResultsInput",
     "AnalyzeVaspNebResultsInput",
     "AnalyzeTrajectoryInput",
     "AnalyzeOrcaResultsInput",
     "AnalyzeXtbResultsInput",
-    "analyze_vasp_results",
     "analyze_vasp_neb_results",
     "analyze_trajectory",
     "analyze_orca_results",
