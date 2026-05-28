@@ -897,6 +897,336 @@ function EventFeed({ events, hasMore, loadingOlder, onLoadOlder }) {
   );
 }
 
+function formatDurationMs(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "-";
+  }
+  if (numeric < 1000) {
+    return `${Math.round(numeric)} ms`;
+  }
+  return `${(numeric / 1000).toFixed(numeric < 10000 ? 1 : 0)} s`;
+}
+
+function formatDurationSec(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "-";
+  }
+  if (numeric < 60) {
+    return `${numeric.toFixed(numeric < 10 ? 1 : 0)} s`;
+  }
+  const minutes = Math.floor(numeric / 60);
+  const seconds = Math.round(numeric % 60);
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatPercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "-";
+  }
+  return `${(numeric * 100).toFixed(numeric > 0 && numeric < 0.1 ? 1 : 0)}%`;
+}
+
+function formatJsonPreview(value, maxChars = 6000) {
+  try {
+    const text = JSON.stringify(value || {}, null, 2);
+    return text.length > maxChars ? `${text.slice(0, maxChars).trimEnd()}\n...` : text;
+  } catch {
+    return String(value || "");
+  }
+}
+
+function countListNote(rows) {
+  return Array.isArray(rows) && rows.length ? `${rows.length} rows` : "";
+}
+
+function CountList({ rows, valueKey = "name" }) {
+  const items = Array.isArray(rows) ? rows : [];
+  if (!items.length) {
+    return <div className="todo-empty compact">No rows.</div>;
+  }
+  return (
+    <div className="count-list">
+      {items.slice(0, 10).map((item) => (
+        <div key={`${item?.[valueKey] || item?.name}-${item?.count}`} className="count-row">
+          <span>{item?.[valueKey] || item?.name || "-"}</span>
+          <strong>{formatCount(item?.count)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ObservabilityTabs({ active, onChange }) {
+  const tabs = [
+    ["overview", "Overview"],
+    ["trace", "Trace"],
+    ["decisions", "Decisions"],
+    ["state", "State"],
+    ["raw", "Raw"],
+  ];
+  return (
+    <div className="monitor-tabs" role="tablist" aria-label="Monitor sections">
+      {tabs.map(([key, label]) => (
+        <button
+          key={key}
+          type="button"
+          className={active === key ? "active" : ""}
+          onClick={() => onChange(key)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TraceTreePanel({ tree }) {
+  const nodes = Array.isArray(tree?.nodes) ? tree.nodes : [];
+  if (!nodes.length) {
+    return <div className="todo-empty">No trace calls captured yet.</div>;
+  }
+  return (
+    <div className="trace-tree">
+      {nodes.map((node) => {
+        const status = String(node.status || "unknown").replaceAll("_", "-");
+        return (
+          <article key={`${node.id}-${node.order}`} className={`trace-node status-${status}`} style={{ "--depth": Number(node.depth || 0) }}>
+            <div className="trace-node-main">
+              <span className="trace-node-type">{node.type || "event"}</span>
+              <strong>{node.name || "-"}</strong>
+              {node.agent_name ? <span className="trace-node-agent">{node.agent_name}</span> : null}
+              <span className="trace-node-status">{node.status || "unknown"}</span>
+              <span className="trace-node-time">{formatDurationMs(node.duration_ms)}</span>
+            </div>
+            {node.summary ? <div className="trace-node-summary">{node.summary}</div> : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function DecisionPanel({ decisions }) {
+  const rows = Array.isArray(decisions) ? decisions : [];
+  if (!rows.length) {
+    return <div className="todo-empty">No decision records captured yet.</div>;
+  }
+  return (
+    <div className="decision-list">
+      {rows.slice().reverse().map((item, index) => (
+        <article key={`${item.ts || index}-${index}`} className="decision-item">
+          <div className="decision-head">
+            <span>{joinItems([item.agent_name, item.model]) || "agent"}</span>
+            <span>{formatTime(item.ts)}</span>
+          </div>
+          {item.reason ? <p className="decision-reason">{item.reason}</p> : <p className="decision-muted">No reasoning text was exposed by the provider for this step.</p>}
+          {item.decision ? <div className="decision-action">{item.decision}</div> : null}
+          {item.evidence && item.evidence !== item.decision ? <div className="decision-evidence">{item.evidence}</div> : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function TaskStatePanel({ taskState }) {
+  const todos = Array.isArray(taskState?.todos) ? taskState.todos : [];
+  const timeline = Array.isArray(taskState?.timeline) ? taskState.timeline : [];
+  return (
+    <div className="monitor-split">
+      <section className="monitor-panel">
+        <div className="section-head">
+          <div>
+            <div className="section-label">Plan</div>
+            <h3 className="section-title">{formatCount(taskState?.plan_revision_count || 0)} revisions</h3>
+          </div>
+        </div>
+        {todos.length ? (
+          <div className="todo-list compact">
+            {todos.map((item, index) => (
+              <article key={`${item.content}-${index}`} className={`todo-item status-${String(item.status || "pending").replaceAll("_", "-")}`}>
+                <div className="todo-item-head">
+                  <span className="todo-status-pill">{item.status || "pending"}</span>
+                </div>
+                <div className="todo-item-text">{item.content}</div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="todo-empty">No todo plan captured yet.</div>
+        )}
+      </section>
+      <section className="monitor-panel">
+        <div className="section-head">
+          <div>
+            <div className="section-label">State Timeline</div>
+            <h3 className="section-title">{countListNote(timeline) || "No rows"}</h3>
+          </div>
+        </div>
+        <div className="state-timeline">
+          {timeline.length ? timeline.slice().reverse().map((item, index) => (
+            <article key={`${item.ts || index}-${index}`} className="state-row">
+              <div className="state-row-head">
+                <span>{item.name || "STATE"}</span>
+                <span>{formatTime(item.ts)}</span>
+              </div>
+              <div className="state-row-body">{joinItems([item.status, item.phase, item.task_id, item.summary]) || "-"}</div>
+            </article>
+          )) : <div className="todo-empty">No state changes captured yet.</div>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RawLogPanel({ observability, events, eventPage, loadingOlder, onLoadOlder }) {
+  const rawEvents = Array.isArray(observability?.raw_logs?.events) && observability.raw_logs.events.length
+    ? observability.raw_logs.events
+    : (Array.isArray(events) ? events : []);
+  const chatMessages = Array.isArray(observability?.chat_messages) ? observability.chat_messages : [];
+  return (
+    <div className="monitor-split raw-split">
+      <section className="monitor-panel">
+        <div className="section-head">
+          <div>
+            <div className="section-label">Session History</div>
+            <h3 className="section-title">{countListNote(chatMessages) || "No rows"}</h3>
+          </div>
+        </div>
+        <div className="raw-list">
+          {chatMessages.length ? chatMessages.slice().reverse().map((message, index) => (
+            <article key={`${message.message_id || index}-${index}`} className="raw-row">
+              <div className="raw-row-head">
+                <span>{joinItems([message.role, message.kind]) || "message"}</span>
+                <span>{message.created_at ? String(message.created_at) : ""}</span>
+              </div>
+              <pre>{compactText(message.content || "", 1600)}</pre>
+            </article>
+          )) : <div className="todo-empty">No chat history for this run.</div>}
+        </div>
+      </section>
+      <section className="monitor-panel">
+        <div className="section-head">
+          <div>
+            <div className="section-label">Raw Events</div>
+            <h3 className="section-title">{formatCount(observability?.raw_logs?.total_events || rawEvents.length)} records</h3>
+          </div>
+          {eventPage?.has_more ? (
+            <button type="button" className="ghost-btn" onClick={onLoadOlder} disabled={loadingOlder}>
+              {loadingOlder ? "Loading" : "Older"}
+            </button>
+          ) : null}
+        </div>
+        <div className="raw-list">
+          {rawEvents.length ? rawEvents.slice().reverse().map((event, index) => (
+            <details key={`${event.id || event.seq || index}-${event.name}`} className="raw-row">
+              <summary>
+                <span>{joinItems([event.source || event.category, event.name, event.tool || event.model])}</span>
+                <span>{formatTime(event.ts)}</span>
+              </summary>
+              {event.summary ? <p>{event.summary}</p> : null}
+              <pre>{formatJsonPreview(event.payload || event)}</pre>
+            </details>
+          )) : <div className="todo-empty">No events captured yet.</div>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MonitorDashboard({
+  observability,
+  usage,
+  events,
+  eventPage,
+  loadingOlder,
+  onLoadOlder,
+  activeTab,
+  onTabChange,
+}) {
+  const data = observability?.data || {};
+  const metrics = data.metrics || {};
+  const usageSummary = data.usage_summary || usage || {};
+  const taskState = data.task_state || {};
+  const costValue = usageSummary.cost_usd;
+  return (
+    <div className="monitor-dashboard">
+      {observability?.error ? <div className="auth-error">{observability.error}</div> : null}
+      <div className="metrics-grid monitor-kpis">
+        <MetricCard label="Duration" value={formatDurationSec(metrics.duration_sec)} note={data.selected_run || ""} />
+        <MetricCard label="LLM calls" value={formatCount(metrics.llm_calls)} note={`avg ${formatDurationMs(metrics.avg_llm_latency_ms)}`} />
+        <MetricCard label="Tool calls" value={formatCount(metrics.tool_calls)} note={`${formatCount(metrics.tool_failures)} failed`} />
+        <MetricCard label="Error rate" value={formatPercent(metrics.error_rate)} />
+        <MetricCard label="Cost" value={formatCost(costValue)} note={formatCostNote(usageSummary)} />
+        <MetricCard label="Tokens" value={formatCount(usageSummary.total_tokens || metrics.input_tokens + metrics.output_tokens)} note={`out ${formatCount(usageSummary.output_tokens || metrics.output_tokens)} · reason ${formatCount(usageSummary.reasoning_tokens || metrics.reasoning_tokens)}`} />
+        <MetricCard label="Plan edits" value={formatCount(taskState.plan_revision_count || 0)} />
+        <MetricCard label="DB events" value={formatCount(metrics.total_events)} note={data.db_path ? data.db_path.split("/").slice(-1)[0] : ""} />
+      </div>
+      <ObservabilityTabs active={activeTab} onChange={onTabChange} />
+      {observability?.loading ? <div className="monitor-loading">Loading observability records...</div> : null}
+      {activeTab === "overview" ? (
+        <div className="monitor-split overview-split">
+          <section className="monitor-panel">
+            <div className="section-head">
+              <div>
+                <div className="section-label">Model / Agent</div>
+                <h3 className="section-title">Call distribution</h3>
+              </div>
+            </div>
+            <div className="overview-columns">
+              <CountList rows={metrics.models} />
+              <CountList rows={metrics.agents} />
+            </div>
+          </section>
+          <section className="monitor-panel">
+            <div className="section-head">
+              <div>
+                <div className="section-label">Tools</div>
+                <h3 className="section-title">Most used</h3>
+              </div>
+            </div>
+            <CountList rows={metrics.tools} />
+          </section>
+        </div>
+      ) : null}
+      {activeTab === "trace" ? (
+        <section className="monitor-panel fill-panel">
+          <div className="section-head">
+            <div>
+              <div className="section-label">Trace Tree</div>
+              <h3 className="section-title">{formatCount(data.trace_tree?.nodes?.length || 0)} calls</h3>
+            </div>
+          </div>
+          <TraceTreePanel tree={data.trace_tree} />
+        </section>
+      ) : null}
+      {activeTab === "decisions" ? (
+        <section className="monitor-panel fill-panel">
+          <div className="section-head">
+            <div>
+              <div className="section-label">Decision Attribution</div>
+              <h3 className="section-title">{formatCount(data.decisions?.length || 0)} records</h3>
+            </div>
+          </div>
+          <DecisionPanel decisions={data.decisions} />
+        </section>
+      ) : null}
+      {activeTab === "state" ? <TaskStatePanel taskState={taskState} /> : null}
+      {activeTab === "raw" ? (
+        <RawLogPanel
+          observability={data}
+          events={events}
+          eventPage={eventPage}
+          loadingOlder={loadingOlder}
+          onLoadOlder={onLoadOlder}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function normalizeMathMarkdown(text) {
   const source = String(text || "");
   if (!source) {
@@ -2825,6 +3155,8 @@ function App({ boot }) {
   const [events, setEvents] = useState([]);
   const [eventPage, setEventPage] = useState({ has_more: false, min_seq: 0, max_seq: 0, loading: false });
   const [agentTab, setAgentTab] = useState("ALL");
+  const [monitorTab, setMonitorTab] = useState("overview");
+  const [observability, setObservability] = useState({ data: null, loading: false, error: "" });
   const [streamNonce, setStreamNonce] = useState(0);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryPanel, setMemoryPanel] = useState({
@@ -2917,6 +3249,7 @@ function App({ boot }) {
             setSnapshot(null);
             setCtx("");
             setEvents([]);
+            setObservability({ data: null, loading: false, error: "" });
             setStatusMessage("");
           });
           return;
@@ -2958,6 +3291,23 @@ function App({ boot }) {
       cancelled = true;
     };
   }, [authNonce]);
+
+  useEffect(() => {
+    if (view !== "monitor" || !ctx) {
+      return;
+    }
+    void loadObservability(selectedRun);
+  }, [view, ctx, selectedRun, currentProjectSpace]);
+
+  useEffect(() => {
+    if (view !== "monitor" || !ctx || !isRunActive(snapshot?.run_status)) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void loadObservability(selectedRun);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [view, ctx, selectedRun, currentProjectSpace, snapshot?.run_status]);
 
   useEffect(() => {
     if (authStatus.loading || !authStatus.auth_enabled || authStatus.authenticated || authMode !== "register") {
@@ -3232,6 +3582,7 @@ function App({ boot }) {
         setSnapshot(null);
         setCtx("");
         setEvents([]);
+        setObservability({ data: null, loading: false, error: "" });
         setSelectedRun("");
         setWorkspaceRoot("");
         setWorkspaceName("");
@@ -3242,6 +3593,31 @@ function App({ boot }) {
           username: "",
         });
         setAuthBusy(false);
+      });
+    }
+  }
+
+  async function loadObservability(runName = selectedRun) {
+    if (!ctx || view !== "monitor") {
+      return;
+    }
+    const targetRun = runName || selectedRun || snapshot?.selected_run || "";
+    startTransition(() => {
+      setObservability((prev) => ({ ...prev, loading: true, error: "" }));
+    });
+    try {
+      const data = await apiFetch(
+        `/api/session/${escapePath(ctx)}/observability?run=${escapePath(targetRun)}&project_space=${escapePath(currentProjectSpace)}&limit=600`,
+      );
+      startTransition(() => {
+        setObservability({ data, loading: false, error: "" });
+        if (data.selected_run) {
+          setSelectedRun(data.selected_run);
+        }
+      });
+    } catch (error) {
+      startTransition(() => {
+        setObservability((prev) => ({ ...prev, loading: false, error: String(error?.message || error) }));
       });
     }
   }
@@ -3265,6 +3641,9 @@ function App({ boot }) {
       });
       latestSeqRef.current = Number(data.runtime?.seq ?? 0);
     });
+    if (view === "monitor") {
+      void loadObservability(data.selected_run || runName || "");
+    }
   }
 
   async function loadOlderEvents() {
@@ -3553,7 +3932,9 @@ function App({ boot }) {
       }
     });
     setStreamNonce((value) => value + 1);
-    void loadDetails;
+    if (loadDetails && view === "monitor") {
+      void loadObservability(data.selected_run || data.runtime?.run_name || scopedPayload?.run_name || "");
+    }
   }
 
   async function handleWorkspaceRefresh() {
@@ -3921,34 +4302,23 @@ function App({ boot }) {
                   </div>
                 </div>
 
-                {view === "monitor" ? (
-                  <div className="metrics-grid">
-                    <MetricCard label="Phase" value={live.current_phase || snapshot?.run_status} />
-                    <MetricCard label="Graph node" value={graph.node || live.current_node} />
-                    <MetricCard label="Task" value={live.current_task_goal || live.current_task_id} />
-                    <MetricCard label="Tool" value={live.active_toolcall?.tool || "-"} note={live.active_toolcall?.status || ""} />
-                    <MetricCard label="Cost" value={formatCost(usage.cost_usd)} note={formatCostNote(usage)} />
-                    <MetricCard label="Output tokens" value={usage.output_tokens || usage.outputTokens || llm.usage?.output_tokens} />
-                    <MetricCard label="Reasoning tokens" value={usage.reasoning_tokens || llm.usage?.reasoning_tokens || "-"} />
-                  </div>
-                ) : null}
-
-                {view === "home" ? (
-                  <>
-                    <p className="lane-info">{laneGuide.summary}</p>
-                    <ChatThread messages={chatMessages} />
-                  </>
-                ) : (
-                  <div className="monitor-grid">
-                    <div className="section-label">Events</div>
-                    <EventFeed
-                      events={visibleEvents}
-                      hasMore={eventPage.has_more}
-                      loadingOlder={eventPage.loading}
-                      onLoadOlder={loadOlderEvents}
-                    />
-                  </div>
-                )}
+	                {view === "home" ? (
+	                  <>
+	                    <p className="lane-info">{laneGuide.summary}</p>
+	                    <ChatThread messages={chatMessages} />
+	                  </>
+	                ) : (
+	                  <MonitorDashboard
+	                    observability={observability}
+	                    usage={usage}
+	                    events={visibleEvents}
+	                    eventPage={eventPage}
+	                    loadingOlder={eventPage.loading}
+	                    onLoadOlder={loadOlderEvents}
+	                    activeTab={monitorTab}
+	                    onTabChange={setMonitorTab}
+	                  />
+	                )}
               </div>
 
               {view === "home" ? (

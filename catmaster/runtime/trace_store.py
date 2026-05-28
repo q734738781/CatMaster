@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Dict
 import json
 
+from catmaster.runtime.observability_store import ObservabilityStore
+
 
 def _now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
@@ -50,6 +52,10 @@ class TraceStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        try:
+            ObservabilityStore(self.run_dir).record_trace_record(path.name, payload)
+        except Exception:
+            return
 
 
 __all__ = ["TraceStore"]

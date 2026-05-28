@@ -16,6 +16,7 @@ from catmaster.webui import server
 from catmaster.webui.server import create_app
 from catmaster.webui.session import WebSession
 from catmaster.webui.web_reporter import WebReporter
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.ui.events import make_event
 
 
@@ -658,31 +659,123 @@ def test_web_reporter_persists_ui_events_and_usage_summary(tmp_path: Path) -> No
         )
     )
 
-    event_rows = [
-        json.loads(line)
-        for line in (tmp_path / "ui_events.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert event_rows[-1]["seq"] == 1
-    assert event_rows[-1]["name"] == "LLM_CALL_END"
+    assert not (tmp_path / "ui_events.jsonl").exists()
 
     usage = json.loads((tmp_path / "usage_summary.json").read_text(encoding="utf-8"))
     assert usage["cost_usd"] == 0.42
     assert usage["cost_source"] == "exact"
     assert usage["calls"] == 1
 
+    observability = ObservabilityStore(tmp_path).read_snapshot()
+    assert observability["metrics"]["llm_calls"] == 1
+    assert observability["events"][-1]["name"] == "LLM_CALL_END"
+    event_page = WebSession().read_ui_events(tmp_path, limit=2)
+    assert event_page["events"][-1]["seq"] == 1
+    assert event_page["events"][-1]["name"] == "LLM_CALL_END"
+
     resumed = WebReporter()
     resumed.set_run_dir(tmp_path)
     resumed.emit(make_event("RUN_END", category="run", payload={"status": "done"}, run_id="run_demo"))
-    event_rows = [
-        json.loads(line)
-        for line in (tmp_path / "ui_events.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert event_rows[-1]["seq"] == 2
+    assert not (tmp_path / "ui_events.jsonl").exists()
+    resumed_page = WebSession().read_ui_events(tmp_path, limit=2)
+    assert [event["seq"] for event in resumed_page["events"]] == [1, 2]
 
 
-def test_websession_read_ui_events_paginates_by_sequence(tmp_path: Path) -> None:
+def test_web_reporter_backfills_legacy_ui_events_before_sqlite_write(tmp_path: Path) -> None:
+    (tmp_path / "ui_events.jsonl").write_text(
+        "\n".join(
+            json.dumps({"seq": seq, "name": "RUN_EVENT", "payload": {"status": str(seq)}})
+            for seq in (1, 2)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reporter = WebReporter()
+    reporter.set_run_dir(tmp_path)
+    reporter.emit(make_event("RUN_END", category="run", payload={"status": "done"}, run_id="run_demo"))
+
+    page = WebSession().read_ui_events(tmp_path, limit=5)
+    assert [event["seq"] for event in page["events"]] == [1, 2, 3]
+
+
+def test_observability_route_returns_metrics_and_backfilled_events(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    run_dir = ws / "metadata" / "runs" / "run_obs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (ws / "files").mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_state.json").write_text(
+        json.dumps({"status": "done", "entrypoint": "experiment", "summary": "Observed run"}),
+        encoding="utf-8",
+    )
+    (run_dir / "ui_events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({
+                    "seq": 1,
+                    "ts": 1.0,
+                    "name": "LLM_CALL_END",
+                    "category": "llm",
+                    "payload": {
+                        "model": "gpt-test",
+                        "elapsed_ms": 1000,
+                        "text_preview": "Done",
+                        "usage": {"input_tokens": 2, "output_tokens": 3},
+                    },
+                }),
+                json.dumps({
+                    "seq": 2,
+                    "ts": 2.0,
+                    "name": "TOOL_CALL_END",
+                    "category": "tool",
+                    "payload": {"tool": "bash", "status": "success"},
+                }),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+
+    response = client.get(
+        f"/api/session/{ctx}/observability",
+        params={"project_space": "demo", "run": "run_obs"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_run"] == "run_obs"
+    assert payload["metrics"]["llm_calls"] == 1
+    assert payload["metrics"]["tool_calls"] == 1
+    assert payload["raw_logs"]["total_events"] == 2
+
+
+def test_websession_read_ui_events_paginates_sqlite_by_sequence(tmp_path: Path) -> None:
+    store = ObservabilityStore(tmp_path)
+    for seq in range(1, 6):
+        store.record_ui_event({"seq": seq, "name": "RUN_EVENT", "payload": {"status": str(seq)}})
+
+    session = WebSession()
+
+    latest = session.read_ui_events(tmp_path, limit=2)
+    assert [event["seq"] for event in latest["events"]] == [4, 5]
+    assert latest["has_more"] is True
+    assert latest["min_seq"] == 4
+
+    older = session.read_ui_events(tmp_path, limit=2, before_seq=4)
+    assert [event["seq"] for event in older["events"]] == [2, 3]
+    assert older["has_more"] is True
+
+    newer = session.read_ui_events(tmp_path, limit=2, after_seq=3)
+    assert [event["seq"] for event in newer["events"]] == [4, 5]
+
+
+def test_websession_read_ui_events_falls_back_to_legacy_jsonl_when_sqlite_missing(tmp_path: Path) -> None:
     for seq in range(1, 6):
         with (tmp_path / "ui_events.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"seq": seq, "name": "RUN_EVENT", "payload": {"status": str(seq)}}) + "\n")

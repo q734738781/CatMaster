@@ -9,11 +9,11 @@ description: Use this skill for MACE-based rapid screening, relaxation, single-p
 Use this skill to run cheap MACE screening or short MACE MD sampling on a structure batch before spending VASP resources.
 
 ## Quick Start
-1. Prepare a clean structure batch under `input_dir`.
+1. Prepare a clean stage directory containing an `input/` folder with the structures to evaluate.
 2. Choose `task_name="mace_relax_dir"` for geometry cleanup, `task_name="mace_sp_dir"` for static ranking, or `task_name="mace_md_dir"` for ASE-backed MD sampling.
-3. Choose `model`, `default_dtype`, dispersion policy, and any shortlist criterion needed for the next VASP or ML step before dispatch.
-4. Keep `output_root` outside `input_dir`.
-5. Use the collected outputs and batch-state files to decide which candidates advance to VASP.
+3. Pass calculator and run controls through `params`; for MD, write the grouped MD controls to a staged JSON file and pass its path as `params.params_path`.
+4. Submit with `remote_submission` for one stage, or `remote_submission_batch` when the batch root has one first-level child stage per task.
+5. Use stage-local outputs plus receipt/context fields to decide which candidates advance to VASP.
 
 ## Allowed tools
 - `get_avail_remote_task`
@@ -26,18 +26,19 @@ Use this skill to run cheap MACE screening or short MACE MD sampling on a struct
 - Use lightweight local filesystem/Python checks for paths and batch shape before launching managed MACE. Submit one intentional managed batch rather than probing remote execution for setup questions local inspection can answer.
 - `mace_relax_dir` needs a staged `input/` directory; it can also toggle `model`, `head`, `dispersion`, and `relax_lattice` through `params`.
 - `mace_sp_dir` is for energy evaluation only and does not relax geometry.
-- `mace_md_dir` is for trajectory generation and thermal sampling, not a replacement for a converged relaxation.
+- `mace_md_dir` needs a staged `input/` directory plus a params JSON file, defaulting to `params/md_params.json`; it is for trajectory generation and thermal sampling, not a replacement for a converged relaxation.
 - Do not compare relax and SP outputs as if they were the same screening stage.
 - For geometry optimization with `mace_relax_dir`, keep `default_dtype=float64` by default. Only switch to `float32` when the user explicitly wants a cheaper, lower-rigor screening pass and the numerical looseness is acceptable.
 
-### 2. Configure MACE MD through `md_config`
-- The tool schema intentionally exposes only one free-form `md_config` object for MD controls. Do not expect the tool schema to list every ASE parameter.
-- Keep calculator-level basics (`model`, `head`, `dispersion`, `default_dtype`) in the top-level tool arguments unless you need advanced calculator switches.
-- Inside `md_config`, use optional groups named `calculator`, `dynamics`, `thermostat`, `barostat`, and `output`.
+### 2. Configure MACE MD through a staged params JSON
+- Write MD controls into a JSON file inside the stage, normally `params/md_params.json`.
+- Pass `params={"params_path": "params/md_params.json"}` unless you deliberately choose a different stage-local path.
+- Keep calculator-level basics (`model`, `head`, `dispersion`, `default_dtype`) in the JSON unless the remote task command exposes them directly.
+- Inside the JSON, use optional groups named `calculator`, `dynamics`, `thermostat`, `barostat`, and `output`.
 - Use only the keys needed by the chosen method; do not fill thermostat/barostat keys just because they exist in a template.
 - The remote runner supplies defaults for omitted keys: NVT, 300 K, 1 fs, 1000 steps, Bussi thermostat, trajectory/log every 10 steps.
 
-Common `md_config` templates:
+Common MD params JSON templates:
 
 ```json
 {
@@ -72,15 +73,17 @@ ASE mapping:
 - NVT `thermostat.type` maps as `bussi` -> `Bussi`, `nhc` -> `NoseHooverChainNVT`, `langevin` -> `Langevin`, and `berendsen` -> `NVTBerendsen`.
 - NPT `barostat.type` maps as `isotropic_mtk` -> `IsotropicMTKNPT`, `full_mtk` -> `MTKNPT`, and `berendsen` -> `NPTBerendsen`.
 - For NPT Berendsen, include `barostat.compressibility_bar_inv`; it is system-specific.
-- For output cadence, set `md_config.output` with `traj_interval`, `log_interval`, `log_stress`, or `overwrite` only when defaults are unsuitable.
+- For output cadence, set the staged params JSON `output` group with `traj_interval`, `log_interval`, `log_stress`, or `overwrite` only when defaults are unsuitable.
 
-### 3. Keep input and output trees separate
-- Both tools reject `output_root` inside `input_dir`.
-- The runtime stages a temporary batch tree under `output_root`, dispatches remotely, collects outputs, then removes the staging tree.
+### 3. Use the stage layout expected by the remote task
+- For `mace_sp_dir` and `mace_relax_dir`, the stage contains `input/` and the downloaded `output/` directory after completion.
+- For `mace_md_dir`, the stage contains `input/`, `params/md_params.json`, and the downloaded `output/` directory after completion.
+- For batch submission, every first-level child under `work_dir` must be one complete MACE stage; nested discovery is not performed.
 
 ### 4. Use collected evidence, not launch success alone
-- Returned metadata includes `batch_state_rel`, collected stdout/stderr/status files, and any `batch_summary_rel`.
-- On dispatch failure, the tool still tries to collect partial outputs; inspect those before deciding to rerun.
+- Returned metadata includes `work_dir_rel`, `remote_context_id`, `submission_hash`, `receipt_rel`, and `task_state_counts`.
+- Stage-local evidence includes `status.json`, `stdout.log`, `stderr.log`, and remote runner outputs such as `output/batch_summary.json`.
+- On dispatch failure, inspect receipt/context fields and stage-local evidence before deciding to resubmit; the remote work may still be live.
 
 ### 5. Use this skill while the workflow artifact is still materials-side
 - Use this skill for structure batches, candidate ranking, geometry cleanup, and materials-side post-analysis before expensive reference calculations.
@@ -103,9 +106,9 @@ ASE mapping:
 ## Output Contract
 Return:
 - chosen MACE stage (`relax` or `sp`)
-- for MD, chosen ensemble plus grouped `calculator`, `dynamics`, `thermostat`, `barostat`, and `output` controls
-- `output_root_rel`
-- `batch_state_rel`
+- for MD, chosen ensemble plus staged params JSON path and grouped `calculator`, `dynamics`, `thermostat`, `barostat`, and `output` controls
+- `work_dir_rel`
+- `remote_context_id`, `submission_hash`, and `receipt_rel` when present
 - shortlist or keep/drop rule for downstream VASP handoff
 
 ## References

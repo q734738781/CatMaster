@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from catmaster.tools.base import ensure_project_space_layout, system_root, workspace_root
 from catmaster.runtime import RunControl
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.usage_stats import load_usage_summary
 from catmaster.ui import make_event
 from catmaster.specialists import RUN_STATE_FILE
@@ -1114,13 +1115,35 @@ class WebSession:
         if store is None or not target_session_id:
             return
         try:
-            store.append_message(
+            message_id = store.append_message(
                 target_session_id,
                 role=role,
                 content=content,
                 kind=kind,
                 source_run_id=source_run_id,
                 source_prompt_id=source_prompt_id,
+                meta=meta,
+            )
+        except Exception:
+            return
+        run_name = str(source_run_id or "").strip()
+        if not run_name:
+            return
+        ws = self._workspace_path(workspace)
+        if ws is None:
+            return
+        run_dir = system_root(workspace=ws) / "runs" / run_name
+        if not run_dir.exists():
+            return
+        try:
+            ObservabilityStore(run_dir).record_chat_message(
+                session_id=target_session_id,
+                role=role,
+                content=content,
+                kind=kind,
+                source_run_id=run_name,
+                source_prompt_id=source_prompt_id,
+                message_id=str(message_id or ""),
                 meta=meta,
             )
         except Exception:
@@ -1317,6 +1340,15 @@ class WebSession:
             return ""
         return io.tail_jsonl(run_dir / trace_name, project_space=ws, max_lines=MAX_TRACE_LINES)
 
+    def read_observability(self, run_dir: Optional[Path], *, workspace: Optional[Path] = None, limit: int = 400) -> Dict[str, Any]:
+        ws = self._workspace_path(workspace)
+        if ws is None or not run_dir:
+            return {}
+        try:
+            return ObservabilityStore(Path(run_dir)).read_snapshot(limit=limit)
+        except Exception:
+            return {}
+
     def read_usage_summary(self, run_dir: Optional[Path]) -> Dict[str, Any]:
         if not run_dir:
             return {}
@@ -1334,6 +1366,15 @@ class WebSession:
         after_seq: int = 0,
     ) -> Dict[str, Any]:
         if not run_dir:
+            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+        store = ObservabilityStore(Path(run_dir))
+        if store.db_exists():
+            try:
+                page = store.read_ui_events_page(limit=limit, before_seq=before_seq, after_seq=after_seq)
+            except Exception:
+                page = None
+            if isinstance(page, dict):
+                return page
             return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
         path = Path(run_dir) / "ui_events.jsonl"
         if not path.exists():
@@ -1671,6 +1712,19 @@ class WebSession:
             (run_dir / RUN_STATE_FILE).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             return
+        try:
+            ObservabilityStore(run_dir).record_run_state(payload, reason="initial_resume" if is_resume else "initial")
+            prompt_text = str(user_prompt or "").strip()
+            if prompt_text:
+                ObservabilityStore(run_dir).record_chat_message(
+                    session_id=str(chat_session_id or ""),
+                    role="user",
+                    content=prompt_text,
+                    kind="chat",
+                    source_run_id=run_dir.name,
+                )
+        except Exception:
+            return
 
     def _write_interrupted_run_state(
         self,
@@ -1709,6 +1763,10 @@ class WebSession:
         )
         try:
             (run_dir / RUN_STATE_FILE).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            return
+        try:
+            ObservabilityStore(run_dir).record_run_state(payload, reason="interrupted")
         except Exception:
             return
 

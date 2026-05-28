@@ -20,7 +20,8 @@ from pydantic import BaseModel
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
-from catmaster.runtime.artifact_callback import LangChainStepLogger, UIEventHandler
+from catmaster.runtime.artifact_callback import LangChainStepLogger, ObservabilityCallbackHandler, UIEventHandler
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.run_control import RunControl
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError, content_to_text
@@ -2328,6 +2329,13 @@ class SpecialistRunner:
                     default_agent_name=default_agent_name,
                 )
             )
+        callbacks.append(
+            ObservabilityCallbackHandler(
+                self.run_context.run_dir,
+                run_id=self.run_context.run_id,
+                default_agent_name=default_agent_name,
+            )
+        )
         agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
         if bool(getattr(agent_runtime, "print_state_messages", False)):
             callbacks.append(LangChainStepLogger(run_id=self.run_context.run_id))
@@ -2869,6 +2877,10 @@ class SpecialistRunner:
     def _write_run_state(self, payload: dict[str, Any]) -> None:
         path = self.run_context.run_dir / RUN_STATE_FILE
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            ObservabilityStore(self.run_context.run_dir).record_run_state(payload, reason="specialist")
+        except Exception:
+            return
 
     def _emit(self, name: str, *, payload: dict[str, Any] | None = None) -> None:
         try:

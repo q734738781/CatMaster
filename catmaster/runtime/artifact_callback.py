@@ -14,6 +14,7 @@ import logging
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -22,6 +23,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.outputs import LLMResult
 
 from catmaster.runtime.artifact_store import ArtifactStore
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.tool_observation_projection import project_tool_observation
 from catmaster.runtime.trace_store import TraceStore
 from catmaster.ui.events import UIEvent, make_event
@@ -537,6 +539,7 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
         projection = _coerce_tool_projection(output, tool_name=tool_name)
         normalized_status = str(projection.get("tool_status") or "success")
         normalized_error = projection.get("error")
+        refs = self.artifact_store.toolcall_refs(toolcall_key)
 
         self.artifact_store.write_output(toolcall_key, {
             "raw_output": _json_safe(output),
@@ -551,6 +554,7 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
             "error": normalized_error,
             "toolcall_id": toolcall_key,
             "run_id": self.run_id,
+            **refs,
         })
 
     def on_tool_error(
@@ -575,6 +579,7 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
             "tool_status": "error",
             "tool_name": tool_name,
         })
+        refs = self.artifact_store.toolcall_refs(toolcall_key)
         self.trace_store.append_toolcall({
             "role": "langgraph",
             "tool_name": tool_name,
@@ -582,6 +587,7 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
             "error": str(error),
             "toolcall_id": toolcall_key,
             "run_id": self.run_id,
+            **refs,
         })
 
 
@@ -619,7 +625,19 @@ class LLMTracingHandler(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        self._register_start(serialized, run_id)
+        model = self._register_start(serialized, run_id)
+        if prompts:
+            self.trace_store.append_event({
+                "event": "LLM_RAW_REQUEST",
+                "payload": {
+                    "role": "langgraph",
+                    "model": model,
+                    "run_id": self.run_id,
+                    "callback_run_id": str(run_id),
+                    "parent_callback_run_id": str(parent_run_id or ""),
+                    "prompts": _json_safe(prompts),
+                },
+            })
 
     def on_chat_model_start(
         self,
@@ -632,8 +650,18 @@ class LLMTracingHandler(BaseCallbackHandler):
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
-        _ = messages
-        self._register_start(serialized, run_id)
+        model = self._register_start(serialized, run_id)
+        self.trace_store.append_event({
+            "event": "LLM_RAW_REQUEST",
+            "payload": {
+                "role": "langgraph",
+                "model": model,
+                "run_id": self.run_id,
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
+                "messages": _json_safe(messages),
+            },
+        })
 
     def on_llm_end(
         self,
@@ -652,6 +680,7 @@ class LLMTracingHandler(BaseCallbackHandler):
                 "model": info.get("model", ""),
                 "run_id": self.run_id,
                 "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
                 "generations": generations,
             },
         })
@@ -672,8 +701,284 @@ class LLMTracingHandler(BaseCallbackHandler):
                 "model": info.get("model", ""),
                 "error": str(error),
                 "run_id": self.run_id,
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
             },
         })
+
+
+class ObservabilityCallbackHandler(BaseCallbackHandler):
+    """Record raw LangChain callback payloads directly to the run observability DB."""
+
+    def __init__(self, run_dir: Path, *, run_id: str = "", default_agent_name: str = "") -> None:
+        super().__init__()
+        self.store = ObservabilityStore(Path(run_dir))
+        self.run_id = run_id
+        self.default_agent_name = str(default_agent_name or "").strip()
+        self._llm_pending: Dict[str, Dict[str, Any]] = {}
+        self._tool_pending: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _context(metadata: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, Any]:
+        merged: Dict[str, Any] = {}
+        if isinstance(metadata, dict):
+            merged.update(metadata)
+        raw_metadata = kwargs.get("metadata")
+        if isinstance(raw_metadata, dict):
+            merged.update(raw_metadata)
+        return merged
+
+    def _agent_name(self, ctx: Dict[str, Any]) -> str:
+        for key in ("lc_agent_name", "agent_name", "agent", "subagent"):
+            value = str(ctx.get(key) or "").strip()
+            if value:
+                return value
+        checkpoint_ns = str(ctx.get("langgraph_checkpoint_ns") or ctx.get("checkpoint_ns") or "").strip()
+        if checkpoint_ns:
+            head = checkpoint_ns.split(":", 1)[0].strip()
+            if head and head != "model":
+                return head
+        return self.default_agent_name
+
+    def _record(self, name: str, *, payload: Dict[str, Any], category: str, task_id: str = "", step_id: Optional[int] = None) -> None:
+        try:
+            self.store.record_raw_callback(
+                name,
+                payload=payload,
+                category=category,
+                run_id=self.run_id,
+                task_id=task_id,
+                step_id=step_id,
+            )
+        except Exception:
+            return
+
+    def on_llm_start(
+        self,
+        serialized: Dict[str, Any],
+        prompts: List[str],
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        ctx = self._context(metadata, **kwargs)
+        model = str(serialized.get("kwargs", {}).get("model_name") or "")
+        agent_name = self._agent_name(ctx)
+        self._llm_pending[str(run_id)] = {
+            "model": model,
+            "start_ts": time.time(),
+            "agent_name": agent_name,
+            "task_id": str(ctx.get("task_id") or ""),
+            "step_id": ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
+            "parent_callback_run_id": str(parent_run_id or ""),
+            "node": str(ctx.get("langgraph_node") or ctx.get("node") or ""),
+        }
+        if prompts:
+            self._record(
+                "LLM_RAW_REQUEST",
+                category="llm",
+                task_id=str(ctx.get("task_id") or ""),
+                step_id=ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
+                payload={
+                    "model": model,
+                    "agent_name": agent_name,
+                    "callback_run_id": str(run_id),
+                    "parent_callback_run_id": str(parent_run_id or ""),
+                    "node": str(ctx.get("langgraph_node") or ctx.get("node") or ""),
+                    "prompts": _json_safe(prompts),
+                },
+            )
+
+    def on_chat_model_start(
+        self,
+        serialized: Dict[str, Any],
+        messages: List[List[Any]],
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        _ = tags
+        self.on_llm_start(serialized, [], run_id=run_id, parent_run_id=parent_run_id, metadata=metadata, **kwargs)
+        info = self._llm_pending.get(str(run_id), {})
+        self._record(
+            "LLM_RAW_REQUEST",
+            category="llm",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "model": str(info.get("model") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
+                "node": str(info.get("node") or ""),
+                "messages": _json_safe(messages),
+            },
+        )
+
+    def on_llm_end(
+        self,
+        response: LLMResult,
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        _ = kwargs
+        info = self._llm_pending.pop(str(run_id), {})
+        elapsed_ms = int((time.time() - float(info.get("start_ts") or time.time())) * 1000)
+        self._record(
+            "LLM_RAW_RESPONSE",
+            category="llm",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "model": str(info.get("model") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "node": str(info.get("node") or ""),
+                "elapsed_ms": elapsed_ms,
+                "usage": _extract_usage_from_llm_result(response),
+                "generations": _extract_raw_generations(response),
+            },
+        )
+
+    def on_llm_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        _ = kwargs
+        info = self._llm_pending.pop(str(run_id), {})
+        self._record(
+            "LLM_ERROR",
+            category="llm",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "model": str(info.get("model") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "node": str(info.get("node") or ""),
+                "error": str(error),
+            },
+        )
+
+    def on_tool_start(
+        self,
+        serialized: Dict[str, Any],
+        input_str: str,
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        ctx = self._context(metadata, **kwargs)
+        task_id = str(ctx.get("task_id") or "")
+        step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None
+        agent_name = self._agent_name(ctx)
+        tool_name = str(serialized.get("name") or "")
+        if inputs is not None:
+            raw_params: Any = inputs
+        else:
+            try:
+                raw_params = json.loads(input_str)
+            except Exception:
+                raw_params = input_str
+        params_compact, params_full = _compact_tool_params(raw_params, max_chars=480)
+        self._tool_pending[str(run_id)] = {
+            "tool": tool_name,
+            "start_ts": time.time(),
+            "task_id": task_id,
+            "step_id": step_id,
+            "agent_name": agent_name,
+            "parent_callback_run_id": str(parent_run_id or ""),
+        }
+        self._record(
+            "TOOL_RAW_INPUT",
+            category="tool",
+            task_id=task_id,
+            step_id=step_id,
+            payload={
+                "tool_name": tool_name,
+                "tool": tool_name,
+                "agent_name": agent_name,
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
+                "params_compact": params_compact,
+                "params_full": params_full,
+            },
+        )
+
+    def on_tool_end(
+        self,
+        output: Any,
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        _ = kwargs
+        info = self._tool_pending.pop(str(run_id), {})
+        projection = _coerce_tool_projection(output, tool_name=str(info.get("tool") or ""))
+        elapsed_ms = int((time.time() - float(info.get("start_ts") or time.time())) * 1000)
+        self._record(
+            "TOOL_RAW_OUTPUT",
+            category="tool",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "tool_name": str(projection.get("tool_name") or info.get("tool") or ""),
+                "tool": str(projection.get("tool_name") or info.get("tool") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "status": str(projection.get("tool_status") or "success"),
+                "tool_status": str(projection.get("tool_status") or "success"),
+                "error": projection.get("error"),
+                "elapsed_ms": elapsed_ms,
+                "projection": projection,
+                "raw_output": _json_safe(output),
+            },
+        )
+
+    def on_tool_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        _ = kwargs
+        info = self._tool_pending.pop(str(run_id), {})
+        self._record(
+            "TOOL_RAW_OUTPUT",
+            category="tool",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "tool_name": str(info.get("tool") or ""),
+                "tool": str(info.get("tool") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "status": "error",
+                "tool_status": "error",
+                "error": str(error),
+            },
+        )
 
 
 class LangChainStepLogger(BaseCallbackHandler):
@@ -877,6 +1182,7 @@ class UIEventHandler(BaseCallbackHandler):
         input_str: str,
         *,
         run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
         metadata: Optional[Dict[str, Any]] = None,
         inputs: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -905,6 +1211,7 @@ class UIEventHandler(BaseCallbackHandler):
             "params_compact": params_compact,
             "params_full": params_full,
             "agent_name": agent_name,
+            "parent_callback_run_id": str(parent_run_id or ""),
         }
         self._emit(
             "TOOL_CALL_START",
@@ -916,6 +1223,8 @@ class UIEventHandler(BaseCallbackHandler):
             params_compact=params_compact,
             params_full=params_full,
             agent_name=agent_name,
+            callback_run_id=toolcall_id,
+            parent_callback_run_id=str(parent_run_id or ""),
         )
 
     def on_tool_end(
@@ -939,6 +1248,8 @@ class UIEventHandler(BaseCallbackHandler):
             params_compact=str(info.get("params_compact") or ""),
             toolcall_id=str(info.get("toolcall_id") or ""),
             agent_name=str(info.get("agent_name") or ""),
+            callback_run_id=str(info.get("toolcall_id") or ""),
+            parent_callback_run_id=str(info.get("parent_callback_run_id") or ""),
         )
 
     def on_tool_error(
@@ -960,6 +1271,8 @@ class UIEventHandler(BaseCallbackHandler):
             params_compact=str(info.get("params_compact") or ""),
             toolcall_id=str(info.get("toolcall_id") or ""),
             agent_name=str(info.get("agent_name") or ""),
+            callback_run_id=str(info.get("toolcall_id") or ""),
+            parent_callback_run_id=str(info.get("parent_callback_run_id") or ""),
         )
 
     def on_llm_start(
@@ -968,6 +1281,7 @@ class UIEventHandler(BaseCallbackHandler):
         prompts: List[str],
         *,
         run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
@@ -982,6 +1296,7 @@ class UIEventHandler(BaseCallbackHandler):
             "node": str(ctx.get("langgraph_node") or ctx.get("node") or ""),
             "agent_name": agent_name,
             "reasoning_emitted": "",
+            "parent_callback_run_id": str(parent_run_id or ""),
         }
         self._emit(
             "LLM_CALL_START",
@@ -992,6 +1307,9 @@ class UIEventHandler(BaseCallbackHandler):
             phase="react",
             node=str(ctx.get("langgraph_node") or ctx.get("node") or ""),
             agent_name=agent_name,
+            llm_call_id=str(run_id),
+            callback_run_id=str(run_id),
+            parent_callback_run_id=str(parent_run_id or ""),
         )
 
     def on_chat_model_start(
@@ -1006,7 +1324,7 @@ class UIEventHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         _ = (messages, parent_run_id, tags)
-        self.on_llm_start(serialized, [], run_id=run_id, metadata=metadata, **kwargs)
+        self.on_llm_start(serialized, [], run_id=run_id, parent_run_id=parent_run_id, metadata=metadata, **kwargs)
 
     def on_llm_new_token(
         self,
@@ -1035,6 +1353,9 @@ class UIEventHandler(BaseCallbackHandler):
                 node=str(info.get("node") or ""),
                 text=reasoning_delta,
                 agent_name=str(info.get("agent_name") or ""),
+                llm_call_id=str(run_id),
+                callback_run_id=str(run_id),
+                parent_callback_run_id=str(info.get("parent_callback_run_id") or ""),
             )
         token_text = str(token or "")
         if token_text:
@@ -1048,6 +1369,9 @@ class UIEventHandler(BaseCallbackHandler):
                 node=str(info.get("node") or ""),
                 text=token_text,
                 agent_name=str(info.get("agent_name") or ""),
+                llm_call_id=str(run_id),
+                callback_run_id=str(run_id),
+                parent_callback_run_id=str(info.get("parent_callback_run_id") or ""),
             )
 
     def on_llm_end(
@@ -1088,6 +1412,9 @@ class UIEventHandler(BaseCallbackHandler):
             text_preview=text_preview,
             tool_calls=tool_names,
             agent_name=str(info.get("agent_name") or ""),
+            llm_call_id=str(run_id),
+            callback_run_id=str(run_id),
+            parent_callback_run_id=str(info.get("parent_callback_run_id") or ""),
         )
 
 
@@ -1114,6 +1441,7 @@ __all__ = [
     "ArtifactPersistenceHandler",
     "LangChainStepLogger",
     "LLMTracingHandler",
+    "ObservabilityCallbackHandler",
     "UIEventHandler",
     "build_callbacks",
 ]

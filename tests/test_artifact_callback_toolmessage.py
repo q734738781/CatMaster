@@ -10,8 +10,9 @@ pytest.importorskip("langchain_core")
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
-from catmaster.runtime.artifact_callback import ArtifactPersistenceHandler, UIEventHandler
+from catmaster.runtime.artifact_callback import ArtifactPersistenceHandler, ObservabilityCallbackHandler, UIEventHandler
 from catmaster.runtime.artifact_store import ArtifactStore
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.trace_store import TraceStore
 from catmaster.ui.reporters import Reporter
 
@@ -195,6 +196,43 @@ def test_ui_event_handler_emits_llm_preview_and_tool_plan() -> None:
     assert payload.get("text_preview") == "Progress: built O2 and preparing relax."
     assert payload.get("tool_calls") == ["mace_relax_batch"]
     assert payload.get("agent_name") == "experiment_specialist"
+
+
+def test_observability_callback_records_raw_llm_and_tool_payloads(tmp_path) -> None:
+    handler = ObservabilityCallbackHandler(tmp_path, run_id="run_x", default_agent_name="materials_worker")
+
+    llm_id = uuid.uuid4()
+    handler.on_chat_model_start(
+        serialized={"kwargs": {"model_name": "gpt-test"}},
+        messages=[[AIMessage(content="prepare O2 input")]],
+        run_id=llm_id,
+        metadata={"lc_agent_name": "materials_worker"},
+    )
+    handler.on_llm_end(
+        LLMResult(generations=[[ChatGeneration(message=AIMessage(content="done"))]], llm_output={}),
+        run_id=llm_id,
+    )
+
+    tool_id = uuid.uuid4()
+    handler.on_tool_start(
+        serialized={"name": "remote_submission"},
+        input_str=json.dumps({"work_dir": "o2"}),
+        run_id=tool_id,
+        parent_run_id=llm_id,
+    )
+    handler.on_tool_end(
+        {"status": "success", "tool_name": "remote_submission", "submission_id": "sub_1"},
+        run_id=tool_id,
+        parent_run_id=llm_id,
+    )
+
+    snapshot = ObservabilityStore(tmp_path).read_snapshot()
+    names = [event["name"] for event in snapshot["events"]]
+    assert "LLM_RAW_REQUEST" in names
+    assert "LLM_RAW_RESPONSE" in names
+    assert "TOOL_RAW_INPUT" in names
+    assert "TOOL_RAW_OUTPUT" in names
+    assert any(node["parent_id"] == str(llm_id) for node in snapshot["trace_tree"]["nodes"])
 
 
 def test_ui_event_handler_reasoning_delta_emits_only_new_suffix() -> None:

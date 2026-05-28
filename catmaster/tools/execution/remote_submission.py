@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.runtime.tool_runtime import current_tool_audience
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import resolve_workspace_path, system_root, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
     TaskSpec,
@@ -21,7 +23,7 @@ from catmaster.tools.execution.dpdispatcher_runner import (
 )
 from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_payloads import render_task_fields
-from catmaster.tools.execution.task_registry import TaskConfig, TaskRegistry
+from catmaster.tools.execution.task_registry import TaskConfig, TaskRegistry, format_template
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -182,6 +184,10 @@ def _normalize_params(cfg: TaskConfig | None, params: dict[str, Any] | None) -> 
         else:
             out[str(key)] = value
     return out
+
+
+def _shell_quote_params(ctx: dict[str, Any]) -> dict[str, str]:
+    return {str(key): shlex.quote(str(value)) for key, value in ctx.items()}
 
 
 def _unresolved_placeholders(command: str) -> list[str]:
@@ -382,7 +388,7 @@ def _build_task_spec(
     else:
         ctx = _normalize_params(cfg, params)
         rendered = render_task_fields(cfg, ctx, stage_dir)
-        command = str(rendered["command"])
+        command = format_template(cfg.command, _shell_quote_params(ctx))
         missing = _unresolved_placeholders(command)
         if missing:
             raise ValueError(f"Missing params for task '{task_name}': {', '.join(missing)}")
@@ -403,6 +409,29 @@ def _state_counts(states: list[str]) -> dict[str, int]:
     return dict(Counter(str(item) for item in states))
 
 
+def _safe_submission_token(work_dir: Path) -> str:
+    rel = workspace_relpath(work_dir)
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", rel).strip("._")
+    return (token or work_dir.name or "stage")[:96]
+
+
+def _prepare_dispatch_workspace(work_dir: Path, *, tool_name: str) -> tuple[Path, str, Path]:
+    staging_root = system_root() / "dpdispatcher" / "staging"
+    staging_root.mkdir(parents=True, exist_ok=True)
+    work_base = f"{tool_name}_{_safe_submission_token(work_dir)}_{uuid4().hex[:10]}"
+    dispatch_dir = staging_root / work_base
+    if dispatch_dir.exists():
+        shutil.rmtree(dispatch_dir)
+    shutil.copytree(work_dir, dispatch_dir, symlinks=True)
+    return staging_root, work_base, dispatch_dir
+
+
+def _sync_dispatch_workspace_back(dispatch_dir: Path, work_dir: Path) -> None:
+    if not dispatch_dir.is_dir():
+        return
+    shutil.copytree(dispatch_dir, work_dir, dirs_exist_ok=True, symlinks=True)
+
+
 def _submit(
     *,
     tool_name: str,
@@ -415,11 +444,12 @@ def _submit(
     check_interval: int,
     clean_remote: bool,
 ) -> tuple[str, dict[str, Any]]:
+    local_root, work_base, dispatch_dir = _prepare_dispatch_workspace(work_dir, tool_name=tool_name)
     req = BatchDispatchRequest(
         machine=str(register.get_resources(resources_key).get("machine") or ""),
         resources=resources_key,
-        work_base=work_dir.name,
-        local_root=str(work_dir.parent),
+        work_base=work_base,
+        local_root=str(local_root),
         tasks=tasks,
         forward_common_files=list(cfg.forward_common_files if cfg is not None else []),
         backward_common_files=list(cfg.backward_common_files if cfg is not None else []),
@@ -433,11 +463,23 @@ def _submit(
         result = dispatch_submission(req, register=register)
     except Exception as exc:
         dispatch_error = exc
+    try:
+        _sync_dispatch_workspace_back(dispatch_dir, work_dir)
+    except Exception as sync_exc:
+        remote_context = remote_context_from_exception(dispatch_error)
+        if dispatch_error is None:
+            sync_error = RuntimeError(f"local result sync failed: {sync_exc}")
+        else:
+            sync_error = RuntimeError(f"{dispatch_error}; local result sync failed: {sync_exc}")
+        if remote_context:
+            setattr(sync_error, "remote_context", remote_context)
+        sync_error.__cause__ = sync_exc
+        dispatch_error = sync_error
     if dispatch_error is not None:
         data = {
             "task_name": task_name,
             "work_dir_rel": workspace_relpath(work_dir),
-            "work_base": work_dir.name,
+            "work_base": work_base,
             "resources": resources_key,
             **remote_context_from_exception(dispatch_error),
         }

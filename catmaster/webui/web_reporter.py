@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.usage_stats import summarize_usage_from_metadata, write_usage_summary_from_metadata
 from catmaster.ui import Reporter
 from catmaster.ui.events import UIEvent, make_event
@@ -195,14 +196,17 @@ class WebReporter(Reporter):
                 "task_id": getattr(event, "task_id", None),
                 "step_id": getattr(event, "step_id", None),
             }
-        if str(payload.get("name") or "") in {"LLM_REASONING_DELTA", "LLM_TOKEN_DELTA"}:
+        name = str(payload.get("name") or "")
+        if name in {"LLM_REASONING_DELTA", "LLM_TOKEN_DELTA"}:
+            if name == "LLM_REASONING_DELTA":
+                self._append_observability_event(payload)
             return
         with self._cond:
             self._seq += 1
             payload["seq"] = self._seq
             self._apply_live_updates(payload)
             self._events.append(payload)
-            self._append_persisted_ui_event(payload)
+            self._append_observability_event(payload)
             self._cond.notify_all()
 
     def get_events_since(self, last_seq: int) -> Tuple[List[Dict[str, Any]], int]:
@@ -451,23 +455,33 @@ class WebReporter(Reporter):
                 }
             )
 
-    def _append_persisted_ui_event(self, event: Dict[str, Any]) -> None:
+    def _append_observability_event(self, event: Dict[str, Any]) -> None:
         run_dir = self._run_dir
         if run_dir is None:
             return
         try:
-            path = Path(run_dir) / "ui_events.jsonl"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+            ObservabilityStore(Path(run_dir)).record_ui_event(event)
         except Exception:
             return
 
     @staticmethod
     def _last_persisted_event_seq(run_dir: Path) -> int:
+        store = ObservabilityStore(Path(run_dir))
+        if store.db_exists():
+            try:
+                return store.last_ui_event_seq()
+            except Exception:
+                return 0
         path = Path(run_dir) / "ui_events.jsonl"
         if not path.exists():
             return 0
+        try:
+            store.read_snapshot(limit=1)
+            sqlite_seq = store.last_ui_event_seq()
+            if sqlite_seq > 0:
+                return sqlite_seq
+        except Exception:
+            pass
         last_seq = 0
         try:
             with path.open("r", encoding="utf-8") as handle:

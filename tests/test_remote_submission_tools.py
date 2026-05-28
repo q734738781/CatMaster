@@ -22,6 +22,22 @@ from catmaster.tools.execution.task_registry import TaskRegistry
 remote_submission_mod = importlib.import_module("catmaster.tools.execution.remote_submission")
 
 
+def test_package_root_preserves_legacy_execution_exports() -> None:
+    from catmaster.tools.execution import (
+        MaceRelaxInput,
+        VaspExecuteInput,
+        crest_conformer_search,
+        orca_execute_batch,
+        xtb_run_batch,
+    )
+
+    assert MaceRelaxInput.__name__ == "MaceRelaxInput"
+    assert VaspExecuteInput.__name__ == "VaspExecuteInput"
+    assert callable(crest_conformer_search)
+    assert callable(orca_execute_batch)
+    assert callable(xtb_run_batch)
+
+
 def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     with toolcall_context("catalog", audience="materials_worker"):
         _, artifact = get_avail_remote_task({"return_resource": True})
@@ -62,6 +78,8 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
 
     def _fake_dispatch(req, *, register=None, config_path=None):
         _ = (register, config_path)
+        stage_copy = Path(req.local_root) / req.work_base
+        (stage_copy / "output_marker.txt").write_text("downloaded", encoding="utf-8")
         captured["work_base"] = req.work_base
         captured["local_root"] = req.local_root
         captured["machine"] = req.machine
@@ -100,7 +118,8 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
                 }
             )
 
-    assert captured["work_base"] == "mace_sp"
+    assert str(captured["work_base"]).startswith("remote_submission_stage_mace_sp_")
+    assert str(captured["local_root"]).endswith("metadata/dpdispatcher/staging")
     assert captured["task_work_path"] == "."
     assert captured["resources"] == "mace_gpu"
     assert captured["check_interval"] == 7
@@ -108,9 +127,79 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
     assert "medium-mpa-0" in str(captured["command"])
     assert "float32" in str(captured["command"])
     assert (stage / "task_script" / "mace_sp.py").is_file()
+    assert (stage / "output_marker.txt").read_text(encoding="utf-8") == "downloaded"
+    assert artifact["data"]["work_base"] == captured["work_base"]
     assert artifact["data"]["remote_context_id"] == "dp_test"
     assert artifact["data"]["submission_hash"] == "abc123"
     assert "jobs" not in artifact["data"]
+
+
+def test_remote_submission_uses_unique_work_base_for_same_basename(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    work_bases: list[str] = []
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = (register, config_path)
+        work_bases.append(req.work_base)
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={"remote_context_id": f"dp_{len(work_bases)}", "submission_hash": f"hash_{len(work_bases)}", "receipt_rel": "receipt.json"},
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        for rel in ("a/stage", "b/stage"):
+            (tmp_path / "files" / rel).mkdir(parents=True)
+        with toolcall_context("submit", audience="materials_worker"):
+            remote_submission({"work_dir": "a/stage", "task_name": "vasp_execute"})
+            remote_submission({"work_dir": "b/stage", "task_name": "vasp_execute"})
+
+    assert len(work_bases) == 2
+    assert work_bases[0] != work_bases[1]
+    assert work_bases[0].startswith("remote_submission_a_stage_")
+    assert work_bases[1].startswith("remote_submission_b_stage_")
+
+
+def test_remote_submission_quotes_template_params(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = (register, config_path)
+        captured["command"] = req.tasks[0].command
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={"remote_context_id": "dp_quote", "submission_hash": "hash_quote", "receipt_rel": "receipt.json"},
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage"
+        (stage / "input").mkdir(parents=True)
+        (stage / "input" / "CO.vasp").write_text("dummy", encoding="utf-8")
+        with toolcall_context("submit", audience="materials_worker"):
+            remote_submission(
+                {
+                    "work_dir": "stage",
+                    "task_name": "mace_sp_dir",
+                    "params": {"head": "", "model": "model with spaces"},
+                }
+            )
+
+    assert "--head '' --dispersion false" in captured["command"]
+    assert "--model 'model with spaces'" in captured["command"]
 
 
 def test_remote_submission_batch_maps_first_level_children(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -118,6 +207,8 @@ def test_remote_submission_batch_maps_first_level_children(monkeypatch: pytest.M
 
     def _fake_dispatch(req, *, register=None, config_path=None):
         _ = (register, config_path)
+        stage_copy = Path(req.local_root) / req.work_base
+        (stage_copy / "a" / "OUTCAR").write_text("done", encoding="utf-8")
         captured["task_work_paths"] = [task.task_work_path for task in req.tasks]
         captured["commands"] = [task.command for task in req.tasks]
         return SimpleNamespace(
@@ -144,6 +235,7 @@ def test_remote_submission_batch_maps_first_level_children(monkeypatch: pytest.M
     assert all("vasp_boot.py" in command for command in captured["commands"])
     assert (root / "a" / "task_script" / "vasp_boot.py").is_file()
     assert (root / "b" / "task_script" / "vasp_boot.py").is_file()
+    assert (root / "a" / "OUTCAR").read_text(encoding="utf-8") == "done"
     assert artifact["data"]["task_count"] == 2
     assert artifact["data"]["task_state_counts"] == {"finished": 2}
 
@@ -153,7 +245,9 @@ def test_remote_submission_failure_exposes_receipt_context_in_message_and_artifa
     tmp_path: Path,
 ) -> None:
     def _fake_dispatch(req, *, register=None, config_path=None):
-        _ = (req, register, config_path)
+        _ = (register, config_path)
+        stage_copy = Path(req.local_root) / req.work_base
+        (stage_copy / "partial.txt").write_text("partial", encoding="utf-8")
         raise DPDispatcherDispatchError(
             "ConnectionResetError: connection reset by peer",
             remote_context={
@@ -185,6 +279,7 @@ def test_remote_submission_failure_exposes_receipt_context_in_message_and_artifa
     data = excinfo.value.artifact["data"]
     assert data["receipt_rel"] == ".deepagents/dpdispatcher/receipts/dp_failed.json"
     assert data["jobs"][0]["job_id"] == "12345"
+    assert (stage / "partial.txt").read_text(encoding="utf-8") == "partial"
 
 
 def test_remote_submission_parses_boolean_controls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -379,3 +474,21 @@ def test_remote_submission_rejects_cross_audience_task(tmp_path: Path) -> None:
             with pytest.raises(CatMasterToolExecutionError) as excinfo:
                 remote_submission({"work_dir": "stage", "task_name": "orca_execute"})
     assert "not visible to audience" in str(excinfo.value)
+
+
+def test_remote_submission_skills_use_stage_layout_schema() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    vasp_text = (repo_root / "skills" / "materials" / "vasp-batch-execution" / "SKILL.md").read_text(encoding="utf-8")
+    mace_text = (repo_root / "skills" / "materials" / "mace-screening-and-relaxation" / "SKILL.md").read_text(encoding="utf-8")
+
+    for forbidden in ("input_dir", "output_dir", "_BATCH_STATE", "batch_state"):
+        assert forbidden not in vasp_text
+    assert "work_dir" in vasp_text
+    assert "first-level child" in vasp_text
+    assert "status.json" in vasp_text
+
+    for forbidden in ("input_dir", "output_root", "_BATCH_STATE", "batch_state", "md_config"):
+        assert forbidden not in mace_text
+    assert "work_dir" in mace_text
+    assert "input/" in mace_text
+    assert "params/md_params.json" in mace_text

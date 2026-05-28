@@ -1078,6 +1078,27 @@ def _build_events(
     return page
 
 
+def _build_observability(
+    *,
+    registry: SessionRegistry,
+    ctx: str,
+    username: str = "admin",
+    run_name: str,
+    project_space: str = "",
+    limit: int = 400,
+) -> dict[str, Any]:
+    session = registry.get_session(ctx, username=username)
+    workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
+    run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
+    payload = session.read_observability(run_dir, workspace=workspace, limit=limit)
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["selected_run"] = selected_run
+    payload["usage_summary"] = session.read_usage_summary(run_dir)
+    payload["chat_messages"] = session.get_chat_messages(limit=120, workspace=workspace)
+    return payload
+
+
 def _build_memory(*, registry: SessionRegistry, ctx: str, username: str = "admin", run_name: str = "", source: str = "all", project_space: str = "") -> dict[str, Any]:
     session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
@@ -1373,6 +1394,25 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
                 limit=limit,
                 before_seq=before_seq,
                 after_seq=after_seq,
+            )
+        )
+
+    @app.get("/api/session/{ctx}/observability")
+    def _session_observability(
+        ctx: str,
+        run: str = "",
+        project_space: str = "",
+        limit: int = 400,
+    ):
+        identity, _session = _bound_session(ctx)
+        return JSONResponse(
+            _build_observability(
+                registry=registry,
+                ctx=ctx,
+                username=identity.username,
+                run_name=run,
+                project_space=project_space,
+                limit=limit,
             )
         )
 
