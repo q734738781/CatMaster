@@ -28,6 +28,36 @@ vasp_execute_neb:
     - "*"
   task_work_path: "."
 
+cp2k_execute:
+  audiences: [materials_worker, dynamics_worker]
+  description: "Run one prepared CP2K stage directory."
+  boot_script: "catmaster/remote/cpu/cp2k_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#cp2k_execute"
+  resources: cp2k_cpu
+  requires: [cp2k]
+  command: "python task_script/cp2k_boot.py --cp2k-bin cp2k.psmp"
+  forward_files:
+    - "*"
+    - "task_script/cp2k_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+lammps_execute:
+  audiences: [dynamics_worker]
+  description: "Run one prepared LAMMPS stage directory."
+  boot_script: "catmaster/remote/cpu/lammps_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#lammps_execute"
+  resources: lammps_cpu
+  requires: [lammps]
+  command: "python task_script/lammps_boot.py --lammps-bin lmp --gpu auto"
+  forward_files:
+    - "*"
+    - "task_script/lammps_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
 mace_relax_dir:
   audiences: [materials_worker]
   description: "Run MACE relaxations for structures staged under input/."
@@ -78,7 +108,7 @@ mace_sp_dir:
   task_work_path: "."
 
 mace_md_dir:
-  audiences: [materials_worker]
+  audiences: [dynamics_worker]
   description: "Run MACE MD for structures staged under input/."
   boot_script: "catmaster/remote/gpu/mace_md.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_md_dir"

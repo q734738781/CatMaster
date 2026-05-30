@@ -22,6 +22,10 @@ from catmaster.tools.geometry_inputs.orca_prepare import (
     orca_nebts_prepare,
     orca_irc_prepare,
 )
+from catmaster.tools.geometry_inputs.cp2k_prepare import (
+    Cp2kPrepareInput,
+    cp2k_prepare,
+)
 from catmaster.tools.geometry_inputs.vasp_prepare import (
     VaspPrepareInput,
     vasp_prepare,
@@ -106,6 +110,8 @@ __all__ = [
     "orca_optts_prepare",
     "orca_nebts_prepare",
     "orca_irc_prepare",
+    "Cp2kPrepareInput",
+    "cp2k_prepare",
     "VaspPrepareInput",
     "VaspBandPrepareInput",
     "SlabBuildInput",

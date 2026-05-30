@@ -47,6 +47,31 @@ For batch submission, make each first-level child one complete calculation folde
 ## vasp_execute_neb
 Same as `vasp_execute`, but the stage is a VASP NEB/dimer-style folder with the image subdirectories and root inputs expected by VASP.
 
+## cp2k_execute
+Stage directory must contain a prepared CP2K input named `job.inp`. The task runs the generic CP2K boot script with `cp2k.psmp`, `OMP_NUM_THREADS=1`, and MPI ranks from the scheduler allocation.
+
+```text
+stage/
+  job.inp
+  manifest.json
+  optional structure / restart / basis / potential / include files
+```
+
+For batch submission, make each first-level child one complete CP2K stage directory. Scientific task type is encoded in `job.inp`; do not use per-recipe remote task names.
+
+## lammps_execute
+Stage directory must contain a prepared LAMMPS input named `in.lammps`. Fresh structure runs should also contain `system.data`; restart runs should contain the referenced restart file.
+
+```text
+stage/
+  in.lammps
+  manifest.json
+  system.data or restart file
+  optional potential files
+```
+
+The generic boot script runs `lmp` and detects GPU/KOKKOS/GPU-package availability when possible. If acceleration fails, it may fall back to CPU execution so the calculation can still produce output.
+
 ## orca_execute
 Stage directory must contain a prepared ORCA input named `job.inp`:
 
@@ -81,7 +106,7 @@ Common params: `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed
 Same layout as `mace_sp_dir`, with relaxation params such as `fmax`, `maxsteps`, and `relax_lattice`. Common params also include `device`; managed GPU tasks default to `device=auto`, which prioritizes completion and may fall back to CPU. Pass `device=cuda` only for hard GPU validation.
 
 ## mace_md_dir
-Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`.
+Dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`.
 
 Common params: `params_path`, `device`.
 

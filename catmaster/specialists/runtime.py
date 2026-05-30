@@ -74,6 +74,7 @@ _REMOTE_EXECUTION_TOOL_ALLOWLIST = {
 _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "create_molecule_from_smiles",
     *_REMOTE_EXECUTION_TOOL_ALLOWLIST,
+    "cp2k_prepare",
     "vasp_prepare",
     "vasp_band_prepare",
     "build_slab",
@@ -107,6 +108,17 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "generate_nanobanana_figure",
     "vaspkit_adsorbate_thermo_correction",
     "vaspkit_gas_thermo_correction",
+    "export_builtin_tool_source",
+}
+_DYNAMICS_WORKER_TOOL_ALLOWLIST: set[str] = {
+    *_REMOTE_EXECUTION_TOOL_ALLOWLIST,
+    "cp2k_aimd_prepare",
+    "cp2k_output_summary",
+    "lammps_forcefield_validate",
+    "lammps_prepare",
+    "lammps_log_summary",
+    "md_trajectory_summary",
+    "analyze_trajectory",
     "export_builtin_tool_source",
 }
 _ML_WORKER_TOOL_ALLOWLIST: set[str] = {
@@ -939,6 +951,23 @@ class SpecialistRunner:
                 runtime=runtime,
             ),
             self._compiled_worker_subagent(
+                name="dynamics_worker",
+                description="Handle bounded atomistic dynamics subtasks such as CP2K AIMD, LAMMPS minimization/MD, restarts, and trajectory QC.",
+                model_role="task_runner",
+                system_prompt=self._dynamics_worker_prompt(
+                    execution_contract=self._execution_capability_contract(audience="dynamics_worker")
+                ),
+                tools=self._augment_with_default_autonomous_tools(
+                    self._named_tools(_DYNAMICS_WORKER_TOOL_ALLOWLIST, audience="dynamics_worker"),
+                    audience="dynamics_worker",
+                ),
+                skills=[
+                    self._skills_group_virtual_path("dynamics"),
+                    self._skills_group_virtual_path("execution"),
+                ],
+                runtime=runtime,
+            ),
+            self._compiled_worker_subagent(
                 name="orca_xtb_worker",
                 description="Handle bounded molecular quantum-chemistry subtasks, including conformer search, xTB screening, and ORCA preparation/execution/analysis.",
                 model_role="task_runner",
@@ -1381,6 +1410,7 @@ class SpecialistRunner:
         base = deepagents_root / "skills"
         layouts = {
             base / "materials": repo_root / "skills" / "materials",
+            base / "dynamics": repo_root / "skills" / "dynamics",
             base / "machine_learning": repo_root / "skills" / "machine_learning",
             base / "quantum_chemistry": repo_root / "skills" / "quantum_chemistry",
             base / "execution": repo_root / "skills" / "execution",
@@ -1446,7 +1476,7 @@ class SpecialistRunner:
     def _execution_capability_contract(
         self,
         *,
-        audience: Literal["materials_worker", "ml_worker", "orca_xtb_worker"],
+        audience: Literal["materials_worker", "dynamics_worker", "ml_worker", "orca_xtb_worker"],
     ) -> str:
         _ = audience
         return "\n".join(
@@ -1603,9 +1633,9 @@ class SpecialistRunner:
             "You are ExperimentSpecialist.\n"
             "Your default role is coordination, dispatch, and decision-making across the experiment lane, not personally executing the substantive domain work.\n"
             "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, deciding the next bounded handoff, and bounded experiment-facing summaries grounded in completed workspace evidence.\n"
-            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct public-source checking only when a quick external check is needed.\n"
+            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `dynamics_worker` for CP2K AIMD, CP2K reusable run-health summaries, LAMMPS minimization/MD/restart work, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct public-source checking only when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
-            "In particular, general materials or surface workflows belong to `materials_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
+            "In particular, general materials or surface workflows belong to `materials_worker`; atomistic dynamics, force-field based minimization/MD, restarts, and trajectory-health work belong to `dynamics_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
                 "Each brief should contain one primary goal and one completion criterion. "
                 "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
@@ -1802,8 +1832,8 @@ class SpecialistRunner:
             "You are materials_worker for ExperimentSpecialist.\n"
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
-            "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis when those steps serve one materials workflow.\n"
-            "For MACE or other ML-potential relaxations, single-points, MD, and path calculations, use the registered managed batch path first when it fits; do not run local calculators just because the package is importable.\n"
+            "Typical MACE work here includes surrogate screening, relaxation, single-point ranking, and path optimization when those steps serve one materials workflow; MACE MD sampling belongs to `dynamics_worker`.\n"
+            "For MACE or other ML-potential relaxations, single-points, and path calculations, use the registered managed batch path first when it fits; do not run local calculators just because the package is importable.\n"
             "When no dedicated tool covers a bounded materials task, use local command/Python capability with mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
             "If a handy Python package is missing for a bounded local step, install it through the local command capability.\n"
@@ -1844,6 +1874,30 @@ class SpecialistRunner:
             "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use a narrow official-docs or primary-source check before locking the workflow.\n"
             "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
+            "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
+            f"{cls._tool_policy()}\n"
+            f"{execution_contract}\n"
+            f"{cls._general_purpose_worker_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
+            f"{cls._deepagent_memory_policy(allow_memory_write=False)}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            f"{cls._soft_reporting_contract()}"
+        )
+
+    @classmethod
+    def _dynamics_worker_prompt(cls, *, execution_contract: str = "") -> str:
+        return (
+            "You are dynamics_worker for ExperimentSpecialist.\n"
+            "Handle a bounded atomistic dynamics subtask autonomously inside the workspace.\n"
+            "This worker owns CP2K AIMD preparation/execution handoff, MACE MD sampling, reusable CP2K run-health summaries, LAMMPS force-field validation, minimization, MD, restart staging, and generic trajectory QC.\n"
+            "It does not own general slab, adsorbate, bulk, defect, or conventional DFT structure construction; consume artifacts from `materials_worker` for those steps.\n"
+            "For CP2K AIMD, MACE MD, and LAMMPS execution, use the registered managed remote path when it fits, with prepared stage directories submitted through DPDispatcher.\n"
+            "Do not invent force-field parameters, pair coefficients, or complex PLUMED collective variables. Use validated force-field cards and user-provided or curated PLUMED files.\n"
+            "When no dedicated analysis tool covers a bounded trajectory question, use local command/Python capability with mature third-party libraries inside the workspace instead of forcing a generic parser.\n"
+            "If a handy Python package is missing for a bounded local step, install it through the local command capability.\n"
+            "When configuration details, package behavior, or methodological best practice are uncertain, use a narrow official-docs or primary-source check before finalizing the workflow.\n"
+            "For heavier custom logic such as trajectory post-processing or deterministic batch analysis, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
+            "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
             f"{cls._tool_policy()}\n"
             f"{execution_contract}\n"

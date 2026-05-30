@@ -38,6 +38,7 @@ class ToolRegistry:
             orca_optts_prepare,
             orca_nebts_prepare,
             orca_irc_prepare,
+            cp2k_prepare,
             vasp_prepare,
             vasp_band_prepare,
             build_slab,
@@ -74,6 +75,7 @@ class ToolRegistry:
             OrcaOptTSPrepareInput,
             OrcaNebTSPrepareInput,
             OrcaIRCPrepareInput,
+            Cp2kPrepareInput,
             VaspPrepareInput,
             VaspBandPrepareInput,
             SlabBuildInput,
@@ -113,6 +115,20 @@ class ToolRegistry:
             GetAvailResourcesInput,
             RemoteSubmissionBatchInput,
             RemoteSubmissionInput,
+        )
+        from catmaster.tools.dynamics import (
+            Cp2kAimdPrepareInput,
+            Cp2kOutputSummaryInput,
+            LammpsForcefieldValidateInput,
+            LammpsLogSummaryInput,
+            LammpsPrepareInput,
+            MdTrajectorySummaryInput,
+            cp2k_aimd_prepare,
+            cp2k_output_summary,
+            lammps_forcefield_validate,
+            lammps_log_summary,
+            lammps_prepare,
+            md_trajectory_summary,
         )
         from catmaster.tools.analysis import (
             compile_text,
@@ -196,6 +212,13 @@ class ToolRegistry:
         self.register_tool("orca_optts_prepare", orca_optts_prepare, OrcaOptTSPrepareInput)
         self.register_tool("orca_nebts_prepare", orca_nebts_prepare, OrcaNebTSPrepareInput)
         self.register_tool("orca_irc_prepare", orca_irc_prepare, OrcaIRCPrepareInput)
+        self.register_tool("cp2k_prepare", cp2k_prepare, Cp2kPrepareInput)
+        self.register_tool("cp2k_aimd_prepare", cp2k_aimd_prepare, Cp2kAimdPrepareInput)
+        self.register_tool("cp2k_output_summary", cp2k_output_summary, Cp2kOutputSummaryInput)
+        self.register_tool("lammps_forcefield_validate", lammps_forcefield_validate, LammpsForcefieldValidateInput)
+        self.register_tool("lammps_prepare", lammps_prepare, LammpsPrepareInput)
+        self.register_tool("lammps_log_summary", lammps_log_summary, LammpsLogSummaryInput)
+        self.register_tool("md_trajectory_summary", md_trajectory_summary, MdTrajectorySummaryInput)
         self.register_tool("remote_submission", remote_submission, RemoteSubmissionInput)
         self.register_tool("remote_submission_batch", remote_submission_batch, RemoteSubmissionBatchInput)
         self.register_tool("get_avail_remote_task", get_avail_remote_task, GetAvailRemoteTaskInput)

@@ -147,9 +147,13 @@ def test_starter_skills_use_standard_sections_and_consistent_allowed_tools() -> 
         "## References",
     ]
 
-    skill_root = repo_root / "skills" / "materials"
-    skill_paths = sorted(path for path in skill_root.glob("*/SKILL.md"))
-    assert skill_paths, "expected starter skills under skills/materials/*/SKILL.md"
+    skill_paths = sorted(
+        [
+            *repo_root.glob("skills/materials/*/SKILL.md"),
+            *repo_root.glob("skills/dynamics/*/SKILL.md"),
+        ]
+    )
+    assert skill_paths, "expected starter skills under skills/{materials,dynamics}/*/SKILL.md"
 
     for path in skill_paths:
         name = path.parent.name

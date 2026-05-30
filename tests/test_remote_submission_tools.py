@@ -44,6 +44,7 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
         _, artifact = get_avail_remote_task({"return_resource": True})
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
     assert {"vasp_execute", "mace_sp_dir"}.issubset(task_names)
+    assert "mace_md_dir" not in task_names
     assert "orca_execute" not in task_names
     assert "mace_train_dir" not in task_names
     first_with_resource = next(item for item in artifact["data"]["tasks"] if item.get("resources"))
@@ -71,6 +72,13 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
         _, artifact = get_avail_resources({})
     resource_names = {item["resources"] for item in artifact["data"]["resources"]}
     assert resource_names == {"general_cpu"}
+
+    with toolcall_context("catalog", audience="dynamics_worker"):
+        _, artifact = get_avail_remote_task({"return_resource": True})
+    dynamics_task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
+    assert "mace_md_dir" in dynamics_task_names
+    assert "mace_sp_dir" not in dynamics_task_names
+    assert "mace_relax_dir" not in dynamics_task_names
 
 
 def test_remote_task_catalog_references_existing_boot_scripts_and_layout_sections() -> None:
@@ -652,4 +660,10 @@ def test_remote_submission_skills_use_stage_layout_schema() -> None:
         assert forbidden not in mace_text
     assert "work_dir" in mace_text
     assert "input/" in mace_text
-    assert "params/md_params.json" in mace_text
+    assert "mace_md_dir" in mace_text
+
+    mace_md_text = (repo_root / "skills" / "dynamics" / "mace-md-sampling" / "SKILL.md").read_text(encoding="utf-8")
+    assert "work_dir" in mace_md_text
+    assert "input/" in mace_md_text
+    assert "params/md_params.json" in mace_md_text
+    assert "md_config" in mace_md_text

@@ -1009,3 +1009,7 @@ INFO:     127.0.0.1:60956 - "GET /api/session/ctx_24a1d58f2c3b/stream?last_seq=1
   return obj.__class__(**changes)
 /home/chenhh/miniconda3/envs/catmaster/lib/python3.12/dataclasses.py:1588: LangChainDeprecationWarning: `files_update` was deprecated in deepagents 0.5.0 and will be removed in deepagents==0.7.0. State updates are now handled internally by the backend.
   return obj.__class__(**changes)
+Socket exception: Connection reset by peer (104)
+Socket exception: Connection reset by peer (104)
+Socket exception: Connection reset by peer (104)
+Socket exception: Connection reset by peer (104)

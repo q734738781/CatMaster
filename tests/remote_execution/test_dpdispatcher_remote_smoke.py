@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from catmaster.tools.base import workspace_scope
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "tests" / "assets"
@@ -99,6 +100,17 @@ def _stage_vasp_o2_structure(project_space: Path) -> Path:
     return structure_path
 
 
+def _write_o2_xyz(project_space: Path, rel_dir: str) -> Path:
+    input_dir = _files_root(project_space) / rel_dir
+    input_dir.mkdir(parents=True, exist_ok=True)
+    structure_path = input_dir / "O2.xyz"
+    structure_path.write_text(
+        "2\nO2 smoke\nO 0.000000 0.000000 0.000000\nO 0.000000 0.000000 1.210000\n",
+        encoding="utf-8",
+    )
+    return structure_path
+
+
 def _invoke_agent_tool(project_space: Path, tool_name: str, payload: dict[str, Any], *, audience: str = "") -> tuple[Any, dict[str, Any]]:
     from catmaster.tools.registry import ToolRegistry
 
@@ -153,7 +165,7 @@ def test_agent_tool_mace_sp_remote(tmp_path: Path) -> None:
 
 
 def test_vasp_prepare_then_remote_submission_o2_sp_remote(tmp_path: Path) -> None:
-    from catmaster.tools.base import workspace_relpath, workspace_scope
+    from catmaster.tools.base import workspace_relpath
 
     project_space = _project_space(tmp_path)
     with workspace_scope(project_space):
@@ -206,3 +218,240 @@ def test_vasp_prepare_then_remote_submission_o2_sp_remote(tmp_path: Path) -> Non
             "VASP did not return expected output files; "
             f"stage_dir={workspace_relpath(input_dir)}"
         )
+
+
+def test_cp2k_prepare_then_remote_submission_o2_sp_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    with workspace_scope(project_space):
+        _write_o2_xyz(project_space, "remote_execution/cp2k_o2_sp_input")
+        _prepare_content, prepare_artifact = _invoke_agent_tool(
+            project_space,
+            "cp2k_prepare",
+            {
+                "input_path": "remote_execution/cp2k_o2_sp_input/O2.xyz",
+                "output_root": "remote_execution/cp2k_o2_sp_prepared",
+                "recipe": "sp",
+                "settings": {"periodic": "none", "cell_abc": [12, 12, 12], "xc": "PBE"},
+            },
+            audience="materials_worker",
+        )
+        record = (prepare_artifact.get("data") or {})["records"][0]
+        stage_rel = str(record["stage_dir_rel"])
+        stage_dir = _files_rel(project_space, stage_rel)
+        assert (stage_dir / "job.inp").is_file()
+
+        _submit_content, submit_artifact = _invoke_agent_tool(
+            project_space,
+            "remote_submission",
+            {
+                "work_dir": stage_rel,
+                "task_name": "cp2k_execute",
+                "config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
+            },
+            audience="materials_worker",
+        )
+        submit_data = submit_artifact.get("data") or {}
+
+    assert submit_data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+    cp2k_summary = _read_json(stage_dir / "cp2k_summary.json")
+    assert cp2k_summary.get("completed") is True
+    assert (stage_dir / "job.out").is_file()
+
+
+def test_cp2k_prepare_then_remote_submission_o2_geo_opt_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    with workspace_scope(project_space):
+        _write_o2_xyz(project_space, "remote_execution/cp2k_o2_geo_input")
+        _prepare_content, prepare_artifact = _invoke_agent_tool(
+            project_space,
+            "cp2k_prepare",
+            {
+                "input_path": "remote_execution/cp2k_o2_geo_input/O2.xyz",
+                "output_root": "remote_execution/cp2k_o2_geo_prepared",
+                "recipe": "geo_opt",
+                "settings": {
+                    "periodic": "none",
+                    "cell_abc": [12, 12, 12],
+                    "xc": "PBE",
+                    "max_iter": 3,
+                },
+            },
+            audience="materials_worker",
+        )
+        record = (prepare_artifact.get("data") or {})["records"][0]
+        stage_rel = str(record["stage_dir_rel"])
+        stage_dir = _files_rel(project_space, stage_rel)
+        assert "RUN_TYPE GEO_OPT" in (stage_dir / "job.inp").read_text(encoding="utf-8")
+
+        _submit_content, submit_artifact = _invoke_agent_tool(
+            project_space,
+            "remote_submission",
+            {
+                "work_dir": stage_rel,
+                "task_name": "cp2k_execute",
+                "config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
+            },
+            audience="materials_worker",
+        )
+        submit_data = submit_artifact.get("data") or {}
+
+    assert submit_data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+    assert _read_json(stage_dir / "cp2k_summary.json").get("completed") is True
+
+
+def test_cp2k_aimd_prepare_then_remote_submission_o2_short_nvt_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    with workspace_scope(project_space):
+        _write_o2_xyz(project_space, "remote_execution/cp2k_o2_aimd_input")
+        _prepare_content, prepare_artifact = _invoke_agent_tool(
+            project_space,
+            "cp2k_aimd_prepare",
+            {
+                "input_path": "remote_execution/cp2k_o2_aimd_input/O2.xyz",
+                "output_root": "remote_execution/cp2k_o2_aimd_prepared",
+                "recipe": "nvt",
+                "settings": {
+                    "periodic": "none",
+                    "cell_abc": [12, 12, 12],
+                    "xc": "PBE",
+                    "steps": 3,
+                    "temperature": 300,
+                    "trajectory_stride": 1,
+                    "restart_stride": 1,
+                },
+            },
+            audience="dynamics_worker",
+        )
+        record = (prepare_artifact.get("data") or {})["records"][0]
+        stage_rel = str(record["stage_dir_rel"])
+        stage_dir = _files_rel(project_space, stage_rel)
+        assert "RUN_TYPE MD" in (stage_dir / "job.inp").read_text(encoding="utf-8")
+
+        _submit_content, submit_artifact = _invoke_agent_tool(
+            project_space,
+            "remote_submission",
+            {
+                "work_dir": stage_rel,
+                "task_name": "cp2k_execute",
+                "config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
+            },
+            audience="dynamics_worker",
+        )
+        submit_data = submit_artifact.get("data") or {}
+
+    assert submit_data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+    assert _read_json(stage_dir / "cp2k_summary.json").get("completed") is True
+
+
+def test_lammps_lj_prepare_then_remote_submission_o2_minimize_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    with workspace_scope(project_space):
+        _write_o2_xyz(project_space, "remote_execution/lammps_o2_lj_input")
+        _ff_content, ff_artifact = _invoke_agent_tool(
+            project_space,
+            "lammps_forcefield_validate",
+            {
+                "forcefield_card": {
+                    "units": "metal",
+                    "atom_style": "atomic",
+                    "pair_style": "lj/cut 8.5",
+                    "pair_coeff": ["* * 0.0103 3.0"],
+                }
+            },
+            audience="dynamics_worker",
+        )
+        _prepare_content, prepare_artifact = _invoke_agent_tool(
+            project_space,
+            "lammps_prepare",
+            {
+                "input_path": "remote_execution/lammps_o2_lj_input/O2.xyz",
+                "output_root": "remote_execution/lammps_o2_lj_min_prepared",
+                "recipe": "minimize",
+                "forcefield_card_path": (ff_artifact.get("data") or {})["output_path_rel"],
+                "settings": {"cell_abc": [20, 20, 20], "thermo": 1},
+            },
+            audience="dynamics_worker",
+        )
+        record = (prepare_artifact.get("data") or {})["records"][0]
+        stage_rel = str(record["stage_dir_rel"])
+        stage_dir = _files_rel(project_space, stage_rel)
+        assert (stage_dir / "in.lammps").is_file()
+
+        _submit_content, submit_artifact = _invoke_agent_tool(
+            project_space,
+            "remote_submission",
+            {
+                "work_dir": stage_rel,
+                "task_name": "lammps_execute",
+                "config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
+            },
+            audience="dynamics_worker",
+        )
+        submit_data = submit_artifact.get("data") or {}
+
+    assert submit_data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+    lammps_summary = _read_json(stage_dir / "lammps_summary.json")
+    assert lammps_summary.get("completed") is True
+    assert any((stage_dir / name).is_file() for name in ("log.lammps", "lammps_stdout.out"))
+
+
+def test_lammps_lj_prepare_then_remote_submission_o2_short_nvt_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    with workspace_scope(project_space):
+        _write_o2_xyz(project_space, "remote_execution/lammps_o2_lj_nvt_input")
+        _ff_content, ff_artifact = _invoke_agent_tool(
+            project_space,
+            "lammps_forcefield_validate",
+            {
+                "forcefield_card": {
+                    "units": "metal",
+                    "atom_style": "atomic",
+                    "pair_style": "lj/cut 8.5",
+                    "pair_coeff": ["* * 0.0103 3.0"],
+                }
+            },
+            audience="dynamics_worker",
+        )
+        _prepare_content, prepare_artifact = _invoke_agent_tool(
+            project_space,
+            "lammps_prepare",
+            {
+                "input_path": "remote_execution/lammps_o2_lj_nvt_input/O2.xyz",
+                "output_root": "remote_execution/lammps_o2_lj_nvt_prepared",
+                "recipe": "nvt",
+                "forcefield_card_path": (ff_artifact.get("data") or {})["output_path_rel"],
+                "settings": {
+                    "cell_abc": [20, 20, 20],
+                    "steps": 5,
+                    "thermo": 1,
+                    "dump_stride": 1,
+                    "restart_stride": 5,
+                },
+            },
+            audience="dynamics_worker",
+        )
+        record = (prepare_artifact.get("data") or {})["records"][0]
+        stage_rel = str(record["stage_dir_rel"])
+        stage_dir = _files_rel(project_space, stage_rel)
+        assert "fix int all nvt" in (stage_dir / "in.lammps").read_text(encoding="utf-8")
+
+        _submit_content, submit_artifact = _invoke_agent_tool(
+            project_space,
+            "remote_submission",
+            {
+                "work_dir": stage_rel,
+                "task_name": "lammps_execute",
+                "config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
+            },
+            audience="dynamics_worker",
+        )
+        submit_data = submit_artifact.get("data") or {}
+
+    assert submit_data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+    assert _read_json(stage_dir / "lammps_summary.json").get("completed") is True
+    assert (stage_dir / "trajectory.lammpstrj").is_file()

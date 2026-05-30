@@ -678,7 +678,7 @@ const LANE_GUIDE = {
   experiment: {
     title: "Experiment",
     summary: "Run bounded computational execution and return concise evidence with files.",
-    subagents: ["materials_worker", "ml_worker", "orca_xtb_worker"],
+    subagents: ["materials_worker", "dynamics_worker", "ml_worker", "orca_xtb_worker"],
   },
   research: {
     title: "Research",

@@ -8,7 +8,7 @@ import pytest
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.remote.gpu.mace_md import _config_from_compact_payload, _validate_config
-from catmaster.specialists.runtime import _MATERIALS_WORKER_TOOL_ALLOWLIST
+from catmaster.specialists.runtime import _DYNAMICS_WORKER_TOOL_ALLOWLIST, _MATERIALS_WORKER_TOOL_ALLOWLIST
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.execution.mace_dispatch import MaceMDBatchInput, mace_md_batch
 from catmaster.tools.execution.task_registry import TaskRegistry
@@ -20,8 +20,10 @@ def test_registry_replaces_mace_md_batch_with_generic_remote_submission() -> Non
     registry = ToolRegistry()
     assert "mace_md_batch" not in registry.list_tools()
     assert "mace_md_batch" not in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "mace_md_batch" not in _DYNAMICS_WORKER_TOOL_ALLOWLIST
     assert "remote_submission" in registry.list_tools()
     assert "remote_submission" in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "remote_submission" in _DYNAMICS_WORKER_TOOL_ALLOWLIST
 
 
 def test_mace_md_batch_input_defaults_are_generic_md() -> None:
@@ -74,6 +76,7 @@ def test_mace_md_batch_requires_berendsen_npt_compressibility() -> None:
 
 def test_mace_md_dir_task_command_has_no_historical_gpu_or_scale_options() -> None:
     cfg = TaskRegistry().get("mace_md_dir")
+    assert cfg.audiences == ["dynamics_worker"]
     assert "mace_md.py" in cfg.command
     assert "--gpu_ids" not in cfg.command
     assert "--scales" not in cfg.command

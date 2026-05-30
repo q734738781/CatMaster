@@ -24,8 +24,9 @@ They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/
   - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
 - `ExperimentSpecialist`
   - Bounded execution specialist.
-  - May delegate only to `materials_worker`, `ml_worker`, and `orca_xtb_worker`.
+  - May delegate only to `materials_worker`, `dynamics_worker`, `ml_worker`, and `orca_xtb_worker`.
   - Uses direct public-source checking only for narrow best-practice checks, official docs, or primary-source verification. Keep this limited to focused implementation grounding, not broad review.
+  - MACE ownership is split by artifact: relaxation, single-point ranking, and NEB/path optimization belong to `materials_worker`; MACE MD sampling and trajectory QC belong to `dynamics_worker`; dataset construction, training, fine-tuning, and benchmark evaluation belong to `ml_worker`.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.

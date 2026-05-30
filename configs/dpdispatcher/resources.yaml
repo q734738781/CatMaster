@@ -28,6 +28,34 @@ vasp_cpu_neb:
     - "#SBATCH --export=ALL"
   source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
 
+cp2k_cpu:
+  kind: domain
+  capabilities: [cp2k]
+  description: "Prepared CP2K CPU MPI execution."
+  audiences: [materials_worker, dynamics_worker]
+  machine: cpu_server_2
+  number_node: 1
+  cpu_per_node: 32
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 4-00:00:00"
+    - "#SBATCH --export=ALL"
+
+lammps_cpu:
+  kind: domain
+  capabilities: [lammps]
+  description: "Prepared LAMMPS CPU execution with boot-time GPU detection when available."
+  audiences: [dynamics_worker]
+  machine: cpu_server_2
+  number_node: 1
+  cpu_per_node: 16
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 2-00:00:00"
+    - "#SBATCH --export=ALL"
+
 general_cpu:
   kind: general_cpu
   capabilities: [python, custom_boot]
@@ -63,7 +91,7 @@ mace_gpu:
   kind: domain
   capabilities: [mace, gpu]
   description: "Managed MACE GPU execution."
-  audiences: [materials_worker, ml_worker]
+  audiences: [materials_worker, dynamics_worker, ml_worker]
   machine: gpu_server
   number_node: 1
   cpu_per_node: 16

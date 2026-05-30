@@ -1,17 +1,17 @@
 ---
 name: md-diffusion-analysis
-description: Use this skill for MD execution and post-analysis when the goal is trajectory-based MSD/RDF/diffusion evidence rather than a generic VASP run log.
+description: Use this skill for VASP MD execution and post-analysis when the goal is trajectory-based MSD/RDF/diffusion evidence rather than a generic VASP run log. MACE MD belongs to dynamics_worker.
 ---
 
 # md-diffusion-analysis
 
 ## Overview
-Use this skill to prepare an MD stage, dispatch it, and summarize the resulting trajectory with MSD, RDF, and diffusion-fit artifacts. Do not use it for a generic VASP run log, one-off thermalization checks, or when the trajectory is too short to support diffusion claims.
+Use this skill to prepare a VASP MD stage, dispatch it, and summarize the resulting trajectory with MSD, RDF, and diffusion-fit artifacts. Do not use it for a generic VASP run log, one-off thermalization checks, or when the trajectory is too short to support diffusion claims. For MACE MD sampling, delegate to `dynamics_worker` and `mace-md-sampling`.
 
 ## Quick Start
-1. Choose whether this is a VASP MD run or a cheaper MACE MD sampling run.
-2. For VASP, prepare inputs with `vasp_prepare(preset="md", ...)` and make controls explicit through `user_incar_patch`.
-3. For MACE, prepare the `mace_md_dir` stage layout and submit with `remote_submission`; place MD controls in the staged params JSON.
+1. Confirm this is a VASP MD run. If it is MACE MD, hand off to `dynamics_worker`.
+2. Prepare inputs with `vasp_prepare(preset="md", ...)` and make controls explicit through `user_incar_patch`.
+3. Submit the prepared VASP stage with managed remote execution.
 4. Decide what part of the trajectory is equilibration and what part is production.
 5. Analyze the collected trajectory with `analyze_trajectory`.
 
@@ -28,7 +28,7 @@ Use this skill to prepare an MD stage, dispatch it, and summarize the resulting 
 - Use `user_incar_patch` in the same `vasp_prepare` call to set the actual timestep, thermostat, or temperature schedule needed for the run.
 - Surface the intended ensemble semantics explicitly; do not leave the reader guessing whether the run is being interpreted as NVT-like sampling, annealing, or another protocol.
 
-For MACE MD, do not flatten all MD knobs into top-level arguments. Use one `md_config` object, with optional nested `dynamics`, `thermostat`, `barostat`, and `output` groups. Read `mace-screening-and-relaxation` for concrete `md_config` templates.
+For MACE MD, do not run from this materials-side skill. The dynamics-side `mace-md-sampling` skill owns `mace_md_dir`, grouped MD controls, trajectory output, and trajectory analysis.
 
 ### 2. Separate equilibration from production
 - Report how much trajectory is being discarded as warmup before any diffusion fit.

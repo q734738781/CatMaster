@@ -17,6 +17,7 @@ import catmaster.specialists.runtime as runtime_mod
 from catmaster.specialists.runtime import (
     RUN_STATE_FILE,
     _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
+    _DYNAMICS_WORKER_TOOL_ALLOWLIST,
     _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST,
     _MATERIALS_WORKER_TOOL_ALLOWLIST,
     _METADATA_AGENT_TOOL_ALLOWLIST,
@@ -128,6 +129,7 @@ def test_real_registry_covers_specialist_allowlists() -> None:
     assert _RESEARCH_TOOL_ALLOWLIST <= registered
     assert _WRITING_TOOL_ALLOWLIST <= registered
     assert _MATERIALS_WORKER_TOOL_ALLOWLIST <= registered
+    assert _DYNAMICS_WORKER_TOOL_ALLOWLIST <= registered
     assert _METADATA_AGENT_TOOL_ALLOWLIST <= registered
     assert _LITREVIEW_AGENT_TOOL_ALLOWLIST <= registered
     assert _WRITING_WORKER_TOOL_ALLOWLIST <= registered
@@ -304,11 +306,15 @@ def test_execution_capability_contract_is_worker_scoped_and_tool_surface_bound(t
     )
 
     assert set(_MATERIALS_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
+    assert set(_DYNAMICS_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
     assert set(_ML_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
     assert set(_ORCA_XTB_WORKER_TOOL_ALLOWLIST).issubset(set(built.runner.registry.tools))
     assert "remote_submission" in _MATERIALS_WORKER_TOOL_ALLOWLIST
+    assert "remote_submission" in _DYNAMICS_WORKER_TOOL_ALLOWLIST
     assert "remote_submission" in _ML_WORKER_TOOL_ALLOWLIST
     assert "remote_submission" in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
+    assert {name for name in _MATERIALS_WORKER_TOOL_ALLOWLIST if name.startswith("cp2k_")} == {"cp2k_prepare"}
+    assert {"cp2k_aimd_prepare", "cp2k_output_summary", "lammps_prepare", "lammps_log_summary"} <= _DYNAMICS_WORKER_TOOL_ALLOWLIST
     assert "mace_neb_batch" not in _MATERIALS_WORKER_TOOL_ALLOWLIST
     assert "mace_train" not in _ML_WORKER_TOOL_ALLOWLIST
     assert "orca_execute_batch" not in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
@@ -762,7 +768,7 @@ def test_run_impl_retries_invalid_final_report_and_recovers(
     ("entrypoint", "expected_subagent_names"),
     [
         ("research", ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
-        ("experiment", ["materials_worker", "ml_worker", "orca_xtb_worker"]),
+        ("experiment", ["materials_worker", "ml_worker", "dynamics_worker", "orca_xtb_worker"]),
         ("literature_review", ["literature_agent", "metadata_agent"]),
         ("writing", ["writing_worker_agent", "writing_polisher_agent"]),
         ("peer_review", ["peer_review_worker_agent"]),
@@ -907,6 +913,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
             "materials_worker",
             "ml_worker",
+            "dynamics_worker",
             "orca_xtb_worker",
         ]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in experiment_agent_kwargs["middleware"])
@@ -987,12 +994,16 @@ def test_specialist_lanes_start_with_staged_skills(
     elif entrypoint == "experiment":
         materials_worker_kwargs = _find_created_agent("materials_worker")
         ml_worker_kwargs = _find_created_agent("ml_worker")
+        dynamics_worker_kwargs = _find_created_agent("dynamics_worker")
         orca_worker_kwargs = _find_created_agent("orca_xtb_worker")
         assert "runnable" in subagents_by_name["materials_worker"]
         assert "runnable" in subagents_by_name["ml_worker"]
+        assert "runnable" in subagents_by_name["dynamics_worker"]
         assert "runnable" in subagents_by_name["orca_xtb_worker"]
         assert {tool.name for tool in materials_worker_kwargs["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert materials_worker_kwargs["skills"] == ["/.deepagents/skills/materials", "/.deepagents/skills/execution"]
+        assert {tool.name for tool in dynamics_worker_kwargs["tools"]} == (_DYNAMICS_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        assert dynamics_worker_kwargs["skills"] == ["/.deepagents/skills/dynamics", "/.deepagents/skills/execution"]
         assert {tool.name for tool in ml_worker_kwargs["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert ml_worker_kwargs["skills"] == ["/.deepagents/skills/machine_learning", "/.deepagents/skills/execution"]
         assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
@@ -1007,6 +1018,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself." in agent_kwargs["system_prompt"]
         assert "general materials or surface workflows belong to `materials_worker`" in agent_kwargs["system_prompt"]
+        assert "atomistic dynamics, force-field based minimization/MD, restarts, and trajectory-health work belong to `dynamics_worker`" in agent_kwargs["system_prompt"]
         assert "model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`" in agent_kwargs["system_prompt"]
         assert "use `orca_xtb_worker` for molecular or cluster quantum-chemistry work" in agent_kwargs["system_prompt"]
         assert "purely report writing from already completed evidence" in agent_kwargs["system_prompt"]
@@ -1029,7 +1041,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "If the scope is complete, state the executed scope, key evidence paths, and residual limitations" in agent_kwargs["system_prompt"]
         assert "remote_submission" in {tool.name for tool in materials_worker_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in materials_worker_kwargs["tools"]}
-        assert "Typical MACE work here includes surrogate screening, relaxation, MD sampling, ranking, and post-analysis" in materials_worker_kwargs["system_prompt"]
+        assert "Typical MACE work here includes surrogate screening, relaxation, single-point ranking, and path optimization" in materials_worker_kwargs["system_prompt"]
+        assert "MACE MD sampling belongs to `dynamics_worker`" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in materials_worker_kwargs["system_prompt"]
@@ -1041,6 +1054,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "registered managed execution in this worker is authoritative" in materials_worker_kwargs["system_prompt"]
         assert "Before low-level managed remote submission, read the task catalog or mounted execution skill" in materials_worker_kwargs["system_prompt"]
         assert "If managed submission fails with receipt/context fields" in materials_worker_kwargs["system_prompt"]
+        assert "CP2K AIMD preparation/execution handoff, MACE MD sampling" in dynamics_worker_kwargs["system_prompt"]
+        assert "Do not invent force-field parameters" in dynamics_worker_kwargs["system_prompt"]
+        assert "registered managed execution in this worker is authoritative" in dynamics_worker_kwargs["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in ml_worker_kwargs["system_prompt"]
         assert "When a registered managed ML tool fits the task, prefer that managed path first." in ml_worker_kwargs["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in ml_worker_kwargs["system_prompt"]
@@ -1068,6 +1084,10 @@ def test_specialist_lanes_start_with_staged_skills(
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"
             for item in orca_worker_kwargs["middleware"]
+        )
+        assert not any(
+            type(item).__name__ == "_FakeToolSelectorMiddleware"
+            for item in dynamics_worker_kwargs["middleware"]
         )
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"
