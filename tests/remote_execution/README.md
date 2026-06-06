@@ -2,6 +2,19 @@
 
 These tests submit real DPDispatcher jobs and are opt-in.
 
+For deployment checks on a remote machine, prefer the CLI wrapper first:
+
+```bash
+python scripts/remote_execution_smoke.py --list
+python scripts/remote_execution_smoke.py --suite core --check-interval 30
+python scripts/remote_execution_smoke.py --suite no_cp2k --check-interval 60
+# Only use this when CP2K is configured:
+# python scripts/remote_execution_smoke.py --suite all --check-interval 60
+```
+
+The CLI writes a JSON report under `/tmp/catmaster_remote_execution_smoke`
+by default and exercises the current agent-visible `remote_submission` path.
+
 Run the whole group explicitly:
 
 ```bash
@@ -20,7 +33,6 @@ CATMASTER_REMOTE_MACE_MODEL=mh-1 \
 CATMASTER_REMOTE_MACE_HEAD=omat_pbe \
 CATMASTER_REMOTE_MACE_DTYPE=float32 \
 CATMASTER_REMOTE_VASP_TASK=vasp_execute \
-CATMASTER_REMOTE_CP2K_CHECK_INTERVAL=60 \
 CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL=30 \
 pytest tests/remote_execution -s -vv
 ```
@@ -45,12 +57,13 @@ Prerequisites:
 - Local pymatgen can locate VASP pseudopotentials, because the VASP test starts
   from `vasp_prepare` and requires POTCAR generation before remote dispatch.
 - The CPU remote environment can run VASP through `catmaster/remote/cpu/vasp_boot.py`.
-- The CPU remote environment can run CP2K through `cp2k.psmp`; the CP2K boot
-  script sets `OMP_NUM_THREADS=1` and uses MPI ranks from the scheduler
-  allocation.
-- The CPU remote environment can run LAMMPS through `lmp`; the LAMMPS boot
-  script may enable KOKKOS/GPU-package acceleration when visible and falls back
-  to CPU execution if acceleration fails.
+- The CPU remote environment can run CP2K through `cp2k.psmp` only when running
+  CP2K-specific tests or `--suite all`; `--suite no_cp2k` deliberately skips it.
+- The CPU remote environment can expose a LAMMPS executable in `PATH`; the
+  LAMMPS boot script auto-detects common names such as `lmp_mpi`, `lmp`,
+  KOKKOS/GPU variants, and can be overridden with `CATMASTER_LAMMPS_BIN`.
+  It may enable KOKKOS/GPU-package acceleration when visible and falls back to
+  CPU execution if acceleration fails.
 
 Useful overrides:
 

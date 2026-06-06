@@ -2,67 +2,62 @@
 # Runtime requirements.
 # Notes:
 #   - mp-api requires Python >= 3.10.
-#   - For reproducibility, consider pinning exact versions via a lock/constraints
-#     file (pip-tools / uv / poetry) once you validate a working set.
+#   - Direct runtime dependencies are pinned to a known-good CatMaster
+#     environment because several upstream APIs change quickly.
 # -----------------------------------------------------------------------------
 
 # Core scientific stack
-numpy
-scipy
-pandas
-joblib
-seaborn
+numpy==2.2.6
+scipy==1.17.1
+pandas==2.3.3
+joblib==1.5.2
+seaborn==0.13.2
 
 # Atomistic modeling / materials
-ase
-pymatgen
-cclib
-beautifulsoup4
-ovito
-matplotlib
-phonopy
-dscribe
-mendeleev
+ase==3.27.0
+pymatgen==2025.6.14
+cclib==1.8.1
+beautifulsoup4==4.14.3
+matplotlib==3.10.7
+phonopy==3.2.0
 
 # Machine learning
-scikit-learn
-xgboost
-umap-learn
-optuna
-matminer
+scikit-learn==1.8.0
+xgboost==3.2.0
+umap-learn==0.5.11
+optuna==4.8.0
+matminer==0.10.0
 
 # YAML parsing (PyYAML) and round-trip editing (ruamel.yaml)
-pyyaml
-ruamel.yaml
+pyyaml==6.0.3
+ruamel.yaml==0.18.16
 
 # Remote execution / HPC control plane
-dpdispatcher
-paramiko
+dpdispatcher==1.0.0
+paramiko==4.0.0
 
 # LLM agent system
-openai
-langchain
-langchain-core
-langchain-openai
-langchain-openrouter>=0.2.1
-langchain-anthropic
-langchain-codex-oauth>=1.0,<1.1
-langchain-mcp-adapters
-langchain-community
-langgraph
+openai==2.31.0
+langchain==1.2.15
+langchain-core==1.3.2
+langchain-openai==1.1.10
+langchain-openrouter==0.2.1
+langchain-anthropic==1.4.2
+langchain-codex-oauth==1.0.0
+langgraph==1.1.6
 deepagents==0.5.6
-langgraph-checkpoint-sqlite>=3.0.3
-aiosqlite
-httpx
-openrouter>=0.9.1
-tavily-python
-faiss-cpu
+langgraph-checkpoint-sqlite==3.0.3
+aiosqlite==0.22.1
+httpx==0.28.1
+openrouter==0.9.1
+tavily-python==0.7.23
+faiss-cpu==1.13.2
 
 # Utilities
-python-dotenv
-pydantic
-gradio
+pydantic==2.13.0
+gradio==6.8.0
 
 # External data / cheminformatics
-mp-api     # often shown in docs as: pip install mp_api
-rdkit      # PyPI uses 2025.3.6-style versions
+mp-api==0.45.12     # import name: mp_api
+emmet-core==0.86.0rc1
+rdkit==2025.9.6

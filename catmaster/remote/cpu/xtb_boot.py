@@ -10,6 +10,50 @@ import sys
 import time
 
 
+def _parse_cpu_count(raw: str) -> int | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    head = text.split(",", 1)[0].strip()
+    digits = []
+    for char in head:
+        if char.isdigit():
+            digits.append(char)
+            continue
+        break
+    if not digits:
+        return None
+    try:
+        parsed = int("".join(digits))
+    except Exception:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _resolve_threads() -> int:
+    explicit = _parse_cpu_count(os.environ.get("CATMASTER_XTB_THREADS", ""))
+    if explicit:
+        return explicit
+    for key in ("SLURM_CPUS_PER_TASK", "SLURM_NTASKS", "SLURM_CPUS_ON_NODE", "SLURM_JOB_CPUS_PER_NODE", "OMP_NUM_THREADS"):
+        parsed = _parse_cpu_count(os.environ.get(key, ""))
+        if parsed:
+            return parsed
+    return 1
+
+
+def _xtb_env(nthreads: int) -> dict[str, str]:
+    env = dict(os.environ)
+    threads = max(1, int(nthreads))
+    env.setdefault("OMP_NUM_THREADS", f"{threads},1")
+    env.setdefault("MKL_NUM_THREADS", str(threads))
+    env.setdefault("OPENBLAS_NUM_THREADS", str(threads))
+    env.setdefault("OMP_MAX_ACTIVE_LEVELS", "1")
+    env.setdefault("OMP_STACKSIZE", "4G")
+    return env
+
+
 def _parse_bool(value: str) -> bool:
     text = str(value).strip().lower()
     if text in {"1", "true", "t", "yes", "y", "on"}:
@@ -134,12 +178,28 @@ def main() -> int:
     summary_path = Path("xtb_summary.json")
     started = time.time()
     completed = False
+    nthreads = _resolve_threads()
+    env = _xtb_env(nthreads)
     with open(args.log, "w", encoding="utf-8") as log_handle:
         log_handle.write(f"[xtb_boot] cwd={Path.cwd()}\n")
         log_handle.write(f"[xtb_boot] command={' '.join(base_cmd)}\n")
         log_handle.write(f"[xtb_boot] xtb_bin={xtb_bin}\n")
+        log_handle.write(f"[xtb_boot] threads={nthreads}\n")
+        for key in (
+            "SLURM_JOB_ID",
+            "SLURM_NTASKS",
+            "SLURM_CPUS_PER_TASK",
+            "SLURM_CPUS_ON_NODE",
+            "SLURM_JOB_CPUS_PER_NODE",
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "OMP_MAX_ACTIVE_LEVELS",
+            "OMP_STACKSIZE",
+        ):
+            log_handle.write(f"[xtb_boot] env {key}={env.get(key, '')}\n")
         log_handle.flush()
-        proc = subprocess.run(base_cmd, stdout=log_handle, stderr=subprocess.STDOUT, check=False)
+        proc = subprocess.run(base_cmd, stdout=log_handle, stderr=subprocess.STDOUT, env=env, check=False)
         completed = proc.returncode == 0
 
     payload = {
@@ -155,6 +215,14 @@ def main() -> int:
         "uhf": int(args.uhf),
         "started_at": started,
         "finished_at": time.time(),
+        "threads": nthreads,
+        "thread_env": {
+            "OMP_NUM_THREADS": env.get("OMP_NUM_THREADS", ""),
+            "MKL_NUM_THREADS": env.get("MKL_NUM_THREADS", ""),
+            "OPENBLAS_NUM_THREADS": env.get("OPENBLAS_NUM_THREADS", ""),
+            "OMP_MAX_ACTIVE_LEVELS": env.get("OMP_MAX_ACTIVE_LEVELS", ""),
+            "OMP_STACKSIZE": env.get("OMP_STACKSIZE", ""),
+        },
         "extra_files": extra_files,
         "outputs": _collect_outputs(),
         "log_file": args.log,

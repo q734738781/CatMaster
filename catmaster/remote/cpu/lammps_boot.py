@@ -11,6 +11,84 @@ import sys
 import time
 
 
+_CPU_LAMMPS_BIN_CANDIDATES = (
+    "lmp_mpi",
+    "lmp",
+    "lammps",
+    "lmp_openmpi",
+    "lmp_intel_cpu_intelmpi",
+    "lmp_intel_cpu",
+    "lmp_serial",
+)
+
+_GPU_LAMMPS_BIN_CANDIDATES = (
+    "lmp_kokkos_cuda_mpi",
+    "lmp_kokkos_cuda",
+    "lmp_kokkos",
+    "lmp_gpu",
+    "lmp_cuda",
+    "lmp_mpi",
+    "lmp",
+    "lammps",
+)
+
+
+def _split_candidate_env(raw: str) -> list[str]:
+    out: list[str] = []
+    for item in re.split(r"[:,]", str(raw or "")):
+        text = item.strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _binary_exists(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def _resolve_lammps_binary(requested: str, *, mode: str, gpu_count: int) -> tuple[str, list[str]]:
+    raw = str(requested or "auto").strip()
+    candidates: list[str] = []
+    if raw and raw.lower() not in {"auto", "__auto__"}:
+        candidates.append(raw)
+    else:
+        candidates.extend(_split_candidate_env(os.environ.get("CATMASTER_LAMMPS_BIN", "")))
+        candidates.extend(_split_candidate_env(os.environ.get("CATMASTER_LAMMPS_BIN_CANDIDATES", "")))
+        if str(mode or "auto").lower() != "off" and gpu_count > 0:
+            candidates.extend(_GPU_LAMMPS_BIN_CANDIDATES)
+            candidates.extend(_CPU_LAMMPS_BIN_CANDIDATES)
+        else:
+            candidates.extend(_CPU_LAMMPS_BIN_CANDIDATES)
+            candidates.extend(_GPU_LAMMPS_BIN_CANDIDATES)
+    tried = _dedupe(candidates)
+    for candidate in tried:
+        if "/" in candidate:
+            path = Path(candidate).expanduser()
+            if _binary_exists(path):
+                return str(path), tried
+            continue
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved, tried
+    raise FileNotFoundError(
+        "Unable to resolve LAMMPS executable. "
+        f"requested={raw!r}; tried={', '.join(tried) if tried else '(none)'}; "
+        "set CATMASTER_LAMMPS_BIN or pass --lammps-bin to override."
+    )
+
+
 def _run_help(lmp_bin: str) -> str:
     try:
         proc = subprocess.run([lmp_bin, "-help"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
@@ -91,7 +169,7 @@ def _run_lammps(command: list[str], output_log: Path, env: dict[str, str]) -> su
 def main() -> int:
     parser = argparse.ArgumentParser(description="LAMMPS boot wrapper for DPDispatcher tasks")
     parser.add_argument("--input", default="in.lammps", help="LAMMPS input script")
-    parser.add_argument("--lammps-bin", default="lmp", help="LAMMPS executable")
+    parser.add_argument("--lammps-bin", default="auto", help="LAMMPS executable or `auto`")
     parser.add_argument("--gpu", default="auto", choices=["auto", "off", "gpu", "kokkos"], help="GPU acceleration selection")
     parser.add_argument("--allow-cpu-fallback", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--log", default="lammps_stdout.out", help="Wrapper log path")
@@ -101,17 +179,60 @@ def main() -> int:
     if not input_path.is_file():
         sys.stderr.write(f"[lammps_boot] input file missing: {input_path}\n")
         return 2
-    lmp_bin = shutil.which(args.lammps_bin) or args.lammps_bin
-    help_text = _run_help(lmp_bin)
     gpu_count = _detect_gpu_count()
+    log_path = Path(args.log)
+    started = time.time()
+    try:
+        lmp_bin, lmp_candidates = _resolve_lammps_binary(args.lammps_bin, mode=args.gpu, gpu_count=gpu_count)
+    except FileNotFoundError as exc:
+        log_path.write_text(
+            "\n".join(
+                [
+                    f"[lammps_boot] cwd={Path.cwd()}",
+                    f"[lammps_boot] requested_lammps_bin={args.lammps_bin}",
+                    f"[lammps_boot] gpu_count={gpu_count}",
+                    f"[lammps_boot] error={exc}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        Path("lammps_summary.json").write_text(
+            json.dumps(
+                {
+                    "completed": False,
+                    "returncode": 2,
+                    "command": [],
+                    "input": input_path.name,
+                    "started_at": started,
+                    "finished_at": time.time(),
+                    "outputs": _collect_outputs(),
+                    "log_file": args.log,
+                    "gpu_count": gpu_count,
+                    "acceleration": "unresolved",
+                    "cpu_fallback_used": False,
+                    "requested_lammps_bin": args.lammps_bin,
+                    "resolved_lammps_bin": "",
+                    "lammps_bin_candidates": [],
+                    "error": str(exc),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        sys.stderr.write(f"[lammps_boot] {exc}\n")
+        return 2
+    help_text = _run_help(lmp_bin)
     prefix, acceleration = _gpu_command_prefix(lmp_bin, args.gpu, gpu_count, help_text)
     command = [*prefix, "-in", input_path.name]
     env = dict(os.environ)
     env.setdefault("OMP_NUM_THREADS", "1")
-    started = time.time()
-    log_path = Path(args.log)
     log_path.write_text(f"[lammps_boot] cwd={Path.cwd()}\n", encoding="utf-8")
     with log_path.open("a", encoding="utf-8") as log_handle:
+        log_handle.write(f"[lammps_boot] requested_lammps_bin={args.lammps_bin}\n")
+        log_handle.write(f"[lammps_boot] resolved_lammps_bin={lmp_bin}\n")
+        log_handle.write(f"[lammps_boot] lammps_bin_candidates={', '.join(lmp_candidates)}\n")
         for key in (
             "SLURM_JOB_ID",
             "SLURM_NTASKS",
@@ -145,6 +266,9 @@ def main() -> int:
         "gpu_count": gpu_count,
         "acceleration": acceleration,
         "cpu_fallback_used": fallback_used,
+        "requested_lammps_bin": args.lammps_bin,
+        "resolved_lammps_bin": lmp_bin,
+        "lammps_bin_candidates": lmp_candidates,
     }
     Path("lammps_summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return int(proc.returncode)

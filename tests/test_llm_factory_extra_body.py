@@ -137,6 +137,32 @@ def test_build_chat_model_passes_reasoning_summary_config(monkeypatch) -> None:
     assert captured.get("use_responses_api") is True
 
 
+def test_build_chat_model_passes_oai_compatible_top_level_reasoning_effort(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "langchain_openai", types.SimpleNamespace(ChatOpenAI=FakeChatOpenAI))
+
+    cfg = LLMConfig(
+        provider="oai_compatible",
+        model="compatible-model",
+        api_key="test-key",
+        base_url="https://compatible.example/v1",
+        reasoning={"effort": "high"},
+        reasoning_effort="medium",
+    )
+
+    build_chat_model(cfg)
+
+    assert captured.get("base_url") == "https://compatible.example/v1"
+    assert captured.get("reasoning_effort") == "medium"
+    assert captured.get("reasoning") is None
+    assert captured.get("use_responses_api") is False
+
+
 def test_build_chat_model_passes_anthropic_common_and_chat_kwargs(monkeypatch) -> None:
     captured: dict = {}
 

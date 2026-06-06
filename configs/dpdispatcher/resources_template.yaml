@@ -1,43 +1,168 @@
 # DPDispatcher resource-card template.
 # This file is ignored by CatMaster registries because its filename contains
-# "template". Copy selected cards to configs/dpdispatcher/resources_local.yaml
-# for private machine-specific overrides.
+# "template". Copy it to configs/dpdispatcher/resources.yaml for an active
+# private deployment config, then edit machine keys, queue names, core counts,
+# and environment scripts for the target cluster.
 
-example_cpu_resource:
+vasp_cpu:
   kind: domain
-  capabilities: [vasp, cp2k, lammps, xtb, crest, orca]
-  description: "Example CPU queue resource."
-  audiences: [materials_worker, dynamics_worker, orca_xtb_worker]
-  machine: cpu_server_2
+  capabilities: [vasp]
+  description: "Prepared VASP single-stage CPU execution."
+  audiences: [materials_worker]
+  machine: cpu_server
+  number_node: 1
+  cpu_per_node: 52
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 10-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_VASP_ENV_SCRIPT>"
+
+vasp_cpu_neb:
+  kind: domain
+  capabilities: [vasp]
+  description: "Prepared VASP NEB/path CPU execution."
+  audiences: [materials_worker]
+  machine: cpu_server
+  number_node: 1
+  cpu_per_node: 104
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 10-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_VASP_ENV_SCRIPT>"
+
+cp2k_cpu:
+  kind: domain
+  capabilities: [cp2k]
+  description: "Prepared CP2K CPU MPI execution."
+  audiences: [materials_worker, dynamics_worker]
+  machine: cpu_server
   number_node: 1
   cpu_per_node: 32
-  gpu_per_node: 0
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 4-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_CP2K_ENV_SCRIPT>"
+
+lammps_cpu:
+  kind: domain
+  capabilities: [lammps]
+  description: "Prepared LAMMPS CPU execution with boot-time GPU detection when available."
+  audiences: [dynamics_worker]
+  machine: cpu_server
+  number_node: 1
+  cpu_per_node: 16
   queue_name: batch
   group_size: 1
   custom_flags:
     - "#SBATCH -t 2-00:00:00"
     - "#SBATCH --export=ALL"
   source_list:
-    - "<REMOTE_ENV_SCRIPT>"
-  prepend_script: |
-    ulimit -s unlimited
+    - "<REMOTE_LAMMPS_ENV_SCRIPT>"
 
-example_gpu_resource:
-  kind: general_gpu
-  capabilities: [python, gpu, mace, custom_boot]
+general_cpu:
+  kind: general_cpu
+  capabilities: [python, custom_boot]
   allow_custom_boot: true
+  description: "General CPU/Python custom boot_script execution."
+  audiences: [materials_worker, ml_worker, orca_xtb_worker]
   default_for_custom_boot: true
-  description: "Example GPU queue resource."
-  audiences: [materials_worker, dynamics_worker, ml_worker]
+  machine: cpu_server
+  number_node: 1
+  cpu_per_node: 4
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 02:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_GENERAL_CPU_ENV_SCRIPT>"
+
+general_gpu:
+  kind: general_gpu
+  capabilities: [python, gpu, custom_boot]
+  allow_custom_boot: true
+  description: "General GPU/Python custom boot_script execution."
+  audiences: [materials_worker, ml_worker]
   machine: gpu_server
   number_node: 1
   cpu_per_node: 16
   gpu_per_node: 1
-  queue_name: gpu
+  queue_name: main
   group_size: 1
   custom_flags:
     - "#SBATCH --export=ALL"
   source_list:
     - "<REMOTE_GPU_ENV_SCRIPT>"
-  prepend_script: |
-    nvidia-smi || true
+
+mace_gpu:
+  kind: domain
+  capabilities: [mace, gpu]
+  description: "Managed MACE GPU execution."
+  audiences: [materials_worker, dynamics_worker, ml_worker]
+  machine: gpu_server
+  number_node: 1
+  cpu_per_node: 16
+  gpu_per_node: 1
+  queue_name: main
+  group_size: 1
+  custom_flags:
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_MACE_ENV_SCRIPT>"
+
+xtb_cpu:
+  kind: domain
+  capabilities: [xtb]
+  description: "Managed xTB CPU execution."
+  audiences: [orca_xtb_worker]
+  machine: cpu_server
+  number_node: 1
+  cpu_per_node: 32
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 2-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_XTB_ENV_SCRIPT>"
+
+crest_cpu:
+  kind: domain
+  capabilities: [crest]
+  description: "Managed CREST CPU execution."
+  audiences: [orca_xtb_worker]
+  machine: cpu_server
+  number_node: 1
+  cpu_per_node: 32
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 2-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_XTB_ENV_SCRIPT>"
+
+orca_cpu:
+  kind: domain
+  capabilities: [orca]
+  description: "Managed ORCA CPU execution."
+  audiences: [orca_xtb_worker]
+  machine: cpu_server
+  number_node: 1
+  cpu_per_node: 32
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 4-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_ORCA_ENV_SCRIPT>"

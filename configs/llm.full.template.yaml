@@ -205,8 +205,12 @@ models:
     top_p: null
     max_tokens: null
     max_output_tokens: null
+    # oai_compatible uses langchain-openai ChatOpenAI with chat-completions mode.
+    # CatMaster passes only top-level reasoning_effort on this path; it does not
+    # translate reasoning.effort into reasoning_effort for OpenAI-compatible
+    # endpoints.
     reasoning: {}
-    reasoning_effort: null
+    reasoning_effort: null  # e.g. medium/high if the compatible endpoint supports it
     frequency_penalty: null
     presence_penalty: null
     api_key_env: CATMASTER_COMPATIBLE_API_KEY

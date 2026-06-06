@@ -12,7 +12,7 @@ conda activate catmaster
 pip install -r requirements/pc.txt
 ```
 
-If this machine will also run local GPU / MACE tasks:
+If this machine will also run local GPU / MACE tasks, install the GPU/MACE add-on dependencies as well. `requirements/gpu.txt` is not a complete WebUI/agent environment and does not replace `requirements/pc.txt`:
 
 ```bash
 pip install -r requirements/gpu.txt
@@ -57,6 +57,12 @@ The LLM config mainly has two sections:
 
 - `models`: local labels for `provider`, `model`, `base_url`, and provider-specific parameters.
 - `agents`: role-to-model bindings. At minimum configure `proposal`, `director`, `task_runner`, `memory_patch`, and `summary`.
+
+Reasoning fields are provider-specific:
+
+- `openrouter` and official `openai`: use `reasoning.effort`, for example `reasoning: {effort: high}`.
+- `oai_compatible`: use top-level `reasoning_effort`, for example `reasoning_effort: high`. CatMaster currently uses the `langchain-openai` chat-completions path here and does not translate `reasoning.effort` into `reasoning_effort`.
+- `deepseek`: use top-level `reasoning_effort`; DeepSeek-specific fields such as `thinking` belong under `provider_options.deepseek.extra_body`.
 
 ## 3. Provide API Keys
 

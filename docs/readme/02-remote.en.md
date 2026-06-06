@@ -16,18 +16,22 @@ CatMaster reads:
 configs/dpdispatcher/machines.yaml
 ```
 
-For a first setup:
+For a first setup, copy all three templates:
 
 ```bash
-cp configs/machines_template.yaml configs/dpdispatcher/machines.yaml
+cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml
+cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml
+cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml
 ```
+
+`machines.yaml`, `resources.yaml`, and `tasks.yaml` are active deployment config files. They contain login hosts, SSH keys, local/remote work roots, queues, `source_list`, and task commands, so they are ignored by Git and by deployment packaging. Public releases include only `*_template.yaml`.
 
 The template uses two default machine keys:
 
 - `cpu_server_2`
 - `gpu_server`
 
-These names match the default resource cards in `configs/dpdispatcher/resources.yaml`. You may rename them, but then you must update each resource card's `machine` field.
+These names match the resource cards in `configs/dpdispatcher/resources.yaml`. You may rename them, but then you must update each resource card's `machine` field.
 
 Simplified example:
 
@@ -56,7 +60,7 @@ ssh -i /home/your_user/.ssh/id_ed25519 your_user@login.cluster.edu
 
 ## 2. Understand Resource Cards
 
-Default resource cards live in:
+Active resource cards live in:
 
 ```text
 configs/dpdispatcher/resources.yaml
@@ -81,15 +85,9 @@ Check these fields first:
 - `custom_flags` use the right Slurm/PBS syntax.
 - `source_list` or `prepend_script` loads VASP, CP2K, MACE, or other required programs.
 
-## 3. Use Local Resource Overrides
+## 3. Edit Active Resource Cards
 
-If the default `resources.yaml` does not match your cluster, copy the template:
-
-```bash
-cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources_local.yaml
-```
-
-You can use the same key to override a default resource. Example override for `vasp_cpu`:
+If `resources.yaml` does not match your cluster, edit that private file directly. It is not committed or packaged. Check that `source_list` and `prepend_script` load the remote task environment. Example for `vasp_cpu`:
 
 ```yaml
 vasp_cpu:
@@ -109,11 +107,11 @@ vasp_cpu:
     - /path/to/remote/vasp_env.sh
 ```
 
-Matching resource keys override the default definitions. This lets existing task templates keep referencing `vasp_cpu`.
+Existing task templates can keep referencing `vasp_cpu`.
 
-## 4. Understand Task Templates
+## 4. Understand Task Config
 
-Default tasks live in:
+Active tasks live in:
 
 ```text
 configs/dpdispatcher/tasks.yaml
@@ -145,11 +143,7 @@ Each task defines:
 
 ## 5. Add Custom Tasks
 
-For custom remote tasks:
-
-```bash
-cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks_local.yaml
-```
+For custom remote tasks, edit the private `configs/dpdispatcher/tasks.yaml`.
 
 Example:
 
@@ -169,7 +163,7 @@ my_python_task:
   task_work_path: "."
 ```
 
-YAML files with `template` in the filename are examples only and are not loaded as active runtime config. Put enabled local config in `resources_local.yaml` or `tasks_local.yaml`.
+YAML files with `template` in the filename are examples only and are not loaded as active runtime config. Copy them to `machines.yaml`, `resources.yaml`, and `tasks.yaml` to enable them.
 
 ## 6. Use Remote Tasks In The WebUI
 
@@ -185,9 +179,41 @@ For MACE relax:
 Convert structures/ into a mace_relax_dir stage with input/, then submit it with remote_submission. Use model=mh-1 and head=omat_pbe.
 ```
 
-## 7. Optional Real Remote Smoke Tests
+## 7. Real Remote Smoke Tests
 
-Real submission tests are opt-in:
+After remote deployment, run the script-style smoke test first. It prepares tiny O2/H2O stages, uses CatMaster's current agent-visible `remote_submission` path, and submits real DPDispatcher jobs. It is not a dry-run.
+
+List available suites and cases:
+
+```bash
+python scripts/remote_execution_smoke.py --list
+```
+
+Common minimal coverage:
+
+```bash
+python scripts/remote_execution_smoke.py --suite core --check-interval 30
+```
+
+`core` runs real `mace_sp`, `xtb_sp`, and `orca_sp` jobs. For material-side coverage:
+
+```bash
+python scripts/remote_execution_smoke.py --suite materials --check-interval 60
+```
+
+For all regular remote execution coverage:
+
+```bash
+python scripts/remote_execution_smoke.py --suite all --check-interval 60
+```
+
+By default the script writes staged files and the JSON report under `/tmp/catmaster_remote_execution_smoke`. To choose a stable location:
+
+```bash
+python scripts/remote_execution_smoke.py --suite core --project-space /path/to/catmaster_remote_smoke
+```
+
+The pytest entry remains available for development:
 
 ```bash
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution -s -vv
@@ -203,11 +229,11 @@ tests/remote_execution/README.md
 
 `Machine 'xxx' not found`
 
-The `machine` field in `resources.yaml` or `resources_local.yaml` does not match a key in `configs/dpdispatcher/machines.yaml`.
+The `machine` field in `configs/dpdispatcher/resources.yaml` does not match a key in `configs/dpdispatcher/machines.yaml`.
 
 `Resources 'xxx' not found`
 
-The task references a resource key that is not defined in `resources.yaml` or `resources_local.yaml`.
+The task references a resource key that is not defined in `configs/dpdispatcher/resources.yaml`.
 
 SSH fails
 

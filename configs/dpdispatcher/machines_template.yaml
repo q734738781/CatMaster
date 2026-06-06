@@ -1,7 +1,9 @@
+# DPDispatcher machine-card template.
 # Copy to configs/dpdispatcher/machines.yaml after proper setup.
-# This local file is ignored by Git because it contains hostnames, usernames,
-# SSH key paths, local_root, remote_root, and cluster-specific env_setup.
-cpu_server_2:
+# The active machines.yaml is ignored by Git and by deployment packaging because
+# it contains hostnames, usernames, SSH key paths, local_root, remote_root, and
+# cluster-specific env_setup.
+cpu_server:
   batch_type: Slurm
   context_type: SSHContext
   local_root: <LOCAL_WORK_ROOT>

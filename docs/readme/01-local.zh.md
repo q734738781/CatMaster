@@ -12,7 +12,7 @@ conda activate catmaster
 pip install -r requirements/pc.txt
 ```
 
-如果这台机器还要跑本地 GPU / MACE 任务，再安装 GPU 依赖：
+如果这台机器还要跑本地 GPU / MACE 任务，再额外安装 GPU/MACE 依赖。`requirements/gpu.txt` 不是完整 WebUI/agent 环境，不能替代 `requirements/pc.txt`：
 
 ```bash
 pip install -r requirements/gpu.txt
@@ -57,6 +57,12 @@ LLM 配置主要看两块：
 
 - `models`：给每个模型起一个本地标签，设置 `provider`、`model`、`base_url` 和 provider 相关参数。
 - `agents`：把不同任务角色绑定到模型标签。最少需要 `proposal`、`director`、`task_runner`、`memory_patch`、`summary`。
+
+Reasoning 字段按 provider 区分填写：
+
+- `openrouter` 和官方 `openai`：使用 `reasoning.effort`，例如 `reasoning: {effort: high}`。
+- `oai_compatible`：使用顶层 `reasoning_effort`，例如 `reasoning_effort: high`。当前 CatMaster 走 `langchain-openai` 的 chat-completions 路径，不会把 `reasoning.effort` 自动翻译成 `reasoning_effort`。
+- `deepseek`：使用顶层 `reasoning_effort`；DeepSeek 专用 `thinking` 等字段放到 `provider_options.deepseek.extra_body`。
 
 ## 3. 提供 API key
 

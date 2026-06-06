@@ -16,18 +16,22 @@ CatMaster 的远程提交基于 DPDispatcher。你需要把三类事情配置清
 configs/dpdispatcher/machines.yaml
 ```
 
-第一次使用时复制模板：
+第一次使用时复制三类模板：
 
 ```bash
-cp configs/machines_template.yaml configs/dpdispatcher/machines.yaml
+cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml
+cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml
+cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml
 ```
+
+`machines.yaml`、`resources.yaml`、`tasks.yaml` 是实际部署配置，包含登录主机、SSH key、本地/远端 work root、队列、`source_list` 和任务命令，默认被 `.gitignore` 和部署打包脚本排除。公开发布只带 `*_template.yaml`。
 
 模板里默认给出两个机器键：
 
 - `cpu_server_2`
 - `gpu_server`
 
-这些名字和 `configs/dpdispatcher/resources.yaml` 里的默认资源卡匹配。你可以改名字，但如果改了机器键，也要同步修改 resource 里的 `machine` 字段。
+这些名字和 `configs/dpdispatcher/resources.yaml` 里的资源卡匹配。你可以改名字，但如果改了机器键，也要同步修改 resource 里的 `machine` 字段。
 
 一个简化示例：
 
@@ -54,9 +58,9 @@ cpu_server_2:
 ssh -i /home/your_user/.ssh/id_ed25519 your_user@login.cluster.edu
 ```
 
-## 2. 理解默认资源卡
+## 2. 理解资源卡
 
-默认资源卡在：
+实际资源卡在：
 
 ```text
 configs/dpdispatcher/resources.yaml
@@ -81,15 +85,9 @@ resource 里最需要检查：
 - `custom_flags` 是否符合你的 Slurm/PBS 语法。
 - `source_list` 或 `prepend_script` 是否能加载 VASP、CP2K、MACE 等环境。
 
-## 3. 使用本地资源覆盖文件
+## 3. 修改实际资源卡
 
-如果默认 `resources.yaml` 不适合你的集群，建议复制模板到本地覆盖文件：
-
-```bash
-cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources_local.yaml
-```
-
-你可以在 `resources_local.yaml` 里写同名 key 来覆盖默认资源卡。例如覆盖 `vasp_cpu`：
+如果 `resources.yaml` 不适合你的集群，直接编辑这个私有文件。它不会进入 git 或部署包。重点检查 `source_list` 和 `prepend_script` 是否能加载远程任务环境。例如 `vasp_cpu`：
 
 ```yaml
 vasp_cpu:
@@ -109,11 +107,11 @@ vasp_cpu:
     - /path/to/remote/vasp_env.sh
 ```
 
-同名 resource key 会覆盖默认定义。这样任务仍然可以继续引用 `vasp_cpu`，不需要改所有任务模板。
+任务继续引用 `vasp_cpu`，不需要改所有任务模板。
 
-## 4. 理解任务模板
+## 4. 理解任务配置
 
-默认任务在：
+实际任务在：
 
 ```text
 configs/dpdispatcher/tasks.yaml
@@ -145,11 +143,7 @@ configs/dpdispatcher/tasks.yaml
 
 ## 5. 自定义任务
 
-如果需要自定义远程任务，复制模板：
-
-```bash
-cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks_local.yaml
-```
+如果需要自定义远程任务，编辑私有的 `configs/dpdispatcher/tasks.yaml`。
 
 示例：
 
@@ -169,7 +163,7 @@ my_python_task:
   task_work_path: "."
 ```
 
-文件名里带 `template` 的 YAML 只作为示例，不会被当成真实配置读取。真正想启用的配置应放在 `resources_local.yaml` 或 `tasks_local.yaml`。
+文件名里带 `template` 的 YAML 只作为示例，不会被当成真实配置读取。真正想启用的配置应复制为 `machines.yaml`、`resources.yaml`、`tasks.yaml`。
 
 ## 6. 在 WebUI 中使用远程任务
 
@@ -185,9 +179,41 @@ my_python_task:
 将 structures/ 里的结构整理成 mace_relax_dir 需要的 input/ stage，然后用 remote_submission 提交，模型用 mh-1，head 用 omat_pbe。
 ```
 
-## 7. 可选真实远程 smoke test
+## 7. 真实远程 smoke test
 
-真实提交测试默认不运行。确认集群配置完成后，可以显式开启：
+部署到远端后，优先跑脚本式 smoke test。它会准备极小 O2/H2O 输入，走 CatMaster 当前 agent 可见的 `remote_submission` 路径，并提交真实 DPDispatcher 任务，不是 dry-run。
+
+查看可用 suite 和 case：
+
+```bash
+python scripts/remote_execution_smoke.py --list
+```
+
+常用最小覆盖：
+
+```bash
+python scripts/remote_execution_smoke.py --suite core --check-interval 30
+```
+
+`core` 会实跑 `mace_sp`、`xtb_sp`、`orca_sp`。更完整的材料侧覆盖：
+
+```bash
+python scripts/remote_execution_smoke.py --suite materials --check-interval 60
+```
+
+全部常规远程执行覆盖：
+
+```bash
+python scripts/remote_execution_smoke.py --suite all --check-interval 60
+```
+
+脚本默认把阶段文件和 JSON 报告写到 `/tmp/catmaster_remote_execution_smoke`。需要固定目录时：
+
+```bash
+python scripts/remote_execution_smoke.py --suite core --project-space /path/to/catmaster_remote_smoke
+```
+
+仍然保留 pytest 入口，适合开发时跑：
 
 ```bash
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution -s -vv
@@ -203,11 +229,11 @@ tests/remote_execution/README.md
 
 `Machine 'xxx' not found`
 
-`resources.yaml` 或 `resources_local.yaml` 的 `machine` 字段没有对应到 `configs/dpdispatcher/machines.yaml` 中的机器 key。
+`configs/dpdispatcher/resources.yaml` 的 `machine` 字段没有对应到 `configs/dpdispatcher/machines.yaml` 中的机器 key。
 
 `Resources 'xxx' not found`
 
-任务引用的 resource key 没有在 `resources.yaml` 或 `resources_local.yaml` 中定义。
+任务引用的 resource key 没有在 `configs/dpdispatcher/resources.yaml` 中定义。
 
 SSH 失败
 

@@ -13,6 +13,7 @@ __pycache__
 node_modules/
 /workspace
 /logs
+/dist/
 /tests/test_output
 /templates
 POTCAR
@@ -22,6 +23,8 @@ POTCAR
 /configs/llm.local.yaml
 /configs/*.local.yaml
 /configs/dpdispatcher/machines.yaml
+/configs/dpdispatcher/resources.yaml
+/configs/dpdispatcher/tasks.yaml
 /configs/dpdispatcher/*_local.yaml
 /configs/dpdispatcher/*.local.yaml
 /reference_scripts

@@ -1,25 +1,14 @@
-# GPU server dependencies
-torch
-mace-torch
-ase
-numpy
-pandas
-scikit-learn
-nvidia-ml-py3  # For GPU detection via NVML
-filelock
-tqdm
-matplotlib
-dpdispatcher
-pyyaml
-httpx
-langchain-openrouter>=0.2.1
-langchain-anthropic
-langchain-codex-oauth>=1.0,<1.1
-openrouter>=0.9.1
-tavily-python
-faiss-cpu
-deepagents==0.5.6
-langgraph-checkpoint-sqlite>=3.0.3
-aiosqlite
-
-# If you plan to use MACE in local, you should also install the dependencies list in this file as well as pc.txt.
+# GPU/MACE execution dependencies.
+#
+# This file is intentionally not a full CatMaster WebUI/agent environment.
+# Use it for remote MACE boot-script environments, or install it after
+# requirements/pc.txt on machines that also run local MACE/GPU tools.
+# Keep shared scientific pins compatible with requirements/pc.txt.
+torch==2.9.0
+mace-torch==0.3.15
+ase==3.27.0
+numpy==2.2.6
+scipy==1.17.1
+pandas==2.3.3
+matplotlib==3.10.7
+pyyaml==6.0.3

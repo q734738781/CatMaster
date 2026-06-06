@@ -161,13 +161,13 @@ Possible future removal:
 
 ## Dependency Expectations
 
-Current minimum versions are recorded in `requirements/pc.txt` and
-`requirements/gpu.txt`:
+Current versions are pinned in `requirements/pc.txt`:
 
-- `langchain-openrouter>=0.2.1`
-- `openrouter>=0.9.1`
+- `langchain-openrouter==0.2.1`
+- `openrouter==0.9.1`
+- `deepagents==0.5.6`
 
-`deepagents==0.5.2` was still in use when this note was written. DeepAgents issue
+DeepAgents issue
 `langchain-ai/deepagents#2873` tracks a related multimodal summarization problem:
 image blocks can be mishandled when conversation history is summarized/offloaded.
 
