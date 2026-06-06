@@ -910,12 +910,14 @@ def _stream_patch(session, runtime: dict[str, Any], *, workspace: Optional[Path]
         selected_run = run_dir.name if run_dir is not None else selected_run
     persisted_usage = session.read_usage_summary(run_dir) if run_dir is not None else {}
     usage_summary = _merge_usage_summary(runtime.get("usage_totals"), persisted_usage)
+    machine_time_summary = session.read_machine_time_summary(run_dir) if run_dir is not None else {}
     return {
         "active_run": active_run,
         "selected_run": selected_run,
         "chat_messages": session.get_chat_messages(workspace=workspace),
         "cards": _serialize_cards(session.list_run_cards(workspace=workspace)),
         "usage_summary": usage_summary,
+        "machine_time_summary": machine_time_summary,
         "proposal": session.read_proposal(run_dir, workspace=workspace),
         "todo_items": session.read_todo_items(run_dir),
         "result_text": session.read_result_text(run_dir),
@@ -977,6 +979,7 @@ def _build_snapshot(
         event_page = session.read_ui_events(run_dir, limit=200)
         events = list(event_page.get("events") or []) or list(runtime.get("recent_events") or [])
         usage_summary = _merge_usage_summary(runtime.get("usage_totals"), session.read_usage_summary(run_dir))
+        machine_time_summary = session.read_machine_time_summary(run_dir)
         llm = dict(runtime.get("llm") or {})
         graph = dict(runtime.get("graph") or {})
     else:
@@ -984,6 +987,7 @@ def _build_snapshot(
         event_page = session.read_ui_events(run_dir, limit=200)
         events = list(event_page.get("events") or [])
         usage_summary = session.read_usage_summary(run_dir)
+        machine_time_summary = session.read_machine_time_summary(run_dir)
         llm = live_state.get("llm") if isinstance(live_state.get("llm"), dict) else {}
         graph = {"node": str(live_state.get("current_node") or ""), "message_count": 0, "tool_calls": [], "text_preview": ""}
 
@@ -1011,6 +1015,7 @@ def _build_snapshot(
         "events": events,
         "events_page": event_page if isinstance(event_page, dict) else {},
         "usage_summary": usage_summary,
+        "machine_time_summary": machine_time_summary,
         "proposal": session.read_proposal(run_dir, workspace=workspace),
         "todo_items": session.read_todo_items(run_dir),
         "result_text": session.read_result_text(run_dir),
@@ -1033,6 +1038,7 @@ def _apply_chat_session_view(snapshot: dict[str, Any], *, active_run: str = "") 
     snapshot["prompt"] = None
     snapshot["events"] = []
     snapshot["usage_summary"] = {}
+    snapshot["machine_time_summary"] = {}
     snapshot["proposal"] = ""
     snapshot["todo_items"] = []
     snapshot["result_text"] = ""
@@ -1097,6 +1103,7 @@ def _build_observability(
         payload = {}
     payload["selected_run"] = selected_run
     payload["usage_summary"] = session.read_usage_summary(run_dir)
+    payload["machine_time_summary"] = session.read_machine_time_summary(run_dir)
     payload["chat_messages"] = session.get_chat_messages(limit=120, workspace=workspace)
     return payload
 

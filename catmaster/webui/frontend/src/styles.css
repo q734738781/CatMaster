@@ -1974,6 +1974,80 @@ button:disabled {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.monitor-usage-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.machine-time-panel {
+  flex: 0 0 auto;
+  max-height: 36vh;
+}
+
+.machine-time-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.machine-time-totals div {
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 2px 0 7px;
+}
+
+.machine-time-totals span {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: calc(14px * 0.9);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.machine-time-totals strong {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(18px * 0.9);
+}
+
+.machine-time-table-wrap {
+  overflow: auto;
+  min-height: 0;
+}
+
+.machine-time-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: calc(15px * 0.9);
+}
+
+.machine-time-table th,
+.machine-time-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.machine-time-table th {
+  color: var(--text-tertiary);
+  font-size: calc(13px * 0.9);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-elevated);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.machine-time-table.compact td {
+  color: var(--text-secondary);
+  font-size: calc(14px * 0.9);
+}
+
 .monitor-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -2496,7 +2570,7 @@ button:disabled {
   .tool-trace-list {
     overflow: visible;
   }
-  .metrics-grid, .settings-grid, .composer-fields, .usage-grid, .file-structure-meta, .monitor-split, .overview-columns {
+  .metrics-grid, .settings-grid, .composer-fields, .usage-grid, .file-structure-meta, .monitor-split, .overview-columns, .machine-time-totals {
     grid-template-columns: 1fr;
   }
   .monitor-dashboard,

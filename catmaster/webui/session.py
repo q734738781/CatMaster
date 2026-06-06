@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from catmaster.tools.base import ensure_project_space_layout, system_root, workspace_root
 from catmaster.runtime import RunControl
 from catmaster.runtime.observability_store import ObservabilityStore
+from catmaster.runtime.machine_time_stats import load_machine_time_summary
 from catmaster.runtime.usage_stats import load_usage_summary
 from catmaster.ui import make_event
 from catmaster.specialists import RUN_STATE_FILE
@@ -1354,6 +1355,14 @@ class WebSession:
             return {}
         try:
             return load_usage_summary(run_dir)
+        except Exception:
+            return {}
+
+    def read_machine_time_summary(self, run_dir: Optional[Path]) -> Dict[str, Any]:
+        if not run_dir:
+            return {}
+        try:
+            return load_machine_time_summary(run_dir)
         except Exception:
             return {}
 

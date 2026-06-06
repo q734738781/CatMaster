@@ -58,6 +58,20 @@ def test_assert_remote_success_raises_for_missing_status() -> None:
     assert "missing/invalid status file" in str(exc.value)
 
 
+def test_status_details_include_remote_elapsed_seconds(tmp_path: Path) -> None:
+    (tmp_path / "status.json").write_text(
+        '{"returncode": 0, "command": "echo ok", "t_start": 100.0, "t_end": 145.5}\n',
+        encoding="utf-8",
+    )
+
+    details = dpr._status_details_for_task(tmp_path, task_index=0, task_work_path=".")
+
+    assert details["returncode"] == 0
+    assert details["t_start"] == 100.0
+    assert details["t_end"] == 145.5
+    assert details["elapsed_seconds"] == 45.5
+
+
 def test_remote_receipt_records_dpdispatcher_job_status(tmp_path: Path) -> None:
     class _Job:
         job_hash = "abc123"

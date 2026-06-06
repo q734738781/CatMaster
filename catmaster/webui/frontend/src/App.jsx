@@ -10,6 +10,7 @@ import { Grid } from "gridjs-react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import {
   Bot,
+  Cpu,
   Files,
   FolderOpen,
   LockKeyhole,
@@ -875,6 +876,26 @@ function formatCostNote(summary) {
   return source;
 }
 
+function formatHours(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  if (numeric === 0) {
+    return "0.000";
+  }
+  if (Math.abs(numeric) < 0.001) {
+    return numeric.toExponential(2);
+  }
+  return numeric.toLocaleString(undefined, {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+  });
+}
+
 function usageInputUncached(summary) {
   if (!summary || typeof summary !== "object") {
     return 0;
@@ -1235,6 +1256,98 @@ function TaskStatePanel({ taskState }) {
   );
 }
 
+function MachineTimePanel({ summary }) {
+  const data = summary && typeof summary === "object" ? summary : {};
+  const resourceRows = Array.isArray(data.by_resource) ? data.by_resource : [];
+  const records = Array.isArray(data.records) ? data.records.slice(-20).reverse() : [];
+  return (
+    <section className="monitor-panel machine-time-panel">
+      <div className="section-head">
+        <div>
+          <div className="section-label">Usage</div>
+          <h3 className="section-title">Remote machine time</h3>
+        </div>
+      </div>
+      <div className="machine-time-totals">
+        <div>
+          <span>Requests</span>
+          <strong>{formatCount(data.requests || 0)}</strong>
+        </div>
+        <div>
+          <span>Core hours</span>
+          <strong>{formatHours(data.core_hours)}</strong>
+        </div>
+        <div>
+          <span>Node hours</span>
+          <strong>{formatHours(data.node_hours)}</strong>
+        </div>
+        <div>
+          <span>GPU node hours</span>
+          <strong>{formatHours(data.gpu_node_hours)}</strong>
+        </div>
+      </div>
+      {resourceRows.length ? (
+        <div className="machine-time-table-wrap">
+          <table className="machine-time-table">
+            <thead>
+              <tr>
+                <th>Resource</th>
+                <th>Req</th>
+                <th>Tasks</th>
+                <th>Core h</th>
+                <th>Node h</th>
+                <th>GPU node h</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resourceRows.map((row) => (
+                <tr key={row.name || "resource"}>
+                  <td>{row.name || "-"}</td>
+                  <td>{formatCount(row.requests)}</td>
+                  <td>{formatCount(row.task_count)}</td>
+                  <td>{formatHours(row.core_hours)}</td>
+                  <td>{formatHours(row.node_hours)}</td>
+                  <td>{formatHours(row.gpu_node_hours)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="todo-empty">No remote requests recorded for this run.</div>
+      )}
+      {records.length ? (
+        <div className="machine-time-table-wrap">
+          <table className="machine-time-table compact">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Task</th>
+                <th>Resource</th>
+                <th>Status</th>
+                <th>Core h</th>
+                <th>Node h</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((record) => (
+                <tr key={record.record_id || `${record.recorded_at}-${record.work_base}`}>
+                  <td>{record.recorded_at ? new Date(record.recorded_at).toLocaleTimeString() : "-"}</td>
+                  <td>{record.task_name || record.tool_name || "-"}</td>
+                  <td>{record.resources || "-"}</td>
+                  <td>{record.status || "-"}</td>
+                  <td>{formatHours(record.core_hours)}</td>
+                  <td>{formatHours(record.node_hours)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function RawLogPanel({ observability, events, eventPage, loadingOlder, onLoadOlder }) {
   const rawEvents = Array.isArray(observability?.raw_logs?.events) && observability.raw_logs.events.length
     ? observability.raw_logs.events
@@ -1293,6 +1406,7 @@ function RawLogPanel({ observability, events, eventPage, loadingOlder, onLoadOld
 function MonitorDashboard({
   observability,
   usage,
+  machineTime,
   events,
   eventPage,
   loadingOlder,
@@ -1303,6 +1417,8 @@ function MonitorDashboard({
   const data = observability?.data || {};
   const metrics = data.metrics || {};
   const usageSummary = data.usage_summary || usage || {};
+  const machineSummary = data.machine_time_summary || machineTime || {};
+  const [machineTimeOpen, setMachineTimeOpen] = useState(false);
   const taskState = data.task_state || {};
   const costValue = usageSummary.cost_usd;
   const uncachedInput = usageInputUncached(usageSummary);
@@ -1317,9 +1433,21 @@ function MonitorDashboard({
         <MetricCard label="Error rate" value={formatPercent(metrics.error_rate)} />
         <MetricCard label="Cost" value={formatCost(costValue)} note={formatCostNote(usageSummary)} />
         <MetricCard label="Tokens" value={formatCount(usageSummary.total_tokens || metrics.input_tokens + metrics.output_tokens)} note={`in ${formatCount(uncachedInput)} · cache ${formatCount(cacheRead)} · out ${formatCount(usageSummary.output_tokens || metrics.output_tokens)}`} />
+        <MetricCard label="Core hours" value={formatHours(machineSummary.core_hours)} note={`${formatCount(machineSummary.requests || 0)} remote req`} />
+        <MetricCard label="Node hours" value={formatHours(machineSummary.node_hours)} note={`GPU node ${formatHours(machineSummary.gpu_node_hours)}`} />
         <MetricCard label="Plan edits" value={formatCount(taskState.plan_revision_count || 0)} />
         <MetricCard label="DB events" value={formatCount(metrics.total_events)} note={data.db_path ? data.db_path.split("/").slice(-1)[0] : ""} />
       </div>
+      <div className="monitor-usage-actions">
+        <button
+          type="button"
+          className={`ghost-btn ${machineTimeOpen ? "active" : ""}`}
+          onClick={() => setMachineTimeOpen((prev) => !prev)}
+        >
+          <ActionContent icon={Cpu}>机时统计</ActionContent>
+        </button>
+      </div>
+      {machineTimeOpen ? <MachineTimePanel summary={machineSummary} /> : null}
       <ObservabilityTabs active={activeTab} onChange={onTabChange} />
       {observability?.loading ? <div className="monitor-loading">Loading observability records...</div> : null}
       {activeTab === "overview" ? (
@@ -3534,6 +3662,7 @@ function App({ boot }) {
               llm: runtime.llm || prev.llm || {},
               graph: runtime.graph || prev.graph || {},
               usage_summary: data.usage_summary || runtime.usage_totals || prev.usage_summary || {},
+              machine_time_summary: data.machine_time_summary || prev.machine_time_summary || {},
               chat_messages: data.chat_messages || prev.chat_messages || [],
               cards: data.cards || prev.cards || [],
               todo_items: data.todo_items || prev.todo_items || [],
@@ -4194,6 +4323,7 @@ function App({ boot }) {
   });
   const live = snapshot?.live_state || {};
   const usage = snapshot?.usage_summary || {};
+  const machineTime = snapshot?.machine_time_summary || {};
   const visibleEvents = view === "monitor" ? events : [];
   const thinkingMessages = buildThinkingMessages(snapshot, events, agentTab);
   const chatMessages = buildChatTimeline(snapshot, events, thinkingMessages);
@@ -4473,6 +4603,7 @@ function App({ boot }) {
 	                  <MonitorDashboard
 	                    observability={observability}
 	                    usage={usage}
+	                    machineTime={machineTime}
 	                    events={visibleEvents}
 	                    eventPage={eventPage}
 	                    loadingOlder={eventPage.loading}

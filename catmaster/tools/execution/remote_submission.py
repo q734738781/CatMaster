@@ -11,8 +11,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from catmaster.runtime.machine_time_stats import append_machine_time_record, build_machine_time_record
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.runtime.tool_runtime import current_tool_audience
+from catmaster.runtime.tool_runtime import current_run_dir, current_tool_audience, current_toolcall_key
 from catmaster.tools.base import resolve_workspace_path, system_root, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
@@ -524,6 +525,44 @@ def _sync_dispatch_workspace_back(dispatch_dir: Path, work_dir: Path) -> None:
     shutil.copytree(dispatch_dir, work_dir, dirs_exist_ok=True, symlinks=True)
 
 
+def _record_machine_time(
+    *,
+    status: str,
+    tool_name: str,
+    work_dir: Path,
+    task_name: str,
+    work_base: str,
+    tasks: list[TaskSpec],
+    resources_key: str,
+    register: MachineRegister,
+    result: Any = None,
+    remote_context: dict[str, Any] | None = None,
+    error: str = "",
+) -> None:
+    run_dir = current_run_dir()
+    if not run_dir:
+        return
+    try:
+        resource_cfg = dict(register.get_resources(resources_key))
+        record = build_machine_time_record(
+            status=status,
+            tool_name=tool_name,
+            task_name=task_name,
+            work_dir_rel=workspace_relpath(work_dir),
+            work_base=work_base,
+            resources_key=resources_key,
+            resource_cfg=resource_cfg,
+            task_count=len(tasks),
+            toolcall_id=current_toolcall_key(),
+            result=result,
+            remote_context=remote_context,
+            error=error,
+        )
+        append_machine_time_record(run_dir, record)
+    except Exception:
+        return
+
+
 def _submit(
     *,
     tool_name: str,
@@ -588,6 +627,18 @@ def _submit(
             "resources": resources_key,
             **remote_context,
         }
+        _record_machine_time(
+            status="failed",
+            tool_name=tool_name,
+            work_dir=work_dir,
+            task_name=task_name,
+            work_base=work_base,
+            tasks=tasks,
+            resources_key=resources_key,
+            register=register,
+            remote_context=remote_context,
+            error=f"{type(dispatch_error).__name__}: {dispatch_error}",
+        )
         _fail(tool_name, message=f"DPDispatcher submission failed: {dispatch_error}", data=data, error_code="dispatch_failed")
 
     states = result.task_states if result else []
@@ -602,6 +653,18 @@ def _submit(
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         **remote_context_from_result(result),
     }
+    _record_machine_time(
+        status="success",
+        tool_name=tool_name,
+        work_dir=work_dir,
+        task_name=task_name,
+        work_base=data["work_base"],
+        tasks=tasks,
+        resources_key=resources_key,
+        register=register,
+        result=result,
+        remote_context=remote_context_from_result(result),
+    )
     content = (
         f"{tool_name} completed.\n"
         f"task_name={task_name or 'custom_boot_script'} tasks={len(tasks)} resources={resources_key}\n"

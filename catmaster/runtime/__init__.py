@@ -30,6 +30,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "usage_summary_path": ("catmaster.runtime.usage_stats", "usage_summary_path"),
     "summarize_usage_from_metadata": ("catmaster.runtime.usage_stats", "summarize_usage_from_metadata"),
     "write_usage_summary_from_metadata": ("catmaster.runtime.usage_stats", "write_usage_summary_from_metadata"),
+    "load_machine_time_summary": ("catmaster.runtime.machine_time_stats", "load_machine_time_summary"),
+    "machine_time_records_path": ("catmaster.runtime.machine_time_stats", "machine_time_records_path"),
+    "machine_time_summary_path": ("catmaster.runtime.machine_time_stats", "machine_time_summary_path"),
 }
 
 __all__ = list(_EXPORTS.keys())

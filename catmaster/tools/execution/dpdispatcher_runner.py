@@ -88,6 +88,7 @@ class DispatchResult(BaseModel):
     jobs: List[Dict[str, Any]] = Field(default_factory=list)
     job_status_counts: Dict[str, int] = Field(default_factory=dict)
     remote_context: Dict[str, Any] = Field(default_factory=dict)
+    status_records: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskSpec(BaseModel):
@@ -426,6 +427,17 @@ def _read_status_file(path: Path) -> Dict[str, Any] | None:
         return None
 
 
+def _to_float_or_none(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value))
+    except Exception:
+        return None
+
+
 def _status_details_for_task(work_base_dir: Path, *, task_index: int, task_work_path: str) -> Dict[str, Any]:
     work_path = task_work_path or "."
     task_dir = work_base_dir / work_path
@@ -453,6 +465,14 @@ def _status_details_for_task(work_base_dir: Path, *, task_index: int, task_work_
     rec["stderr_file"] = data.get("stderr_file")
     rec["stdout_tail"] = data.get("stdout_tail")
     rec["stderr_tail"] = data.get("stderr_tail")
+    t_start = _to_float_or_none(data.get("t_start"))
+    t_end = _to_float_or_none(data.get("t_end"))
+    if t_start is not None:
+        rec["t_start"] = t_start
+    if t_end is not None:
+        rec["t_end"] = t_end
+    if t_start is not None and t_end is not None and t_end >= t_start:
+        rec["elapsed_seconds"] = t_end - t_start
     return rec
 
 
@@ -568,6 +588,7 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
     output_dir = Path(machine.context.init_local_root) / request.work_base / request.task_work_path
     cleanup_dpdispatcher_artifacts(output_dir)
     remote_context = _public_remote_context(receipt)
+    jobs = list(receipt.get("jobs") or [])
 
     return DispatchResult(
         work_base=request.work_base,
@@ -580,7 +601,10 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
         remote_context_id=str(remote_context.get("remote_context_id") or ""),
         receipt_rel=str(remote_context.get("receipt_rel") or ""),
         submission_hash=str(remote_context.get("submission_hash") or ""),
+        jobs=jobs,
+        job_status_counts=_job_status_counts(jobs),
         remote_context=remote_context,
+        status_records=status_records,
     )
 
 
@@ -675,6 +699,7 @@ def dispatch_submission(
     output_dir = Path(machine.context.init_local_root) / batch.work_base / suffix
     cleanup_dpdispatcher_artifacts(output_dir)
     remote_context = _public_remote_context(receipt)
+    jobs = list(receipt.get("jobs") or [])
 
     return DispatchResult(
         work_base=batch.work_base,
@@ -687,7 +712,10 @@ def dispatch_submission(
         remote_context_id=str(remote_context.get("remote_context_id") or ""),
         receipt_rel=str(remote_context.get("receipt_rel") or ""),
         submission_hash=str(remote_context.get("submission_hash") or ""),
+        jobs=jobs,
+        job_status_counts=_job_status_counts(jobs),
         remote_context=remote_context,
+        status_records=status_records,
     )
 
 

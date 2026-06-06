@@ -16,6 +16,7 @@ from catmaster.webui import server
 from catmaster.webui.server import create_app
 from catmaster.webui.session import WebSession
 from catmaster.webui.web_reporter import WebReporter
+from catmaster.runtime.machine_time_stats import append_machine_time_record
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.ui.events import make_event
 
@@ -735,6 +736,22 @@ def test_observability_route_returns_metrics_and_backfilled_events(tmp_path: Pat
         + "\n",
         encoding="utf-8",
     )
+    append_machine_time_record(
+        run_dir,
+        {
+            "status": "success",
+            "tool_name": "remote_submission",
+            "task_name": "vasp_execute",
+            "resources": "vasp_cpu",
+            "machine": "cpu_server_2",
+            "task_count": 1,
+            "number_node": 1,
+            "cpu_per_node": 32,
+            "elapsed_seconds": 3600,
+            "core_hours": 32.0,
+            "node_hours": 1.0,
+        },
+    )
 
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
@@ -753,6 +770,8 @@ def test_observability_route_returns_metrics_and_backfilled_events(tmp_path: Pat
     assert payload["metrics"]["llm_calls"] == 1
     assert payload["metrics"]["tool_calls"] == 1
     assert payload["raw_logs"]["total_events"] == 2
+    assert payload["machine_time_summary"]["requests"] == 1
+    assert payload["machine_time_summary"]["core_hours"] == 32.0
 
 
 def test_websession_read_ui_events_paginates_sqlite_by_sequence(tmp_path: Path) -> None:
