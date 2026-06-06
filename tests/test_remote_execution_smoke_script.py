@@ -18,6 +18,7 @@ def test_remote_execution_smoke_script_lists_cases_without_submitting() -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "core: mace_sp, xtb_sp, orca_sp" in proc.stdout
-    assert "no_cp2k: mace_sp, vasp_sp, xtb_sp, orca_sp, lammps_min, crest_quick" in proc.stdout
+    assert "all: mace_sp, vasp_sp, xtb_sp, orca_sp, cp2k_sp, lammps_min, crest_quick" in proc.stdout
     assert "vasp_sp" in proc.stdout
     assert "cp2k_sp" in proc.stdout
+    assert "no_cp2k" not in proc.stdout

@@ -7,9 +7,7 @@ For deployment checks on a remote machine, prefer the CLI wrapper first:
 ```bash
 python scripts/remote_execution_smoke.py --list
 python scripts/remote_execution_smoke.py --suite core --check-interval 30
-python scripts/remote_execution_smoke.py --suite no_cp2k --check-interval 60
-# Only use this when CP2K is configured:
-# python scripts/remote_execution_smoke.py --suite all --check-interval 60
+python scripts/remote_execution_smoke.py --suite all --check-interval 60
 ```
 
 The CLI writes a JSON report under `/tmp/catmaster_remote_execution_smoke`
@@ -57,8 +55,8 @@ Prerequisites:
 - Local pymatgen can locate VASP pseudopotentials, because the VASP test starts
   from `vasp_prepare` and requires POTCAR generation before remote dispatch.
 - The CPU remote environment can run VASP through `catmaster/remote/cpu/vasp_boot.py`.
-- The CPU remote environment can run CP2K through `cp2k.psmp` only when running
-  CP2K-specific tests or `--suite all`; `--suite no_cp2k` deliberately skips it.
+- The CPU remote environment can run CP2K through `cp2k.psmp` for full-suite
+  deployment checks.
 - The CPU remote environment can expose a LAMMPS executable in `PATH`; the
   LAMMPS boot script auto-detects common names such as `lmp_mpi`, `lmp`,
   KOKKOS/GPU variants, and can be overridden with `CATMASTER_LAMMPS_BIN`.

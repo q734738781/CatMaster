@@ -588,8 +588,7 @@ SUITES: dict[str, list[str]] = {
     "materials": ["mace_sp", "vasp_sp"],
     "qchem": ["xtb_sp", "orca_sp"],
     "dynamics": ["cp2k_sp", "lammps_min"],
-    "no_cp2k": ["mace_sp", "vasp_sp", "xtb_sp", "orca_sp", "lammps_min", "crest_quick"],
-    "all": ["mace_sp", "vasp_sp", "xtb_sp", "orca_sp", "cp2k_sp", "lammps_min"],
+    "all": ["mace_sp", "vasp_sp", "xtb_sp", "orca_sp", "cp2k_sp", "lammps_min", "crest_quick"],
 }
 
 
