@@ -1,0 +1,43 @@
+# DPDispatcher resource-card template.
+# This file is ignored by CatMaster registries because its filename contains
+# "template". Copy selected cards to configs/dpdispatcher/resources_local.yaml
+# for private machine-specific overrides.
+
+example_cpu_resource:
+  kind: domain
+  capabilities: [vasp, cp2k, lammps, xtb, crest, orca]
+  description: "Example CPU queue resource."
+  audiences: [materials_worker, dynamics_worker, orca_xtb_worker]
+  machine: cpu_server_2
+  number_node: 1
+  cpu_per_node: 32
+  gpu_per_node: 0
+  queue_name: batch
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 2-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_ENV_SCRIPT>"
+  prepend_script: |
+    ulimit -s unlimited
+
+example_gpu_resource:
+  kind: general_gpu
+  capabilities: [python, gpu, mace, custom_boot]
+  allow_custom_boot: true
+  default_for_custom_boot: true
+  description: "Example GPU queue resource."
+  audiences: [materials_worker, dynamics_worker, ml_worker]
+  machine: gpu_server
+  number_node: 1
+  cpu_per_node: 16
+  gpu_per_node: 1
+  queue_name: gpu
+  group_size: 1
+  custom_flags:
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_GPU_ENV_SCRIPT>"
+  prepend_script: |
+    nvidia-smi || true

@@ -26,7 +26,7 @@
 
 脚本：
 
-- [extract_elec_converged_ase_db.py](/mnt/ssd/chenhh/python_projects/Battery/prep_dft_ft_data/extract_elec_converged_ase_db.py)
+- [extract_elec_converged_ase_db.py](extract_elec_converged_ase_db.py)
 
 设计原则：
 
@@ -56,7 +56,7 @@
 示例：
 
 ```bash
-source /home/chenhh/miniconda3/etc/profile.d/conda.sh
+source <CONDA_PROFILE_SCRIPT>
 conda activate catmaster
 
 python prep_dft_ft_data/extract_elec_converged_ase_db.py \
@@ -133,7 +133,7 @@ python prep_dft_ft_data/extract_elec_converged_ase_db.py \
 
 脚本：
 
-- [export_ase_db_to_mace_xyz.py](/mnt/ssd/chenhh/python_projects/Battery/prep_dft_ft_data/export_ase_db_to_mace_xyz.py)
+- [export_ase_db_to_mace_xyz.py](export_ase_db_to_mace_xyz.py)
 
 该脚本会把 DB 中参考量显式写成 MACE 友好的键名：
 
@@ -164,7 +164,7 @@ python prep_dft_ft_data/export_ase_db_to_mace_xyz.py \
 
 脚本：
 
-- [estimate_mace_e0s.py](/mnt/ssd/chenhh/python_projects/Battery/prep_dft_ft_data/estimate_mace_e0s.py)
+- [estimate_mace_e0s.py](estimate_mace_e0s.py)
 
 它直接复用 MACE 官方的 `estimate_e0s_from_foundation()`：
 
@@ -557,7 +557,7 @@ LoRA 常用调参建议：
 ### 8.1 抽取并过滤 ionic steps
 
 ```bash
-source /home/chenhh/miniconda3/etc/profile.d/conda.sh
+source <CONDA_PROFILE_SCRIPT>
 conda activate catmaster
 
 python prep_dft_ft_data/extract_elec_converged_ase_db.py \

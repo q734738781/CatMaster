@@ -259,12 +259,151 @@ function buildLiveAssistantMessage(snapshot, agentTab = "ALL") {
   };
 }
 
-function mergeChatMessages(messages, liveMessage) {
+function mergeChatMessages(messages, liveMessages) {
   const rows = Array.isArray(messages) ? [...messages] : [];
-  if (liveMessage) {
-    rows.push(liveMessage);
+  const additions = Array.isArray(liveMessages) ? liveMessages.filter(Boolean) : (liveMessages ? [liveMessages] : []);
+  if (!additions.length) {
+    return rows;
   }
+  const shouldInsertBeforeResult = additions.length === 1 && additions[0]?.kind === "thinking_summary";
+  if (shouldInsertBeforeResult) {
+    let resultIndex = -1;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const message = rows[index];
+      if (message?.kind === "result" && message?.role === "assistant") {
+        resultIndex = index;
+        break;
+      }
+    }
+    if (resultIndex >= 0) {
+      rows.splice(resultIndex, 0, ...additions);
+      return rows;
+    }
+  }
+  rows.push(...additions);
   return rows;
+}
+
+function eventSortKey(event, fallbackIndex = 0) {
+  return Number(event?.seq || event?.ts || fallbackIndex || 0);
+}
+
+function eventIdentity(event, fallbackIndex = 0) {
+  return String(event?.seq || `${event?.name || "event"}-${event?.ts || ""}-${fallbackIndex}`);
+}
+
+function llmStepMessageFromEvent(event, index = 0) {
+  const message = eventToChatMessage(event);
+  if (!message) {
+    return null;
+  }
+  const payload = event?.payload || {};
+  const meta = joinItems([payload.agent_name, payload.model, formatTime(event?.ts)]);
+  return {
+    ...message,
+    kind: "llm_step",
+    badge: "thinking",
+    status: meta || message.status || "",
+    thinkingKey: eventIdentity(event, index),
+  };
+}
+
+function isDuplicateThinkingMessage(message, existing) {
+  const content = compactComparableText(message?.content || "");
+  if (!content) {
+    return true;
+  }
+  return existing.some((item) => {
+    if (message?.thinkingKey && item?.thinkingKey && message.thinkingKey === item.thinkingKey) {
+      return true;
+    }
+    const other = compactComparableText(item?.content || "");
+    return other && content === other;
+  });
+}
+
+function snapshotResultText(snapshot) {
+  const direct = String(snapshot?.result_text || "").trim();
+  if (direct) {
+    return direct;
+  }
+  const messages = Array.isArray(snapshot?.chat_messages) ? snapshot.chat_messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (String(message?.role || "") !== "assistant") {
+      continue;
+    }
+    const content = String(message?.content || "").trim();
+    if (content) {
+      return content;
+    }
+  }
+  return "";
+}
+
+function buildThinkingSummaryMessage(messages) {
+  const rows = Array.isArray(messages) ? messages.filter(Boolean) : [];
+  if (!rows.length) {
+    return null;
+  }
+  const content = rows
+    .map((message, index) => {
+      const label = joinItems([`Step ${index + 1}`, message.status]);
+      return `### ${label}\n\n${message.content || ""}`.trim();
+    })
+    .join("\n\n");
+  return {
+    role: "assistant",
+    kind: "thinking_summary",
+    badge: "thoughts",
+    status: `${rows.length} ${rows.length === 1 ? "step" : "steps"}`,
+    collapsible: true,
+    summary: "Thinking process",
+    content,
+  };
+}
+
+function buildThinkingMessages(snapshot, events, agentTab = "ALL") {
+  const live = snapshot?.live_state || {};
+  const status = String(snapshot?.run_status || live.status || "").trim();
+  const isActive = isRunActive(status);
+  const resultText = isActive ? "" : snapshotResultText(snapshot);
+  const completed = [];
+  const seen = new Set();
+  const candidates = (Array.isArray(events) ? events : [])
+    .map((event, index) => ({ event, index }))
+    .filter(({ event }) => String(event?.name || "") === "LLM_CALL_END")
+    .filter(({ event }) => agentTab === "ALL" || String(event?.payload?.agent_name || "").trim() === agentTab)
+    .sort((left, right) => eventSortKey(left.event, left.index) - eventSortKey(right.event, right.index));
+
+  candidates.forEach(({ event, index }) => {
+    const key = eventIdentity(event, index);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    const message = llmStepMessageFromEvent(event, index);
+    if (!message || (resultText && messageMatchesResult(message, resultText))) {
+      return;
+    }
+    if (!isDuplicateThinkingMessage(message, completed)) {
+      completed.push(message);
+    }
+  });
+
+  const activeMessage = buildLiveAssistantMessage(snapshot, agentTab);
+  if (activeMessage && !isDuplicateThinkingMessage(activeMessage, completed)) {
+    completed.push({
+      ...activeMessage,
+      thinkingKey: `active-${activeMessage.status || ""}-${compactComparableText(activeMessage.content || "").slice(0, 80)}`,
+    });
+  }
+
+  if (isActive) {
+    return completed;
+  }
+  const summary = buildThinkingSummaryMessage(completed);
+  return summary ? [summary] : [];
 }
 
 function formatPromptContent(prompt) {
@@ -1853,7 +1992,14 @@ function ChatThread({ messages }) {
             {message.badge ? <div className="chat-badge">{message.badge}</div> : null}
           </div>
           {message.status ? <div className="chat-status">{message.status}</div> : null}
-          <MarkdownContent text={message.content} />
+          {message.collapsible ? (
+            <details className="chat-collapse">
+              <summary>{message.summary || "Details"}</summary>
+              <MarkdownContent text={message.content} />
+            </details>
+          ) : (
+            <MarkdownContent text={message.content} />
+          )}
         </article>
       ))}
     </div>
@@ -4047,13 +4193,10 @@ function App({ boot }) {
     return JSON.stringify(card).toLowerCase().includes(deferredSearch.trim().toLowerCase());
   });
   const live = snapshot?.live_state || {};
-  const llm = snapshot?.llm || live.llm || {};
-  const graph = snapshot?.graph || {};
   const usage = snapshot?.usage_summary || {};
   const visibleEvents = view === "monitor" ? events : [];
-  const latestLlmMessage = buildLatestLlmEndMessage(snapshot, events, agentTab);
-  const liveAssistantMessage = latestLlmMessage || buildLiveAssistantMessage(snapshot, agentTab);
-  const chatMessages = buildChatTimeline(snapshot, events, liveAssistantMessage);
+  const thinkingMessages = buildThinkingMessages(snapshot, events, agentTab);
+  const chatMessages = buildChatTimeline(snapshot, events, thinkingMessages);
   const laneGuide = LANE_GUIDE[lane] || LANE_GUIDE.experiment;
   const todoRows = Array.isArray(live?.todo_rows) && live.todo_rows.length
     ? live.todo_rows

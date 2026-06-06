@@ -1356,6 +1356,13 @@ button:disabled {
   margin-right: 40px;
 }
 
+.chat-bubble.thinking_summary {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  padding: 8px 10px;
+  margin-right: 40px;
+}
+
 .chat-bubble-header {
   display: flex;
   justify-content: space-between;
@@ -1395,6 +1402,47 @@ button:disabled {
   line-height: 1.5;
   font-size: calc(17px * 0.9);
   word-break: break-word;
+}
+
+.chat-collapse {
+  margin-top: 2px;
+}
+
+.chat-collapse summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: calc(15px * 0.9);
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+.chat-collapse summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-collapse summary::before {
+  content: "▸";
+  color: var(--text-tertiary);
+  font-size: calc(14px * 0.9);
+  transition: transform 120ms ease;
+}
+
+.chat-collapse[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.chat-collapse .chat-content {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: calc(16px * 0.9);
 }
 
 .md-body > :first-child {
@@ -2325,7 +2373,8 @@ button:disabled {
 
 .chat-bubble.llm_step,
 .chat-bubble.tool_event,
-.chat-bubble.run_event {
+.chat-bubble.run_event,
+.chat-bubble.thinking_summary {
   background: #f8fafc;
 }
 

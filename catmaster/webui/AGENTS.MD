@@ -11,7 +11,7 @@ The active WebUI is a FastAPI-backed, React-based interface. Do not treat this p
 
 The primary frontend entrypoint is:
 
-- [App.jsx](/home/chenhh/python_projects/CatMaster/catmaster/webui/frontend/src/App.jsx)
+- [App.jsx](frontend/src/App.jsx)
 
 ## 2) UI architecture rules
 

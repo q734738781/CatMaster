@@ -60,5 +60,5 @@ Return:
 
 ## References
 - Use `mace-dataset-curation` first when the dataset root has not yet been built from VASP outputs.
-- Reference flow: [vasp_to_mace_finetune.md](/home/chenhh/python_projects/CatMaster/reference_scripts/mace_training_example/vasp_to_mace_finetune.md)
-- Validated training command: [run_train.sh](/home/chenhh/python_projects/CatMaster/reference_scripts/mace_training_example/run_train.sh)
+- Reference flow: [vasp_to_mace_finetune.md](../../../demos/reference_scripts/mace_training_example/vasp_to_mace_finetune.md)
+- Validated training command: [run_train.sh](../../../demos/reference_scripts/mace_training_example/run_train.sh)

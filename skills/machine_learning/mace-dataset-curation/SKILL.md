@@ -55,5 +55,5 @@ Return:
 - any skipped-run ledger
 
 ## References
-- Reference flow: [vasp_to_mace_finetune.md](/home/chenhh/python_projects/CatMaster/reference_scripts/mace_training_example/vasp_to_mace_finetune.md)
-- Export conventions: [export_ase_db_to_mace_xyz.py](/home/chenhh/python_projects/CatMaster/reference_scripts/mace_training_example/export_ase_db_to_mace_xyz.py)
+- Reference flow: [vasp_to_mace_finetune.md](../../../demos/reference_scripts/mace_training_example/vasp_to_mace_finetune.md)
+- Export conventions: [export_ase_db_to_mace_xyz.py](../../../demos/reference_scripts/mace_training_example/export_ase_db_to_mace_xyz.py)

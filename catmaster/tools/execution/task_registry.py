@@ -40,7 +40,13 @@ def _iter_config_files(base: Path) -> Iterable[Path]:
         return [base]
     files: List[Path] = []
     for ext in ("*.yaml", "*.yml", "*.json"):
-        files.extend(sorted(base.glob(ext)))
+        files.extend(
+            sorted(
+                p for p in base.glob(ext)
+                # Ignore example/template files to avoid exposing them as active task cards.
+                if "template" not in p.stem.lower()
+            )
+        )
     return files
 
 

@@ -1,6 +1,7 @@
 # CatMaster LLM config template (new schema)
 # - No legacy tool_calling/tool_calling_profiles/reasoning_effort fields.
 # - Use provider_options for provider-bound custom options.
+# - For every supported field/provider example, see configs/llm.full.template.yaml.
 
 models:
   # -------------------------------------------------------------------------

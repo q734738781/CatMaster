@@ -209,6 +209,16 @@ def test_specialist_reporting_contract_requires_direct_answer_and_relative_paths
     assert "replace or delete stale incorrect reports/notes" in contract
 
 
+def test_research_reporting_contract_requires_scientific_reasonableness_section() -> None:
+    contract = runtime_mod.SpecialistRunner._research_reporting_contract()
+    assert "`Summary`, `Scientific Reasonableness Check`, `Facts`, and `Files`" in contract
+    assert "`Scientific Reasonableness Check` is required for research closeouts" in contract
+    assert "scientifically plausible" in contract
+    assert "evidence supports the claim" in contract
+    assert "method/QC/literature-context checks" in contract
+    assert "dispatch the next bounded specialist step" in contract
+
+
 def test_writing_reporting_contract_allows_summary_first_closeout() -> None:
     contract = runtime_mod.SpecialistRunner._writing_reporting_contract()
     assert "shape the user requested" in contract
@@ -282,6 +292,12 @@ def test_specialist_prompts_require_explicit_follow_on_delegate_judgment() -> No
     assert "On resume, continue the original objective plus any human resume note" in research_prompt
     assert "Research completion audit: before final answer" in research_prompt
     assert "reconcile progress against the runtime objective" in research_prompt
+    assert "Default to scientific progress rather than verdict-only closure" in research_prompt
+    assert "check whether the content is scientifically reasonable" in research_prompt
+    assert "first decide whether a bounded follow-up experiment, narrower literature/metadata check, artifact re-analysis, or revised hypothesis can move the research forward" in research_prompt
+    assert "Perform a scientific reasonableness audit" in research_prompt
+    assert "evidence-claim fit" in research_prompt
+    assert "`Scientific Reasonableness Check` is required for research closeouts" in research_prompt
     assert "dispatch the next bounded specialist step or return a precise blocker" in research_prompt
     assert "Final conclusions should cite the evidence paths or saved memos they depend on" in research_prompt
     assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in experiment_prompt
@@ -883,6 +899,10 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Use the Research Kernel only as working memory" in agent_kwargs["system_prompt"]
         assert "Research completion audit: before final answer" in agent_kwargs["system_prompt"]
         assert "reconcile progress against the runtime objective" in agent_kwargs["system_prompt"]
+        assert "Default to scientific progress rather than verdict-only closure" in agent_kwargs["system_prompt"]
+        assert "Perform a scientific reasonableness audit" in agent_kwargs["system_prompt"]
+        assert "Treat `frontier` as the active research driver" in agent_kwargs["system_prompt"]
+        assert "`Scientific Reasonableness Check` is required for research closeouts" in agent_kwargs["system_prompt"]
         assert "dispatch the next bounded specialist step or return a precise blocker" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "metadata_agent" in agent_kwargs["system_prompt"]

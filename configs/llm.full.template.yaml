@@ -1,0 +1,364 @@
+# CatMaster full LLM config template.
+# Copy to configs/llm.yaml for the hardcoded default path, then edit locally.
+# Keep real API keys in environment variables, not in this YAML file.
+
+models:
+  openrouter-main:
+    provider: openrouter
+    model: openai/gpt-5.2
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: high
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: https://openrouter.ai/api/v1
+    default_headers:
+      HTTP-Referer: null
+      X-Title: CatMaster
+    provider_options:
+      openrouter:
+        extra_body:
+          provider:
+            order: [openai]
+          cache_control:
+            type: ephemeral
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  openrouter-deep:
+    provider: openrouter
+    model: openai/gpt-5.5
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: xhigh
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: https://openrouter.ai/api/v1
+    default_headers: {}
+    provider_options:
+      openrouter:
+        extra_body: {}
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  openrouter-image:
+    provider: openrouter
+    model: google/gemini-2.5-flash-image-preview
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning: {}
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: https://openrouter.ai/api/v1
+    default_headers: {}
+    provider_options:
+      openrouter:
+        extra_body: {}
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  openai-main:
+    provider: openai
+    model: gpt-5
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: medium
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: OPENAI_API_KEY
+    api_key: null
+    base_url: null
+    default_headers: {}
+    provider_options:
+      openai:
+        request_options:
+          timeout: 120
+          max_retries: 3
+          default_headers: {}
+          default_query: {}
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  deepseek-main:
+    provider: deepseek
+    model: deepseek-reasoner
+    temperature: 0.6
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning: {}
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: DEEPSEEK_API_KEY
+    api_key: null
+    base_url: null
+    default_headers: {}
+    provider_options:
+      deepseek:
+        extra_body:
+          thinking:
+            type: enabled
+        request_options:
+          timeout: 120
+          max_retries: 3
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  anthropic-main:
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning: {}
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: ANTHROPIC_API_KEY
+    api_key: null
+    base_url: null
+    default_headers: {}
+    provider_options:
+      anthropic:
+        chat_kwargs:
+          # thinking:
+          #   type: enabled
+          #   budget_tokens: 4096
+          # betas:
+          #   - token-efficient-tools-2025-02-19
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  codex-oauth-main:
+    provider: codex_oauth
+    model: gpt-5.2-codex
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning: {}
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: null
+    api_key: null
+    base_url: null
+    default_headers: {}
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          system_prompt_mode: strict
+          # text_verbosity: medium
+          # reasoning_effort: medium
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  oai-compatible-main:
+    provider: oai_compatible
+    model: local-or-compatible-model
+    temperature: 0.7
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning: {}
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: CATMASTER_COMPATIBLE_API_KEY
+    api_key: null
+    base_url: http://127.0.0.1:8000/v1
+    default_headers: {}
+    provider_options:
+      oai_compatible:
+        extra_body: {}
+    print_http_raw_post: false
+    langchain_class: null
+    langchain_kwargs: {}
+    timeout_s: 120
+    max_retries: 3
+    extra: {}
+
+  gemini-langchain-main:
+    provider: gemini
+    model: gemini-2.5-pro
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning: {}
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: GOOGLE_API_KEY
+    api_key: null
+    base_url: null
+    default_headers: {}
+    provider_options: {}
+    print_http_raw_post: false
+    langchain_class: langchain_google_genai.ChatGoogleGenerativeAI
+    langchain_kwargs:
+      model: gemini-2.5-pro
+      temperature: 1.0
+    timeout_s: null
+    max_retries: null
+    extra: {}
+
+  custom-langchain-main:
+    provider: langchain
+    model: custom-model-label
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning: {}
+    reasoning_effort: null
+    frequency_penalty: null
+    presence_penalty: null
+    api_key_env: null
+    api_key: null
+    base_url: null
+    default_headers: {}
+    provider_options: {}
+    print_http_raw_post: false
+    langchain_class: package.module.ChatModelClass
+    langchain_kwargs: {}
+    timeout_s: null
+    max_retries: null
+    extra: {}
+
+agents:
+  proposal: openrouter-main
+  director: openrouter-main
+  task_runner: openrouter-main
+  research_lead: openrouter-deep
+  research_state_updater: openrouter-deep
+  write_director: openrouter-deep
+  section_writer: openrouter-main
+  write_reviewer: openrouter-main
+  academic_polisher: openrouter-deep
+  tex_compile_fixer: openrouter-deep
+  memory_patch: openrouter-main
+  summary: openrouter-main
+  tool_selector: openrouter-main
+  image_analyzer: openrouter-main
+  literature_synthesizer: openrouter-main
+  literature_deep_research: openrouter-deep
+
+peer_review_models:
+  - openrouter-deep
+
+image_generation:
+  model_label: openrouter-image
+  image_config:
+    aspect_ratio: "4:3"
+
+writing:
+  author_name: CatMaster
+
+agent_runtime:
+  recursion_limit: 300
+  max_tool_calls: 120
+  print_state_messages: false
+  print_http_raw_post: false
+
+agent_policies:
+  proposal:
+    browse_tools_enabled: true
+
+literature:
+  auto_default_depth: quick
+  role_auto_max:
+    proposal: standard
+    director: focused
+    fast_director: focused
+    task_runner: none
+    research_lead: deep_report
+    research_state_updater: deep_report
+    write_director: none
+    section_writer: standard
+    write_reviewer: none
+  public_web_on_search_failure: true
+  summary_key_paper_count: 5
+  semantic_scholar_retry_429_attempts: 5
+  semantic_scholar_retry_429_wait_seconds: 15.0
+  budgets:
+    none:
+      agent_step_budget: 1
+      search_limit: 0
+      recommendation_limit: 0
+      recommendation_seed_count: 0
+      public_web_limit: 0
+      use_public_web: false
+    quick:
+      agent_step_budget: 4
+      search_limit: 6
+      recommendation_limit: 0
+      recommendation_seed_count: 0
+      public_web_limit: 5
+      use_public_web: false
+    standard:
+      agent_step_budget: 6
+      search_limit: 10
+      recommendation_limit: 4
+      recommendation_seed_count: 3
+      public_web_limit: 3
+      use_public_web: true
+    focused:
+      agent_step_budget: 8
+      search_limit: 12
+      recommendation_limit: 6
+      recommendation_seed_count: 3
+      public_web_limit: 5
+      use_public_web: true
+    deep_report:
+      agent_step_budget: 16
+      search_limit: 14
+      recommendation_limit: 6
+      recommendation_seed_count: 3
+      public_web_limit: 5
+      use_public_web: true

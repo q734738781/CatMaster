@@ -433,7 +433,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run a full smoke matrix for the molecular quantum-chemistry lane.")
     parser.add_argument(
         "--workspace",
-        default="/home/chenhh/python_projects/CatMaster/tmp_qchem_full_smoke",
+        default="tmp_qchem_full_smoke",
         help="Project-space root for smoke outputs.",
     )
     parser.add_argument("--check-interval", type=int, default=10, help="DPDispatcher polling interval.")

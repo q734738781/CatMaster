@@ -3,7 +3,7 @@
 This repository now uses a DeepAgent-native specialist runtime as the active path. Treat the current implementation under `catmaster/specialists/` as the source of truth.
 
 Maintainer notes for CatMaster's non-standard DeepAgents/LangChain/OpenRouter
-interaction layers are in [deepagents_interactions.md](/home/chenhh/python_projects/CatMaster/docs/deepagents_interactions.md).
+interaction layers are in [deepagents_interactions.md](../docs/deepagents_interactions.md).
 
 ## 1) Active architecture
 
@@ -15,13 +15,15 @@ The active runtime exposes exactly three lanes:
 - `experiment`
 - `writing`
 
-They are built in [runtime.py](/home/chenhh/python_projects/CatMaster/catmaster/specialists/runtime.py).
+They are built in [runtime.py](specialists/runtime.py).
 
 ### Specialist roles
 
 - `ResearchSpecialist`
   - The only orchestration-capable specialist.
   - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
+  - Must default to research progress, not verdict-only closure: after a delegated result, check scientific reasonableness and evidence-claim fit, update the frontier, and dispatch a bounded experiment, re-analysis, or literature/metadata check when that can advance the objective within scope.
+  - Its research-lane closeout should include a `Scientific Reasonableness Check` section covering plausibility, evidence-claim fit, method/QC/literature context, and unresolved gaps.
 - `ExperimentSpecialist`
   - Bounded execution specialist.
   - May delegate only to `materials_worker`, `dynamics_worker`, `ml_worker`, and `orca_xtb_worker`.

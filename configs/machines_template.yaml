@@ -1,5 +1,7 @@
-# Rename to machines.yaml after proper setup.
-cpu_server:
+# Copy to configs/dpdispatcher/machines.yaml after proper setup.
+# This local file is ignored by Git because it contains hostnames, usernames,
+# SSH key paths, local_root, remote_root, and cluster-specific env_setup.
+cpu_server_2:
   batch_type: Slurm
   context_type: SSHContext
   local_root: <LOCAL_WORK_ROOT>
@@ -12,7 +14,7 @@ cpu_server:
     key_filename: <PATH_TO_SSH_KEY>
   env_setup: |
     ulimit -s unlimited
-    # Ensure Python 3.10+ is available for task_script/vasp_boot.py
+    # Ensure Python 3.10+ is available for task_script/*_boot.py
     # module load python/3.10
     # source <REMOTE_VASP_ENV_SCRIPT>
 

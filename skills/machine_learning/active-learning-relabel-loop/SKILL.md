@@ -55,4 +55,4 @@ Return:
 
 ## References
 - This skill coordinates the loop contract; the expensive reference calculations still happen outside the ML lane.
-- Use the same validated training recipe documented in [vasp_to_mace_finetune.md](/home/chenhh/python_projects/CatMaster/reference_scripts/mace_training_example/vasp_to_mace_finetune.md) when comparing AL rounds.
+- Use the same validated training recipe documented in [vasp_to_mace_finetune.md](../../../demos/reference_scripts/mace_training_example/vasp_to_mace_finetune.md) when comparing AL rounds.

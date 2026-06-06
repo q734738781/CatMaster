@@ -11,7 +11,7 @@ vasp_cpu:
   custom_flags:
     - "#SBATCH -t 10-00:00:00"
     - "#SBATCH --export=ALL"
-  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
+  source_list: []
 
 vasp_cpu_neb:
   kind: domain
@@ -26,7 +26,7 @@ vasp_cpu_neb:
   custom_flags:
     - "#SBATCH -t 10-00:00:00"
     - "#SBATCH --export=ALL"
-  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_vasp.sh"]
+  source_list: []
 
 cp2k_cpu:
   kind: domain
@@ -114,7 +114,7 @@ xtb_cpu:
   custom_flags:
     - "#SBATCH -t 2-00:00:00"
     - "#SBATCH --export=ALL"
-  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
+  source_list: []
 
 crest_cpu:
   kind: domain
@@ -129,7 +129,7 @@ crest_cpu:
   custom_flags:
     - "#SBATCH -t 2-00:00:00"
     - "#SBATCH --export=ALL"
-  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_xtb.sh"]
+  source_list: []
 
 orca_cpu:
   kind: domain
@@ -144,4 +144,4 @@ orca_cpu:
   custom_flags:
     - "#SBATCH -t 4-00:00:00"
     - "#SBATCH --export=ALL"
-  source_list: ["/public/home/chenhh/catmaster_code/catmaster_env_orca.sh"]
+  source_list: []

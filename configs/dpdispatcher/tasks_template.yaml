@@ -1,0 +1,23 @@
+# DPDispatcher task-card template.
+# This file is ignored by CatMaster registries because its filename contains
+# "template". Copy custom tasks to configs/dpdispatcher/tasks_local.yaml.
+
+example_task_dir:
+  audiences: [materials_worker]
+  description: "Run a prepared stage directory with a bundled boot script."
+  boot_script: "catmaster/remote/cpu/vasp_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute"
+  resources: vasp_cpu
+  requires: [vasp]
+  command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
+  defaults:
+    input_path: input
+    output_root: output
+  forward_files:
+    - "*"
+    - "task_script/vasp_boot.py"
+  backward_files:
+    - "*"
+  forward_common_files: []
+  backward_common_files: []
+  task_work_path: "."
