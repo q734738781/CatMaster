@@ -83,7 +83,7 @@ For batch submission, make each first-level child one complete calculation folde
 
 ## vasp_execute_neb
 Same as `vasp_execute`, but the stage is a VASP NEB/dimer-style folder with the image subdirectories and root inputs expected by VASP.
-Before submission, verify that the stage came from `vasp_neb_prepare` or an equivalent checked image tree. Do not submit if endpoint ordering/cell validation failed or if the preparation artifact reports `short_distance_count > 0` (default warning threshold: minimum interatomic distance below `0.8 Å`).
+Before submission, verify that the stage came from `vasp_neb_prepare` or an equivalent checked image tree. Do not submit if endpoint ordering/cell validation failed. If the preparation artifact reports `short_distance_count > 0` (default warning threshold: minimum interatomic distance below `0.8 Å`), treat it as strong evidence of potentially abnormal interpolation and verify or remediate the image tree before deciding to submit.
 
 ## cp2k_execute
 Stage directory must contain a prepared CP2K input named `job.inp`. The task runs the generic CP2K boot script with `cp2k.psmp`, `OMP_NUM_THREADS=1`, and MPI ranks from the scheduler allocation.
@@ -150,7 +150,7 @@ Common params: `params_path`, `device`.
 
 ## mace_neb_dir
 Stage directory must contain `input/` with one prepared path task directory per NEB job. Outputs are written to `output/`.
-Each path task should be generated or checked by the NEB preparation workflow before submission. Do not submit a tree with atom-order mismatches or a `short_distance_count > 0` overlap warning from the preparation artifact.
+Each path task should be generated or checked by the NEB preparation workflow before submission. Do not submit a tree with atom-order mismatches. If the preparation artifact reports `short_distance_count > 0`, treat it as strong evidence of potentially abnormal interpolation and verify or remediate the image tree before deciding to submit.
 
 Common params: `mode`, `fmax`, `steps`, `climb`, `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU.
 

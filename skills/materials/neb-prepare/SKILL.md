@@ -49,7 +49,7 @@ Use this skill when the job is to prepare a pathway calculation rather than exec
 ### 3. Build the shared image tree
 - Use `make_neb_geometry` to generate the flat numbered image tree (`00.vasp`, `01.vasp`, ...).
 - Prefer this flat image-tree layout as the common handoff format.
-- Inspect `make_neb_geometry` warnings before handing the tree to execution. A minimum interatomic distance below about `0.8 Å` in any image is a likely overlap/interpolation problem; recheck endpoint atom mapping, use `remap_neb_endpoint_atoms` for same-species permutations, try `interp_method="idpp"`, or remodel the event as a shorter primitive hop.
+- Inspect `make_neb_geometry` warnings before handing the tree to execution. A minimum interatomic distance below about `0.8 Å` in any image is strong evidence that abnormal interpolation or atom overlap may be present; recheck endpoint atom mapping, use `remap_neb_endpoint_atoms` for same-species permutations, try `interp_method="idpp"`, or remodel the event as a shorter primitive hop.
 - Endpoint atom count, element sequence, and lattice mismatches are hard errors. Do not bypass them by manually copying image files into a later execution stage.
 - If the output directory already exists, require `overwrite=true` rather than silently mixing trees.
 
@@ -74,7 +74,7 @@ Use this skill when the job is to prepare a pathway calculation rather than exec
 ## Method-critical defaults
 - Keep endpoint preparation, image generation, and later execution settings scientifically aligned.
 - Do not treat image-count choice as cosmetic; it is part of the pathway model.
-- Treat `short_distance_count > 0` or an overlap warning from `make_neb_geometry`/`vasp_neb_prepare` as a preparation failure until the endpoint mapping or path model has been checked.
+- Treat `short_distance_count > 0` or an overlap warning from `make_neb_geometry`/`vasp_neb_prepare` as strong evidence of a potentially abnormal interpolation until the endpoint mapping or path model has been checked.
 - Prefer odd intermediate-image counts for `CI-NEB` refinement so there is a natural central climbing image.
 - Prefer even intermediate-image counts for plain `NEB` only when the path is otherwise symmetric and no unique climbing image is needed yet.
 - For dimer preparation, never skip the mass weighting performed by `vasp_dimer_prepare`.
