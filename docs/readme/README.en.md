@@ -18,6 +18,16 @@ Chinese guide:
 - [远程配置要点](02-remote.zh.md)
 - [功能介绍与日常使用](03-features.zh.md)
 
+## Public Web Demo
+
+A public CatMaster WebUI demo is available at:
+
+```text
+https://cm.cccgg.cyou
+```
+
+The demo server is configured with the full CatMaster feature set, but compute resources may be limited. Use it to try the interface, workflow, file handling, and agent behavior; run heavier calculations on your own configured machine or cluster.
+
 ## Shortest Path
 
 To start the WebUI quickly:

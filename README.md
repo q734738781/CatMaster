@@ -4,6 +4,24 @@ CatMaster is a local agent workbench for computational catalysis and materials w
 
 CatMaster 是一个面向计算催化和材料工作流的本地 agent 工作台。日常入口是 WebUI：选择项目空间、选择任务模式、提交需求，并在同一界面查看文件、运行记录、工具调用和结果。
 
+## Public Web Demo
+
+A public CatMaster WebUI demo is available at:
+
+```text
+https://cm.cccgg.cyou
+```
+
+This server is configured with the full CatMaster feature set, but its compute resources may be limited. It is best for trying the interface, workflow, file handling, and agent behavior; run heavier calculations on your own configured machine or cluster.
+
+公共 WebUI demo：
+
+```text
+https://cm.cccgg.cyou
+```
+
+该服务器具备 CatMaster 的完整功能，但算力可能偏低。适合体验界面、工作流、文件管理和 agent 行为；较重的计算任务建议在自己配置的机器或集群上运行。
+
 ## What It Can Do
 
 - Prepare and analyze atomistic structures, slabs, adsorbates, VASP/CP2K/LAMMPS/ORCA/xTB inputs, and MACE workflows.

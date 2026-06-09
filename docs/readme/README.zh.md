@@ -18,6 +18,16 @@
 - [Remote setup](02-remote.en.md)
 - [Features and workflows](03-features.en.md)
 
+## 公共 Web Demo
+
+公共 CatMaster WebUI demo 可在这里访问：
+
+```text
+https://cm.cccgg.cyou
+```
+
+该服务器具备 CatMaster 的完整功能，但算力可能偏低。建议用于体验界面、工作流、文件管理和 agent 行为；较重的计算任务请在自己配置的机器或集群上运行。
+
 ## 最短路径
 
 只想先把 WebUI 跑起来，可以先做这几步：
