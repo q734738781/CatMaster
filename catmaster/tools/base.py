@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import contextvars
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from pathlib import Path
 
 PROJECT_FILES_DIR_NAME = "files"
@@ -130,6 +130,59 @@ def workspace_relpath(path: Path, workspace: Path | str | None = None) -> str:
         return str(path.resolve().relative_to(root))
     except Exception:
         return str(path.resolve())
+
+
+def _compact_artifact_item(item: Any) -> Any:
+    return dict(item) if isinstance(item, dict) else item
+
+
+def compact_list_for_artifact(
+    items: Sequence[Any],
+    *,
+    count_key: str,
+    inline_key: str,
+    preview_key: str,
+    truncated_key: str,
+    full_rel_key: str | None = None,
+    full_rel: str | None = None,
+    max_inline: int = 3,
+) -> dict[str, Any]:
+    """Return a compact list payload for LLM-facing tool artifacts."""
+
+    values = [_compact_artifact_item(item) for item in items]
+    payload: dict[str, Any] = {count_key: len(values)}
+    if full_rel_key and full_rel:
+        payload[full_rel_key] = full_rel
+    if len(values) <= max_inline:
+        payload[inline_key] = values
+    else:
+        payload[preview_key] = values[:max_inline]
+        payload[truncated_key] = len(values) - max_inline
+    return payload
+
+
+def compact_records_for_artifact(
+    records: Sequence[dict[str, Any]],
+    *,
+    full_records_rel: str | None = None,
+    max_inline: int = 3,
+) -> dict[str, Any]:
+    """Return a compact records payload for tool artifacts.
+
+    Full records should live in a manifest/summary file when a tool can produce
+    many entries. Small single-task results remain inline for ergonomic follow-up.
+    """
+
+    return compact_list_for_artifact(
+        records,
+        count_key="record_count",
+        inline_key="records",
+        preview_key="records_preview",
+        truncated_key="records_truncated",
+        full_rel_key="records_full_rel",
+        full_rel=full_records_rel,
+        max_inline=max_inline,
+    )
 
 
 def _is_virtual_workspace_absolute(raw_path: str) -> bool:

@@ -255,7 +255,8 @@ def adapt_tool_return(
         )
 
     suppress_content_offload_ref = bool(artifact.pop("suppress_content_offload_ref", False))
-    artifact.setdefault("tool_args", _json_safe(tool_args or {}))
+    if config.include_tool_args:
+        artifact.setdefault("tool_args", _json_safe(tool_args or {}))
     data = artifact.get("data")
     if isinstance(data, Mapping) and data:
         normalized_data, field_refs = _offload_data_fields(

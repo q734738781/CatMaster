@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,6 +90,42 @@ def test_vasp_execute_batch_accepts_custom_task_name_for_neb(monkeypatch, tmp_pa
     assert captured["task_work_paths"] == ["neb_case"]
     assert data.get("task_name") == "vasp_execute_neb"
     assert data.get("resources_key") == "vasp_cpu_neb"
+
+
+def test_vasp_execute_batch_compacts_large_output_lists(monkeypatch, tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        files_root = tmp_path / "files"
+        for idx in range(6):
+            _touch_vasp_inputs(files_root / "runs" / f"case_{idx}")
+
+        monkeypatch.setattr(vasp_dispatch, "_resolve_machine_for_resources", lambda _: "dummy_machine")
+
+        def _fake_dispatch(req):
+            return SimpleNamespace(
+                task_states=["finished" for _ in req.tasks],
+                submission_dir=str((files_root / "outs" / "_fake_submission").resolve()),
+                work_base=req.work_base,
+                duration_s=0.01,
+            )
+
+        monkeypatch.setattr(vasp_dispatch, "dispatch_submission", _fake_dispatch)
+
+        _content, artifact = vasp_dispatch.vasp_execute_batch(
+            {
+                "input_dir": "runs",
+                "output_dir": "outs",
+                "check_interval": 1,
+            }
+        )
+
+    data = artifact.get("data") or {}
+    assert "outputs" not in data
+    assert len(data.get("outputs_preview") or []) == 5
+    assert data.get("outputs_truncated") == 1
+    summary_rel = data.get("execution_summary_rel")
+    assert summary_rel
+    summary = json.loads((tmp_path / "files" / summary_rel).read_text(encoding="utf-8"))
+    assert len(summary["outputs"]) == 6
 
 
 def test_vasp_execute_batch_failure_exposes_remote_context(monkeypatch, tmp_path: Path) -> None:

@@ -25,6 +25,13 @@ Use this skill when the task is one ensemble-aware molecular NMR episode.
 - `orca_prepare`
 - `analyze_orca_results`
 
+## Method-critical defaults
+- Parameter priority: honor explicit user requirements first; otherwise choose ORCA NMR settings from the molecule class and spectral objective; if that judgment remains uncertain, run a narrow literature or official documentation check before finalizing the override.
+- Do not add ORCA overrides just to restate the tool baseline; only override when the user, molecule class, task objective, or a checked source justifies it.
+- The `orca_prepare` auto level for `task="nmr"` resolves to `WB97X-D4/def2-TZVP`; override to an NMR-oriented basis, solvent model, or functional when the spectrum target or checked source justifies it.
+- Prefer xTB/CREST followed by `r2SCAN-3c` for conformer cleanup or structure refinement before NMR unless the user provides a different ensemble protocol.
+- Keep conformer pruning, ORCA NMR preparation, and later Boltzmann aggregation traceable to the selected charge, multiplicity, method, basis, solvation model, and retained conformer set.
+
 ## Output Contract
 Return:
 - retained conformer directory

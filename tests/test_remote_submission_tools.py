@@ -41,9 +41,16 @@ def test_package_root_preserves_legacy_execution_exports() -> None:
 
 def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     with toolcall_context("catalog", audience="materials_worker"):
-        _, artifact = get_avail_remote_task({"return_resource": True})
+        content, artifact = get_avail_remote_task({"return_resource": True})
+    assert "remote_submission: work_dir is one prepared stage" in content
+    assert "remote_submission_batch: work_dir is a parent root" in content
+    assert "boot script runs once inside each first-level child" in content
+    assert "submission_guidance" in artifact["data"]
+    assert "remote_submission_batch" in artifact["data"]["submission_guidance"]
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
     assert {"vasp_execute", "mace_sp_dir"}.issubset(task_names)
+    mace_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mace_sp_dir")
+    assert "input/" in mace_item["submission_hint"]
     assert "mace_md_dir" not in task_names
     assert "orca_execute" not in task_names
     assert "mace_train_dir" not in task_names
@@ -143,10 +150,11 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
                     "params": {"model": "medium-mpa-0", "default_dtype": "float32"},
                     "config": {"check_interval": 7, "clean_remote": True, "cpu_per_node": 8},
                 }
-            )
+    )
 
     assert str(captured["work_base"]).startswith("remote_submission_stage_mace_sp_")
-    assert str(captured["local_root"]).endswith("metadata/dpdispatcher/staging")
+    assert Path(str(captured["local_root"])).parent.name == "staging"
+    assert Path(str(captured["local_root"])).name == captured["work_base"]
     assert captured["task_work_path"] == "."
     assert captured["resources"] == "mace_gpu"
     assert captured["check_interval"] == 7
@@ -166,10 +174,12 @@ def test_remote_submission_uses_unique_work_base_for_same_basename(
     tmp_path: Path,
 ) -> None:
     work_bases: list[str] = []
+    local_roots: list[str] = []
 
     def _fake_dispatch(req, *, register=None, config_path=None):
         _ = (register, config_path)
         work_bases.append(req.work_base)
+        local_roots.append(req.local_root)
         return SimpleNamespace(
             task_states=["finished"],
             submission_dir=str(Path(req.local_root) / req.work_base),
@@ -191,6 +201,9 @@ def test_remote_submission_uses_unique_work_base_for_same_basename(
     assert work_bases[0] != work_bases[1]
     assert work_bases[0].startswith("remote_submission_a_stage_")
     assert work_bases[1].startswith("remote_submission_b_stage_")
+    assert local_roots[0] != local_roots[1]
+    assert Path(local_roots[0]).name == work_bases[0]
+    assert Path(local_roots[1]).name == work_bases[1]
 
 
 def test_remote_submission_quotes_template_params(

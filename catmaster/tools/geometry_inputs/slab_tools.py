@@ -13,7 +13,7 @@ from pymatgen.core import Structure
 from pymatgen.core.surface import SlabGenerator
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 from catmaster.tools.geometry_inputs.adsorbate_tool import propagate_adsorbate_metadata
 
 
@@ -352,6 +352,15 @@ def build_slab(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
             except Exception as exc:
                 errors.append({"bulk_rel": str(rel_path), "error": str(exc)})
 
+        batch_json = output_root / "batch_build_slab.json"
+        try:
+            batch_json.write_text(
+                json.dumps({"results": results, "errors": errors}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
         data = {
             "bulk_dir_rel": workspace_relpath(bulk_root),
             "output_root_rel": workspace_relpath(output_root),
@@ -364,8 +373,26 @@ def build_slab(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
             "lll_reduce": lll_reduce,
             "structures_found": len(structures),
             "structures_built": len(results),
-            "results": results,
-            "errors": errors,
+            "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
+            "errors_count": len(errors),
+            **compact_list_for_artifact(
+                results,
+                count_key="results_count",
+                inline_key="results",
+                preview_key="results_preview",
+                truncated_key="results_truncated",
+                full_rel_key="results_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
         }
         first_output = results[0]["output_dir_rel"] if results else ""
         lines = [
@@ -373,6 +400,8 @@ def build_slab(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
             f"structures_built={len(results)} structures_found={len(structures)} errors={len(errors)}",
             f"output_root_rel={data['output_root_rel']}",
         ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
         if first_output:
             lines.append(f"first_output_dir={first_output}")
         content = "\n".join(lines)
@@ -651,6 +680,15 @@ def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             "structures_processed": len(results),
             "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
             "errors_count": len(errors),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
         }
         first_output = results[0]["output_rel"] if results else ""
         lines = [
@@ -845,6 +883,15 @@ def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, obje
             "structures_processed": len(results),
             "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
             "errors_count": len(errors),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
         }
         first_output = results[0]["output_rel"] if results else ""
         lines = [
@@ -1020,6 +1067,15 @@ def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, obj
             "structures_processed": len(results),
             "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
             "errors_count": len(errors),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
         }
         first_output = results[0]["output_rel"] if results else ""
         lines = [

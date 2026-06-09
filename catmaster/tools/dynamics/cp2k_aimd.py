@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_records_for_artifact, resolve_workspace_path, workspace_relpath
 from catmaster.tools.geometry_inputs.cp2k_common import (
     discover_structure_paths,
     normalize_settings,
@@ -13,6 +13,7 @@ from catmaster.tools.geometry_inputs.cp2k_common import (
     safe_stage_name,
     tool_error,
     write_cp2k_stage,
+    write_json,
 )
 
 
@@ -219,12 +220,15 @@ def cp2k_aimd_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             )
         )
 
+    manifest = output_root / "cp2k_aimd_prepare_manifest.json"
+    write_json(manifest, {"input_path_rel": workspace_relpath(input_path), "recipe": params.recipe, "records": records})
     data = {
         "input_path_rel": workspace_relpath(input_path),
         "output_root_rel": workspace_relpath(output_root),
         "recipe": params.recipe,
-        "records": records,
         "prepared_count": len(records),
+        "manifest_rel": workspace_relpath(manifest),
+        **compact_records_for_artifact(records, full_records_rel=workspace_relpath(manifest)),
     }
     content = (
         "cp2k_aimd_prepare completed.\n"

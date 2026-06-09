@@ -78,6 +78,7 @@ class StructWriter:
             user_incar_patch=user_incar_patch or {},
             patch_policy=patch_policy,
             protected_keys=protected_keys,
+            preset=preset,
         )
         self._apply_fixed_charge_density_defaults(structure=structure, settings=merged_settings)
         k_grid = self._generate_kgrid(regime, k_product, structure)
@@ -297,6 +298,7 @@ class StructWriter:
         user_incar_patch: Dict[str, Any],
         patch_policy: PatchPolicy,
         protected_keys: set[str],
+        preset: VaspPreset,
     ) -> tuple[Dict[str, Any], Tuple[str, ...]]:
         merged = dict(canonical_settings)
         removal_keys: list[str] = []
@@ -307,7 +309,11 @@ class StructWriter:
                 raise ValueError("INCAR key must be a non-empty string.")
             if patch_policy == "safe" and key in protected_keys:
                 base_value = canonical_settings.get(key)
-                if raw_value != base_value:
+                if raw_value != base_value and not StructWriter._safe_protected_override_allowed(
+                    preset=preset,
+                    key=key,
+                    value=raw_value,
+                ):
                     raise ValueError(
                         f"user_incar_patch attempts to override protected INCAR key {key} under patch_policy='safe'. "
                         "Use patch_policy='force' if you really need to replace preset/regime-bound defaults."
@@ -321,6 +327,16 @@ class StructWriter:
         return merged, tuple(removal_keys)
 
     @staticmethod
+    def _safe_protected_override_allowed(*, preset: VaspPreset, key: str, value: Any) -> bool:
+        if key == "IBRION" and preset == "relax":
+            try:
+                ibrion = int(value)
+            except (TypeError, ValueError):
+                return False
+            return ibrion in {1, 2, 3}
+        return False
+
+    @staticmethod
     def _protected_keys_for_scope(
         *,
         preset: VaspPreset,
@@ -329,12 +345,10 @@ class StructWriter:
         dos_use_chgcar: bool,
     ) -> set[str]:
         protected = {"IBRION"}
-        if preset in {"relax", "static", "freq", "dimer"}:
-            protected.update({"ISIF", "NSW"})
+        if preset in {"relax", "dimer"}:
+            protected.add("ISIF")
         if regime == "gas" or preset == "freq":
             protected.add("ISYM")
-        if preset == "freq":
-            protected.update({"POTIM", "NFREE"})
         if preset == "dos" and dos_use_chgcar:
             protected.add("ICHARG")
         if relax_cell:

@@ -18,6 +18,7 @@ from catmaster.tools.base import resolve_workspace_path, system_root, workspace_
 from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
     TaskSpec,
+    cleanup_dpdispatcher_transfer_archives,
     dispatch_submission,
     remote_context_from_receipt,
     remote_context_from_exception,
@@ -66,6 +67,70 @@ _FORBIDDEN_CONFIG_FIELDS = {
     "credentials",
 }
 
+_REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
+    "remote_submission": (
+        "Use for one prepared stage directory. `work_dir` is the stage itself, and the boot script "
+        "runs directly in that stage cwd. A stage may contain internal batch inputs when the layout says so, "
+        "for example MACE `input/` with many structures. If you have two or more independent prepared "
+        "stages for the same task_name/params/config, prefer one remote_submission_batch parent root instead "
+        "of multiple parallel remote_submission calls."
+    ),
+    "remote_submission_batch": (
+        "Preferred when there are multiple independent prepared stages for the same task_name/params/config. "
+        "Use a parent batch root whose first-level children are independent stages. "
+        "The boot script runs once inside each first-level child directory. Each child is submitted "
+        "as one DPDispatcher task with the same task_name, params, and config. No recursive nested "
+        "discovery is performed."
+    ),
+    "registered_task_config": (
+        "For registered task_name templates, normally omit config.resources and config.machine. "
+        "The task's resource card owns the machine and environment; override only explicit sizing fields "
+        "such as cpu_per_node or gpu_per_node when intentionally requested."
+    ),
+}
+
+
+def _catalog_task_hint(task_name: str) -> str:
+    if task_name.startswith("mace_"):
+        return (
+            "MACE *_dir layouts are usually one stage with input/ and output/; use remote_submission "
+            "for one such stage even when input/ contains many structures. Use remote_submission_batch "
+            "only for a parent root containing multiple independent MACE stage directories."
+        )
+    if task_name.startswith("vasp_"):
+        return (
+            "One VASP stage is one complete calculation folder. For multiple scheduler jobs, make a "
+            "parent root with one complete VASP folder per first-level child and use remote_submission_batch."
+        )
+    if task_name in {"xtb_run", "crest_run", "orca_execute", "cp2k_execute", "lammps_execute"}:
+        return (
+            "One stage is one prepared job directory for this executable. Use remote_submission_batch "
+            "only when the parent root contains one prepared job directory per first-level child."
+        )
+    return "Use remote_submission for one matching stage; use remote_submission_batch for first-level child stages."
+
+
+def _catalog_content(*, tasks: list[dict[str, Any]]) -> str:
+    lines = [
+        f"Available remote tasks: {len(tasks)}",
+        "Submission decision:",
+        "- remote_submission: work_dir is one prepared stage; the boot script runs directly in that directory.",
+        "- remote_submission_batch: work_dir is a parent root; the boot script runs once inside each first-level child directory.",
+        "- If two or more independent stages share the same task_name, params, and config, prefer one remote_submission_batch call over multiple parallel remote_submission calls.",
+        "- Do not use remote_submission_batch just because a single stage contains many inputs; MACE *_dir stages commonly batch internally under input/.",
+        "- For registered task_name templates, omit config.resources/config.machine unless an explicit sizing override is needed.",
+        "Tasks:",
+    ]
+    for item in tasks:
+        details = [str(item["description"]).rstrip(".")]
+        resources = item.get("resources")
+        if isinstance(resources, dict) and resources.get("resources"):
+            details.append(f"resources={resources['resources']}")
+        if item.get("layout_ref"):
+            details.append(f"layout_ref={item['layout_ref']}")
+        lines.append(f"- {item['task_name']}: " + "; ".join(details))
+    return "\n".join(lines)
+
 
 def _parse_bool(value: Any, *, field: str) -> bool:
     if isinstance(value, bool):
@@ -90,11 +155,25 @@ def _parse_positive_int(value: Any, *, field: str) -> int:
 
 
 class RemoteSubmissionInput(BaseModel):
-    """[remote/execute] Submit one prepared stage directory through DPDispatcher."""
+    """[remote/execute] Submit exactly one prepared stage directory as one DPDispatcher task.
+
+    Use this when `work_dir` itself matches the selected task layout. The boot
+    script runs directly with `work_dir` as cwd. If that layout internally accepts
+    many inputs, such as a MACE stage containing `input/` with many structures,
+    it is still one stage and should use this tool. For two or more independent
+    prepared stages that share the same task_name/params/config, prefer
+    remote_submission_batch instead of parallel remote_submission calls.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    work_dir: str = Field(..., description="Workspace-relative prepared stage directory. The remote task runs with this directory as cwd.")
+    work_dir: str = Field(
+        ...,
+        description=(
+            "Workspace-relative prepared stage directory. For remote_submission this is the stage itself, "
+            "not a parent batch root. The remote task runs with this directory as cwd."
+        ),
+    )
     task_name: str | None = Field(None, description="Registered remote task template name. Mutually exclusive with boot_script.")
     boot_script: str | None = Field(
         None,
@@ -122,11 +201,28 @@ class RemoteSubmissionInput(BaseModel):
 
 
 class RemoteSubmissionBatchInput(RemoteSubmissionInput):
-    """[remote/execute] Submit each first-level child of a prepared batch stage directory as one DPDispatcher task."""
+    """[remote/execute] Submit a parent batch root as multiple DPDispatcher tasks.
+
+    Prefer this when there are two or more independent prepared stages for the
+    same task_name/params/config. Use only when `work_dir` contains one
+    first-level child directory per task and every child independently matches
+    the same selected task layout. The boot script runs once inside each
+    first-level child directory, not once in the parent. No recursive nested
+    discovery is performed; the same `task_name`, params, and config are applied
+    to every child.
+    """
+
+    work_dir: str = Field(
+        ...,
+        description=(
+            "Workspace-relative parent batch root. Each first-level child directory is submitted as one "
+            "independent stage for the same task_name/boot_script. Do not pass a single prepared stage here."
+        ),
+    )
 
 
 class GetAvailRemoteTaskInput(BaseModel):
-    """[remote/catalog] List remote task templates visible to the current worker."""
+    """[remote/catalog] List remote task templates and single-vs-batch submission rules visible to the current worker."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -512,11 +608,12 @@ def _prepare_dispatch_workspace(work_dir: Path, *, tool_name: str) -> tuple[Path
     staging_root = system_root() / "dpdispatcher" / "staging"
     staging_root.mkdir(parents=True, exist_ok=True)
     work_base = f"{tool_name}_{_safe_submission_token(work_dir)}_{uuid4().hex[:10]}"
-    dispatch_dir = staging_root / work_base
-    if dispatch_dir.exists():
-        shutil.rmtree(dispatch_dir)
+    local_root = staging_root / work_base
+    dispatch_dir = local_root / work_base
+    if local_root.exists():
+        shutil.rmtree(local_root)
     shutil.copytree(work_dir, dispatch_dir, symlinks=True)
-    return staging_root, work_base, dispatch_dir
+    return local_root, work_base, dispatch_dir
 
 
 def _sync_dispatch_workspace_back(dispatch_dir: Path, work_dir: Path) -> None:
@@ -596,6 +693,7 @@ def _submit(
     except Exception as exc:
         dispatch_error = exc
     try:
+        cleanup_dpdispatcher_transfer_archives(dispatch_dir)
         _sync_dispatch_workspace_back(dispatch_dir, work_dir)
     except Exception as sync_exc:
         remote_context = remote_context_from_exception(dispatch_error)
@@ -791,13 +889,14 @@ def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
             "task_name": name,
             "description": cfg.description,
             "layout_ref": cfg.layout_ref,
+            "submission_hint": _catalog_task_hint(name),
         }
         if params.return_resource and cfg.resources:
             resources_cfg = register.get_resources(cfg.resources)
             item["resources"] = _resource_summary(cfg.resources, resources_cfg, register=register)
         tasks.append(item)
-    data = {"audience": audience, "tasks": tasks}
-    content = f"Available remote tasks: {len(tasks)}"
+    data = {"audience": audience, "submission_guidance": dict(_REMOTE_SUBMISSION_GUIDANCE), "tasks": tasks}
+    content = _catalog_content(tasks=tasks)
     return _success("get_avail_remote_task", content=content, data=data)
 
 

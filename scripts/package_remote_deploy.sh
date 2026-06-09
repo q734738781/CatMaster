@@ -154,7 +154,7 @@ packaged_at_local=$(date '+%Y-%m-%dT%H:%M:%S%z')
 package_profile=runtime-webui-deploy
 package_root=$PACKAGE_ROOT_NAME
 archive_name=$ARCHIVE_NAME
-excluded_private_configs=configs/llm.yaml,configs/dpdispatcher/machines.yaml,configs/dpdispatcher/resources.yaml,configs/dpdispatcher/tasks.yaml,.env,.sesskey
+excluded_private_configs=configs/llm.yaml,configs/llm_*.yaml,configs/dpdispatcher/machines.yaml,configs/dpdispatcher/resources.yaml,configs/dpdispatcher/tasks.yaml,.env,.sesskey
 EOF
 }
 
@@ -162,7 +162,7 @@ write_deploy_readme() {
   {
     printf '%s\n' '# CatMaster Remote Deployment'
     printf '\n'
-    printf '%s\n' 'This archive contains a runtime-oriented CatMaster checkout with the rebuilt WebUI static bundle. Local secrets, logs, project spaces, caches, node_modules, `.git`, `configs/llm.yaml`, and active DPDispatcher deployment files (`configs/dpdispatcher/machines.yaml`, `resources.yaml`, `tasks.yaml`) are intentionally excluded.'
+    printf '%s\n' 'This archive contains a runtime-oriented CatMaster checkout with the rebuilt WebUI static bundle. Local secrets, logs, project spaces, caches, node_modules, `.git`, active LLM configs (`configs/llm.yaml`, `configs/llm_*.yaml`), and active DPDispatcher deployment files (`configs/dpdispatcher/machines.yaml`, `resources.yaml`, `tasks.yaml`) are intentionally excluded.'
     printf '\n'
     printf '%s\n' '## 1. Unpack'
     printf '\n'
@@ -232,7 +232,7 @@ verify_archive() {
   tar -tzf "$ARCHIVE_PATH" >/dev/null
   tar_list="$(tar -tzf "$ARCHIVE_PATH")"
 
-  local private_pattern='(^|/)(\.git|\.env$|\.sesskey|dpdispatcher\.log|node_modules|\.runtime|project_space|workspace)(/|$)|(^|/)configs/llm\.yaml$|(^|/)configs/dpdispatcher/(machines|resources|tasks)\.yaml$'
+  local private_pattern='(^|/)(\.git|\.env$|\.sesskey|dpdispatcher\.log|node_modules|\.runtime|project_space|workspace)(/|$)|(^|/)configs/llm\.yaml$|(^|/)configs/llm_[^/]+\.yaml$|(^|/)configs/dpdispatcher/(machines|resources|tasks)\.yaml$'
   local private_hits=""
   local env_hits=""
   private_hits="$(printf '%s\n' "$tar_list" | grep -E "$private_pattern" || true)"
@@ -394,7 +394,9 @@ RSYNC_ARGS=(
   --exclude='.env'
   --exclude='.env.*'
   --exclude='configs/llm.yaml'
+  --exclude='configs/llm_*.yaml'
   --exclude='llm.yaml'
+  --exclude='llm_*.yaml'
   --exclude='configs/*.local.yaml'
   --exclude='*.local.yaml'
   --exclude='configs/dpdispatcher/machines.yaml'

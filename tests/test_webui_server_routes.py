@@ -417,6 +417,32 @@ def test_named_vasp_outputs_are_classified_as_structure(tmp_path: Path) -> None:
     assert server._entry_preview_kind(tmp_path / "XDATCAR") == "structure"
 
 
+def test_unknown_suffix_small_text_files_are_previewed(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    (ws / "files").mkdir(parents=True)
+    (ws / "metadata").mkdir(parents=True)
+    (ws / "files" / "job.sub.run").write_text("#!/bin/bash\necho running\n", encoding="utf-8")
+    (ws / "files" / "job.gbw").write_bytes(b"\x00\x01\x02binary")
+
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+
+    tree = client.get(f"/api/session/{ctx}/files/tree", params={"path": "files"})
+    assert tree.status_code == 200
+    kinds = {item["name"]: item["preview_kind"] for item in tree.json()["children"]}
+    assert kinds["job.sub.run"] == "text"
+    assert kinds["job.gbw"] == "binary"
+
+    preview = client.get(f"/api/session/{ctx}/files/content", params={"path": "files/job.sub.run"})
+    assert preview.status_code == 200
+    payload = preview.json()
+    assert payload["kind"] == "text"
+    assert "echo running" in payload["preview_text"]
+
+
 def test_poscar_uses_native_vasp_poscar_view(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "demo"
     (ws / "files").mkdir(parents=True)

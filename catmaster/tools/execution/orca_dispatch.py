@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     STATUS_FILE_NAME,
     BatchDispatchRequest,
@@ -247,6 +247,28 @@ def orca_execute_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             shutil.rmtree(stage_root)
         except Exception as exc:
             warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
+    states = result.task_states if result else []
+    execution_summary_path = output_root / "orca_execute_batch_summary.json"
+    execution_summary_path.write_text(
+        json.dumps(
+            {
+                "tool_name": "orca_execute_batch",
+                "task_name": params.task_name,
+                "work_base": work_base,
+                "input_dir_rel": workspace_relpath(input_dir),
+                "output_root_rel": workspace_relpath(output_root),
+                "task_states": states,
+                "outputs": outputs,
+                "warnings": warnings,
+                **remote_context_from_result(result),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    execution_summary_rel = workspace_relpath(execution_summary_path)
 
     if dispatch_error is not None:
         _fail(
@@ -256,7 +278,27 @@ def orca_execute_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "input_dir_rel": workspace_relpath(input_dir),
                 "output_root_rel": workspace_relpath(output_root),
                 "batch_state_rel": workspace_relpath(state_path),
-                "outputs": outputs,
+                "execution_summary_rel": execution_summary_rel,
+                **compact_list_for_artifact(
+                    outputs,
+                    count_key="outputs_count",
+                    inline_key="outputs",
+                    preview_key="outputs_preview",
+                    truncated_key="outputs_truncated",
+                    full_rel_key="outputs_full_rel",
+                    full_rel=execution_summary_rel,
+                    max_inline=5,
+                ),
+                **compact_list_for_artifact(
+                    states,
+                    count_key="task_states_count",
+                    inline_key="task_states",
+                    preview_key="task_states_preview",
+                    truncated_key="task_states_truncated",
+                    full_rel_key="task_states_full_rel",
+                    full_rel=execution_summary_rel,
+                    max_inline=20,
+                ),
                 **remote_context_from_exception(dispatch_error),
             },
             warnings=warnings,
@@ -269,10 +311,29 @@ def orca_execute_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "input_dir_rel": workspace_relpath(input_dir),
         "output_root_rel": workspace_relpath(output_root),
         "batch_state_rel": workspace_relpath(state_path),
-        "outputs": outputs,
+        "execution_summary_rel": execution_summary_rel,
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
-        "task_states": result.task_states if result else [],
         "work_base": result.work_base if result else work_base,
+        **compact_list_for_artifact(
+            outputs,
+            count_key="outputs_count",
+            inline_key="outputs",
+            preview_key="outputs_preview",
+            truncated_key="outputs_truncated",
+            full_rel_key="outputs_full_rel",
+            full_rel=execution_summary_rel,
+            max_inline=5,
+        ),
+        **compact_list_for_artifact(
+            states,
+            count_key="task_states_count",
+            inline_key="task_states",
+            preview_key="task_states_preview",
+            truncated_key="task_states_truncated",
+            full_rel_key="task_states_full_rel",
+            full_rel=execution_summary_rel,
+            max_inline=20,
+        ),
         **remote_context_from_result(result),
     }
     content = (

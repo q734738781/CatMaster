@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_records_for_artifact, resolve_workspace_path, workspace_relpath
 
 from .cp2k_common import (
     band_motion_lines,
@@ -20,6 +20,7 @@ from .cp2k_common import (
     tool_error,
     vibrational_top_level_lines,
     write_cp2k_stage,
+    write_json,
 )
 
 
@@ -123,12 +124,15 @@ def cp2k_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
     if params.recipe == "neb":
         record = _prepare_neb_stage(sources=sources, output_root=output_root, settings=settings)
+        manifest = output_root / "cp2k_prepare_manifest.json"
+        write_json(manifest, {"input_path_rel": workspace_relpath(input_path), "recipe": params.recipe, "records": [record]})
         data = {
             "input_path_rel": workspace_relpath(input_path),
             "output_root_rel": workspace_relpath(output_root),
             "recipe": params.recipe,
-            "records": [record],
             "prepared_count": 1,
+            "manifest_rel": workspace_relpath(manifest),
+            **compact_records_for_artifact([record], full_records_rel=workspace_relpath(manifest)),
         }
         content = (
             "cp2k_prepare completed.\n"
@@ -157,12 +161,15 @@ def cp2k_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             )
         )
 
+    manifest = output_root / "cp2k_prepare_manifest.json"
+    write_json(manifest, {"input_path_rel": workspace_relpath(input_path), "recipe": params.recipe, "records": records})
     data = {
         "input_path_rel": workspace_relpath(input_path),
         "output_root_rel": workspace_relpath(output_root),
         "recipe": params.recipe,
-        "records": records,
         "prepared_count": len(records),
+        "manifest_rel": workspace_relpath(manifest),
+        **compact_records_for_artifact(records, full_records_rel=workspace_relpath(manifest)),
     }
     content = (
         "cp2k_prepare completed.\n"

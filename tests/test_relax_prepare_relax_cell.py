@@ -345,6 +345,112 @@ def test_struct_writer_safe_patch_blocks_protected_override() -> None:
         )
 
 
+def test_struct_writer_safe_patch_allows_nsw_override() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    plan = writer.plan_vasp_inputs(
+        structure=structure,
+        output_dir=Path("unused"),
+        preset="relax",
+        regime="gas",
+        user_incar_patch={"NSW": 100},
+        patch_policy="safe",
+    )
+    assert plan.user_incar_settings["NSW"] == 100
+    assert "NSW" not in plan.protected_keys
+
+
+@pytest.mark.parametrize("ibrion", [1, 2, 3])
+def test_struct_writer_safe_patch_allows_relax_ibrion_algorithm_override(ibrion: int) -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    plan = writer.plan_vasp_inputs(
+        structure=structure,
+        output_dir=Path("unused"),
+        preset="relax",
+        regime="bulk",
+        user_incar_patch={"IBRION": ibrion},
+        patch_policy="safe",
+    )
+    assert plan.user_incar_settings["IBRION"] == ibrion
+    assert "IBRION" in plan.protected_keys
+
+
+@pytest.mark.parametrize("ibrion", [-1, 5, 44])
+def test_struct_writer_safe_patch_blocks_relax_ibrion_mode_override(ibrion: int) -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    with pytest.raises(ValueError, match="patch_policy='safe'"):
+        writer.plan_vasp_inputs(
+            structure=structure,
+            output_dir=Path("unused"),
+            preset="relax",
+            regime="bulk",
+            user_incar_patch={"IBRION": ibrion},
+            patch_policy="safe",
+        )
+
+
+def test_struct_writer_safe_patch_allows_static_isif_override() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    plan = writer.plan_vasp_inputs(
+        structure=structure,
+        output_dir=Path("unused"),
+        preset="static",
+        regime="bulk",
+        user_incar_patch={"ISIF": 3},
+        patch_policy="safe",
+    )
+    assert plan.user_incar_settings["ISIF"] == 3
+    assert "ISIF" not in plan.protected_keys
+
+
+def test_struct_writer_safe_patch_blocks_relax_isif_override() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    with pytest.raises(ValueError, match="patch_policy='safe'"):
+        writer.plan_vasp_inputs(
+            structure=structure,
+            output_dir=Path("unused"),
+            preset="relax",
+            regime="slab",
+            user_incar_patch={"ISIF": 3},
+            patch_policy="safe",
+        )
+
+
+def test_struct_writer_safe_patch_allows_freq_step_controls() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    plan = writer.plan_vasp_inputs(
+        structure=structure,
+        output_dir=Path("unused"),
+        preset="freq",
+        regime="bulk",
+        user_incar_patch={"POTIM": 0.01, "NFREE": 4},
+        patch_policy="safe",
+    )
+    assert plan.user_incar_settings["POTIM"] == pytest.approx(0.01)
+    assert plan.user_incar_settings["NFREE"] == 4
+    assert "POTIM" not in plan.protected_keys
+    assert "NFREE" not in plan.protected_keys
+
+
+def test_struct_writer_safe_patch_still_blocks_gas_isym_override() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    with pytest.raises(ValueError, match="patch_policy='safe'"):
+        writer.plan_vasp_inputs(
+            structure=structure,
+            output_dir=Path("unused"),
+            preset="relax",
+            regime="gas",
+            user_incar_patch={"ISYM": 2},
+            patch_policy="safe",
+        )
+
+
 def test_struct_writer_safe_patch_allows_dos_method_override() -> None:
     writer = StructWriter()
     structure = Structure.from_file("tests/assets/Fe.cif")
@@ -358,6 +464,21 @@ def test_struct_writer_safe_patch_allows_dos_method_override() -> None:
     )
     assert plan.user_incar_settings["NEDOS"] == 4001
     assert plan.user_incar_settings["ISMEAR"] == 0
+
+
+def test_struct_writer_safe_patch_blocks_fixed_density_icharg_override() -> None:
+    writer = StructWriter()
+    structure = Structure.from_file("tests/assets/Fe.cif")
+    with pytest.raises(ValueError, match="patch_policy='safe'"):
+        writer.plan_vasp_inputs(
+            structure=structure,
+            output_dir=Path("unused"),
+            preset="dos",
+            regime="bulk",
+            dos_use_chgcar=True,
+            user_incar_patch={"ICHARG": 2},
+            patch_policy="safe",
+        )
 
 
 def test_struct_writer_safe_patch_allows_md_method_override() -> None:

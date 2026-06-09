@@ -43,6 +43,8 @@ Use this skill for CP2K AIMD tasks in `dynamics_worker`: NVE, NVT, NPT, restart,
 - Use `cp2k_output_summary` for reusable run evidence: completion, return code, energy lines, SCF evidence, optimization/frequency markers, and CP2K `.ener` files.
 
 ## Method-critical defaults
+- Parameter priority: honor explicit user requirements first; otherwise choose CP2K AIMD `settings` overrides from the system class and sampling objective; if that judgment remains uncertain, run a narrow literature or official documentation check before finalizing the override.
+- Do not add CP2K `settings` overrides just to restate the tool baseline; only override when the user, system class, task objective, or a checked source justifies it.
 - Project policy: prefer output completion over performance when safe, but keep receipt/context if remote execution fails.
 - Report ensemble, timestep, total simulated time, temperature/pressure controls, trajectory stride, and restart stride.
 - Do not infer free-energy barriers or mechanisms from a generic trajectory summary.

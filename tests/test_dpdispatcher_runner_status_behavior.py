@@ -23,6 +23,45 @@ def test_wrap_command_captures_stdout_and_stderr() -> None:
     assert '>"$__CM_STDOUT" 2>"$__CM_STDERR"' in wrapped
 
 
+def test_wrap_command_can_inject_dispatch_token_for_hash_isolation() -> None:
+    wrapped_a = dpr._wrap_command_for_dpdispatcher("echo hello", dispatch_token="run-a:task-0")
+    wrapped_b = dpr._wrap_command_for_dpdispatcher("echo hello", dispatch_token="run-b:task-0")
+
+    assert wrapped_a != wrapped_b
+    assert "CM_DPDISPATCHER_SUBMISSION_TOKEN=run-a:task-0" in wrapped_a
+    assert "CM_DPDISPATCHER_SUBMISSION_TOKEN=run-b:task-0" in wrapped_b
+
+
+def test_dispatch_token_changes_dpdispatcher_hashes() -> None:
+    resources = dpr.Resources(
+        number_node=1,
+        cpu_per_node=1,
+        gpu_per_node=0,
+        queue_name="batch",
+        group_size=1,
+    )
+    task_a = dpr.Task(
+        command=dpr._wrap_command_for_dpdispatcher("echo hello", dispatch_token="same-stage:a"),
+        task_work_path=".",
+        forward_files=[],
+        backward_files=[],
+    )
+    task_b = dpr.Task(
+        command=dpr._wrap_command_for_dpdispatcher("echo hello", dispatch_token="same-stage:b"),
+        task_work_path=".",
+        forward_files=[],
+        backward_files=[],
+    )
+    sub_a = dpr.Submission(work_base="same_work_base", resources=resources, task_list=[task_a])
+    sub_b = dpr.Submission(work_base="same_work_base", resources=resources, task_list=[task_b])
+    sub_a.generate_jobs()
+    sub_b.generate_jobs()
+
+    assert task_a.task_hash != task_b.task_hash
+    assert sub_a.belonging_jobs[0].job_hash != sub_b.belonging_jobs[0].job_hash
+    assert sub_a.submission_hash != sub_b.submission_hash
+
+
 def test_assert_remote_success_raises_for_nonzero_with_excerpt() -> None:
     with pytest.raises(RuntimeError) as exc:
         dpr._assert_remote_success(
@@ -112,6 +151,61 @@ def test_task_states_are_reported_as_readable_status_names() -> None:
         "finished": 3,
         "running": 1,
     }
+
+
+def test_transfer_archive_filter_removes_stale_dpdispatcher_archives() -> None:
+    files = dpr._filter_dpdispatcher_transfer_archives(
+        [
+            "status.json",
+            "a" * 40 + ".tar.gz",
+            "./" + "b" * 40 + ".tar",
+            "result.tar.gz",
+        ]
+    )
+
+    assert files == ["status.json", "result.tar.gz"]
+
+
+def test_safe_ssh_get_files_cleans_corrupt_archive_on_error(tmp_path: Path) -> None:
+    class _Submission:
+        submission_hash = "c" * 40
+
+    class _SFTP:
+        def __init__(self) -> None:
+            self.removed: list[str] = []
+
+        def remove(self, path: str) -> None:
+            self.removed.append(path)
+
+    class _Context:
+        submission = _Submission()
+        local_root = str(tmp_path)
+        remote_root = "/remote/work"
+
+        def __init__(self) -> None:
+            self.sftp = _SFTP()
+
+    seen_files: list[str] = []
+    archive = tmp_path / ("c" * 40 + ".tar.gz")
+    archive.write_bytes(b"stale")
+
+    def _original(context: _Context, files: list[str], *, tar_compress: bool = True) -> None:
+        seen_files.extend(files)
+        archive.write_bytes(b"")
+        raise EOFError("truncated gzip")
+
+    context = _Context()
+    with pytest.raises(EOFError):
+        dpr._safe_ssh_get_files_call(
+            _original,
+            context,
+            ["status.json", "c" * 40 + ".tar.gz"],
+            tar_compress=True,
+        )
+
+    assert seen_files == ["status.json"]
+    assert not archive.exists()
+    assert context.sftp.removed == ["/remote/work/" + "c" * 40 + ".tar.gz"]
 
 
 def test_public_remote_context_omits_jobs_unless_requested() -> None:

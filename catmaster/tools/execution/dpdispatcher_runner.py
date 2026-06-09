@@ -4,6 +4,7 @@ import shlex
 import time
 import uuid
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -29,14 +30,37 @@ _DP_PATTERNS = [
     re.compile(r"^[0-9a-f]{40}\.sub$"),
     re.compile(r"^[0-9a-f]{40}\.sub\.run$"),
     re.compile(r"^[0-9a-f]{40}\.json$"),
+    re.compile(r"^[0-9a-f]{40}\.tar(?:\.gz)?$"),
     re.compile(r"^tag_failure_download_.*$"),
 ]
+_DP_TRANSFER_ARCHIVE_RE = re.compile(r"^[0-9a-f]{40}\.tar(?:\.gz)?$")
+_SAFE_SSH_DOWNLOAD_PATCHED = False
 
 def _is_dp_artifact(name: str) -> bool:
     for pat in _DP_PATTERNS:
         if pat.match(name):
             return True
     return False
+
+def _is_dp_transfer_archive(name: str) -> bool:
+    return bool(_DP_TRANSFER_ARCHIVE_RE.match(name))
+
+def _filter_dpdispatcher_transfer_archives(files: List[str]) -> List[str]:
+    return [str(f) for f in files if not _is_dp_transfer_archive(Path(str(f)).name)]
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+    except Exception:
+        pass
+
+def cleanup_dpdispatcher_transfer_archives(work_base_dir: Path) -> None:
+    if not work_base_dir.exists():
+        return
+    for p in work_base_dir.rglob("*"):
+        if p.is_file() and _is_dp_transfer_archive(p.name):
+            _unlink_quietly(p)
 
 def cleanup_dpdispatcher_artifacts(work_base_dir: Path) -> None:
     if not work_base_dir.exists():
@@ -51,6 +75,51 @@ def cleanup_dpdispatcher_artifacts(work_base_dir: Path) -> None:
             p.unlink()
         except Exception:
             continue
+
+
+def _safe_ssh_get_files_call(original_get_files: Any, context: Any, files: List[str], *, tar_compress: Any = True) -> Any:
+    filtered = _filter_dpdispatcher_transfer_archives(files)
+    submission_hash = str(getattr(getattr(context, "submission", None), "submission_hash", "") or "")
+    suffix = ".tar" if not tar_compress else ".tar.gz"
+    archive_name = f"{submission_hash}{suffix}" if submission_hash else ""
+    local_root = str(getattr(context, "local_root", "") or "")
+    local_archive = Path(local_root) / archive_name if local_root and archive_name else None
+    if local_archive is not None:
+        _unlink_quietly(local_archive)
+    try:
+        return original_get_files(context, filtered, tar_compress=tar_compress)
+    except Exception:
+        if local_archive is not None:
+            _unlink_quietly(local_archive)
+        remote_root = str(getattr(context, "remote_root", "") or "")
+        sftp = getattr(context, "sftp", None)
+        if archive_name and remote_root and sftp is not None:
+            try:
+                sftp.remove(Path(os.path.join(remote_root, archive_name)).as_posix())
+            except Exception:
+                pass
+        raise
+
+
+def _install_safe_ssh_download_patch() -> None:
+    global _SAFE_SSH_DOWNLOAD_PATCHED
+    if _SAFE_SSH_DOWNLOAD_PATCHED:
+        return
+    try:
+        from dpdispatcher.contexts.ssh_context import SSHContext
+    except Exception:
+        return
+    original = getattr(SSHContext, "_get_files", None)
+    if original is None or getattr(original, "_catmaster_safe_download", False):
+        _SAFE_SSH_DOWNLOAD_PATCHED = True
+        return
+
+    def _catmaster_safe_get_files(self: Any, files: List[str], tar_compress: Any = True) -> Any:
+        return _safe_ssh_get_files_call(original, self, files, tar_compress=tar_compress)
+
+    setattr(_catmaster_safe_get_files, "_catmaster_safe_download", True)
+    setattr(SSHContext, "_get_files", _catmaster_safe_get_files)
+    _SAFE_SSH_DOWNLOAD_PATCHED = True
 
 
 class DispatchRequest(BaseModel):
@@ -70,6 +139,7 @@ class DispatchRequest(BaseModel):
     clean_remote: bool = Field(False, description="Remove remote work dir after download")
     check_interval: int = Field(30, description="Polling interval seconds when waiting")
     tool_name: str = Field("dpdispatcher", description="CatMaster tool name creating this submission")
+    dispatch_id: str = Field(default_factory=lambda: uuid.uuid4().hex, description="CatMaster-generated nonce for hash isolation")
 
 
 class DispatchResult(BaseModel):
@@ -113,6 +183,7 @@ class BatchDispatchRequest(BaseModel):
     clean_remote: bool = Field(False, description="Remove remote work dir after download")
     check_interval: int = Field(30, description="Polling interval seconds when waiting")
     tool_name: str = Field("dpdispatcher", description="CatMaster tool name creating this submission")
+    dispatch_id: str = Field(default_factory=lambda: uuid.uuid4().hex, description="CatMaster-generated nonce for hash isolation")
 
 
 class DPDispatcherDispatchError(RuntimeError):
@@ -357,8 +428,14 @@ def _ensure_status_backward_files(files: List[str]) -> List[str]:
     return out
 
 
-def _wrap_command_for_dpdispatcher(command: str) -> str:
+def _safe_dispatch_token(value: Any) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(value or "").strip()).strip("._:-")
+    return token[:160]
+
+
+def _wrap_command_for_dpdispatcher(command: str, *, dispatch_token: str = "") -> str:
     status_file_repr = repr(STATUS_FILE_NAME)
+    safe_token = _safe_dispatch_token(dispatch_token)
     py_script = (
         "import json\n"
         "import os\n"
@@ -401,6 +478,7 @@ def _wrap_command_for_dpdispatcher(command: str) -> str:
     script = "\n".join(
         [
             "set -o pipefail",
+            f"export CM_DPDISPATCHER_SUBMISSION_TOKEN={shlex.quote(safe_token)}" if safe_token else ":",
             f"__CM_COMMAND={shlex.quote(command)}",
             f"__CM_STDOUT={shlex.quote(STDOUT_FILE_NAME)}",
             f"__CM_STDERR={shlex.quote(STDERR_FILE_NAME)}",
@@ -521,7 +599,10 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
     resources = _build_resources(res_cfg, env_setup)
 
     task = Task(
-        command=_wrap_command_for_dpdispatcher(request.command),
+        command=_wrap_command_for_dpdispatcher(
+            request.command,
+            dispatch_token=f"{request.dispatch_id}:{request.work_base}:0",
+        ),
         task_work_path=request.task_work_path,
         forward_files=request.forward_files,
         backward_files=_ensure_status_backward_files(request.backward_files),
@@ -546,6 +627,7 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
 
     t0 = time.time()
     try:
+        _install_safe_ssh_download_patch()
         submission.run_submission(clean=request.clean_remote, check_interval=request.check_interval)
     except Exception as exc:
         receipt = _write_remote_receipt(
@@ -628,12 +710,15 @@ def dispatch_submission(
 
     task_list = [
         Task(
-            command=_wrap_command_for_dpdispatcher(t.command),
+            command=_wrap_command_for_dpdispatcher(
+                t.command,
+                dispatch_token=f"{batch.dispatch_id}:{batch.work_base}:{i}",
+            ),
             task_work_path=t.task_work_path,
             forward_files=t.forward_files,
             backward_files=_ensure_status_backward_files(t.backward_files),
         )
-        for t in batch.tasks
+        for i, t in enumerate(batch.tasks)
     ]
 
     submission = Submission(
@@ -653,6 +738,7 @@ def dispatch_submission(
 
     t0 = time.time()
     try:
+        _install_safe_ssh_download_patch()
         submission.run_submission(clean=batch.clean_remote, check_interval=batch.check_interval)
     except Exception as exc:
         receipt = _write_remote_receipt(

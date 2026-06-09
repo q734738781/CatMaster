@@ -12,6 +12,8 @@ Avoid brittle tests that assert long prompt text or exact optional skill names. 
 
 When tests need coverage for prompts or skills, prefer stable behavioral contracts such as generated runner structure, tool bindings, staged skill roots matching the current source tree, schema fields, state transitions, or one narrowly scoped sentinel for a critical invariant.
 
+Do not add tests that assert exact managed-execution prompt wording. Cover the behavior through tool bindings, tool schemas, task-catalog behavior, or runtime execution tests instead.
+
 ## Dependency Management
 
 Keep deployment dependencies reproducible. Runtime requirement files should use exact versions for dependencies that CatMaster imports, configures, or intentionally exposes as part of agent workflows. Scientific Python, pymatgen, pandas, ASE, MACE/torch, DPDispatcher, Pydantic, LangChain, DeepAgents, OpenRouter, and WebUI-adjacent packages are especially likely to change APIs between releases.

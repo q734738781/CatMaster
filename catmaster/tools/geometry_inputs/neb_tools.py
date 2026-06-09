@@ -15,11 +15,12 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.io.vasp.inputs import Poscar
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 
 from .vasp_inputs import StructWriter
 
 _CELL_TOL = 1e-5
+_NEB_MIN_PAIR_DISTANCE_WARNING_ANGSTROM = 0.8
 _ELEMENT_MAP_INCAR_KEYS = {"MAGMOM", "LDAUU", "LDAUJ"}
 _NEB_PROTECTED_KEYS_BASE = {"IBRION", "POTIM", "ICHAIN", "IMAGES", "IOPT", "ISYM", "LCLIMB"}
 _STRUCTURE_FILE_SUFFIXES = {"", ".vasp", ".cif", ".xyz", ".poscar", ".contcar"}
@@ -94,6 +95,11 @@ class MakeNebGeometryInput(BaseModel):
         True,
         description="If true, interpolate using the periodic minimum image convention for endpoint displacements.",
     )
+    min_pair_distance_warning_angstrom: float = Field(
+        _NEB_MIN_PAIR_DISTANCE_WARNING_ANGSTROM,
+        ge=0.0,
+        description="Warn when any generated image has a minimum interatomic distance below this threshold.",
+    )
     overwrite: bool = Field(False, description="If true, overwrite output_dir if it exists.")
 
     @model_validator(mode="after")
@@ -145,6 +151,11 @@ class VaspNebPrepareInput(BaseModel):
     mic: bool = Field(
         True,
         description="If true, interpolate endpoint displacements with the periodic minimum image convention.",
+    )
+    min_pair_distance_warning_angstrom: float = Field(
+        _NEB_MIN_PAIR_DISTANCE_WARNING_ANGSTROM,
+        ge=0.0,
+        description="Warn when any NEB image has a minimum interatomic distance below this threshold.",
     )
     overwrite: bool = Field(False, description="If true, replace output_root if it already exists.")
     regime: Literal["bulk", "slab", "gas"] = Field(
@@ -199,6 +210,7 @@ class NebImageSet:
     total_images: int
     intermediate_images: int
     warnings: list[str]
+    geometry_check: dict[str, Any]
 
 
 class EstimateNebImageCountInput(BaseModel):
@@ -712,6 +724,73 @@ def _build_images(
     return list(images_atoms), warnings
 
 
+def _minimum_pair_distance_record(atoms: Any, *, image_label: str) -> dict[str, Any] | None:
+    atom_count = int(len(atoms))
+    if atom_count < 2:
+        return None
+    use_mic = bool(np.any(np.asarray(getattr(atoms, "pbc", False), dtype=bool)))
+    try:
+        distances = np.asarray(atoms.get_all_distances(mic=use_mic), dtype=float)
+    except Exception:
+        distances = np.asarray(atoms.get_all_distances(mic=False), dtype=float)
+    if distances.shape != (atom_count, atom_count):
+        return None
+    np.fill_diagonal(distances, np.inf)
+    flat_index = int(np.argmin(distances))
+    distance = float(distances.reshape(-1)[flat_index])
+    if not math.isfinite(distance):
+        return None
+    i, j = np.unravel_index(flat_index, distances.shape)
+    symbols = atoms.get_chemical_symbols()
+    return {
+        "image": str(image_label),
+        "distance_angstrom": distance,
+        "atom_indices_0based": [int(i), int(j)],
+        "atom_indices_1based": [int(i) + 1, int(j) + 1],
+        "elements": [str(symbols[int(i)]), str(symbols[int(j)])],
+    }
+
+
+def _check_neb_image_distances(
+    images: list[Any],
+    *,
+    threshold_angstrom: float,
+    image_labels: list[str] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    threshold = float(threshold_angstrom)
+    labels = image_labels or [f"{idx:02d}" for idx in range(len(images))]
+    records: list[dict[str, Any]] = []
+    for idx, atoms in enumerate(images):
+        label = labels[idx] if idx < len(labels) else f"{idx:02d}"
+        record = _minimum_pair_distance_record(atoms, image_label=label)
+        if record is not None:
+            records.append(record)
+    shortest = min(records, key=lambda item: float(item["distance_angstrom"])) if records else None
+    short_records = [record for record in records if float(record["distance_angstrom"]) < threshold]
+    warnings: list[str] = []
+    if short_records:
+        shortest_short = min(short_records, key=lambda item: float(item["distance_angstrom"]))
+        atom_pair = "-".join(str(idx) for idx in shortest_short["atom_indices_1based"])
+        elem_pair = "-".join(str(symbol) for symbol in shortest_short["elements"])
+        warnings.append(
+            f"NEB image geometry warning: {len(short_records)} image(s) have minimum interatomic distance below "
+            f"{threshold:.2f} Angstrom; shortest is {float(shortest_short['distance_angstrom']):.3f} Angstrom "
+            f"in image {shortest_short['image']} between atoms {atom_pair} ({elem_pair}). This often indicates "
+            "interpolated atom overlap; recheck endpoint atom mapping, use remap_neb_endpoint_atoms for same-species "
+            "permutations, try idpp interpolation, or remodel the path as a shorter primitive hop."
+        )
+    check = {
+        "min_pair_distance_warning_threshold_angstrom": threshold,
+        "min_pair_distance_angstrom": float(shortest["distance_angstrom"]) if shortest else None,
+        "min_pair_distance_image": str(shortest["image"]) if shortest else None,
+        "min_pair_distance_atoms_1based": list(shortest["atom_indices_1based"]) if shortest else [],
+        "min_pair_distance_elements": list(shortest["elements"]) if shortest else [],
+        "short_distance_count": len(short_records),
+        "short_distance_records": short_records,
+    }
+    return check, warnings
+
+
 def _success(
     tool_name: str,
     *,
@@ -814,6 +893,11 @@ def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         mic=params.mic,
     )
     warnings.extend(interp_warnings)
+    geometry_check, geometry_warnings = _check_neb_image_distances(
+        images,
+        threshold_angstrom=params.min_pair_distance_warning_angstrom,
+    )
+    warnings.extend(geometry_warnings)
 
     image_files: List[str] = []
     for idx, atoms in enumerate(images):
@@ -827,16 +911,45 @@ def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
         image_files.append(workspace_relpath(out_path))
 
+    summary_path = output_root / "neb_geometry_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "output_dir": workspace_relpath(output_root),
+                "num_intermediate_images": params.n_images,
+                "num_total_images": params.n_images + 2,
+                "image_files": image_files,
+                "geometry_check": geometry_check,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     data = {
         "output_dir": workspace_relpath(output_root),
         "num_intermediate_images": params.n_images,
         "num_total_images": params.n_images + 2,
-        "image_files": image_files,
+        "summary_json_rel": workspace_relpath(summary_path),
+        "geometry_check": geometry_check,
+        **compact_list_for_artifact(
+            image_files,
+            count_key="image_files_count",
+            inline_key="image_files",
+            preview_key="image_files_preview",
+            truncated_key="image_files_truncated",
+            full_rel_key="image_files_full_rel",
+            full_rel=workspace_relpath(summary_path),
+            max_inline=20,
+        ),
     }
     lines = [
         "make_neb_geometry completed.",
         f"num_total_images={data['num_total_images']} num_intermediate_images={params.n_images}",
         f"output_dir={data['output_dir']}",
+        f"min_pair_distance_angstrom={geometry_check['min_pair_distance_angstrom']}",
+        f"short_distance_count={geometry_check['short_distance_count']}",
     ]
     if image_files:
         lines.append(f"first_image_file={image_files[0]}")
@@ -870,6 +983,7 @@ def _make_neb_geometry_batch(params: MakeNebGeometryInput) -> tuple[str, dict[st
         _fail("make_neb_geometry", message="Batch input_root contains no task directories.", error_code="invalid_batch_root")
 
     task_results: list[dict[str, Any]] = []
+    batch_warnings: list[str] = []
     for task_dir in task_dirs:
         if any(path.is_dir() for path in task_dir.iterdir()):
             _fail(
@@ -883,6 +997,8 @@ def _make_neb_geometry_batch(params: MakeNebGeometryInput) -> tuple[str, dict[st
         task_params = params.model_copy(update={"initial_path": workspace_relpath(init_path), "final_path": workspace_relpath(final_path), "input_root": None, "output_root": None, "output_dir": workspace_relpath(task_output_root)})
         _content, artifact = make_neb_geometry(task_params.model_dump(exclude_none=True))
         task_results.append({"task_id": task_dir.name, **artifact["data"]})
+        for warning in artifact.get("warnings", []) or []:
+            batch_warnings.append(f"{task_dir.name}: {warning}")
 
     batch_summary_path = output_root / "batch_summary.json"
     batch_summary = {
@@ -890,6 +1006,7 @@ def _make_neb_geometry_batch(params: MakeNebGeometryInput) -> tuple[str, dict[st
         "output_root_rel": workspace_relpath(output_root),
         "task_count": len(task_results),
         "tasks": task_results,
+        "warnings": batch_warnings,
     }
     batch_summary_path.write_text(json.dumps(batch_summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     data = {
@@ -903,7 +1020,7 @@ def _make_neb_geometry_batch(params: MakeNebGeometryInput) -> tuple[str, dict[st
         f"task_count={len(task_results)} output_root_rel={data['output_root_rel']} "
         f"batch_summary_rel={data['batch_summary_rel']}"
     )
-    return _success("make_neb_geometry", content=content, data=data)
+    return _success("make_neb_geometry", content=content, data=data, warnings=batch_warnings)
 
 
 def _strip_incar_comment(line: str) -> str:
@@ -1052,6 +1169,7 @@ class VaspNebWriter:
             "image_dirs": image_set.image_dirs_rel,
             "num_total_images": image_set.total_images,
             "num_intermediate_images": image_set.intermediate_images,
+            "geometry_check": image_set.geometry_check,
             "output_incar_path": support_info["output_incar_path"],
             "diff_json_rel": support_info["diff_json_rel"],
             "protected_incar_keys": support_info["protected_incar_keys"],
@@ -1064,6 +1182,8 @@ class VaspNebWriter:
             f"num_total_images={image_set.total_images} num_intermediate_images={image_set.intermediate_images}",
             f"output_root_rel={data['output_root_rel']}",
             f"output_incar_path={data['output_incar_path']}",
+            f"min_pair_distance_angstrom={image_set.geometry_check['min_pair_distance_angstrom']}",
+            f"short_distance_count={image_set.geometry_check['short_distance_count']}",
         ]
         if params.images_root:
             lines.append(
@@ -1182,6 +1302,11 @@ class VaspNebWriter:
             interp_method=params.interp_method,
             mic=params.mic,
         )
+        geometry_check, geometry_warnings = _check_neb_image_distances(
+            images,
+            threshold_angstrom=params.min_pair_distance_warning_angstrom,
+        )
+        warnings.extend(geometry_warnings)
         image_dirs = self._write_images(
             output_root=output_root,
             images=images,
@@ -1202,6 +1327,7 @@ class VaspNebWriter:
             total_images=len(images),
             intermediate_images=params.n_images,
             warnings=warnings,
+            geometry_check=geometry_check,
         )
 
     def _materialize_from_image_tree(self, *, params: VaspNebPrepareInput, output_root: Path) -> NebImageSet:
@@ -1240,6 +1366,8 @@ class VaspNebWriter:
             )
 
         image_dirs_rel: list[str] = []
+        images_atoms: list[Any] = []
+        image_labels: list[str] = []
         representative_atoms = None
         warnings: list[str] = []
         for idx, src in image_sources:
@@ -1260,6 +1388,20 @@ class VaspNebWriter:
             atoms = _read_atoms(struct_path)
             if representative_atoms is None:
                 representative_atoms = atoms
+            else:
+                error = _validate_structures(representative_atoms, atoms)
+                if error:
+                    _fail(
+                        "vasp_neb_prepare",
+                        message=f"Image {idx:02d} is inconsistent with image 00: {error}",
+                        data={
+                            "images_root_rel": workspace_relpath(images_root),
+                            "output_root_rel": workspace_relpath(output_root),
+                        },
+                        error_code="invalid_image_tree",
+                    )
+            images_atoms.append(atoms)
+            image_labels.append(f"{idx:02d}")
             out_path = dst_dir / params.output_filename
             ase_write(
                 str(out_path),
@@ -1270,6 +1412,12 @@ class VaspNebWriter:
             )
             image_dirs_rel.append(workspace_relpath(dst_dir))
 
+        geometry_check, geometry_warnings = _check_neb_image_distances(
+            images_atoms,
+            threshold_angstrom=params.min_pair_distance_warning_angstrom,
+            image_labels=image_labels,
+        )
+        warnings.extend(geometry_warnings)
         warnings.extend(self._copy_required_image_tree_outcars(images_root=images_root, output_root=output_root, total_images=len(image_dirs_rel)))
 
         if representative_atoms is None:  # pragma: no cover
@@ -1280,6 +1428,7 @@ class VaspNebWriter:
             total_images=len(image_dirs_rel),
             intermediate_images=max(0, len(image_dirs_rel) - 2),
             warnings=warnings,
+            geometry_check=geometry_check,
         )
 
     @staticmethod

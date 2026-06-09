@@ -11,7 +11,7 @@ from ase.io import write as ase_write
 from pydantic import BaseModel, Field, model_validator
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_records_for_artifact, resolve_workspace_path, workspace_relpath
 
 _SUPPORTED_EXTS = {".xyz", ".mol", ".sdf", ".mol2", ".pdb", ".vasp", ".cif"}
 _TIGHTNESS_KEYWORDS = {
@@ -29,6 +29,24 @@ _ORCA_METHOD_ALIASES = {
     "gfn1-xtb": "XTB1",
 }
 _SAFE_PATCH_KEYS = {"ri", "grid", "final_grid", "scf_maxiter", "calc_hess", "recalc_hess", "nroots"}
+_ORCA_COMPOSITE_METHODS = {"hf-3c", "b97-3c", "b3lyp-3c", "pbeh-3c", "r2scan-3c", "wb97x-3c"}
+_ORCA_INTERNAL_BASIS_METHODS = _ORCA_COMPOSITE_METHODS | {"xtb0", "xtb1", "xtb2"}
+_ORCA_AUTO_METHOD_BY_TASK = {
+    "sp": "WB97X-D4",
+    "opt": "r2SCAN-3c",
+    "freq": "r2SCAN-3c",
+    "optfreq": "r2SCAN-3c",
+    "td": "WB97X-D4",
+    "nmr": "WB97X-D4",
+}
+_ORCA_AUTO_BASIS_BY_TASK = {
+    "sp": "def2-TZVP",
+    "opt": "def2-SVP",
+    "freq": "def2-SVP",
+    "optfreq": "def2-SVP",
+    "td": "def2-TZVP",
+    "nmr": "def2-TZVP",
+}
 
 
 def _tool_error(tool_name: str, message: str, *, data: dict[str, Any] | None = None, error_code: str = "") -> None:
@@ -70,6 +88,27 @@ def _orca_method_name(method: str) -> str:
     if not normalized:
         raise ValueError("method is required")
     return _ORCA_METHOD_ALIASES.get(normalized.lower(), normalized)
+
+
+@dataclass(frozen=True)
+class _OrcaLevel:
+    method: str
+    basis: str
+
+
+def _resolve_orca_level(*, task: str, method: str, basis: str) -> _OrcaLevel:
+    task_name = str(task).strip().lower()
+    raw_method = str(method or "auto").strip()
+    resolved_method = _ORCA_AUTO_METHOD_BY_TASK.get(task_name, "r2SCAN-3c") if raw_method.lower() == "auto" else _orca_method_name(raw_method)
+    raw_basis = str(basis or "").strip()
+    if raw_basis.lower() == "auto":
+        if resolved_method.lower() in _ORCA_INTERNAL_BASIS_METHODS:
+            resolved_basis = ""
+        else:
+            resolved_basis = _ORCA_AUTO_BASIS_BY_TASK.get(task_name, "def2-SVP")
+    else:
+        resolved_basis = raw_basis
+    return _OrcaLevel(method=resolved_method, basis=resolved_basis)
 
 
 def _orca_solvent_keywords(solvent_model: str, solvent: str | None) -> list[str]:
@@ -201,8 +240,20 @@ class OrcaPrepareInput(BaseModel):
     input_path: str = Field(..., description="Single molecular structure file or a directory of molecular structures.")
     output_root: str = Field(..., description="Output root for prepared ORCA job directories.")
     task: Literal["sp", "opt", "freq", "optfreq", "td", "nmr"] = Field(..., description="Canonical ORCA task kind.")
-    method: str = Field("r2SCAN-3c", description="ORCA method keyword, e.g. r2SCAN-3c, B3LYP, PBE0, XTB2.")
-    basis: str = Field("def2-SVP", description="Primary basis-set keyword.")
+    method: str = Field(
+        "auto",
+        description=(
+            "ORCA method keyword. auto uses r2SCAN-3c for opt/freq/optfreq structure and thermal-correction layers, "
+            "and WB97X-D4 for sp/td/nmr property or refinement layers; explicit examples include B3LYP, PBE0, and XTB2."
+        ),
+    )
+    basis: str = Field(
+        "auto",
+        description=(
+            "Primary basis-set keyword. auto leaves the basis blank for 3c composite and XTB-family methods; "
+            "otherwise it uses def2-SVP for opt/freq/optfreq and def2-TZVP for sp/td/nmr."
+        ),
+    )
     aux_basis: str | None = Field(None, description="Optional auxiliary basis keyword.")
     dispersion: Literal["none", "d3bj", "d4"] = Field("none", description="Dispersion correction keyword.")
     solvent_model: Literal["none", "cpcm", "smd"] = Field("none", description="Implicit-solvation model.")
@@ -365,13 +416,14 @@ def orca_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if not structures:
         _tool_error("orca_prepare", f"No supported structures found under {input_path}", error_code="no_structures")
     prepared: list[dict[str, Any]] = []
+    level = _resolve_orca_level(task=params.task, method=params.method, basis=params.basis)
     for structure in structures:
         relative_name = structure.stem if input_path.is_file() else str(structure.relative_to(input_path).with_suffix(""))
         input_text = _render_orca_input(
             task=params.task,
             xyz_name="input.xyz",
-            method=params.method,
-            basis=params.basis,
+            method=level.method,
+            basis=level.basis,
             aux_basis=params.aux_basis,
             dispersion=params.dispersion,
             solvent_model=params.solvent_model,
@@ -398,17 +450,21 @@ def orca_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         manifest,
         {
             "task": params.task,
-            "method": params.method,
-            "basis": params.basis,
+            "method": level.method,
+            "basis": level.basis,
+            "requested_method": params.method,
+            "requested_basis": params.basis,
             "records": prepared,
         },
     )
     data = {
         "task": params.task,
+        "method": level.method,
+        "basis": level.basis,
         "output_root_rel": workspace_relpath(output_root),
         "manifest_rel": workspace_relpath(manifest),
         "prepared_count": len(prepared),
-        "records": prepared,
+        **compact_records_for_artifact(prepared, full_records_rel=workspace_relpath(manifest)),
     }
     content = (
         "orca_prepare completed.\n"
@@ -432,11 +488,12 @@ def orca_scan_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         params.end_value,
         params.steps,
     )
+    level = _resolve_orca_level(task="opt", method=params.method, basis=params.basis)
     input_text = _render_orca_input(
         task="opt",
         xyz_name="input.xyz",
-        method=params.method,
-        basis=params.basis,
+        method=level.method,
+        basis=level.basis,
         aux_basis=params.aux_basis,
         dispersion=params.dispersion,
         solvent_model=params.solvent_model,
@@ -459,6 +516,8 @@ def orca_scan_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "start_value": params.start_value,
             "end_value": params.end_value,
             "steps": params.steps,
+            "method": level.method,
+            "basis": level.basis,
             "run_dir_rel": workspace_relpath(built.run_dir),
             "inp_rel": workspace_relpath(built.inp_path),
         },
@@ -490,11 +549,12 @@ def orca_optts_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         ts_mode=params.ts_mode,
         active_atoms=params.active_atoms,
     )
+    level = _resolve_orca_level(task="opt", method=params.method, basis=params.basis)
     input_text = _render_orca_input(
         task="opt",
         xyz_name="input.xyz",
-        method=params.method,
-        basis=params.basis,
+        method=level.method,
+        basis=level.basis,
         aux_basis=params.aux_basis,
         dispersion=params.dispersion,
         solvent_model=params.solvent_model,
@@ -518,6 +578,8 @@ def orca_optts_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "recalc_hess": params.recalc_hess,
             "ts_mode": params.ts_mode,
             "active_atoms": params.active_atoms,
+            "method": level.method,
+            "basis": level.basis,
         },
     )
     data = {
@@ -605,11 +667,12 @@ def orca_irc_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     structures = _discover_structures(input_path)
     if len(structures) != 1:
         _tool_error("orca_irc_prepare", "orca_irc_prepare currently expects one input structure.", error_code="single_structure_required")
+    level = _resolve_orca_level(task="freq", method=params.method, basis=params.basis)
     input_text = _render_orca_input(
         task="freq",
         xyz_name="input.xyz",
-        method=params.method,
-        basis=params.basis,
+        method=level.method,
+        basis=level.basis,
         aux_basis=params.aux_basis,
         dispersion=params.dispersion,
         solvent_model=params.solvent_model,
@@ -629,6 +692,8 @@ def orca_irc_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         {
             "run_dir_rel": workspace_relpath(built.run_dir),
             "inp_rel": workspace_relpath(built.inp_path),
+            "method": level.method,
+            "basis": level.basis,
         },
     )
     data = {

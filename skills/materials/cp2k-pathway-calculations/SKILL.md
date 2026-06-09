@@ -40,6 +40,8 @@ Use this skill for CP2K pathway refinement after endpoints, images, or transitio
 - Report exact files parsed and whether endpoints were fixed or optimized.
 
 ## Method-critical defaults
+- Parameter priority: honor explicit user requirements first; otherwise choose CP2K pathway overrides from the system class and pathway objective; if that judgment remains uncertain, run a narrow literature or official documentation check before finalizing the override.
+- Do not add CP2K `settings` overrides just to restate the tool baseline; only override when the user, system class, task objective, or a checked source justifies it.
 - Pathway preparation is not evidence of a barrier.
 - Atom ordering mismatches invalidate the path.
 - Project policy: do not create a separate pathway-preparation tool; use `cp2k_prepare` for CP2K conventional and pathway preparation.

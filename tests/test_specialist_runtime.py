@@ -552,6 +552,37 @@ def test_model_retry_middleware_retries_openrouter_unmarshaller_error(monkeypatc
     assert sleeps == [60.0]
 
 
+def test_model_retry_middleware_retries_wellau_upstream_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
+    model_mw = middleware[0]
+    sleeps: list[float] = []
+    attempts = {"count": 0}
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _handler(_request):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError(
+                'InternalServerError: {"error":{"message":"Upstream stream ended without a terminal response event",'
+                '"type":"api_error"}}event: error data: {"error":{"type":"upstream_error",'
+                '"message":"Upstream request failed"}}'
+            )
+        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
+
+    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+
+    async def _run():
+        return await model_mw.awrap_model_call(object(), _handler)
+
+    result = asyncio.run(_run())
+
+    assert isinstance(result, ModelResponse)
+    assert attempts["count"] == 2
+    assert sleeps == [60.0]
+
+
 def test_extract_final_text_ignores_user_message_fallback() -> None:
     runner = runtime_mod.SpecialistRunner(
         llm_profile=_FakeProfile(),

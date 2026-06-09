@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path
 from catmaster.tools.base import workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     STATUS_FILE_NAME,
@@ -417,6 +417,27 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             shutil.rmtree(stage_root)
         except Exception as exc:
             collect_warnings.append(f"staging cleanup failed: {type(exc).__name__}: {exc}")
+    states = result.task_states if result else []
+    execution_summary_path = output_root / "vasp_execute_batch_summary.json"
+    execution_summary_path.write_text(
+        json.dumps(
+            {
+                "task_name": task_name,
+                "work_base": work_base,
+                "input_root_rel": workspace_relpath(input_root),
+                "output_root_rel": workspace_relpath(output_root),
+                "task_states": states,
+                "outputs": outputs,
+                "warnings": collect_warnings,
+                **remote_context_from_result(result),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    execution_summary_rel = workspace_relpath(execution_summary_path)
 
     if dispatch_error is not None:
         _fail(
@@ -427,29 +448,68 @@ def vasp_execute_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "work_base": work_base,
                 "input_root_rel": workspace_relpath(input_root),
                 "output_root_rel": workspace_relpath(output_root),
-                "outputs": outputs,
                 "batch_state_rel": workspace_relpath(state_path),
+                "execution_summary_rel": execution_summary_rel,
+                **compact_list_for_artifact(
+                    outputs,
+                    count_key="outputs_count",
+                    inline_key="outputs",
+                    preview_key="outputs_preview",
+                    truncated_key="outputs_truncated",
+                    full_rel_key="outputs_full_rel",
+                    full_rel=execution_summary_rel,
+                    max_inline=5,
+                ),
+                **compact_list_for_artifact(
+                    states,
+                    count_key="task_states_count",
+                    inline_key="task_states",
+                    preview_key="task_states_preview",
+                    truncated_key="task_states_truncated",
+                    full_rel_key="task_states_full_rel",
+                    full_rel=execution_summary_rel,
+                    max_inline=20,
+                ),
                 **remote_context_from_exception(dispatch_error),
             },
             error_code="dispatch_failed",
         )
 
     data = {
-        "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         "work_base": result.work_base if result else work_base,
         "input_root_rel": workspace_relpath(input_root),
         "output_root_rel": workspace_relpath(output_root),
-        "outputs": outputs,
         "batch_state_rel": workspace_relpath(state_path),
+        "execution_summary_rel": execution_summary_rel,
         "task_name": task_name,
         "resources_key": resources_key,
+        **compact_list_for_artifact(
+            outputs,
+            count_key="outputs_count",
+            inline_key="outputs",
+            preview_key="outputs_preview",
+            truncated_key="outputs_truncated",
+            full_rel_key="outputs_full_rel",
+            full_rel=execution_summary_rel,
+            max_inline=5,
+        ),
+        **compact_list_for_artifact(
+            states,
+            count_key="task_states_count",
+            inline_key="task_states",
+            preview_key="task_states_preview",
+            truncated_key="task_states_truncated",
+            full_rel_key="task_states_full_rel",
+            full_rel=execution_summary_rel,
+            max_inline=20,
+        ),
         **remote_context_from_result(result),
     }
     first_output = outputs[0]["output_dir_rel"] if outputs else ""
     lines = [
         "vasp_execute_batch completed.",
-        f"task_name={task_name} calc_dirs={len(input_dirs)} outputs_collected={len(outputs)} task_states={len(data['task_states'])}",
+        f"task_name={task_name} calc_dirs={len(input_dirs)} outputs_collected={len(outputs)} task_states={len(states)}",
         f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
     ]
     if data["submission_dir"]:

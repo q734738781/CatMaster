@@ -11,7 +11,7 @@ from pymatgen.core import Structure, Molecule
 from pymatgen.io.vasp.inputs import Poscar
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 
 ADS_META_SCHEMA = "catmaster.adsorbate_meta.v1"
 ADS_INDICES_SCHEMA = "catmaster.ads_indices.v1"
@@ -790,11 +790,30 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, 
                 slabs_failed += 1
                 errors.append({"slab_file_rel": workspace_relpath(slab_path), "error": str(exc)})
 
+        errors_path: Path | None = None
+        if errors:
+            errors_path = out_dir / "batch_errors.json"
+            try:
+                errors_path.write_text(json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                errors_path = None
+
         if slabs_processed == 0:
             _fail(
                 "generate_batch_adsorption_structures",
                 message="No slabs processed successfully.",
-                data={"errors": errors},
+                data={
+                    "output_dir_rel": workspace_relpath(out_dir),
+                    **compact_list_for_artifact(
+                        errors,
+                        count_key="errors_count",
+                        inline_key="errors",
+                        preview_key="errors_preview",
+                        truncated_key="errors_truncated",
+                        full_rel_key="errors_full_rel",
+                        full_rel=workspace_relpath(errors_path) if errors_path else None,
+                    ),
+                },
                 error_code="all_slabs_failed",
             )
 
@@ -827,7 +846,17 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, 
             "ads_atoms_total_sum": int(sum(len(ent.get("ads_indices", [])) for ent in ads_index_entries)),
         }
         if errors:
-            data["errors"] = errors
+            data.update(
+                compact_list_for_artifact(
+                    errors,
+                    count_key="errors_count",
+                    inline_key="errors",
+                    preview_key="errors_preview",
+                    truncated_key="errors_truncated",
+                    full_rel_key="errors_full_rel",
+                    full_rel=workspace_relpath(errors_path) if errors_path else None,
+                )
+            )
 
         content = (
             "generate_batch_adsorption_structures completed.\n"

@@ -148,7 +148,7 @@ _WRITING_TOOL_ALLOWLIST = {
     "review_pdf_manuscript",
 }
 _RESEARCH_TOOL_ALLOWLIST: set[str] = set()
-_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = set()
+_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {"get_avail_remote_task"}
 _PEER_REVIEW_TOOL_ALLOWLIST = {"peer_review_request"}
 _PEER_REVIEW_WORKER_TOOL_ALLOWLIST = set(_PEER_REVIEW_TOOL_ALLOWLIST)
 _METADATA_AGENT_TOOL_ALLOWLIST = {
@@ -1481,10 +1481,11 @@ class SpecialistRunner:
         _ = audience
         return "\n".join(
             [
-                "Execution capability contract: registered managed execution in this worker is authoritative; do not replace a fitting managed path with local shell/Python just because the executable is not locally visible.",
-                "Use local commands and Python for preparation, inspection, glue logic, post-processing, dependency setup for bounded local steps, and work not covered by current managed tools.",
-                "Before low-level managed remote submission, read the task catalog or mounted execution skill, prepare and verify the declared stage layout, and do not submit raw trees unless they already match it.",
+                "Execution capability contract: registered managed execution in this worker is authoritative for worker-owned scientific engine runs when it fits.",
+                "Local `execute` is only for preparation, inspection, lightweight scripts, dependency setup for bounded local steps, and post-processing; do not use it to run engine binaries, MPI/sbatch wrappers, or boot scripts that bypass a managed path.",
+                "Before low-level managed remote submission, read the task catalog or mounted execution skill, prepare and verify the declared stage layout, then submit prepared stages with `remote_submission` or `remote_submission_batch`.",
                 "If managed submission fails with receipt/context fields, bounded automatic recovery is allowed when it serves the user's output goal, but read or preserve the receipt context before retrying and account for possible live remote jobs.",
+                "If managed execution is unavailable, report the missing task/config/layout context instead of falling back to local engine execution unless the user explicitly requests local-only execution or a dry run.",
             ]
         )
 
@@ -1638,6 +1639,7 @@ class SpecialistRunner:
             "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, deciding the next bounded handoff, and bounded experiment-facing summaries grounded in completed workspace evidence.\n"
             "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `dynamics_worker` for CP2K AIMD, CP2K reusable run-health summaries, LAMMPS minimization/MD/restart work, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct public-source checking only when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
+            "For worker-owned calculation briefs, use the remote task catalog only to avoid misleading local fallback instructions; submission belongs to the worker. Do not suggest local executable fallback for scientific engines unless the user asked for local-only execution or a dry run.\n"
             "In particular, general materials or surface workflows belong to `materials_worker`; atomistic dynamics, force-field based minimization/MD, restarts, and trajectory-health work belong to `dynamics_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
                 "Each brief should contain one primary goal and one completion criterion. "
@@ -1650,9 +1652,9 @@ class SpecialistRunner:
             "For likely transient managed-execution failures, you may delegate one bounded recovery attempt toward the requested output when the previous receipt/context is preserved; ask the user only when recovery would materially increase cost, queue pressure, or scientific scope.\n"
             "Only do the implementation directly in the specialist thread when no available worker matches the task, or when the action is a tiny coordination-only step that would not justify a delegation round.\n"
             "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
-            "If a bounded workspace task is not covered by a dedicated registered tool, do not stop at that boundary alone; route it to the relevant worker so it can use local command/Python capability and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
+            "If a bounded workspace task is not covered by a dedicated registered tool and is not a scientific engine execution with a managed path, do not stop at that boundary alone; route it to the relevant worker so it can use local command/Python capability and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
             "If a worker needs a handy Python package for a bounded local step and it is missing, let it install that package through its local command capability.\n"
-            "When method settings, software behavior, or scientific best practice are uncertain, use a narrow official-docs or primary-source check before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
+            "When method settings, software behavior, or scientific best practice are uncertain, use a narrow literature or official documentation check before improvising a custom implementation. Keep that check narrow and implementation-oriented; do not turn it into a broad literature review.\n"
             "When that custom implementation becomes heavy, batch-oriented, high-throughput, or clearly worth rerunning, prefer materializing it as a reusable workspace script under `scripts/` instead of burying the logic inside one long ephemeral shell command.\n"
             f"Do not orchestrate other specialists. {memory_policy}\n"
             f"{cls._report_packet_policy()}\n"
@@ -1854,10 +1856,12 @@ class SpecialistRunner:
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
             "Typical MACE work here includes surrogate screening, relaxation, single-point ranking, and path optimization when those steps serve one materials workflow; MACE MD sampling belongs to `dynamics_worker`.\n"
             "For MACE or other ML-potential relaxations, single-points, and path calculations, use the registered managed batch path first when it fits; do not run local calculators just because the package is importable.\n"
+            "For VASP, CP2K, and managed MACE execution, local command capability is for stage prep and analysis only; engine execution stays on the managed remote path.\n"
             "When no dedicated tool covers a bounded materials task, use local command/Python capability with mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
+            "For method-parameter choices in materials calculations, honor explicit user requirements first, then choose task- and system-driven overrides; if the choice remains uncertain, use a narrow literature or official documentation check before finalizing the override.\n"
             "If a handy Python package is missing for a bounded local step, install it through the local command capability.\n"
-            "When configuration details, package behavior, or methodological best practice are uncertain, use a narrow official-docs or primary-source check before finalizing the workflow.\n"
+            "When configuration details, package behavior, or methodological best practice are uncertain, use a narrow literature or official documentation check before finalizing the workflow.\n"
             "For heavier custom logic such as high-throughput screening helpers, large batch post-processing, or multi-step deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
             "When your result naturally becomes a dataset, a training/evaluation job, or an active-learning update loop, return the artifacts needed for a clean handoff to `ml_worker`.\n"
             "Use available execution and analysis tools, keep the run focused, and return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
@@ -1881,6 +1885,7 @@ class SpecialistRunner:
             "When a registered managed ML tool fits the task, prefer that managed path first.\n"
             "For MACE dataset curation, training, and benchmark evaluation, prefer the registered managed dataset/training/evaluation path over ad hoc local wrapper scripts.\n"
             "Do not create or run a local training wrapper when the managed training path already fits the request.\n"
+            "For managed MACE training or evaluation, local command capability is for dataset/script preparation and summaries only; training/evaluation execution stays on the managed remote path when it fits.\n"
             "Do not replace managed MACE training or evaluation with local CLI/Python execution unless the user explicitly requested a local-only dry run or the managed tool cannot express the required workflow.\n"
             "Prefer using libraries already available in the environment and reusable workspace code before introducing new dependencies or parallel implementations.\n"
             "Common libraries already available here include `numpy`, `pandas`, `scipy`, `matplotlib`, `torch`, `joblib`, and `matminer`; prefer them first unless the task clearly needs something else.\n"
@@ -1891,7 +1896,7 @@ class SpecialistRunner:
             "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts rather than burying them in one-off shell snippets.\n"
             "Use remote execution when the job is heavy, long-running, batch-oriented, or needs managed compute; MACE training/fine-tuning normally falls into this category.\n"
             "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate. If the current ML task is not covered by those managed tools, keep going locally with reusable scripts under `scripts/` instead of stopping.\n"
-            "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use a narrow official-docs or primary-source check before locking the workflow.\n"
+            "When framework behavior, hyperparameter conventions, or implementation best practice are uncertain, use a narrow literature or official documentation check before locking the workflow.\n"
             "For heavier custom logic such as dataset sweeps, benchmark harnesses, or other multi-run deterministic pipelines, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
             "When the loop needs new structures, new reference calculations, or materials-side post-analysis, return the artifacts needed for a clean handoff to `materials_worker`.\n"
             "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
@@ -1912,10 +1917,12 @@ class SpecialistRunner:
             "This worker owns CP2K AIMD preparation/execution handoff, MACE MD sampling, reusable CP2K run-health summaries, LAMMPS force-field validation, minimization, MD, restart staging, and generic trajectory QC.\n"
             "It does not own general slab, adsorbate, bulk, defect, or conventional DFT structure construction; consume artifacts from `materials_worker` for those steps.\n"
             "For CP2K AIMD, MACE MD, and LAMMPS execution, use the registered managed remote path when it fits, with prepared stage directories submitted through DPDispatcher.\n"
+            "For CP2K AIMD, LAMMPS, and MACE MD execution, local command capability is for stage prep and analysis only; engine execution stays on the managed remote path.\n"
             "Do not invent force-field parameters, pair coefficients, or complex PLUMED collective variables. Use validated force-field cards and user-provided or curated PLUMED files.\n"
+            "For method-parameter choices in dynamics calculations, honor explicit user requirements first, then choose task- and system-driven overrides; if the choice remains uncertain, use a narrow literature or official documentation check before finalizing the override.\n"
             "When no dedicated analysis tool covers a bounded trajectory question, use local command/Python capability with mature third-party libraries inside the workspace instead of forcing a generic parser.\n"
             "If a handy Python package is missing for a bounded local step, install it through the local command capability.\n"
-            "When configuration details, package behavior, or methodological best practice are uncertain, use a narrow official-docs or primary-source check before finalizing the workflow.\n"
+            "When configuration details, package behavior, or methodological best practice are uncertain, use a narrow literature or official documentation check before finalizing the workflow.\n"
             "For heavier custom logic such as trajectory post-processing or deterministic batch analysis, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
             "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
@@ -1935,16 +1942,19 @@ class SpecialistRunner:
             "Handle a bounded molecular quantum-chemistry subtask autonomously inside the workspace.\n"
             "This worker owns molecule/cluster workflows: SMILES-to-3D conversion, conformer generation and pruning, xTB or CREST preoptimization/screening, ORCA preparation/execution, and molecular post-analysis for optimization, frequencies, scans, TS/IRC, TDDFT, or NMR-style jobs.\n"
             "Prefer the dedicated managed tools when they fit for molecule creation, conformer handling, xTB/CREST screening, ORCA preparation/execution, and molecular post-analysis.\n"
+            "For ORCA, xTB, and CREST execution, local command capability is for stage prep, checks, and post-processing only; engine execution stays on the managed remote path.\n"
             "If the user names a small molecule or cluster but does not provide a structure file, first create the structure under `<topic>/structures/` and only then launch xTB/CREST/ORCA tools against that exact workspace-relative path.\n"
             "Do not guess that a path like `<topic>/structures/<name>.xyz` already exists; verify it exists or create it before calling managed batch or preparation tools.\n"
             "Treat xTB/CREST as the fast exploration layer and ORCA as the higher-fidelity molecular quantum layer unless the task explicitly calls for a different partition.\n"
             "For cheap preoptimization, conformer cleanup, low-cost screening, or geometry relaxation before higher-level ORCA work, default to the dedicated xTB/CREST managed path instead of forcing an ORCA-native semiempirical setup.\n"
             "Use ORCA with XTB-family methods only when the request explicitly needs an ORCA-native XTB workflow or another ORCA-side feature that the dedicated xTB/CREST path does not cover; do not choose ORCA-XTB as the default fallback for routine preopt steps.\n"
+            "For ORCA method, basis, dispersion, solvation, charge, spin, and tightness choices, honor explicit user requirements first, then choose task- and molecule-driven overrides; if the choice remains uncertain, use a narrow literature or official documentation check before finalizing the override.\n"
+            "Treat `orca_prepare` auto as a layered workflow default: optimization/frequency tasks use r2SCAN-3c, while single-point, TDDFT, and NMR tasks use WB97X-D4/def2-TZVP; add higher-level hybrid/TZ-or-larger single points or calibration for final barriers and publication-facing energies when needed.\n"
             "When the request is about one mechanistic step or one catalyst-side molecular episode, keep the run on the molecular lane instead of trying to translate it into a periodic workflow.\n"
             "When no dedicated tool covers a bounded molecular task, use local command/Python capability with mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "If a handy Python package is missing for a bounded local step, install it through the local command capability.\n"
             "For heavier custom logic such as ensemble post-processing, Boltzmann aggregation, or multi-step deterministic screening helpers, write a reusable workspace script under `scripts/` and run that script instead of leaving the whole implementation embedded in one ephemeral command.\n"
-            "When configuration details, software behavior, or methodological best practice are uncertain, use a narrow official-docs or primary-source check before finalizing the workflow.\n"
+            "When configuration details, software behavior, or methodological best practice are uncertain, use a narrow literature or official documentation check before finalizing the workflow.\n"
             "Return a compact result with the key finding, relevant artifact paths, and any blocking issue.\n"
             "Do not perform broad literature review; that belongs to `litreview_agent` in the research lane.\n"
             f"{cls._tool_policy()}\n"
@@ -2543,6 +2553,17 @@ class SpecialistRunner:
             "eof while parsing",
             "validation errors for unmarshaller",
             "validation error for unmarshaller",
+            "upstream stream ended without a terminal response event",
+            "upstream request failed",
+            "upstream_error",
+            "terminal response event",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+            "connection reset",
+            "connection aborted",
+            "read timeout",
+            "timed out",
             "union_tag_invalid",
             "body.",
             ".tool.content",
@@ -2551,9 +2572,11 @@ class SpecialistRunner:
             return True
         if "openrouter" in text and "validation" in text:
             return True
+        if "internalservererror" in text and ("upstream" in text or "api_error" in text):
+            return True
         if "body." in text and ".tool.content" in text:
             return True
-        return any(fragment in text for fragment in retryable_fragments[:4])
+        return any(fragment in text for fragment in retryable_fragments[:15])
 
     @classmethod
     def _sanitize_tool_result_for_history(cls, result: Any) -> Any:

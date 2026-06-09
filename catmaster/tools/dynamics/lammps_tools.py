@@ -13,7 +13,7 @@ from ase.io import write as ase_write
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_records_for_artifact, resolve_workspace_path, workspace_relpath
 from catmaster.tools.dynamics.cp2k_analysis import parse_cp2k_energy_file
 from catmaster.tools.geometry_inputs.cp2k_common import discover_structure_paths, safe_stage_name
 
@@ -550,12 +550,15 @@ def lammps_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 settings=settings,
             )
         )
+    manifest = output_root / "lammps_prepare_manifest.json"
+    _write_json(manifest, {"input_path_rel": workspace_relpath(input_path), "recipe": params.recipe, "records": records})
     data = {
         "input_path_rel": workspace_relpath(input_path),
         "output_root_rel": workspace_relpath(output_root),
         "recipe": params.recipe,
-        "records": records,
         "prepared_count": len(records),
+        "manifest_rel": workspace_relpath(manifest),
+        **compact_records_for_artifact(records, full_records_rel=workspace_relpath(manifest)),
     }
     content = (
         "lammps_prepare completed.\n"

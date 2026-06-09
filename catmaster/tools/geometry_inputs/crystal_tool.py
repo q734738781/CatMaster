@@ -12,7 +12,7 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.symmetry.bandstructure import HighSymmKpath
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 
 
 def _error_message(message: str, *, data: Dict[str, Any] | None = None) -> str:
@@ -517,7 +517,17 @@ def supercell(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "errors_count": len(errors),
             }
             if errors:
-                data["errors"] = errors
+                data.update(
+                    compact_list_for_artifact(
+                        errors,
+                        count_key="errors_count",
+                        inline_key="errors",
+                        preview_key="errors_preview",
+                        truncated_key="errors_truncated",
+                        full_rel_key="errors_full_rel",
+                        full_rel=workspace_relpath(batch_json),
+                    )
+                )
             first_output = results[0]["output_rel"] if results else ""
             lines = [
                 "supercell completed.",
@@ -591,8 +601,15 @@ def enumerate_unique_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]
             "input_rel": workspace_relpath(structure_path),
             "output_json_rel": workspace_relpath(output_json),
             "natoms": len(structure),
-            "groups_count": len(groups),
-            "groups": groups,
+            **compact_list_for_artifact(
+                groups,
+                count_key="groups_count",
+                inline_key="groups",
+                preview_key="groups_preview",
+                truncated_key="groups_truncated",
+                full_rel_key="groups_full_rel",
+                full_rel=workspace_relpath(output_json),
+            ),
         }
         content = (
             "enumerate_unique_sites completed.\n"

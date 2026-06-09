@@ -289,25 +289,31 @@ def vasp_prepare(payload: Dict[str, object]) -> tuple[str, dict[str, Any]]:
         "use_dft_plus_u": bool(params.use_dft_plus_u),
         "enable_dipole": bool(params.enable_dipole),
         "compute_dos": bool(params.compute_dos or params.preset == "dos"),
-        "dos_nedos": plan.user_incar_settings.get("NEDOS") if params.preset == "dos" else None,
-        "dos_ismear": plan.user_incar_settings.get("ISMEAR") if params.preset == "dos" else None,
-        "dos_icharg": plan.user_incar_settings.get("ICHARG") if params.preset == "dos" else None,
-        "dos_charge_density_mode": (
-            "fixed_chgcar" if dos_charge_density_path is not None else ("self_consistent" if params.preset == "dos" else None)
-        ),
-        "dos_charge_density_path_rel": (
-            workspace_relpath(dos_charge_density_path) if dos_charge_density_path is not None else None
-        ),
-        "md_temperature_begin_k": plan.user_incar_settings.get("TEBEG") if params.preset == "md" else None,
-        "md_temperature_end_k": plan.user_incar_settings.get("TEEND") if params.preset == "md" else None,
-        "md_steps": plan.user_incar_settings.get("NSW") if params.preset == "md" else None,
-        "md_timestep_fs": plan.user_incar_settings.get("POTIM") if params.preset == "md" else None,
-        "md_smass": plan.user_incar_settings.get("SMASS") if params.preset == "md" else None,
-        "mdalgo": plan.user_incar_settings.get("MDALGO") if params.preset == "md" else None,
         "patch_policy": params.patch_policy,
         "protected_incar_keys": list(plan.protected_keys),
         "user_patch_keys": sorted(dict(params.user_incar_patch).keys()),
     }
+    if params.preset == "dos":
+        data.update(
+            {
+                "dos_nedos": plan.user_incar_settings.get("NEDOS"),
+                "dos_ismear": plan.user_incar_settings.get("ISMEAR"),
+                "dos_icharg": plan.user_incar_settings.get("ICHARG"),
+                "dos_charge_density_mode": "fixed_chgcar" if dos_charge_density_path is not None else "self_consistent",
+                "dos_charge_density_path_rel": workspace_relpath(dos_charge_density_path) if dos_charge_density_path is not None else None,
+            }
+        )
+    if params.preset == "md":
+        data.update(
+            {
+                "md_temperature_begin_k": plan.user_incar_settings.get("TEBEG"),
+                "md_temperature_end_k": plan.user_incar_settings.get("TEEND"),
+                "md_steps": plan.user_incar_settings.get("NSW"),
+                "md_timestep_fs": plan.user_incar_settings.get("POTIM"),
+                "md_smass": plan.user_incar_settings.get("SMASS"),
+                "mdalgo": plan.user_incar_settings.get("MDALGO"),
+            }
+        )
     propagated, warnings = propagate_adsorbate_metadata(
         input_structure_path=input_path,
         output_structure_path=output_root / "POSCAR",

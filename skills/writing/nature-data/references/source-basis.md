@@ -1,6 +1,6 @@
 # Source Basis
 
-Use this file when a user asks why a rule exists, wants primary-source justification, or needs to
+Use this file when a user asks why a rule exists, wants source-backed justification, or needs to
 audit the `nature-data` skill against real policy sources.
 
 ## Source map

@@ -14,7 +14,7 @@ from ase.io import write as ase_write
 from pydantic import BaseModel, Field, model_validator
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
     TaskSpec,
@@ -624,6 +624,7 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             warnings=collect_warnings,
             error_code="dispatch_failed",
         )
+    states = result.task_states if result else []
     data = {
         "dataset_dir_rel": workspace_relpath(dataset_dir),
         "output_root_rel": workspace_relpath(output_root),
@@ -635,8 +636,15 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "e0s": params.e0s,
         "multiheads_finetuning": params.multiheads_finetuning,
         "atomic_numbers": atomic_numbers,
-        "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        **compact_list_for_artifact(
+            states,
+            count_key="task_states_count",
+            inline_key="task_states",
+            preview_key="task_states_preview",
+            truncated_key="task_states_truncated",
+            max_inline=20,
+        ),
         **remote_context_from_result(result),
         **collect_info,
     }
@@ -754,14 +762,22 @@ def mace_evaluate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             warnings=collect_warnings,
             error_code="dispatch_failed",
         )
+    states = result.task_states if result else []
     data = {
         "dataset_dir_rel": workspace_relpath(dataset_dir),
         "output_root_rel": workspace_relpath(output_root),
         "batch_state_rel": workspace_relpath(state_path),
         "work_base": work_base,
         "model": params.model,
-        "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
+        **compact_list_for_artifact(
+            states,
+            count_key="task_states_count",
+            inline_key="task_states",
+            preview_key="task_states_preview",
+            truncated_key="task_states_truncated",
+            max_inline=20,
+        ),
         **remote_context_from_result(result),
         **collect_info,
     }

@@ -47,6 +47,17 @@ def _write_two_atom_poscar(path: Path, species: list[str], frac_xs: list[float])
     structure.to(filename=str(path), fmt="poscar")
 
 
+def _write_two_atom_cart_poscar(path: Path, species: list[str], positions: list[list[float]]) -> None:
+    structure = Structure(
+        lattice=Lattice.cubic(8.0),
+        species=species,
+        coords=positions,
+        coords_are_cartesian=True,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Poscar(structure, sort_structure=False).write_file(str(path))
+
+
 def _write_poscar_with_sd(path: Path, species: list[str], coords: list[list[float]], selective_dynamics: list[list[bool]]) -> None:
     structure = Structure(
         lattice=Lattice.cubic(5.0),
@@ -277,6 +288,30 @@ def test_make_neb_geometry_writes_flat_vasp_image_tree(tmp_path: Path) -> None:
         assert (output_root / f"{idx:02d}.vasp").is_file()
 
 
+def test_make_neb_geometry_warns_for_short_interatomic_distance(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        _write_two_atom_cart_poscar(tmp_path / "files" / "inputs" / "IS.vasp", ["H", "H"], [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+        _write_two_atom_cart_poscar(tmp_path / "files" / "inputs" / "FS.vasp", ["H", "H"], [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+
+        _content, artifact = make_neb_geometry(
+            {
+                "initial_path": "inputs/IS.vasp",
+                "final_path": "inputs/FS.vasp",
+                "output_dir": "neb_images_overlap",
+                "n_images": 1,
+                "mic": False,
+            }
+        )
+
+    warnings = artifact["warnings"]
+    geometry_check = artifact["data"]["geometry_check"]
+    assert any("minimum interatomic distance below 0.80 Angstrom" in item for item in warnings)
+    assert geometry_check["short_distance_count"] == 1
+    assert geometry_check["min_pair_distance_image"] == "01"
+    assert geometry_check["min_pair_distance_angstrom"] == pytest.approx(0.0)
+    assert geometry_check["short_distance_records"][0]["atom_indices_1based"] == [1, 2]
+
+
 def test_make_neb_geometry_uses_minimum_image_when_mic_enabled(tmp_path: Path) -> None:
     with workspace_scope(tmp_path):
         _write_poscar(tmp_path / "files" / "inputs" / "IS.vasp", 0.9)
@@ -376,6 +411,22 @@ def test_estimate_neb_image_count_rejects_element_sequence_mismatch(tmp_path: Pa
                 {
                     "initial_path": "inputs/IS.vasp",
                     "final_path": "inputs/FS.vasp",
+                }
+            )
+
+
+def test_make_neb_geometry_rejects_element_sequence_mismatch(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        _write_two_atom_poscar(tmp_path / "files" / "inputs" / "IS.vasp", ["H", "O"], [0.0, 0.2])
+        _write_two_atom_poscar(tmp_path / "files" / "inputs" / "FS.vasp", ["O", "H"], [0.1, 0.3])
+
+        with pytest.raises(CatMasterToolExecutionError, match="different element sequences"):
+            make_neb_geometry(
+                {
+                    "initial_path": "inputs/IS.vasp",
+                    "final_path": "inputs/FS.vasp",
+                    "output_dir": "bad_neb_images",
+                    "n_images": 1,
                 }
             )
 
@@ -624,6 +675,63 @@ def test_vasp_neb_prepare_force_patch_allows_protected_override_from_image_tree(
     warnings = artifact["warnings"]
     assert any("Copy the original relax OUTCAR into jobs/neb_from_tree/00/OUTCAR" in item for item in warnings)
     assert any("Copy the original relax OUTCAR into jobs/neb_from_tree/02/OUTCAR" in item for item in warnings)
+
+
+def test_vasp_neb_prepare_image_tree_rejects_element_sequence_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(StructWriter, "write_vasp_inputs", _fake_write_vasp_inputs)
+
+    with workspace_scope(tmp_path):
+        images_root = tmp_path / "files" / "prepared_images"
+        _write_poscar_with_sd(
+            images_root / "00.vasp",
+            ["H", "O"],
+            [[0.0, 0.0, 0.0], [0.2, 0.5, 0.5]],
+            [[True, True, True], [True, True, True]],
+        )
+        _write_poscar_with_sd(
+            images_root / "01.vasp",
+            ["O", "H"],
+            [[0.1, 0.0, 0.0], [0.3, 0.5, 0.5]],
+            [[True, True, True], [True, True, True]],
+        )
+
+        with pytest.raises(CatMasterToolExecutionError, match="different element sequences"):
+            vasp_neb_prepare(
+                {
+                    "images_root": "prepared_images",
+                    "output_root": "jobs/bad_neb_from_tree",
+                }
+            )
+
+
+def test_vasp_neb_prepare_image_tree_warns_for_short_interatomic_distance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(StructWriter, "write_vasp_inputs", _fake_write_vasp_inputs)
+
+    with workspace_scope(tmp_path):
+        images_root = tmp_path / "files" / "prepared_images"
+        _write_two_atom_cart_poscar(images_root / "00.vasp", ["H", "H"], [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+        _write_two_atom_cart_poscar(images_root / "01.vasp", ["H", "H"], [[1.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
+        _write_two_atom_cart_poscar(images_root / "02.vasp", ["H", "H"], [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+
+        _content, artifact = vasp_neb_prepare(
+            {
+                "images_root": "prepared_images",
+                "output_root": "jobs/neb_from_short_tree",
+            }
+        )
+
+    warnings = artifact["warnings"]
+    geometry_check = artifact["data"]["geometry_check"]
+    assert any("minimum interatomic distance below 0.80 Angstrom" in item for item in warnings)
+    assert geometry_check["short_distance_count"] == 1
+    assert geometry_check["min_pair_distance_image"] == "01"
+    assert geometry_check["min_pair_distance_angstrom"] == pytest.approx(0.2)
 
 
 def test_vasp_neb_prepare_accepts_flat_image_tree_and_warns_for_endpoint_outcars(

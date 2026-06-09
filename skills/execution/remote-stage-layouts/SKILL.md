@@ -16,13 +16,50 @@ allowed-tools: "ls read_file write_file edit_file execute get_avail_remote_task 
 2. Read the matching layout section below.
 3. Create a clean workspace-relative stage directory.
 4. Verify the exact files with `ls` or `find`.
-5. Submit with `remote_submission` for one stage, or `remote_submission_batch` when `work_dir` contains one first-level child directory per task.
+5. Submit with `remote_submission` for one stage. When there are two or more independent prepared stages for the same `task_name`, `params`, and `config`, make a parent root and prefer one `remote_submission_batch` call.
 
 Never pass a raw project input tree to low-level remote submission unless it already matches the declared layout.
 Do not use `execute` to import, wrap, or call CatMaster managed tool implementations; call the exposed `remote_submission` or `remote_submission_batch` tool directly.
 
+## Submission Decision
+- Use `remote_submission` when `work_dir` itself is one prepared stage matching the selected `task_name` layout. The boot script runs directly in `work_dir`.
+- Prefer `remote_submission_batch` when there are two or more independent prepared stages for the same `task_name`, `params`, and `config`; do not issue multiple parallel `remote_submission` calls for that case.
+- Use `remote_submission_batch` only when `work_dir` is a parent batch root and each first-level child directory is a complete independent stage for the same `task_name`. The parent directory is not the task cwd; the boot script runs once inside each first-level child directory.
+- A single stage may contain many scientific inputs if the task layout says so. This is still `remote_submission`, not `remote_submission_batch`. Common example: `mace_sp_dir` or `mace_relax_dir` with many structures under one `input/`.
+- `remote_submission_batch` does not recursively discover nested jobs. It submits only first-level child directories.
+- `remote_submission_batch` applies the same `task_name`, `params`, and `config` to every first-level child. Do not use it when children need different task templates or incompatible params.
+
+```text
+single stage -> remote_submission
+stage/
+  INCAR
+  POSCAR
+  KPOINTS
+  POTCAR
+
+parent with independent stages -> remote_submission_batch
+batch_root/
+  job_a/
+    INCAR
+    POSCAR
+    KPOINTS
+    POTCAR
+  job_b/
+    INCAR
+    POSCAR
+    KPOINTS
+    POTCAR
+
+one MACE stage with internal input batch -> remote_submission
+mace_stage/
+  input/
+    a.vasp
+    b.vasp
+```
+
 ## General layout rules
 - The remote cwd is the submitted stage directory, and outputs are downloaded back into that same stage.
+- Multiple same-template independent jobs should be grouped under one parent and submitted with `remote_submission_batch`; this keeps them in one DPDispatcher submission and one result-download lifecycle.
 - Built-in boot scripts are copied automatically from the task catalog.
 - `get_avail_resources` lists general custom-boot resource cards. Use `general_cpu` for custom pure-Python/ASE CPU scripts and `general_gpu` for custom GPU scripts when visible; otherwise rely on the card marked `default_for_custom_boot`.
 - Domain task resource defaults are shown through `get_avail_remote_task(return_resource=true)`. For registered tasks, do not pass `config.resources`; the task resource card owns machine/environment initialization. Override only exposed sizing fields such as `cpu_per_node` or `gpu_per_node` when intentionally requested.
@@ -46,6 +83,7 @@ For batch submission, make each first-level child one complete calculation folde
 
 ## vasp_execute_neb
 Same as `vasp_execute`, but the stage is a VASP NEB/dimer-style folder with the image subdirectories and root inputs expected by VASP.
+Before submission, verify that the stage came from `vasp_neb_prepare` or an equivalent checked image tree. Do not submit if endpoint ordering/cell validation failed or if the preparation artifact reports `short_distance_count > 0` (default warning threshold: minimum interatomic distance below `0.8 Å`).
 
 ## cp2k_execute
 Stage directory must contain a prepared CP2K input named `job.inp`. The task runs the generic CP2K boot script with `cp2k.psmp`, `OMP_NUM_THREADS=1`, and MPI ranks from the scheduler allocation.
@@ -112,6 +150,7 @@ Common params: `params_path`, `device`.
 
 ## mace_neb_dir
 Stage directory must contain `input/` with one prepared path task directory per NEB job. Outputs are written to `output/`.
+Each path task should be generated or checked by the NEB preparation workflow before submission. Do not submit a tree with atom-order mismatches or a `short_distance_count > 0` overlap warning from the preparation artifact.
 
 Common params: `mode`, `fmax`, `steps`, `climb`, `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU.
 

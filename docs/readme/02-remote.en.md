@@ -179,7 +179,38 @@ For MACE relax:
 Convert structures/ into a mace_relax_dir stage with input/, then submit it with remote_submission. Use model=mh-1 and head=omat_pbe.
 ```
 
-## 7. Real Remote Smoke Tests
+## 7. Single Versus Batch Submission
+
+The difference between `remote_submission` and `remote_submission_batch` is where the boot script starts:
+
+- `remote_submission`: `work_dir` is one stage, and the boot script starts once directly inside `work_dir`.
+- `remote_submission_batch`: `work_dir` is a parent root, and the boot script starts once inside each first-level child directory. The parent root itself is not used as the task cwd.
+
+```text
+remote_submission:
+stage/
+  INCAR
+  POSCAR
+  KPOINTS
+  POTCAR
+
+remote_submission_batch:
+batch_root/
+  job_a/
+    INCAR
+    POSCAR
+    KPOINTS
+    POTCAR
+  job_b/
+    INCAR
+    POSCAR
+    KPOINTS
+    POTCAR
+```
+
+Do not switch to `remote_submission_batch` merely because one stage contains many scientific inputs. For example, one `mace_sp_dir` or `mace_relax_dir` stage may contain many structures under `input/`; that is still one `remote_submission`. Use `remote_submission_batch` only when you have multiple independent MACE stage child directories.
+
+## 8. Real Remote Smoke Tests
 
 After remote deployment, run the script-style smoke test first. It prepares tiny O2/H2O stages, uses CatMaster's current agent-visible `remote_submission` path, and submits real DPDispatcher jobs. It is not a dry-run.
 
@@ -225,7 +256,7 @@ See:
 tests/remote_execution/README.md
 ```
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 `Machine 'xxx' not found`
 

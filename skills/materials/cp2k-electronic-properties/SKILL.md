@@ -33,6 +33,8 @@ Use this skill for CP2K electronic-property stages after the structural footing 
 - Report the exact files parsed and the assumptions used to align energy windows, spin channels, atom groups, or orbital projections.
 
 ## Method-critical defaults
+- Parameter priority: honor explicit user requirements first; otherwise choose CP2K property-stage overrides from the system class and electronic-property objective; if that judgment remains uncertain, run a narrow literature or official documentation check before finalizing the override.
+- Do not add CP2K `settings` overrides just to restate the tool baseline; only override when the user, system class, task objective, or a checked source justifies it.
 - DOS/PDOS settings depend on the scientific question; do not present a generic grid as converged evidence.
 - For charge or population analysis, state which CP2K property output was requested and parsed.
 

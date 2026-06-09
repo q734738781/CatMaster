@@ -17,8 +17,9 @@ except Exception:  # pragma: no cover
 class ToolOutputConfig:
     inline_data_enabled: bool = True
     preview_chars: int = 3_000
-    offload_chars: int = 600
+    offload_chars: int = 20_000
     offload_dir_rel: str = "_tool_outputs"
+    include_tool_args: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "ToolOutputConfig":
@@ -28,6 +29,7 @@ class ToolOutputConfig:
             preview_chars=max(256, int(payload.get("preview_chars", cls.preview_chars))),
             offload_chars=max(128, int(payload.get("offload_chars", cls.offload_chars))),
             offload_dir_rel=str(payload.get("offload_dir_rel", cls.offload_dir_rel)).strip() or cls.offload_dir_rel,
+            include_tool_args=bool(payload.get("include_tool_args", cls.include_tool_args)),
         )
 
 

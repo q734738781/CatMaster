@@ -13,7 +13,7 @@ from mp_api.client import MPRester
 from pydantic import BaseModel, Field
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 
 
 class MPSearchMaterialsInput(BaseModel):
@@ -356,54 +356,69 @@ def mp_download_structure(payload: Dict[str, object]) -> tuple[str, dict[str, An
             error_code="download_failed",
         )
 
-    if errors and not results:
-        _fail(
-            "mp_download_structure",
-            message="Failed to download structures for all requested mp_ids.",
-            data={
-                "format": fmt,
-                "output_dir_rel": workspace_relpath(out_dir),
-                "results": results,
-                "errors": errors,
-            },
-            error_code="all_downloads_failed",
-        )
-
     if errors:
         warnings.append(f"Partial failure: {len(errors)} of {len(params.mp_ids)} mp_ids failed.")
+
+    summary_path = out_dir / "mp_download_structure_summary.json"
+    summary_rel = ""
+    try:
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "format": fmt,
+                    "output_dir_rel": workspace_relpath(out_dir),
+                    "requested": len(params.mp_ids),
+                    "downloaded": len(results),
+                    "results": results,
+                    "errors": errors,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        summary_rel = workspace_relpath(summary_path)
+    except Exception as exc:
+        warnings.append(f"Failed to persist MP download summary: {type(exc).__name__}: {exc}")
 
     data = {
         "format": fmt,
         "output_dir_rel": workspace_relpath(out_dir),
-        "results": results,
-        "errors": errors,
         "requested": len(params.mp_ids),
         "downloaded": len(results),
+        "summary_json_rel": summary_rel,
+        **compact_list_for_artifact(
+            results,
+            count_key="results_count",
+            inline_key="results",
+            preview_key="results_preview",
+            truncated_key="results_truncated",
+            full_rel_key="results_full_rel",
+            full_rel=summary_rel or None,
+        ),
+        **compact_list_for_artifact(
+            errors,
+            count_key="errors_count",
+            inline_key="errors",
+            preview_key="errors_preview",
+            truncated_key="errors_truncated",
+            full_rel_key="errors_full_rel",
+            full_rel=summary_rel or None,
+        ),
     }
+    if errors and not results:
+        _fail(
+            "mp_download_structure",
+            message="Failed to download structures for all requested mp_ids.",
+            data=data,
+            error_code="all_downloads_failed",
+        )
+
     downloaded_ids_all = [str(item.get("mp_id") or "") for item in results if isinstance(item, dict)]
     failed_ids_all = [str(item.get("mp_id") or "") for item in errors if isinstance(item, dict)]
     downloaded_ids = downloaded_ids_all[:3]
     failed_ids = failed_ids_all[:3]
-
-    examples_rel = ""
-    if len(downloaded_ids_all) > 3 or len(failed_ids_all) > 3:
-        examples_path = out_dir / "mp_download_structure_examples.json"
-        payload = {
-            "downloaded_ids": downloaded_ids_all,
-            "failed_ids": failed_ids_all,
-            "requested": len(params.mp_ids),
-            "downloaded": len(results),
-            "errors": len(errors),
-        }
-        try:
-            examples_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            examples_rel = workspace_relpath(examples_path)
-            data["examples_json_rel"] = examples_rel
-        except Exception as exc:
-            warnings.append(f"Failed to persist full examples list: {type(exc).__name__}: {exc}")
 
     content = (
         "mp_download_structure completed.\n"
@@ -412,8 +427,8 @@ def mp_download_structure(payload: Dict[str, object]) -> tuple[str, dict[str, An
         f"downloaded_examples={downloaded_ids}\n"
         f"failed_examples={failed_ids}"
     )
-    if examples_rel:
-        content += f"\nexamples_json_rel={examples_rel}"
+    if summary_rel:
+        content += f"\nsummary_json_rel={summary_rel}"
     return _success("mp_download_structure", content=content, data=data, warnings=warnings)
 
 

@@ -17,6 +17,15 @@ def _project_space(tmp_path: Path) -> Path:
     return project
 
 
+def _write_water_xyz(files_root: Path) -> None:
+    xyz_path = files_root / "structures" / "h2o.xyz"
+    xyz_path.parent.mkdir(parents=True, exist_ok=True)
+    xyz_path.write_text(
+        "3\nwater\nO 0.000000 0.000000 0.000000\nH 0.758602 0.000000 0.504284\nH -0.758602 0.000000 0.504284\n",
+        encoding="utf-8",
+    )
+
+
 def test_orca_prepare_single_structure_creates_input(tmp_path: Path) -> None:
     project = _project_space(tmp_path)
     with workspace_scope(project):
@@ -47,6 +56,79 @@ def test_orca_prepare_single_structure_creates_input(tmp_path: Path) -> None:
         assert "Freq" in inp_text
         assert "%pal" not in inp_text
         assert "* xyzfile 0 1 input.xyz" in inp_text
+
+
+def test_orca_prepare_auto_optfreq_uses_r2scan3c_structure_level(tmp_path: Path) -> None:
+    project = _project_space(tmp_path)
+    with workspace_scope(project):
+        files_root = project / "files"
+        _write_water_xyz(files_root)
+        _, artifact = orca_prepare(
+            {
+                "input_path": "structures/h2o.xyz",
+                "output_root": "calculations/orca/h2o_auto_optfreq",
+                "task": "optfreq",
+                "maxcore_mb": 512,
+            }
+        )
+        run_dir = files_root / artifact["data"]["records"][0]["run_dir_rel"]
+        inp_text = (run_dir / "job.inp").read_text(encoding="utf-8")
+        assert "! r2SCAN-3c TightSCF Opt Freq" in inp_text
+        assert artifact["data"]["method"] == "r2SCAN-3c"
+        assert artifact["data"]["basis"] == ""
+
+
+def test_orca_prepare_auto_sp_uses_larger_basis(tmp_path: Path) -> None:
+    project = _project_space(tmp_path)
+    with workspace_scope(project):
+        files_root = project / "files"
+        _write_water_xyz(files_root)
+        _, artifact = orca_prepare(
+            {
+                "input_path": "structures/h2o.xyz",
+                "output_root": "calculations/orca/h2o_auto_sp",
+                "task": "sp",
+                "maxcore_mb": 512,
+            }
+        )
+        run_dir = files_root / artifact["data"]["records"][0]["run_dir_rel"]
+        inp_text = (run_dir / "job.inp").read_text(encoding="utf-8")
+        assert "! WB97X-D4 def2-TZVP TightSCF" in inp_text
+        assert artifact["data"]["basis"] == "def2-TZVP"
+
+
+def test_orca_prepare_auto_basis_stays_blank_for_internal_basis_methods(tmp_path: Path) -> None:
+    project = _project_space(tmp_path)
+    with workspace_scope(project):
+        files_root = project / "files"
+        _write_water_xyz(files_root)
+        _, r2scan_artifact = orca_prepare(
+            {
+                "input_path": "structures/h2o.xyz",
+                "output_root": "calculations/orca/h2o_r2scan",
+                "task": "opt",
+                "method": "r2SCAN-3c",
+                "maxcore_mb": 512,
+            }
+        )
+        r2scan_dir = files_root / r2scan_artifact["data"]["records"][0]["run_dir_rel"]
+        r2scan_line = (r2scan_dir / "job.inp").read_text(encoding="utf-8").splitlines()[0]
+        assert r2scan_line == "! r2SCAN-3c TightSCF Opt"
+        assert r2scan_artifact["data"]["basis"] == ""
+
+        _, xtb_artifact = orca_prepare(
+            {
+                "input_path": "structures/h2o.xyz",
+                "output_root": "calculations/orca/h2o_xtb2",
+                "task": "opt",
+                "method": "XTB2",
+                "maxcore_mb": 512,
+            }
+        )
+        xtb_dir = files_root / xtb_artifact["data"]["records"][0]["run_dir_rel"]
+        xtb_line = (xtb_dir / "job.inp").read_text(encoding="utf-8").splitlines()[0]
+        assert xtb_line == "! XTB2 TightSCF Opt"
+        assert xtb_artifact["data"]["basis"] == ""
 
 
 def test_orca_prepare_td_uses_tddft_block_without_simple_keyword(tmp_path: Path) -> None:

@@ -24,6 +24,7 @@ Use this skill once the pathway inputs are already prepared and the question is 
 
 ### 1. Default NEB route: coarse `plain-NEB`, then `CI-NEB`
 - Do not use managed NEB execution as a diagnostic for missing preparation. If image trees, endpoint provenance, or dimer modes are uncertain, return to `neb-prepare` first.
+- Do not submit a NEB tree that carries an overlap/short-distance preparation warning. In CatMaster tools, `short_distance_count > 0` means at least one image has a minimum interatomic distance below the configured threshold, default `0.8 Å`.
 - Start from a prepared NEB root with climbing image disabled.
 - Run a coarse plain `NEB` first to localize the band and reduce gross path noise.
 - Once the band is reasonably converged, restart from those coarse-converged images with climbing image enabled for `CI-NEB` refinement.
@@ -58,6 +59,7 @@ Use this skill once the pathway inputs are already prepared and the question is 
 - If the workflow takes the dimer branch, keep the mode-generation evidence explicit; dimer runs without a credible reaction direction are weakly interpretable.
 - Keep `default_dtype=float64` as the default for MACE geometry/path optimization; only use `float32` when the run is explicitly exploratory.
 - For pathway work, separate preparation, execution, and analysis artifacts cleanly.
+- Before dispatch, verify that the prepared tree passed endpoint ordering and image-distance QC; launch success does not repair an overlapped band.
 
 ## Output Contract
 Return:

@@ -37,6 +37,8 @@ Use this skill when a CP2K frequency or vibrational-analysis stage is requested 
 - Report imaginary-frequency count and the exact output file parsed.
 
 ## Method-critical defaults
+- Parameter priority: honor explicit user requirements first; otherwise choose CP2K vibrational-stage overrides from the system class and frequency/thermochemistry objective; if that judgment remains uncertain, run a narrow literature or official documentation check before finalizing the override.
+- Do not add CP2K `settings` overrides just to restate the tool baseline; only override when the user, system class, task objective, or a checked source justifies it.
 - Vibrational analysis is a validation/post-processing stage, not a substitute for geometry acceptance.
 - For surfaces or constrained systems, state the atom set and constraint assumptions used in the model.
 

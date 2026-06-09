@@ -179,7 +179,38 @@ my_python_task:
 将 structures/ 里的结构整理成 mace_relax_dir 需要的 input/ stage，然后用 remote_submission 提交，模型用 mh-1，head 用 omat_pbe。
 ```
 
-## 7. 真实远程 smoke test
+## 7. Single 与 Batch 提交
+
+`remote_submission` 和 `remote_submission_batch` 的区别是 boot script 在哪里启动：
+
+- `remote_submission`：`work_dir` 本身就是一个 stage，boot script 直接在 `work_dir` 里启动一次。
+- `remote_submission_batch`：`work_dir` 是父目录，boot script 会在每个第一层子目录里各启动一次；父目录本身不会作为任务 cwd 启动。
+
+```text
+remote_submission:
+stage/
+  INCAR
+  POSCAR
+  KPOINTS
+  POTCAR
+
+remote_submission_batch:
+batch_root/
+  job_a/
+    INCAR
+    POSCAR
+    KPOINTS
+    POTCAR
+  job_b/
+    INCAR
+    POSCAR
+    KPOINTS
+    POTCAR
+```
+
+不要因为一个 stage 内部包含多个科学输入就自动改用 `remote_submission_batch`。例如 `mace_sp_dir` 和 `mace_relax_dir` 的一个 stage 可以在 `input/` 下放多个结构，这仍然是一次 `remote_submission`；只有当你准备了多个独立的 MACE stage 子目录时才用 `remote_submission_batch`。
+
+## 8. 真实远程 smoke test
 
 部署到远端后，优先跑脚本式 smoke test。它会准备极小 O2/H2O 输入，走 CatMaster 当前 agent 可见的 `remote_submission` 路径，并提交真实 DPDispatcher 任务，不是 dry-run。
 
@@ -225,7 +256,7 @@ CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution -s -vv
 tests/remote_execution/README.md
 ```
 
-## 8. 常见问题
+## 9. 常见问题
 
 `Machine 'xxx' not found`
 

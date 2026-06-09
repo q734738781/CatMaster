@@ -27,7 +27,7 @@ They are built in [runtime.py](specialists/runtime.py).
 - `ExperimentSpecialist`
   - Bounded execution specialist.
   - May delegate only to `materials_worker`, `dynamics_worker`, `ml_worker`, and `orca_xtb_worker`.
-  - Uses direct public-source checking only for narrow best-practice checks, official docs, or primary-source verification. Keep this limited to focused implementation grounding, not broad review.
+  - Uses direct public-source checking only for narrow best-practice, literature, or official documentation checks. Keep this limited to focused implementation grounding, not broad review.
   - MACE ownership is split by artifact: relaxation, single-point ranking, and NEB/path optimization belong to `materials_worker`; MACE MD sampling and trajectory QC belong to `dynamics_worker`; dataset construction, training, fine-tuning, and benchmark evaluation belong to `ml_worker`.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
@@ -36,9 +36,13 @@ They are built in [runtime.py](specialists/runtime.py).
 
 Execution guidance for the active experiment path:
 
-- If a dedicated tool does not cover a bounded execution task, prefer implementing the missing step with local command/Python capability and mature third-party libraries inside the workspace over stopping at the tool boundary.
+- `ExperimentSpecialist` may inspect the remote task catalog to form clean worker briefs, but managed submission belongs to the worker agents.
+- Scientific engine execution with a registered managed path should stay managed remote execution. This includes VASP, CP2K, ORCA, xTB/CREST, LAMMPS, and MACE execution/training/MD paths.
+- Local command/Python capability is for general preparation, file inspection, lightweight glue scripts, dependency setup for bounded local steps, and post-processing. Do not use it as a fallback to run scientific engine binaries, boot scripts, `sbatch`, or `mpirun` when a managed path fits.
+- If a managed path is missing or unavailable, return a precise blocker with the missing task/config/layout context instead of silently switching to local execution, unless the user explicitly requested local-only execution or a dry run.
+- If a dedicated tool does not cover a bounded non-engine execution task, prefer implementing the missing step with local command/Python capability and mature third-party libraries inside the workspace over stopping at the tool boundary.
 - Local command calls run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there instead of modifying the main environment.
-- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow current-docs or primary-source check before improvising. Do not turn that into a broad literature campaign.
+- If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow literature or official documentation check before improvising. Do not turn that into a broad literature campaign.
 - If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
 
 ## 2) Current literature architecture

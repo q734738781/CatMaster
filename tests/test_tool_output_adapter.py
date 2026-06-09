@@ -131,13 +131,29 @@ def test_adapt_tool_return_offload_preserves_observability_metadata(tmp_path) ->
 
     assert "Offload:" in str(content)
     assert artifact.get("warnings") == ["keep-warning"]
-    assert artifact.get("tool_args") == {"text": "hello"}
+    assert "tool_args" not in artifact
     refs = artifact.get("offload_refs") or []
     assert len(refs) == 1
     offload_path = tmp_path / refs[0]
     assert offload_path.exists()
     payload = json.loads(offload_path.read_text(encoding="utf-8"))
     assert payload.get("tool_name") == "dummy_tool"
+    assert "tool_args" not in payload
+
+
+def test_adapt_tool_return_can_include_tool_args_when_enabled(tmp_path) -> None:
+    config = ToolOutputConfig(offload_chars=20_000, include_tool_args=True)
+    raw_result = ("done", {"tool_name": "dummy_tool", "data": {"summary": "done"}})
+
+    _content, artifact = adapt_tool_return(
+        tool_name="dummy_tool",
+        raw_result=raw_result,
+        tool_args={"text": "hello"},
+        workspace_files_root=tmp_path,
+        output_config=config,
+    )
+
+    assert artifact.get("tool_args") == {"text": "hello"}
 
 
 def test_adapt_tool_return_can_suppress_content_offload_ref(tmp_path) -> None:

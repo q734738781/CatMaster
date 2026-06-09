@@ -46,6 +46,8 @@ Use this skill when the task is a conventional CP2K DFT calculation stage owned 
 - For a batch root, every first-level child must already be a complete CP2K stage.
 
 ## Method-critical defaults
+- Parameter priority: honor explicit user requirements first; otherwise choose CP2K `settings` overrides from the system class and task objective; if that judgment remains uncertain, run a narrow literature or official documentation check before finalizing the override.
+- Do not add CP2K `settings` overrides just to restate the tool baseline; only override when the user, system class, task objective, or a checked source justifies it.
 - Report the chosen XC functional, basis, potential, cutoff, charge, multiplicity, periodicity, and k-points when they affect comparisons.
 - Treat frequency, DOS/PDOS, and charge analysis as follow-up stages from an accepted structure, not as automatic analysis of every CP2K run.
 - For surfaces or low-dimensional systems, make `periodic` explicit rather than silently relying on automatic inference.

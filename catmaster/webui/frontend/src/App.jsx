@@ -4203,10 +4203,18 @@ function App({ boot }) {
       ...(payload || {}),
       project_space: payload?.project_space ?? currentProjectSpace,
     };
-    const data = await apiFetch(url, {
-      method: "POST",
-      body: JSON.stringify(scopedPayload),
-    });
+    let data;
+    try {
+      data = await apiFetch(url, {
+        method: "POST",
+        body: JSON.stringify(scopedPayload),
+      });
+    } catch (error) {
+      startTransition(() => {
+        setStatusMessage(String(error?.message || error));
+      });
+      return;
+    }
     rememberWebuiSession(data, scopedPayload?.lane || lane);
     startTransition(() => {
       setSnapshot(data);
@@ -4281,6 +4289,25 @@ function App({ boot }) {
       resume_run_name: form.resume_run_name || selectedRun,
     }, { loadDetails: view === "monitor" });
     setForm((prev) => ({ ...prev, prompt: "" }));
+  }
+
+  async function handleResumeSelectedRun() {
+    if (!selectedRun) {
+      return;
+    }
+    await postAndApply(`/api/session/${escapePath(ctx)}/run/start`, {
+      ...form,
+      run_mode: "resume_selected_run",
+      prompt: form.prompt,
+      lane,
+      resume_run_name: selectedRun,
+    }, { loadDetails: view === "monitor" });
+    setForm((prev) => ({
+      ...prev,
+      prompt: "",
+      run_mode: "resume_selected_run",
+      resume_run_name: selectedRun,
+    }));
   }
 
   async function handleInterrupt() {
@@ -4662,14 +4689,10 @@ function App({ boot }) {
                     <button
                       type="button"
                       className="ghost-btn"
-                      onClick={() => setForm((prev) => ({
-                        ...prev,
-                        run_mode: "resume_selected_run",
-                        resume_run_name: selectedRun,
-                      }))}
+                      onClick={handleResumeSelectedRun}
                       disabled={!selectedRun}
                     >
-                      Use selected run for resume
+                      Resume selected run
                     </button>
                   </div>
                 </div>

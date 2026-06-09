@@ -33,6 +33,7 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - `MAGMOM`, `LDAUU`, and `LDAUJ` must be element-value maps such as `{"Fe": 2.2}`.
 - Use `null` in `user_incar_patch` to request removal of a key from the final INCAR.
 - Keep `patch_policy="safe"` by default; use `force` only when intentionally overriding canonical defaults.
+- In safe mode, tune run-control and method knobs directly when they do not change the job identity: `NSW`, static `ISIF`, frequency `POTIM`/`NFREE`, and relax optimizer `IBRION=1/2/3` are allowed. Safe still blocks cross-mode changes such as static/frequency/dimer/MD `IBRION`, relax/dimer cell-relaxation `ISIF`, gas/frequency `ISYM`, and fixed-density DOS `ICHARG`.
 
 ### 1. Pick the right canonical preset
 - Confirm the input path exists before preparing a VASP tree.
@@ -69,6 +70,9 @@ Use this skill to produce execution-ready VASP input trees without fighting tool
 - For DOS tuning, the common explicit overrides are `ISMEAR`, `SIGMA`, `EFERMI`, `NEDOS`, `EMIN`, `EMAX`, and occasionally `LMAXMIX`.
 - `MAGMOM`, `LDAUU`, and `LDAUJ` must be element maps.
 - `patch_policy="safe"` rejects overrides only for the small protected set of preset/regime-bound keys. For `dos` and `md`, safe intentionally leaves most method controls overrideable so the model can change `NEDOS`, `ISMEAR`, `NSW`, `POTIM`, `TEBEG`, `TEEND`, `SMASS`, `MDALGO`, and similar knobs without switching to `force`.
+- For ordinary relax jobs, changing `NSW` and choosing a standard relaxation optimizer (`IBRION=1`, `2`, or `3`) is a safe method adjustment, not a reason to switch to `force`.
+- For static jobs, `ISIF` can be adjusted in safe mode because it does not turn the job into an ionic or cell relaxation.
+- For finite-difference frequency jobs, `POTIM` and `NFREE` can be adjusted in safe mode because they tune the displacement/stencil, while `IBRION` and `ISYM` remain protected.
 - `patch_policy="force"` applies the patch after canonical defaults, including explicit removal with `null`.
 - Only use `force` when you are intentionally breaking the preset identity itself, for example replacing `IBRION` with a non-matching job type or tearing down other protected invariants.
 

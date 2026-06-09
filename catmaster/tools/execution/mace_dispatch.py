@@ -9,7 +9,7 @@ import os
 import shlex
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.tools.base import resolve_workspace_path, workspace_relpath
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 from catmaster.tools.execution.dpdispatcher_runner import (
     STATUS_FILE_NAME,
     STDOUT_FILE_NAME,
@@ -634,8 +634,8 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             error_code="dispatch_failed",
         )
 
+    states = result.task_states if result else []
     data = {
-        "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         "work_base": result.work_base if result else work_base,
         "input_root_rel": workspace_relpath(input_root),
@@ -651,12 +651,20 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "dispersion": dispersion,
         "default_dtype": params.default_dtype,
         "relax_lattice": relax_lattice,
+        **compact_list_for_artifact(
+            states,
+            count_key="task_states_count",
+            inline_key="task_states",
+            preview_key="task_states_preview",
+            truncated_key="task_states_truncated",
+            max_inline=20,
+        ),
         **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
         "mace_relax_batch completed.",
-        f"structures_found={len(structures)} task_states={len(data['task_states'])}",
+        f"structures_found={len(structures)} task_states={len(states)}",
         f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
     ]
     status_file_rel = str(data.get("status_file_rel") or "")
@@ -827,8 +835,8 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             error_code="dispatch_failed",
         )
 
+    states = result.task_states if result else []
     data = {
-        "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         "work_base": result.work_base if result else work_base,
         "input_root_rel": workspace_relpath(input_root),
@@ -843,12 +851,20 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "head": head,
         "dispersion": dispersion,
         "default_dtype": params.default_dtype,
+        **compact_list_for_artifact(
+            states,
+            count_key="task_states_count",
+            inline_key="task_states",
+            preview_key="task_states_preview",
+            truncated_key="task_states_truncated",
+            max_inline=20,
+        ),
         **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
         "mace_sp_batch completed.",
-        f"structures_found={len(structures)} task_states={len(data['task_states'])}",
+        f"structures_found={len(structures)} task_states={len(states)}",
         f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
     ]
     status_file_rel = str(data.get("status_file_rel") or "")
@@ -1027,8 +1043,8 @@ def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             error_code="dispatch_failed",
         )
 
+    states = result.task_states if result else []
     data = {
-        "task_states": result.task_states if result else [],
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         "work_base": result.work_base if result else work_base,
         "input_root_rel": workspace_relpath(input_root),
@@ -1045,12 +1061,20 @@ def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "default_dtype": params.default_dtype,
         "md_config": params.md_config,
         "params_file_rel": workspace_relpath(params_path),
+        **compact_list_for_artifact(
+            states,
+            count_key="task_states_count",
+            inline_key="task_states",
+            preview_key="task_states_preview",
+            truncated_key="task_states_truncated",
+            max_inline=20,
+        ),
         **remote_context_from_result(result),
         **collect_info,
     }
     lines = [
         "mace_md_batch completed.",
-        f"structures_found={len(structures)} task_states={len(data['task_states'])}",
+        f"structures_found={len(structures)} task_states={len(states)}",
         f"output_root_rel={data['output_root_rel']} batch_state_rel={data['batch_state_rel']}",
     ]
     status_file_rel = str(data.get("status_file_rel") or "")

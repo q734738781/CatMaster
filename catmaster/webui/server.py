@@ -23,6 +23,8 @@ from .auth import AuthIdentity, AuthManager, SESSION_COOKIE_NAME, SESSION_TTL_SE
 from .session_registry import SessionRegistry
 
 TEXT_PREVIEW_LIMIT_BYTES = 160_000
+TEXT_KIND_PROBE_BYTES = 8_192
+AUTO_TEXT_KIND_MAX_BYTES = 8 * 1024 * 1024
 DIRECTORY_PREVIEW_LIMIT = 40
 STRUCTURE_ANIMATION_FRAME_LIMIT = 240
 UPLOAD_LIMIT_BYTES = 512 * 1024 * 1024
@@ -60,6 +62,7 @@ TEXTLIKE_SUFFIXES = {
     ".yaml",
     ".yml",
 } | MARKDOWN_SUFFIXES | JSON_SUFFIXES
+_TEXT_ALLOWED_CONTROL_BYTES = {7, 8, 9, 10, 12, 13, 27}
 
 _AUTH_IDENTITY: ContextVar[AuthIdentity | None] = ContextVar("catmaster_webui_auth_identity", default=None)
 
@@ -251,7 +254,35 @@ def _extract_zip_to_workspace(
     return extracted
 
 
-def _entry_preview_kind(path: Path, *, mime_type: str = "") -> str:
+def _looks_like_text_file(path: Path, *, file_size: int | None = None) -> bool:
+    try:
+        size = int(path.stat().st_size if file_size is None else file_size)
+    except Exception:
+        size = 0
+    if size <= 0:
+        return True
+    if size > AUTO_TEXT_KIND_MAX_BYTES:
+        return False
+    try:
+        with path.open("rb") as handle:
+            sample = handle.read(min(TEXT_KIND_PROBE_BYTES, size))
+    except Exception:
+        return False
+    if not sample:
+        return True
+    if b"\x00" in sample:
+        return False
+    control_count = sum(1 for byte in sample if byte < 32 and byte not in _TEXT_ALLOWED_CONTROL_BYTES)
+    if control_count / max(1, len(sample)) > 0.02:
+        return False
+    try:
+        sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return control_count == 0
+    return True
+
+
+def _entry_preview_kind(path: Path, *, mime_type: str = "", file_size: int | None = None) -> str:
     suffix = path.suffix.lower()
     if path.name.upper() in STRUCTURE_FILE_NAMES or suffix in STRUCTURE_FILE_SUFFIXES:
         return "structure"
@@ -262,6 +293,8 @@ def _entry_preview_kind(path: Path, *, mime_type: str = "") -> str:
     if suffix in JSON_SUFFIXES:
         return "json"
     if mime_type.startswith("text/") or suffix in TEXTLIKE_SUFFIXES:
+        return "text"
+    if _looks_like_text_file(path, file_size=file_size):
         return "text"
     return "binary"
 
@@ -288,7 +321,7 @@ def _serialize_tree_entry(path: Path, *, workspace_root: Path) -> dict[str, Any]
         "size": int(stat.st_size),
         "modified_ts": float(stat.st_mtime),
         "has_children": _directory_has_children(path) if node_type == "directory" else False,
-        "preview_kind": "directory" if node_type == "directory" else _entry_preview_kind(path, mime_type=mime_type),
+        "preview_kind": "directory" if node_type == "directory" else _entry_preview_kind(path, mime_type=mime_type, file_size=int(stat.st_size)),
     }
 
 
@@ -602,7 +635,7 @@ def _file_content_payload(*, ctx: str, session, rel_path: str, workspace: Option
         payload["children"] = _list_directory_entries(candidate, workspace_root=workspace_root, limit=DIRECTORY_PREVIEW_LIMIT)
         return payload
 
-    kind = _entry_preview_kind(candidate, mime_type=mime_type)
+    kind = _entry_preview_kind(candidate, mime_type=mime_type, file_size=int(stat.st_size))
     payload["kind"] = kind
     if kind == "image":
         return payload
