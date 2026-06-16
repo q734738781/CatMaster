@@ -28,6 +28,9 @@ Options:
   --include-demos
       Include demos/ in the archive.
 
+  By default, the archive excludes the entire configs/ directory,
+  including template files. Put deployment configs on the server separately.
+
   --include-path RELPATH
       Add another repository-relative file or directory to the archive.
       May be used more than once.
@@ -154,7 +157,8 @@ packaged_at_local=$(date '+%Y-%m-%dT%H:%M:%S%z')
 package_profile=runtime-webui-deploy
 package_root=$PACKAGE_ROOT_NAME
 archive_name=$ARCHIVE_NAME
-excluded_private_configs=configs/llm.yaml,configs/llm_*.yaml,configs/dpdispatcher/machines.yaml,configs/dpdispatcher/resources.yaml,configs/dpdispatcher/tasks.yaml,.env,.sesskey
+excluded_configs=configs/
+excluded_private_files=.env,.sesskey
 EOF
 }
 
@@ -162,7 +166,7 @@ write_deploy_readme() {
   {
     printf '%s\n' '# CatMaster Remote Deployment'
     printf '\n'
-    printf '%s\n' 'This archive contains a runtime-oriented CatMaster checkout with the rebuilt WebUI static bundle. Local secrets, logs, project spaces, caches, node_modules, `.git`, active LLM configs (`configs/llm.yaml`, `configs/llm_*.yaml`), and active DPDispatcher deployment files (`configs/dpdispatcher/machines.yaml`, `resources.yaml`, `tasks.yaml`) are intentionally excluded.'
+    printf '%s\n' 'This archive contains a runtime-oriented CatMaster checkout with the rebuilt WebUI static bundle. Local secrets, logs, project spaces, caches, node_modules, `.git`, and the entire `configs/` directory are intentionally excluded.'
     printf '\n'
     printf '%s\n' '## 1. Unpack'
     printf '\n'
@@ -181,17 +185,14 @@ write_deploy_readme() {
     printf '%s\n' '# pip install -r requirements/gpu.txt'
     printf '%s\n' '```'
     printf '\n'
-    printf '%s\n' '## 3. Configure local secrets and remote resources'
+    printf '%s\n' '## 3. Add local secrets and remote resources'
+    printf '\n'
+    printf '%s\n' 'The archive does not include `configs/`, including config templates. Put your deployment-specific config files on the server separately, for example by copying a private `configs/` directory into this checkout or mounting equivalent files.'
     printf '\n'
     printf '%s\n' '```bash'
-    printf '%s\n' 'cp configs/llm.template.yaml configs/llm.yaml'
-    printf '%s\n' '# edit configs/llm.yaml or export provider keys such as OPENROUTER_API_KEY'
-    printf '%s\n' 'cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml'
-    printf '%s\n' 'cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml'
-    printf '%s\n' 'cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml'
-    printf '%s\n' '# edit machines.yaml for cluster login/paths/env_setup'
-    printf '%s\n' '# edit resources.yaml for queues, source_list, prepend_script, and CPU/GPU counts'
-    printf '%s\n' '# edit tasks.yaml only when task commands or resource bindings differ'
+    printf '%s\n' 'mkdir -p configs/dpdispatcher'
+    printf '%s\n' '# provide configs/llm.yaml or export provider keys such as OPENROUTER_API_KEY'
+    printf '%s\n' '# provide configs/dpdispatcher/{machines,resources,tasks}.yaml when using remote execution'
     printf '%s\n' '```'
     printf '\n'
     printf '%s\n' 'Keep real API keys and SSH credentials out of the archive. Use environment variables, local ignored files, or machine-level secret management.'
@@ -232,7 +233,7 @@ verify_archive() {
   tar -tzf "$ARCHIVE_PATH" >/dev/null
   tar_list="$(tar -tzf "$ARCHIVE_PATH")"
 
-  local private_pattern='(^|/)(\.git|\.env$|\.sesskey|dpdispatcher\.log|node_modules|\.runtime|project_space|workspace)(/|$)|(^|/)configs/llm\.yaml$|(^|/)configs/llm_[^/]+\.yaml$|(^|/)configs/dpdispatcher/(machines|resources|tasks)\.yaml$'
+  local private_pattern='(^|/)(\.git|\.env$|\.sesskey|dpdispatcher\.log|node_modules|\.runtime|project_space|workspace|configs)(/|$)'
   local private_hits=""
   local env_hits=""
   private_hits="$(printf '%s\n' "$tar_list" | grep -E "$private_pattern" || true)"
@@ -393,6 +394,7 @@ RSYNC_ARGS=(
   --include='.env.example'
   --exclude='.env'
   --exclude='.env.*'
+  --exclude='configs/'
   --exclude='configs/llm.yaml'
   --exclude='configs/llm_*.yaml'
   --exclude='llm.yaml'
@@ -416,7 +418,6 @@ RSYNC_ARGS=(
 
 RUNTIME_PATHS=(
   "catmaster"
-  "configs"
   "requirements"
   "skills"
   "scripts"

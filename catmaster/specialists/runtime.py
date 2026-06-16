@@ -1644,7 +1644,7 @@ class SpecialistRunner:
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
                 "Each brief should contain one primary goal and one completion criterion. "
                 "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
-                "When one worker pass returns, actively decide whether another bounded delegate pass is needed; do not default to closing in the specialist thread just because one worker finished.\n"
+                "When one worker pass returns, actively decide whether another bounded delegate pass is needed from the worker's reported status, artifacts, and QC flags; do not rerun its domain QC in the specialist thread just to confirm it.\n"
                 "Do not hand an entire high-throughput campaign to one worker; split it into episodes and decide the next episode yourself after each return.\n"
             "Do not personally absorb worker-owned tasks just because your own direct tool surface appears sufficient for a small piece of them; the worker boundary is part of the design contract.\n"
             "Do not assume your own specialist thread can directly verify every execution path or remote environment. Some submission or resource checks are only visible through worker-owned managed tools.\n"
@@ -1698,10 +1698,10 @@ class SpecialistRunner:
     @staticmethod
     def _experiment_completion_audit_contract() -> str:
         return (
-            "Experiment completion audit: before final closeout, compare the requested experiment or parent handoff against current evidence. "
-            "Verify that each required preparation, calculation, analysis, QC check, and requested output is supported by a concrete tool result, workspace artifact path, or explicit blocked/failed status. "
-            "Do not treat a worker's return as sufficient when the requested outputs, stop condition, or evidence paths are still missing. "
-            "If the scope is complete, state the executed scope, key evidence paths, and residual limitations; if it is incomplete, either dispatch the next bounded step or return a blocked status with the minimal next action."
+            "Experiment closeout discipline: use worker/tool returns as the QC source of record. "
+            "Before final closeout, check only deliverable coverage: requested outputs, evidence paths, and worker-reported status or flags. "
+            "Do not rerun or reparse calculation outputs just to repeat domain QC unless the user asks for an independent check, the worker report is missing, or it conflicts with the available evidence. "
+            "If the scope is complete, state the executed scope, key evidence paths, and residual limitations; if it is incomplete, either dispatch the next bounded worker step or return a blocked status with the minimal next action."
         )
 
     @staticmethod

@@ -302,8 +302,8 @@ def test_specialist_prompts_require_explicit_follow_on_delegate_judgment() -> No
     assert "Final conclusions should cite the evidence paths or saved memos they depend on" in research_prompt
     assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in experiment_prompt
     assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in experiment_prompt
-    assert "Experiment completion audit: before final closeout" in experiment_prompt
-    assert "requested outputs, stop condition, or evidence paths are still missing" in experiment_prompt
+    assert "Experiment closeout discipline: use worker/tool returns as the QC source of record" in experiment_prompt
+    assert "Do not rerun or reparse calculation outputs just to repeat domain QC" in experiment_prompt
     assert "When one writing-worker pass returns, actively decide whether another bounded delegate pass is needed" in writing_prompt
     assert "When one worker review episode returns, actively decide whether another bounded delegate pass is needed" in peer_review_prompt
 
@@ -1087,8 +1087,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
         assert "If a worker needs a handy Python package for a bounded local step and it is missing" in agent_kwargs["system_prompt"]
-        assert "Experiment completion audit: before final closeout" in agent_kwargs["system_prompt"]
-        assert "Verify that each required preparation, calculation, analysis, QC check, and requested output" in agent_kwargs["system_prompt"]
+        assert "Experiment closeout discipline: use worker/tool returns as the QC source of record" in agent_kwargs["system_prompt"]
+        assert "Do not rerun or reparse calculation outputs just to repeat domain QC" in agent_kwargs["system_prompt"]
         assert "If the scope is complete, state the executed scope, key evidence paths, and residual limitations" in agent_kwargs["system_prompt"]
         assert "remote_submission" in {tool.name for tool in materials_worker_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in materials_worker_kwargs["tools"]}
