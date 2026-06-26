@@ -36,3 +36,4 @@ tmp*
 benchmark*
 fix_sonnet*
 /.runtime/
+AGENTS.md

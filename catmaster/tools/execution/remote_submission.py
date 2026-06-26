@@ -4,6 +4,7 @@ import json
 import re
 import shlex
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -251,6 +252,7 @@ def _fail(tool_name: str, *, message: str, data: dict[str, Any] | None = None, e
         "work_dir_rel",
         "work_base",
         "resources",
+        "duration_s",
         "remote_context_id",
         "submission_hash",
         "submitted_at",
@@ -688,6 +690,7 @@ def _submit(
     dispatch_error: Exception | None = None
     result = None
     submitted_at = _now_iso()
+    dispatch_started = time.time()
     try:
         result = dispatch_submission(req, register=register)
     except Exception as exc:
@@ -707,6 +710,8 @@ def _submit(
         dispatch_error = sync_error
     if dispatch_error is not None:
         remote_context = remote_context_from_exception(dispatch_error)
+        if remote_context and "duration_s" not in remote_context:
+            remote_context["duration_s"] = round(max(0.0, time.time() - dispatch_started), 3)
         if not remote_context:
             receipt = write_dispatch_attempt_receipt(
                 tool_name=tool_name,
@@ -716,6 +721,7 @@ def _submit(
                 resources=resources_key,
                 submitted_at=submitted_at,
                 error=f"{type(dispatch_error).__name__}: {dispatch_error}",
+                duration_s=time.time() - dispatch_started,
             )
             remote_context = remote_context_from_receipt(receipt, include_jobs=True)
         data = {
@@ -767,7 +773,8 @@ def _submit(
         f"{tool_name} completed.\n"
         f"task_name={task_name or 'custom_boot_script'} tasks={len(tasks)} resources={resources_key}\n"
         f"task_state_counts={json.dumps(state_counts, ensure_ascii=False, sort_keys=True)}\n"
-        f"work_dir_rel={data['work_dir_rel']} remote_context_id={data.get('remote_context_id', '')}"
+        f"work_dir_rel={data['work_dir_rel']} remote_context_id={data.get('remote_context_id', '')} "
+        f"duration_s={data.get('duration_s', '')}"
     )
     return _success(tool_name, content=content, data=data, execution_time=result.duration_s if result else None)
 

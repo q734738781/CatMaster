@@ -237,6 +237,7 @@ def test_dpdispatcher_dispatch_error_string_exposes_remote_context() -> None:
     exc = dpr.DPDispatcherDispatchError(
         "Connection reset by peer",
         remote_context={
+            "duration_s": 12.3456,
             "remote_context_id": "dp_ctx",
             "submission_hash": "abc",
             "receipt_rel": ".deepagents/dpdispatcher/receipts/dp_ctx.json",
@@ -245,6 +246,7 @@ def test_dpdispatcher_dispatch_error_string_exposes_remote_context() -> None:
 
     text = str(exc)
     assert "Connection reset by peer" in text
+    assert "duration_s=12.346" in text
     assert "remote_context_id=dp_ctx" in text
     assert "submission_hash=abc" in text
     assert "receipt_rel=.deepagents/dpdispatcher/receipts/dp_ctx.json" in text

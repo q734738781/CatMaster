@@ -186,6 +186,18 @@ class BatchDispatchRequest(BaseModel):
     dispatch_id: str = Field(default_factory=lambda: uuid.uuid4().hex, description="CatMaster-generated nonce for hash isolation")
 
 
+def _duration_s_value(value: Any) -> float | None:
+    if value in (None, "", [], {}):
+        return None
+    try:
+        duration = float(value)
+    except Exception:
+        return None
+    if duration != duration or duration < 0:
+        return None
+    return round(duration, 3)
+
+
 class DPDispatcherDispatchError(RuntimeError):
     """DPDispatcher failure carrying the receipt context that reached the agent."""
 
@@ -197,9 +209,13 @@ class DPDispatcherDispatchError(RuntimeError):
         cause: Exception | None = None,
     ) -> None:
         self.remote_context = dict(remote_context or {})
+        duration_s = _duration_s_value(self.remote_context.get("duration_s"))
+        self.duration_s = duration_s
+        if duration_s is not None:
+            self.remote_context["duration_s"] = duration_s
         self.cause = cause
         detail_lines = []
-        for key in ("remote_context_id", "submission_hash", "receipt_rel"):
+        for key in ("duration_s", "remote_context_id", "submission_hash", "receipt_rel"):
             value = self.remote_context.get(key)
             if value not in (None, "", [], {}):
                 detail_lines.append(f"{key}={value}")
@@ -305,6 +321,7 @@ def _write_remote_receipt(
     submission: Submission,
     tool_name: str,
     receipt: dict[str, Any] | None = None,
+    duration_s: Any = None,
 ) -> dict[str, Any]:
     submission_hash = str(getattr(submission, "submission_hash", "") or "")
     now = _now_iso()
@@ -314,6 +331,9 @@ def _write_remote_receipt(
     receipt_dir.mkdir(parents=True, exist_ok=True)
     receipt_path = receipt_dir / f"{context_id}.json"
     jobs = _job_records(submission)
+    duration_value = _duration_s_value(duration_s)
+    if duration_value is None:
+        duration_value = _duration_s_value((receipt or {}).get("duration_s"))
     payload: dict[str, Any] = {
         "context_id": context_id,
         "submitted_at": submitted_at,
@@ -324,6 +344,8 @@ def _write_remote_receipt(
         "job_status_counts": _job_status_counts(jobs),
         "receipt_rel": workspace_relpath(receipt_path),
     }
+    if duration_value is not None:
+        payload["duration_s"] = duration_value
     receipt_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return payload
 
@@ -337,6 +359,7 @@ def write_dispatch_attempt_receipt(
     resources: str,
     submitted_at: str = "",
     error: str = "",
+    duration_s: Any = None,
 ) -> dict[str, Any]:
     """Write a CatMaster-side receipt when DPDispatcher fails before a submission hash exists."""
 
@@ -359,6 +382,9 @@ def write_dispatch_attempt_receipt(
         "job_status_counts": {},
         "receipt_rel": workspace_relpath(receipt_path),
     }
+    duration_value = _duration_s_value(duration_s)
+    if duration_value is not None:
+        payload["duration_s"] = duration_value
     if error:
         payload["dispatch_error"] = str(error)
     receipt_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -369,6 +395,7 @@ def _public_remote_context(
     receipt: dict[str, Any] | None,
     *,
     include_jobs: bool = False,
+    duration_s: Any = None,
 ) -> dict[str, Any]:
     if not receipt:
         return {}
@@ -379,6 +406,11 @@ def _public_remote_context(
         "submission_hash": receipt.get("submission_hash") or "",
         "receipt_rel": receipt.get("receipt_rel") or "",
     }
+    duration_value = _duration_s_value(duration_s)
+    if duration_value is None:
+        duration_value = _duration_s_value(receipt.get("duration_s"))
+    if duration_value is not None:
+        context["duration_s"] = duration_value
     if include_jobs:
         context["jobs"] = list(receipt.get("jobs") or [])
         context["job_status_counts"] = dict(receipt.get("job_status_counts") or {})
@@ -395,7 +427,13 @@ def remote_context_from_result(result: Any) -> dict[str, Any]:
     """Return the agent-facing remote context from a DispatchResult-like value."""
     context = getattr(result, "remote_context", None)
     if isinstance(context, dict) and context:
-        return dict(context)
+        out = dict(context)
+        duration_value = _duration_s_value(out.get("duration_s"))
+        if duration_value is None:
+            duration_value = _duration_s_value(getattr(result, "duration_s", None))
+        if duration_value is not None:
+            out["duration_s"] = duration_value
+        return out
     out: dict[str, Any] = {}
     for key in (
         "remote_context_id",
@@ -403,6 +441,7 @@ def remote_context_from_result(result: Any) -> dict[str, Any]:
         "updated_at",
         "submission_hash",
         "receipt_rel",
+        "duration_s",
     ):
         value = getattr(result, key, None)
         if value not in (None, "", [], {}):
@@ -416,7 +455,13 @@ def remote_context_from_exception(exc: Exception | None) -> dict[str, Any]:
         return {}
     context = getattr(exc, "remote_context", None)
     if isinstance(context, dict) and context:
-        return dict(context)
+        out = dict(context)
+        duration_value = _duration_s_value(out.get("duration_s"))
+        if duration_value is None:
+            duration_value = _duration_s_value(getattr(exc, "duration_s", None))
+        if duration_value is not None:
+            out["duration_s"] = duration_value
+        return out
     return {}
 
 
@@ -630,14 +675,16 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
         _install_safe_ssh_download_patch()
         submission.run_submission(clean=request.clean_remote, check_interval=request.check_interval)
     except Exception as exc:
+        duration = time.time() - t0
         receipt = _write_remote_receipt(
             submission=submission,
             tool_name=request.tool_name,
             receipt=receipt,
+            duration_s=duration,
         )
         raise DPDispatcherDispatchError(
             f"{type(exc).__name__}: {exc}",
-            remote_context=_public_remote_context(receipt, include_jobs=True),
+            remote_context=_public_remote_context(receipt, include_jobs=True, duration_s=duration),
             cause=exc,
         ) from exc
     duration = time.time() - t0
@@ -645,6 +692,7 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
         submission=submission,
         tool_name=request.tool_name,
         receipt=receipt,
+        duration_s=duration,
     )
 
     work_base_dir = Path(machine.context.init_local_root) / request.work_base
@@ -658,10 +706,11 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
             submission=submission,
             tool_name=request.tool_name,
             receipt=receipt,
+            duration_s=duration,
         )
         raise DPDispatcherDispatchError(
             f"{type(exc).__name__}: {exc}",
-            remote_context=_public_remote_context(receipt, include_jobs=True),
+            remote_context=_public_remote_context(receipt, include_jobs=True, duration_s=duration),
             cause=exc,
         ) from exc
 
@@ -669,7 +718,7 @@ def dispatch_task(request: DispatchRequest, *, config_path: Optional[str] = None
     state_counts = task_state_counts(states)
     output_dir = Path(machine.context.init_local_root) / request.work_base / request.task_work_path
     cleanup_dpdispatcher_artifacts(output_dir)
-    remote_context = _public_remote_context(receipt)
+    remote_context = _public_remote_context(receipt, duration_s=duration)
     jobs = list(receipt.get("jobs") or [])
 
     return DispatchResult(
@@ -741,14 +790,16 @@ def dispatch_submission(
         _install_safe_ssh_download_patch()
         submission.run_submission(clean=batch.clean_remote, check_interval=batch.check_interval)
     except Exception as exc:
+        duration = time.time() - t0
         receipt = _write_remote_receipt(
             submission=submission,
             tool_name=batch.tool_name,
             receipt=receipt,
+            duration_s=duration,
         )
         raise DPDispatcherDispatchError(
             f"{type(exc).__name__}: {exc}",
-            remote_context=_public_remote_context(receipt, include_jobs=True),
+            remote_context=_public_remote_context(receipt, include_jobs=True, duration_s=duration),
             cause=exc,
         ) from exc
     duration = time.time() - t0
@@ -756,6 +807,7 @@ def dispatch_submission(
         submission=submission,
         tool_name=batch.tool_name,
         receipt=receipt,
+        duration_s=duration,
     )
 
     work_base_dir = Path(machine.context.init_local_root) / batch.work_base
@@ -770,10 +822,11 @@ def dispatch_submission(
             submission=submission,
             tool_name=batch.tool_name,
             receipt=receipt,
+            duration_s=duration,
         )
         raise DPDispatcherDispatchError(
             f"{type(exc).__name__}: {exc}",
-            remote_context=_public_remote_context(receipt, include_jobs=True),
+            remote_context=_public_remote_context(receipt, include_jobs=True, duration_s=duration),
             cause=exc,
         ) from exc
 
@@ -784,7 +837,7 @@ def dispatch_submission(
     suffix = work_suffixes.pop() if len(work_suffixes) == 1 else ""
     output_dir = Path(machine.context.init_local_root) / batch.work_base / suffix
     cleanup_dpdispatcher_artifacts(output_dir)
-    remote_context = _public_remote_context(receipt)
+    remote_context = _public_remote_context(receipt, duration_s=duration)
     jobs = list(receipt.get("jobs") or [])
 
     return DispatchResult(

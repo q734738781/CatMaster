@@ -143,7 +143,7 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
         (stage / "input").mkdir(parents=True)
         (stage / "input" / "CO.vasp").write_text("dummy", encoding="utf-8")
         with toolcall_context("submit", audience="materials_worker"):
-            _, artifact = remote_submission(
+            content, artifact = remote_submission(
                 {
                     "work_dir": "stage/mace_sp",
                     "task_name": "mace_sp_dir",
@@ -166,6 +166,8 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
     assert artifact["data"]["work_base"] == captured["work_base"]
     assert artifact["data"]["remote_context_id"] == "dp_test"
     assert artifact["data"]["submission_hash"] == "abc123"
+    assert artifact["data"]["duration_s"] == 0.1
+    assert "duration_s=0.1" in content
     assert "jobs" not in artifact["data"]
 
 
@@ -314,11 +316,13 @@ def test_remote_submission_failure_exposes_receipt_context_in_message_and_artifa
     assert "remote_context_id=dp_failed" in message
     assert "submission_hash=hash_failed" in message
     assert "submitted_at=2026-05-20T12:00:00+08:00" in message
+    assert "duration_s=" in message
     assert "jobs=1" in message
     assert '"running": 1' in message
     data = excinfo.value.artifact["data"]
     assert data["receipt_rel"] == ".deepagents/dpdispatcher/receipts/dp_failed.json"
     assert data["jobs"][0]["job_id"] == "12345"
+    assert data["duration_s"] >= 0
     assert (stage / "partial.txt").read_text(encoding="utf-8") == "partial"
 
 
@@ -343,14 +347,17 @@ def test_remote_submission_pre_dispatch_failure_writes_attempt_receipt(
         data = excinfo.value.artifact["data"]
         assert "remote_context_id=" in message
         assert "receipt_rel=" in message
+        assert "duration_s=" in message
         assert data["submission_hash"] == ""
         assert data["jobs"] == []
+        assert data["duration_s"] >= 0
 
         receipt_path = tmp_path / "files" / data["receipt_rel"]
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         assert receipt["context_id"] == data["remote_context_id"]
         assert receipt["submission_hash"] == ""
         assert receipt["jobs"] == []
+        assert receipt["duration_s"] == data["duration_s"]
         assert receipt["task_name"] == "vasp_execute"
         assert receipt["work_dir_rel"] == "stage"
         assert receipt["resources"] == "vasp_cpu"
