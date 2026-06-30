@@ -30,7 +30,7 @@ WebUI 的文件视图可以浏览项目空间里的文件、上传文件、预�
 
 - 构建 slab、吸附结构、分子结构。
 - 准备 VASP、CP2K、LAMMPS、ORCA、xTB 输入。
-- 调用 MACE relax、single point、MD、NEB、训练或评估任务。
+- 调用 MACE relax、single point、MD、NEB、训练或评估任务，以及 UMA single point / relax 预筛任务。
 - 分析已有输出，例如 `OUTCAR`、`vasprun.xml`、CP2K output、LAMMPS log。
 - 提交已经准备好的远程 stage。
 
@@ -129,6 +129,7 @@ WebUI 的文件视图可以浏览项目空间里的文件、上传文件、预�
 - ORCA、xTB、CREST：量化、半经验和构象搜索。
 - VASP、CP2K、LAMMPS：第一性原理和分子模拟。
 - MACE：机器学习势 relax、single point、MD、NEB、训练和评估。
+- FairChem UMA：材料、催化体系、分子和团簇的机器学习 single point / relax 预筛；远程运行时建议使用独立于 MACE 的环境。
 
 外部程序可以在本机或远程机器上。远程程序路径通常通过 [远程配置要点](02-remote.zh.md) 中的 resource 环境加载。
 
@@ -145,7 +146,7 @@ WebUI 的文件视图可以浏览项目空间里的文件、上传文件、预�
 
 1. 确认 stage 目录完整。
 2. 选择 `remote_submission` 或 `remote_submission_batch`。
-3. 明确 `task_name`，例如 `vasp_execute` 或 `mace_relax_dir`。
+3. 明确 `task_name`，例如 `vasp_execute`、`mace_relax_dir` 或 `uma_sp_dir`。
 4. 运行后记录 `remote_context_id`、`submission_hash`、`receipt_rel`。
 
 ### 分析结果

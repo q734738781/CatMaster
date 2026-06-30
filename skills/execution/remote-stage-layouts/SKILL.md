@@ -25,7 +25,7 @@ Do not use `execute` to import, wrap, or call CatMaster managed tool implementat
 - Use `remote_submission` when `work_dir` itself is one prepared stage matching the selected `task_name` layout. The boot script runs directly in `work_dir`.
 - Prefer `remote_submission_batch` when there are two or more independent prepared stages for the same `task_name`, `params`, and `config`; do not issue multiple parallel `remote_submission` calls for that case.
 - Use `remote_submission_batch` only when `work_dir` is a parent batch root and each first-level child directory is a complete independent stage for the same `task_name`. The parent directory is not the task cwd; the boot script runs once inside each first-level child directory.
-- A single stage may contain many scientific inputs if the task layout says so. This is still `remote_submission`, not `remote_submission_batch`. Common example: `mace_sp_dir` or `mace_relax_dir` with many structures under one `input/`.
+- A single stage may contain many scientific inputs if the task layout says so. This is still `remote_submission`, not `remote_submission_batch`. Common example: `mace_sp_dir`, `mace_relax_dir`, `uma_sp_dir`, or `uma_relax_dir` with many structures under one `input/`.
 - `remote_submission_batch` does not recursively discover nested jobs. It submits only first-level child directories.
 - `remote_submission_batch` applies the same `task_name`, `params`, and `config` to every first-level child. Do not use it when children need different task templates or incompatible params.
 
@@ -142,6 +142,37 @@ Common params: `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed
 
 ## mace_relax_dir
 Same layout as `mace_sp_dir`, with relaxation params such as `fmax`, `maxsteps`, and `relax_lattice`. Common params also include `device`; managed GPU tasks default to `device=auto`, which prioritizes completion and may fall back to CPU. Pass `device=cuda` only for hard GPU validation.
+
+## uma_sp_dir
+Stage directory must contain `input/` with structures for FairChem UMA single-point inference. Outputs are written to `output/`.
+
+```text
+stage/
+  input/
+    POSCAR or *.vasp/*.cif/*.poscar/*.xyz/*.extxyz
+  optional params/
+    uma_metadata.json
+```
+
+Common params: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`.
+
+- `model` defaults to `uma-s-1p2`.
+- `uma_task=auto` makes a conservative molecule-vs-periodic choice: periodic structures with valid cells use `omat`; nonperiodic structures use `omol`.
+- For catalysis, oxide catalysis, electrocatalysis, DAC/MOF, or molecular crystals, set `uma_task` explicitly (`oc20`, `oc22`, `oc25`, `odac`, or `omc`) instead of relying on `auto`.
+- `omol` requires correct `charge` and `spin` values. FairChem examples use the `spin` field as the spin-state value expected by OMOL, for example singlet `spin=1` and triplet `spin=3`.
+- Non-`omol` tasks should normally use `charge=0` and `spin=0`; CatMaster's UMA boot scripts reject nonzero values for those tasks to avoid mixing molecular spin metadata into materials/catalysis tasks.
+- The optional `params/uma_metadata.json` can override `task`, `charge`, and `spin` per input file. If used, pass `params.metadata_path=params/uma_metadata.json`.
+
+Use `remote_submission` for one UMA stage even when `input/` contains many structures. Use `remote_submission_batch` only when the parent directory contains multiple independent UMA stage directories.
+
+## uma_relax_dir
+Same layout as `uma_sp_dir`, with relaxation params such as `fmax`, `steps`, `optimizer`, and `relax_cell`.
+
+Common params: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`, `fmax`, `steps`, `optimizer`, `relax_cell`.
+
+- `relax_cell=false` is the default and should remain the default for first-pass screening.
+- `relax_cell=true` is only enabled for `uma_task=omat` in CatMaster. Other UMA tasks either target nonperiodic systems or may not have stress-label supervision.
+- UMA relaxations are screening/preoptimization steps. For molecular quantum-chemistry claims, use ORCA/xTB follow-up validation rather than treating UMA as final quantum evidence.
 
 ## mace_md_dir
 Dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`.

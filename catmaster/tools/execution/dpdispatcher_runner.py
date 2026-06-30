@@ -236,12 +236,26 @@ def _build_machine(cfg: Dict, local_root: Path) -> Machine:
 def _build_resources(cfg: Dict, env_setup: Optional[str]) -> Resources:
     cfg = dict(cfg)
     cfg.pop("machine", None)
+    source_list = cfg.pop("source_list", [])
+    if isinstance(source_list, str):
+        source_list = [source_list]
+    source_lines = []
+    for item in source_list:
+        source_path = str(item).strip()
+        if not source_path:
+            continue
+        quoted = shlex.quote(source_path)
+        source_lines.append(
+            f"test -f {quoted} || {{ echo Missing source script: {quoted} >&2; exit 127; }}; source {quoted}"
+        )
     prepend = cfg.get("prepend_script", [])
     if isinstance(prepend, str):
         prepend = [prepend]
     if env_setup:
         env_lines = [ln for ln in env_setup.splitlines() if ln.strip()]
-        prepend = env_lines + prepend
+        prepend = env_lines + source_lines + prepend
+    elif source_lines:
+        prepend = source_lines + prepend
     if prepend:
         cfg["prepend_script"] = prepend
     try:

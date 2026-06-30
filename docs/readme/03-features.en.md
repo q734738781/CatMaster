@@ -30,7 +30,7 @@ Use this for bounded computational tasks:
 
 - Build slabs, adsorbate structures, and molecules.
 - Prepare VASP, CP2K, LAMMPS, ORCA, and xTB inputs.
-- Run MACE relax, single point, MD, NEB, training, or evaluation tasks.
+- Run MACE relax, single point, MD, NEB, training, or evaluation tasks, plus UMA single-point or relaxation screening tasks.
 - Analyze existing outputs such as `OUTCAR`, `vasprun.xml`, CP2K output, or LAMMPS logs.
 - Submit prepared remote stages.
 
@@ -129,6 +129,7 @@ Install only what your tasks require:
 - ORCA, xTB, CREST: quantum chemistry, semiempirical calculations, and conformer search.
 - VASP, CP2K, LAMMPS: first-principles and molecular simulation workflows.
 - MACE: machine-learning potential relax, single point, MD, NEB, training, and evaluation.
+- FairChem UMA: machine-learning single-point or relaxation screening for materials, catalyst structures, molecules, and clusters; use a remote environment separate from MACE.
 
 External programs can run locally or remotely. Remote executable paths are normally loaded through resource environment setup in [Remote setup](02-remote.en.md).
 
@@ -145,7 +146,7 @@ External programs can run locally or remotely. Remote executable paths are norma
 
 1. Confirm the stage directory is complete.
 2. Use `remote_submission` or `remote_submission_batch`.
-3. Specify `task_name`, such as `vasp_execute` or `mace_relax_dir`.
+3. Specify `task_name`, such as `vasp_execute`, `mace_relax_dir`, or `uma_sp_dir`.
 4. Record `remote_context_id`, `submission_hash`, and `receipt_rel`.
 
 ### Analyze Results

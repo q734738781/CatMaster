@@ -73,6 +73,7 @@ configs/dpdispatcher/resources.yaml
 - `cp2k_cpu`：CP2K CPU MPI 任务。
 - `lammps_cpu`：LAMMPS CPU 任务。
 - `mace_gpu`：MACE GPU 任务。
+- `uma_gpu`：FairChem UMA GPU 任务，建议使用独立于 MACE 的 conda 环境。
 - `general_cpu`：自定义 CPU boot script。
 - `general_gpu`：自定义 GPU boot script。
 - `xtb_cpu`、`crest_cpu`、`orca_cpu`：分子量化和构象任务。
@@ -83,7 +84,7 @@ resource 里最需要检查：
 - `queue_name` 是否是你的集群队列名。
 - `cpu_per_node` / `gpu_per_node` 是否符合队列规则。
 - `custom_flags` 是否符合你的 Slurm/PBS 语法。
-- `source_list` 或 `prepend_script` 是否能加载 VASP、CP2K、MACE 等环境。
+- `source_list` 或 `prepend_script` 是否能加载 VASP、CP2K、MACE、UMA 等环境。
 
 ## 3. 修改实际资源卡
 
@@ -109,6 +110,62 @@ vasp_cpu:
 
 任务继续引用 `vasp_cpu`，不需要改所有任务模板。
 
+### UMA / FairChem 独立环境
+
+UMA 不建议装进现有 MACE 环境。FairChem/UMA 会牵涉独立的 PyTorch、模型下载和 Hugging Face 鉴权；把它和 `mace_gpu` 共用环境容易互相污染。推荐新建远端环境，例如：
+
+```bash
+conda create -n catmaster-uma python=3.11 -y
+conda activate catmaster-uma
+pip install -r requirements/uma.txt
+```
+
+然后让 `uma_gpu.source_list` 指向一个只负责 UMA 的脚本。可直接按下面模板修改：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /path/to/miniconda3/etc/profile.d/conda.sh
+conda activate catmaster-uma
+
+export HF_HOME=/path/to/shared/cache/huggingface
+export HF_HUB_CACHE="$HF_HOME/hub"
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
+export TORCH_HOME=/path/to/shared/cache/torch
+mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$TORCH_HOME"
+
+if [ -z "${HF_TOKEN:-}" ] && [ -f "$HOME/.config/huggingface/token" ]; then
+  export HF_TOKEN="$(tr -d '\n' < "$HOME/.config/huggingface/token")"
+fi
+
+# 仅在模型已经预热到 HF_HUB_CACHE 后再打开离线模式。
+# export HF_HUB_OFFLINE=1
+
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-${SLURM_CPUS_ON_NODE:-8}}"
+```
+
+不要把 `HF_TOKEN` 写进 `configs/dpdispatcher/tasks.yaml`、`params`、stage 文件或提示词参数。UMA checkpoint 体积大，也不应放进 `forward_files` 传输。第一次运行可以让远端下载模型；如果计算节点没有公网，先在登录节点或可联网节点执行一次预热：
+
+```bash
+mkdir -p "$HOME/.config/huggingface"
+chmod 700 "$HOME/.config/huggingface"
+printf '%s' '<hf_token_with_facebook_UMA_access>' > "$HOME/.config/huggingface/token"
+chmod 600 "$HOME/.config/huggingface/token"
+```
+
+确认 token 文件存在后再预热模型：
+
+```bash
+source /path/to/catmaster_env_uma.sh
+python - <<'PY'
+from fairchem.core import pretrained_mlip
+pretrained_mlip.get_predict_unit("uma-s-1p2", device="cpu")
+PY
+```
+
+预热完成并确认计算节点共享同一个 cache 后，才考虑设置 `HF_HUB_OFFLINE=1`。
+
 ## 4. 理解任务配置
 
 实际任务在：
@@ -129,6 +186,8 @@ configs/dpdispatcher/tasks.yaml
 - `mace_neb_dir`
 - `mace_train_dir`
 - `mace_eval_dir`
+- `uma_sp_dir`
+- `uma_relax_dir`
 - `xtb_run`
 
 每个 task 定义：
@@ -179,6 +238,20 @@ my_python_task:
 将 structures/ 里的结构整理成 mace_relax_dir 需要的 input/ stage，然后用 remote_submission 提交，模型用 mh-1，head 用 omat_pbe。
 ```
 
+对于周期材料或催化体系的 UMA single point：
+
+```text
+将 structures/ 里的结构整理成 uma_sp_dir 需要的 input/ stage，用 remote_submission 提交，params 设置 model=uma-s-1p2、uma_task=omat。若是 OC20/OC25/ODAC/OMC 语义任务，不要依赖 auto，明确设置对应 uma_task。
+```
+
+对于分子或团簇的 UMA 预优化：
+
+```text
+将 molecules/ 里的结构整理成 uma_relax_dir 需要的 input/ stage，用 remote_submission 提交，params 设置 uma_task=omol、charge=0、spin=1、relax_cell=false。后续正式能量、频率、TS 或光谱仍需 ORCA/xTB/DFT 验证。
+```
+
+`uma_task=auto` 只做保守的分子/周期粗分：有有效周期 cell 时默认 `omat`，否则默认 `omol`。`omol` 的 `charge` 和 `spin` 会写入 ASE `Atoms.info`；非 `omol` 任务请保持 `charge=0`、`spin=0`。
+
 ## 7. Single 与 Batch 提交
 
 `remote_submission` 和 `remote_submission_batch` 的区别是 boot script 在哪里启动：
@@ -208,7 +281,7 @@ batch_root/
     POTCAR
 ```
 
-不要因为一个 stage 内部包含多个科学输入就自动改用 `remote_submission_batch`。例如 `mace_sp_dir` 和 `mace_relax_dir` 的一个 stage 可以在 `input/` 下放多个结构，这仍然是一次 `remote_submission`；只有当你准备了多个独立的 MACE stage 子目录时才用 `remote_submission_batch`。
+不要因为一个 stage 内部包含多个科学输入就自动改用 `remote_submission_batch`。例如 `mace_sp_dir`、`mace_relax_dir`、`uma_sp_dir` 和 `uma_relax_dir` 的一个 stage 可以在 `input/` 下放多个结构，这仍然是一次 `remote_submission`；只有当你准备了多个独立的 stage 子目录时才用 `remote_submission_batch`。
 
 ## 8. 真实远程 smoke test
 
@@ -236,6 +309,12 @@ python scripts/remote_execution_smoke.py --suite materials --check-interval 60
 
 ```bash
 python scripts/remote_execution_smoke.py --suite all --check-interval 60
+```
+
+UMA 需要额外的 FairChem 环境、Hugging Face 权限和模型 cache，因此单独放在 `uma` suite，不并入 `core` 或 `all`。该 suite 会覆盖分子/周期 single point 和短 relax：
+
+```bash
+python scripts/remote_execution_smoke.py --suite uma --uma-model uma-s-1p2 --uma-task omat --uma-check-interval 60
 ```
 
 脚本默认把阶段文件和 JSON 报告写到 `/tmp/catmaster_remote_execution_smoke`。需要固定目录时：
@@ -270,9 +349,13 @@ SSH 失败
 
 先在终端直接跑 `ssh`，不要先从 CatMaster 排查。确认 host、port、username、key 和远程防火墙。
 
-远程命令找不到 VASP/MACE/CP2K
+远程命令找不到 VASP/MACE/CP2K/UMA
 
 检查 resource 的 `source_list` 或 `prepend_script`，确认远程 job 环境里能找到对应程序。
+
+UMA 报模型下载、鉴权或离线 cache 错误
+
+先在远端直接 `source catmaster_env_uma.sh`，确认 `python -c "from fairchem.core import pretrained_mlip"` 可运行；再检查 `HF_TOKEN` 是否只在远端环境里设置、`HF_HOME/HF_HUB_CACHE` 是否指向计算节点可读写的持久目录、是否在未预热模型前打开了 `HF_HUB_OFFLINE=1`。如果错误包含 `GatedRepoError` 或 `Access to model facebook/UMA is restricted`，说明远端 token 不存在、没有被 source script 读到，或该 Hugging Face 账号尚未获准访问 `facebook/UMA`。
 
 结果没有下载回来
 

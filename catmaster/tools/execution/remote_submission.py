@@ -98,6 +98,12 @@ def _catalog_task_hint(task_name: str) -> str:
             "for one such stage even when input/ contains many structures. Use remote_submission_batch "
             "only for a parent root containing multiple independent MACE stage directories."
         )
+    if task_name.startswith("uma_"):
+        return (
+            "UMA *_dir layouts are usually one stage with input/ and output/; use remote_submission "
+            "for one such stage even when input/ contains many structures. Use remote_submission_batch "
+            "only for a parent root containing multiple independent UMA stage directories."
+        )
     if task_name.startswith("vasp_"):
         return (
             "One VASP stage is one complete calculation folder. For multiple scheduler jobs, make a "
@@ -333,6 +339,27 @@ def _copy_boot_script(script_src: Path | None, stage_dir: Path) -> str:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(script_src, dst)
     return dst.relative_to(stage_dir).as_posix()
+
+
+def _copy_task_script_forward_dependencies(
+    *,
+    script_src: Path | None,
+    stage_dir: Path,
+    forward_files: list[str],
+) -> None:
+    if script_src is None:
+        return
+    for rel in forward_files:
+        path = Path(str(rel))
+        if path.is_absolute() or len(path.parts) != 2 or path.parts[0] != "task_script":
+            continue
+        dst = stage_dir / path
+        if dst.exists():
+            continue
+        src = script_src.parent / path.name
+        if src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
 
 
 def _custom_boot_command(script_rel: str) -> str:
@@ -584,6 +611,11 @@ def _build_task_spec(
         if missing:
             raise ValueError(f"Missing params for task '{task_name}': {', '.join(missing)}")
         forward_files = list(rendered["forward_files"])
+        _copy_task_script_forward_dependencies(
+            script_src=boot_script_src,
+            stage_dir=stage_dir,
+            forward_files=forward_files,
+        )
         if script_rel and script_rel not in forward_files and "*" not in forward_files:
             forward_files.append(script_rel)
         backward_files = list(rendered["backward_files"])

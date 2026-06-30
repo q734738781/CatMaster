@@ -73,6 +73,7 @@ Common keys:
 - `cp2k_cpu`: CP2K CPU MPI jobs.
 - `lammps_cpu`: LAMMPS CPU jobs.
 - `mace_gpu`: MACE GPU jobs.
+- `uma_gpu`: FairChem UMA GPU jobs, preferably in a conda environment separate from MACE.
 - `general_cpu`: custom CPU boot scripts.
 - `general_gpu`: custom GPU boot scripts.
 - `xtb_cpu`, `crest_cpu`, `orca_cpu`: molecular quantum chemistry and conformer jobs.
@@ -83,7 +84,7 @@ Check these fields first:
 - `queue_name` matches your scheduler queue.
 - `cpu_per_node` / `gpu_per_node` follow queue limits.
 - `custom_flags` use the right Slurm/PBS syntax.
-- `source_list` or `prepend_script` loads VASP, CP2K, MACE, or other required programs.
+- `source_list` or `prepend_script` loads VASP, CP2K, MACE, UMA, or other required programs.
 
 ## 3. Edit Active Resource Cards
 
@@ -109,6 +110,62 @@ vasp_cpu:
 
 Existing task templates can keep referencing `vasp_cpu`.
 
+### UMA / FairChem Environment
+
+Do not install UMA into the existing MACE environment. FairChem/UMA has its own PyTorch, model-download, and Hugging Face authentication requirements, and sharing the `mace_gpu` environment can create dependency conflicts. Use a separate remote environment, for example:
+
+```bash
+conda create -n catmaster-uma python=3.11 -y
+conda activate catmaster-uma
+pip install -r requirements/uma.txt
+```
+
+Then point `uma_gpu.source_list` at an UMA-only setup script. Start from this template:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /path/to/miniconda3/etc/profile.d/conda.sh
+conda activate catmaster-uma
+
+export HF_HOME=/path/to/shared/cache/huggingface
+export HF_HUB_CACHE="$HF_HOME/hub"
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
+export TORCH_HOME=/path/to/shared/cache/torch
+mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$TORCH_HOME"
+
+if [ -z "${HF_TOKEN:-}" ] && [ -f "$HOME/.config/huggingface/token" ]; then
+  export HF_TOKEN="$(tr -d '\n' < "$HOME/.config/huggingface/token")"
+fi
+
+# Enable offline mode only after the model is prewarmed into HF_HUB_CACHE.
+# export HF_HUB_OFFLINE=1
+
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-${SLURM_CPUS_ON_NODE:-8}}"
+```
+
+Do not put `HF_TOKEN` in `configs/dpdispatcher/tasks.yaml`, task `params`, stage files, or prompt arguments. UMA checkpoints are large and should not be sent through `forward_files`. The first run can download the model on the remote side. If compute nodes have no internet access, prewarm the cache once from a login node or another network-enabled node:
+
+```bash
+mkdir -p "$HOME/.config/huggingface"
+chmod 700 "$HOME/.config/huggingface"
+printf '%s' '<hf_token_with_facebook_UMA_access>' > "$HOME/.config/huggingface/token"
+chmod 600 "$HOME/.config/huggingface/token"
+```
+
+After the token file exists, prewarm the model:
+
+```bash
+source /path/to/catmaster_env_uma.sh
+python - <<'PY'
+from fairchem.core import pretrained_mlip
+pretrained_mlip.get_predict_unit("uma-s-1p2", device="cpu")
+PY
+```
+
+Only consider `HF_HUB_OFFLINE=1` after the prewarmed cache is visible from compute jobs.
+
 ## 4. Understand Task Config
 
 Active tasks live in:
@@ -129,6 +186,8 @@ Task keys include:
 - `mace_neb_dir`
 - `mace_train_dir`
 - `mace_eval_dir`
+- `uma_sp_dir`
+- `uma_relax_dir`
 - `xtb_run`
 
 Each task defines:
@@ -179,6 +238,20 @@ For MACE relax:
 Convert structures/ into a mace_relax_dir stage with input/, then submit it with remote_submission. Use model=mh-1 and head=omat_pbe.
 ```
 
+For an UMA single point on periodic materials or catalyst structures:
+
+```text
+Convert structures/ into an uma_sp_dir stage with input/, then submit it with remote_submission. Set params model=uma-s-1p2 and uma_task=omat. For OC20/OC25/ODAC/OMC semantic tasks, do not rely on auto; set the explicit uma_task.
+```
+
+For an UMA pre-optimization of molecules or clusters:
+
+```text
+Convert molecules/ into an uma_relax_dir stage with input/, then submit it with remote_submission. Set params uma_task=omol, charge=0, spin=1, relax_cell=false. Final energies, frequencies, TS work, or spectra still need ORCA/xTB/DFT validation.
+```
+
+`uma_task=auto` is intentionally conservative: a valid periodic cell defaults to `omat`; otherwise it defaults to `omol`. For `omol`, `charge` and `spin` are written to ASE `Atoms.info`. Keep `charge=0` and `spin=0` for non-`omol` tasks.
+
 ## 7. Single Versus Batch Submission
 
 The difference between `remote_submission` and `remote_submission_batch` is where the boot script starts:
@@ -208,7 +281,7 @@ batch_root/
     POTCAR
 ```
 
-Do not switch to `remote_submission_batch` merely because one stage contains many scientific inputs. For example, one `mace_sp_dir` or `mace_relax_dir` stage may contain many structures under `input/`; that is still one `remote_submission`. Use `remote_submission_batch` only when you have multiple independent MACE stage child directories.
+Do not switch to `remote_submission_batch` merely because one stage contains many scientific inputs. For example, one `mace_sp_dir`, `mace_relax_dir`, `uma_sp_dir`, or `uma_relax_dir` stage may contain many structures under `input/`; that is still one `remote_submission`. Use `remote_submission_batch` only when you have multiple independent stage child directories.
 
 ## 8. Real Remote Smoke Tests
 
@@ -236,6 +309,12 @@ For all regular remote execution coverage:
 
 ```bash
 python scripts/remote_execution_smoke.py --suite all --check-interval 60
+```
+
+UMA needs an additional FairChem environment, Hugging Face access, and model cache, so it is isolated in the `uma` suite and is not part of `core` or `all`. The suite covers molecular/periodic single points and short relaxations:
+
+```bash
+python scripts/remote_execution_smoke.py --suite uma --uma-model uma-s-1p2 --uma-task omat --uma-check-interval 60
 ```
 
 By default the script writes staged files and the JSON report under `/tmp/catmaster_remote_execution_smoke`. To choose a stable location:
@@ -270,9 +349,13 @@ SSH fails
 
 Run `ssh` directly first. Confirm host, port, username, key path, and firewall access.
 
-Remote command cannot find VASP/MACE/CP2K
+Remote command cannot find VASP/MACE/CP2K/UMA
 
 Check the resource `source_list` or `prepend_script`; the remote job environment must load the required executable.
+
+UMA reports model-download, authentication, or offline-cache errors
+
+On the remote side, first run `source catmaster_env_uma.sh` and confirm `python -c "from fairchem.core import pretrained_mlip"` works. Then check that `HF_TOKEN` is set only in the remote environment, `HF_HOME/HF_HUB_CACHE` points to a persistent directory visible from compute jobs, and `HF_HUB_OFFLINE=1` is not enabled before the model is prewarmed. If the error contains `GatedRepoError` or `Access to model facebook/UMA is restricted`, the remote token is missing, was not read by the source script, or the Hugging Face account does not have access to `facebook/UMA`.
 
 Results do not download
 

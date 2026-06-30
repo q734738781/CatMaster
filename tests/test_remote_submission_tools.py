@@ -48,9 +48,11 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "submission_guidance" in artifact["data"]
     assert "remote_submission_batch" in artifact["data"]["submission_guidance"]
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
-    assert {"vasp_execute", "mace_sp_dir"}.issubset(task_names)
+    assert {"vasp_execute", "mace_sp_dir", "uma_sp_dir", "uma_relax_dir"}.issubset(task_names)
     mace_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mace_sp_dir")
     assert "input/" in mace_item["submission_hint"]
+    uma_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "uma_sp_dir")
+    assert "UMA" in uma_item["submission_hint"]
     assert "mace_md_dir" not in task_names
     assert "orca_execute" not in task_names
     assert "mace_train_dir" not in task_names
@@ -79,6 +81,12 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
         _, artifact = get_avail_resources({})
     resource_names = {item["resources"] for item in artifact["data"]["resources"]}
     assert resource_names == {"general_cpu"}
+    with toolcall_context("catalog", audience="orca_xtb_worker"):
+        _, artifact = get_avail_remote_task({"return_resource": True})
+    qchem_task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
+    assert {"xtb_run", "orca_execute", "uma_sp_dir", "uma_relax_dir"}.issubset(qchem_task_names)
+    uma_qchem = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "uma_sp_dir")
+    assert uma_qchem["resources"]["resources"] == "uma_gpu"
 
     with toolcall_context("catalog", audience="dynamics_worker"):
         _, artifact = get_avail_remote_task({"return_resource": True})
@@ -169,6 +177,49 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
     assert artifact["data"]["duration_s"] == 0.1
     assert "duration_s=0.1" in content
     assert "jobs" not in artifact["data"]
+
+
+def test_remote_submission_copies_uma_helper_and_skips_missing_optional_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = (register, config_path)
+        captured["resources"] = req.resources
+        captured["command"] = req.tasks[0].command
+        captured["forward_files"] = list(req.tasks[0].forward_files)
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={"remote_context_id": "dp_uma", "submission_hash": "hash_uma", "receipt_rel": "receipt.json"},
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage" / "uma_sp"
+        (stage / "input").mkdir(parents=True)
+        (stage / "input" / "H2O.xyz").write_text("3\nH2O\nO 0 0 0\nH 0 0 1\nH 1 0 0\n", encoding="utf-8")
+        with toolcall_context("submit", audience="orca_xtb_worker"):
+            remote_submission(
+                {
+                    "work_dir": "stage/uma_sp",
+                    "task_name": "uma_sp_dir",
+                    "params": {"uma_task": "omol", "charge": 0, "spin": 1},
+                }
+            )
+
+    assert captured["resources"] == "uma_gpu"
+    assert "--uma_task omol" in str(captured["command"])
+    assert "task_script/uma_sp.py" in captured["forward_files"]
+    assert "task_script/uma_common.py" in captured["forward_files"]
+    assert "params/uma_metadata.json" not in captured["forward_files"]
+    assert (stage / "task_script" / "uma_sp.py").is_file()
+    assert (stage / "task_script" / "uma_common.py").is_file()
 
 
 def test_remote_submission_uses_unique_work_base_for_same_basename(

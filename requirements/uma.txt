@@ -1,0 +1,14 @@
+# GPU/UMA execution dependencies.
+#
+# This file is intentionally separate from requirements/gpu.txt because
+# FairChem UMA and MACE may require incompatible torch-side dependency sets.
+# Use it for the remote UMA conda/virtualenv activated by the uma_gpu
+# DPDispatcher resource. Verify these pins on the target GPU/CUDA stack before
+# production use.
+fairchem-core==2.21.0
+torch==2.8.0
+ase==3.29.0
+numpy==2.2.6
+scipy==1.17.1
+huggingface-hub==0.36.2
+pyyaml==6.0.3

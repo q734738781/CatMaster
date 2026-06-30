@@ -8,6 +8,7 @@ For deployment checks on a remote machine, prefer the CLI wrapper first:
 python scripts/remote_execution_smoke.py --list
 python scripts/remote_execution_smoke.py --suite core --check-interval 30
 python scripts/remote_execution_smoke.py --suite all --check-interval 60
+python scripts/remote_execution_smoke.py --suite uma --uma-check-interval 60
 ```
 
 The CLI writes a JSON report under `/tmp/catmaster_remote_execution_smoke`
@@ -32,6 +33,9 @@ CATMASTER_REMOTE_MACE_HEAD=omat_pbe \
 CATMASTER_REMOTE_MACE_DTYPE=float32 \
 CATMASTER_REMOTE_VASP_TASK=vasp_execute \
 CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL=30 \
+CATMASTER_REMOTE_UMA_MODEL=uma-s-1p2 \
+CATMASTER_REMOTE_UMA_TASK=omat \
+CATMASTER_REMOTE_UMA_RELAX_STEPS=5 \
 pytest tests/remote_execution -s -vv
 ```
 
@@ -45,6 +49,10 @@ CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdisp
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_cp2k_aimd_prepare_then_remote_submission_o2_short_nvt_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_lammps_lj_prepare_then_remote_submission_o2_minimize_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_lammps_lj_prepare_then_remote_submission_o2_short_nvt_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_omol_sp_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_periodic_sp_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_omol_relax_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_periodic_relax_remote -s -vv
 ```
 
 Prerequisites:
@@ -52,6 +60,10 @@ Prerequisites:
 - `configs/dpdispatcher/machines.yaml` contains reachable machines.
 - `configs/dpdispatcher/resources.yaml` binds `mace_gpu` and `vasp_cpu`.
 - The GPU remote environment can run MACE single-point jobs.
+- The UMA remote environment can run FairChem UMA single-point jobs when
+  `CATMASTER_RUN_REMOTE_UMA_TESTS=1` is set. It must use `uma_gpu`, a
+  separate UMA/FairChem environment, a valid Hugging Face token or prewarmed
+  cache, and should not reuse the MACE environment.
 - Local pymatgen can locate VASP pseudopotentials, because the VASP test starts
   from `vasp_prepare` and requires POTCAR generation before remote dispatch.
 - The CPU remote environment can run VASP through `catmaster/remote/cpu/vasp_boot.py`.
@@ -73,6 +85,13 @@ CATMASTER_REMOTE_MACE_DTYPE=float32
 CATMASTER_REMOTE_VASP_TASK=vasp_execute
 CATMASTER_REMOTE_CP2K_CHECK_INTERVAL=60
 CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL=30
+CATMASTER_REMOTE_UMA_CHECK_INTERVAL=60
+CATMASTER_REMOTE_UMA_MODEL=uma-s-1p2
+CATMASTER_REMOTE_UMA_TASK=omat
+CATMASTER_REMOTE_UMA_DEVICE=auto
+CATMASTER_REMOTE_UMA_MOL_SPIN=1
+CATMASTER_REMOTE_UMA_RELAX_FMAX=0.05
+CATMASTER_REMOTE_UMA_RELAX_STEPS=5
 ```
 
 Expected coverage:
@@ -95,6 +114,12 @@ Expected coverage:
   minimization and short NVT stages, dispatch them with
   `task_name=lammps_execute`, and check `status.json`, `lammps_summary.json`,
   LAMMPS log output, and trajectory output where applicable.
+- The UMA tests are opt-in on top of the global remote gate. They stage H2O
+  for `uma_sp_dir`/`uma_relax_dir` with `audience=orca_xtb_worker` and
+  `uma_task=omol`, and an O2 periodic VASP structure for
+  `audience=materials_worker` with `uma_task=omat` by default. They check
+  `status.json`, `batch_summary.json`, finite energy or final energy, max
+  force for relaxations, per-item `summary.json`, and output structures.
 
 Failure triage:
 
@@ -109,6 +134,10 @@ Failure triage:
   or result-download pressure.
 - Non-zero `status.json.returncode` with stderr/stdout tails means the remote
   environment launched but MACE/VASP itself failed.
+- UMA authentication, network, or offline-cache failures should be triaged in
+  the `uma_gpu.source_list` script: check `HF_TOKEN`, `HF_HOME/HF_HUB_CACHE`,
+  model prewarm, and that `HF_HUB_OFFLINE=1` is used only after the cache is
+  populated.
 - CP2K `status.json.returncode=2` before launch usually means `SLURM_NTASKS`
   was unavailable or `job.inp` was missing in the submitted stage.
 - LAMMPS acceleration failures should be visible in `lammps_stdout.out`; by

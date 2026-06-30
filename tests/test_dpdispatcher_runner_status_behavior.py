@@ -32,6 +32,29 @@ def test_wrap_command_can_inject_dispatch_token_for_hash_isolation() -> None:
     assert "CM_DPDISPATCHER_SUBMISSION_TOKEN=run-b:task-0" in wrapped_b
 
 
+def test_build_resources_sources_resource_source_list_after_machine_env() -> None:
+    resources = dpr._build_resources(
+        {
+            "number_node": 1,
+            "cpu_per_node": 1,
+            "gpu_per_node": 0,
+            "queue_name": "batch",
+            "group_size": 1,
+            "source_list": ["/opt/catmaster env/uma.sh"],
+            "prepend_script": ["echo ready"],
+        },
+        env_setup="module load base\nconda activate catmaster",
+    )
+
+    assert resources.source_list == []
+    assert resources.prepend_script == [
+        "module load base",
+        "conda activate catmaster",
+        "test -f '/opt/catmaster env/uma.sh' || { echo Missing source script: '/opt/catmaster env/uma.sh' >&2; exit 127; }; source '/opt/catmaster env/uma.sh'",
+        "echo ready",
+    ]
+
+
 def test_dispatch_token_changes_dpdispatcher_hashes() -> None:
     resources = dpr.Resources(
         number_node=1,

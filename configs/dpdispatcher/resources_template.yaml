@@ -119,6 +119,22 @@ mace_gpu:
   source_list:
     - "<REMOTE_MACE_ENV_SCRIPT>"
 
+uma_gpu:
+  kind: domain
+  capabilities: [uma, fairchem, gpu]
+  description: "Managed FairChem UMA GPU execution."
+  audiences: [materials_worker, orca_xtb_worker]
+  machine: gpu_server
+  number_node: 1
+  cpu_per_node: 16
+  gpu_per_node: 1
+  queue_name: main
+  group_size: 1
+  custom_flags:
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_UMA_ENV_SCRIPT>"
+
 xtb_cpu:
   kind: domain
   capabilities: [xtb]

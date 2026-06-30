@@ -19,6 +19,12 @@ RUN_REMOTE = os.environ.get("CATMASTER_RUN_REMOTE_EXECUTION_TESTS", "").strip().
     "yes",
     "on",
 }
+RUN_UMA = os.environ.get("CATMASTER_RUN_REMOTE_UMA_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 pytestmark = pytest.mark.skipif(
     not RUN_REMOTE,
@@ -111,6 +117,46 @@ def _write_o2_xyz(project_space: Path, rel_dir: str) -> Path:
     return structure_path
 
 
+def _write_water_xyz(project_space: Path, rel_dir: str) -> Path:
+    input_dir = _files_root(project_space) / rel_dir
+    input_dir.mkdir(parents=True, exist_ok=True)
+    structure_path = input_dir / "H2O.xyz"
+    structure_path.write_text(
+        "\n".join(
+            [
+                "3",
+                "H2O UMA smoke",
+                "O 0.000000 0.000000 0.000000",
+                "H 0.758602 0.000000 0.504284",
+                "H -0.758602 0.000000 0.504284",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return structure_path
+
+
+def _uma_check_interval() -> int:
+    return _int_env("CATMASTER_REMOTE_UMA_CHECK_INTERVAL", _remote_check_interval(60))
+
+
+def _uma_model() -> str:
+    return os.environ.get("CATMASTER_REMOTE_UMA_MODEL", "uma-s-1p2").strip() or "uma-s-1p2"
+
+
+def _uma_device() -> str:
+    return os.environ.get("CATMASTER_REMOTE_UMA_DEVICE", "auto").strip() or "auto"
+
+
+def _uma_relax_fmax() -> float:
+    return float(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_FMAX", "0.05"))
+
+
+def _uma_relax_steps() -> int:
+    return int(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_STEPS", "5"))
+
+
 def _invoke_agent_tool(project_space: Path, tool_name: str, payload: dict[str, Any], *, audience: str = "") -> tuple[Any, dict[str, Any]]:
     from catmaster.tools.registry import ToolRegistry
 
@@ -162,6 +208,210 @@ def test_agent_tool_mace_sp_remote(tmp_path: Path) -> None:
     output_root = stage_dir / "output"
     assert (output_root / "O2" / "summary.json").is_file()
     assert (output_root / "O2" / "sp.vasp").is_file()
+
+
+@pytest.mark.skipif(
+    not RUN_UMA,
+    reason="UMA remote smoke tests need gated model access; set CATMASTER_RUN_REMOTE_UMA_TESTS=1",
+)
+def test_agent_tool_uma_omol_sp_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    stage_dir = _files_root(project_space) / "remote_execution" / "uma_h2o_sp_stage"
+    input_dir = stage_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    _write_water_xyz(project_space, "remote_execution/uma_h2o_sp_stage/input")
+
+    payload = {
+        "work_dir": "remote_execution/uma_h2o_sp_stage",
+        "task_name": "uma_sp_dir",
+        "params": {
+            "model": _uma_model(),
+            "uma_task": "omol",
+            "charge": 0,
+            "spin": int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")),
+            "device": _uma_device(),
+        },
+        "config": {"check_interval": _uma_check_interval()},
+    }
+
+    _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="orca_xtb_worker")
+    data = artifact.get("data") or {}
+
+    assert artifact.get("tool_name") == "remote_submission"
+    assert data.get("resources") == "uma_gpu"
+    assert data.get("task_count") == 1
+    assert data.get("task_state_counts"), "DPDispatcher returned no task states"
+
+    _assert_status_success(stage_dir / "status.json")
+
+    batch_summary = _read_json(stage_dir / "output" / "batch_summary.json")
+    assert batch_summary.get("errors") == []
+    results = batch_summary.get("results") or []
+    assert len(results) == 1
+
+    energy = results[0].get("summary", {}).get("energy_eV")
+    assert isinstance(energy, (int, float)) and math.isfinite(float(energy))
+
+    output_root = stage_dir / "output"
+    assert (output_root / "H2O" / "summary.json").is_file()
+    assert (output_root / "H2O" / "sp.xyz").is_file()
+
+
+@pytest.mark.skipif(
+    not RUN_UMA,
+    reason="UMA remote smoke tests need gated model access; set CATMASTER_RUN_REMOTE_UMA_TESTS=1",
+)
+def test_agent_tool_uma_periodic_sp_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    stage_dir = _files_root(project_space) / "remote_execution" / "uma_o2_periodic_sp_stage"
+    input_dir = stage_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ASSETS / "O2_VASP_inputs" / "POSCAR", input_dir / "O2.vasp")
+
+    payload = {
+        "work_dir": "remote_execution/uma_o2_periodic_sp_stage",
+        "task_name": "uma_sp_dir",
+        "params": {
+            "model": _uma_model(),
+            "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
+            "charge": 0,
+            "spin": 0,
+            "device": _uma_device(),
+        },
+        "config": {"check_interval": _uma_check_interval()},
+    }
+
+    _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="materials_worker")
+    data = artifact.get("data") or {}
+
+    assert artifact.get("tool_name") == "remote_submission"
+    assert data.get("resources") == "uma_gpu"
+    assert data.get("task_count") == 1
+    assert data.get("task_state_counts"), "DPDispatcher returned no task states"
+
+    _assert_status_success(stage_dir / "status.json")
+
+    batch_summary = _read_json(stage_dir / "output" / "batch_summary.json")
+    assert batch_summary.get("errors") == []
+    results = batch_summary.get("results") or []
+    assert len(results) == 1
+
+    energy = results[0].get("summary", {}).get("energy_eV")
+    assert isinstance(energy, (int, float)) and math.isfinite(float(energy))
+
+    output_root = stage_dir / "output"
+    assert (output_root / "O2" / "summary.json").is_file()
+    assert (output_root / "O2" / "sp.vasp").is_file()
+
+
+@pytest.mark.skipif(
+    not RUN_UMA,
+    reason="UMA remote smoke tests need gated model access; set CATMASTER_RUN_REMOTE_UMA_TESTS=1",
+)
+def test_agent_tool_uma_omol_relax_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    stage_dir = _files_root(project_space) / "remote_execution" / "uma_h2o_relax_stage"
+    input_dir = stage_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    _write_water_xyz(project_space, "remote_execution/uma_h2o_relax_stage/input")
+
+    payload = {
+        "work_dir": "remote_execution/uma_h2o_relax_stage",
+        "task_name": "uma_relax_dir",
+        "params": {
+            "model": _uma_model(),
+            "uma_task": "omol",
+            "charge": 0,
+            "spin": int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")),
+            "device": _uma_device(),
+            "fmax": _uma_relax_fmax(),
+            "steps": _uma_relax_steps(),
+            "optimizer": "FIRE",
+            "relax_cell": "false",
+        },
+        "config": {"check_interval": _uma_check_interval()},
+    }
+
+    _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="orca_xtb_worker")
+    data = artifact.get("data") or {}
+
+    assert artifact.get("tool_name") == "remote_submission"
+    assert data.get("resources") == "uma_gpu"
+    assert data.get("task_count") == 1
+    assert data.get("task_state_counts"), "DPDispatcher returned no task states"
+
+    _assert_status_success(stage_dir / "status.json")
+
+    batch_summary = _read_json(stage_dir / "output" / "batch_summary.json")
+    assert batch_summary.get("errors") == []
+    results = batch_summary.get("results") or []
+    assert len(results) == 1
+
+    summary = results[0].get("summary", {})
+    final_energy = summary.get("final_energy_eV")
+    max_force = summary.get("max_force_abs_eVA")
+    assert isinstance(final_energy, (int, float)) and math.isfinite(float(final_energy))
+    assert isinstance(max_force, (int, float)) and math.isfinite(float(max_force))
+    assert isinstance(summary.get("converged"), bool)
+
+    output_root = stage_dir / "output"
+    assert (output_root / "H2O" / "summary.json").is_file()
+    assert (output_root / "H2O" / "opt.xyz").is_file()
+
+
+@pytest.mark.skipif(
+    not RUN_UMA,
+    reason="UMA remote smoke tests need gated model access; set CATMASTER_RUN_REMOTE_UMA_TESTS=1",
+)
+def test_agent_tool_uma_periodic_relax_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    stage_dir = _files_root(project_space) / "remote_execution" / "uma_o2_periodic_relax_stage"
+    input_dir = stage_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ASSETS / "O2_VASP_inputs" / "POSCAR", input_dir / "O2.vasp")
+
+    payload = {
+        "work_dir": "remote_execution/uma_o2_periodic_relax_stage",
+        "task_name": "uma_relax_dir",
+        "params": {
+            "model": _uma_model(),
+            "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
+            "charge": 0,
+            "spin": 0,
+            "device": _uma_device(),
+            "fmax": _uma_relax_fmax(),
+            "steps": _uma_relax_steps(),
+            "optimizer": "FIRE",
+            "relax_cell": "false",
+        },
+        "config": {"check_interval": _uma_check_interval()},
+    }
+
+    _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="materials_worker")
+    data = artifact.get("data") or {}
+
+    assert artifact.get("tool_name") == "remote_submission"
+    assert data.get("resources") == "uma_gpu"
+    assert data.get("task_count") == 1
+    assert data.get("task_state_counts"), "DPDispatcher returned no task states"
+
+    _assert_status_success(stage_dir / "status.json")
+
+    batch_summary = _read_json(stage_dir / "output" / "batch_summary.json")
+    assert batch_summary.get("errors") == []
+    results = batch_summary.get("results") or []
+    assert len(results) == 1
+
+    summary = results[0].get("summary", {})
+    final_energy = summary.get("final_energy_eV")
+    max_force = summary.get("max_force_abs_eVA")
+    assert isinstance(final_energy, (int, float)) and math.isfinite(float(final_energy))
+    assert isinstance(max_force, (int, float)) and math.isfinite(float(max_force))
+    assert isinstance(summary.get("converged"), bool)
+
+    output_root = stage_dir / "output"
+    assert (output_root / "O2" / "summary.json").is_file()
+    assert (output_root / "O2" / "opt.vasp").is_file()
 
 
 def test_vasp_prepare_then_remote_submission_o2_sp_remote(tmp_path: Path) -> None:

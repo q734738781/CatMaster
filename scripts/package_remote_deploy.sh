@@ -28,8 +28,9 @@ Options:
   --include-demos
       Include demos/ in the archive.
 
-  By default, the archive excludes the entire configs/ directory,
-  including template files. Put deployment configs on the server separately.
+  By default, the archive includes only public DPDispatcher template configs
+  under configs/dpdispatcher/*_template.yaml. Private deployment configs
+  stay excluded.
 
   --include-path RELPATH
       Add another repository-relative file or directory to the archive.
@@ -157,7 +158,8 @@ packaged_at_local=$(date '+%Y-%m-%dT%H:%M:%S%z')
 package_profile=runtime-webui-deploy
 package_root=$PACKAGE_ROOT_NAME
 archive_name=$ARCHIVE_NAME
-excluded_configs=configs/
+included_config_templates=configs/dpdispatcher/*_template.yaml
+excluded_private_configs=configs/dpdispatcher/{machines,resources,tasks}.yaml
 excluded_private_files=.env,.sesskey
 EOF
 }
@@ -166,7 +168,7 @@ write_deploy_readme() {
   {
     printf '%s\n' '# CatMaster Remote Deployment'
     printf '\n'
-    printf '%s\n' 'This archive contains a runtime-oriented CatMaster checkout with the rebuilt WebUI static bundle. Local secrets, logs, project spaces, caches, node_modules, `.git`, and the entire `configs/` directory are intentionally excluded.'
+    printf '%s\n' 'This archive contains a runtime-oriented CatMaster checkout with the rebuilt WebUI static bundle. Local secrets, logs, project spaces, caches, node_modules, `.git`, and private active config files are intentionally excluded.'
     printf '\n'
     printf '%s\n' '## 1. Unpack'
     printf '\n'
@@ -185,17 +187,41 @@ write_deploy_readme() {
     printf '%s\n' '# pip install -r requirements/gpu.txt'
     printf '%s\n' '```'
     printf '\n'
-    printf '%s\n' '## 3. Add local secrets and remote resources'
-    printf '\n'
-    printf '%s\n' 'The archive does not include `configs/`, including config templates. Put your deployment-specific config files on the server separately, for example by copying a private `configs/` directory into this checkout or mounting equivalent files.'
+    printf '%s\n' 'Create a separate environment for FairChem UMA. Do not install UMA into the MACE environment:'
     printf '\n'
     printf '%s\n' '```bash'
-    printf '%s\n' 'mkdir -p configs/dpdispatcher'
+    printf '%s\n' 'conda create -n catmaster-uma python=3.11 -y'
+    printf '%s\n' 'conda activate catmaster-uma'
+    printf '%s\n' 'pip install -r requirements/uma.txt'
+    printf '%s\n' '```'
+    printf '\n'
+    printf '%s\n' '## 3. Add local secrets and remote resources'
+    printf '\n'
+    printf '%s\n' 'The archive includes public DPDispatcher templates under `configs/dpdispatcher/*_template.yaml`, but excludes deployment-specific active configs such as `machines.yaml`, `resources.yaml`, and `tasks.yaml`.'
+    printf '\n'
+    printf '%s\n' '```bash'
+    printf '%s\n' 'cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml'
+    printf '%s\n' 'cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml'
+    printf '%s\n' 'cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml'
     printf '%s\n' '# provide configs/llm.yaml or export provider keys such as OPENROUTER_API_KEY'
-    printf '%s\n' '# provide configs/dpdispatcher/{machines,resources,tasks}.yaml when using remote execution'
+    printf '%s\n' '# edit configs/dpdispatcher/{machines,resources,tasks}.yaml for your cluster'
     printf '%s\n' '```'
     printf '\n'
     printf '%s\n' 'Keep real API keys and SSH credentials out of the archive. Use environment variables, local ignored files, or machine-level secret management.'
+    printf '\n'
+    printf '%s\n' 'For UMA, keep `HF_TOKEN` only in the remote UMA source script or a remote secret file, never in task params or staged files. Point `HF_HOME`, `HF_HUB_CACHE`, `TRANSFORMERS_CACHE`, and `TORCH_HOME` to persistent remote cache directories. If compute nodes have no internet access, prewarm the model cache once before enabling `HF_HUB_OFFLINE=1`:'
+    printf '\n'
+    printf '%s\n' '```bash'
+    printf '%s\n' 'mkdir -p "$HOME/.config/huggingface"'
+    printf '%s\n' 'chmod 700 "$HOME/.config/huggingface"'
+    printf '%s\n' "printf '%s' '<hf_token_with_facebook_UMA_access>' > \"\$HOME/.config/huggingface/token\""
+    printf '%s\n' 'chmod 600 "$HOME/.config/huggingface/token"'
+    printf '%s\n' 'source /path/to/catmaster_env_uma.sh'
+    printf '%s\n' 'python - <<'"'"'PY'"'"''
+    printf '%s\n' 'from fairchem.core import pretrained_mlip'
+    printf '%s\n' 'pretrained_mlip.get_predict_unit("uma-s-1p2", device="cpu")'
+    printf '%s\n' 'PY'
+    printf '%s\n' '```'
     printf '\n'
     printf '%s\n' '## 4. Start WebUI'
     printf '\n'
@@ -216,6 +242,8 @@ write_deploy_readme() {
     printf '%s\n' 'python scripts/remote_execution_smoke.py --suite core --check-interval 30'
     printf '%s\n' '# broader coverage:'
     printf '%s\n' '# python scripts/remote_execution_smoke.py --suite all --check-interval 60'
+    printf '%s\n' '# UMA is isolated because it needs FairChem, Hugging Face access, and model cache; the suite covers SP and short relax jobs:'
+    printf '%s\n' '# python scripts/remote_execution_smoke.py --suite uma --uma-model uma-s-1p2 --uma-task omat --uma-check-interval 60'
     printf '%s\n' '```'
     printf '\n'
     printf '%s\n' 'These commands submit actual DPDispatcher calculations. The default report root is `/tmp/catmaster_remote_execution_smoke`.'
@@ -233,14 +261,19 @@ verify_archive() {
   tar -tzf "$ARCHIVE_PATH" >/dev/null
   tar_list="$(tar -tzf "$ARCHIVE_PATH")"
 
-  local private_pattern='(^|/)(\.git|\.env$|\.sesskey|dpdispatcher\.log|node_modules|\.runtime|project_space|workspace|configs)(/|$)'
+  local private_pattern='(^|/)(\.git|\.env$|\.sesskey|dpdispatcher\.log|node_modules|\.runtime|project_space|workspace)(/|$)'
   local private_hits=""
+  local config_hits=""
   local env_hits=""
   private_hits="$(printf '%s\n' "$tar_list" | grep -E "$private_pattern" || true)"
+  config_hits="$(printf '%s\n' "$tar_list" \
+    | grep -E "(^|/)configs(/|$)" \
+    | grep -v -E "^$PACKAGE_ROOT_NAME/configs/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/(machines_template|resources_template|tasks_template)\.yaml$" \
+    || true)"
   env_hits="$(printf '%s\n' "$tar_list" | grep -E '(^|/)\.env($|\.)' | grep -v -E '(^|/)\.env\.example$' || true)"
-  if [[ -n "$private_hits" || -n "$env_hits" ]]; then
+  if [[ -n "$private_hits" || -n "$config_hits" || -n "$env_hits" ]]; then
     echo "Archive contains private or runtime-only paths:" >&2
-    printf '%s\n' "$private_hits" "$env_hits" | sed '/^$/d' >&2
+    printf '%s\n' "$private_hits" "$config_hits" "$env_hits" | sed '/^$/d' >&2
     exit 1
   fi
 
@@ -250,6 +283,9 @@ verify_archive() {
     "$PACKAGE_ROOT_NAME/.deploy_info"
     "$PACKAGE_ROOT_NAME/.env.example"
     "$PACKAGE_ROOT_NAME/scripts/remote_execution_smoke.py"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/machines_template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/resources_template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/tasks_template.yaml"
     "$PACKAGE_ROOT_NAME/catmaster/webui/static/app.js"
     "$PACKAGE_ROOT_NAME/catmaster/webui/static/app.css"
   )
@@ -422,6 +458,9 @@ RUNTIME_PATHS=(
   "skills"
   "scripts"
   "docs"
+  "configs/dpdispatcher/machines_template.yaml"
+  "configs/dpdispatcher/resources_template.yaml"
+  "configs/dpdispatcher/tasks_template.yaml"
   "main.py"
   "README.md"
   "LICENSE"

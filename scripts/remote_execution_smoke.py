@@ -316,6 +316,169 @@ def run_mace_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _assert_uma_batch_energy(stage_dir: Path, output_name: str) -> tuple[dict[str, Any], float]:
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"UMA returned errors: {batch.get('errors')!r}")
+    results = batch.get("results") or []
+    if not results:
+        raise AssertionError("UMA batch_summary.json has no results")
+    energy = _finite_number(results[0].get("summary", {}).get("energy_eV"), "UMA energy_eV")
+    if not (stage_dir / "output" / output_name / "summary.json").is_file():
+        raise AssertionError(f"UMA summary.json was not downloaded for {output_name}")
+    return batch, energy
+
+
+def _assert_uma_batch_relax(stage_dir: Path, output_name: str, structure_name: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"UMA relaxation returned errors: {batch.get('errors')!r}")
+    results = batch.get("results") or []
+    if not results:
+        raise AssertionError("UMA relaxation batch_summary.json has no results")
+    summary = results[0].get("summary") or {}
+    _finite_number(summary.get("final_energy_eV"), "UMA final_energy_eV")
+    _finite_number(summary.get("max_force_abs_eVA"), "UMA max_force_abs_eVA")
+    if not isinstance(summary.get("converged"), bool):
+        raise AssertionError(f"UMA relaxation summary lacks boolean convergence flag: {summary!r}")
+    output_dir = stage_dir / "output" / output_name
+    if not (output_dir / "summary.json").is_file():
+        raise AssertionError(f"UMA relaxation summary.json was not downloaded for {output_name}")
+    if not (output_dir / structure_name).is_file():
+        raise AssertionError(f"UMA relaxation output structure was not downloaded: {output_dir / structure_name}")
+    return batch, summary
+
+
+def run_uma_mol_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, "uma_h2o_sp")
+    input_dir = stage_dir / "input"
+    _write_water_xyz(input_dir / "H2O.xyz")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="uma_sp_dir",
+        audience="orca_xtb_worker",
+        check_interval=args.uma_check_interval,
+        params={
+            "model": args.uma_model,
+            "uma_task": "omol",
+            "charge": 0,
+            "spin": args.uma_mol_spin,
+            "device": args.uma_device,
+        },
+    )
+    _status_ok(stage_dir)
+    batch, energy = _assert_uma_batch_energy(stage_dir, "H2O")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": ["status.json returncode=0", "UMA OMOL batch_summary has one finite energy", "output/H2O/summary.json exists"],
+        "details": {"energy_eV": energy, "summary": batch, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def run_uma_mol_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, "uma_h2o_relax")
+    input_dir = stage_dir / "input"
+    _write_water_xyz(input_dir / "H2O.xyz")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="uma_relax_dir",
+        audience="orca_xtb_worker",
+        check_interval=args.uma_check_interval,
+        params={
+            "model": args.uma_model,
+            "uma_task": "omol",
+            "charge": 0,
+            "spin": args.uma_mol_spin,
+            "device": args.uma_device,
+            "fmax": args.uma_relax_fmax,
+            "steps": args.uma_relax_steps,
+            "relax_cell": "false",
+        },
+    )
+    _status_ok(stage_dir)
+    batch, summary = _assert_uma_batch_relax(stage_dir, "H2O", "opt.xyz")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "status.json returncode=0",
+            "UMA OMOL relaxation has finite final energy and max force",
+            "output/H2O/summary.json and opt.xyz exist",
+        ],
+        "details": {"summary": summary, "batch_summary": batch, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def run_uma_mat_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, "uma_o2_box_sp")
+    input_dir = stage_dir / "input"
+    _write_o2_poscar(input_dir / "O2.vasp")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="uma_sp_dir",
+        audience="materials_worker",
+        check_interval=args.uma_check_interval,
+        params={
+            "model": args.uma_model,
+            "uma_task": args.uma_task,
+            "charge": 0,
+            "spin": 0,
+            "device": args.uma_device,
+        },
+    )
+    _status_ok(stage_dir)
+    batch, energy = _assert_uma_batch_energy(stage_dir, "O2")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": ["status.json returncode=0", "UMA periodic batch_summary has one finite energy", "output/O2/summary.json exists"],
+        "details": {"energy_eV": energy, "summary": batch, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def run_uma_mat_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, "uma_o2_box_relax")
+    input_dir = stage_dir / "input"
+    _write_o2_poscar(input_dir / "O2.vasp")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="uma_relax_dir",
+        audience="materials_worker",
+        check_interval=args.uma_check_interval,
+        params={
+            "model": args.uma_model,
+            "uma_task": args.uma_task,
+            "charge": 0,
+            "spin": 0,
+            "device": args.uma_device,
+            "fmax": args.uma_relax_fmax,
+            "steps": args.uma_relax_steps,
+            "relax_cell": "false",
+        },
+    )
+    _status_ok(stage_dir)
+    batch, summary = _assert_uma_batch_relax(stage_dir, "O2", "opt.vasp")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "status.json returncode=0",
+            "UMA periodic relaxation has finite final energy and max force",
+            "output/O2/summary.json and opt.vasp exist",
+        ],
+        "details": {"summary": summary, "batch_summary": batch, "task_data": data},
+        **_remote_context(data),
+    }
+
+
 def run_vasp_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
     input_rel, input_dir = _case_stage(ctx, "vasp_o2_input")
     _write_o2_poscar(input_dir / "O2.vasp")
@@ -575,6 +738,10 @@ def run_crest_quick(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, An
 
 CASES: dict[str, CaseSpec] = {
     "mace_sp": CaseSpec("mace_sp", "MACE GPU O2 single-point energy through mace_sp_dir.", run_mace_sp),
+    "uma_mol_sp": CaseSpec("uma_mol_sp", "FairChem UMA OMOL H2O single-point energy through uma_sp_dir.", run_uma_mol_sp),
+    "uma_mol_relax": CaseSpec("uma_mol_relax", "FairChem UMA OMOL H2O short relaxation through uma_relax_dir.", run_uma_mol_relax),
+    "uma_mat_sp": CaseSpec("uma_mat_sp", "FairChem UMA periodic O2-box single-point energy through uma_sp_dir.", run_uma_mat_sp),
+    "uma_mat_relax": CaseSpec("uma_mat_relax", "FairChem UMA periodic O2-box short relaxation through uma_relax_dir.", run_uma_mat_relax),
     "vasp_sp": CaseSpec("vasp_sp", "VASP CPU O2 static single-point through vasp_prepare + vasp_execute.", run_vasp_sp),
     "xtb_sp": CaseSpec("xtb_sp", "xTB CPU O2 single-point through xtb_run.", run_xtb_sp),
     "orca_sp": CaseSpec("orca_sp", "ORCA CPU O2 triplet single-point through orca_prepare + orca_execute.", run_orca_sp),
@@ -586,6 +753,7 @@ CASES: dict[str, CaseSpec] = {
 SUITES: dict[str, list[str]] = {
     "core": ["mace_sp", "xtb_sp", "orca_sp"],
     "materials": ["mace_sp", "vasp_sp"],
+    "uma": ["uma_mol_sp", "uma_mol_relax", "uma_mat_sp", "uma_mat_relax"],
     "qchem": ["xtb_sp", "orca_sp"],
     "dynamics": ["cp2k_sp", "lammps_min"],
     "all": ["mace_sp", "vasp_sp", "xtb_sp", "orca_sp", "cp2k_sp", "lammps_min", "crest_quick"],
@@ -697,6 +865,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mace-dtype", choices=("float32", "float64"), default=os.environ.get("CATMASTER_REMOTE_MACE_DTYPE", "float32"))
     parser.add_argument("--mace-device", default=os.environ.get("CATMASTER_REMOTE_MACE_DEVICE", "auto"))
 
+    parser.add_argument("--uma-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_UMA_CHECK_INTERVAL"))
+    parser.add_argument("--uma-model", default=os.environ.get("CATMASTER_REMOTE_UMA_MODEL", "uma-s-1p2"))
+    parser.add_argument("--uma-task", choices=("auto", "omat", "oc20", "oc22", "oc25", "odac", "omc"), default=os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat"))
+    parser.add_argument("--uma-device", default=os.environ.get("CATMASTER_REMOTE_UMA_DEVICE", "auto"))
+    parser.add_argument("--uma-mol-spin", type=int, default=int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")))
+    parser.add_argument("--uma-relax-fmax", type=float, default=float(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_FMAX", "0.05")))
+    parser.add_argument("--uma-relax-steps", type=int, default=int(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_STEPS", "5")))
+
     parser.add_argument("--vasp-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_VASP_CHECK_INTERVAL"))
     parser.add_argument("--vasp-nelm", type=int, default=int(os.environ.get("CATMASTER_REMOTE_VASP_NELM", "40")))
 
@@ -729,6 +905,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     for name in (
         "mace_check_interval",
+        "uma_check_interval",
         "vasp_check_interval",
         "xtb_check_interval",
         "orca_check_interval",

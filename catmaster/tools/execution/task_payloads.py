@@ -33,7 +33,12 @@ def expand_forward_files(patterns: Sequence[str], base_dir: Path, ctx: Mapping[s
     for item in patterns or []:
         if item == "*":
             return ["*"]
-        expanded.append(format_template(item, ctx))
+        optional = str(item).startswith("?")
+        raw = str(item)[1:] if optional else str(item)
+        rendered = format_template(raw, ctx)
+        if optional and not (base_dir / rendered).exists():
+            continue
+        expanded.append(rendered)
     if not expanded:
         return ["*"]
     return dedup(expanded)

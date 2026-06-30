@@ -24,14 +24,14 @@ https://cm.cccgg.cyou
 
 ## What It Can Do
 
-- Prepare and analyze atomistic structures, slabs, adsorbates, VASP/CP2K/LAMMPS/ORCA/xTB inputs, and MACE workflows.
+- Prepare and analyze atomistic structures, slabs, adsorbates, VASP/CP2K/LAMMPS/ORCA/xTB inputs, and MACE/UMA workflows.
 - Run bounded experiment tasks, broader research planning, literature review, writing, and PDF peer-review style checks.
 - Submit prepared calculation stages to remote machines through DPDispatcher when your cluster access is configured.
 - Keep user artifacts inside project spaces so runs, reports, intermediate files, and histories stay inspectable.
 
 ## 能力概览
 
-- 结构、表面、吸附物、VASP/CP2K/LAMMPS/ORCA/xTB 输入、MACE 相关任务的准备与分析。
+- 结构、表面、吸附物、VASP/CP2K/LAMMPS/ORCA/xTB 输入、MACE/UMA 相关任务的准备与分析。
 - 支持计算实验、研究规划、文献综述、写作和 PDF 审稿式检查。
 - 配好集群访问后，可通过 DPDispatcher 提交远程计算任务。
 - 使用项目空间保存输入、输出、中间文件、运行历史和报告，方便继续任务和复查结果。

@@ -112,6 +112,62 @@ mace_sp_dir:
     - "output"
   task_work_path: "."
 
+uma_sp_dir:
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Run FairChem UMA single-point calculations for structures staged under input/."
+  boot_script: "catmaster/remote/gpu/uma_sp.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#uma_sp_dir"
+  resources: uma_gpu
+  requires: [uma]
+  command: "python task_script/uma_sp.py --input {input_path} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata_path} --device {device}"
+  defaults:
+    input_path: input
+    output_root: output
+    model: uma-s-1p2
+    uma_task: auto
+    charge: 0
+    spin: 0
+    metadata_path: __none__
+    device: auto
+  forward_files:
+    - "input"
+    - "?params/uma_metadata.json"
+    - "task_script/uma_sp.py"
+    - "task_script/uma_common.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+uma_relax_dir:
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Run FairChem UMA relaxations for structures staged under input/."
+  boot_script: "catmaster/remote/gpu/uma_relax.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#uma_relax_dir"
+  resources: uma_gpu
+  requires: [uma]
+  command: "python task_script/uma_relax.py --input {input_path} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata_path} --device {device} --fmax {fmax} --steps {steps} --optimizer {optimizer} --relax_cell {relax_cell}"
+  defaults:
+    input_path: input
+    output_root: output
+    model: uma-s-1p2
+    uma_task: auto
+    charge: 0
+    spin: 0
+    metadata_path: __none__
+    device: auto
+    fmax: 0.02
+    steps: 500
+    optimizer: FIRE
+    relax_cell: false
+  forward_files:
+    - "input"
+    - "?params/uma_metadata.json"
+    - "task_script/uma_relax.py"
+    - "task_script/uma_common.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
 mace_md_dir:
   audiences: [dynamics_worker]
   description: "Run MACE MD for structures staged under input/."
