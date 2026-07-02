@@ -1,16 +1,18 @@
 ---
 name: literature-grounding
-description: Use this skill when the user asks for papers, prior work, benchmark conventions, prior-art mapping, or other explicit evidence grounding from published work, including heterogeneous-catalysis method benchmarks.
+description: Use this skill when the user asks for papers, reported physical/chemical properties, prior work, benchmark conventions, prior-art mapping, or other explicit evidence grounding from published work, including heterogeneous-catalysis method benchmarks.
 ---
 
 # literature-grounding
 
 ## Overview
-Use this skill to run the smallest literature-grounding workflow that can answer a paper, benchmark, or prior-art question with reusable evidence. Do not use it when ordinary web context is enough, when the question is mainly about current non-paper facts, or when the task is actually about local project artifacts rather than published work.
+Use this skill to run the smallest literature-grounding workflow that can answer a paper, reported physical/chemical property, benchmark, or prior-art question with reusable evidence. Do not use it when ordinary web context is enough, when the question is mainly about current non-paper facts, or when the task is actually about local project artifacts rather than published work.
 
 ## Quick Start
 - For broad public-background exploration or quick web context, ordinary online/web search is often enough.
 - If the user asks for papers, prior work, representative literature, supporting evidence, benchmark conventions, prior-art mapping, or a reusable citation pack, route the request to the runtime's literature-review path instead of improvising an ad hoc search plan.
+- If the user asks for a reported physical or chemical property, benchmark value, trend, mechanism-relevant quantity, spectrum, adsorption/formation/reaction energy, barrier, band gap, stability metric, or thermodynamic quantity, default to literature or existing workspace evidence before proposing new DFT.
+- If no reliable source is found and the property is calculable, report that gap and say the user can explicitly request a calculation; do not start DFT or another quantum calculation from this skill by default.
 - When staging a literature request for that path, keep the main `query` focused on the literature question and provide a short domain/topic phrase when possible; scholarly metadata lookups should not receive the full reporting instruction text.
 - Within literature research itself, default to web-first orientation. Only escalate to OpenAlex / Semantic Scholar when paper metadata, citations, DOI/year/venue details, or explicit literature grounding are actually needed.
 - Default to `depth=quick` for representative-paper requests.
@@ -23,7 +25,8 @@ Use this skill to run the smallest literature-grounding workflow that can answer
 
 ## Workflow
 ### 1. Decide whether literature is actually needed
-Only trigger literature work when the user explicitly asks for papers, prior work, supporting evidence, benchmark context, prior-art mapping, or literature-grounded method conventions.
+Only trigger literature work when the user explicitly asks for papers, prior work, supporting evidence, benchmark context, prior-art mapping, literature-grounded method conventions, or reported physical/chemical properties.
+Treat property questions as lookup-first unless the user explicitly asks to calculate, compute, run, screen, or generate new computational evidence.
 Use normal web/online search first when the need is broad background, public-page summaries, or lightweight orientation rather than paper-level grounding.
 Do not route current product facts, software usage questions, or repository-local evidence into this skill just because they mention “references”.
 
@@ -52,6 +55,7 @@ Use the returned literature context pack as the planning/evidence object. Do not
 
 ## Method-critical defaults
 - Literature grounding is not a default-on behavior. It should be explicitly requested by the user or justified by the planning need.
+- Reported physical/chemical property questions are a justified literature-first case. Do not use missing property evidence as implicit permission to launch DFT.
 - Treat the runtime's dedicated literature-review path as a precise grounding mechanism, not the default replacement for ordinary web search.
 - Quick paper-finding requests should not silently escalate into deep literature reviews.
 - When literature is used to justify quantitative settings, benchmark conventions, adsorption/reference-state policy, or dispersion treatment, carry those conclusions forward explicitly into proposal text or task packets.

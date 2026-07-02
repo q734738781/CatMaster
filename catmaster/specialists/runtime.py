@@ -1538,6 +1538,7 @@ class SpecialistRunner:
                 "and decide when writing/report generation should start.\n"
                 "You may delegate only to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
                 "Delegate literature-review work that needs synthesis, source inspection, or metadata verification to `litreview_agent`; it can combine public-source inspection with exact DOI/year/venue/authors/citation metadata resolution via `metadata_agent`.\n"
+                f"{cls._physical_chemical_property_lookup_policy()}\n"
                 "If the user requests a paper, manuscript, journal-style LaTeX draft, cover letter, rebuttal-style response, or other author-facing publication artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
                 "If the user requests an experiment report, validation summary, QC note, execution-facing memo, or other report-style artifact grounded in completed workspace evidence, delegate that work to `experiment_specialist` as a bounded report-writing episode.\n"
                 "Default to not launching `peer_review_specialist`.\n"
@@ -1554,6 +1555,7 @@ class SpecialistRunner:
                 "If peer-review or revision comments show that additional experiments are needed, you may relaunch `experiment_specialist` for bounded follow-up work as long as that work still respects the user's stated scope, budget, evidence limits, and time constraints.\n"
                 "If peer review indicates the work cannot reach the requested publication bar within the user's stated scope, budget, evidence limits, or time constraints, stop and tell the user that directly instead of looping.\n"
                 "Do not treat your own local shell view or direct tool view as authoritative for managed experiment capability. If submission-path, remote-environment, or resource visibility matters, issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread.\n"
+                f"{cls._delegated_computation_role_policy()}\n"
                 f"{cls._author_packet_policy()}\n"
                 f"{cls._report_packet_policy()}\n"
                 f"{cls._tool_policy()}\n"
@@ -1640,6 +1642,7 @@ class SpecialistRunner:
             "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `dynamics_worker` for CP2K AIMD, CP2K reusable run-health summaries, LAMMPS minimization/MD/restart work, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct public-source checking only when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
             "For worker-owned calculation briefs, use the remote task catalog only to avoid misleading local fallback instructions; submission belongs to the worker. Do not suggest local executable fallback for scientific engines unless the user asked for local-only execution or a dry run.\n"
+            f"{cls._physical_chemical_property_lookup_policy()}\n"
             "In particular, general materials or surface workflows belong to `materials_worker`; atomistic dynamics, force-field based minimization/MD, restarts, and trajectory-health work belong to `dynamics_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
                 "Each brief should contain one primary goal and one completion criterion. "
@@ -1649,6 +1652,7 @@ class SpecialistRunner:
             "Do not personally absorb worker-owned tasks just because your own direct tool surface appears sufficient for a small piece of them; the worker boundary is part of the design contract.\n"
             "Do not assume your own specialist thread can directly verify every execution path or remote environment. Some submission or resource checks are only visible through worker-owned managed tools.\n"
             "If execution-path, remote-environment, or resource availability is relevant and the relevant managed tool is not directly visible here, delegate a bounded probe to the matching worker instead of concluding the capability is absent.\n"
+            f"{cls._delegated_computation_role_policy()}\n"
             "For likely transient managed-execution failures, you may delegate one bounded recovery attempt toward the requested output when the previous receipt/context is preserved; ask the user only when recovery would materially increase cost, queue pressure, or scientific scope.\n"
             "Only do the implementation directly in the specialist thread when no available worker matches the task, or when the action is a tiny coordination-only step that would not justify a delegation round.\n"
             "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
@@ -1693,6 +1697,27 @@ class SpecialistRunner:
             "For experiment-report handoffs, pass one compact inline report packet with exactly these fields: "
             "`objective`, `executed_scope`, `key_methods`, `key_results`, `failures_or_qc`, and `target_outputs`. "
             "Keep it terse, execution-facing, and grounded in completed workspace evidence. Do not pad it with paper-style novelty framing or raw transcript excerpts."
+        )
+
+    @staticmethod
+    def _physical_chemical_property_lookup_policy() -> str:
+        return (
+            "Physical/chemical property lookup policy: when the user's request is to know a reported physical or chemical property, benchmark value, trend, "
+            "mechanistic quantity, spectrum, adsorption/formation/reaction energy, barrier, band gap, stability metric, or thermodynamic quantity, treat it first "
+            "as a literature-grounded or existing-evidence lookup rather than a new DFT job. Prioritize literature/public-source evidence and existing workspace "
+            "results; do not launch new DFT, ORCA, VASP, CP2K, xTB/CREST, or other quantum calculations by default just to answer a property question. "
+            "If reliable literature or workspace evidence is not found and the property is calculable with CatMaster, state that gap and tell the user they can "
+            "explicitly request a calculation; include the minimal calculable route or required inputs without starting the calculation. Start a new calculation "
+            "only when the user explicitly asks to calculate, compute, run, screen, or otherwise generate new computational evidence, or has already approved that plan."
+        )
+
+    @staticmethod
+    def _delegated_computation_role_policy() -> str:
+        return (
+            "Delegated computation role policy: do not answer that CatMaster cannot calculate merely because the current specialist thread lacks direct execution "
+            "tools or because your visible tool surface is incomplete. If the request fits a worker-owned domain or managed execution path, delegate a bounded "
+            "calculation/probe to the proper specialist or worker before declaring a capability blocker. Only report a blocker after identifying the concrete "
+            "missing input, task registration, resource configuration, stage layout, or user approval that prevents execution."
         )
 
     @staticmethod
@@ -1757,8 +1782,8 @@ class SpecialistRunner:
             "For journal-facing citations and BibTeX, use publication-style metadata only; if citation metadata is unresolved, prefer a visible citation gap or a request for literature cleanup rather than fabricating a reference."
         )
 
-    @staticmethod
-    def _workspace_path_discipline() -> str:
+    @classmethod
+    def _workspace_path_discipline(cls) -> str:
         return (
             "Workspace path discipline: treat the project files root as your working directory and prefer workspace-relative paths. "
             "Treat `/` only as the workspace virtual root, not as a host filesystem root. "
@@ -1767,7 +1792,16 @@ class SpecialistRunner:
             "For shell or local-command calls, never use leading-slash workspace paths like `/writing/...`; use workspace-relative paths such as `writing/...` instead. "
             "Keep transient observations in the conversation/tool stream unless persistence is needed. Only persist key constraints, decisive results, reusable handoff material, or user-requested deliverables. "
             "Prefer a topic-centric layout: `literature/` for grounding material, `structures/` for geometry/setup artifacts, `calculations/` for execution outputs, `scripts/` for reusable code, `notes/` for compact saved notes, and `writing/` for manuscript outputs. "
+            f"{cls._workspace_script_header_policy()} "
             "If the workspace already has a clear established layout, extend it instead of creating a parallel scheme."
+        )
+
+    @staticmethod
+    def _workspace_script_header_policy() -> str:
+        return (
+            "Workspace script header policy: every agent-created or substantially revised reusable script under `scripts/` must start with a concise comment header "
+            "containing `Code writing date: YYYY-MM-DD`, `Responsible/related agent: <agent name>`, `Implementation principle: <how it works>`, and "
+            "`Purpose: <what it is for>`, with key inputs/outputs included when helpful."
         )
 
     @staticmethod

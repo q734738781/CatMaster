@@ -256,6 +256,11 @@ def test_materials_worker_prompt_includes_workspace_path_discipline() -> None:
     assert "calculations/" in prompt
     assert "notes/" in prompt
     assert "writing/" in prompt
+    assert "Workspace script header policy" in prompt
+    assert "`Code writing date: YYYY-MM-DD`" in prompt
+    assert "`Responsible/related agent: <agent name>`" in prompt
+    assert "`Implementation principle: <how it works>`" in prompt
+    assert "`Purpose: <what it is for>`" in prompt
 
 
 def test_orca_xtb_worker_prompt_includes_workspace_path_discipline() -> None:
@@ -306,6 +311,20 @@ def test_specialist_prompts_require_explicit_follow_on_delegate_judgment() -> No
     assert "Do not rerun or reparse calculation outputs just to repeat domain QC" in experiment_prompt
     assert "When one writing-worker pass returns, actively decide whether another bounded delegate pass is needed" in writing_prompt
     assert "When one worker review episode returns, actively decide whether another bounded delegate pass is needed" in peer_review_prompt
+
+
+def test_specialist_prompts_integrate_property_lookup_and_delegated_compute_rules() -> None:
+    research_prompt = runtime_mod.SpecialistRunner._base_system_prompt("research", thread_id="thread-1")
+    experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
+
+    for prompt in (research_prompt, experiment_prompt):
+        assert "Physical/chemical property lookup policy" in prompt
+        assert "treat it first as a literature-grounded or existing-evidence lookup" in prompt
+        assert "do not launch new DFT" in prompt
+        assert "explicitly request a calculation" in prompt
+        assert "Delegated computation role policy" in prompt
+        assert "delegate a bounded calculation/probe" in prompt
+        assert "concrete missing input, task registration, resource configuration, stage layout, or user approval" in prompt
 
 
 def test_execution_capability_contract_is_worker_scoped_and_tool_surface_bound(tmp_path: Path) -> None:

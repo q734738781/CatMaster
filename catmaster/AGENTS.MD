@@ -22,12 +22,15 @@ They are built in [runtime.py](specialists/runtime.py).
 - `ResearchSpecialist`
   - The only orchestration-capable specialist.
   - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
+  - For reported physical/chemical properties, benchmark values, trends, mechanism-relevant quantities, spectra, adsorption/formation/reaction energies, barriers, band gaps, stability metrics, and thermodynamic quantities, default to literature or existing workspace evidence before proposing new DFT.
+  - If literature/workspace evidence is not found but the property is calculable, state the evidence gap and tell the user they can explicitly request a calculation; do not launch DFT by default from a property lookup.
   - Must default to research progress, not verdict-only closure: after a delegated result, check scientific reasonableness and evidence-claim fit, update the frontier, and dispatch a bounded experiment, re-analysis, or literature/metadata check when that can advance the objective within scope.
   - Its research-lane closeout should include a `Scientific Reasonableness Check` section covering plausibility, evidence-claim fit, method/QC/literature context, and unresolved gaps.
 - `ExperimentSpecialist`
   - Bounded execution specialist.
   - May delegate only to `materials_worker`, `dynamics_worker`, `ml_worker`, and `orca_xtb_worker`.
   - Uses direct public-source checking only for narrow best-practice, literature, or official documentation checks. Keep this limited to focused implementation grounding, not broad review.
+  - Do not answer that CatMaster cannot calculate solely because the specialist thread lacks direct execution tools. If a task fits a worker-owned domain or managed execution path, delegate a bounded calculation/probe before declaring a capability blocker.
   - MACE ownership is split by artifact: relaxation, single-point ranking, and NEB/path optimization belong to `materials_worker`; MACE MD sampling and trajectory QC belong to `dynamics_worker`; dataset construction, training, fine-tuning, and benchmark evaluation belong to `ml_worker`.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
@@ -44,6 +47,7 @@ Execution guidance for the active experiment path:
 - Local command calls run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there instead of modifying the main environment.
 - If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow literature or official documentation check before improvising. Do not turn that into a broad literature campaign.
 - If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
+- Every agent-created or substantially revised reusable script under `scripts/` must start with a concise comment header containing code writing date, responsible/related agent, implementation principle, and purpose. Include key inputs/outputs when helpful.
 
 ## 2) Current literature architecture
 
@@ -62,6 +66,8 @@ All autonomous specialists and workers also receive a default public-source chec
 
 - `ExperimentSpecialist`, `WritingSpecialist`, and worker agents may run their own narrow web checks directly.
 - Broad review, source inspection, and citation-grade reconciliation still belong to `litreview_agent`.
+
+Physical/chemical property lookups are a literature-first case: answer from public literature, citation-grade metadata, or existing workspace evidence before proposing new calculations. Missing property evidence is not implicit approval to run DFT; ask for or invite an explicit calculation instruction when the property is computable.
 
 The metadata side is intentionally separate from broad review and is implemented by dedicated scholarly search, exact-record lookup, and recommendation tools.
 
@@ -109,6 +115,7 @@ For active-path generated artifacts inside the workspace `files/` tree:
 - keep writing outputs under `writing/`
 - keep reusable generated helper code and heavy deterministic execution logic under `scripts/`
 - especially prefer `scripts/` for high-throughput screening helpers, large batch post-processing, and other multi-run reproducible pipelines
+- for agent-created or substantially revised scripts, require an opening comment header with code writing date, responsible/related agent, implementation principle, and purpose
 
 ### Multimodal tool-content rules
 
