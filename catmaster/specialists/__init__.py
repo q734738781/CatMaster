@@ -1,4 +1,4 @@
-from .runtime import BuiltSpecialistRunner, RUN_STATE_FILE, SpecialistRunner, build_specialist_runner
+from .runtime import BuiltSpecialistRunner, RUN_STATE_FILE, SpecialistRunner, build_specialist_runner, default_thread_interrupt_on
 from .schemas import (
     ProposalCheckpoint,
     SpecialistEntrypoint,
@@ -11,4 +11,5 @@ __all__ = [
     "SpecialistEntrypoint",
     "SpecialistRunner",
     "build_specialist_runner",
+    "default_thread_interrupt_on",
 ]

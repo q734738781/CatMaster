@@ -12,8 +12,12 @@ import json
 import sqlite3
 import time
 
+from catmaster.runtime import observation_events as obs_events
+
 
 OBSERVABILITY_DB_NAME = "observability.sqlite"
+OBSERVABILITY_SCHEMA_VERSION = 2
+LEGACY_TRACE_SOURCES = frozenset({"event_trace.jsonl", "tool_trace.jsonl", "patch_trace.jsonl"})
 
 
 def _json_safe(value: Any) -> Any:
@@ -62,6 +66,20 @@ def _to_int(value: Any, default: int = 0) -> int:
         return int(value)
     except Exception:
         return default
+
+
+def _usage_reasoning_tokens(usage: Dict[str, Any]) -> int:
+    if not isinstance(usage, dict):
+        return 0
+    candidates = [
+        usage.get("reasoning_tokens"),
+        usage.get("reasoning"),
+    ]
+    for details_key in ("output_token_details", "completion_tokens_details", "output_tokens_details"):
+        details = usage.get(details_key)
+        if isinstance(details, dict):
+            candidates.extend([details.get("reasoning"), details.get("reasoning_tokens")])
+    return max(_to_int(value, 0) for value in candidates)
 
 
 def _compact_text(value: Any, limit: int = 420) -> str:
@@ -121,7 +139,7 @@ def _extract_parent_id(payload: Dict[str, Any]) -> str:
 
 
 def _event_summary(name: str, payload: Dict[str, Any]) -> str:
-    if name == "LLM_CALL_END":
+    if name == obs_events.LLM_CALL_END:
         tools = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
         bits = [
             str(payload.get("model") or "").strip(),
@@ -130,7 +148,7 @@ def _event_summary(name: str, payload: Dict[str, Any]) -> str:
         if tools:
             bits.append("tools=" + ", ".join(str(item) for item in tools[:5]))
         return " | ".join(item for item in bits if item)
-    if name in {"TOOL_CALL_START", "TOOL_CALL_END", "TOOL_RAW_INPUT", "TOOL_RAW_OUTPUT"}:
+    if name in {obs_events.TOOL_CALL_START, obs_events.TOOL_CALL_END, obs_events.TOOL_RAW_INPUT, obs_events.TOOL_RAW_OUTPUT}:
         return " | ".join(
             item
             for item in [
@@ -140,7 +158,7 @@ def _event_summary(name: str, payload: Dict[str, Any]) -> str:
             ]
             if item
         )
-    if name == "RUN_STATE_CHANGE":
+    if name == obs_events.RUN_STATE_CHANGE:
         return " | ".join(
             item
             for item in [
@@ -193,8 +211,9 @@ class ObservabilityStore:
         if not isinstance(event, dict):
             return
         payload = _event_payload(event)
-        self._insert_event(
+        self.record_event(
             source="ui_event",
+            channel="ui",
             name=str(event.get("name") or "EVENT"),
             category=str(event.get("category") or ""),
             ts=_to_float(event.get("ts"), time.time()),
@@ -202,6 +221,9 @@ class ObservabilityStore:
             run_id=str(event.get("run_id") or ""),
             task_id=str(event.get("task_id") or ""),
             step_id=event.get("step_id") if isinstance(event.get("step_id"), int) else None,
+            thread_id=str(event.get("thread_id") or payload.get("thread_id") or ""),
+            message_id=str(event.get("message_id") or payload.get("message_id") or ""),
+            part_id=str(event.get("part_id") or payload.get("part_id") or ""),
             payload=payload,
         )
 
@@ -217,8 +239,9 @@ class ObservabilityStore:
                 name = Path(trace_name).stem.upper()
             else:
                 name = "TRACE_RECORD"
-        self._insert_event(
+        self.record_event(
             source=str(trace_name or "trace"),
+            channel="legacy_trace",
             name=name,
             category="trace",
             ts=_coerce_trace_ts(record.get("ts")),
@@ -226,6 +249,9 @@ class ObservabilityStore:
             run_id=str(record.get("run_id") or payload.get("run_id") or ""),
             task_id=str(record.get("task_id") or payload.get("task_id") or ""),
             step_id=record.get("step_id") if isinstance(record.get("step_id"), int) else None,
+            thread_id=str(record.get("thread_id") or payload.get("thread_id") or ""),
+            message_id=str(record.get("message_id") or payload.get("message_id") or ""),
+            part_id=str(record.get("part_id") or payload.get("part_id") or ""),
             payload=payload,
         )
 
@@ -240,8 +266,9 @@ class ObservabilityStore:
         task_id: str = "",
         step_id: Optional[int] = None,
     ) -> None:
-        self._insert_event(
+        self.record_event(
             source="langchain_callback",
+            channel="callback",
             name=str(name or "CALLBACK_RECORD"),
             category=str(category or "callback"),
             ts=float(ts or time.time()),
@@ -249,6 +276,9 @@ class ObservabilityStore:
             run_id=run_id,
             task_id=task_id,
             step_id=step_id,
+            thread_id=str(payload.get("thread_id") or ""),
+            message_id=str(payload.get("message_id") or ""),
+            part_id=str(payload.get("part_id") or ""),
             payload=payload,
         )
 
@@ -262,15 +292,19 @@ class ObservabilityStore:
             "state_hash": state_hash,
             **(normalized if isinstance(normalized, dict) else {}),
         }
-        self._insert_event(
+        self.record_event(
             source="run_state",
-            name="RUN_STATE_CHANGE",
+            channel="state",
+            name=obs_events.RUN_STATE_CHANGE,
             category="state",
             ts=time.time(),
             seq=None,
             run_id=str(Path(self.run_dir).name),
             task_id="",
             step_id=None,
+            thread_id=str(state_payload.get("thread_id") or ""),
+            message_id=str(state_payload.get("message_id") or ""),
+            part_id=str(state_payload.get("part_id") or ""),
             payload=state_payload,
         )
 
@@ -299,15 +333,77 @@ class ObservabilityStore:
             "source_prompt_id": str(source_prompt_id or ""),
             "meta": meta if isinstance(meta, dict) else {},
         }
-        self._insert_event(
+        self.record_event(
             source="chat_session",
-            name="CHAT_MESSAGE",
+            channel="chat",
+            name=obs_events.CHAT_MESSAGE,
             category="chat",
             ts=time.time(),
             seq=None,
             run_id=str(source_run_id or Path(self.run_dir).name),
             task_id="",
             step_id=None,
+            thread_id=str(meta.get("thread_id") or "") if isinstance(meta, dict) else "",
+            message_id=str(message_id or ""),
+            part_id="",
+            payload=payload,
+        )
+
+    def record_thread_event(self, event: Any) -> None:
+        """Persist a WebUI thread stream event in the canonical observation table."""
+        if hasattr(event, "model_dump"):
+            payload = event.model_dump(mode="json")
+        elif isinstance(event, dict):
+            payload = dict(event)
+        else:
+            return
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        self.record_event(
+            source="thread_event",
+            channel="thread",
+            name=str(payload.get("event") or "thread.event"),
+            category="thread",
+            ts=_to_float(payload.get("created_at"), time.time()),
+            seq=_to_int(payload.get("seq"), 0) or None,
+            run_id=str(data.get("run_id") or payload.get("run_id") or Path(self.run_dir).name),
+            task_id=str(data.get("task_id") or ""),
+            step_id=None,
+            thread_id=str(payload.get("thread_id") or data.get("thread_id") or ""),
+            message_id=str(payload.get("message_id") or data.get("message_id") or ""),
+            part_id=str(data.get("part_id") or data.get("text_part_id") or ""),
+            payload=payload,
+        )
+
+    def record_event(
+        self,
+        *,
+        source: str,
+        channel: str = "",
+        name: str,
+        category: str,
+        ts: float,
+        seq: Optional[int],
+        run_id: str,
+        task_id: str,
+        step_id: Optional[int],
+        payload: Dict[str, Any],
+        thread_id: str = "",
+        message_id: str = "",
+        part_id: str = "",
+    ) -> None:
+        self._insert_event(
+            source=source,
+            channel=channel,
+            name=name,
+            category=category,
+            ts=ts,
+            seq=seq,
+            run_id=run_id,
+            task_id=task_id,
+            step_id=step_id,
+            thread_id=thread_id,
+            message_id=message_id,
+            part_id=part_id,
             payload=payload,
         )
 
@@ -378,27 +474,191 @@ class ObservabilityStore:
             "max_seq": int(events[-1].get("seq") or 0) if events else 0,
         }
 
-    def read_snapshot(self, *, limit: int = 400) -> Dict[str, Any]:
-        self._backfill_if_empty()
-        capped = min(2000, max(1, int(limit or 400)))
+    def read_thread_events_page(self, thread_id: str, *, last_seq: int = 0, limit: int = 1000) -> list[Dict[str, Any]]:
+        if not self.db_exists():
+            return []
+        capped_limit = min(5000, max(1, int(limit or 1000)))
         with self._connect() as conn:
-            total = _scalar_int(conn, "SELECT COUNT(*) FROM observation_events")
+            rows = conn.execute(
+                """
+                SELECT * FROM observation_events
+                WHERE channel = 'thread' AND thread_id = ? AND seq IS NOT NULL AND seq > ?
+                ORDER BY seq ASC
+                LIMIT ?
+                """,
+                (str(thread_id or ""), int(last_seq or 0), capped_limit),
+            ).fetchall()
+        return [_row_to_event(row) for row in rows]
+
+    def read_thread_events(self, thread_id: str, *, last_seq: int = 0, limit: int = 1000) -> list[Dict[str, Any]]:
+        return self.read_thread_events_page(thread_id, last_seq=last_seq, limit=limit)
+
+    def read_events_page(
+        self,
+        *,
+        limit: int = 400,
+        before_id: int = 0,
+        after_id: int = 0,
+        channel: str = "",
+        category: str = "",
+        names: Optional[Iterable[str]] = None,
+        run_id: str = "",
+        thread_id: str = "",
+        agent_name: str = "",
+        tool: str = "",
+        include_legacy_trace_records: bool = False,
+    ) -> Dict[str, Any]:
+        if not self.db_exists():
+            return {"events": [], "has_more": False, "min_id": 0, "max_id": 0}
+        capped_limit = min(5000, max(1, int(limit or 400)))
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_legacy_trace_records:
+            placeholders = ", ".join("?" for _ in LEGACY_TRACE_SOURCES)
+            clauses.append(f"source NOT IN ({placeholders})")
+            params.extend(_legacy_trace_source_values())
+        if channel:
+            clauses.append("channel = ?")
+            params.append(str(channel))
+        if category:
+            clauses.append("category = ?")
+            params.append(str(category))
+        clean_names = [str(name).strip() for name in list(names or []) if str(name).strip()]
+        if clean_names:
+            placeholders = ", ".join("?" for _ in clean_names)
+            clauses.append(f"name IN ({placeholders})")
+            params.extend(clean_names)
+        if run_id:
+            clauses.append("run_id = ?")
+            params.append(str(run_id))
+        if thread_id:
+            clauses.append("thread_id = ?")
+            params.append(str(thread_id))
+        if agent_name:
+            clauses.append("agent_name = ?")
+            params.append(str(agent_name))
+        if tool:
+            clauses.append("tool = ?")
+            params.append(str(tool))
+        if after_id > 0:
+            clauses.append("id > ?")
+            params.append(int(after_id))
+            order_sql = "ORDER BY id ASC"
+            reverse_rows = False
+        else:
+            if before_id > 0:
+                clauses.append("id < ?")
+                params.append(int(before_id))
+            order_sql = "ORDER BY id DESC"
+            reverse_rows = True
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM observation_events
+                {where_sql}
+                {order_sql}
+                LIMIT ?
+                """,
+                (*params, capped_limit + 1),
+            ).fetchall()
+        has_more = len(rows) > capped_limit
+        page_rows = rows[:capped_limit]
+        if reverse_rows:
+            page_rows = list(reversed(page_rows))
+        events = [_row_to_event(row) for row in page_rows]
+        return {
+            "events": events,
+            "has_more": has_more,
+            "min_id": int(events[0].get("id") or 0) if events else 0,
+            "max_id": int(events[-1].get("id") or 0) if events else 0,
+        }
+
+    def latest_thread_event_seq(self, thread_id: str) -> int:
+        if not self.db_exists():
+            return 0
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(seq) AS max_seq
+                FROM observation_events
+                WHERE channel = 'thread' AND thread_id = ? AND seq IS NOT NULL
+                """,
+                (str(thread_id or ""),),
+            ).fetchone()
+        if row is None:
+            return 0
+        return _to_int(row["max_seq"], 0)
+
+    def list_tool_names(
+        self,
+        *,
+        limit: int = 64,
+        event_names: Optional[Iterable[str]] = None,
+        include_legacy_trace_records: bool = False,
+    ) -> list[str]:
+        if not self.db_exists():
+            return []
+        capped_limit = min(500, max(1, int(limit or 64)))
+        source_filter = _source_filter_clause(prefix="AND", include_legacy_trace_records=include_legacy_trace_records)
+        params: list[Any] = list(_legacy_trace_source_values() if not include_legacy_trace_records else ())
+        clean_names = [str(name).strip() for name in list(event_names or []) if str(name).strip()]
+        name_filter = ""
+        if clean_names:
+            placeholders = ", ".join("?" for _ in clean_names)
+            name_filter = f"AND name IN ({placeholders})"
+            params.extend(clean_names)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT tool
+                FROM observation_events
+                WHERE tool IS NOT NULL AND tool != ''
+                {source_filter}
+                {name_filter}
+                ORDER BY id ASC
+                LIMIT 5000
+                """,
+                tuple(params),
+            ).fetchall()
+        out: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            name = str(row["tool"] or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+            if len(out) >= capped_limit:
+                break
+        return out
+
+    def read_snapshot(self, *, limit: int = 400, include_legacy_trace_records: bool = False) -> Dict[str, Any]:
+        capped = min(2000, max(1, int(limit or 400)))
+        source_filter_sql, source_filter_params = _legacy_trace_source_filter(include_legacy_trace_records)
+        with self._connect() as conn:
+            total = _scalar_int(
+                conn,
+                f"SELECT COUNT(*) FROM observation_events {source_filter_sql}",
+                source_filter_params,
+            )
             rows = [
                 _row_to_event(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT * FROM observation_events
+                    {source_filter_sql}
                     ORDER BY id DESC
                     LIMIT ?
                     """,
-                    (capped,),
+                    (*source_filter_params, capped),
                 ).fetchall()
             ]
             rows.reverse()
             all_call_rows = [
                 _row_to_event(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT * FROM observation_events
                     WHERE name IN (
                         'LLM_CALL_START', 'LLM_CALL_END', 'LLM_ERROR',
@@ -406,67 +666,81 @@ class ObservabilityStore:
                         'LLM_RAW_REQUEST', 'LLM_RAW_RESPONSE',
                         'TOOL_RAW_INPUT', 'TOOL_RAW_OUTPUT'
                     )
+                    {_source_filter_clause(prefix="AND", include_legacy_trace_records=include_legacy_trace_records)}
                     ORDER BY id ASC
                     LIMIT 5000
-                    """
+                    """,
+                    source_filter_params,
                 ).fetchall()
             ]
             llm_rows = [
                 _row_to_event(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT * FROM observation_events
                     WHERE name IN ('LLM_CALL_END', 'LLM_ERROR')
+                    {_source_filter_clause(prefix="AND", include_legacy_trace_records=include_legacy_trace_records)}
                     ORDER BY id ASC
                     LIMIT 5000
-                    """
+                    """,
+                    source_filter_params,
                 ).fetchall()
             ]
             tool_rows = [
                 _row_to_event(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT * FROM observation_events
                     WHERE name IN ('TOOL_CALL_END', 'TOOL_RAW_OUTPUT')
+                    {_source_filter_clause(prefix="AND", include_legacy_trace_records=include_legacy_trace_records)}
                     ORDER BY id ASC
                     LIMIT 5000
-                    """
+                    """,
+                    source_filter_params,
                 ).fetchall()
             ]
             decision_rows = [
                 _row_to_event(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT * FROM observation_events
                     WHERE name IN ('LLM_CALL_END', 'TASK_DECISION')
+                    {_source_filter_clause(prefix="AND", include_legacy_trace_records=include_legacy_trace_records)}
                     ORDER BY id DESC
                     LIMIT 120
-                    """
+                    """,
+                    source_filter_params,
                 ).fetchall()
             ]
             decision_rows.reverse()
             task_rows = [
                 _row_to_event(row)
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT * FROM observation_events
                     WHERE name IN (
                         'TASKS_COMPILED', 'TASK_START', 'TASK_SUMMARY', 'TASK_END',
                         'RUN_START', 'RUN_END', 'RUN_PAUSED', 'RUN_STATE_CHANGE',
                         'TOOL_CALL_START', 'TOOL_RAW_INPUT'
                     )
+                    {_source_filter_clause(prefix="AND", include_legacy_trace_records=include_legacy_trace_records)}
                     ORDER BY id ASC
                     LIMIT 5000
-                    """
+                    """,
+                    source_filter_params,
                 ).fetchall()
             ]
             by_name = {
                 str(row["name"]): int(row["n"])
                 for row in conn.execute(
-                    "SELECT name, COUNT(*) AS n FROM observation_events GROUP BY name ORDER BY n DESC"
+                    f"SELECT name, COUNT(*) AS n FROM observation_events {source_filter_sql} GROUP BY name ORDER BY n DESC",
+                    source_filter_params,
                 ).fetchall()
             }
-            bounds = conn.execute("SELECT MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM observation_events").fetchone()
+            bounds = conn.execute(
+                f"SELECT MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM observation_events {source_filter_sql}",
+                source_filter_params,
+            ).fetchone()
         metrics = _build_metrics(
             total=total,
             by_name=by_name,
@@ -488,10 +762,17 @@ class ObservabilityStore:
             },
         }
 
+    def read_run_snapshot(self, *, limit: int = 400, include_legacy_trace_records: bool = False) -> Dict[str, Any]:
+        return self.read_snapshot(limit=limit, include_legacy_trace_records=include_legacy_trace_records)
+
+    def read_metrics(self, *, include_legacy_trace_records: bool = False) -> Dict[str, Any]:
+        return self.read_snapshot(limit=1, include_legacy_trace_records=include_legacy_trace_records).get("metrics", {})
+
     def _insert_event(
         self,
         *,
         source: str,
+        channel: str,
         name: str,
         category: str,
         ts: float,
@@ -499,6 +780,9 @@ class ObservabilityStore:
         run_id: str,
         task_id: str,
         step_id: Optional[int],
+        thread_id: str,
+        message_id: str,
+        part_id: str,
         payload: Dict[str, Any],
     ) -> None:
         payload = payload if isinstance(payload, dict) else {"value": payload}
@@ -509,21 +793,26 @@ class ObservabilityStore:
             conn.execute(
                 """
                 INSERT INTO observation_events (
-                    ts, seq, source, category, name, run_id, task_id, step_id,
+                    ts, seq, source, channel, category, name,
+                    run_id, task_id, step_id, thread_id, message_id, part_id,
                     agent_name, callback_run_id, parent_callback_run_id,
                     node, model, tool, status, duration_ms, payload_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     float(ts or time.time()),
                     seq,
                     str(source or ""),
+                    str(channel or ""),
                     str(category or ""),
                     str(name or "EVENT"),
                     str(run_id or payload.get("run_id") or ""),
                     str(task_id or payload.get("task_id") or ""),
                     step_id,
+                    str(thread_id or payload.get("thread_id") or ""),
+                    str(message_id or payload.get("message_id") or ""),
+                    str(part_id or payload.get("part_id") or ""),
                     _extract_agent_name(payload),
                     callback_id,
                     parent_id,
@@ -536,19 +825,21 @@ class ObservabilityStore:
                 ),
             )
 
-    def _backfill_if_empty(self) -> None:
+    def import_legacy_jsonl(self, *, include_ui_events: bool = True, include_legacy_trace_records: bool = False) -> int:
+        imported = 0
         try:
-            with self._connect() as conn:
-                existing = _scalar_int(conn, "SELECT COUNT(*) FROM observation_events")
-            if existing:
-                return
-            for row in _iter_jsonl(Path(self.run_dir) / "ui_events.jsonl"):
-                self.record_ui_event(row)
-            for trace_name in ("event_trace.jsonl", "tool_trace.jsonl", "patch_trace.jsonl"):
-                for row in _iter_jsonl(Path(self.run_dir) / trace_name):
-                    self.record_trace_record(trace_name, row)
+            if include_ui_events:
+                for row in _iter_jsonl(Path(self.run_dir) / "ui_events.jsonl"):
+                    self.record_ui_event(row)
+                    imported += 1
+            if include_legacy_trace_records:
+                for trace_name in ("event_trace.jsonl", "tool_trace.jsonl", "patch_trace.jsonl"):
+                    for row in _iter_jsonl(Path(self.run_dir) / trace_name):
+                        self.record_trace_record(trace_name, row)
+                        imported += 1
         except Exception:
-            return
+            return imported
+        return imported
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -559,11 +850,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             ts REAL NOT NULL,
             seq INTEGER,
             source TEXT NOT NULL,
+            channel TEXT NOT NULL DEFAULT '',
             category TEXT NOT NULL,
             name TEXT NOT NULL,
             run_id TEXT,
             task_id TEXT,
             step_id INTEGER,
+            thread_id TEXT,
+            message_id TEXT,
+            part_id TEXT,
             agent_name TEXT,
             callback_run_id TEXT,
             parent_callback_run_id TEXT,
@@ -576,15 +871,54 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _ensure_columns(
+        conn,
+        "observation_events",
+        {
+            "channel": "TEXT NOT NULL DEFAULT ''",
+            "thread_id": "TEXT",
+            "message_id": "TEXT",
+            "part_id": "TEXT",
+        },
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_observation_ts ON observation_events(ts)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_observation_name ON observation_events(name)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_observation_source ON observation_events(source)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_observation_channel_thread_seq ON observation_events(channel, thread_id, seq)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_observation_run ON observation_events(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_observation_callback ON observation_events(callback_run_id)")
+    current_version = _to_int(conn.execute("PRAGMA user_version").fetchone()[0], 0)
+    if current_version < OBSERVABILITY_SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {OBSERVABILITY_SCHEMA_VERSION}")
 
 
-def _scalar_int(conn: sqlite3.Connection, sql: str) -> int:
-    row = conn.execute(sql).fetchone()
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: Dict[str, str]) -> None:
+    existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, declaration in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
+
+def _legacy_trace_source_values() -> tuple[str, ...]:
+    return tuple(sorted(LEGACY_TRACE_SOURCES))
+
+
+def _legacy_trace_source_filter(include_legacy_trace_records: bool) -> tuple[str, tuple[str, ...]]:
+    if include_legacy_trace_records:
+        return "", ()
+    placeholders = ", ".join("?" for _ in LEGACY_TRACE_SOURCES)
+    return f"WHERE source NOT IN ({placeholders})", _legacy_trace_source_values()
+
+
+def _source_filter_clause(*, prefix: str, include_legacy_trace_records: bool) -> str:
+    if include_legacy_trace_records:
+        return ""
+    placeholders = ", ".join("?" for _ in LEGACY_TRACE_SOURCES)
+    return f"{prefix} source NOT IN ({placeholders})"
+
+
+def _scalar_int(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> int:
+    row = conn.execute(sql, params).fetchone()
     if row is None:
         return 0
     return _to_int(row[0], 0)
@@ -598,11 +932,15 @@ def _row_to_event(row: sqlite3.Row) -> Dict[str, Any]:
         "ts": float(row["ts"] or 0.0),
         "seq": row["seq"],
         "source": str(row["source"] or ""),
+        "channel": str(row["channel"] or ""),
         "category": str(row["category"] or ""),
         "name": str(row["name"] or ""),
         "run_id": str(row["run_id"] or ""),
         "task_id": str(row["task_id"] or ""),
         "step_id": row["step_id"],
+        "thread_id": str(row["thread_id"] or ""),
+        "message_id": str(row["message_id"] or ""),
+        "part_id": str(row["part_id"] or ""),
         "agent_name": str(row["agent_name"] or ""),
         "callback_run_id": str(row["callback_run_id"] or ""),
         "parent_callback_run_id": str(row["parent_callback_run_id"] or ""),
@@ -628,6 +966,9 @@ def _row_to_ui_event(row: sqlite3.Row) -> Dict[str, Any]:
         "run_id": str(row["run_id"] or "") or None,
         "task_id": str(row["task_id"] or "") or None,
         "step_id": row["step_id"],
+        "thread_id": str(row["thread_id"] or "") or None,
+        "message_id": str(row["message_id"] or "") or None,
+        "part_id": str(row["part_id"] or "") or None,
         "seq": int(row["seq"] or 0),
     }
     if not event["run_id"]:
@@ -636,6 +977,12 @@ def _row_to_ui_event(row: sqlite3.Row) -> Dict[str, Any]:
         event.pop("task_id", None)
     if event["step_id"] is None:
         event.pop("step_id", None)
+    if not event["thread_id"]:
+        event.pop("thread_id", None)
+    if not event["message_id"]:
+        event.pop("message_id", None)
+    if not event["part_id"]:
+        event.pop("part_id", None)
     return event
 
 
@@ -711,14 +1058,25 @@ def _build_metrics(
     llm_errors = 0
     models: Dict[str, int] = {}
     agents: Dict[str, int] = {}
+    counted_llm_rows: list[Dict[str, Any]] = []
+    seen_llm_calls: set[str] = set()
     for row in llm_rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        call_key = str(row.get("callback_run_id") or payload.get("callback_run_id") or "").strip()
+        if not call_key:
+            call_key = f"{row.get('name')}:{row.get('id')}"
+        if call_key in seen_llm_calls:
+            continue
+        seen_llm_calls.add(call_key)
+        counted_llm_rows.append(row)
+    for row in counted_llm_rows:
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         if row.get("name") == "LLM_ERROR":
             llm_errors += 1
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
         input_tokens += _to_int(usage.get("input_tokens"), 0)
         output_tokens += _to_int(usage.get("output_tokens"), 0)
-        reasoning_tokens += _to_int(usage.get("reasoning_tokens"), 0)
+        reasoning_tokens += _usage_reasoning_tokens(usage)
         elapsed = _to_int(payload.get("elapsed_ms"), 0)
         if elapsed > 0:
             llm_latency_ms.append(elapsed)
@@ -754,7 +1112,8 @@ def _build_metrics(
             tool = str(row.get("tool") or payload.get("tool") or payload.get("tool_name") or "").strip()
             if tool:
                 tools[tool] = tools.get(tool, 0) + 1
-    total_calls = len(llm_rows) + tool_calls
+    llm_calls = len([row for row in counted_llm_rows if row.get("name") == "LLM_CALL_END"])
+    total_calls = llm_calls + llm_errors + tool_calls
     failed_calls = llm_errors + tool_failures
     return {
         "total_events": total,
@@ -762,7 +1121,7 @@ def _build_metrics(
         "first_ts": first_ts,
         "last_ts": last_ts,
         "event_counts": by_name,
-        "llm_calls": len([row for row in llm_rows if row.get("name") == "LLM_CALL_END"]),
+        "llm_calls": llm_calls,
         "llm_errors": llm_errors,
         "tool_calls": tool_calls,
         "tool_failures": tool_failures,
@@ -984,4 +1343,4 @@ def _extract_todos(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
-__all__ = ["OBSERVABILITY_DB_NAME", "ObservabilityStore"]
+__all__ = ["OBSERVABILITY_DB_NAME", "OBSERVABILITY_SCHEMA_VERSION", "ObservabilityStore"]

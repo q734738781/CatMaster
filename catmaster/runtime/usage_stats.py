@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Dict
 import json
 
+from catmaster.runtime import observation_events as obs_events
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.openrouter_pricing import pricing_cost, resolve_model_pricing
 
 
@@ -24,6 +26,54 @@ def load_usage_summary(run_dir: Path) -> Dict[str, Any]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def summarize_usage_from_observability(run_dir: Path | str | None) -> Dict[str, Any]:
+    if run_dir is None:
+        return {}
+    run_path = Path(run_dir).expanduser().resolve()
+    store = ObservabilityStore(run_path)
+    semantic_page = store.read_events_page(names=[obs_events.LLM_CALL_END], limit=5000)
+    semantic_rows = _rows_with_usage(semantic_page.get("events"))
+    if semantic_rows:
+        rows = semantic_rows
+        source_events = obs_events.LLM_CALL_END
+    else:
+        raw_page = store.read_events_page(names=[obs_events.LLM_RAW_RESPONSE], limit=5000)
+        rows = _rows_with_usage(raw_page.get("events"))
+        source_events = obs_events.LLM_RAW_RESPONSE
+    if not rows:
+        return {}
+
+    usage_metadata: dict[str, dict[str, Any]] = {}
+    call_counts_by_model: dict[str, int] = {}
+    usage_by_role: dict[str, dict[str, dict[str, Any]]] = {}
+    call_counts_by_role: dict[str, int] = {}
+    for row in rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        model = str(row.get("model") or payload.get("model") or "unknown").strip() or "unknown"
+        role = str(row.get("agent_name") or payload.get("agent_name") or "").strip()
+        usage_metadata = _merge_usage_metadata(usage_metadata, {model: usage})
+        call_counts_by_model[model] = call_counts_by_model.get(model, 0) + 1
+        if role:
+            usage_by_role[role] = _merge_usage_metadata(usage_by_role.get(role), {model: usage})
+            call_counts_by_role[role] = call_counts_by_role.get(role, 0) + 1
+
+    summary = summarize_usage_from_metadata(
+        usage_metadata,
+        run_dir=run_path,
+        call_counts_by_model=call_counts_by_model,
+        usage_metadata_by_role=usage_by_role,
+        call_counts_by_role=call_counts_by_role,
+    )
+    summary["source"] = "observability_store"
+    summary["source_events"] = source_events
+    summary["raw_usage_metadata"] = usage_metadata
+    summary["call_counts_by_model"] = call_counts_by_model
+    summary["raw_usage_metadata_by_role"] = usage_by_role
+    summary["call_counts_by_role"] = call_counts_by_role
+    return summary
 
 
 def write_usage_summary_from_metadata(
@@ -471,6 +521,27 @@ def _coerce_call_counts(raw: Any) -> dict[str, int]:
     return out
 
 
+def _rows_with_usage(rows: Any) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        if not isinstance(payload.get("usage"), dict):
+            continue
+        call_key = str(row.get("callback_run_id") or payload.get("callback_run_id") or "").strip()
+        if not call_key:
+            call_key = f"{row.get('name')}:{row.get('id')}"
+        if call_key in seen:
+            continue
+        seen.add(call_key)
+        out.append(row)
+    return out
+
+
 def _merge_call_counts(base: Any, update: Any) -> dict[str, int]:
     merged = _coerce_call_counts(base)
     for key, value in _coerce_call_counts(update).items():
@@ -528,6 +599,7 @@ def _merge_usage_dict(base: dict[str, Any], update: dict[str, Any]) -> dict[str,
 
 __all__ = [
     "load_usage_summary",
+    "summarize_usage_from_observability",
     "summarize_usage_from_metadata",
     "usage_summary_path",
     "write_usage_summary_from_metadata",

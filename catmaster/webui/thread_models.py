@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+import time
+from enum import Enum
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
+
+
+def utc_ts() -> float:
+    return time.time()
+
+
+class ThreadStatus(str, Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+    INTERRUPTED = "interrupted"
+    ERROR = "error"
+
+
+class MessagePart(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    type: Literal["text", "reasoning", "tool-call", "artifact", "interrupt", "receipt", "subagent", "trace"]
+    text: str = ""
+    status: str = ""
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCallPart(MessagePart):
+    type: Literal["tool-call"] = "tool-call"
+    tool_call_id: str
+    tool: str = ""
+    input: dict[str, Any] = Field(default_factory=dict)
+    output: Any = None
+
+
+class ArtifactPart(MessagePart):
+    type: Literal["artifact"] = "artifact"
+    artifact_id: str
+    renderer: str = "text"
+    title: str = ""
+    summary: str = ""
+    path: str = ""
+
+
+class InterruptRecord(BaseModel):
+    interrupt_id: str
+    thread_id: str
+    message_id: str = ""
+    part_id: str = ""
+    status: Literal["pending", "resolved"] = "pending"
+    kind: str = "approval"
+    title: str = ""
+    body: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: float = Field(default_factory=utc_ts)
+    resolved_at: float | None = None
+    resolution: dict[str, Any] | None = None
+
+
+class ThreadMessage(BaseModel):
+    id: str
+    thread_id: str
+    role: Literal["user", "assistant", "system", "tool"]
+    status: Literal["created", "streaming", "completed", "failed", "interrupted"] = "created"
+    created_at: float = Field(default_factory=utc_ts)
+    updated_at: float = Field(default_factory=utc_ts)
+    parts: list[SerializeAsAny[MessagePart]] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+    structured_sidecar: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThreadRecord(BaseModel):
+    thread_id: str
+    workspace_id: str
+    deepagent_thread_id: str
+    title: str = ""
+    status: ThreadStatus = ThreadStatus.IDLE
+    entrypoint: str = "research"
+    created_at: float = Field(default_factory=utc_ts)
+    updated_at: float = Field(default_factory=utc_ts)
+    active_message_id: str = ""
+    active_run_id: str = ""
+    pending_steering: list[dict[str, Any]] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactRecord(BaseModel):
+    artifact_id: str
+    thread_id: str = ""
+    message_id: str = ""
+    tool_call_id: str = ""
+    run_id: str = ""
+    workspace_id: str = ""
+    path: str
+    mime_type: str = ""
+    renderer: str = "text"
+    title: str = ""
+    summary: str = ""
+    created_at: float = Field(default_factory=utc_ts)
+    updated_at: float = Field(default_factory=utc_ts)
+    preview_url: str = ""
+    download_url: str = ""
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThreadEventEnvelope(BaseModel):
+    seq: int
+    event: str
+    thread_id: str
+    message_id: str = ""
+    status: str = ""
+    created_at: float = Field(default_factory=utc_ts)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThreadCreateRequest(BaseModel):
+    title: str = ""
+    entrypoint: str = "research"
+    permission_mode: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThreadSubmitRequest(BaseModel):
+    text: str
+    entrypoint: str = "research"
+    model_config: str = ""
+    permission_mode: str = ""
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ThreadResumeRequest(BaseModel):
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+    text: str = ""
+
+
+class ThreadStopRequest(BaseModel):
+    emergency: bool = False
+    reason: str = ""
+
+
+class ThreadPatchRequest(BaseModel):
+    title: str | None = None
+    entrypoint: str | None = None
+    status: ThreadStatus | None = None
+    permission_mode: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+__all__ = [
+    "ArtifactPart",
+    "ArtifactRecord",
+    "InterruptRecord",
+    "MessagePart",
+    "ThreadCreateRequest",
+    "ThreadEventEnvelope",
+    "ThreadMessage",
+    "ThreadPatchRequest",
+    "ThreadRecord",
+    "ThreadResumeRequest",
+    "ThreadStatus",
+    "ThreadStopRequest",
+    "ThreadSubmitRequest",
+    "ToolCallPart",
+    "utc_ts",
+]

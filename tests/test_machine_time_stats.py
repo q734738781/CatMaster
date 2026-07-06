@@ -39,6 +39,7 @@ def test_append_machine_time_record_summarizes_cpu_core_and_node_hours(tmp_path:
     assert summary["node_hours"] == 1.0
     assert summary["gpu_node_hours"] == 0.0
     assert summary["by_resource"][0]["name"] == "vasp_cpu"
+    assert summary["source"] == "observability_store"
     assert machine_time_records_path(tmp_path).is_file()
     assert machine_time_summary_path(tmp_path).is_file()
 

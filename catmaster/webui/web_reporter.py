@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 import time
 import uuid
@@ -504,34 +503,7 @@ class WebReporter(Reporter):
                 return store.last_ui_event_seq()
             except Exception:
                 return 0
-        path = Path(run_dir) / "ui_events.jsonl"
-        if not path.exists():
-            return 0
-        try:
-            store.read_snapshot(limit=1)
-            sqlite_seq = store.last_ui_event_seq()
-            if sqlite_seq > 0:
-                return sqlite_seq
-        except Exception:
-            pass
-        last_seq = 0
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                for index, line in enumerate(handle, start=1):
-                    text = line.strip()
-                    if not text:
-                        continue
-                    try:
-                        item = json.loads(text)
-                    except Exception:
-                        continue
-                    try:
-                        last_seq = max(last_seq, int(item.get("seq") or index))
-                    except Exception:
-                        last_seq = max(last_seq, index)
-        except Exception:
-            return 0
-        return last_seq
+        return 0
 
     def _persist_usage_summary(self) -> None:
         run_dir = self._run_dir

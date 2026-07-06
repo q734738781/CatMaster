@@ -9,6 +9,9 @@ from typing import Any, Dict, Iterable, List
 import json
 import uuid
 
+from catmaster.runtime import observation_events as obs_events
+from catmaster.runtime.observability_store import ObservabilityStore
+
 MACHINE_TIME_RECORDS_NAME = "machine_time_records.jsonl"
 MACHINE_TIME_SUMMARY_NAME = "machine_time_summary.json"
 
@@ -25,6 +28,9 @@ def load_machine_time_summary(run_dir: Path | None) -> Dict[str, Any]:
     if run_dir is None:
         return empty_machine_time_summary()
     run_path = Path(run_dir).expanduser().resolve()
+    observed = summarize_machine_time_from_observability(run_path)
+    if observed.get("requests"):
+        return observed
     records_path = machine_time_records_path(run_path)
     if records_path.exists():
         summary = summarize_machine_time_records(_iter_record_file(records_path), run_dir=run_path)
@@ -45,12 +51,45 @@ def append_machine_time_record(run_dir: Path | str | None, record: Dict[str, Any
         return empty_machine_time_summary()
     run_path = Path(run_dir).expanduser().resolve()
     normalized = normalize_machine_time_record(record)
+    try:
+        ObservabilityStore(run_path).record_event(
+            source="machine_time",
+            channel="machine",
+            name=obs_events.MACHINE_TIME_RECORD,
+            category="machine",
+            ts=_to_timestamp(normalized.get("recorded_at")),
+            seq=None,
+            run_id=run_path.name,
+            task_id=str(normalized.get("task_name") or ""),
+            step_id=None,
+            payload=normalized,
+        )
+    except Exception:
+        pass
     path = machine_time_records_path(run_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(normalized, ensure_ascii=False, sort_keys=True) + "\n")
     summary = summarize_machine_time_records(_iter_record_file(path), run_dir=run_path)
     _write_summary(run_path, summary)
+    return summary
+
+
+def summarize_machine_time_from_observability(run_dir: Path | str | None) -> Dict[str, Any]:
+    if run_dir is None:
+        return empty_machine_time_summary()
+    run_path = Path(run_dir).expanduser().resolve()
+    try:
+        page = ObservabilityStore(run_path).read_events_page(names=[obs_events.MACHINE_TIME_RECORD], limit=5000)
+    except Exception:
+        return empty_machine_time_summary(run_path)
+    records: list[Dict[str, Any]] = []
+    for event in page.get("events") if isinstance(page, dict) else []:
+        payload = event.get("payload") if isinstance(event, dict) and isinstance(event.get("payload"), dict) else {}
+        if payload:
+            records.append(payload)
+    summary = summarize_machine_time_records(records, run_dir=run_path)
+    summary["source"] = "observability_store"
     return summary
 
 
@@ -325,6 +364,16 @@ def _bucket_summary(records: List[Dict[str, Any]], key: str) -> List[Dict[str, A
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _to_timestamp(value: Any) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return datetime.now(timezone.utc).timestamp()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return datetime.now(timezone.utc).timestamp()
 
 
 def _round_hours(value: Any) -> float:

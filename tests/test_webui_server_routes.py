@@ -39,7 +39,7 @@ def test_monitor_path_with_slash_hits_monitor_mount(tmp_path: Path) -> None:
     assert getattr(full_matches[0], "path", None) == "/monitor/"
 
 
-def test_pages_load_react_static_bundle(tmp_path: Path) -> None:
+def test_default_page_loads_react_static_bundle_and_legacy_pages_redirect(tmp_path: Path) -> None:
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
 
@@ -48,6 +48,20 @@ def test_pages_load_react_static_bundle(tmp_path: Path) -> None:
     assert 'rel="icon"' in home.text
     assert '/static/app.css' in home.text
     assert '/static/app.js' in home.text
+
+    monitor = client.get("/monitor/", follow_redirects=False)
+    assert monitor.status_code == 307
+    assert monitor.headers["location"] == "/#tab=monitor"
+
+    files_page = client.get("/files/", follow_redirects=False)
+    assert files_page.status_code == 307
+    assert files_page.headers["location"] == "/#tab=files"
+
+
+def test_legacy_pages_are_debug_only(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CATMASTER_WEBUI_LEGACY_ROUTES", "1")
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
 
     monitor = client.get("/monitor/")
     assert monitor.status_code == 200
@@ -75,6 +89,47 @@ def test_bootstrap_recovers_from_stale_missing_project_space(tmp_path: Path) -> 
     assert payload["workspace_root"] == str(tmp_path.resolve())
     assert payload["workspace_name"] == ""
     assert "Project space does not exist: missing_space" in payload["status_message"]
+
+
+def test_workspace_delete_requires_confirmation_and_non_active_workspace(tmp_path: Path) -> None:
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+
+    boot = client.get("/api/bootstrap").json()
+    ctx = boot["ctx"]
+    created = client.post(f"/api/session/{ctx}/workspace/create", json={"workspace": "scratch"})
+    assert created.status_code == 200
+    assert (tmp_path / "scratch").is_dir()
+
+    wrong_confirm = client.request(
+        "DELETE",
+        f"/api/session/{ctx}/workspace/delete",
+        json={"workspace": "scratch", "confirm_name": "wrong"},
+    )
+    assert wrong_confirm.status_code == 400
+    assert (tmp_path / "scratch").is_dir()
+
+    opened_scratch = client.post(f"/api/session/{ctx}/workspace/open", json={"workspace": "scratch"})
+    assert opened_scratch.status_code == 200
+    active_delete = client.request(
+        "DELETE",
+        f"/api/session/{ctx}/workspace/delete",
+        json={"workspace": "scratch", "confirm_name": "scratch", "active_workspace": "scratch"},
+    )
+    assert active_delete.status_code == 400
+    assert "Switch away" in active_delete.json()["detail"]
+    assert (tmp_path / "scratch").is_dir()
+
+    opened = client.post(f"/api/session/{ctx}/workspace/open", json={"workspace": "admin"})
+    assert opened.status_code == 200
+    deleted = client.request(
+        "DELETE",
+        f"/api/session/{ctx}/workspace/delete",
+        json={"workspace": "scratch", "confirm_name": "scratch", "active_workspace": "admin"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["ok"] is True
+    assert not (tmp_path / "scratch").exists()
 
 
 def test_files_routes_list_preview_and_download(tmp_path: Path) -> None:
@@ -708,7 +763,7 @@ def test_web_reporter_persists_ui_events_and_usage_summary(tmp_path: Path) -> No
     assert [event["seq"] for event in resumed_page["events"]] == [1, 2]
 
 
-def test_web_reporter_backfills_legacy_ui_events_before_sqlite_write(tmp_path: Path) -> None:
+def test_web_reporter_does_not_backfill_legacy_ui_events_before_sqlite_write(tmp_path: Path) -> None:
     (tmp_path / "ui_events.jsonl").write_text(
         "\n".join(
             json.dumps({"seq": seq, "name": "RUN_EVENT", "payload": {"status": str(seq)}})
@@ -723,10 +778,10 @@ def test_web_reporter_backfills_legacy_ui_events_before_sqlite_write(tmp_path: P
     reporter.emit(make_event("RUN_END", category="run", payload={"status": "done"}, run_id="run_demo"))
 
     page = WebSession().read_ui_events(tmp_path, limit=5)
-    assert [event["seq"] for event in page["events"]] == [1, 2, 3]
+    assert [event["seq"] for event in page["events"]] == [1]
 
 
-def test_observability_route_returns_metrics_and_backfilled_events(tmp_path: Path) -> None:
+def test_observability_route_returns_metrics_from_observability_store_only(tmp_path: Path) -> None:
     ws = tmp_path / "demo"
     run_dir = ws / "metadata" / "runs" / "run_obs"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -735,32 +790,33 @@ def test_observability_route_returns_metrics_and_backfilled_events(tmp_path: Pat
         json.dumps({"status": "done", "entrypoint": "experiment", "summary": "Observed run"}),
         encoding="utf-8",
     )
-    (run_dir / "ui_events.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps({
-                    "seq": 1,
-                    "ts": 1.0,
-                    "name": "LLM_CALL_END",
-                    "category": "llm",
-                    "payload": {
-                        "model": "gpt-test",
-                        "elapsed_ms": 1000,
-                        "text_preview": "Done",
-                        "usage": {"input_tokens": 2, "output_tokens": 3},
-                    },
-                }),
-                json.dumps({
-                    "seq": 2,
-                    "ts": 2.0,
-                    "name": "TOOL_CALL_END",
-                    "category": "tool",
-                    "payload": {"tool": "bash", "status": "success"},
-                }),
-            ]
-        )
-        + "\n",
+    (run_dir / "usage_summary.json").write_text(
+        json.dumps({"source": "legacy_export", "input_tokens": 999, "output_tokens": 999, "calls": 999}),
         encoding="utf-8",
+    )
+    obs = ObservabilityStore(run_dir)
+    obs.record_ui_event(
+        {
+            "seq": 1,
+            "ts": 1.0,
+            "name": "LLM_CALL_END",
+            "category": "llm",
+            "payload": {
+                "model": "gpt-test",
+                "elapsed_ms": 1000,
+                "text_preview": "Done",
+                "usage": {"input_tokens": 2, "output_tokens": 3},
+            },
+        }
+    )
+    obs.record_ui_event(
+        {
+            "seq": 2,
+            "ts": 2.0,
+            "name": "TOOL_CALL_END",
+            "category": "tool",
+            "payload": {"tool": "bash", "status": "success"},
+        }
     )
     append_machine_time_record(
         run_dir,
@@ -787,7 +843,7 @@ def test_observability_route_returns_metrics_and_backfilled_events(tmp_path: Pat
 
     response = client.get(
         f"/api/session/{ctx}/observability",
-        params={"project_space": "demo", "run": "run_obs"},
+        params={"project_space": "demo", "lane": "experiment", "run": "run_obs"},
     )
 
     assert response.status_code == 200
@@ -795,9 +851,116 @@ def test_observability_route_returns_metrics_and_backfilled_events(tmp_path: Pat
     assert payload["selected_run"] == "run_obs"
     assert payload["metrics"]["llm_calls"] == 1
     assert payload["metrics"]["tool_calls"] == 1
-    assert payload["raw_logs"]["total_events"] == 2
+    assert payload["raw_logs"]["total_events"] == 3
+    assert payload["usage_summary"]["input_tokens"] == 2
+    assert payload["usage_summary"]["output_tokens"] == 3
+    assert payload["usage_summary"]["calls"] == 1
+    assert payload["usage_summary"]["source"] == "observability_store"
+    assert "MACHINE_TIME_RECORD" in payload["metrics"]["event_counts"]
     assert payload["machine_time_summary"]["requests"] == 1
     assert payload["machine_time_summary"]["core_hours"] == 32.0
+
+
+def test_details_route_hides_legacy_traces_unless_requested(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    run_dir = ws / "metadata" / "runs" / "run_trace"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (ws / "files").mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_state.json").write_text(json.dumps({"status": "done", "entrypoint": "experiment"}), encoding="utf-8")
+    (run_dir / "event_trace.jsonl").write_text('{"event":"LLM_RAW_RESPONSE","payload":{"text":"legacy"}}\n', encoding="utf-8")
+    (run_dir / "tool_trace.jsonl").write_text('{"tool_name":"legacy_tool","status":"success"}\n', encoding="utf-8")
+
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+
+    response = client.get(
+        f"/api/session/{ctx}/details",
+        params={"project_space": "demo", "run": "run_trace"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "trace_event" not in payload
+    assert "trace_tool" not in payload
+    assert "trace_patch" not in payload
+
+    legacy_response = client.get(
+        f"/api/session/{ctx}/details",
+        params={"project_space": "demo", "run": "run_trace", "include_legacy_traces": "true"},
+    )
+    assert legacy_response.status_code == 200
+    legacy_payload = legacy_response.json()
+    assert "LLM_RAW_RESPONSE" in legacy_payload["trace_event"]
+    assert "legacy_tool" in legacy_payload["trace_tool"]
+
+
+def test_events_route_reads_unified_observability_events_with_filters(tmp_path: Path) -> None:
+    ws = tmp_path / "demo"
+    run_dir = ws / "metadata" / "runs" / "run_obs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (ws / "files").mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_state.json").write_text(json.dumps({"status": "done", "entrypoint": "experiment"}), encoding="utf-8")
+
+    store = ObservabilityStore(run_dir)
+    store.record_event(
+        source="langchain_callback",
+        channel="callback",
+        name="LLM_CALL_END",
+        category="llm",
+        ts=1.0,
+        seq=None,
+        run_id="run_obs",
+        task_id="",
+        step_id=None,
+        payload={"model": "model-a", "agent_name": "experiment_specialist", "callback_run_id": "llm_1"},
+    )
+    store.record_event(
+        source="thread_event",
+        channel="thread",
+        name="tool_call.completed",
+        category="thread",
+        ts=2.0,
+        seq=7,
+        run_id="run_obs",
+        task_id="",
+        step_id=None,
+        thread_id="thread_1",
+        message_id="msg_1",
+        payload={
+            "seq": 7,
+            "event": "tool_call.completed",
+            "thread_id": "thread_1",
+            "message_id": "msg_1",
+            "status": "completed",
+            "data": {"tool": "mace_relax_dir", "run_id": "run_obs"},
+        },
+    )
+
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    boot = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
+    assert boot.status_code == 200
+    ctx = boot.json()["ctx"]
+
+    response = client.get(
+        f"/api/session/{ctx}/events",
+        params={"project_space": "demo", "run": "run_obs", "limit": 20},
+    )
+    assert response.status_code == 200
+    names = [event["name"] for event in response.json()["events"]]
+    assert "LLM_CALL_END" in names
+    assert "tool_call.completed" in names
+
+    filtered = client.get(
+        f"/api/session/{ctx}/events",
+        params={"project_space": "demo", "run": "run_obs", "channel": "thread", "thread_id": "thread_1"},
+    )
+    assert filtered.status_code == 200
+    payload = filtered.json()
+    assert [event["name"] for event in payload["events"]] == ["tool_call.completed"]
+    assert payload["events"][0]["thread_id"] == "thread_1"
 
 
 def test_websession_read_ui_events_paginates_sqlite_by_sequence(tmp_path: Path) -> None:
@@ -820,7 +983,7 @@ def test_websession_read_ui_events_paginates_sqlite_by_sequence(tmp_path: Path) 
     assert [event["seq"] for event in newer["events"]] == [4, 5]
 
 
-def test_websession_read_ui_events_falls_back_to_legacy_jsonl_when_sqlite_missing(tmp_path: Path) -> None:
+def test_websession_read_ui_events_does_not_fallback_to_legacy_jsonl(tmp_path: Path) -> None:
     for seq in range(1, 6):
         with (tmp_path / "ui_events.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"seq": seq, "name": "RUN_EVENT", "payload": {"status": str(seq)}}) + "\n")
@@ -828,13 +991,12 @@ def test_websession_read_ui_events_falls_back_to_legacy_jsonl_when_sqlite_missin
     session = WebSession()
 
     latest = session.read_ui_events(tmp_path, limit=2)
-    assert [event["seq"] for event in latest["events"]] == [4, 5]
-    assert latest["has_more"] is True
-    assert latest["min_seq"] == 4
+    assert latest == {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
 
-    older = session.read_ui_events(tmp_path, limit=2, before_seq=4)
-    assert [event["seq"] for event in older["events"]] == [2, 3]
-    assert older["has_more"] is True
+    assert ObservabilityStore(tmp_path).import_legacy_jsonl(include_ui_events=True) == 5
+    imported = session.read_ui_events(tmp_path, limit=2)
+    assert [event["seq"] for event in imported["events"]] == [4, 5]
+    assert imported["has_more"] is True
 
 
 def test_runtime_snapshot_omits_removed_prompt_payload() -> None:

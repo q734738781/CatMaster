@@ -5,7 +5,24 @@ from datetime import datetime
 from html import escape
 from typing import Any, Callable, Dict, List, Optional
 
-from .components import status_color
+_STATUS_COLORS: Dict[str, str] = {
+    "running": "#10b981",
+    "starting": "#10b981",
+    "done": "#6b7280",
+    "error": "#ef4444",
+    "failure": "#ef4444",
+    "paused": "#f59e0b",
+    "interrupted_paused": "#f59e0b",
+    "interrupting": "#f59e0b",
+    "awaiting_human_feedback": "#6366f1",
+    "needs_intervention": "#f97316",
+    "idle": "#9ca3af",
+    "unknown": "#9ca3af",
+}
+
+
+def status_color(status: str) -> str:
+    return _STATUS_COLORS.get(status, "#94a3b8")
 
 
 def truncate(value: Any, max_len: int = 140) -> str:

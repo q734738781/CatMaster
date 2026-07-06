@@ -1,0 +1,333 @@
+# 预设学校库
+# 随 skill 分发，覆盖 CARSI 公开接入名单中的主要高校
+# 维护者文档见 docs/maintainers.md
+version: 1
+
+# 字段说明：
+#   name:        学校全称
+#   aliases:     别名列表（中英文缩写），用于模糊匹配
+#   auth.type:   cas | jaccount | sso | custom
+#   auth.sso_domain: 统一身份认证域名
+#   auth.carsi_entry: CARSI 联邦认证入口 URL（无则留空）
+#   proxy.type:  ezproxy | null
+#   proxy.ezproxy_url: EZproxy 登录地址（无则留空）
+#   libraries:   该校订阅的、走机构权限的数据库清单
+#   notes:       特殊提示
+
+schools:
+  # ========== C9 联盟 ==========
+  - name: 上海交通大学
+    aliases: [SJTU, sjtu, 交大, 上海交大]
+    auth:
+      type: jaccount
+      sso_domain: jaccount.sjtu.edu.cn
+      carsi_entry: "https://jaccount.sjtu.edu.cn/"
+    discovery:
+      web_of_science_url: "https://webofscience.clarivate.cn/wos/woscc/basic-search"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: "CARSI 入口需通过 jaccount 登录后跳转"
+
+  - name: 清华大学
+    aliases: [THU, tsinghua, 清华]
+    auth:
+      type: cas
+      sso_domain: id.tsinghua.edu.cn
+      carsi_entry: "https://id.tsinghua.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 北京大学
+    aliases: [PKU, pku, 北大]
+    auth:
+      type: cas
+      sso_domain: iaaa.pku.edu.cn
+      carsi_entry: "https://iaaa.pku.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: ""
+
+  - name: 复旦大学
+    aliases: [FDU, fudan, 复旦]
+    auth:
+      type: uis
+      sso_domain: uis.fudan.edu.cn
+      carsi_entry: "https://uis.fudan.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 浙江大学
+    aliases: [ZJU, zju, 浙大]
+    auth:
+      type: cas
+      sso_domain: id.zju.edu.cn
+      carsi_entry: "https://id.zju.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 南京大学
+    aliases: [NJU, nju, 南大]
+    auth:
+      type: cas
+      sso_domain: authserver.nju.edu.cn
+      carsi_entry: "https://authserver.nju.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 中国科学技术大学
+    aliases: [USTC, ustc, 中科大, 科大]
+    auth:
+      type: ustp
+      sso_domain: passport.ustc.edu.cn
+      carsi_entry: "https://passport.ustc.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: ""
+
+  - name: 哈尔滨工业大学
+    aliases: [HIT, hit, 哈工大]
+    auth:
+      type: cas
+      sso_domain: ids.hit.edu.cn
+      carsi_entry: "https://ids.hit.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 西安交通大学
+    aliases: [XJTU, xjtu, 西交大, 西安交大]
+    auth:
+      type: cas
+      sso_domain: cas.xjtu.edu.cn
+      carsi_entry: "https://cas.xjtu.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  # ========== 其他 985 ==========
+  - name: 中国人民大学
+    aliases: [RUC, ruc, 人大]
+    auth:
+      type: cas
+      sso_domain: v.ruc.edu.cn
+      carsi_entry: "https://v.ruc.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 北京航空航天大学
+    aliases: [BUAA, buaa, 北航]
+    auth:
+      type: cas
+      sso_domain: sso.buaa.edu.cn
+      carsi_entry: "https://sso.buaa.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 北京理工大学
+    aliases: [BIT, bit, 北理工]
+    auth:
+      type: cas
+      sso_domain: sso.bit.edu.cn
+      carsi_entry: "https://sso.bit.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 中国农业大学
+    aliases: [CAU, cau, 中国农大]
+    auth:
+      type: cas
+      sso_domain: uis.cau.edu.cn
+      carsi_entry: "https://uis.cau.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 北京师范大学
+    aliases: [BNU, bnu, 北师大]
+    auth:
+      type: cas
+      sso_domain: cas.bnu.edu.cn
+      carsi_entry: "https://cas.bnu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: ""
+
+  - name: 南开大学
+    aliases: [NKU, nku, 南开]
+    auth:
+      type: cas
+      sso_domain: nkuauth.nankai.edu.cn
+      carsi_entry: "https://nkuauth.nankai.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 天津大学
+    aliases: [TJU, tju, 天大]
+    auth:
+      type: cas
+      sso_domain: sso.tju.edu.cn
+      carsi_entry: "https://sso.tju.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 大连理工大学
+    aliases: [DUT, dut, 大连理工]
+    auth:
+      type: cas
+      sso_domain: sso.dlut.edu.cn
+      carsi_entry: "https://sso.dlut.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 吉林大学
+    aliases: [JLU, jlu, 吉大]
+    auth:
+      type: cas
+      sso_domain: sso.jlu.edu.cn
+      carsi_entry: "https://sso.jlu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 同济大学
+    aliases: [TONGJI, tongji, 同济]
+    auth:
+      type: cas
+      sso_domain: ids.tongji.edu.cn
+      carsi_entry: "https://ids.tongji.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 东南大学
+    aliases: [SEU, seu, 东南]
+    auth:
+      type: cas
+      sso_domain: sso.seu.edu.cn
+      carsi_entry: "https://sso.seu.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 厦门大学
+    aliases: [XMU, xmu, 厦大]
+    auth:
+      type: cas
+      sso_domain: ids.xmu.edu.cn
+      carsi_entry: "https://ids.xmu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: ""
+
+  - name: 山东大学
+    aliases: [SDU, sdu, 山大]
+    auth:
+      type: cas
+      sso_domain: pass.sdu.edu.cn
+      carsi_entry: "https://pass.sdu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 武汉大学
+    aliases: [WHU, whu, 武大]
+    auth:
+      type: cas
+      sso_domain: cas.whu.edu.cn
+      carsi_entry: "https://cas.whu.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: ""
+
+  - name: 华中科技大学
+    aliases: [HUST, hust, 华科]
+    auth:
+      type: cas
+      sso_domain: pass.hust.edu.cn
+      carsi_entry: "https://pass.hust.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 中南大学
+    aliases: [CSU, csu, 中南]
+    auth:
+      type: cas
+      sso_domain: cas.csu.edu.cn
+      carsi_entry: "https://cas.csu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  - name: 中山大学
+    aliases: [SYSU, sysu, 中大]
+    auth:
+      type: cas
+      sso_domain: cas.sysu.edu.cn
+      carsi_entry: "https://cas.sysu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: ""
+
+  - name: 华南理工大学
+    aliases: [SCUT, scut, 华南理工]
+    auth:
+      type: cas
+      sso_domain: sso.scut.edu.cn
+      carsi_entry: "https://sso.scut.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 四川大学
+    aliases: [SCU, scu, 川大]
+    auth:
+      type: cas
+      sso_domain: cas.scu.edu.cn
+      carsi_entry: "https://cas.scu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: ""
+
+  - name: 重庆大学
+    aliases: [CQU, cqu, 重大]
+    auth:
+      type: cas
+      sso_domain: cas.cqu.edu.cn
+      carsi_entry: "https://cas.cqu.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 电子科技大学
+    aliases: [UESTC, uestc, 电子科大]
+    auth:
+      type: cas
+      sso_domain: id.uestc.edu.cn
+      carsi_entry: "https://id.uestc.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 西北工业大学
+    aliases: [NWPU, nwpu, 西工大]
+    auth:
+      type: cas
+      sso_domain: cas.nwpu.edu.cn
+      carsi_entry: "https://cas.nwpu.edu.cn/idp/shibboleth"
+    libraries: [IEEE Xplore, Web of Science, 知网, ScienceDirect]
+    notes: ""
+
+  - name: 兰州大学
+    aliases: [LZU, lzu, 兰大]
+    auth:
+      type: cas
+      sso_domain: cas.lzu.edu.cn
+      carsi_entry: "https://cas.lzu.edu.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer]
+    notes: ""
+
+  # ========== 中国科学院 ==========
+  - name: 中国科学院大学
+    aliases: [UCAS, ucas, 国科大]
+    auth:
+      type: cas
+      sso_domain: id.ucas.ac.cn
+      carsi_entry: "https://id.ucas.ac.cn/idp/shibboleth"
+    libraries: [Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: "可通过 CAS 统一身份认证访问各类数据库"
+
+  - name: 中国科学院
+    aliases: [CAS, cas, 中科院]
+    auth:
+      type: cas
+      sso_domain: passport.ustc.edu.cn
+      carsi_entry: ""
+    libraries: [Web of Science, 知网, ScienceDirect, Springer, ACS]
+    notes: "各研究所接入情况不同，建议确认本所认证方式"
+
+# 维护提示：
+# 1. CARSI 入口查询：https://www.carsi.edu.cn/（成员机构列表）
+# 2. 各校 SSO 域名通常为 id.xxx.edu.cn / cas.xxx.edu.cn / sso.xxx.edu.cn
+# 3. 准确性无法保证，向导会做连通性自检，失败时引导用户修正
+# 4. 新增学校格式参考上述条目，aliases 尽量包含中英文缩写

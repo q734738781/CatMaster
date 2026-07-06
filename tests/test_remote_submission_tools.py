@@ -718,8 +718,8 @@ def test_remote_submission_rejects_cross_audience_task(tmp_path: Path) -> None:
 
 def test_remote_submission_skills_use_stage_layout_schema() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    vasp_text = (repo_root / "skills" / "materials" / "vasp-batch-execution" / "SKILL.md").read_text(encoding="utf-8")
-    mace_text = (repo_root / "skills" / "materials" / "mace-screening-and-relaxation" / "SKILL.md").read_text(encoding="utf-8")
+    vasp_text = (repo_root / "skills" / "materials_worker" / "vasp-batch-execution" / "SKILL.md").read_text(encoding="utf-8")
+    mace_text = (repo_root / "skills" / "materials_worker" / "mace-screening-and-relaxation" / "SKILL.md").read_text(encoding="utf-8")
 
     for forbidden in ("input_dir", "output_dir", "_BATCH_STATE", "batch_state"):
         assert forbidden not in vasp_text
@@ -733,7 +733,7 @@ def test_remote_submission_skills_use_stage_layout_schema() -> None:
     assert "input/" in mace_text
     assert "mace_md_dir" in mace_text
 
-    mace_md_text = (repo_root / "skills" / "dynamics" / "mace-md-sampling" / "SKILL.md").read_text(encoding="utf-8")
+    mace_md_text = (repo_root / "skills" / "dynamics_worker" / "mace-md-sampling" / "SKILL.md").read_text(encoding="utf-8")
     assert "work_dir" in mace_md_text
     assert "input/" in mace_md_text
     assert "params/md_params.json" in mace_md_text

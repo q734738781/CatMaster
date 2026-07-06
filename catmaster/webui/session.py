@@ -18,7 +18,7 @@ from catmaster.tools.base import ensure_project_space_layout, system_root, works
 from catmaster.runtime import RunControl
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.machine_time_stats import load_machine_time_summary
-from catmaster.runtime.usage_stats import load_usage_summary
+from catmaster.runtime.usage_stats import summarize_usage_from_observability
 from catmaster.ui import make_event
 from catmaster.specialists import RUN_STATE_FILE
 
@@ -1354,7 +1354,7 @@ class WebSession:
         if not run_dir:
             return {}
         try:
-            return load_usage_summary(run_dir)
+            return summarize_usage_from_observability(run_dir)
         except Exception:
             return {}
 
@@ -1377,59 +1377,49 @@ class WebSession:
         if not run_dir:
             return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
         store = ObservabilityStore(Path(run_dir))
-        if store.db_exists():
-            try:
-                page = store.read_ui_events_page(limit=limit, before_seq=before_seq, after_seq=after_seq)
-            except Exception:
-                page = None
-            if isinstance(page, dict):
-                return page
-            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
-        path = Path(run_dir) / "ui_events.jsonl"
-        if not path.exists():
-            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
-        capped_limit = min(1000, max(1, int(limit or 200)))
-        rows: List[Dict[str, Any]] = []
         try:
-            with path.open("r", encoding="utf-8") as handle:
-                for index, line in enumerate(handle, start=1):
-                    text = line.strip()
-                    if not text:
-                        continue
-                    try:
-                        item = json.loads(text)
-                    except Exception:
-                        continue
-                    if not isinstance(item, dict):
-                        continue
-                    try:
-                        seq = int(item.get("seq") or index)
-                    except Exception:
-                        seq = index
-                    item["seq"] = seq
-                    rows.append(item)
+            page = store.read_ui_events_page(limit=limit, before_seq=before_seq, after_seq=after_seq)
         except Exception:
-            return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
+            page = None
+        if isinstance(page, dict):
+            return page
+        return {"events": [], "has_more": False, "min_seq": 0, "max_seq": 0}
 
-        rows.sort(key=lambda item: int(item.get("seq") or 0))
-        if after_seq > 0:
-            matching = [item for item in rows if int(item.get("seq") or 0) > int(after_seq)]
-            page = matching[:capped_limit]
-            has_more = len(matching) > len(page)
-        elif before_seq > 0:
-            matching = [item for item in rows if int(item.get("seq") or 0) < int(before_seq)]
-            page = matching[-capped_limit:]
-            has_more = len(matching) > len(page)
-        else:
-            matching = rows
-            page = matching[-capped_limit:]
-            has_more = len(matching) > len(page)
-        return {
-            "events": page,
-            "has_more": has_more,
-            "min_seq": int(page[0].get("seq") or 0) if page else 0,
-            "max_seq": int(page[-1].get("seq") or 0) if page else 0,
-        }
+    def read_events(
+        self,
+        run_dir: Optional[Path],
+        *,
+        limit: int = 200,
+        before_id: int = 0,
+        after_id: int = 0,
+        channel: str = "",
+        category: str = "",
+        names: Optional[List[str]] = None,
+        run_id: str = "",
+        thread_id: str = "",
+        agent_name: str = "",
+        tool: str = "",
+        include_legacy_trace_records: bool = False,
+    ) -> Dict[str, Any]:
+        if not run_dir:
+            return {"events": [], "has_more": False, "min_id": 0, "max_id": 0}
+        store = ObservabilityStore(Path(run_dir))
+        try:
+            return store.read_events_page(
+                limit=limit,
+                before_id=before_id,
+                after_id=after_id,
+                channel=channel,
+                category=category,
+                names=names or None,
+                run_id=run_id,
+                thread_id=thread_id,
+                agent_name=agent_name,
+                tool=tool,
+                include_legacy_trace_records=include_legacy_trace_records,
+            )
+        except Exception:
+            return {"events": [], "has_more": False, "min_id": 0, "max_id": 0}
 
     def update_live_state(
         self,

@@ -1,8 +1,8 @@
 # CatMaster
 
-CatMaster is a local agent workbench for computational catalysis and materials workflows. It provides a WebUI for project spaces, task lanes, file browsing, run history, tool traces, and result inspection.
+CatMaster is a local agent workbench for computational catalysis and materials workflows. Its WebUI opens a thread-centric workspace with project-space files, agent messages, tool cards, artifact previews, interrupts, and result inspection in one view.
 
-CatMaster 是一个面向计算催化和材料工作流的本地 agent 工作台。日常入口是 WebUI：选择项目空间、选择任务模式、提交需求，并在同一界面查看文件、运行记录、工具调用和结果。
+CatMaster 是一个面向计算催化和材料工作流的本地 agent 工作台。日常入口是 WebUI v2 工作区：选择项目空间和线程、提交需求，并在同一界面查看文件树、agent 消息、工具卡片、artifact 预览、中断审批和结果。
 
 ## Public Web Demo
 
@@ -27,14 +27,28 @@ https://cm.cccgg.cyou
 - Prepare and analyze atomistic structures, slabs, adsorbates, VASP/CP2K/LAMMPS/ORCA/xTB inputs, and MACE/UMA workflows.
 - Run bounded experiment tasks, broader research planning, literature review, writing, and PDF peer-review style checks.
 - Submit prepared calculation stages to remote machines through DPDispatcher when your cluster access is configured.
-- Keep user artifacts inside project spaces so runs, reports, intermediate files, and histories stay inspectable.
+- Keep user artifacts inside project spaces so threads, reports, intermediate files, remote receipts, and histories stay inspectable.
+
+## Acknowledgements
+
+CatMaster includes and adapts selected Apache-2.0 skills from Yuan Yizhe's
+`nature-skills` project for literature, researcher, and academic-writing
+workflows: <https://github.com/Yuan1z0825/nature-skills>. The redistributed
+license text is kept at [skills/NATURE_SKILLS_LICENSE](skills/NATURE_SKILLS_LICENSE).
 
 ## 能力概览
 
 - 结构、表面、吸附物、VASP/CP2K/LAMMPS/ORCA/xTB 输入、MACE/UMA 相关任务的准备与分析。
 - 支持计算实验、研究规划、文献综述、写作和 PDF 审稿式检查。
 - 配好集群访问后，可通过 DPDispatcher 提交远程计算任务。
-- 使用项目空间保存输入、输出、中间文件、运行历史和报告，方便继续任务和复查结果。
+- 使用项目空间保存输入、输出、中间文件、线程历史、远程回执和报告，方便继续任务和复查结果。
+
+## 致谢
+
+CatMaster 引入并适配了袁一哲 `nature-skills` 项目中的部分 Apache-2.0
+科研 skills，用于文献、researcher 和学术写作工作流：
+<https://github.com/Yuan1z0825/nature-skills>。随附 license 文本保存在
+[skills/NATURE_SKILLS_LICENSE](skills/NATURE_SKILLS_LICENSE)。
 
 ## Start Here
 
@@ -75,3 +89,25 @@ http://127.0.0.1:7990
 If you need a different provider, remote execution, optional external programs, or troubleshooting notes, follow the full guide above.
 
 如果你使用其他模型供应商、远程计算、可选外部程序，或需要排查启动问题，请按上面的中文分章指南操作。
+
+## Development WebUI v2 Check
+
+For migration and compatibility work, use the `catmaster-dev` environment with
+the same pinned control-plane requirements used by deployment:
+
+```bash
+conda activate catmaster-dev
+/home/chenhh/miniconda3/envs/catmaster-dev/bin/python -m pip install -r requirements/pc.txt
+
+cd catmaster/webui/frontend
+npm install
+npm run build
+
+cd ../../..
+/home/chenhh/miniconda3/envs/catmaster-dev/bin/python -m pytest \
+  tests/test_webui_thread_v2.py tests/test_specialist_runtime.py
+```
+
+WebUI v2 is the default built frontend. Legacy run endpoints remain available
+for compatibility/debugging, but new UI work should use the thread endpoints
+and artifact registry.

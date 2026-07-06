@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from catmaster.runtime import observation_events as obs_events
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.run_ledger.models import RunSearchBlob
 
 
@@ -53,7 +55,13 @@ def _extract_tool_name(payload: Dict[str, Any]) -> str:
     return ""
 
 
-def _collect_tool_names(tool_trace_path: Path, *, limit: int = 64) -> List[str]:
+def _collect_tool_names(run_dir: Path, *, limit: int = 64) -> List[str]:
+    store = ObservabilityStore(run_dir)
+    names = store.list_tool_names(limit=limit, event_names=[obs_events.TOOL_CALL_END])
+    if names or store.db_exists():
+        return names
+
+    tool_trace_path = run_dir / "tool_trace.jsonl"
     if not tool_trace_path.exists():
         return []
     out: List[str] = []
@@ -133,7 +141,7 @@ def build_run_search_blob(run_dir: Path, *, max_chars: int = 5500) -> RunSearchB
     request = _squash(str(task_state.get("user_request") or meta.get("user_request") or ""))
     answer_summary = _answer_summary(task_state)
     task_goals = _collect_task_goals(task_state)
-    tool_names = _collect_tool_names(run_root / "tool_trace.jsonl")
+    tool_names = _collect_tool_names(run_root)
     artifact_paths = _collect_artifact_paths(run_root, task_state)
 
     lines: List[str] = [

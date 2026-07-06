@@ -1,103 +1,160 @@
 # WebUI Development Guide
 
-The active WebUI is a FastAPI-backed, React-based interface. Do not treat this package as a Gradio application.
+The active WebUI is a FastAPI + React thread workspace. Do not treat this
+package as a Gradio application, and do not make the old run monitor the
+primary UX.
 
-## 1) Current stack
+## 1) Source of Truth
+
+The conversation page should be assistant-ui first.
+
+Use `@assistant-ui/react` primitives and runtime patterns for the central chat
+experience whenever they fit:
+
+- thread layout and message list
+- message parts and assistant/user message rendering
+- composer input and send/stop controls
+- tool-call and rich message extension points
+- runtime/store integration boundaries
+
+CatMaster-specific code should adapt backend state into assistant-ui concepts
+and provide domain renderers for artifacts, tool receipts, interrupts, files,
+and scientific multimodal content. Do not rebuild generic chat primitives when
+assistant-ui already provides the behavior.
+
+If a feature cannot be expressed through assistant-ui cleanly, document the
+reason near the implementation and keep the custom surface narrow.
+
+## 2) Current Stack
 
 - backend: FastAPI
-- frontend: React
-- live updates: SSE (`text/event-stream`)
-- state model: `run_state.json` plus streamed runtime events
+- frontend: React/Vite with `@assistant-ui/react`
+- live updates: semantic SSE from thread endpoints
+- state model: thread records, message parts, artifact records, interrupt
+  records, and replayable thread events
 
-The primary frontend entrypoint is:
+The current v2 frontend entrypoint is:
 
-- [App.jsx](frontend/src/App.jsx)
+- [CatMasterWorkspace.jsx](frontend/src/v2/CatMasterWorkspace.jsx)
 
-## 2) UI architecture rules
+The legacy `App.jsx` and `/api/session/{ctx}/run/*` endpoints may remain for
+debugging and compatibility, but new user-facing work should target the thread
+workspace and modern thread API.
 
-### Streaming-first
+## 3) UI Architecture Rules
 
-The active UI is driven by backend push, not by legacy polling assumptions.
+### Assistant-UI First
+
+The center conversation pane should be built primarily from assistant-ui
+components and extension hooks. Custom CatMaster components belong at the
+domain boundary:
+
+- artifact cards and previews
+- chemistry/materials structure viewers
+- file and report references
+- tool receipt summaries
+- interrupt approval/edit/reject controls
+- ask-user response parts
+
+Avoid parallel custom implementations of message lists, composers, thread
+stores, or generic tool-call state unless they are temporary migration code.
+
+### Thread Workspace
+
+The default page is a single CatMaster Workspace:
+
+- left rail: workspace switcher, thread list, project file tree
+- center: assistant-ui conversation thread and composer
+- right inspector: artifact/file/tool/interrupt details
+
+Do not reintroduce separate Home, Monitor, and Files tabs as the primary
+navigation. Files stay available through the left rail and right inspector.
+
+### Multimodal Rendering
+
+Messages may contain text, structured tool events, artifact references, file
+references, molecular/structure previews, images, PDFs, remote receipts, and
+interrupt cards.
+
+Represent these as typed message parts or artifact references first. Use
+assistant-ui extension points for rendering, and keep heavy content behind
+artifact preview/content/download routes rather than embedding large payloads in
+chat history.
+
+### Streaming First
 
 Prefer:
 
-- SSE event handling
-- live snapshot reconciliation
-- explicit run/activity state from the backend
+- semantic SSE event handling
+- incremental message part reconciliation
+- explicit thread status
+- artifact cards that open in the inspector
 
-Do not introduce new UI behavior that depends on:
+Do not introduce new active UI behavior that depends on:
 
 - legacy `task_state.json`
 - `FINAL_REPORT.md`
 - Gradio component semantics
+- the old large runtime snapshot stream as the main state source
 
-### Chat-first layout
+## 4) Backend Contract Assumptions
 
-The main page is a chat-first interface.
+The backend should expose a modern agent-loop contract while preserving
+CatMaster's existing subagent delegation architecture, tool surface, and skills.
 
-Current expectations:
+Assume thread-native endpoints for:
 
-- the central column is the conversation timeline
-- live thinking stays in the chat stream
-- right-side panels are auxiliary views such as Todo and Tool trace
-- long-running sessions should scroll inside the chat container rather than extending the full page height
+- create/list/read/update threads
+- submit/stop/resume thread turns
+- stream thread events by `last_seq`
+- read thread messages and artifacts
+- preview/content/download artifact endpoints
 
-Do not regress the layout into a monitor-first or form-first interface.
+The frontend should not infer agent lifecycle from logs or filenames. If UI
+behavior depends on additional event fields, fix the backend event contract
+instead of adding fragile frontend-only workarounds.
 
-## 3) Live state semantics
+## 5) Artifact, Tool, and Interrupt Semantics
 
-The frontend should distinguish between:
+Artifacts are first-class UI records. Messages should store artifact IDs and
+preview metadata, not base64 payloads or arbitrary absolute paths.
 
-- persisted chat history
-- transient live assistant state
-- per-agent Todo and Tool trace views
+Tool calls should be represented as structured events and rendered as compact
+receipt cards in the conversation, with detailed inspection available in the
+right panel.
 
-Transient runtime information should not be accidentally written into durable chat history unless the backend explicitly persists it.
+Interrupts should render as message parts and inspector review cards. Resume
+payloads should use explicit decision types such as `approve`, `edit`,
+`reject`, and ask-user `respond`.
 
-### Agent-aware views
+Default permission mode is `auto`. The UI must keep an explicit Review/HITL
+toggle available for users who want protected tool calls to pause for approval.
+Both modes should map to backend interrupt policy rather than bypassing backend
+safety checks in the frontend.
 
-The runtime may have multiple active agents or subagents.
+Prompt steering while a thread is running should be queued as a steering request
+and applied at a safe boundary. Do not hard-cancel remote/scientific work solely
+to apply steering.
 
-Frontend code should preserve agent-aware grouping for:
+## 6) Frontend Implementation Conventions
 
-- thinking/live LLM state
-- todo lists
-- tool trace rows
+- Prefer code under `frontend/src/v2/` for new thread-workspace work.
+- Prefer assistant-ui primitives before adding CatMaster-specific chat UI.
+- Keep CatMaster-only artifact/receipt/interrupt metadata available to custom
+  renderers while assistant-ui receives normalized messages.
+- Use internal scrolling for dense rails and inspectors.
+- Keep text and controls compact enough for repeated operational use.
+- Do not add branch/retry UI until backend checkpoint fork support exists.
 
-When showing aggregate views, prefer stable ordering and avoid excessive re-sorting on every streamed event.
-
-## 4) Backend contract assumptions
-
-Assume the backend provides:
-
-- run snapshots
-- streamed runtime events
-- active run identity
-- per-agent live state
-- usage summaries
-
-If UI behavior depends on additional event fields, fix the backend event contract instead of adding fragile frontend-only workarounds.
-
-## 5) Frontend implementation conventions
-
-- Prefer existing React patterns already used in `App.jsx`
-- Keep derived UI state small and explicit
-- Avoid introducing redundant local mirrors of server state when a streamed snapshot is already authoritative
-- Use internal scrolling for dense panels such as Todo and Tool trace
-- Preserve readable ordering in multi-agent views:
-  - Todo grouped by status
-  - Tool trace with running work first
-
-## 6) Build and verification
+## 7) Build and Verification
 
 When changing the WebUI:
 
-- rebuild the frontend bundle
+- rebuild the frontend bundle with `npm run build`
 - keep backend event fields and frontend expectations aligned
-- verify that live streaming still works for:
-  - thinking
-  - todo updates
-  - tool trace updates
-  - final answer insertion
+- verify assistant-ui message rendering, composer behavior, streaming, tool
+  cards, artifact cards, interrupt cards, stop, refresh/rejoin, and artifact
+  preview routes
 
-If a change modifies active WebUI semantics, update the relevant tests in `tests/` in the same change.
+If a change modifies active WebUI semantics, update focused tests in `tests/`
+without asserting long prompt text or exact optional wording.

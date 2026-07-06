@@ -81,6 +81,23 @@ The active runtime writes `run_state.json` in the run directory. This is the act
 
 Active multi-turn continuity for specialists comes from the DeepAgent `thread_id` bound to the chat session. Do not manually inject chat-history summaries or reconstructed transcript text into active specialist prompts.
 
+WebUI thread entrypoints must preserve DeepAgent-native session semantics:
+
+- Reuse the WebUI thread's stable `deepagent_thread_id` as the LangGraph
+  `configurable.thread_id`, even when the user switches between supported
+  entrypoints in the same thread. Do not create entrypoint-specific checkpoint
+  namespaces unless checkpoint fork/isolation support is intentionally added.
+- Direct entry into `research`, `experiment`, `writing`, `peer_review`, or
+  `literature_review` must still build that entrypoint's DeepAgent through the
+  normal `create_deep_agent` path with the matching specialist
+  `system_prompt`, tools, subagents, checkpointer, store, and backend. Do not
+  bypass specialist system prompts by routing direct entrypoint requests through
+  a generic agent wrapper.
+- A new user turn should pass only the current user message/attachments to the
+  agent runtime and rely on the DeepAgent/LangGraph checkpoint for conversation
+  continuity. Do not reconstruct prior WebUI `messages.jsonl` rows into prompt
+  text as an active-path context strategy.
+
 Do not add new active-path features that depend on:
 
 - `task_state.json`
@@ -181,21 +198,27 @@ Proposal review is the exception: proposal checkpoints still use a structured `P
 
 The active skill layout is:
 
-- `skills/materials/*`
-- `skills/machine_learning/*`
-- `skills/quantum_chemistry/*`
-- `skills/execution/*`
-- `skills/writing/*`
+- `skills/materials_worker/*`
+- `skills/dynamics_worker/*`
+- `skills/ml_worker/*`
+- `skills/orca_xtb_worker/*`
+- `skills/research_specialist/*`
+- `skills/litreview_agent/*`
+- `skills/writing_specialist/*`
+- `skills/execution/*` for shared managed-execution support.
 
 At runtime they are staged into:
 
-- `files/.deepagents/skills/materials`
-- `files/.deepagents/skills/machine_learning`
-- `files/.deepagents/skills/quantum_chemistry`
+- `files/.deepagents/skills/materials_worker`
+- `files/.deepagents/skills/dynamics_worker`
+- `files/.deepagents/skills/ml_worker`
+- `files/.deepagents/skills/orca_xtb_worker`
+- `files/.deepagents/skills/research_specialist`
+- `files/.deepagents/skills/litreview_agent`
+- `files/.deepagents/skills/writing_specialist`
 - `files/.deepagents/skills/execution`
-- `files/.deepagents/skills/writing`
 
-Worker agents bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime. Coordinator specialists do not mount skill roots directly.
+Worker agents and entrypoint specialists bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime.
 
 ### Skill authoring
 

@@ -163,9 +163,9 @@ Possible future removal:
 
 Current versions are pinned in `requirements/pc.txt`:
 
-- `langchain-openrouter==0.2.1`
-- `openrouter==0.9.1`
-- `deepagents==0.5.6`
+- `langchain-openrouter==0.2.5`
+- `openrouter==0.11.1`
+- `deepagents==0.6.12`
 
 DeepAgents issue
 `langchain-ai/deepagents#2873` tracks a related multimodal summarization problem:

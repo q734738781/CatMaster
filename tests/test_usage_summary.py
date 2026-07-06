@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 
 from catmaster.runtime.usage_stats import (
+    summarize_usage_from_observability,
     summarize_usage_from_metadata,
     write_usage_summary_from_metadata,
 )
+from catmaster.runtime.observability_store import ObservabilityStore
 
 
 def test_usage_summary_from_langchain_metadata_aggregates_tokens_and_calls(tmp_path) -> None:
@@ -118,3 +120,54 @@ def test_write_usage_summary_from_metadata_writes_file(tmp_path) -> None:
     assert summary["calls"] == 0
     payload = json.loads((tmp_path / "usage_summary.json").read_text(encoding="utf-8"))
     assert payload["calls"] == 0
+
+
+def test_usage_summary_from_observability_prefers_semantic_events_without_double_counting(tmp_path) -> None:
+    store = ObservabilityStore(tmp_path)
+    usage = {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}
+    store.record_raw_callback(
+        "LLM_RAW_RESPONSE",
+        category="llm",
+        payload={"model": "model-a", "agent_name": "worker", "usage": usage},
+    )
+    store.record_ui_event(
+        {
+            "seq": 1,
+            "name": "LLM_CALL_END",
+            "category": "llm",
+            "payload": {"model": "model-a", "agent_name": "worker", "usage": usage},
+        }
+    )
+
+    summary = summarize_usage_from_observability(tmp_path)
+
+    assert summary["source"] == "observability_store"
+    assert summary["source_events"] == "LLM_CALL_END"
+    assert summary["calls"] == 1
+    assert summary["input_tokens"] == 7
+    assert summary["output_tokens"] == 3
+    assert summary["by_role"][0]["name"] == "worker"
+
+
+def test_usage_summary_from_observability_deduplicates_semantic_callback_rows(tmp_path) -> None:
+    store = ObservabilityStore(tmp_path)
+    usage = {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}
+    for source in ("langchain_callback", "ui_event"):
+        store.record_event(
+            source=source,
+            channel="callback" if source == "langchain_callback" else "ui",
+            name="LLM_CALL_END",
+            category="llm",
+            ts=1.0,
+            seq=1 if source == "ui_event" else None,
+            run_id="run_x",
+            task_id="",
+            step_id=None,
+            payload={"model": "model-a", "agent_name": "worker", "callback_run_id": "llm_shared", "usage": usage},
+        )
+
+    summary = summarize_usage_from_observability(tmp_path)
+
+    assert summary["calls"] == 1
+    assert summary["input_tokens"] == 7
+    assert summary["output_tokens"] == 3

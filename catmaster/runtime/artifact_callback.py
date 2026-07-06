@@ -22,6 +22,7 @@ from langchain_core.agents import AgentAction, AgentFinish
 from langchain_core.messages import ToolMessage
 from langchain_core.outputs import LLMResult
 
+from catmaster.runtime import observation_events as obs_events
 from catmaster.runtime.artifact_store import ArtifactStore
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.tool_observation_projection import project_tool_observation
@@ -464,20 +465,23 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
     For each tool call the handler:
     1. Writes ``toolcalls/{key}/input.json`` via ArtifactStore.
     2. Writes ``toolcalls/{key}/output.json`` via ArtifactStore.
-    3. Appends a summary record to ``tool_trace.jsonl`` via TraceStore.
+    3. Emits canonical tool observations to ObservabilityStore.
     """
 
     def __init__(
         self,
         artifact_store: ArtifactStore,
-        trace_store: TraceStore,
+        trace_store: TraceStore | None = None,
         *,
         run_id: str = "",
+        write_legacy_trace: bool = False,
     ) -> None:
         super().__init__()
         self.artifact_store = artifact_store
         self.trace_store = trace_store
         self.run_id = run_id
+        self.write_legacy_trace = bool(write_legacy_trace)
+        self.observability = ObservabilityStore(Path(artifact_store.run_dir))
         self._pending: Dict[str, Dict[str, Any]] = {}
         self._call_counter = 0
 
@@ -522,6 +526,19 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
             "toolcall_id": toolcall_key,
             "run_id": self.run_id,
         })
+        self._record_tool_event(
+            obs_events.TOOL_RAW_INPUT,
+            {
+                "role": "langgraph",
+                "tool_name": tool_name,
+                "tool": tool_name,
+                "toolcall_id": toolcall_key,
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
+                "run_id": self.run_id,
+                "params_full": raw_params,
+            },
+        )
 
     def on_tool_end(
         self,
@@ -546,15 +563,22 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
             "tool_status": normalized_status,
             "tool_name": str(projection.get("tool_name") or tool_name),
         })
-        self.trace_store.append_toolcall({
+        record = {
             "role": "langgraph",
             "tool_name": str(projection.get("tool_name") or tool_name),
+            "tool": str(projection.get("tool_name") or tool_name),
             "status": normalized_status,
+            "tool_status": normalized_status,
             "error": normalized_error,
             "toolcall_id": toolcall_key,
+            "callback_run_id": str(run_id),
+            "parent_callback_run_id": str(parent_run_id or ""),
             "run_id": self.run_id,
             **refs,
-        })
+        }
+        self._record_tool_event(obs_events.TOOL_RAW_OUTPUT, record)
+        if self.write_legacy_trace and self.trace_store is not None:
+            self.trace_store.append_toolcall(record)
 
     def on_tool_error(
         self,
@@ -579,15 +603,39 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
             "tool_name": tool_name,
         })
         refs = self.artifact_store.toolcall_refs(toolcall_key)
-        self.trace_store.append_toolcall({
+        record = {
             "role": "langgraph",
             "tool_name": tool_name,
+            "tool": tool_name,
             "status": "error",
+            "tool_status": "error",
             "error": str(error),
             "toolcall_id": toolcall_key,
+            "callback_run_id": str(run_id),
+            "parent_callback_run_id": str(parent_run_id or ""),
             "run_id": self.run_id,
             **refs,
-        })
+        }
+        self._record_tool_event(obs_events.TOOL_RAW_OUTPUT, record)
+        if self.write_legacy_trace and self.trace_store is not None:
+            self.trace_store.append_toolcall(record)
+
+    def _record_tool_event(self, name: str, payload: Dict[str, Any]) -> None:
+        try:
+            self.observability.record_event(
+                source="artifact_callback",
+                channel="tool",
+                name=name,
+                category="tool",
+                ts=time.time(),
+                seq=None,
+                run_id=self.run_id,
+                task_id=str(payload.get("task_id") or ""),
+                step_id=payload.get("step_id") if isinstance(payload.get("step_id"), int) else None,
+                payload=payload,
+            )
+        except Exception:
+            return
 
 
 class LLMTracingHandler(BaseCallbackHandler):
@@ -707,13 +755,21 @@ class LLMTracingHandler(BaseCallbackHandler):
 
 
 class ObservabilityCallbackHandler(BaseCallbackHandler):
-    """Record raw LangChain callback payloads directly to the run observability DB."""
+    """Record semantic LangChain observations plus raw debug payloads."""
 
-    def __init__(self, run_dir: Path, *, run_id: str = "", default_agent_name: str = "") -> None:
+    def __init__(
+        self,
+        run_dir: Path,
+        *,
+        run_id: str = "",
+        default_agent_name: str = "",
+        record_tool_callbacks: bool = True,
+    ) -> None:
         super().__init__()
         self.store = ObservabilityStore(Path(run_dir))
         self.run_id = run_id
         self.default_agent_name = str(default_agent_name or "").strip()
+        self.record_tool_callbacks = bool(record_tool_callbacks)
         self._llm_pending: Dict[str, Dict[str, Any]] = {}
         self._tool_pending: Dict[str, Dict[str, Any]] = {}
 
@@ -739,7 +795,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                 return head
         return self.default_agent_name
 
-    def _record(self, name: str, *, payload: Dict[str, Any], category: str, task_id: str = "", step_id: Optional[int] = None) -> None:
+    def _record_raw(self, name: str, *, payload: Dict[str, Any], category: str, task_id: str = "", step_id: Optional[int] = None) -> None:
         try:
             self.store.record_raw_callback(
                 name,
@@ -748,6 +804,26 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                 run_id=self.run_id,
                 task_id=task_id,
                 step_id=step_id,
+            )
+        except Exception:
+            return
+
+    def _record_semantic(self, name: str, *, payload: Dict[str, Any], category: str, task_id: str = "", step_id: Optional[int] = None) -> None:
+        try:
+            self.store.record_event(
+                source="langchain_callback",
+                channel="callback",
+                name=name,
+                category=category,
+                ts=time.time(),
+                seq=None,
+                run_id=self.run_id,
+                task_id=task_id,
+                step_id=step_id,
+                thread_id=str(payload.get("thread_id") or ""),
+                message_id=str(payload.get("message_id") or ""),
+                part_id=str(payload.get("part_id") or ""),
+                payload=payload,
             )
         except Exception:
             return
@@ -775,7 +851,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             "node": str(ctx.get("langgraph_node") or ctx.get("node") or ""),
         }
         if prompts:
-            self._record(
+            self._record_raw(
                 "LLM_RAW_REQUEST",
                 category="llm",
                 task_id=str(ctx.get("task_id") or ""),
@@ -789,6 +865,19 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                     "prompts": _json_safe(prompts),
                 },
             )
+        self._record_semantic(
+            "LLM_CALL_START",
+            category="llm",
+            task_id=str(ctx.get("task_id") or ""),
+            step_id=ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
+            payload={
+                "model": model,
+                "agent_name": agent_name,
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
+                "node": str(ctx.get("langgraph_node") or ctx.get("node") or ""),
+            },
+        )
 
     def on_chat_model_start(
         self,
@@ -804,7 +893,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         _ = tags
         self.on_llm_start(serialized, [], run_id=run_id, parent_run_id=parent_run_id, metadata=metadata, **kwargs)
         info = self._llm_pending.get(str(run_id), {})
-        self._record(
+        self._record_raw(
             "LLM_RAW_REQUEST",
             category="llm",
             task_id=str(info.get("task_id") or ""),
@@ -830,7 +919,21 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         _ = kwargs
         info = self._llm_pending.pop(str(run_id), {})
         elapsed_ms = int((time.time() - float(info.get("start_ts") or time.time())) * 1000)
-        self._record(
+        usage = _extract_usage_from_llm_result(response)
+        generations = _extract_raw_generations(response)
+        reasoning_text = ""
+        text_preview = ""
+        tool_names: list[str] = []
+        for generation in generations:
+            if not text_preview:
+                text_preview = _snippet(generation.get("response_text") or "", 320)
+            if not reasoning_text:
+                reasoning_text = str(generation.get("reasoning_text") or "").strip()
+            for tool_call in list(generation.get("parsed_tool_calls") or []):
+                name = str(tool_call.get("name") or "").strip()
+                if name and name not in tool_names:
+                    tool_names.append(name)
+        self._record_raw(
             "LLM_RAW_RESPONSE",
             category="llm",
             task_id=str(info.get("task_id") or ""),
@@ -842,8 +945,26 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                 "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
                 "node": str(info.get("node") or ""),
                 "elapsed_ms": elapsed_ms,
-                "usage": _extract_usage_from_llm_result(response),
-                "generations": _extract_raw_generations(response),
+                "usage": usage,
+                "generations": generations,
+            },
+        )
+        self._record_semantic(
+            "LLM_CALL_END",
+            category="llm",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "model": str(info.get("model") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "node": str(info.get("node") or ""),
+                "elapsed_ms": elapsed_ms,
+                "usage": usage,
+                "reasoning_text": reasoning_text,
+                "text_preview": text_preview,
+                "tool_calls": tool_names,
             },
         )
 
@@ -857,7 +978,21 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
     ) -> None:
         _ = kwargs
         info = self._llm_pending.pop(str(run_id), {})
-        self._record(
+        self._record_raw(
+            "LLM_ERROR",
+            category="llm",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "model": str(info.get("model") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "node": str(info.get("node") or ""),
+                "error": str(error),
+            },
+        )
+        self._record_semantic(
             "LLM_ERROR",
             category="llm",
             task_id=str(info.get("task_id") or ""),
@@ -883,6 +1018,8 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         inputs: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
+        if not self.record_tool_callbacks:
+            return
         ctx = self._context(metadata, **kwargs)
         task_id = str(ctx.get("task_id") or "")
         step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None
@@ -904,7 +1041,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             "agent_name": agent_name,
             "parent_callback_run_id": str(parent_run_id or ""),
         }
-        self._record(
+        self._record_raw(
             "TOOL_RAW_INPUT",
             category="tool",
             task_id=task_id,
@@ -919,6 +1056,40 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                 "params_full": params_full,
             },
         )
+        self._record_semantic(
+            "TOOL_CALL_START",
+            category="tool",
+            task_id=task_id,
+            step_id=step_id,
+            payload={
+                "tool_name": tool_name,
+                "tool": tool_name,
+                "agent_name": agent_name,
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or ""),
+                "params_compact": params_compact,
+            },
+        )
+        if tool_name == "task":
+            subagent_type = ""
+            if isinstance(raw_params, dict):
+                subagent_type = str(raw_params.get("subagent_type") or raw_params.get("agent") or raw_params.get("name") or "").strip()
+            self._record_semantic(
+                "subagent.started",
+                category="subagent",
+                task_id=task_id,
+                step_id=step_id,
+                payload={
+                    "agent_name": agent_name,
+                    "subagent_type": subagent_type,
+                    "description": str(raw_params.get("description") or "") if isinstance(raw_params, dict) else "",
+                    "callback_run_id": str(run_id),
+                    "parent_callback_run_id": str(parent_run_id or ""),
+                    "tool": tool_name,
+                    "tool_name": tool_name,
+                    "params_compact": params_compact,
+                },
+            )
 
     def on_tool_end(
         self,
@@ -928,11 +1099,13 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
+        if not self.record_tool_callbacks:
+            return
         _ = kwargs
         info = self._tool_pending.pop(str(run_id), {})
         projection = _coerce_tool_projection(output, tool_name=str(info.get("tool") or ""))
         elapsed_ms = int((time.time() - float(info.get("start_ts") or time.time())) * 1000)
-        self._record(
+        self._record_raw(
             "TOOL_RAW_OUTPUT",
             category="tool",
             task_id=str(info.get("task_id") or ""),
@@ -951,6 +1124,42 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                 "raw_output": _json_safe(output),
             },
         )
+        self._record_semantic(
+            "TOOL_CALL_END",
+            category="tool",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "tool_name": str(projection.get("tool_name") or info.get("tool") or ""),
+                "tool": str(projection.get("tool_name") or info.get("tool") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "status": str(projection.get("tool_status") or "success"),
+                "tool_status": str(projection.get("tool_status") or "success"),
+                "error": projection.get("error"),
+                "elapsed_ms": elapsed_ms,
+                "projection": projection,
+            },
+        )
+        if str(info.get("tool") or "") == "task":
+            self._record_semantic(
+                "subagent.completed",
+                category="subagent",
+                task_id=str(info.get("task_id") or ""),
+                step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+                payload={
+                    "agent_name": str(info.get("agent_name") or ""),
+                    "callback_run_id": str(run_id),
+                    "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                    "tool": "task",
+                    "tool_name": "task",
+                    "status": str(projection.get("tool_status") or "success"),
+                    "tool_status": str(projection.get("tool_status") or "success"),
+                    "elapsed_ms": elapsed_ms,
+                    "projection": projection,
+                },
+            )
 
     def on_tool_error(
         self,
@@ -960,9 +1169,11 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
+        if not self.record_tool_callbacks:
+            return
         _ = kwargs
         info = self._tool_pending.pop(str(run_id), {})
-        self._record(
+        self._record_raw(
             "TOOL_RAW_OUTPUT",
             category="tool",
             task_id=str(info.get("task_id") or ""),
@@ -978,6 +1189,39 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                 "error": str(error),
             },
         )
+        self._record_semantic(
+            "TOOL_CALL_END",
+            category="tool",
+            task_id=str(info.get("task_id") or ""),
+            step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+            payload={
+                "tool_name": str(info.get("tool") or ""),
+                "tool": str(info.get("tool") or ""),
+                "agent_name": str(info.get("agent_name") or ""),
+                "callback_run_id": str(run_id),
+                "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                "status": "error",
+                "tool_status": "error",
+                "error": str(error),
+            },
+        )
+        if str(info.get("tool") or "") == "task":
+            self._record_semantic(
+                "subagent.error",
+                category="subagent",
+                task_id=str(info.get("task_id") or ""),
+                step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
+                payload={
+                    "agent_name": str(info.get("agent_name") or ""),
+                    "callback_run_id": str(run_id),
+                    "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
+                    "tool": "task",
+                    "tool_name": "task",
+                    "status": "error",
+                    "tool_status": "error",
+                    "error": str(error),
+                },
+            )
 
 
 class LangChainStepLogger(BaseCallbackHandler):
@@ -1420,15 +1664,16 @@ class UIEventHandler(BaseCallbackHandler):
 def build_callbacks(
     *,
     artifact_store: ArtifactStore,
-    trace_store: TraceStore,
+    trace_store: TraceStore | None = None,
     reporter: Reporter,
     run_id: str = "",
     enable_step_logs: bool = False,
 ) -> list[BaseCallbackHandler]:
     """Convenience factory returning the standard callback set."""
+    _ = trace_store
     callbacks: list[BaseCallbackHandler] = [
-        ArtifactPersistenceHandler(artifact_store, trace_store, run_id=run_id),
-        LLMTracingHandler(trace_store, run_id=run_id),
+        ArtifactPersistenceHandler(artifact_store, run_id=run_id),
+        ObservabilityCallbackHandler(artifact_store.run_dir, run_id=run_id, record_tool_callbacks=False),
         UIEventHandler(reporter, run_id=run_id),
     ]
     if enable_step_logs:

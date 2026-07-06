@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 import re
 import shutil
 import tempfile
@@ -19,8 +20,23 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 import uvicorn
 
+from catmaster.specialists import build_specialist_runner, default_thread_interrupt_on
+from catmaster.specialists.streaming_runner import StreamingSpecialistRunner
+from catmaster.tools.base import ensure_project_space_layout, system_root
+
+from .agent_loop import ThreadAgentLoopService
+from .artifact_registry import ArtifactRegistry
 from .auth import AuthIdentity, AuthManager, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from .session_registry import SessionRegistry
+from .thread_events import ThreadEventBroker, format_sse
+from .thread_models import (
+    ThreadCreateRequest,
+    ThreadPatchRequest,
+    ThreadResumeRequest,
+    ThreadStopRequest,
+    ThreadSubmitRequest,
+)
+from .thread_store import ThreadStore
 
 TEXT_PREVIEW_LIMIT_BYTES = 160_000
 TEXT_KIND_PROBE_BYTES = 8_192
@@ -49,6 +65,7 @@ STRUCTURE_FILE_SUFFIXES = {
 STRUCTURE_FILE_NAMES = {"POSCAR", "CONTCAR", "OUTCAR", "XDATCAR"}
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdx", ".rst"}
 JSON_SUFFIXES = {".json", ".jsonl", ".geojson"}
+PDF_SUFFIXES = {".pdf"}
 TEXTLIKE_SUFFIXES = {
     ".csv",
     ".log",
@@ -63,6 +80,91 @@ TEXTLIKE_SUFFIXES = {
     ".yml",
 } | MARKDOWN_SUFFIXES | JSON_SUFFIXES
 _TEXT_ALLOWED_CONTROL_BYTES = {7, 8, 9, 10, 12, 13, 27}
+_THREAD_LANE_ALIASES = {
+    "litreview": "literature_review",
+    "literature": "literature_review",
+}
+_THREAD_ENTRYPOINTS = [
+    {
+        "id": "research",
+        "label": "Research",
+        "summary": "Research coordinator with delegation to experiment, writing, peer review, and literature specialists.",
+    },
+    {
+        "id": "experiment",
+        "label": "Experiment",
+        "summary": "Computation and managed-execution specialist entry for bounded calculations and file-producing workflows.",
+    },
+    {
+        "id": "writing",
+        "label": "Writing",
+        "summary": "Manuscript, report, response, and author-facing scientific writing specialist.",
+    },
+    {
+        "id": "peer_review",
+        "label": "Peer Review",
+        "summary": "Reviewer-style critique and manuscript risk assessment specialist.",
+    },
+    {
+        "id": "literature_review",
+        "label": "Literature Review",
+        "summary": "Focused literature synthesis entry backed by the literature/deep-research lane.",
+    },
+]
+_SUPPORTED_THREAD_ENTRYPOINTS = {str(item["id"]) for item in _THREAD_ENTRYPOINTS}
+_THREAD_PERMISSION_ALIASES = {
+    "ask": "hitl",
+    "manual": "hitl",
+    "review": "hitl",
+    "hitl": "hitl",
+    "human": "hitl",
+    "auto": "auto",
+    "auto_approve": "auto",
+    "autoapprove": "auto",
+    "automatic": "auto",
+}
+
+
+def _normalize_thread_permission_mode(value: Any, *, default: str = "auto") -> str:
+    raw = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not raw:
+        return default
+    mode = _THREAD_PERMISSION_ALIASES.get(raw)
+    if mode is None:
+        raise ValueError("permission_mode must be 'hitl' or 'auto'.")
+    return mode
+
+
+def _thread_event_run_id(data: Dict[str, Any]) -> str:
+    if not isinstance(data, dict):
+        return ""
+    for key in ("run_id", "active_run_id"):
+        text = str(data.get(key) or "").strip()
+        if text:
+            return text
+    receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
+    text = str(receipt.get("run_id") or "").strip()
+    if text:
+        return text
+    message = data.get("message") if isinstance(data.get("message"), dict) else {}
+    meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+    return str(meta.get("run_id") or "").strip()
+
+
+def _thread_permission_mode(thread: Any, override: Any = "") -> str:
+    if str(override or "").strip():
+        return _normalize_thread_permission_mode(override)
+    meta = getattr(thread, "meta", None)
+    if not isinstance(meta, dict):
+        meta = {}
+    return _normalize_thread_permission_mode(meta.get("permission_mode"), default="auto")
+
+
+def _interrupt_on_for_permission_mode(permission_mode: Any) -> dict[str, Any]:
+    mode = _normalize_thread_permission_mode(permission_mode)
+    if mode == "auto":
+        return {}
+    return default_thread_interrupt_on()
 
 _AUTH_IDENTITY: ContextVar[AuthIdentity | None] = ContextVar("catmaster_webui_auth_identity", default=None)
 
@@ -100,6 +202,10 @@ def _coerce_int(value: Any, default: int = 0) -> int:
         return int(text)
     except Exception:
         return int(default)
+
+
+def _split_csv(value: str = "") -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 def _workspace_for_request(registry: SessionRegistry, session, project_space: str = "", *, create: bool = False) -> tuple[Optional[Path], str]:
@@ -292,6 +398,8 @@ def _entry_preview_kind(path: Path, *, mime_type: str = "", file_size: int | Non
         return "markdown"
     if suffix in JSON_SUFFIXES:
         return "json"
+    if suffix in PDF_SUFFIXES or mime_type == "application/pdf":
+        return "pdf"
     if mime_type.startswith("text/") or suffix in TEXTLIKE_SUFFIXES:
         return "text"
     if _looks_like_text_file(path, file_size=file_size):
@@ -644,6 +752,10 @@ def _file_content_payload(*, ctx: str, session, rel_path: str, workspace: Option
         preview_text, truncated = _read_text_preview(candidate)
         payload["preview_text"] = preview_text
         payload["truncated"] = truncated
+        return payload
+    if kind == "pdf":
+        payload["preview_text"] = ""
+        payload["truncated"] = False
         return payload
     if kind in {"text", "markdown", "json"} or mime_type.startswith("text/"):
         preview_text, truncated = _read_text_preview(candidate)
@@ -1009,7 +1121,7 @@ def _build_snapshot(
 
     if runtime_matches_selection:
         live_state = dict(runtime.get("live_state") or {})
-        event_page = session.read_ui_events(run_dir, limit=200)
+        event_page = session.read_events(run_dir, limit=200)
         events = list(event_page.get("events") or []) or list(runtime.get("recent_events") or [])
         usage_summary = _merge_usage_summary(runtime.get("usage_totals"), session.read_usage_summary(run_dir))
         machine_time_summary = session.read_machine_time_summary(run_dir)
@@ -1017,7 +1129,7 @@ def _build_snapshot(
         graph = dict(runtime.get("graph") or {})
     else:
         live_state = session.snapshot_live_state(run_dir, workspace=workspace)
-        event_page = session.read_ui_events(run_dir, limit=200)
+        event_page = session.read_events(run_dir, limit=200)
         events = list(event_page.get("events") or [])
         usage_summary = session.read_usage_summary(run_dir)
         machine_time_summary = session.read_machine_time_summary(run_dir)
@@ -1079,7 +1191,15 @@ def _apply_chat_session_view(snapshot: dict[str, Any], *, active_run: str = "") 
     return snapshot
 
 
-def _build_details(*, registry: SessionRegistry, ctx: str, username: str = "admin", run_name: str, project_space: str = "") -> dict[str, Any]:
+def _build_details(
+    *,
+    registry: SessionRegistry,
+    ctx: str,
+    username: str = "admin",
+    run_name: str,
+    project_space: str = "",
+    include_legacy_traces: bool = False,
+) -> dict[str, Any]:
     session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
     run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
@@ -1088,16 +1208,22 @@ def _build_details(*, registry: SessionRegistry, ctx: str, username: str = "admi
         artifact_rows = artifacts.to_dict(orient="records")
     else:
         artifact_rows = list(artifacts or [])
-    return {
+    payload = {
         "selected_run": selected_run,
         "memory": session.read_memory_index(workspace=workspace),
         "artifacts": artifact_rows,
         "proposal": session.read_proposal(run_dir, workspace=workspace),
         "task_state": session.read_task_state(run_dir, workspace=workspace),
-        "trace_event": session.read_trace(run_dir, "event_trace.jsonl", workspace=workspace),
-        "trace_tool": session.read_trace(run_dir, "tool_trace.jsonl", workspace=workspace),
-        "trace_patch": session.read_trace(run_dir, "patch_trace.jsonl", workspace=workspace),
     }
+    if include_legacy_traces:
+        payload.update(
+            {
+                "trace_event": session.read_trace(run_dir, "event_trace.jsonl", workspace=workspace),
+                "trace_tool": session.read_trace(run_dir, "tool_trace.jsonl", workspace=workspace),
+                "trace_patch": session.read_trace(run_dir, "patch_trace.jsonl", workspace=workspace),
+            }
+        )
+    return payload
 
 
 def _build_events(
@@ -1108,13 +1234,39 @@ def _build_events(
     run_name: str,
     project_space: str = "",
     limit: int = 200,
+    before_id: int = 0,
+    after_id: int = 0,
     before_seq: int = 0,
     after_seq: int = 0,
+    channel: str = "",
+    category: str = "",
+    names: Optional[list[str]] = None,
+    run_id: str = "",
+    thread_id: str = "",
+    agent_name: str = "",
+    tool: str = "",
+    include_legacy_trace_records: bool = False,
 ) -> dict[str, Any]:
     session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
     run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
-    page = session.read_ui_events(run_dir, limit=limit, before_seq=before_seq, after_seq=after_seq)
+    if before_seq or after_seq:
+        page = session.read_ui_events(run_dir, limit=limit, before_seq=before_seq, after_seq=after_seq)
+    else:
+        page = session.read_events(
+            run_dir,
+            limit=limit,
+            before_id=before_id,
+            after_id=after_id,
+            channel=channel,
+            category=category,
+            names=names,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_name=agent_name,
+            tool=tool,
+            include_legacy_trace_records=include_legacy_trace_records,
+        )
     page["selected_run"] = selected_run
     return page
 
@@ -1124,17 +1276,40 @@ def _build_observability(
     registry: SessionRegistry,
     ctx: str,
     username: str = "admin",
-    run_name: str,
+    lane: str = "research",
+    run_name: str = "",
     project_space: str = "",
     limit: int = 400,
 ) -> dict[str, Any]:
     session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
-    run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
+    selected_run = _pick_selected_run(session, run_name, lane=lane, workspace=workspace)
+    run_dir = session.get_selected_run_dir(workspace=workspace) if selected_run else None
+    runtime = _runtime_snapshot(session, workspace=workspace)
+    active_run = _active_run_name(session, runtime, workspace=workspace)
+    runtime_matches_selection = bool(selected_run) and selected_run == str(runtime.get("run_name") or "")
     payload = session.read_observability(run_dir, workspace=workspace, limit=limit)
     if not isinstance(payload, dict):
         payload = {}
+    if runtime_matches_selection:
+        live_state = dict(runtime.get("live_state") or {})
+        graph = dict(runtime.get("graph") or {})
+    else:
+        event_page = session.read_events(run_dir, limit=200)
+        live_state = session.update_live_state(
+            run_dir,
+            list(event_page.get("events") or []),
+            live_llm_enabled=False,
+            workspace=workspace,
+        )
+        graph = {"node": str(live_state.get("current_node") or ""), "message_count": 0, "tool_calls": [], "text_preview": ""}
     payload["selected_run"] = selected_run
+    payload["active_run"] = active_run
+    payload["run_status"] = _display_run_status(session, run_dir, workspace=workspace)
+    payload["run_status_text"] = session.run_status_text(workspace=workspace)
+    payload["live_state"] = live_state
+    payload["graph"] = graph
+    payload["todo_items"] = session.read_todo_items(run_dir)
     payload["usage_summary"] = session.read_usage_summary(run_dir)
     payload["machine_time_summary"] = session.read_machine_time_summary(run_dir)
     payload["chat_messages"] = session.get_chat_messages(limit=120, workspace=workspace)
@@ -1196,6 +1371,10 @@ def _page_html(*, view: str) -> str:
 </html>"""
 
 
+def _legacy_page_routes_enabled() -> bool:
+    return str(os.environ.get("CATMASTER_WEBUI_LEGACY_ROUTES") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 async def _json_body(request: Request) -> dict[str, Any]:
     try:
         payload = await request.json()
@@ -1219,6 +1398,9 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     app = FastAPI(title="CatMaster WebUI")
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    thread_brokers: dict[str, ThreadEventBroker] = {}
+    thread_tasks: dict[str, asyncio.Task[Any]] = {}
+    thread_stop_flags: set[str] = set()
 
     def _identity_or_401() -> AuthIdentity:
         identity = _AUTH_IDENTITY.get()
@@ -1243,6 +1425,127 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         snapshot["auth"] = auth.public_status(identity)
         snapshot["workspace_root_locked"] = True
         return snapshot
+
+    async def _validated_body(model_cls, request: Request):
+        try:
+            return model_cls.model_validate(await _json_body(request))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def _workspace_from_id(workspace_id: str, identity: AuthIdentity) -> tuple[Path, str]:
+        raw_workspace_id = str(workspace_id or "").strip().strip("/")
+        if not raw_workspace_id:
+            raise HTTPException(status_code=400, detail="Workspace id is required.")
+        root = _locked_user_root(identity)
+        target, resolved_name = registry._resolve_project_space_target(raw_workspace_id, root=root)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Project space not found: {raw_workspace_id}")
+        try:
+            ensure_project_space_layout(target, create=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid project space layout: {exc}") from exc
+        workspace_name = registry._project_space_name_from_path(str(target), root=root) or resolved_name or target.name
+        return target.expanduser().resolve(), workspace_name
+
+    def _workspace_for_thread(thread_id: str, identity: AuthIdentity) -> tuple[Path, str]:
+        tid = str(thread_id or "").strip()
+        if not re.match(r"^[A-Za-z0-9_.:-]{3,120}$", tid):
+            raise HTTPException(status_code=400, detail="Invalid thread id.")
+        root = _locked_user_root(identity).expanduser().resolve()
+        workspace_candidates: list[Path] = []
+        if (root / "files").is_dir() and (root / "metadata").is_dir():
+            workspace_candidates.append(root)
+        try:
+            for thread_file in root.rglob(f"metadata/threads/{tid}/thread.json"):
+                if thread_file.is_file():
+                    try:
+                        workspace_candidates.append(thread_file.parents[3])
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        seen: set[str] = set()
+        for workspace in workspace_candidates:
+            key = str(workspace)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                store = ThreadStore(workspace=workspace, workspace_id=registry._project_space_name_from_path(str(workspace), root=root) or workspace.name)
+                store.get_thread(tid)
+            except Exception:
+                continue
+            return workspace.resolve(), registry._project_space_name_from_path(str(workspace), root=root) or workspace.name
+        raise HTTPException(status_code=404, detail=f"Thread not found: {tid}")
+
+    def _broker_for_workspace(workspace: Path) -> ThreadEventBroker:
+        key = str(workspace.expanduser().resolve())
+        broker = thread_brokers.get(key)
+        if broker is None:
+            def _run_dir_for_thread_event(thread_id: str, data: Dict[str, Any]) -> Optional[Path]:
+                run_id = _thread_event_run_id(data)
+                if not run_id:
+                    try:
+                        ws_id = registry._project_space_name_from_path(str(workspace), root=registry.root) or workspace.name
+                        run_id = ThreadStore(workspace=workspace, workspace_id=ws_id).get_thread(thread_id).active_run_id
+                    except Exception:
+                        run_id = ""
+                run_id = str(run_id or "").strip()
+                if not run_id or not re.match(r"^[A-Za-z0-9_.:-]{3,160}$", run_id):
+                    return None
+                return system_root(workspace) / "runs" / run_id
+
+            broker = ThreadEventBroker(workspace=workspace, run_dir_resolver=_run_dir_for_thread_event)
+            thread_brokers[key] = broker
+        return broker
+
+    def _thread_store(workspace: Path, workspace_id: str) -> ThreadStore:
+        return ThreadStore(workspace=workspace, workspace_id=workspace_id)
+
+    def _artifact_registry(workspace: Path, workspace_id: str) -> ArtifactRegistry:
+        return ArtifactRegistry(workspace=workspace, workspace_id=workspace_id)
+
+    def _thread_should_stop(thread_id: str) -> bool:
+        return str(thread_id or "") in thread_stop_flags
+
+    def _agent_loop(workspace: Path, workspace_id: str) -> ThreadAgentLoopService:
+        return ThreadAgentLoopService(
+            workspace=workspace,
+            workspace_id=workspace_id,
+            store=_thread_store(workspace, workspace_id),
+            broker=_broker_for_workspace(workspace),
+            artifact_registry=_artifact_registry(workspace, workspace_id),
+            thread_tasks=thread_tasks,
+            thread_stop_flags=thread_stop_flags,
+            build_runner=build_specialist_runner,
+            streaming_runner_cls=StreamingSpecialistRunner,
+            permission_mode_for_thread=_thread_permission_mode,
+            interrupt_on_for_permission_mode=_interrupt_on_for_permission_mode,
+            normalize_entrypoint=_entrypoint,
+            should_stop=_thread_should_stop,
+        )
+
+    def _entrypoint(value: str) -> str:
+        raw = str(value or "research").strip().lower().replace("-", "_").replace(" ", "_") or "research"
+        candidate = _THREAD_LANE_ALIASES.get(raw, raw)
+        if candidate in _SUPPORTED_THREAD_ENTRYPOINTS:
+            return candidate
+        return "research"
+
+    def _request_entrypoint(value: Any, *, default: str = "research") -> str:
+        raw = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if not raw:
+            return default
+        candidate = _THREAD_LANE_ALIASES.get(raw, raw)
+        if candidate not in _SUPPORTED_THREAD_ENTRYPOINTS:
+            raise HTTPException(status_code=400, detail=f"Invalid entrypoint: {value}")
+        return candidate
+
+    def _request_permission_mode(value: Any, *, default: str = "auto") -> str:
+        try:
+            return _normalize_thread_permission_mode(value, default=default)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def _session_cookie_response(payload: dict[str, Any], token: str) -> JSONResponse:
         response = JSONResponse(payload)
@@ -1346,6 +1649,8 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.get("/monitor", include_in_schema=False)
     def _monitor_redirect(request: Request):
+        if not _legacy_page_routes_enabled():
+            return RedirectResponse(url="/#tab=monitor", status_code=307)
         query = request.url.query
         target = "/monitor/"
         if query:
@@ -1354,6 +1659,8 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.get("/files", include_in_schema=False)
     def _files_redirect(request: Request):
+        if not _legacy_page_routes_enabled():
+            return RedirectResponse(url="/#tab=files", status_code=307)
         query = request.url.query
         target = "/files/"
         if query:
@@ -1365,11 +1672,15 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         return _page_html(view="home")
 
     @app.get("/monitor/", response_class=HTMLResponse)
-    def _monitor_page() -> str:
+    def _monitor_page():
+        if not _legacy_page_routes_enabled():
+            return RedirectResponse(url="/#tab=monitor", status_code=307)
         return _page_html(view="monitor")
 
     @app.get("/files/", response_class=HTMLResponse)
-    def _files_page() -> str:
+    def _files_page():
+        if not _legacy_page_routes_enabled():
+            return RedirectResponse(url="/#tab=files", status_code=307)
         return _page_html(view="files")
 
     @app.get("/api/bootstrap")
@@ -1399,7 +1710,191 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         )
         snapshot["status_message"] = state.status
         snapshot["workspace_root"] = state.project_space_root
+        snapshot["entrypoints"] = _THREAD_ENTRYPOINTS
+        snapshot["default_entrypoint"] = "research"
         return JSONResponse(_with_auth(snapshot, identity))
+
+    @app.get("/api/entrypoints")
+    def _entrypoints():
+        _identity_or_401()
+        return JSONResponse({"entrypoints": _THREAD_ENTRYPOINTS, "default_entrypoint": "research"})
+
+    @app.post("/api/workspaces/{workspace_id}/threads")
+    async def _threads_create(workspace_id: str, request: Request):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_from_id(workspace_id, identity)
+        payload = await _validated_body(ThreadCreateRequest, request)
+        store = _thread_store(workspace, workspace_name)
+        metadata = dict(payload.metadata or {})
+        metadata["permission_mode"] = _request_permission_mode(payload.permission_mode or metadata.get("permission_mode"))
+        thread = store.create_thread(
+            title=payload.title,
+            entrypoint=_request_entrypoint(payload.entrypoint),
+            meta=metadata,
+        )
+        broker = _broker_for_workspace(workspace)
+        broker.emit(thread.thread_id, "thread.created", status=str(thread.status.value), data={"thread": thread.model_dump(mode="json")})
+        return JSONResponse({"thread": thread.model_dump(mode="json")})
+
+    @app.get("/api/workspaces/{workspace_id}/threads")
+    def _threads_list(workspace_id: str):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_from_id(workspace_id, identity)
+        threads = _thread_store(workspace, workspace_name).list_threads()
+        return JSONResponse({"threads": [thread.model_dump(mode="json") for thread in threads]})
+
+    @app.get("/api/threads/{thread_id}")
+    def _thread_get(thread_id: str):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        store = _thread_store(workspace, workspace_name)
+        thread = store.get_thread(thread_id)
+        return JSONResponse({"thread": thread.model_dump(mode="json")})
+
+    @app.patch("/api/threads/{thread_id}")
+    async def _thread_patch(thread_id: str, request: Request):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        payload = await _validated_body(ThreadPatchRequest, request)
+        updates: dict[str, Any] = {}
+        if payload.title is not None:
+            updates["title"] = payload.title
+        if payload.entrypoint is not None:
+            updates["entrypoint"] = _request_entrypoint(payload.entrypoint)
+        if payload.status is not None:
+            updates["status"] = payload.status
+        store = _thread_store(workspace, workspace_name)
+        thread = store.get_thread(thread_id)
+        if payload.metadata is not None or payload.permission_mode is not None:
+            meta = {**dict(thread.meta or {})}
+            if payload.metadata is not None:
+                meta.update(dict(payload.metadata or {}))
+            if payload.permission_mode is not None:
+                meta["permission_mode"] = _request_permission_mode(payload.permission_mode)
+            elif "permission_mode" in meta:
+                meta["permission_mode"] = _request_permission_mode(meta.get("permission_mode"))
+            updates["meta"] = meta
+        thread = store.update_thread(thread_id, **updates)
+        _broker_for_workspace(workspace).emit(thread_id, "thread.updated", status=str(thread.status.value), data={"thread": thread.model_dump(mode="json")})
+        return JSONResponse({"thread": thread.model_dump(mode="json")})
+
+    @app.get("/api/threads/{thread_id}/messages")
+    def _thread_messages(thread_id: str):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        messages = _thread_store(workspace, workspace_name).list_messages(thread_id)
+        return JSONResponse({"messages": [message.model_dump(mode="json") for message in messages]})
+
+    @app.get("/api/threads/{thread_id}/artifacts")
+    def _thread_artifacts(thread_id: str):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        records = _artifact_registry(workspace, workspace_name).list_artifacts(thread_id=thread_id)
+        return JSONResponse({"artifacts": [record.model_dump(mode="json") for record in records]})
+
+    @app.post("/api/threads/{thread_id}/submit")
+    async def _thread_submit(thread_id: str, request: Request):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        payload = await _validated_body(ThreadSubmitRequest, request)
+        payload = payload.model_copy(update={"entrypoint": _request_entrypoint(payload.entrypoint)})
+        result = await _agent_loop(workspace, workspace_name).submit(thread_id=thread_id, payload=payload)
+        return JSONResponse(
+            {
+                "accepted": True,
+                "queued": bool(result.get("queued")),
+                "thread": result["thread"].model_dump(mode="json"),
+                "message": result["message"].model_dump(mode="json"),
+                **({"assistant_message": result["assistant_message"].model_dump(mode="json")} if result.get("assistant_message") else {}),
+            }
+        )
+
+    @app.post("/api/threads/{thread_id}/stop")
+    async def _thread_stop(thread_id: str, request: Request):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        payload = await _validated_body(ThreadStopRequest, request)
+        result = await _agent_loop(workspace, workspace_name).stop(thread_id=thread_id, payload=payload)
+        return JSONResponse({"accepted": True, "status": result["status"], "thread": result["thread"].model_dump(mode="json")})
+
+    @app.post("/api/threads/{thread_id}/resume")
+    async def _thread_resume(thread_id: str, request: Request):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        payload = await _validated_body(ThreadResumeRequest, request)
+        result = await _agent_loop(workspace, workspace_name).resume(
+            thread_id=thread_id,
+            payload=payload,
+            validate_decisions=StreamingSpecialistRunner._validate_decisions,
+        )
+        return JSONResponse({"accepted": True, "assistant_message": result["assistant_message"].model_dump(mode="json"), "thread": result["thread"].model_dump(mode="json")})
+
+    @app.get("/api/threads/{thread_id}/stream")
+    async def _thread_stream(thread_id: str, request: Request, last_seq: str | None = None, once: bool = False):
+        identity = _identity_or_401()
+        workspace, _workspace_name = _workspace_for_thread(thread_id, identity)
+        broker = _broker_for_workspace(workspace)
+
+        async def _event_stream():
+            replay_cursor = last_seq if last_seq is not None else request.headers.get("last-event-id")
+            seq = _coerce_int(replay_cursor, broker.latest_seq(thread_id)) if replay_cursor is not None else broker.latest_seq(thread_id)
+            while True:
+                if await request.is_disconnected():
+                    break
+                events, seq = await asyncio.to_thread(broker.wait_for_events, thread_id, last_seq=seq, timeout_s=10.0)
+                if not events:
+                    yield ": keepalive\n\n"
+                    if once:
+                        break
+                    continue
+                for event in events:
+                    yield format_sse(event)
+                if once:
+                    break
+
+        return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+    @app.get("/api/artifacts/{artifact_id}/preview")
+    def _artifact_preview(artifact_id: str):
+        identity = _identity_or_401()
+        found = ArtifactRegistry.find_in_project_root(_locked_user_root(identity), artifact_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="Artifact not found.")
+        workspace, record = found
+        payload = _file_content_payload(ctx="artifact", session=None, rel_path=record.path, workspace=workspace)
+        payload["artifact"] = record.model_dump(mode="json")
+        payload["download_url"] = record.download_url
+        payload["content_url"] = f"/api/artifacts/{artifact_id}/content"
+        if isinstance(payload.get("structure"), dict):
+            payload["structure"]["viewer_source_mode"] = "url"
+            payload["structure"]["viewer_source_url"] = f"/api/artifacts/{artifact_id}/content"
+        return JSONResponse(payload)
+
+    @app.get("/api/artifacts/{artifact_id}/content")
+    def _artifact_content(artifact_id: str):
+        identity = _identity_or_401()
+        found = ArtifactRegistry.find_in_project_root(_locked_user_root(identity), artifact_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="Artifact not found.")
+        workspace, record = found
+        registry_for_artifact = ArtifactRegistry(workspace=workspace)
+        candidate = registry_for_artifact.resolve_path(record)
+        if not candidate.exists() or not candidate.is_file():
+            raise HTTPException(status_code=404, detail="Artifact file not found.")
+        return FileResponse(candidate, media_type=mimetypes.guess_type(candidate.name)[0] or "application/octet-stream")
+
+    @app.get("/api/artifacts/{artifact_id}/download")
+    def _artifact_download(artifact_id: str):
+        identity = _identity_or_401()
+        found = ArtifactRegistry.find_in_project_root(_locked_user_root(identity), artifact_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="Artifact not found.")
+        workspace, record = found
+        registry_for_artifact = ArtifactRegistry(workspace=workspace)
+        candidate = registry_for_artifact.resolve_path(record)
+        if not candidate.exists() or not candidate.is_file():
+            raise HTTPException(status_code=404, detail="Artifact file not found.")
+        return FileResponse(candidate, filename=candidate.name)
 
     @app.get("/api/session/{ctx}/snapshot")
     def _session_snapshot(ctx: str, lane: str = "research", run: str = "", project_space: str = ""):
@@ -1412,9 +1907,18 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         )
 
     @app.get("/api/session/{ctx}/details")
-    def _session_details(ctx: str, run: str = "", project_space: str = ""):
+    def _session_details(ctx: str, run: str = "", project_space: str = "", include_legacy_traces: bool = False):
         identity, _session = _bound_session(ctx)
-        return JSONResponse(_build_details(registry=registry, ctx=ctx, username=identity.username, run_name=run, project_space=project_space))
+        return JSONResponse(
+            _build_details(
+                registry=registry,
+                ctx=ctx,
+                username=identity.username,
+                run_name=run,
+                project_space=project_space,
+                include_legacy_traces=include_legacy_traces,
+            )
+        )
 
     @app.get("/api/session/{ctx}/events")
     def _session_events(
@@ -1422,10 +1926,23 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         run: str = "",
         project_space: str = "",
         limit: int = 200,
+        before_id: int = 0,
+        after_id: int = 0,
         before_seq: int = 0,
         after_seq: int = 0,
+        channel: str = "",
+        category: str = "",
+        name: str = "",
+        names: str = "",
+        run_id: str = "",
+        thread_id: str = "",
+        agent: str = "",
+        agent_name: str = "",
+        tool: str = "",
+        include_legacy_trace_records: bool = False,
     ):
         identity, _session = _bound_session(ctx)
+        event_names = _split_csv(names) or _split_csv(name)
         return JSONResponse(
             _build_events(
                 registry=registry,
@@ -1434,14 +1951,25 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
                 run_name=run,
                 project_space=project_space,
                 limit=limit,
+                before_id=before_id,
+                after_id=after_id,
                 before_seq=before_seq,
                 after_seq=after_seq,
+                channel=channel,
+                category=category,
+                names=event_names,
+                run_id=run_id,
+                thread_id=thread_id,
+                agent_name=agent_name or agent,
+                tool=tool,
+                include_legacy_trace_records=include_legacy_trace_records,
             )
         )
 
     @app.get("/api/session/{ctx}/observability")
     def _session_observability(
         ctx: str,
+        lane: str = "research",
         run: str = "",
         project_space: str = "",
         limit: int = 400,
@@ -1452,6 +1980,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
                 registry=registry,
                 ctx=ctx,
                 username=identity.username,
+                lane=lane,
                 run_name=run,
                 project_space=project_space,
                 limit=limit,
@@ -1595,6 +2124,45 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         )
         snapshot["ok"] = ok
         snapshot["status_message"] = message
+        return JSONResponse(_with_auth(snapshot, identity))
+
+    @app.delete("/api/session/{ctx}/workspace/delete")
+    async def _workspace_delete(ctx: str, request: Request):
+        payload = await _json_body(request)
+        identity, session = _bound_session(ctx)
+        project_space = str(payload.get("workspace") or "").strip()
+        confirm_name = str(payload.get("confirm_name") or "").strip()
+        active_workspace = str(payload.get("active_workspace") or "").strip()
+        if not project_space:
+            raise HTTPException(status_code=400, detail="Workspace name is required.")
+        if confirm_name != project_space:
+            raise HTTPException(status_code=400, detail="Workspace delete requires confirm_name to match workspace.")
+        if active_workspace and active_workspace == project_space:
+            raise HTTPException(status_code=400, detail="Switch away from the active workspace before deleting it.")
+        root = _locked_user_root(identity).expanduser().resolve()
+        target = session.resolve_workspace_by_name(project_space)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Project space not found: {project_space}")
+        target = target.expanduser().resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Workspace path escapes the locked root.") from exc
+        current = Path(str(session.current_workspace_path() or "")).expanduser().resolve()
+        if target == current:
+            raise HTTPException(status_code=400, detail="Switch away from the active workspace before deleting it.")
+        if target == root:
+            raise HTTPException(status_code=400, detail="Refusing to delete the workspace root.")
+        shutil.rmtree(target)
+        snapshot = _build_snapshot(
+            registry=registry,
+            ctx=ctx,
+            username=identity.username,
+            lane=str(payload.get("lane") or "research"),
+            project_space="",
+        )
+        snapshot["ok"] = True
+        snapshot["status_message"] = f"Deleted workspace {project_space}."
         return JSONResponse(_with_auth(snapshot, identity))
 
     @app.post("/api/session/{ctx}/run/select")

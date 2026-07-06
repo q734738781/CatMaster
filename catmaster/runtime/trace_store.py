@@ -6,16 +6,14 @@ Unified trace store for events, toolcalls, and patches.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict
 import json
 
-from catmaster.runtime.observability_store import ObservabilityStore
-
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass(frozen=True)
@@ -52,10 +50,6 @@ class TraceStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        try:
-            ObservabilityStore(self.run_dir).record_trace_record(path.name, payload)
-        except Exception:
-            return
 
 
 __all__ = ["TraceStore"]

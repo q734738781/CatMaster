@@ -4,9 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test": "node --test src/v2/*.test.mjs",
     "build": "vite build && python3 ../../../scripts/install_jsmol_assets.py --quiet"
   },
   "dependencies": {
+    "@assistant-ui/react": "0.14.24",
+    "@assistant-ui/react-markdown": "0.14.5",
     "@radix-ui/react-tooltip": "^1.2.8",
     "gridjs": "^6.2.0",
     "gridjs-react": "^6.1.1",

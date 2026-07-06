@@ -13,7 +13,7 @@ from catmaster.tools.registry import get_tool_registry
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "skills" / "materials" / "structure-visual-inspection" / "code" / "render_structure_panel.py"
+SCRIPT_PATH = REPO_ROOT / "skills" / "materials_worker" / "structure-visual-inspection" / "code" / "render_structure_panel.py"
 
 
 def _load_render_module():

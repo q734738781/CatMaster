@@ -1,0 +1,23 @@
+name: nature-downloader
+version: 1.0.0
+description: >
+  Configure a user's legitimate library resource entry, reuse their logged-in
+  Chrome institutional session, and download open-access or institution-
+  authorized academic full text/PDFs with clear status reporting for missing
+  PDF or missing library permission.
+
+always_load:
+  - SKILL.md
+
+references:
+  on_demand:
+    - condition: user needs first-run school/library resource configuration
+      path: README.md
+    - condition: configuring known school presets, resource URL inference, or health checks
+      path: scripts/configure_school.py
+    - condition: batch DOI/title/topic downloads through Web of Science or open-access sources
+      path: scripts/batch_download.mjs
+    - condition: browser-authenticated PDF fetching and PDF signature checks
+      path: scripts/browser_pdf_downloader.mjs
+    - condition: canonical download statuses and manifest status semantics
+      path: scripts/lib/status-codes.mjs

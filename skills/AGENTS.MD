@@ -1,21 +1,25 @@
 # Skill Authoring Guide
 
-This directory contains CatMaster starter skills grouped by lane. A skill here is prompt-level SOP, not a tool schema dump and not a hidden runtime contract.
+This directory contains CatMaster starter skills grouped by agent-facing skill root. A skill here is prompt-level SOP, not a tool schema dump and not a hidden runtime contract.
 
 The active runtime loads these skills through DeepAgent skill roots:
 
-- `skills/materials/*`
-- `skills/machine_learning/*`
-- `skills/quantum_chemistry/*`
-- `skills/execution/*`
-- `skills/writing/*`
+- `skills/materials_worker/*`
+- `skills/dynamics_worker/*`
+- `skills/ml_worker/*`
+- `skills/orca_xtb_worker/*`
+- `skills/research_specialist/*`
+- `skills/litreview_agent/*`
+- `skills/writing_specialist/*`
+- `skills/execution/*` as a shared managed-execution support root used by execution workers.
 
 ## Required format
 
-Each skill must live at `skills/materials/<skill-name>/SKILL.md`, `skills/machine_learning/<skill-name>/SKILL.md`, `skills/quantum_chemistry/<skill-name>/SKILL.md`, `skills/execution/<skill-name>/SKILL.md`, or `skills/writing/<skill-name>/SKILL.md` and must satisfy all of the following:
+Each skill must live under one agent-facing root, such as `skills/materials_worker/<skill-name>/SKILL.md`, `skills/dynamics_worker/<skill-name>/SKILL.md`, `skills/ml_worker/<skill-name>/SKILL.md`, `skills/orca_xtb_worker/<skill-name>/SKILL.md`, `skills/research_specialist/<skill-name>/SKILL.md`, `skills/litreview_agent/<skill-name>/SKILL.md`, or `skills/writing_specialist/<skill-name>/SKILL.md`. Shared managed-execution SOPs may live under `skills/execution/<skill-name>/SKILL.md`. Every skill must satisfy all of the following:
 
 - YAML frontmatter at the top.
-- `name` must exactly match the directory name.
+- For CatMaster-local skills, `name` should match the directory name.
+- For third-party imported skills, preserve the upstream directory name and frontmatter `name` exactly, even if they differ.
 - `description` must say both what the skill is for and when to use it.
 - Use this section order in the body:
   - `# <skill-name>`
@@ -43,11 +47,12 @@ allowed-tools: "build_slab fix_atoms_by_layers fix_atoms_by_height supercell"
 
 Rules:
 
-- `license`, `compatibility`, and `allowed-tools` should follow the DeepAgent skill frontmatter pattern.
-- `allowed-tools` is the primary field and should list concrete tool names separated by spaces, not commas.
-- The `allowed-tools` list and the body `## Allowed tools` list must agree.
-- If no tool should be suggested, use an empty frontmatter string and body text `- (none specified)`.
-- Allowed tool names must match real active-path tool names or DeepAgent built-ins. Do not leave legacy names such as removed tools or stale aliases in new or updated skills.
+- `name` and `description` are required.
+- `license`, `compatibility`, and `allowed-tools` may be used when they add useful routing or invocation context.
+- `allowed-tools` is optional. Do not add it to broad, route-like, imported, literature, writing, or policy skills just to satisfy a format convention.
+- For CatMaster-local tool SOP skills that do declare `allowed-tools`, list concrete active-path tool names separated by spaces, not commas.
+- If a skill declares `allowed-tools` and also has a body `## Allowed tools` list, keep the two in agreement.
+- Declared tool names must match real active-path tool names or DeepAgent built-ins. Do not leave legacy names such as removed tools or stale aliases in new or updated skills.
 
 ## Writing rules
 
@@ -87,7 +92,7 @@ A good skill should answer these questions quickly:
 
 - `Overview`: one tight sentence on scope.
 - `Quick Start`: the shortest correct execution path.
-- `Allowed tools`: only real active-path tool names or DeepAgent built-ins that should genuinely be surfaced for selection.
+- `Allowed tools`: optional. Include it only for skills that intentionally guide concrete tool selection; use only real active-path tool names or DeepAgent built-ins.
 - `Workflow`: the real SOP, including non-obvious defaults and traps.
 - `Method-critical defaults`: the settings that must be chosen and reported explicitly when they affect comparability, ranking, or interpretation.
 - `Output Contract`: the minimum handoff evidence expected from a good run.

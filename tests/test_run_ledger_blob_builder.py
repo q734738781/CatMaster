@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.run_ledger.blob_builder import build_run_search_blob
 
 
@@ -30,16 +31,16 @@ def test_build_run_search_blob_from_run_dir(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    (run_dir / "tool_trace.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps({"tool_name": "build_slab"}),
-                json.dumps({"payload": {"tool_name": "place_adsorbate"}}),
-                json.dumps({"tool_name": "build_slab"}),
-            ]
-        ),
-        encoding="utf-8",
-    )
+    store = ObservabilityStore(run_dir)
+    for seq, tool_name in enumerate(("build_slab", "place_adsorbate", "build_slab"), start=1):
+        store.record_ui_event(
+            {
+                "seq": seq,
+                "name": "TOOL_CALL_END",
+                "category": "tool",
+                "payload": {"tool": tool_name, "status": "success"},
+            }
+        )
     blob = build_run_search_blob(run_dir)
     assert blob.run_id == "run_001"
     assert "Evaluate CO adsorption on Fe(111)" in blob.search_blob_text

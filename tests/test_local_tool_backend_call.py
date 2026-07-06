@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 pytest.importorskip("langchain_core")
 from langchain_core.messages import ToolMessage
 
-from catmaster.runtime import ArtifactStore, TraceStore, ToolExecutor
+from catmaster.runtime import ArtifactStore, ToolExecutor
+from catmaster.runtime.trace_store import TraceStore
+from catmaster.runtime.observability_store import ObservabilityStore
 import catmaster.runtime.local_tool_backend as local_backend_module
 from catmaster.runtime.local_tool_backend import LocalToolBackend
 from catmaster.tools.base import ensure_project_space_layout, workspace_root
@@ -58,6 +60,8 @@ def test_local_tool_backend_call(tmp_path) -> None:
     output_path = tmp_path / "toolcalls" / "call-1" / "output.json"
     assert input_path.exists()
     assert output_path.exists()
+    assert not (tmp_path / "tool_trace.jsonl").exists()
+    assert ObservabilityStore(tmp_path).list_tool_names() == ["dummy_tool"]
 
 
 def test_local_tool_backend_passes_workspace_files_root(monkeypatch, tmp_path) -> None:

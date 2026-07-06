@@ -12,6 +12,7 @@ class SkillMeta:
     file_path: str
     abs_skill_dir: Path
     abs_skill_md: Path
+    directory_name: str = ""
     source_root_name: str = "skills"
     mount_token: str = "@skills"
     compatibility: str | None = None

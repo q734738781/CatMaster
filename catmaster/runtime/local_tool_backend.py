@@ -4,12 +4,15 @@ import json
 import logging
 import inspect
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from langchain_core.messages import ToolMessage
 
+from catmaster.runtime import observation_events as obs_events
 from catmaster.runtime.artifact_store import ArtifactStore
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.tool_observation_projection import project_tool_observation
 from catmaster.runtime.tool_output_adapter import (
     CatMasterToolExecutionError,
@@ -31,9 +34,10 @@ class LocalToolBackend(ToolBackend):
         registry: ToolRegistry,
         tool_executor: ToolExecutor,
         artifact_store: ArtifactStore,
-        trace_store: TraceStore,
+        trace_store: TraceStore | None = None,
         role: str = "tool_backend",
         workspace: Optional[Path | str] = None,
+        write_legacy_trace: bool = False,
     ) -> None:
         self.registry = registry
         self.tool_executor = tool_executor
@@ -41,6 +45,7 @@ class LocalToolBackend(ToolBackend):
         self.trace_store = trace_store
         self.role = role
         self.workspace = Path(workspace).expanduser().resolve() if workspace is not None else None
+        self.write_legacy_trace = bool(write_legacy_trace)
         self.logger = logging.getLogger(__name__)
         self._active_lock = threading.Lock()
         self._active_calls: Dict[str, Dict[str, Any]] = {}
@@ -163,8 +168,27 @@ class LocalToolBackend(ToolBackend):
             "input_ref": refs.get("input_ref"),
             "output_ref": refs.get("output_ref"),
         }
-        self.trace_store.append_toolcall(record)
+        self._record_tool_observation(record)
         return message
+
+    def _record_tool_observation(self, record: Dict[str, Any]) -> None:
+        try:
+            ObservabilityStore(self.artifact_store.run_dir).record_event(
+                source="local_tool_backend",
+                channel="tool",
+                name=obs_events.TOOL_RAW_OUTPUT,
+                category="tool",
+                ts=time.time(),
+                seq=None,
+                run_id=str(Path(self.artifact_store.run_dir).name),
+                task_id="",
+                step_id=None,
+                payload=record,
+            )
+        except Exception:
+            pass
+        if self.write_legacy_trace and self.trace_store is not None:
+            self.trace_store.append_toolcall(record)
 
     def cancel_active_call(self, toolcall_key: str) -> bool:
         with self._active_lock:

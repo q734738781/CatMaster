@@ -1,0 +1,4 @@
+interface:
+  display_name: "SJTU 文献下载与全文读取"
+  short_description: "使用用户已登录的交大图书馆（jAccount/CARSI）Chrome 会话下载 PDF、补充材料，处理 jAccount/CARSI/出版商验证后的重试，并验证全文可读性。"
+  default_prompt: "请使用 nature-downloader 技能，通过我已登录的交大图书馆（jAccount/CARSI）浏览器会话下载并读取文献；遇到 jAccount/CARSI 或出版商验证时按安全交接流程处理。"

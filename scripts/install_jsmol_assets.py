@@ -27,6 +27,33 @@ def _default_target() -> Path:
     return _repo_root() / "catmaster" / "webui" / "static" / "vendor" / "jsmol"
 
 
+def _static_root() -> Path:
+    return _repo_root() / "catmaster" / "webui" / "static"
+
+
+def install_katex_font_assets(*, quiet: bool = False) -> int:
+    source_root = _repo_root() / "catmaster" / "webui" / "frontend" / "node_modules" / "katex" / "dist" / "fonts"
+    if not source_root.is_dir():
+        if not quiet:
+            print(f"KaTeX font source not found: {source_root}")
+        return 0
+    target_root = _static_root()
+    target_root.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for source in source_root.iterdir():
+        if not source.is_file():
+            continue
+        if source.suffix.lower() not in {".woff", ".woff2", ".ttf"}:
+            continue
+        destination = target_root / f"asset-{source.name}"
+        if not destination.exists() or source.stat().st_mtime > destination.stat().st_mtime:
+            shutil.copy2(source, destination)
+            copied += 1
+    if copied and not quiet:
+        print(f"Installed {copied} KaTeX font assets to: {target_root}")
+    return copied
+
+
 def _manifest_path(target: Path) -> Path:
     return target / ".install_manifest.json"
 
@@ -157,6 +184,7 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true", help="Suppress status output.")
     args = parser.parse_args()
     install_jsmol_assets(args.target, force=args.force, quiet=args.quiet)
+    install_katex_font_assets(quiet=args.quiet)
     return 0
 
 

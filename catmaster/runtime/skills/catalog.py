@@ -199,11 +199,13 @@ class SkillCatalog:
     def create_default(cls, *, repo_root: Path | None = None) -> "SkillCatalog":
         resolved_repo_root = (repo_root or Path.cwd()).expanduser().resolve()
         roots = [
-            resolved_repo_root / "skills" / "materials",
-            resolved_repo_root / "skills" / "dynamics",
-            resolved_repo_root / "skills" / "machine_learning",
-            resolved_repo_root / "skills" / "quantum_chemistry",
-            resolved_repo_root / "skills" / "writing",
+            resolved_repo_root / "skills" / "materials_worker",
+            resolved_repo_root / "skills" / "dynamics_worker",
+            resolved_repo_root / "skills" / "ml_worker",
+            resolved_repo_root / "skills" / "orca_xtb_worker",
+            resolved_repo_root / "skills" / "research_specialist",
+            resolved_repo_root / "skills" / "litreview_agent",
+            resolved_repo_root / "skills" / "writing_specialist",
         ]
         return cls(
             source_roots=roots,
@@ -229,10 +231,6 @@ class SkillCatalog:
                         raise ValueError("frontmatter.name is required")
                     if not description:
                         raise ValueError("frontmatter.description is required")
-                    if name != skill_dir.name:
-                        raise ValueError(
-                            f"frontmatter.name={name!r} must match directory name {skill_dir.name!r}"
-                        )
                     metadata = frontmatter.get("metadata")
                     metadata_dict = metadata if isinstance(metadata, dict) else {}
                     allowed_tools = _split_allowed_tools(frontmatter.get(_ALLOWED_TOOLS_KEY))
@@ -247,14 +245,33 @@ class SkillCatalog:
                         compatibility = None
                     source_root_name = source_root.name
                     mount_token = f"@{source_root_name}"
-                    if source_root_name == "writing":
+                    if source_root_name == "writing_specialist":
                         if not lanes:
                             lanes = ["writing"]
                         if not roles:
                             roles = ["write_director", "section_writer", "write_reviewer"]
                         if not tags:
                             tags = ["writing"]
-                    elif source_root_name in {"materials", "dynamics", "machine_learning", "quantum_chemistry"}:
+                    elif source_root_name == "research_specialist":
+                        if not lanes:
+                            lanes = ["research"]
+                        if not roles:
+                            roles = ["research_lead", "research_state_updater", "proposal"]
+                        if not tags:
+                            tags = ["researcher"]
+                    elif source_root_name == "litreview_agent":
+                        if not lanes:
+                            lanes = ["literature_review", "research"]
+                        if not roles:
+                            roles = ["literature_synthesizer", "literature_deep_research", "research_lead"]
+                        if not tags:
+                            tags = ["literature"]
+                    elif source_root_name in {
+                        "materials_worker",
+                        "dynamics_worker",
+                        "ml_worker",
+                        "orca_xtb_worker",
+                    }:
                         if not lanes:
                             lanes = ["all"]
                         if not roles:
@@ -278,6 +295,7 @@ class SkillCatalog:
                         ),
                         abs_skill_dir=skill_dir.resolve(),
                         abs_skill_md=skill_md.resolve(),
+                        directory_name=skill_dir.name,
                         source_root_name=source_root_name,
                         mount_token=mount_token,
                         compatibility=compatibility,

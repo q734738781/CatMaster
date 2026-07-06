@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 
-import App from "./App";
+import CatMasterWorkspace from "./v2/CatMasterWorkspace";
 import "./styles.css";
 
 const root = document.getElementById("app");
@@ -12,6 +12,6 @@ if (!root) {
 
 createRoot(root).render(
   <React.StrictMode>
-    <App boot={window.CATMASTER_BOOT || { view: "home" }} />
+    <CatMasterWorkspace boot={window.CATMASTER_BOOT || { view: "workspace" }} />
   </React.StrictMode>,
 );

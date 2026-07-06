@@ -3,10 +3,8 @@ from __future__ import annotations
 from catmaster.llm.factory import _sanitize_openrouter_message_dicts
 
 
-def test_native_openrouter_file_wrapper_preserves_role_for_file_messages() -> None:
-    from langchain_openrouter import chat_models as chat_models_mod
-
-    wrapped = chat_models_mod._wrap_messages_for_sdk(
+def test_openrouter_sanitizer_preserves_non_tool_file_messages() -> None:
+    sanitized = _sanitize_openrouter_message_dicts(
         [
             {"role": "system", "content": "You are a reviewer."},
             {
@@ -25,13 +23,11 @@ def test_native_openrouter_file_wrapper_preserves_role_for_file_messages() -> No
         ]
     )
 
-    serialized = [item.model_dump(by_alias=True) if hasattr(item, "model_dump") else item for item in wrapped]
-
-    assert serialized[0]["role"] == "system"
-    assert serialized[0]["content"] == "You are a reviewer."
-    assert serialized[1]["role"] == "user"
-    assert serialized[1]["content"][0]["type"] == "text"
-    assert serialized[1]["content"][1]["type"] == "file"
+    assert sanitized[0]["role"] == "system"
+    assert sanitized[0]["content"] == "You are a reviewer."
+    assert sanitized[1]["role"] == "user"
+    assert sanitized[1]["content"][0]["type"] == "text"
+    assert sanitized[1]["content"][1]["type"] == "file"
 
 
 def test_openrouter_sanitizer_textualizes_replayed_tool_image_blocks() -> None:

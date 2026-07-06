@@ -51,14 +51,12 @@ def test_artifact_persistence_parses_tool_message_output(tmp_path) -> None:
         run_id=rid,
     )
 
-    records = [
-        json.loads(line)
-        for line in (tmp_path / "tool_trace.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    assert not (tmp_path / "tool_trace.jsonl").exists()
+    events = ObservabilityStore(tmp_path).read_snapshot()["events"]
+    records = [event for event in events if event["name"] == "TOOL_RAW_OUTPUT"]
     assert records
     assert records[0]["status"] == "success"
-    assert records[0]["tool_name"] == "bash"
+    assert records[0]["tool"] == "bash"
 
 
 def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
@@ -125,13 +123,11 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
         run_id=rid,
     )
 
-    records = [
-        json.loads(line)
-        for line in (tmp_path / "tool_trace.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    assert not (tmp_path / "tool_trace.jsonl").exists()
+    events = ObservabilityStore(tmp_path).read_snapshot()["events"]
+    records = [event for event in events if event["name"] == "TOOL_RAW_OUTPUT"]
     assert records
-    assert records[0]["tool_name"] == "vasp_prepare"
+    assert records[0]["tool"] == "vasp_prepare"
     assert records[0]["status"] == "error"
 
 
@@ -228,10 +224,16 @@ def test_observability_callback_records_raw_llm_and_tool_payloads(tmp_path) -> N
 
     snapshot = ObservabilityStore(tmp_path).read_snapshot()
     names = [event["name"] for event in snapshot["events"]]
+    assert "LLM_CALL_START" in names
+    assert "LLM_CALL_END" in names
     assert "LLM_RAW_REQUEST" in names
     assert "LLM_RAW_RESPONSE" in names
+    assert "TOOL_CALL_START" in names
+    assert "TOOL_CALL_END" in names
     assert "TOOL_RAW_INPUT" in names
     assert "TOOL_RAW_OUTPUT" in names
+    assert snapshot["metrics"]["llm_calls"] == 1
+    assert snapshot["metrics"]["tool_calls"] == 1
     assert any(node["parent_id"] == str(llm_id) for node in snapshot["trace_tree"]["nodes"])
 
 

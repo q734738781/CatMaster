@@ -174,6 +174,12 @@ _DEEPAGENT_BUILTIN_TOOL_NAMES = {
     "grep",
     "execute",
 }
+_THREAD_HITL_INTERRUPT_ON = {
+    "write_file": True,
+    "edit_file": True,
+    "remote_submission": True,
+    "remote_submission_batch": True,
+}
 _WRITING_WORKER_TOOL_ALLOWLIST = {
     "polish_academic_prose",
     "generate_nanobanana_figure",
@@ -330,6 +336,7 @@ def build_specialist_runner(
     project_id: str,
     run_dir: Path | None = None,
     preferred_entrypoint: SpecialistEntrypoint = "research",
+    interrupt_on: dict[str, Any] | None = None,
 ) -> BuiltSpecialistRunner:
     if run_dir is not None and Path(run_dir).exists():
         run_ctx = RunContext.load(Path(run_dir))
@@ -351,8 +358,13 @@ def build_specialist_runner(
         run_context=run_ctx,
         reporter=reporter or NullReporter(),
         run_control=run_control,
+        interrupt_on=interrupt_on,
     )
     return BuiltSpecialistRunner(runner=runner, run_context=run_ctx)
+
+
+def default_thread_interrupt_on() -> dict[str, bool]:
+    return dict(_THREAD_HITL_INTERRUPT_ON)
 
 
 class SpecialistRunner:
@@ -366,12 +378,14 @@ class SpecialistRunner:
         run_context: RunContext,
         reporter: Reporter | None = None,
         run_control: RunControl | None = None,
+        interrupt_on: dict[str, Any] | None = None,
     ) -> None:
         self.llm_profile = llm_profile
         self.run_context = run_context
         self.reporter = reporter or NullReporter()
         self.run_control = run_control
         self.registry = get_tool_registry()
+        self.interrupt_on = dict(interrupt_on or {})
 
     def _raise_if_interrupt_requested(self, *, phase: str, details: dict[str, Any] | None = None) -> None:
         control = self.run_control
@@ -875,6 +889,10 @@ class SpecialistRunner:
             "name": f"{entrypoint}_specialist",
             "memory": self._memory_sources(),
         }
+        entry_skills = self._entry_skill_roots(entrypoint)
+        if entry_skills:
+            kwargs["skills"] = entry_skills
+        self._apply_interrupt_on(kwargs)
         subagents = self._entry_subagents(entrypoint, runtime=runtime)
         if subagents:
             kwargs["subagents"] = subagents
@@ -928,7 +946,7 @@ class SpecialistRunner:
                     audience="materials_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("materials"),
+                    self._skills_group_virtual_path("materials_worker"),
                     self._skills_group_virtual_path("execution"),
                 ],
                 runtime=runtime,
@@ -945,7 +963,7 @@ class SpecialistRunner:
                     audience="ml_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("machine_learning"),
+                    self._skills_group_virtual_path("ml_worker"),
                     self._skills_group_virtual_path("execution"),
                 ],
                 runtime=runtime,
@@ -962,7 +980,7 @@ class SpecialistRunner:
                     audience="dynamics_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("dynamics"),
+                    self._skills_group_virtual_path("dynamics_worker"),
                     self._skills_group_virtual_path("execution"),
                 ],
                 runtime=runtime,
@@ -979,7 +997,7 @@ class SpecialistRunner:
                     audience="orca_xtb_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("quantum_chemistry"),
+                    self._skills_group_virtual_path("orca_xtb_worker"),
                     self._skills_group_virtual_path("execution"),
                 ],
                 runtime=runtime,
@@ -996,7 +1014,7 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("writing")],
+                skills=[self._skills_group_virtual_path("writing_specialist")],
                 runtime=runtime,
             ),
             self._compiled_worker_subagent(
@@ -1007,7 +1025,7 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("writing")],
+                skills=[self._skills_group_virtual_path("writing_specialist")],
                 runtime=runtime,
             ),
         ]
@@ -1022,7 +1040,7 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_PEER_REVIEW_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("writing")],
+                skills=[self._skills_group_virtual_path("writing_specialist")],
                 runtime=runtime,
             ),
         ]
@@ -1125,6 +1143,10 @@ class SpecialistRunner:
             "name": f"{entrypoint}_specialist",
             "memory": self._memory_sources(),
         }
+        entry_skills = self._entry_skill_roots(entrypoint)
+        if entry_skills:
+            kwargs["skills"] = entry_skills
+        self._apply_interrupt_on(kwargs)
         subagents = self._entry_subagents(entrypoint, runtime=runtime)
         if subagents:
             kwargs["subagents"] = subagents
@@ -1156,23 +1178,25 @@ class SpecialistRunner:
             "name": name,
             "memory": self._memory_sources(),
         }
+        self._apply_interrupt_on(kwargs)
         if skills:
             kwargs["skills"] = skills
         return create_deep_agent(**kwargs)
 
     def _build_litreview_agent(self, *, runtime: dict[str, Any]) -> Any:
         create_deep_agent = self._load_create_deep_agent()
-        return create_deep_agent(
-            model=build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
-            tools=self._augment_with_default_autonomous_tools([]),
-            system_prompt=self._litreview_wrapper_prompt(),
-            middleware=self._subagent_middleware(runtime=runtime, include_memory_middleware=False),
-            checkpointer=runtime["checkpointer"],
-            store=runtime["store"],
-            backend=runtime["backend"],
-            name="litreview_agent",
-            memory=self._memory_sources(),
-            subagents=[
+        kwargs: dict[str, Any] = {
+            "model": build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
+            "tools": self._augment_with_default_autonomous_tools([]),
+            "system_prompt": self._litreview_wrapper_prompt(),
+            "middleware": self._subagent_middleware(runtime=runtime, include_memory_middleware=False),
+            "checkpointer": runtime["checkpointer"],
+            "store": runtime["store"],
+            "backend": runtime["backend"],
+            "name": "litreview_agent",
+            "memory": self._memory_sources(),
+            "skills": [self._skills_group_virtual_path("litreview_agent")],
+            "subagents": [
                 self._compiled_worker_subagent(
                     name="literature_agent",
                     description="Handle broader literature review, background grounding, public-page inspection, and public-source synthesis.",
@@ -1181,6 +1205,7 @@ class SpecialistRunner:
                     tools=self._augment_with_default_autonomous_tools(
                         self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
                     ),
+                    skills=[self._skills_group_virtual_path("litreview_agent")],
                     runtime=runtime,
                 ),
                 self._compiled_worker_subagent(
@@ -1191,11 +1216,18 @@ class SpecialistRunner:
                     tools=self._augment_with_default_autonomous_tools(
                         self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST),
                     ),
+                    skills=[self._skills_group_virtual_path("litreview_agent")],
                     middleware=self._metadata_middleware(runtime=runtime),
                     runtime=runtime,
                 ),
             ],
-        )
+        }
+        self._apply_interrupt_on(kwargs)
+        return create_deep_agent(**kwargs)
+
+    def _apply_interrupt_on(self, kwargs: dict[str, Any]) -> None:
+        if self.interrupt_on:
+            kwargs["interrupt_on"] = dict(self.interrupt_on)
 
     @asynccontextmanager
     async def _open_agent_runtime(self, *, files_root: Path):
@@ -1409,12 +1441,14 @@ class SpecialistRunner:
         deepagents_root = files_root / ".deepagents"
         base = deepagents_root / "skills"
         layouts = {
-            base / "materials": repo_root / "skills" / "materials",
-            base / "dynamics": repo_root / "skills" / "dynamics",
-            base / "machine_learning": repo_root / "skills" / "machine_learning",
-            base / "quantum_chemistry": repo_root / "skills" / "quantum_chemistry",
+            base / "materials_worker": repo_root / "skills" / "materials_worker",
+            base / "dynamics_worker": repo_root / "skills" / "dynamics_worker",
+            base / "ml_worker": repo_root / "skills" / "ml_worker",
+            base / "orca_xtb_worker": repo_root / "skills" / "orca_xtb_worker",
+            base / "research_specialist": repo_root / "skills" / "research_specialist",
+            base / "litreview_agent": repo_root / "skills" / "litreview_agent",
             base / "execution": repo_root / "skills" / "execution",
-            base / "writing": repo_root / "skills" / "writing",
+            base / "writing_specialist": repo_root / "skills" / "writing_specialist",
         }
         for target, source in layouts.items():
             if not source.exists():
@@ -1431,6 +1465,15 @@ class SpecialistRunner:
     @staticmethod
     def _skills_group_virtual_path(group_name: str) -> str:
         return f"{_SKILLS_ROOT}/{str(group_name or '').strip()}"
+
+    def _entry_skill_roots(self, entrypoint: SpecialistEntrypoint) -> list[str]:
+        if entrypoint == "research":
+            return [self._skills_group_virtual_path("research_specialist")]
+        if entrypoint == "literature_review":
+            return [self._skills_group_virtual_path("litreview_agent")]
+        if entrypoint in {"writing", "peer_review"}:
+            return [self._skills_group_virtual_path("writing_specialist")]
+        return []
 
     def _resolve_thread_id(self, payload: dict[str, Any]) -> str:
         thread_id = str(payload.get("thread_id") or "").strip()
@@ -1814,10 +1857,11 @@ class SpecialistRunner:
     def _soft_reporting_contract() -> str:
         return (
             "For multi-step work, use the available task-tracking capability early and keep it updated when the plan changes. "
-            "For durable multi-step closeouts, it is helpful but not mandatory to use three markdown sections in this order: `Summary`, `Facts`, and `Files`; follow the user's requested response shape when it conflicts with this archival convention. "
-            "`Summary`, when used, should directly answer the user's actual question with the key result and conclusion; do not say only that a report was written. "
-            "`Facts`, when used, should be a short flat list of the most important archival facts. "
-            "`Files`, when used, should be a flat list of relevant workspace-relative output paths; do not return bare filenames, and use `(none reported)` if there are none. "
+            "For user-facing closeouts, answer naturally first in the shape the user requested; do not force fixed `Summary` / `Facts` / `Files` headings when ordinary prose is clearer. "
+            "For durable archival closeouts, those three sections remain an optional convention that can help machine sidecar extraction; use them only when they improve clarity or the user requested a structured report. "
+            "When you include a summary, it should directly answer the user's actual question with the key result and conclusion; do not say only that a report was written. "
+            "When you include facts, keep them as a short flat list of the most important archival facts. "
+            "When you include files, list relevant workspace-relative output paths; do not return bare filenames, and use `(none reported)` if there are none. "
             "If one manuscript PDF is the canonical downstream review target, you may add an optional `ReviewTarget` section with exactly one workspace-relative PDF path when using the archival sections. "
             "If you are correcting a previously wrong result after the user pointed out an error, replace or delete stale incorrect reports/notes when feasible and do not leave superseded wrong paths in `Files`."
         )
@@ -1826,12 +1870,12 @@ class SpecialistRunner:
     def _research_reporting_contract() -> str:
         return (
             "For multi-step research-lane work, use the available task-tracking capability early and keep it updated when the plan changes. "
-            "When you finish a research-lane answer, use markdown sections in this order when the user did not request a stricter shape: `Summary`, `Scientific Reasonableness Check`, `Facts`, and `Files`. "
-            "`Summary` should directly answer the research objective with the current best conclusion or status. "
-            "`Scientific Reasonableness Check` is required for research closeouts: state whether the conclusion is scientifically plausible, whether the evidence supports the claim, what method/QC/literature-context checks were satisfied, and what unresolved gap remains if any. "
+            "When you finish a research-lane answer, answer naturally first and follow the user's requested shape; do not force fixed `Summary` / `Facts` / `Files` headings for normal conversational answers. "
+            "A scientific reasonableness check is required for research closeouts, either as a compact prose paragraph or as a `Scientific Reasonableness Check` section when a structured report is clearer: state whether the conclusion is scientifically plausible, whether the evidence supports the claim, what method/QC/literature-context checks were satisfied, and what unresolved gap remains if any. "
             "If the reasonableness check fails or remains incomplete, either dispatch the next bounded specialist step before final answer or state the precise blocker and minimal next action. "
-            "`Facts` should be a short flat list of decisive archival facts. "
-            "`Files` should be a flat list of relevant workspace-relative output paths; do not return bare filenames, and use `(none reported)` if there are none. "
+            "For durable archival closeouts, optional sections such as `Summary`, `Facts`, and `Files` can still be used to support machine sidecar extraction. "
+            "When used, `Facts` should be a short flat list of decisive archival facts. "
+            "When used, `Files` should be a flat list of relevant workspace-relative output paths; do not return bare filenames, and use `(none reported)` if there are none. "
             "If one manuscript PDF is the canonical downstream review target, you may add an optional `ReviewTarget` section with exactly one workspace-relative PDF path. "
             "If you are correcting a previously wrong result after the user pointed out an error, replace or delete stale incorrect reports/notes when feasible and do not leave superseded wrong paths in `Files`."
         )
