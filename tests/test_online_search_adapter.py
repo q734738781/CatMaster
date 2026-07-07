@@ -147,7 +147,7 @@ def test_open_public_page_falls_back_to_http_extracts_title_description_and_text
       </body>
     </html>
     """
-    adapter = OnlineSearchAdapter()
+    adapter = OnlineSearchAdapter(tavily_api_key="")
     monkeypatch.setattr(
         adapter,
         "_http_client",

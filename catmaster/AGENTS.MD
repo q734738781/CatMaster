@@ -1,5 +1,17 @@
 # CatMaster Runtime Guide
 
+## External API Verification
+
+Before changing active runtime code that depends on external framework APIs,
+especially LangChain, LangGraph, DeepAgents, OpenRouter/provider bridges, or
+streaming event contracts, verify the current API shape from official
+documentation and the locally installed package source/signatures first. Do not
+infer event payloads, message schemas, stream fields, or provider-specific
+metadata by guesswork. When local behavior and public docs differ, document the
+compatibility reason in the code or test and prefer stable documented surfaces
+such as LangChain `content_blocks`, LangGraph v3 protocol events, typed
+projections, and declared tool schemas.
+
 This repository now uses a DeepAgent-native specialist runtime as the active path. Treat the current implementation under `catmaster/specialists/` as the source of truth.
 
 Maintainer notes for CatMaster's non-standard DeepAgents/LangChain/OpenRouter
@@ -36,6 +48,12 @@ They are built in [runtime.py](specialists/runtime.py).
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
   - Uses direct public-source checking only for tightly bounded background supplementation needed by the current manuscript or note.
+
+Layered capability visibility is part of the runtime contract. Research
+delegates remote-capability probes to `experiment_specialist`; experiment may
+use the remote task catalog only to make worker briefs accurate; concrete
+resource checks, worker skill/SOP interpretation, and managed submissions belong
+to the worker agent that owns the domain.
 
 Execution guidance for the active experiment path:
 

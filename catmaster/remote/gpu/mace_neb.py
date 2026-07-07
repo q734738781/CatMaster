@@ -259,7 +259,7 @@ def _compute_projected_neb_force(images: list[Any], *, climb: bool) -> float | N
     try:
         from ase.mep import NEB
 
-        neb = NEB(images, climb=climb, allow_shared_calculator=True)
+        neb = NEB(images, climb=climb, method="improvedtangent", allow_shared_calculator=True)
         neb_forces = neb.get_forces()
         if neb_forces.size:
             return float(np.linalg.norm(neb_forces, axis=1).max())
@@ -358,7 +358,7 @@ def _run_plain_neb(
     summary["method"]["model_source_kind"] = model_source_kind
     summary["method"]["model_source_ref"] = model_source_ref
 
-    neb = NEB(images, climb=climb, allow_shared_calculator=True)
+    neb = NEB(images, climb=climb, method="improvedtangent", allow_shared_calculator=True)
     for atoms in images:
         atoms.set_constraint(copy.deepcopy(images[0].constraints))
         atoms.calc = calc

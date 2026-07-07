@@ -79,18 +79,62 @@ function InterruptActions({ part, onResume }) {
   );
 }
 
+function progressEntries(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  const withBreaks = raw
+    .replace(/(?<!^)(\*\*[^*\n]{3,90}\*\*)/g, "\n\n$1")
+    .replace(/(?<!^)(#{1,4}\s+)/g, "\n\n$1");
+  const chunks = withBreaks
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (chunks.length > 1) return chunks;
+  const sentences = raw.match(/.{1,520}(?:[。.!?]\s+|$)/g) || [raw];
+  return sentences.map((item) => item.trim()).filter(Boolean);
+}
+
 function ReasoningPart({ text }) {
+  const entries = progressEntries(text);
+  const latest = entries[entries.length - 1] || "";
+  const history = entries.slice(0, -1);
   return (
-    <details className="v2-reasoning">
-      <summary>Progress</summary>
-      <MarkdownBlock text={text} />
-    </details>
+    <section className="v2-progress-card">
+      <div className="v2-progress-head">
+        <span>Progress</span>
+        <small>{history.length ? `${history.length} previous` : "latest"}</small>
+      </div>
+      {latest ? <MarkdownBlock text={latest} /> : null}
+      {history.length ? (
+        <details className="v2-progress-history">
+          <summary>History</summary>
+          <div className="v2-progress-history-list">
+            {history.slice().reverse().map((entry, index) => (
+              <div key={`${entry.slice(0, 40)}-${index}`} className="v2-progress-history-item">
+                <MarkdownBlock text={entry} />
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </section>
   );
 }
 
-function ToolPart({ toolName, toolCallId, args, result, artifact, status }) {
+function toolSource(part) {
+  return String(
+    part?.source
+      || part?.artifact?.subagent_source
+      || part?.artifact?.agent_name
+      || part?.data?.subagent_source
+      || part?.data?.agent_name
+      || "",
+  ).trim();
+}
+
+function ToolPart({ toolName, toolCallId, args, result, artifact, source, status }) {
   const normalizedStatus = status?.type || (result === undefined ? "running" : "completed");
-  const subagentSource = String(artifact?.subagent_source || "").trim();
+  const subagentSource = toolSource({ source, artifact });
   const displayName = subagentSource ? `${subagentSource} · ${toolName || "Tool call"}` : (toolName || "Tool call");
   const part = {
     id: toolCallId,
@@ -102,6 +146,8 @@ function ToolPart({ toolName, toolCallId, args, result, artifact, status }) {
       tool: toolName,
       input: args || {},
       output: result,
+      agent_name: artifact?.agent_name || "",
+      subagent_source: artifact?.subagent_source || source || "",
       artifact,
     },
   };
@@ -207,6 +253,8 @@ function toolSelectionPart(part) {
       tool: part.toolName,
       input: part.args || {},
       output: part.result,
+      agent_name: part.artifact?.agent_name || "",
+      subagent_source: part.artifact?.subagent_source || part.source || "",
       artifact: part.artifact,
     },
   };
@@ -215,7 +263,7 @@ function toolSelectionPart(part) {
 function activityLabel(part) {
   const kind = partActivityKind(part);
   if (kind === "tool") {
-    const source = String(part.artifact?.subagent_source || "").trim();
+    const source = toolSource(part);
     const toolTitle = part.toolName || "Tool call";
     return {
       icon: Hammer,
@@ -254,6 +302,7 @@ function ActivityRow({ part }) {
         args={part.args}
         result={part.result}
         artifact={part.artifact}
+        source={part.source}
         status={part.status}
       />
     );

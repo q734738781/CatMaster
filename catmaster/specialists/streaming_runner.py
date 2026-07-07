@@ -80,7 +80,7 @@ def _message_text(message: Any) -> str:
                 chunks.append(item)
             elif isinstance(item, dict):
                 item_type = str(item.get("type") or "").lower()
-                if item_type in {"reasoning", "thinking", "reasoning_text", "redacted_reasoning"}:
+                if item_type in {"reasoning", "thinking", "reasoning_text", "reasoning_content", "redacted_reasoning"}:
                     continue
                 text = item.get("text")
                 if text:
@@ -222,27 +222,77 @@ def _subagent_source_name(metadata: dict[str, Any]) -> str:
 
 def _message_reasoning_text(message: Any) -> str:
     chunks: list[str] = []
-    content = getattr(message, "content", message)
-    if isinstance(message, dict):
+
+    def append_text(value: Any) -> None:
+        if isinstance(value, str) and value:
+            chunks.append(value)
+
+    def append_summary(value: Any) -> None:
+        if isinstance(value, str):
+            append_text(value)
+            return
+        if not isinstance(value, list):
+            return
+        for item in value:
+            if isinstance(item, str):
+                append_text(item)
+            elif isinstance(item, dict):
+                append_text(item.get("text"))
+
+    def append_reasoning_block(block: Any) -> bool:
+        if not isinstance(block, dict):
+            return False
+        block_type = str(block.get("type") or "").lower()
+        if block_type == "reasoning":
+            append_text(block.get("reasoning"))
+            append_summary(block.get("summary"))
+            append_text(block.get("text"))
+            return True
+        if block_type in {"reasoning-delta", "thinking-delta"}:
+            append_text(block.get("reasoning"))
+            append_text(block.get("text"))
+            append_summary(block.get("summary"))
+            return True
+        return False
+
+    blocks = getattr(message, "content_blocks", None)
+    if isinstance(blocks, list):
+        for block in blocks:
+            append_reasoning_block(block)
+    elif isinstance(message, dict):
+        content_blocks = message.get("content_blocks")
+        if isinstance(content_blocks, list):
+            for block in content_blocks:
+                append_reasoning_block(block)
         content = message.get("content")
-    if isinstance(content, list):
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            item_type = str(item.get("type") or "").lower()
-            if item_type in {"reasoning", "thinking", "reasoning_text", "redacted_reasoning"}:
-                text = item.get("text") or item.get("summary") or item.get("reasoning")
-                if text:
-                    chunks.append(str(text))
+        if isinstance(content, list):
+            for block in content:
+                append_reasoning_block(block)
+        append_reasoning_block(message)
+    else:
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                append_reasoning_block(block)
+
     for container_name in ("additional_kwargs", "response_metadata"):
         container = getattr(message, container_name, None)
         if not isinstance(container, dict):
             continue
-        for key in ("reasoning", "reasoning_content", "reasoning_text", "thinking"):
-            value = container.get(key)
-            if isinstance(value, str) and value.strip():
-                chunks.append(value.strip())
-    return "\n".join(chunks)
+        # `reasoning_content` is normalized into `content_blocks` by current
+        # LangChain, but keep `reasoning_text` for provider bridges that expose
+        # this value only as message metadata.
+        append_text(container.get("reasoning_text"))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        text = str(chunk or "")
+        if not text.strip() or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return "\n".join(out)
 
 
 _WORKSPACE_PATH_RE = re.compile(r"^[A-Za-z0-9._/@+\-]+$")
@@ -372,6 +422,7 @@ class CatMasterStreamTranslator:
         self.interrupt_id = ""
         self.reasoning_part_id = ""
         self.reasoning_text_emitted = ""
+        self.observed_reasoning_event_id = 0
         self.subagent_parts_by_source: dict[str, str] = {}
 
     def apply_v3_event(self, event: Any) -> None:
@@ -383,7 +434,7 @@ class CatMasterStreamTranslator:
         if interrupts:
             self._handle_interrupts(interrupts)
         if method in {"on_chat_model_stream", "on_llm_stream"}:
-            chunk = data.get("chunk") if isinstance(data, dict) else data
+            chunk = data.get("chunk") if isinstance(data, dict) and "chunk" in data else data
             self._handle_message_event((chunk, metadata))
             return
         if method in {"on_chat_model_end", "on_llm_end"}:
@@ -509,7 +560,7 @@ class CatMasterStreamTranslator:
             self._handle_tool_calls(message, metadata=metadata)
             reasoning_delta = _message_reasoning_text(message)
             if reasoning_delta:
-                self._append_reasoning_delta(reasoning_delta, metadata=metadata)
+                self._append_reasoning_if_new(reasoning_delta, metadata=metadata)
             delta = _message_text(message)
             if delta:
                 if _is_internal_stream_source(metadata):
@@ -520,7 +571,15 @@ class CatMasterStreamTranslator:
         if isinstance(message, ToolMessage):
             self._handle_tool_message(message)
             return
-        if isinstance(message, dict) and ("content" in message or "role" in message):
+        if isinstance(message, dict) and (
+            "content" in message
+            or "role" in message
+            or "content_blocks" in message
+            or str(message.get("type") or "").lower() in {"reasoning", "reasoning-delta", "thinking-delta"}
+        ):
+            reasoning_delta = _message_reasoning_text(message)
+            if reasoning_delta:
+                self._append_reasoning_if_new(reasoning_delta, metadata=metadata)
             delta = _message_text(message)
             if delta:
                 if _is_internal_stream_source(metadata):
@@ -545,9 +604,9 @@ class CatMasterStreamTranslator:
             if delta_type in {"text-delta", "text"}:
                 text = str(delta.get("text") or "")
             elif delta_type in {"reasoning-delta", "thinking-delta"}:
-                text = str(delta.get("text") or delta.get("summary") or "")
+                text = _message_reasoning_text(delta)
                 if text:
-                    self._append_reasoning_delta(text, metadata=metadata)
+                    self._append_reasoning_if_new(text, metadata=metadata)
                     handled = True
                 continue
             if not text:
@@ -626,6 +685,60 @@ class CatMasterStreamTranslator:
             data={"message_id": self.message_id, "part_id": self.reasoning_part_id, "delta": text},
         )
 
+    def _append_reasoning_if_new(self, text: str, *, metadata: dict[str, Any]) -> None:
+        value = str(text or "")
+        if not value:
+            return
+        current = self.reasoning_text_emitted
+        if current and value.startswith(current):
+            tail = value[len(current):]
+            if tail:
+                self.reasoning_text_emitted = value
+                self._append_reasoning_delta(tail, metadata=metadata)
+            return
+        if value in current:
+            return
+        self.reasoning_text_emitted = f"{current}{value}"
+        self._append_reasoning_delta(value, metadata=metadata)
+
+    def flush_observed_reasoning(self) -> None:
+        """Bridge callback-observed model-end reasoning into the thread stream.
+
+        LangGraph v3 message events are the primary path. This fallback uses the
+        local LangChain callback record after it has already normalized provider
+        payloads into the run's canonical `LLM_CALL_END.reasoning_text` field.
+        """
+        if self.observability_store is None:
+            return
+        try:
+            page = self.observability_store.read_events_page(
+                names=["LLM_CALL_END"],
+                channel="callback",
+                run_id=self.run_id,
+                after_id=self.observed_reasoning_event_id,
+                limit=200,
+            )
+        except Exception:
+            return
+        max_id = self.observed_reasoning_event_id
+        for event in list(page.get("events") or []):
+            event_id = int(event.get("id") or 0)
+            if event_id > max_id:
+                max_id = event_id
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            reasoning = str(payload.get("reasoning_text") or "").strip()
+            if not reasoning:
+                continue
+            metadata = {
+                "agent_name": str(payload.get("agent_name") or event.get("agent_name") or ""),
+                "node": str(payload.get("node") or event.get("node") or ""),
+                "model": str(payload.get("model") or event.get("model") or ""),
+                "callback_run_id": str(payload.get("callback_run_id") or event.get("callback_run_id") or ""),
+                "parent_callback_run_id": str(payload.get("parent_callback_run_id") or event.get("parent_callback_run_id") or ""),
+            }
+            self._append_reasoning_if_new(reasoning, metadata=metadata)
+        self.observed_reasoning_event_id = max_id
+
     def _append_progress_if_new(self, text: str, *, metadata: dict[str, Any]) -> None:
         value = str(text or "").strip()
         if not value:
@@ -678,6 +791,9 @@ class CatMasterStreamTranslator:
 
     def _handle_model_end_text(self, payload: Any, *, metadata: dict[str, Any]) -> None:
         for message in self._extract_messages_from_payload(payload):
+            reasoning = _message_reasoning_text(message)
+            if reasoning:
+                self._append_reasoning_if_new(reasoning, metadata=metadata)
             text = _message_text(message).strip()
             if not text:
                 continue
@@ -800,6 +916,9 @@ class CatMasterStreamTranslator:
             if stream_fields:
                 self.tool_stream_meta_by_call_id[call_id] = {**self.tool_stream_meta_by_call_id.get(call_id, {}), **stream_fields}
             input_payload = self._record_tool_input(call_id, row)
+            observed_fields = self._observed_tool_stream_fields(tool_name=name, input_payload=input_payload)
+            if observed_fields:
+                self.tool_stream_meta_by_call_id[call_id] = {**self.tool_stream_meta_by_call_id.get(call_id, {}), **observed_fields}
             part_id = self.tool_parts_by_call_id.get(call_id)
             if not part_id:
                 part_id = new_id("part_tool")
@@ -831,13 +950,69 @@ class CatMasterStreamTranslator:
 
     def _tool_stream_fields(self, metadata: dict[str, Any]) -> dict[str, Any]:
         fields: dict[str, Any] = {}
-        source = _subagent_source_name(metadata)
+        source = _subagent_source_name(metadata) or _stream_source_name(metadata, default="")
         if source:
+            fields["agent_name"] = source
             fields["subagent_source"] = source
         namespace = metadata.get("namespace")
         if namespace not in (None, "", []):
             fields["stream_namespace"] = _json_safe(namespace, max_text=2_000)
         return fields
+
+    def _observed_tool_stream_fields(self, *, tool_name: str, input_payload: Any) -> dict[str, Any]:
+        name = str(tool_name or "").strip()
+        if not name or self.observability_store is None:
+            return {}
+        try:
+            page = self.observability_store.read_events_page(
+                names=["TOOL_CALL_START", "TOOL_RAW_INPUT"],
+                channel="callback",
+                run_id=self.run_id,
+                limit=500,
+            )
+        except Exception:
+            return {}
+        expected = self._canonical_tool_input(input_payload)
+        fallback: dict[str, Any] = {}
+        for event in reversed(list(page.get("events") or [])):
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            event_tool = str(payload.get("tool") or payload.get("tool_name") or event.get("tool") or "").strip()
+            if event_tool != name:
+                continue
+            source = str(payload.get("agent_name") or event.get("agent_name") or "").strip()
+            if not source:
+                continue
+            candidate = {
+                "agent_name": source,
+                "subagent_source": source,
+            }
+            if not fallback:
+                fallback = candidate
+            observed_input = self._canonical_tool_input(self._observed_tool_input_from_payload(payload))
+            if expected and observed_input and observed_input == expected:
+                return candidate
+        return fallback
+
+    @staticmethod
+    def _canonical_tool_input(value: Any) -> str:
+        try:
+            return json.dumps(_json_safe(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _observed_tool_input_from_payload(payload: dict[str, Any]) -> Any:
+        for key in ("params_full", "raw_params", "input", "args"):
+            value = payload.get(key)
+            if value not in (None, ""):
+                return value
+        compact = payload.get("params_compact")
+        if isinstance(compact, str) and compact.strip():
+            try:
+                return json.loads(compact)
+            except Exception:
+                return compact
+        return {}
 
     def _record_tool_input(self, call_id: str, row: dict[str, Any]) -> Any:
         if "args" not in row and "input" not in row:
@@ -983,6 +1158,9 @@ class CatMasterStreamTranslator:
             current_meta = self._tool_part_meta(part_id)
             tool_name = str(getattr(message, "name", "") or current_meta.get("tool") or call_id or "tool")
             input_payload = self._best_tool_input(call_id) or current_meta.get("input", {})
+            observed_fields = self._observed_tool_stream_fields(tool_name=tool_name, input_payload=input_payload)
+            if observed_fields:
+                self.tool_stream_meta_by_call_id[call_id] = {**self.tool_stream_meta_by_call_id.get(call_id, {}), **observed_fields}
             output_payload = _json_safe(_message_text(message))
             self._update_tool_part_meta(
                 part_id,
@@ -1042,6 +1220,9 @@ class CatMasterStreamTranslator:
         if part_id:
             current_meta = self._tool_part_meta(part_id)
             input_payload = self._best_tool_input(call_id) or current_meta.get("input", {})
+            observed_fields = self._observed_tool_stream_fields(tool_name=name or str(current_meta.get("tool") or call_id), input_payload=input_payload)
+            if observed_fields:
+                self.tool_stream_meta_by_call_id[call_id] = {**self.tool_stream_meta_by_call_id.get(call_id, {}), **observed_fields}
             self._update_tool_part_meta(
                 part_id,
                 tool_call_id=call_id,
@@ -1629,8 +1810,11 @@ class StreamingSpecialistRunner:
             async for event in stream:
                 started = True
                 translator.apply_v3_event(event)
+                translator.flush_observed_reasoning()
                 if self.should_stop(translator.thread_id):
+                    translator.flush_observed_reasoning()
                     raise asyncio.CancelledError("Graceful stop requested.")
+            translator.flush_observed_reasoning()
             return
         except Exception as exc:
             if started:
@@ -1640,8 +1824,11 @@ class StreamingSpecialistRunner:
                 raise
         async for chunk in agent.astream(input_payload, config=config, stream_mode=["messages", "updates"]):
             translator.apply_astream_chunk(chunk)
+            translator.flush_observed_reasoning()
             if self.should_stop(translator.thread_id):
+                translator.flush_observed_reasoning()
                 raise asyncio.CancelledError("Graceful stop requested.")
+        translator.flush_observed_reasoning()
 
     @staticmethod
     def _validate_decisions(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:

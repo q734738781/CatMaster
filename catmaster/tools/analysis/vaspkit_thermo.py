@@ -386,6 +386,11 @@ def _run_ase_gas_thermo(
     outcar_path = _read_required_outcar(calculation_dir, tool_name=tool_name)
     vib_energies = _extract_outcar_vib_energies_ev(outcar_path, tool_name=tool_name)
     atoms = read_vasp_out(str(outcar_path), index=-1)
+    atoms = atoms.copy()
+    # ASE 3.29+ rejects periodic Atoms in IdealGasThermo because moments of
+    # inertia are molecular quantities. VASP gas calculations usually retain a
+    # large box in OUTCAR, so strip periodicity before the thermochemistry step.
+    atoms.pbc = False
     geometry = _infer_gas_geometry(atoms)
     symmetry_number, point_group = _infer_symmetry_number(atoms)
     pressure_pa = float(pressure_atm) * _VASP_ATM_IN_PA

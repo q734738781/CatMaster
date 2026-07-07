@@ -719,7 +719,7 @@ def _build_images(
         images_atoms.append(init_use.copy())
     images_atoms.append(final_use)
 
-    neb = NEB(images_atoms)
+    neb = NEB(images_atoms, method="improvedtangent")
     neb.interpolate(method=interp_method, mic=bool(mic))
     return list(images_atoms), warnings
 

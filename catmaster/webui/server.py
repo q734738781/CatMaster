@@ -22,6 +22,7 @@ import uvicorn
 
 from catmaster.specialists import build_specialist_runner, default_thread_interrupt_on
 from catmaster.specialists.streaming_runner import StreamingSpecialistRunner
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.tools.base import ensure_project_space_layout, system_root
 
 from .agent_loop import ThreadAgentLoopService
@@ -84,6 +85,87 @@ _THREAD_LANE_ALIASES = {
     "litreview": "literature_review",
     "literature": "literature_review",
 }
+
+
+def _canonical_json(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    except Exception:
+        return ""
+
+
+def _observed_tool_input(payload: Dict[str, Any]) -> Any:
+    for key in ("params_full", "raw_params", "input", "args"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    compact = payload.get("params_compact")
+    if isinstance(compact, str) and compact.strip():
+        try:
+            return json.loads(compact)
+        except Exception:
+            return compact
+    return {}
+
+
+def _tool_source_index(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    try:
+        events = ObservabilityStore(run_dir).read_events_page(
+            names=["TOOL_CALL_START", "TOOL_RAW_INPUT"],
+            channel="callback",
+            limit=2000,
+        ).get("events") or []
+    except Exception:
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        tool = str(payload.get("tool") or payload.get("tool_name") or event.get("tool") or "").strip()
+        source = str(payload.get("agent_name") or event.get("agent_name") or "").strip()
+        if not tool or not source:
+            continue
+        out.setdefault(tool, []).append(
+            {
+                "agent_name": source,
+                "subagent_source": source,
+                "input_key": _canonical_json(_observed_tool_input(payload)),
+            }
+        )
+    return out
+
+
+def _enrich_thread_message_tool_sources(messages: list[dict[str, Any]], *, workspace: Path) -> list[dict[str, Any]]:
+    indexes: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for message in messages:
+        meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+        run_id = str(meta.get("run_id") or "").strip()
+        if not run_id:
+            continue
+        if run_id not in indexes:
+            indexes[run_id] = _tool_source_index(system_root(workspace) / "runs" / run_id)
+        index = indexes.get(run_id) or {}
+        for part in list(message.get("parts") or []):
+            if not isinstance(part, dict) or part.get("type") != "tool-call":
+                continue
+            part_meta = part.get("meta") if isinstance(part.get("meta"), dict) else {}
+            if part_meta.get("agent_name") or part_meta.get("subagent_source"):
+                continue
+            tool = str(part.get("tool") or part_meta.get("tool") or "").strip()
+            if not tool:
+                continue
+            candidates = list(index.get(tool) or [])
+            if not candidates:
+                continue
+            input_key = _canonical_json(part_meta.get("input") if "input" in part_meta else part.get("input") or {})
+            selected = None
+            for candidate in reversed(candidates):
+                if input_key and candidate.get("input_key") == input_key:
+                    selected = candidate
+                    break
+            selected = selected or candidates[-1]
+            enriched_meta = {**part_meta, "agent_name": selected["agent_name"], "subagent_source": selected["subagent_source"]}
+            part["meta"] = enriched_meta
+    return messages
 _THREAD_ENTRYPOINTS = [
     {
         "id": "research",
@@ -1783,7 +1865,8 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         identity = _identity_or_401()
         workspace, workspace_name = _workspace_for_thread(thread_id, identity)
         messages = _thread_store(workspace, workspace_name).list_messages(thread_id)
-        return JSONResponse({"messages": [message.model_dump(mode="json") for message in messages]})
+        rows = [message.model_dump(mode="json") for message in messages]
+        return JSONResponse({"messages": _enrich_thread_message_tool_sources(rows, workspace=workspace)})
 
     @app.get("/api/threads/{thread_id}/artifacts")
     def _thread_artifacts(thread_id: str):

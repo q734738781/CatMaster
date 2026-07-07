@@ -30,6 +30,7 @@ function catPartToAssistant(part) {
   }
   if (type === "tool-call") {
     const meta = part.meta || {};
+    const source = String(meta.subagent_source || meta.agent_name || part.subagent_source || part.agent_name || "").trim();
     return {
       type: "tool-call",
       toolCallId: String(part.tool_call_id || meta.tool_call_id || part.id || ""),
@@ -38,6 +39,7 @@ function catPartToAssistant(part) {
       argsText: JSON.stringify(meta.input || part.input || {}),
       result: part.output ?? meta.output,
       artifact: meta,
+      source,
     };
   }
   return {

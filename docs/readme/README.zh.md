@@ -33,9 +33,8 @@ https://cm.cccgg.cyou
 只想先把 WebUI 跑起来，可以先做这几步：
 
 ```bash
-conda create -n catmaster python=3.11
+conda env create -f requirements/pc-conda.yml
 conda activate catmaster
-pip install -r requirements/pc.txt
 
 cp configs/llm.template.yaml configs/llm.yaml
 export OPENROUTER_API_KEY="..."

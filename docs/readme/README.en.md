@@ -33,9 +33,8 @@ The demo server is configured with the full CatMaster feature set, but compute r
 To start the WebUI quickly:
 
 ```bash
-conda create -n catmaster python=3.11
+conda env create -f requirements/pc-conda.yml
 conda activate catmaster
-pip install -r requirements/pc.txt
 
 cp configs/llm.template.yaml configs/llm.yaml
 export OPENROUTER_API_KEY="..."

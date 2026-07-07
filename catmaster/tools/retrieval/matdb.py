@@ -9,7 +9,6 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 from pymatgen.core.structure import Structure
-from mp_api.client import MPRester
 from pydantic import BaseModel, Field
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
@@ -48,10 +47,16 @@ class MPDownloadStructureInput(BaseModel):
     output_dir: str = Field("retrieval/mp", description="Workspace-relative directory to save the structure.")
 
 
-def _mpr(*, monty_decode: bool = True, use_document_model: bool = True) -> MPRester:
+def _mpr(*, monty_decode: bool = True, use_document_model: bool = True) -> Any:
     api_key = os.environ.get("MP_API_KEY")
     if not api_key:
         raise RuntimeError("MP_API_KEY environment variable is not set.")
+    try:
+        from mp_api.client import MPRester
+    except Exception as exc:
+        raise RuntimeError(
+            "Materials Project client could not be imported. Check mp-api/emmet-core compatibility in the active environment."
+        ) from exc
     return MPRester(api_key, monty_decode=monty_decode, use_document_model=use_document_model)
 
 _FIELD_ALIASES = {

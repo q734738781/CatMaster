@@ -7,12 +7,13 @@ Goal: start the CatMaster WebUI on a Linux machine and connect it to a working L
 Use a dedicated conda environment:
 
 ```bash
-conda create -n catmaster python=3.11
+conda env create -f requirements/pc-conda.yml
 conda activate catmaster
-pip install -r requirements/pc.txt
 ```
 
-If this machine will also run local GPU / MACE tasks, install the GPU/MACE add-on dependencies as well. `requirements/gpu.txt` is not a complete WebUI/agent environment and does not replace `requirements/pc.txt`:
+`requirements/pc-conda.yml` is the single source of truth for the PC/control-plane environment. It lets conda solve the scientific/materials stack and keeps the exact-pinned LLM/WebUI pip packages inline in the same file. Do not install the scientific stack directly with pip.
+
+If this machine will also run local GPU / MACE tasks, install the GPU/MACE add-on dependencies as well. `requirements/gpu.txt` is not a complete WebUI/agent environment and does not replace `requirements/pc-conda.yml`:
 
 ```bash
 pip install -r requirements/gpu.txt

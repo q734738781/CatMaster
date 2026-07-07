@@ -11,6 +11,7 @@ import { apiFetch, useCatMasterThreadRuntime } from "./useCatMasterThreadRuntime
 import { DEFAULT_ENTRYPOINT, entrypointMeta, normalizedEntrypoints, normalizeEntrypoint } from "./entrypoints";
 import { selectionFromHash, selectionToHash, tabFromHash } from "./inspectorSelection";
 import { artifactForSelection } from "./artifactSelection.js";
+import { todoGroupsFromMessages } from "./todoPanel.js";
 
 function AuthPanel({ onReady }) {
   const [mode, setMode] = useState("login");
@@ -201,6 +202,7 @@ export default function CatMasterWorkspace({ boot }) {
     onThreadUpdate: updateThread,
     onSelectArtifact: (nextSelection) => handleSelection(nextSelection),
   });
+  const todoGroups = useMemo(() => todoGroupsFromMessages(runtimeState.messages), [runtimeState.messages]);
 
   const checkAuthAndBootstrap = useCallback(async (projectSpace = "") => {
     setLoading(true);
@@ -532,6 +534,7 @@ export default function CatMasterWorkspace({ boot }) {
             workspaceName={workspaceName}
             tabs={previewTabs}
             activeTabId={activePreviewTabId}
+            todoGroups={todoGroups}
             onActivate={setActivePreviewTabId}
             onClose={closePreviewTab}
           />

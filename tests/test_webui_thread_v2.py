@@ -1121,6 +1121,100 @@ def test_stream_translator_merges_incremental_tool_call_args(tmp_path: Path) -> 
     assert completed_events[-1].data["input"] == {"path": "notes/summary.md", "content": "ok"}
 
 
+def test_stream_translator_labels_tool_calls_with_agent_source(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_tool_source",
+    )
+
+    translator._handle_tool_call_payload(
+        {"id": "tc_todos", "name": "write_todos", "args": {"todos": [{"content": "plan", "status": "in_progress"}]}},
+        metadata={"lc_agent_name": "experiment_specialist", "langgraph_node": "model"},
+    )
+
+    saved = store.get_message(thread.thread_id, message.id)
+    tool_part = next(part for part in saved.parts if part.type == "tool-call")
+    started = [event for event in broker.replay(thread.thread_id) if event.event == "tool_call.started"][-1]
+    assert tool_part.meta["agent_name"] == "experiment_specialist"
+    assert tool_part.meta["subagent_source"] == "experiment_specialist"
+    assert started.data["agent_name"] == "experiment_specialist"
+    assert started.data["subagent_source"] == "experiment_specialist"
+
+
+def test_stream_translator_backfills_tool_agent_source_from_callback_observation(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    run_dir = tmp_path / "run_tool_observed_source"
+    run_id = "run_tool_observed_source"
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    observability = ObservabilityStore(run_dir)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id=run_id,
+        observability_store=observability,
+    )
+    todos = [{"content": "Prepare input", "status": "in_progress"}]
+
+    translator._handle_tool_call_payload({"id": "tc_todos", "name": "write_todos", "args": {"todos": todos}})
+    observability.record_event(
+        source="langchain_callback",
+        channel="callback",
+        name="TOOL_CALL_START",
+        category="tool",
+        ts=1.0,
+        seq=None,
+        run_id=run_id,
+        task_id="",
+        step_id=None,
+        payload={
+            "tool": "write_todos",
+            "tool_name": "write_todos",
+            "agent_name": "materials_worker",
+            "params_compact": json.dumps({"todos": todos}),
+        },
+    )
+    translator._handle_tool_message(ToolMessage(content="Updated todo list", tool_call_id="tc_todos", name="write_todos"))
+
+    saved = store.get_message(thread.thread_id, message.id)
+    tool_part = next(part for part in saved.parts if part.type == "tool-call")
+    completed = [event for event in broker.replay(thread.thread_id) if event.event == "tool_call.completed"][-1]
+    assert tool_part.meta["agent_name"] == "materials_worker"
+    assert tool_part.meta["subagent_source"] == "materials_worker"
+    assert completed.data["agent_name"] == "materials_worker"
+    assert completed.data["subagent_source"] == "materials_worker"
+
+
 def test_stream_translator_backfills_tool_args_from_chat_model_end(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     store = ThreadStore(workspace=workspace, workspace_id="default")
@@ -1407,6 +1501,165 @@ def test_stream_translator_separates_reasoning_and_internal_subagent_streams(tmp
     assert "subagent.delta" in event_names
 
 
+def test_stream_translator_surfaces_reasoning_text_and_content_fields(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_reasoning_fields",
+    )
+
+    translator.apply_v3_event(
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="", additional_kwargs={"reasoning_text": "Plan: "})},
+        }
+    )
+    translator.apply_v3_event(
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Plan: inspect files"})},
+        }
+    )
+    translator.apply_v3_event(
+        {
+            "method": "messages",
+            "params": {
+                "data": [
+                    {
+                        "event": "content-block-delta",
+                        "delta": {"type": "reasoning-delta", "reasoning": " and stream to audit"},
+                    }
+                ]
+            },
+        }
+    )
+
+    saved = store.get_message(thread.thread_id, message.id)
+    text_part = next(part for part in saved.parts if part.id == "part_text")
+    reasoning_part = next(part for part in saved.parts if part.type == "reasoning")
+    assert text_part.text == ""
+    assert reasoning_part.text == "Plan: inspect files and stream to audit"
+    reasoning_events = [event for event in broker.replay(thread.thread_id) if event.event == "reasoning.delta"]
+    assert [event.data["delta"] for event in reasoning_events] == ["Plan: ", "inspect files", " and stream to audit"]
+
+
+def test_stream_translator_surfaces_model_end_reasoning_content(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_model_end_reasoning",
+    )
+
+    translator.apply_v3_event(
+        {
+            "event": "on_chat_model_end",
+            "metadata": {"lc_agent_name": "research_specialist", "langgraph_node": "model"},
+            "data": {
+                "output": AIMessage(
+                    content="",
+                    additional_kwargs={"reasoning_content": "Need to plan the MACE relaxation before tools."},
+                    tool_calls=[{"id": "tc_plan", "name": "write_todos", "args": {"todos": ["plan"]}}],
+                )
+            },
+        }
+    )
+
+    saved = store.get_message(thread.thread_id, message.id)
+    reasoning_part = next(part for part in saved.parts if part.type == "reasoning")
+    tool_part = next(part for part in saved.parts if part.type == "tool-call")
+    assert reasoning_part.text == "Need to plan the MACE relaxation before tools."
+    assert tool_part.meta["tool"] == "write_todos"
+    reasoning_events = [event for event in broker.replay(thread.thread_id) if event.event == "reasoning.delta"]
+    assert reasoning_events[-1].data["delta"] == "Need to plan the MACE relaxation before tools."
+
+
+def test_stream_translator_flushes_callback_reasoning_text(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    run_dir = tmp_path / "run_observed_reasoning"
+    run_id = "run_observed_reasoning"
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    observability = ObservabilityStore(run_dir)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id=run_id,
+        observability_store=observability,
+    )
+    observability.record_event(
+        source="langchain_callback",
+        channel="callback",
+        name="LLM_CALL_END",
+        category="llm",
+        ts=1.0,
+        seq=None,
+        run_id=run_id,
+        task_id="",
+        step_id=None,
+        payload={
+            "agent_name": "materials_worker",
+            "callback_run_id": "llm_1",
+            "node": "model",
+            "reasoning_text": "**Planning** Use MACE then audit outputs.",
+        },
+    )
+
+    translator.flush_observed_reasoning()
+    translator.flush_observed_reasoning()
+
+    saved = store.get_message(thread.thread_id, message.id)
+    reasoning_part = next(part for part in saved.parts if part.type == "reasoning")
+    assert reasoning_part.text == "**Planning** Use MACE then audit outputs."
+    assert reasoning_part.meta["source"] == "materials_worker"
+    reasoning_events = [event for event in broker.replay(thread.thread_id) if event.event == "reasoning.delta"]
+    assert [event.data["delta"] for event in reasoning_events] == ["**Planning** Use MACE then audit outputs."]
+
+
 def test_stream_translator_handles_v3_content_block_delta_messages(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     store = ThreadStore(workspace=workspace, workspace_id="default")
@@ -1572,6 +1825,86 @@ def test_streaming_adapter_falls_back_to_astream_event_schema(tmp_path: Path) ->
     saved = store.get_message(thread.thread_id, message.id)
     assert saved.parts[0].text == "hello"
     assert [event.event for event in broker.replay(thread.thread_id)] == ["message.delta", "message.delta"]
+
+
+def test_streaming_adapter_flushes_observed_reasoning_before_stop(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    run_id = "run_stop_reasoning"
+    run_dir = tmp_path / run_id
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=registry,
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id=run_id,
+        observability_store=ObservabilityStore(run_dir),
+    )
+
+    class FakeV3Agent:
+        async def astream_events(self, _payload, config=None, version="v3"):
+            ObservabilityStore(run_dir).record_event(
+                source="langchain_callback",
+                channel="callback",
+                name="LLM_CALL_END",
+                category="llm",
+                ts=1.0,
+                seq=None,
+                run_id=run_id,
+                task_id="",
+                step_id=None,
+                payload={
+                    "agent_name": "experiment_specialist",
+                    "callback_run_id": "llm_stop",
+                    "node": "model",
+                    "reasoning_text": "Need to inspect the remote stage before submitting.",
+                },
+            )
+            yield {"method": "messages", "params": {"data": []}}
+
+    runner = StreamingSpecialistRunner(
+        runner=SimpleNamespace(run_context=SimpleNamespace(run_dir=run_dir, run_id=run_id)),  # type: ignore[arg-type]
+        thread_store=store,
+        event_broker=broker,
+        artifact_registry=registry,
+        should_stop=lambda _thread_id: True,
+    )
+
+    import asyncio
+
+    async def _run() -> str:
+        try:
+            await runner._consume_agent_stream(
+                FakeV3Agent(),
+                input_payload={"messages": [{"role": "user", "content": "Run O2."}]},
+                config={},
+                translator=translator,
+            )
+        except asyncio.CancelledError:
+            return "cancelled"
+        return "completed"
+
+    assert asyncio.run(_run()) == "cancelled"
+    saved = store.get_message(thread.thread_id, message.id)
+    reasoning_part = next(part for part in saved.parts if part.type == "reasoning")
+    assert reasoning_part.text == "Need to inspect the remote stage before submitting."
+    assert [event.event for event in broker.replay(thread.thread_id)] == [
+        "message.part.created",
+        "reasoning.delta",
+    ]
 
 
 def test_streaming_adapter_consumes_deepagents_v3_protocol_message_deltas(tmp_path: Path) -> None:

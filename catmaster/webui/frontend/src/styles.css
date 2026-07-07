@@ -4496,11 +4496,70 @@ body.v2-resizing-columns * {
   margin-bottom: 0;
 }
 
-.v2-reasoning {
-  border: 1px solid #deded6;
+.v2-progress-card {
+  border: 1px solid #d6ded8;
   border-radius: 6px;
-  padding: 8px;
-  color: #4b5752;
+  background: #f7faf7;
+  overflow: hidden;
+}
+
+.v2-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #d6ded8;
+  color: #244f3d;
+}
+
+.v2-progress-head span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.v2-progress-head small {
+  color: #66736e;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.v2-progress-card > .v2-message-text {
+  padding: 9px 10px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.v2-progress-history {
+  border-top: 1px solid #d6ded8;
+}
+
+.v2-progress-history summary {
+  cursor: pointer;
+  padding: 7px 10px;
+  color: #66736e;
+  font-size: 12px;
+}
+
+.v2-progress-history-list {
+  max-height: 280px;
+  overflow: auto;
+  padding: 0 10px 10px;
+}
+
+.v2-progress-history-item {
+  border-top: 1px solid #e0e0d8;
+  padding: 8px 0;
+}
+
+.v2-progress-history-item:first-child {
+  border-top: 0;
+}
+
+.v2-progress-history-item .v2-message-text {
+  color: #48524f;
+  font-size: 12px;
 }
 
 .v2-activity-group {
@@ -5019,6 +5078,8 @@ body.v2-resizing-columns * {
   padding: 0;
   gap: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .v2-browser-tabs {
@@ -5106,6 +5167,141 @@ body.v2-resizing-columns * {
   overflow: auto;
   padding: 12px;
   background: #ffffff;
+}
+
+.v2-todo-resize {
+  height: 9px;
+  flex: 0 0 9px;
+  display: grid;
+  place-items: center;
+  cursor: row-resize;
+  border-top: 1px solid #d4d4d4;
+  border-bottom: 1px solid #d4d4d4;
+  background: #f3f3f3;
+  color: #69707c;
+}
+
+.v2-todo-resize:hover,
+.v2-todo-resize:focus-visible {
+  background: #e8e8e8;
+  color: #244f3d;
+}
+
+.v2-todo-panel {
+  flex: 0 0 var(--v2-todo-panel-height, 220px);
+  min-height: 140px;
+  max-height: 560px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fbfbf8;
+}
+
+.v2-todo-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #e0e0d8;
+}
+
+.v2-todo-head h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.v2-todo-head small {
+  color: #66736e;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.v2-todo-groups {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px 12px;
+}
+
+.v2-todo-group + .v2-todo-group {
+  margin-top: 10px;
+}
+
+.v2-todo-source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: #1f2523;
+}
+
+.v2-todo-source span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.v2-todo-source small {
+  color: #66736e;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.v2-todo-group ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.v2-todo-group li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 1px solid #e0e0d8;
+  border-left: 3px solid #8c918d;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.v2-todo-group li.status-in_progress,
+.v2-todo-group li.status-running,
+.v2-todo-group li.status-active {
+  border-left-color: #2f6f55;
+}
+
+.v2-todo-group li.status-completed,
+.v2-todo-group li.status-complete,
+.v2-todo-group li.status-done {
+  border-left-color: #75816b;
+  background: #f7f8f4;
+}
+
+.v2-todo-group li.status-pending {
+  border-left-color: #b08a35;
+}
+
+.v2-todo-group li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.v2-todo-group li small {
+  color: #66736e;
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .v2-file-tab-preview {
@@ -5204,4 +5400,172 @@ body.v2-resizing-columns * {
 .v2-activity-list .v2-code.compact {
   max-height: none;
   overflow: visible;
+}
+
+/* 1080p readability pass: keep the dense workspace, but make primary text scannable. */
+.v2-workspace {
+  font-size: 15px;
+}
+
+.v2-topbar h1,
+.v2-panel-toolbar h2 {
+  font-size: 21px;
+}
+
+.v2-eyebrow,
+.v2-section-title {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.v2-workspace-tabs button,
+.v2-file-tabs button,
+.v2-subtabs button,
+.v2-permission-toggle button,
+.v2-entrypoint-picker select {
+  font-size: 14px;
+}
+
+.v2-entrypoint-picker > span,
+.v2-entrypoint-picker small,
+.v2-thread-status-strip,
+.v2-message-meta,
+.v2-muted,
+.v2-summary {
+  font-size: 13px;
+}
+
+.v2-thread-row,
+.v2-file-label,
+.v2-file-note,
+.v2-file-meta span {
+  font-size: 13px;
+}
+
+.v2-thread-row span,
+.v2-file-label span {
+  font-size: 14px;
+}
+
+.v2-thread-row small,
+.v2-file-label small {
+  font-size: 12px;
+}
+
+.v2-thread-messages {
+  max-width: 1040px;
+  gap: 16px;
+}
+
+.v2-message {
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.v2-message-avatar {
+  width: 36px;
+  height: 36px;
+}
+
+.v2-message-body {
+  padding: 14px;
+}
+
+.v2-message-text {
+  font-size: 15.5px;
+  line-height: 1.62;
+}
+
+.v2-progress-head span,
+.v2-activity-group summary,
+.v2-tool-card summary,
+.v2-activity-row,
+.v2-subagent-card summary {
+  font-size: 14px;
+}
+
+.v2-progress-head small,
+.v2-activity-group summary small,
+.v2-tool-card summary small,
+.v2-activity-row small,
+.v2-activity-group summary code,
+.v2-activity-row code {
+  font-size: 12px;
+}
+
+.v2-progress-history summary,
+.v2-progress-history-item .v2-message-text {
+  font-size: 13.5px;
+}
+
+.v2-tool-card-body label {
+  font-size: 12px;
+}
+
+.v2-workspace .v2-code,
+.v2-code.compact,
+.v2-raw-row pre,
+.v2-event-row code {
+  font-size: 12.5px;
+  line-height: 1.48;
+}
+
+.v2-browser-tab {
+  min-width: 124px;
+  font-size: 13px;
+}
+
+.v2-file-tab-actions strong,
+.v2-inspector-head h3,
+.v2-todo-head h3,
+.v2-monitor-panel-head h3 {
+  font-size: 15px;
+}
+
+.v2-todo-head small,
+.v2-todo-source small,
+.v2-todo-group li small {
+  font-size: 12px;
+}
+
+.v2-todo-source span {
+  font-size: 13px;
+}
+
+.v2-todo-group li span {
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.v2-monitor-list div,
+.v2-monitor-metric span,
+.v2-monitor-metric small,
+.v2-monitor-filters input,
+.v2-raw-row summary {
+  font-size: 13px;
+}
+
+.v2-monitor-metric strong {
+  font-size: 18px;
+}
+
+@media (max-height: 820px) {
+  .v2-topbar {
+    min-height: 78px;
+    padding-top: 12px;
+    padding-bottom: 10px;
+  }
+
+  .v2-thread-scroll {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .v2-message-body {
+    padding: 13px;
+  }
+
+  .v2-todo-panel {
+    min-height: 132px;
+  }
 }

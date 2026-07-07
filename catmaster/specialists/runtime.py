@@ -1598,6 +1598,7 @@ class SpecialistRunner:
                 "If peer-review or revision comments show that additional experiments are needed, you may relaunch `experiment_specialist` for bounded follow-up work as long as that work still respects the user's stated scope, budget, evidence limits, and time constraints.\n"
                 "If peer review indicates the work cannot reach the requested publication bar within the user's stated scope, budget, evidence limits, or time constraints, stop and tell the user that directly instead of looping.\n"
                 "Do not treat your own local shell view or direct tool view as authoritative for managed experiment capability. If submission-path, remote-environment, or resource visibility matters, issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread.\n"
+                f"{cls._research_layered_capability_visibility_policy()}\n"
                 f"{cls._delegated_computation_role_policy()}\n"
                 f"{cls._author_packet_policy()}\n"
                 f"{cls._report_packet_policy()}\n"
@@ -1685,6 +1686,7 @@ class SpecialistRunner:
             "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `dynamics_worker` for CP2K AIMD, CP2K reusable run-health summaries, LAMMPS minimization/MD/restart work, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct public-source checking only when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
             "For worker-owned calculation briefs, use the remote task catalog only to avoid misleading local fallback instructions; submission belongs to the worker. Do not suggest local executable fallback for scientific engines unless the user asked for local-only execution or a dry run.\n"
+            f"{cls._experiment_layered_capability_visibility_policy()}\n"
             f"{cls._physical_chemical_property_lookup_policy()}\n"
             "In particular, general materials or surface workflows belong to `materials_worker`; atomistic dynamics, force-field based minimization/MD, restarts, and trajectory-health work belong to `dynamics_worker`; model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
@@ -1761,6 +1763,23 @@ class SpecialistRunner:
             "tools or because your visible tool surface is incomplete. If the request fits a worker-owned domain or managed execution path, delegate a bounded "
             "calculation/probe to the proper specialist or worker before declaring a capability blocker. Only report a blocker after identifying the concrete "
             "missing input, task registration, resource configuration, stage layout, or user approval that prevents execution."
+        )
+
+    @staticmethod
+    def _research_layered_capability_visibility_policy() -> str:
+        return (
+            "Layered capability visibility: as ResearchSpecialist, do not inspect remote task catalogs, concrete remote resources, queue state, remote environments, or submission readiness directly. "
+            "If remote execution capability matters, delegate a bounded probe to ExperimentSpecialist with the scientific objective and decision needed. "
+            "Do not read worker-owned skills or tool source to reconstruct execution SOPs; pass objective, artifact constraints, and completion criteria instead."
+        )
+
+    @staticmethod
+    def _experiment_layered_capability_visibility_policy() -> str:
+        return (
+            "Layered capability visibility: as ExperimentSpecialist, you coordinate the experiment lane rather than performing worker-owned execution preflight yourself. "
+            "You may use the remote task catalog only to keep worker briefs accurate and avoid misleading local-fallback instructions. "
+            "Do not treat catalog visibility as proof of concrete resource availability, queue health, credentials, remote environment health, or submission readiness. "
+            "Do not read worker-owned skills or tool source to reconstruct detailed execution SOPs; concrete resource checks, skill-guided preflight, and managed submissions belong to the worker agent that owns the domain."
         )
 
     @staticmethod

@@ -7,12 +7,13 @@
 建议使用独立 conda 环境：
 
 ```bash
-conda create -n catmaster python=3.11
+conda env create -f requirements/pc-conda.yml
 conda activate catmaster
-pip install -r requirements/pc.txt
 ```
 
-如果这台机器还要跑本地 GPU / MACE 任务，再额外安装 GPU/MACE 依赖。`requirements/gpu.txt` 不是完整 WebUI/agent 环境，不能替代 `requirements/pc.txt`：
+`requirements/pc-conda.yml` 是 PC/control-plane 环境的唯一入口：科学/材料栈交给 conda 求解，精确 pin 的 LLM/WebUI pip 包也内联在同一个文件里。不要直接用 pip 安装科学栈。
+
+如果这台机器还要跑本地 GPU / MACE 任务，再额外安装 GPU/MACE 依赖。`requirements/gpu.txt` 不是完整 WebUI/agent 环境，不能替代 `requirements/pc-conda.yml`：
 
 ```bash
 pip install -r requirements/gpu.txt

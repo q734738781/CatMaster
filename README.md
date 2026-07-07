@@ -69,9 +69,8 @@ English guide:
 ## Minimal Local Launch
 
 ```bash
-conda create -n catmaster python=3.11
+conda env create -f requirements/pc-conda.yml
 conda activate catmaster
-pip install -r requirements/pc.txt
 
 cp configs/llm.template.yaml configs/llm.yaml
 export OPENROUTER_API_KEY="..."
@@ -97,7 +96,7 @@ the same pinned control-plane requirements used by deployment:
 
 ```bash
 conda activate catmaster-dev
-/home/chenhh/miniconda3/envs/catmaster-dev/bin/python -m pip install -r requirements/pc.txt
+conda env update -n catmaster-dev -f requirements/pc-conda.yml
 
 cd catmaster/webui/frontend
 npm install

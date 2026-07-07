@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Download, FileBox, RefreshCw, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Download, FileBox, ListChecks, RefreshCw, X } from "lucide-react";
 
 import ArtifactRenderer from "./ArtifactRenderer";
 import { apiFetch } from "../useCatMasterThreadRuntime";
+import { todoSummary } from "../todoPanel.js";
 
 function escapePath(value) {
   return encodeURIComponent(String(value || ""));
@@ -11,6 +12,50 @@ function escapePath(value) {
 function tabTitle(tab) {
   const label = tab?.title || tab?.artifact?.title || tab?.artifact?.path || tab?.path || "Preview";
   return String(label).split("/").filter(Boolean).pop() || label;
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function todoStatusClass(status) {
+  const value = String(status || "pending").toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  return value || "pending";
+}
+
+function TodoPanel({ groups }) {
+  const rows = Array.isArray(groups) ? groups : [];
+  const summary = todoSummary(rows);
+  return (
+    <section className="v2-todo-panel" aria-label="Todo list">
+      <div className="v2-todo-head">
+        <div>
+          <div className="v2-eyebrow">Todos</div>
+          <h3>Plan</h3>
+        </div>
+        <small>{summary.total ? `${summary.done}/${summary.total} done` : "0 items"}</small>
+      </div>
+      <div className="v2-todo-groups">
+        {rows.map((group) => (
+          <section key={group.source} className="v2-todo-group">
+            <div className="v2-todo-source">
+              <span>{group.source}</span>
+              <small>{group.status || "running"}</small>
+            </div>
+            <ol>
+              {(group.rows || []).map((todo, index) => (
+                <li key={`${todo.content}-${index}`} className={`status-${todoStatusClass(todo.status)}`}>
+                  <span>{todo.content}</span>
+                  <small>{todo.status || "pending"}</small>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ))}
+        {!rows.length ? <div className="v2-empty compact">No todo plan yet.</div> : null}
+      </div>
+    </section>
+  );
 }
 
 function FilePreviewBody({ ctx, workspaceName, tab }) {
@@ -63,14 +108,43 @@ function FilePreviewBody({ ctx, workspaceName, tab }) {
   );
 }
 
-export default function FilePreviewTabs({ ctx, workspaceName, tabs, activeTabId, onActivate, onClose }) {
+export default function FilePreviewTabs({ ctx, workspaceName, tabs, activeTabId, todoGroups, onActivate, onClose }) {
+  const shellRef = useRef(null);
+  const [todoHeight, setTodoHeight] = useState(() => {
+    if (typeof window === "undefined") return 220;
+    const saved = Number(window.localStorage.getItem("catmaster:v2:todo-panel-height"));
+    return Number.isFinite(saved) && saved > 0 ? saved : 220;
+  });
   const activeTab = useMemo(
     () => (tabs || []).find((tab) => tab.id === activeTabId) || (tabs || [])[0] || null,
     [tabs, activeTabId],
   );
 
+  function startTodoResize(event) {
+    event.preventDefault();
+    const shell = shellRef.current;
+    if (!shell) return;
+    document.body.classList.add("v2-resizing-columns");
+    const move = (moveEvent) => {
+      const rect = shell.getBoundingClientRect();
+      const maxHeight = Math.max(150, Math.min(560, rect.height - 170));
+      const next = clampNumber(rect.bottom - moveEvent.clientY, 140, maxHeight);
+      setTodoHeight(next);
+      window.localStorage.setItem("catmaster:v2:todo-panel-height", String(Math.round(next)));
+    };
+    const stop = () => {
+      document.body.classList.remove("v2-resizing-columns");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }
+
   return (
-    <aside className="v2-right-inspector v2-file-preview-tabs">
+    <aside ref={shellRef} className="v2-right-inspector v2-file-preview-tabs" style={{ "--v2-todo-panel-height": `${todoHeight}px` }}>
       <div className="v2-browser-tabs" role="tablist" aria-label="Open file previews">
         {(tabs || []).map((tab) => (
           <div
@@ -105,6 +179,10 @@ export default function FilePreviewTabs({ ctx, workspaceName, tabs, activeTabId,
           <div className="v2-empty">Open files or artifacts from the chat to preview them here.</div>
         )}
       </div>
+      <div className="v2-todo-resize" role="separator" aria-label="Resize todo panel" aria-orientation="horizontal" tabIndex={0} onPointerDown={startTodoResize}>
+        <ListChecks size={13} />
+      </div>
+      <TodoPanel groups={todoGroups} />
     </aside>
   );
 }

@@ -1,0 +1,78 @@
+name: catmaster
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # Keep the PC/control-plane environment complete.
+  - python=3.13
+  - pip
+
+  # Core scientific stack. Let conda solve compatible builds; keep the
+  # constraints that avoid currently known package-family conflicts.
+  - numpy<2.5
+  - scipy
+  - pandas<3
+  - joblib
+  - seaborn
+  - matplotlib
+  - beautifulsoup4
+  - pyyaml
+  - ruamel.yaml
+
+  # Atomistic modeling / materials.
+  - ase
+  - pymatgen
+  - phonopy
+  - mp-api=0.46.4
+  - emmet-core=0.87.1
+  - rdkit
+
+  # Machine learning / descriptors used by CatMaster workflows.
+  - scikit-learn
+  - xgboost
+  - umap-learn
+  - optuna
+  - matminer
+  - pysr=1.5.10
+  - faiss-cpu
+
+  # Remote/control-plane packages with native or crypto dependencies.
+  - paramiko
+
+  # WebUI frontend toolchain. Keep Node in the same environment so backend,
+  # tests, and frontend rebuilds survive machine-level Node/npm changes.
+  - nodejs>=22,<25
+
+  # Fast-moving LLM/WebUI/runtime packages are installed by pip but kept in
+  # this single conda environment file so local setup has one source of truth.
+  - pip:
+      # LLM / agent runtime: exact pins because CatMaster adapts provider payloads.
+      - openai==2.44.0
+      - openrouter==0.11.1
+      - langchain==1.3.11
+      - langchain-core==1.4.8
+      - langchain-openai==1.3.3
+      - langchain-openrouter==0.2.5
+      - langchain-anthropic==1.4.8
+      - langchain-codex-oauth==1.0.0
+      - langchain-deepseek==1.1.0
+      - langchain-google-genai==4.2.7
+      - langgraph==1.2.7
+      - deepagents==0.6.12
+      - langgraph-checkpoint-sqlite==3.1.0
+      - aiosqlite==0.22.1
+
+      # LLM-adjacent HTTP/search packages used by runtime integrations.
+      - httpx==0.28.1
+      - tavily-python==0.7.23
+
+      # WebUI/API server and schema layer.
+      - fastapi==0.139.0
+      - uvicorn==0.50.2
+      - pydantic==2.12.5
+
+      # Remote execution / HPC control plane.
+      - dpdispatcher==1.0.0
+
+      # Test runner used for CatMaster compatibility checks.
+      - pytest==9.1.1

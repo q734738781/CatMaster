@@ -161,10 +161,11 @@ Possible future removal:
 
 ## Dependency Expectations
 
-Current versions are pinned in `requirements/pc.txt`:
+Current versions are pinned in `requirements/pc-conda.yml`:
 
 - `langchain-openrouter==0.2.5`
 - `openrouter==0.11.1`
+- `langchain-deepseek==1.1.0`
 - `deepagents==0.6.12`
 
 DeepAgents issue
