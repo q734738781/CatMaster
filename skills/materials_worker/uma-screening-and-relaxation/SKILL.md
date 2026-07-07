@@ -14,7 +14,7 @@ Use this skill when a materials workflow needs FairChem UMA inference as a rapid
 1. Read `remote-stage-layouts` for `uma_sp_dir` or `uma_relax_dir`.
 2. Build one clean stage directory with `input/` containing the candidate structures.
 3. Choose `uma_task` explicitly when the scientific domain is known.
-4. Submit one prepared stage with `remote_submission`; use `remote_submission_batch` only for multiple independent UMA stage directories.
+4. Submit one prepared stage with `remote_submission` and put method-critical settings in `template_overrides`; use `remote_submission_batch` only for multiple independent UMA stage directories.
 5. Report `remote_context_id`, `submission_hash`, `receipt_rel`, and the downloaded `output/batch_summary.json`.
 
 ## Task choice
@@ -27,8 +27,10 @@ Use this skill when a materials workflow needs FairChem UMA inference as a rapid
 - Keep UMA and MACE as separate managed paths. Do not submit UMA work through `mace_gpu` or MACE task names.
 - Do not use `omol` to compute OC20/OC25 adsorption reference energies or catalyst-side adsorption energies.
 - Keep `charge=0` and `spin=0` for non-`omol` UMA tasks.
+- For `uma_task=omol`, set `charge` and `spin` explicitly through `template_overrides` and verify the downloaded `summary.json`; do not rely on the default `spin=0`.
 - Keep `relax_cell=false` unless the task is explicitly `omat` and the user wants cell relaxation.
 - Treat UMA outputs as screening evidence unless the user explicitly accepts ML-potential-level conclusions.
+- Do not edit copied `task_script/` files or use `sitecustomize.py` to force UMA arguments. If the requested `uma_task`, `charge`, or `spin` cannot be expressed through `template_overrides` or metadata, report the template gap.
 
 ## Stage examples
 Single-point screening:
@@ -40,7 +42,7 @@ stage/
     slab_b.vasp
 ```
 
-Submit with `task_name="uma_sp_dir"` and params such as:
+Submit with `task_name="uma_sp_dir"` and `template_overrides` such as:
 
 ```json
 {"uma_task": "omat", "model": "uma-s-1p2", "device": "auto"}
@@ -52,4 +54,4 @@ Relaxation:
 {"uma_task": "omat", "fmax": 0.02, "steps": 500, "relax_cell": false}
 ```
 
-For mixed task batches, write `params/uma_metadata.json` and pass `metadata_path=params/uma_metadata.json`.
+For mixed task batches, write `params/uma_metadata.json` and pass `template_overrides={"metadata_path": "params/uma_metadata.json"}`.

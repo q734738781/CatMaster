@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 
@@ -25,6 +26,28 @@ from catmaster.runtime.literature.tools import (
     web_search,
 )
 from catmaster.tools.base import workspace_scope
+
+
+def _schema_null_markers(schema: Any, path: str = "$") -> list[str]:
+    markers: list[str] = []
+    if isinstance(schema, dict):
+        schema_type = schema.get("type")
+        if schema_type == "null" or (isinstance(schema_type, list) and "null" in schema_type):
+            markers.append(path)
+        for key in ("anyOf", "oneOf"):
+            variants = schema.get(key)
+            if isinstance(variants, list) and any(
+                isinstance(item, dict) and item.get("type") == "null" for item in variants
+            ):
+                markers.append(f"{path}.{key}")
+        if schema.get("default") is None and "default" in schema:
+            markers.append(f"{path}.default")
+        for key, value in schema.items():
+            markers.extend(_schema_null_markers(value, f"{path}.{key}"))
+    elif isinstance(schema, list):
+        for index, value in enumerate(schema):
+            markers.extend(_schema_null_markers(value, f"{path}[{index}]"))
+    return markers
 
 
 def test_literature_store_persists_records_queries_and_memos(tmp_path: Path) -> None:
@@ -342,6 +365,38 @@ def test_literature_subagent_builds_agentic_toolset_with_topic_hint(tmp_path: Pa
     assert "Topic hint: CO adsorption on Fe(110)" in tools["search_openalex"].description
     assert "open_public_page" in tools
     assert "find_in_page" in tools
+
+
+def test_literature_subagent_internal_tool_schemas_do_not_export_null_markers(tmp_path: Path) -> None:
+    config = LiteratureRuntimeConfig.from_dict(
+        {
+            "budgets": {
+                "quick": {
+                    "search_limit": 3,
+                    "recommendation_limit": 2,
+                    "recommendation_seed_count": 1,
+                    "public_web_limit": 2,
+                    "use_public_web": True,
+                }
+            }
+        }
+    )
+    subagent = LiteratureSubagent(
+        openalex=None,
+        semanticscholar=object(),
+        online_search=object(),
+        store=LiteratureStore(workspace=tmp_path),
+        config=config,
+    )
+
+    markers = {}
+    for tool in subagent._build_search_tools(budget=config.budget_for_depth("quick"), topic="CO adsorption"):
+        schema = tool.args_schema
+        if hasattr(schema, "model_json_schema"):
+            schema = schema.model_json_schema()
+        markers[tool.name] = _schema_null_markers(schema)
+
+    assert {name: hits for name, hits in markers.items() if hits} == {}
 
 
 def test_search_semantic_scholar_tool_soft_fails_on_rate_limit(monkeypatch) -> None:

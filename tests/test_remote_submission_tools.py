@@ -11,6 +11,7 @@ from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.runtime.tool_runtime import toolcall_context
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.execution.remote_submission import (
+    RemoteSubmissionInput,
     get_avail_remote_task,
     get_avail_resources,
     remote_submission,
@@ -45,14 +46,19 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "remote_submission: work_dir is one prepared stage" in content
     assert "remote_submission_batch: work_dir is a parent root" in content
     assert "boot script runs once inside each first-level child" in content
+    assert "template_overrides" in content
     assert "submission_guidance" in artifact["data"]
     assert "remote_submission_batch" in artifact["data"]["submission_guidance"]
+    assert "template_overrides" in artifact["data"]["submission_guidance"]
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
     assert {"vasp_execute", "mace_sp_dir", "uma_sp_dir", "uma_relax_dir"}.issubset(task_names)
     mace_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mace_sp_dir")
     assert "input/" in mace_item["submission_hint"]
+    assert "head" in mace_item["template_override_keys"]
+    assert mace_item["template_defaults"]["head"] == "omat_pbe"
     uma_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "uma_sp_dir")
     assert "UMA" in uma_item["submission_hint"]
+    assert "spin" in uma_item["template_override_keys"]
     assert "mace_md_dir" not in task_names
     assert "orca_execute" not in task_names
     assert "mace_train_dir" not in task_names
@@ -293,6 +299,73 @@ def test_remote_submission_quotes_template_params(
 
     assert "--head '' --dispersion false" in captured["command"]
     assert "--model 'model with spaces'" in captured["command"]
+
+
+def test_remote_submission_template_overrides_alias_renders_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = (register, config_path)
+        captured["command"] = req.tasks[0].command
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={"remote_context_id": "dp_override", "submission_hash": "hash_override", "receipt_rel": "receipt.json"},
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    schema = RemoteSubmissionInput.model_json_schema()["properties"]
+    assert "template_overrides" in schema
+    assert schema["template_overrides"]["type"] == "object"
+    assert "anyOf" not in schema["template_overrides"]
+    assert schema["params"]["type"] == "object"
+    assert "anyOf" not in schema["params"]
+    assert schema["config"]["type"] == "object"
+    assert "anyOf" not in schema["config"]
+    assert schema["task_name"]["type"] == "string"
+    assert "anyOf" not in schema["task_name"]
+    assert schema["boot_script"]["type"] == "string"
+    assert "anyOf" not in schema["boot_script"]
+
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage"
+        (stage / "input").mkdir(parents=True)
+        (stage / "input" / "O2.vasp").write_text("dummy", encoding="utf-8")
+        with toolcall_context("submit", audience="materials_worker"):
+            remote_submission(
+                {
+                    "work_dir": "stage",
+                    "task_name": "mace_relax_dir",
+                    "template_overrides": {"head": "omol", "fmax": 0.03, "maxsteps": 100},
+                }
+            )
+
+    assert "--head omol" in captured["command"]
+    assert "--fmax 0.03" in captured["command"]
+    assert "--steps 100" in captured["command"]
+
+
+def test_remote_submission_accepts_legacy_null_object_fields() -> None:
+    parsed = RemoteSubmissionInput(
+        work_dir="stage",
+        task_name="mace_relax_dir",
+        boot_script=None,
+        params=None,
+        template_overrides=None,
+        config=None,
+    )
+
+    assert parsed.task_name == "mace_relax_dir"
+    assert parsed.boot_script == ""
+    assert parsed.params == {}
+    assert parsed.template_overrides == {}
+    assert parsed.config == {}
 
 
 def test_remote_submission_batch_maps_first_level_children(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

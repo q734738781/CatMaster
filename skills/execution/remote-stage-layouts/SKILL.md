@@ -65,7 +65,9 @@ mace_stage/
 - Domain task resource defaults are shown through `get_avail_remote_task(return_resource=true)`. For registered tasks, do not pass `config.resources`; the task resource card owns machine/environment initialization. Override only exposed sizing fields such as `cpu_per_node` or `gpu_per_node` when intentionally requested.
 - For worker tools, do not pass `config.machine`; machine-level selection is a backend/admin detail.
 - For batch submission, every first-level child of `work_dir` is submitted as one task; nested discovery is not performed.
-- Use `params` only for command-template values. Use `config` for custom-boot resource-card selection, allowed sizing overrides, and submission controls.
+- Use `template_overrides` for registered task command-template values; `params` is the legacy alias. Use this for method-critical defaults such as MACE `head`/`fmax` or UMA `uma_task`/`spin`.
+- Use `config` only for custom-boot resource-card selection, allowed sizing overrides, and submission controls.
+- Do not edit copied `task_script/` files or add `sitecustomize.py` to change built-in template defaults. Built-in boot scripts are copied by the submission tool, and template values belong in `template_overrides`.
 
 ## vasp_execute
 Stage directory must be one complete VASP calculation folder:
@@ -138,10 +140,10 @@ stage/
     POSCAR or *.vasp/*.cif/*.poscar
 ```
 
-Common params: `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU; pass `device=cuda` only when CUDA execution is required.
+Common template overrides: `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU; pass `device=cuda` only when CUDA execution is required.
 
 ## mace_relax_dir
-Same layout as `mace_sp_dir`, with relaxation params such as `fmax`, `maxsteps`, and `relax_lattice`. Common params also include `device`; managed GPU tasks default to `device=auto`, which prioritizes completion and may fall back to CPU. Pass `device=cuda` only for hard GPU validation.
+Same layout as `mace_sp_dir`, with relaxation template overrides such as `fmax`, `maxsteps`, and `relax_lattice`. Common overrides also include `device`; managed GPU tasks default to `device=auto`, which prioritizes completion and may fall back to CPU. Pass `device=cuda` only for hard GPU validation.
 
 ## uma_sp_dir
 Stage directory must contain `input/` with structures for FairChem UMA single-point inference. Outputs are written to `output/`.
@@ -154,21 +156,21 @@ stage/
     uma_metadata.json
 ```
 
-Common params: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`.
+Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`.
 
 - `model` defaults to `uma-s-1p2`.
 - `uma_task=auto` makes a conservative molecule-vs-periodic choice: periodic structures with valid cells use `omat`; nonperiodic structures use `omol`.
 - For catalysis, oxide catalysis, electrocatalysis, DAC/MOF, or molecular crystals, set `uma_task` explicitly (`oc20`, `oc22`, `oc25`, `odac`, or `omc`) instead of relying on `auto`.
 - `omol` requires correct `charge` and `spin` values. FairChem examples use the `spin` field as the spin-state value expected by OMOL, for example singlet `spin=1` and triplet `spin=3`.
 - Non-`omol` tasks should normally use `charge=0` and `spin=0`; CatMaster's UMA boot scripts reject nonzero values for those tasks to avoid mixing molecular spin metadata into materials/catalysis tasks.
-- The optional `params/uma_metadata.json` can override `task`, `charge`, and `spin` per input file. If used, pass `params.metadata_path=params/uma_metadata.json`.
+- The optional `params/uma_metadata.json` can override `task`, `charge`, and `spin` per input file. If used, pass `template_overrides={"metadata_path": "params/uma_metadata.json"}`.
 
 Use `remote_submission` for one UMA stage even when `input/` contains many structures. Use `remote_submission_batch` only when the parent directory contains multiple independent UMA stage directories.
 
 ## uma_relax_dir
-Same layout as `uma_sp_dir`, with relaxation params such as `fmax`, `steps`, `optimizer`, and `relax_cell`.
+Same layout as `uma_sp_dir`, with relaxation template overrides such as `fmax`, `steps`, `optimizer`, and `relax_cell`.
 
-Common params: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`, `fmax`, `steps`, `optimizer`, `relax_cell`.
+Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`, `fmax`, `steps`, `optimizer`, `relax_cell`.
 
 - `relax_cell=false` is the default and should remain the default for first-pass screening.
 - `relax_cell=true` is only enabled for `uma_task=omat` in CatMaster. Other UMA tasks either target nonperiodic systems or may not have stress-label supervision.

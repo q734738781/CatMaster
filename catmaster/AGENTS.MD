@@ -67,6 +67,16 @@ Execution guidance for the active experiment path:
 - If the missing implementation becomes heavy, high-throughput, multi-step, or clearly worth rerunning, materialize it as a reusable workspace script under `scripts/` instead of hiding the whole workflow in one long ephemeral shell command.
 - Every agent-created or substantially revised reusable script under `scripts/` must start with a concise comment header containing code writing date, responsible/related agent, implementation principle, and purpose. Include key inputs/outputs when helpful.
 
+Agent-visible tool schema rules:
+
+- Treat tool schemas as an LLM-facing interface, not only as a Pydantic validation artifact. Legal JSON Schema can still be confusing after LangChain, provider, MCP, or registry conversion.
+- Separate "may be omitted" from "may be null". Avoid `T | None = None` / `Optional[T] = None` for active-path tool inputs unless `null` is a real domain value the model should choose.
+- For optional object/list/string controls, prefer non-nullable defaults: `Field(default_factory=dict)`, `Field(default_factory=list)`, or `""`. If legacy callers may send `null`, coerce it in a `model_validator(mode="before")` rather than exposing nullable schema.
+- Avoid exposing `anyOf`/`oneOf` nullable unions for method-critical control fields, especially `dict`, `list`, `str`, enum, and override/config fields. Nullable unions can be stripped, normalized to the wrong branch, or read by the LLM as if `null` were the only safe value.
+- Describe the intended empty value directly, such as "leave empty when using task_name" or "omit or pass `{}` when no overrides are needed"; do not tell the model to pass `null` unless that is the intended method value.
+- For method-critical overrides, expose a named non-nullable object such as `template_overrides`, document accepted keys in the tool/catalog surface, and test that the override renders into the actual command or payload.
+- Test the final schema that the agent sees, not just `BaseModel.model_json_schema()`. Check `StructuredTool.args_schema`, `ToolRegistry.as_openai_tools(...)`, and any sanitizer/provider adapter that may alter `anyOf`, defaults, required fields, or nullability.
+
 ## 2) Current literature architecture
 
 All agent-visible public web search should flow through the registered public-source checking capability.

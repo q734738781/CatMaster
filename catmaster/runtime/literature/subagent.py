@@ -8,10 +8,12 @@ from typing import Any, Iterable
 
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 from catmaster.llm.config import LLMProfile, LiteratureRuntimeConfig
 from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.tool_output_adapter import tool_error_to_message
+from catmaster.tools.registry import sanitize_json_schema
 
 from .depth_policy import resolve_depth
 from .models import LiteratureContextPack, PaperRecord, ResearchDepth
@@ -114,6 +116,12 @@ def _make_internal_tool_budget_middleware(*, max_tool_calls: int) -> list[Any]:
     return [_ResetToolCallCounterMiddleware(), _ToolCallBudgetMiddleware()]
 
 
+def _sanitized_tool_schema(input_model: type[BaseModel]) -> dict[str, Any]:
+    schema = sanitize_json_schema(input_model.model_json_schema())
+    schema.pop("description", None)
+    return schema
+
+
 @dataclass
 class LiteratureSubagent:
     semanticscholar: SemanticScholarClient
@@ -173,6 +181,66 @@ class LiteratureSubagent:
         public_search_enabled = bool(
             allow_public_web and getattr(self.online_search, "public_search_enabled", lambda: True)()
         )
+        search_limit_schema = max(1, int(search_limit or 1))
+        rec_limit_schema = max(1, int(rec_limit or 1))
+        web_limit_schema = max(1, int(web_limit or 1))
+
+        class _SearchOpenAlexArgs(BaseModel):
+            query: str = Field(..., description="Short paper-lookup query for OpenAlex.")
+            limit: int = Field(
+                search_limit_schema,
+                ge=1,
+                le=search_limit_schema,
+                description="Maximum number of OpenAlex records to return. Omit to use the configured cap.",
+            )
+
+        class _SearchSemanticScholarArgs(BaseModel):
+            query: str = Field(..., description="Short paper-lookup query for Semantic Scholar.")
+            limit: int = Field(
+                search_limit_schema,
+                ge=1,
+                le=search_limit_schema,
+                description="Maximum number of Semantic Scholar records to return. Omit to use the configured cap.",
+            )
+
+        class _GetOpenAlexRecordArgs(BaseModel):
+            work_id_or_doi: str = Field(..., description="OpenAlex work id or DOI.")
+
+        class _GetSemanticScholarRecordArgs(BaseModel):
+            paper_id_or_doi: str = Field(..., description="Semantic Scholar paper id or DOI.")
+
+        class _RecommendSemanticScholarArgs(BaseModel):
+            seed_paper_ids: list[str] = Field(..., description="Seed Semantic Scholar paper ids.")
+            limit: int = Field(
+                rec_limit_schema,
+                ge=1,
+                le=rec_limit_schema,
+                description="Maximum number of recommendations to return. Omit to use the configured cap.",
+            )
+
+        class _WebSearchArgs(BaseModel):
+            query: str = Field(..., description="Public-web query.")
+            max_results: int = Field(
+                web_limit_schema,
+                ge=1,
+                le=web_limit_schema,
+                description="Maximum number of public-web results to return. Omit to use the configured cap.",
+            )
+
+        class _OpenPublicPageArgs(BaseModel):
+            url: str = Field(..., description="Public http(s) URL.")
+            max_chars: int = Field(
+                12000,
+                ge=500,
+                le=50000,
+                description="Maximum number of normalized text characters to retain.",
+            )
+
+        class _FindInPageArgs(BaseModel):
+            url: str = Field(..., description="Public http(s) URL.")
+            pattern: str = Field(..., description="Pattern to search for.")
+            max_matches: int = Field(5, ge=1, le=50, description="Maximum number of match snippets to return.")
+            context_chars: int = Field(240, ge=40, le=2000, description="Context characters around each match.")
 
         def search_openalex(query: str, limit: int | None = None) -> str:
             actual_limit = max(1, min(int(limit or search_limit or 1), max(search_limit, 1)))
@@ -316,6 +384,8 @@ class LiteratureSubagent:
                     f"Search OpenAlex for accurate scholarly metadata only. Use short paper-lookup queries, not broad background questions or reporting instructions. "
                     f"Use this when you need DOI/year/venue/authors/citation metadata or an exact paper match. Default/cap limit={search_limit}. Topic hint: {topic or '(none)'}."
                 ),
+                args_schema=_sanitized_tool_schema(_SearchOpenAlexArgs),
+                infer_schema=False,
             ),
             StructuredTool.from_function(
                 func=search_semantic_scholar,
@@ -324,16 +394,22 @@ class LiteratureSubagent:
                     f"Search Semantic Scholar only to supplement or confirm precise paper metadata, abstract/tldr hints, and recommendation seeds. "
                     f"Do not use this for broad background search. Default/cap limit={search_limit}."
                 ),
+                args_schema=_sanitized_tool_schema(_SearchSemanticScholarArgs),
+                infer_schema=False,
             ),
             StructuredTool.from_function(
                 func=get_openalex_record,
                 name="get_openalex_record",
                 description="Fetch a single OpenAlex work by OpenAlex id or DOI when a specific paper needs exact metadata confirmation.",
+                args_schema=_sanitized_tool_schema(_GetOpenAlexRecordArgs),
+                infer_schema=False,
             ),
             StructuredTool.from_function(
                 func=get_semantic_scholar_record,
                 name="get_semantic_scholar_record",
                 description="Fetch a single Semantic Scholar paper by paper id or DOI when a specific paper needs exact metadata or abstract confirmation.",
+                args_schema=_sanitized_tool_schema(_GetSemanticScholarRecordArgs),
+                infer_schema=False,
             ),
         ]
         if rec_limit > 0:
@@ -346,6 +422,8 @@ class LiteratureSubagent:
                         f"Use only after you already found promising semantic scholar papers and need metadata-grounded expansion. Default/cap limit={rec_limit};"
                         f" seed count should stay small (typically <= {rec_seed_count})."
                     ),
+                    args_schema=_sanitized_tool_schema(_RecommendSemanticScholarArgs),
+                    infer_schema=False,
                 )
             )
         if public_search_enabled and web_limit > 0:
@@ -357,6 +435,8 @@ class LiteratureSubagent:
                         f"Search public web for broad background, NIH/landing-page summaries, or context beyond metadata. "
                         f"Use this for broad orientation or when scholarly APIs are sparse. Default/cap results={web_limit}."
                     ),
+                    args_schema=_sanitized_tool_schema(_WebSearchArgs),
+                    infer_schema=False,
                 )
             )
         if allow_public_web:
@@ -368,6 +448,8 @@ class LiteratureSubagent:
                         "Open a public http(s) page returned from search and extract normalized visible text, title, "
                         "description, and final URL. Use this when snippets are not enough and you need page-level evidence."
                     ),
+                    args_schema=_sanitized_tool_schema(_OpenPublicPageArgs),
+                    infer_schema=False,
                 )
             )
             tools.append(
@@ -378,6 +460,8 @@ class LiteratureSubagent:
                         "Search normalized text within a public page previously identified by URL. Use this to confirm "
                         "whether a page mentions a specific method, adsorbate, material, reference-state convention, or keyword."
                     ),
+                    args_schema=_sanitized_tool_schema(_FindInPageArgs),
+                    infer_schema=False,
                 )
             )
         return tools

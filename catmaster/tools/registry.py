@@ -369,7 +369,7 @@ class ToolRegistry:
         """List all registered tools with their schemas."""
         return {
             name: {
-                "parameters": info["parameters"]
+                "parameters": sanitize_json_schema(info["parameters"])
             }
             for name, info in self.tools.items()
         }
@@ -549,28 +549,75 @@ def _make_langchain_tool(
     )
 
 
-def sanitize_json_schema(schema: dict) -> dict:
+def _is_null_schema(schema: Any) -> bool:
+    return isinstance(schema, dict) and schema.get("type") == "null"
+
+
+def _merge_non_null_variant(parent: dict, variant: dict, union_key: str) -> dict:
+    merged = dict(variant)
+    for key, value in parent.items():
+        if key == union_key:
+            continue
+        if key == "default" and value is None:
+            continue
+        if key in {"description", "default"} or key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _strip_optional_nullability(schema: dict, *, required: bool) -> dict:
+    if required:
+        return schema
+
+    cleaned = dict(schema)
+    for union_key in ("anyOf", "oneOf"):
+        variants = cleaned.get(union_key)
+        if not isinstance(variants, list) or not any(_is_null_schema(item) for item in variants):
+            continue
+        non_null_variants = [item for item in variants if not _is_null_schema(item)]
+        if len(non_null_variants) == 1 and isinstance(non_null_variants[0], dict):
+            cleaned = _merge_non_null_variant(cleaned, non_null_variants[0], union_key)
+        else:
+            cleaned[union_key] = non_null_variants
+            if cleaned.get("default") is None:
+                cleaned.pop("default", None)
+        break
+
+    schema_type = cleaned.get("type")
+    if isinstance(schema_type, list) and "null" in schema_type:
+        non_null_types = [item for item in schema_type if item != "null"]
+        cleaned["type"] = non_null_types[0] if len(non_null_types) == 1 else non_null_types
+        if cleaned.get("default") is None:
+            cleaned.pop("default", None)
+    elif cleaned.get("default") is None:
+        cleaned.pop("default", None)
+
+    return cleaned
+
+
+def sanitize_json_schema(schema: dict, *, _required: bool = True) -> dict:
     if isinstance(schema, list):
-        return [sanitize_json_schema(item) for item in schema]
+        return [sanitize_json_schema(item, _required=_required) for item in schema]
     if not isinstance(schema, dict):
         return schema
 
+    required_fields = set(schema.get("required") or []) if isinstance(schema.get("required"), list) else set()
     cleaned: dict = {}
     for key, value in schema.items():
         if key in {"title", "examples"}:
             continue
-        if isinstance(value, dict):
+        if key == "properties" and isinstance(value, dict):
+            cleaned[key] = {
+                prop: sanitize_json_schema(prop_schema, _required=prop in required_fields)
+                for prop, prop_schema in value.items()
+            }
+        elif isinstance(value, dict):
             cleaned[key] = sanitize_json_schema(value)
         elif isinstance(value, list):
             cleaned[key] = [sanitize_json_schema(item) for item in value]
         else:
             cleaned[key] = value
 
-    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
-        cleaned["properties"] = {
-            prop: sanitize_json_schema(prop_schema)
-            for prop, prop_schema in cleaned["properties"].items()
-        }
     for key in ("anyOf", "allOf", "oneOf"):
         if key in cleaned and isinstance(cleaned[key], list):
             cleaned[key] = [sanitize_json_schema(item) for item in cleaned[key]]
@@ -578,6 +625,8 @@ def sanitize_json_schema(schema: dict) -> dict:
         cleaned["items"] = sanitize_json_schema(cleaned["items"])
     if "prefixItems" in cleaned and isinstance(cleaned["prefixItems"], list):
         cleaned["prefixItems"] = [sanitize_json_schema(item) for item in cleaned["prefixItems"]]
+
+    cleaned = _strip_optional_nullability(cleaned, required=_required)
 
     schema_type = cleaned.get("type")
     if schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type):
