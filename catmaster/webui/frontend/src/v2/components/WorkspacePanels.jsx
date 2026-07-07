@@ -51,10 +51,70 @@ function formatHours(value) {
   return hours.toFixed(2);
 }
 
-function compactJson(value, max = 3200) {
+function jsonText(value) {
   if (value == null || value === "") return "";
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function compactJson(value, max = 3200) {
+  const text = jsonText(value);
   return text.length > max ? `${text.slice(0, max)}\n... truncated ...` : text;
+}
+
+function plainText(value, fallback = "-") {
+  if (value == null) return fallback;
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text || fallback;
+  }
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : fallback;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "object") {
+    const text = jsonText(value).replace(/\s+/g, " ").trim();
+    return text || fallback;
+  }
+  return String(value);
+}
+
+function compactPlainText(value, max = 420) {
+  const text = plainText(value, "").replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function formatDurationMs(value) {
+  const ms = Number(value || 0);
+  if (!Number.isFinite(ms) || ms <= 0) return "-";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return formatDurationSec(ms / 1000);
+}
+
+function formatMaybeDurationSec(value) {
+  const seconds = Number(value || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "-";
+  return formatDurationSec(seconds);
+}
+
+function formatTimestamp(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) return "-";
+  const ms = number > 100000000000 ? number : number * 1000;
+  return new Date(ms).toLocaleString();
+}
+
+function formatTokenUsage(value) {
+  const usage = asRecord(value);
+  const total = usage.total_tokens ?? usage.totalTokens ?? usage.total;
+  const input = usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.prompt;
+  const output = usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.completion;
+  const chunks = [];
+  if (Number(total) > 0) chunks.push(`${formatCount(total)} total`);
+  if (Number(input) > 0) chunks.push(`${formatCount(input)} in`);
+  if (Number(output) > 0) chunks.push(`${formatCount(output)} out`);
+  return chunks.join(" / ") || "-";
 }
 
 function clampNumber(value, min, max) {
@@ -392,6 +452,248 @@ function MonitorList({ rows, empty = "No rows." }) {
   );
 }
 
+function LivePanel({ icon: Icon, title, children }) {
+  return (
+    <section className="v2-monitor-panel">
+      <div className="v2-monitor-panel-head">
+        {Icon ? <Icon size={15} /> : null}
+        <h3>{title}</h3>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function LiveFieldGrid({ rows }) {
+  const visibleRows = rows.filter((row) => row && (row.always || plainText(row.value, "") !== ""));
+  if (!visibleRows.length) return <div className="v2-empty">No live fields yet.</div>;
+  return (
+    <div className="v2-live-fields">
+      {visibleRows.map((row) => (
+        <div key={row.label}>
+          <span>{row.label}</span>
+          <strong title={plainText(row.value)}>{plainText(row.value)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiveProgress({ progress }) {
+  const state = asRecord(progress);
+  const completed = Number(state.completed || 0);
+  const pending = Number(state.pending || 0);
+  const failed = Number(state.failed || 0);
+  const needsIntervention = Number(state.needs_intervention || 0);
+  const total = Number(state.total || completed + pending + failed + needsIntervention || 0);
+  const pct = total > 0 ? clampNumber((completed / total) * 100, 0, 100) : 0;
+  return (
+    <div className="v2-live-progress">
+      <div className="v2-live-progress-bar" aria-label="Task progress">
+        <span style={{ width: `${pct}%` }} />
+      </div>
+      <div className="v2-live-progress-counts">
+        <div><span>Done</span><strong>{formatCount(completed)}</strong></div>
+        <div><span>Pending</span><strong>{formatCount(pending)}</strong></div>
+        <div><span>Failed</span><strong>{formatCount(failed)}</strong></div>
+        <div><span>Needs input</span><strong>{formatCount(needsIntervention)}</strong></div>
+        <div><span>Total</span><strong>{formatCount(total)}</strong></div>
+      </div>
+    </div>
+  );
+}
+
+function LiveToolDetails({ toolcall, empty = "No active tool call." }) {
+  const call = asRecord(toolcall);
+  if (!call.tool) return <div className="v2-empty">{empty}</div>;
+  const paramsText = call.params_compact || (call.params_full != null ? compactJson(call.params_full, 1400) : "");
+  return (
+    <>
+      <LiveFieldGrid
+        rows={[
+          { label: "Tool", value: call.tool, always: true },
+          { label: "Status", value: call.status || "running", always: true },
+          { label: "Elapsed", value: formatMaybeDurationSec(call.elapsed_sec ?? call.duration_sec), always: true },
+          { label: "Task", value: call.task_id },
+          { label: "Step", value: call.step_id },
+          { label: "Tool call", value: call.toolcall_id },
+        ]}
+      />
+      {paramsText ? (
+        <details className="v2-live-details">
+          <summary>Parameters</summary>
+          <pre>{paramsText}</pre>
+        </details>
+      ) : null}
+    </>
+  );
+}
+
+function LiveToolList({ rows }) {
+  const normalized = Array.isArray(rows) ? rows.filter((row) => row && typeof row === "object" && row.tool) : [];
+  if (!normalized.length) return <div className="v2-empty">No recent tool calls.</div>;
+  return (
+    <div className="v2-live-list">
+      {normalized.slice().reverse().slice(0, 10).map((row, index) => (
+        <div key={row.toolcall_id || `${row.tool}-${index}`} className="v2-live-row">
+          <div>
+            <strong>{row.tool}</strong>
+            <small>{row.highlights || compactPlainText(row.params_compact, 180) || row.task_id || ""}</small>
+          </div>
+          <span>{row.status || "done"}</span>
+          <code>{formatMaybeDurationSec(row.duration_sec ?? row.elapsed_sec)}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiveTodoList({ liveState }) {
+  const rows = Array.isArray(liveState?.todo_rows) ? liveState.todo_rows : [];
+  const items = rows.length
+    ? rows
+    : (Array.isArray(liveState?.todo_items) ? liveState.todo_items.map((item) => ({ content: item, status: "pending" })) : []);
+  const visibleItems = items.filter((item) => item && plainText(item.content || item, "")).slice(0, 8);
+  if (!visibleItems.length) return <div className="v2-empty">No task list has been published.</div>;
+  return (
+    <div className="v2-live-list">
+      {visibleItems.map((item, index) => (
+        <div key={`${item.content || item}-${index}`} className="v2-live-row">
+          <div>
+            <strong>{plainText(item.content || item)}</strong>
+          </div>
+          <span>{item.status || "pending"}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function liveAgentStatus(agent) {
+  const state = asRecord(agent);
+  const llm = asRecord(state.llm);
+  if (asRecord(state.active_toolcall).tool || String(llm.status || "") === "running") return "active";
+  return plainText(state.status, "idle");
+}
+
+function LiveAgentList({ agents }) {
+  const rows = Object.entries(asRecord(agents))
+    .map(([name, agent]) => ({ name, agent: asRecord(agent), status: liveAgentStatus(agent) }))
+    .filter((row) => row.name)
+    .sort((left, right) => {
+      const rank = (status) => (status === "active" ? 0 : status === "completed" ? 1 : 2);
+      const rankDiff = rank(left.status) - rank(right.status);
+      if (rankDiff !== 0) return rankDiff;
+      return Number(right.agent.last_updated_ts || 0) - Number(left.agent.last_updated_ts || 0);
+    });
+  if (!rows.length) return <div className="v2-empty">No subagent state captured yet.</div>;
+  return (
+    <div className="v2-live-list">
+      {rows.slice(0, 12).map(({ name, agent, status }) => {
+        const activeTool = asRecord(agent.active_toolcall);
+        const llm = asRecord(agent.llm);
+        const detail = activeTool.tool || llm.phase || llm.model || formatTimestamp(agent.last_updated_ts);
+        return (
+          <div key={name} className="v2-live-row">
+            <div>
+              <strong>{name}</strong>
+              <small>{detail}</small>
+            </div>
+            <span>{status}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LiveLlmPanel({ llm }) {
+  const state = asRecord(llm);
+  const hasContent = state.model || state.phase || state.status || state.text || state.reasoning_text || Object.keys(asRecord(state.usage)).length;
+  if (!hasContent) return <div className="v2-empty">No LLM call captured yet.</div>;
+  return (
+    <>
+      <LiveFieldGrid
+        rows={[
+          { label: "Model", value: state.model },
+          { label: "Phase", value: state.phase },
+          { label: "Status", value: state.status || "idle", always: true },
+          { label: "Elapsed", value: formatDurationMs(state.elapsed_ms), always: true },
+          { label: "Usage", value: formatTokenUsage(state.usage), always: true },
+        ]}
+      />
+      {state.reasoning_text ? <p className="v2-live-note"><strong>Reasoning</strong>{compactPlainText(state.reasoning_text, 700)}</p> : null}
+      {state.text ? <p className="v2-live-note"><strong>Output</strong>{compactPlainText(state.text, 700)}</p> : null}
+    </>
+  );
+}
+
+function LiveStateView({ liveState }) {
+  const state = asRecord(liveState);
+  const summary = asRecord(state.live_summary);
+  const headline = summary.live_headline || state.current_task_goal || state.current_phase || state.status || "No active run state.";
+  const taskSummary = asRecord(state.last_task_summary);
+  const journal = Array.isArray(state.journal_recent) ? state.journal_recent : [];
+  return (
+    <div className="v2-monitor-columns v2-live-grid">
+      <LivePanel icon={Activity} title="Current Activity">
+        <div className="v2-live-headline">{plainText(headline)}</div>
+        {summary.live_summary ? <p className="v2-live-note">{summary.live_summary}</p> : null}
+        {summary.next_expected_step ? <p className="v2-live-note"><strong>Next</strong>{summary.next_expected_step}</p> : null}
+        <LiveFieldGrid
+          rows={[
+            { label: "Status", value: state.status || "unknown", always: true },
+            { label: "Phase", value: state.current_phase || "unknown", always: true },
+            { label: "Task", value: state.current_task_id },
+            { label: "Run", value: state.run_id },
+            { label: "Updated", value: formatTimestamp(state.last_updated_ts), always: true },
+          ]}
+        />
+      </LivePanel>
+
+      <LivePanel icon={Cpu} title="Active Tool">
+        <LiveToolDetails toolcall={state.active_toolcall} />
+      </LivePanel>
+
+      <LivePanel icon={ListChecks} title="Progress">
+        <LiveProgress progress={state.progress} />
+        <LiveTodoList liveState={state} />
+      </LivePanel>
+
+      <LivePanel icon={GitBranch} title="Recent Tools">
+        <LiveToolList rows={state.recent_toolcalls} />
+      </LivePanel>
+
+      <LivePanel icon={MessageSquare} title="Agents">
+        <LiveAgentList agents={state.agents} />
+      </LivePanel>
+
+      <LivePanel icon={BarChart3} title="Recent LLM">
+        <LiveLlmPanel llm={state.llm} />
+      </LivePanel>
+
+      {(taskSummary.summary_snippet || journal.length) ? (
+        <LivePanel icon={Clock} title="Task Journal">
+          {taskSummary.summary_snippet ? (
+            <p className="v2-live-note"><strong>{taskSummary.outcome || "latest"}</strong>{taskSummary.summary_snippet}</p>
+          ) : null}
+          <div className="v2-live-list">
+            {journal.slice().reverse().slice(0, 5).map((item, index) => (
+              <div key={`${item.task_id || "journal"}-${index}`} className="v2-live-row">
+                <div>
+                  <strong>{item.task_id || `Entry ${index + 1}`}</strong>
+                  <small>{item.summary_snippet || ""}</small>
+                </div>
+                <span>{item.outcome || ""}</span>
+              </div>
+            ))}
+          </div>
+        </LivePanel>
+      ) : null}
+    </div>
+  );
+}
+
 function matchesMonitorFilters(event, filters) {
   if (!event || !filters) return true;
   const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
@@ -479,11 +781,12 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
   const usage = observability?.usage_summary || {};
   const machine = observability?.machine_time_summary || {};
   const liveState = observability?.live_state || {};
-  const graph = observability?.graph || {};
   const rawEvents = Array.isArray(observability?.raw_logs?.events) && observability.raw_logs.events.length ? observability.raw_logs.events : sessionEvents;
   const chatMessages = Array.isArray(observability?.chat_messages) ? observability.chat_messages : [];
   const filteredRawEvents = rawEvents.filter((event) => matchesMonitorFilters(event, eventFilters));
   const filteredThreadRows = threadRows.filter((event) => matchesMonitorFilters(event, eventFilters));
+  const filteredSessionEvents = sessionEvents.filter((event) => matchesMonitorFilters(event, eventFilters));
+  const visibleEvents = [...filteredThreadRows, ...filteredSessionEvents.slice().reverse()].slice(0, 300);
 
   return (
     <section className="v2-tab-panel">
@@ -550,21 +853,24 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
         </div>
       ) : null}
       {activeSubtab === "live" ? (
-        <div className="v2-monitor-columns">
-          <MonitorCodeBlock title="Live State" text={compactJson(liveState)} />
-          <MonitorCodeBlock title="Graph" text={compactJson(graph)} />
-        </div>
+        <LiveStateView liveState={liveState} />
       ) : null}
       {activeSubtab === "events" ? (
         <div className="v2-event-list">
-          {[...filteredThreadRows, ...sessionEvents.filter((event) => matchesMonitorFilters(event, eventFilters)).slice().reverse()].slice(0, 300).map((event, index) => (
-            <div key={event.seq || event.id || `${event.event || event.name}-${index}`} className="v2-event-row">
-              <span>{event.event || event.name || event.category || "event"}</span>
-              <small>{event.status || event.source || ""}</small>
-              <code>{compactJson(event.data || event.payload || event, 900)}</code>
-            </div>
-          ))}
-          {!filteredThreadRows.length && !sessionEvents.filter((event) => matchesMonitorFilters(event, eventFilters)).length ? <div className="v2-empty">No events captured yet.</div> : null}
+          {visibleEvents.map((event, index) => {
+            const payload = event.data || event.payload || event;
+            return (
+              <details key={event.seq || event.id || `${event.event || event.name}-${index}`} className="v2-event-row">
+                <summary>
+                  <span>{event.event || event.name || event.category || "event"}</span>
+                  <small>{event.status || event.source || ""}</small>
+                  <code>{compactJson(payload, 900)}</code>
+                </summary>
+                <pre>{jsonText(payload) || "(empty)"}</pre>
+              </details>
+            );
+          })}
+          {!visibleEvents.length ? <div className="v2-empty">No events captured yet.</div> : null}
         </div>
       ) : null}
       {activeSubtab === "raw" ? (
@@ -599,7 +905,6 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
         <div className="v2-monitor-columns">
           <MonitorCodeBlock title="Task State" text={details?.task_state || ""} />
           <MonitorCodeBlock title="Memory" text={details?.memory || ""} />
-          <MonitorCodeBlock title="Proposal" text={details?.proposal || ""} />
         </div>
       ) : null}
       {eventPage?.has_more ? <div className="v2-muted">Older event pages are available in the API.</div> : null}
