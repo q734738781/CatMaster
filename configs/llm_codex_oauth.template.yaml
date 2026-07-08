@@ -10,7 +10,8 @@
 #   python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 #
 # Copy this file to configs/llm.yaml on the deployment target. The default
-# matches current Codex guidance: GPT-5.5 with high reasoning effort.
+# matches current Codex guidance: GPT-5.5 with high reasoning effort and
+# Responses API reasoning summaries for monitor observability.
 
 models:
   codex-oauth-main:
@@ -31,7 +32,9 @@ models:
     provider_options:
       codex_oauth:
         chat_kwargs:
-          reasoning_effort: high
+          reasoning:
+            effort: high
+            summary: auto
           verbosity: medium
 
 agents:

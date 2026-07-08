@@ -706,12 +706,11 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         if max_tokens is not None:
             kwargs.setdefault("max_completion_tokens", max_tokens)
         reasoning_config = _resolve_reasoning_config(cfg)
-        if "reasoning_effort" not in kwargs and cfg.reasoning_effort:
-            kwargs["reasoning_effort"] = cfg.reasoning_effort
-        if "reasoning_effort" not in kwargs and isinstance(reasoning_config, dict):
-            effort = reasoning_config.get("effort")
-            if isinstance(effort, str) and effort.strip():
-                kwargs["reasoning_effort"] = effort.strip()
+        if "reasoning" not in kwargs and "reasoning_effort" not in kwargs:
+            if isinstance(reasoning_config, dict):
+                kwargs["reasoning"] = reasoning_config
+            elif cfg.reasoning_effort:
+                kwargs["reasoning_effort"] = cfg.reasoning_effort
         kwargs.setdefault(
             "instructions",
             "You are CatMaster's Codex OAuth runtime. Use bound tools and DeepAgents "

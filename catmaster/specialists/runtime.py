@@ -2503,6 +2503,7 @@ class SpecialistRunner:
                     self.reporter,
                     run_id=self.run_context.run_id,
                     default_agent_name=default_agent_name,
+                    default_model_name=self.run_context.model_name,
                 )
             )
         callbacks.append(
@@ -2510,11 +2511,17 @@ class SpecialistRunner:
                 self.run_context.run_dir,
                 run_id=self.run_context.run_id,
                 default_agent_name=default_agent_name,
+                default_model_name=self.run_context.model_name,
             )
         )
         agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
         if bool(getattr(agent_runtime, "print_state_messages", False)):
-            callbacks.append(LangChainStepLogger(run_id=self.run_context.run_id))
+            callbacks.append(
+                LangChainStepLogger(
+                    run_id=self.run_context.run_id,
+                    default_model_name=self.run_context.model_name,
+                )
+            )
         return callbacks
 
     @staticmethod

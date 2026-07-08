@@ -110,19 +110,13 @@ export CATMASTER_LLM_CONFIG=configs/llm_gemini.yaml
 
 ## 5. Codex OAuth
 
-Codex OAuth 使用非官方 `langchain-codex-oauth` 包，不使用 API key。第一次使用前，在 `catmaster` 环境里登录：
+Codex OAuth 使用 `langchain-openai` 的 `_ChatOpenAICodex`，不使用 API key。第一次使用前，在 `catmaster` 环境里登录：
 
 ```bash
-langchain-codex-oauth auth login
+python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 ```
 
-远程机器或端口受限时：
-
-```bash
-langchain-codex-oauth auth login --manual
-```
-
-`configs/llm.template.yaml` 和 `configs/llm.full.template.yaml` 中都有示例。
+`configs/llm_codex_oauth.template.yaml` 是本地 Codex OAuth 部署 profile；`configs/llm.template.yaml` 和 `configs/llm.full.template.yaml` 中也有示例。旧 `langchain-codex-oauth` token store 只作为兼容 fallback 读取，新环境不要再依赖第三方 adapter。
 
 ## 6. 准备项目空间
 

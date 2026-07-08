@@ -287,7 +287,7 @@ def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch)
                 "chat_kwargs": {
                     "system_prompt_mode": "strict",
                     "text_verbosity": "medium",
-                    "reasoning_effort": "high",
+                    "reasoning": {"effort": "high", "summary": "auto"},
                 }
             }
         },
@@ -301,13 +301,55 @@ def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch)
     assert captured.get("max_completion_tokens") == 2048
     assert captured.get("timeout") == 60
     assert captured.get("max_retries") == 2
-    assert captured.get("reasoning_effort") == "high"
+    assert captured.get("reasoning") == {"effort": "high", "summary": "auto"}
+    assert "reasoning_effort" not in captured
     assert captured.get("verbosity") == "medium"
     assert captured.get("instructions")
     assert captured.get("token_provider") is not None
     assert "system_prompt_mode" not in captured
     assert "text_verbosity" not in captured
     assert "api_key" not in captured
+
+
+def test_build_chat_model_passes_codex_oauth_top_level_reasoning_summary(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeChatOpenAICodex:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    class FakeChatGPTToken:
+        pass
+
+    class FakeFileChatGPTOAuthTokenProvider:
+        @classmethod
+        def from_default_store(cls):
+            return cls()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai.chat_models.codex",
+        types.SimpleNamespace(_ChatOpenAICodex=FakeChatOpenAICodex),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai.chatgpt_oauth",
+        types.SimpleNamespace(
+            _ChatGPTToken=FakeChatGPTToken,
+            _FileChatGPTOAuthTokenProvider=FakeFileChatGPTOAuthTokenProvider,
+        ),
+    )
+
+    cfg = LLMConfig(
+        provider="codex_oauth",
+        model="gpt-5.5",
+        reasoning={"effort": "high", "summary": "auto"},
+    )
+
+    build_chat_model(cfg)
+
+    assert captured.get("reasoning") == {"effort": "high", "summary": "auto"}
+    assert "reasoning_effort" not in captured
 
 
 def test_codex_oauth_token_provider_reads_legacy_store(monkeypatch, tmp_path) -> None:

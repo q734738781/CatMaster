@@ -173,7 +173,9 @@ models:
     provider_options:
       codex_oauth:
         chat_kwargs:
-          reasoning_effort: high
+          reasoning:
+            effort: high
+            summary: auto
           verbosity: medium
 
 agents:

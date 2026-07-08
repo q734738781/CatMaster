@@ -110,19 +110,13 @@ export CATMASTER_LLM_CONFIG=configs/llm_gemini.yaml
 
 ## 5. Codex OAuth
 
-Codex OAuth uses the non-official `langchain-codex-oauth` package and does not use an API key. Log in once inside the `catmaster` environment:
+Codex OAuth uses `langchain-openai`'s `_ChatOpenAICodex` and does not use an API key. Log in once inside the `catmaster` environment:
 
 ```bash
-langchain-codex-oauth auth login
+python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 ```
 
-For remote machines or restricted callback ports:
-
-```bash
-langchain-codex-oauth auth login --manual
-```
-
-Examples are included in `configs/llm.template.yaml` and `configs/llm.full.template.yaml`.
+`configs/llm_codex_oauth.template.yaml` is the local Codex OAuth deployment profile; examples are also included in `configs/llm.template.yaml` and `configs/llm.full.template.yaml`. The legacy `langchain-codex-oauth` token store is read only as a compatibility fallback; new environments should not depend on the third-party adapter.
 
 ## 6. Prepare A Project Space
 

@@ -179,6 +179,11 @@ export default function CatMasterWorkspace({ boot }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
+  const requestedProjectSpace = useMemo(() => {
+    if (boot?.project_space) return String(boot.project_space);
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("project_space") || "";
+  }, [boot?.project_space]);
   const workspaceName = bootstrap?.workspace_name || "";
   const entrypoints = normalizedEntrypoints(bootstrap?.entrypoints);
   const activeThread = useMemo(
@@ -238,8 +243,8 @@ export default function CatMasterWorkspace({ boot }) {
   }, []);
 
   useEffect(() => {
-    checkAuthAndBootstrap(boot?.project_space || "");
-  }, []);
+    checkAuthAndBootstrap(requestedProjectSpace);
+  }, [checkAuthAndBootstrap, requestedProjectSpace]);
 
   useEffect(() => {
     const restoreSelection = () => {
@@ -430,7 +435,7 @@ export default function CatMasterWorkspace({ boot }) {
   }
 
   if (auth?.auth_enabled && !auth?.authenticated) {
-    return <AuthPanel onReady={() => checkAuthAndBootstrap("")} />;
+    return <AuthPanel onReady={() => checkAuthAndBootstrap(requestedProjectSpace)} />;
   }
 
   return (

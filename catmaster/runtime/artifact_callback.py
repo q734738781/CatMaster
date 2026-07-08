@@ -76,6 +76,32 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _extract_model_name_from_callback(
+    serialized: Dict[str, Any] | None,
+    *,
+    default_model_name: str = "",
+    callback_kwargs: Dict[str, Any] | None = None,
+) -> str:
+    """Best-effort model name extraction from LangChain callback payloads."""
+    candidates: list[Any] = []
+    data = serialized if isinstance(serialized, dict) else {}
+    kwargs = data.get("kwargs")
+    if isinstance(kwargs, dict):
+        candidates.extend(kwargs.get(key) for key in ("model_name", "model", "model_id", "deployment_name"))
+    candidates.extend(data.get(key) for key in ("model_name", "model", "model_id"))
+    call_kwargs = callback_kwargs if isinstance(callback_kwargs, dict) else {}
+    invocation_params = call_kwargs.get("invocation_params")
+    if isinstance(invocation_params, dict):
+        candidates.extend(invocation_params.get(key) for key in ("model_name", "model", "model_id", "deployment_name"))
+    candidates.extend(call_kwargs.get(key) for key in ("model_name", "model", "model_id", "deployment_name"))
+    candidates.append(default_model_name)
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def _compact_tool_params(raw_params: Any, *, max_chars: int = 220) -> tuple[str, Any]:
     safe_params = _json_safe(raw_params)
     if isinstance(safe_params, dict):
@@ -646,14 +672,20 @@ class LLMTracingHandler(BaseCallbackHandler):
         trace_store: TraceStore,
         *,
         run_id: str = "",
+        default_model_name: str = "",
     ) -> None:
         super().__init__()
         self.trace_store = trace_store
         self.run_id = run_id
+        self.default_model_name = str(default_model_name or "").strip()
         self._pending: Dict[str, Dict[str, Any]] = {}
 
-    def _register_start(self, serialized: Dict[str, Any], callback_run_id: uuid.UUID) -> str:
-        model_name = str(serialized.get("kwargs", {}).get("model_name", "") or "")
+    def _register_start(self, serialized: Dict[str, Any], callback_run_id: uuid.UUID, **kwargs: Any) -> str:
+        model_name = _extract_model_name_from_callback(
+            serialized,
+            default_model_name=self.default_model_name,
+            callback_kwargs=kwargs,
+        )
         key = str(callback_run_id)
         current = self._pending.get(key) or {}
         if "start_ts" not in current:
@@ -672,7 +704,7 @@ class LLMTracingHandler(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        model = self._register_start(serialized, run_id)
+        model = self._register_start(serialized, run_id, **kwargs)
         if prompts:
             self.trace_store.append_event({
                 "event": "LLM_RAW_REQUEST",
@@ -697,7 +729,7 @@ class LLMTracingHandler(BaseCallbackHandler):
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
-        model = self._register_start(serialized, run_id)
+        model = self._register_start(serialized, run_id, **kwargs)
         self.trace_store.append_event({
             "event": "LLM_RAW_REQUEST",
             "payload": {
@@ -763,12 +795,14 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         *,
         run_id: str = "",
         default_agent_name: str = "",
+        default_model_name: str = "",
         record_tool_callbacks: bool = True,
     ) -> None:
         super().__init__()
         self.store = ObservabilityStore(Path(run_dir))
         self.run_id = run_id
         self.default_agent_name = str(default_agent_name or "").strip()
+        self.default_model_name = str(default_model_name or "").strip()
         self.record_tool_callbacks = bool(record_tool_callbacks)
         self._llm_pending: Dict[str, Dict[str, Any]] = {}
         self._tool_pending: Dict[str, Dict[str, Any]] = {}
@@ -839,7 +873,11 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         ctx = self._context(metadata, **kwargs)
-        model = str(serialized.get("kwargs", {}).get("model_name") or "")
+        model = _extract_model_name_from_callback(
+            serialized,
+            default_model_name=self.default_model_name,
+            callback_kwargs=kwargs,
+        )
         agent_name = self._agent_name(ctx)
         self._llm_pending[str(run_id)] = {
             "model": model,
@@ -1227,10 +1265,17 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
 class LangChainStepLogger(BaseCallbackHandler):
     """Compact step-level runtime logging for LangChain callback execution."""
 
-    def __init__(self, *, run_id: str = "", logger_name: str = "catmaster.langchain") -> None:
+    def __init__(
+        self,
+        *,
+        run_id: str = "",
+        logger_name: str = "catmaster.langchain",
+        default_model_name: str = "",
+    ) -> None:
         super().__init__()
         self.run_id = run_id
         self.logger = logging.getLogger(logger_name)
+        self.default_model_name = str(default_model_name or "").strip()
         self._llm_pending: Dict[str, Dict[str, Any]] = {}
         self._tool_pending: Dict[str, Dict[str, Any]] = {}
 
@@ -1242,7 +1287,11 @@ class LangChainStepLogger(BaseCallbackHandler):
         run_id: uuid.UUID,
         **kwargs: Any,
     ) -> None:
-        model_name = str(serialized.get("kwargs", {}).get("model_name", "") or "")
+        model_name = _extract_model_name_from_callback(
+            serialized,
+            default_model_name=self.default_model_name,
+            callback_kwargs=kwargs,
+        )
         batch_count = len(list(messages or []))
         message_count = sum(len(list(batch or [])) for batch in list(messages or []))
         self._llm_pending[str(run_id)] = {
@@ -1371,11 +1420,19 @@ class UIEventHandler(BaseCallbackHandler):
     ``_emit()`` manually.
     """
 
-    def __init__(self, reporter: Reporter, *, run_id: str = "", default_agent_name: str = "") -> None:
+    def __init__(
+        self,
+        reporter: Reporter,
+        *,
+        run_id: str = "",
+        default_agent_name: str = "",
+        default_model_name: str = "",
+    ) -> None:
         super().__init__()
         self.reporter = reporter
         self.run_id = run_id
         self.default_agent_name = str(default_agent_name or "").strip()
+        self.default_model_name = str(default_model_name or "").strip()
         self._tool_pending: Dict[str, Dict[str, Any]] = {}
         self._llm_pending: Dict[str, Dict[str, Any]] = {}
 
@@ -1529,7 +1586,11 @@ class UIEventHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         ctx = self._context(metadata, **kwargs)
-        model = str(serialized.get("kwargs", {}).get("model_name") or "")
+        model = _extract_model_name_from_callback(
+            serialized,
+            default_model_name=self.default_model_name,
+            callback_kwargs=kwargs,
+        )
         agent_name = self._agent_name(ctx)
         self._llm_pending[str(run_id)] = {
             "model": model,
@@ -1667,17 +1728,23 @@ def build_callbacks(
     trace_store: TraceStore | None = None,
     reporter: Reporter,
     run_id: str = "",
+    default_model_name: str = "",
     enable_step_logs: bool = False,
 ) -> list[BaseCallbackHandler]:
     """Convenience factory returning the standard callback set."""
     _ = trace_store
     callbacks: list[BaseCallbackHandler] = [
         ArtifactPersistenceHandler(artifact_store, run_id=run_id),
-        ObservabilityCallbackHandler(artifact_store.run_dir, run_id=run_id, record_tool_callbacks=False),
-        UIEventHandler(reporter, run_id=run_id),
+        ObservabilityCallbackHandler(
+            artifact_store.run_dir,
+            run_id=run_id,
+            default_model_name=default_model_name,
+            record_tool_callbacks=False,
+        ),
+        UIEventHandler(reporter, run_id=run_id, default_model_name=default_model_name),
     ]
     if enable_step_logs:
-        callbacks.append(LangChainStepLogger(run_id=run_id))
+        callbacks.append(LangChainStepLogger(run_id=run_id, default_model_name=default_model_name))
     return callbacks
 
 

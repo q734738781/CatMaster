@@ -237,6 +237,44 @@ def test_observability_callback_records_raw_llm_and_tool_payloads(tmp_path) -> N
     assert any(node["parent_id"] == str(llm_id) for node in snapshot["trace_tree"]["nodes"])
 
 
+def test_llm_callbacks_fall_back_to_default_model_name(tmp_path) -> None:
+    reporter = _CollectReporter()
+    obs_handler = ObservabilityCallbackHandler(
+        tmp_path,
+        run_id="run_x",
+        default_agent_name="materials_worker",
+        default_model_name="gpt-5.5",
+    )
+    ui_handler = UIEventHandler(
+        reporter,
+        run_id="run_x",
+        default_agent_name="materials_worker",
+        default_model_name="gpt-5.5",
+    )
+    llm_id = uuid.uuid4()
+    for handler in (obs_handler, ui_handler):
+        handler.on_chat_model_start(
+            serialized={"kwargs": {}},
+            messages=[[AIMessage(content="hello")]],
+            run_id=llm_id,
+            metadata={"lc_agent_name": "materials_worker"},
+        )
+        handler.on_llm_end(
+            LLMResult(generations=[[ChatGeneration(message=AIMessage(content="done"))]], llm_output={}),
+            run_id=llm_id,
+        )
+
+    snapshot = ObservabilityStore(tmp_path).read_snapshot()
+    event_models = {
+        event["payload"].get("model")
+        for event in snapshot["events"]
+        if event["name"] in {"LLM_CALL_START", "LLM_CALL_END", "LLM_RAW_REQUEST", "LLM_RAW_RESPONSE"}
+    }
+    assert event_models == {"gpt-5.5"}
+    ui_models = {event.payload.get("model") for event in reporter.events if event.name in {"LLM_CALL_START", "LLM_CALL_END"}}
+    assert ui_models == {"gpt-5.5"}
+
+
 def test_observability_callback_hides_injected_tool_runtime(tmp_path) -> None:
     handler = ObservabilityCallbackHandler(tmp_path, run_id="run_x", default_agent_name="materials_worker")
 
