@@ -1469,20 +1469,29 @@ class StreamingSpecialistRunner:
         self,
         *,
         prompt: str,
+        content: str | list[dict[str, Any]] | None = None,
         entrypoint: SpecialistEntrypoint,
         thread_id: str,
         message_id: str,
         text_part_id: str,
         deepagent_thread_id: str,
     ) -> dict[str, Any]:
+        user_prompt = str(prompt or "").strip()
+        message_content: str | list[dict[str, Any]]
+        if isinstance(content, list) and content:
+            message_content = content
+        elif isinstance(content, str) and content.strip():
+            message_content = content.strip()
+        else:
+            message_content = user_prompt
         return await self._run_stream(
-            input_payload={"messages": [{"role": "user", "content": str(prompt or "").strip()}]},
+            input_payload={"messages": [{"role": "user", "content": message_content}]},
             entrypoint=entrypoint,
             thread_id=thread_id,
             message_id=message_id,
             text_part_id=text_part_id,
             deepagent_thread_id=deepagent_thread_id,
-            user_prompt=str(prompt or "").strip(),
+            user_prompt=user_prompt,
             resume=False,
         )
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+import asyncio
+from datetime import datetime, timezone
 import os
 import logging
 import json
 import re
 import warnings
+from pathlib import Path
 
 from catmaster.llm.config import LLMConfig
 
@@ -27,8 +30,14 @@ def _unsupported_openrouter_block_text(block: dict[str, Any]) -> str:
     return f"[{block_type} block omitted from replayed message{suffix}]"
 
 
+def _openrouter_data_url(*, mime_type: str, base64_data: str) -> str:
+    mime = str(mime_type or "application/octet-stream").strip() or "application/octet-stream"
+    return f"data:{mime};base64,{base64_data}"
+
+
 def _sanitize_openrouter_content(content: Any, *, role: str | None = None) -> Any:
     """Normalize replayed message blocks to the current OpenRouter SDK schema."""
+    _ = role
     if not isinstance(content, list):
         return content
 
@@ -44,10 +53,21 @@ def _sanitize_openrouter_content(content: Any, *, role: str | None = None) -> An
 
         block = dict(item)
         block_type = str(block.get("type") or "").strip().lower()
-        if role == "tool" and block_type != "text":
-            sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
-            continue
         if block_type in {"text", "file", "image_url", "input_audio", "input_video", "video_url"}:
+            if block_type == "file" and "file" not in block and block.get("base64"):
+                sanitized.append(
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": str(block.get("filename") or block.get("name") or "attachment"),
+                            "file_data": _openrouter_data_url(
+                                mime_type=str(block.get("mime_type") or "application/octet-stream"),
+                                base64_data=str(block.get("base64") or ""),
+                            ),
+                        },
+                    }
+                )
+                continue
             sanitized.append(block)
             continue
         if block_type == "image":
@@ -59,6 +79,20 @@ def _sanitize_openrouter_content(content: Any, *, role: str | None = None) -> An
             url = str(block.get("url") or "").strip()
             if url:
                 sanitized.append({"type": "image_url", "image_url": {"url": url}})
+                continue
+            encoded = str(block.get("base64") or "").strip()
+            if encoded:
+                sanitized.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": _openrouter_data_url(
+                                mime_type=str(block.get("mime_type") or "image/png"),
+                                base64_data=encoded,
+                            )
+                        },
+                    }
+                )
                 continue
             sanitized.append(_openrouter_text_block(_unsupported_openrouter_block_text(block)))
             continue
@@ -452,6 +486,102 @@ def _apply_openai_request_options(cfg: LLMConfig, kwargs: Dict[str, Any]) -> Non
         kwargs["max_retries"] = request_options.get("max_retries")
 
 
+def _legacy_codex_oauth_auth_path() -> Path:
+    explicit = os.getenv("LANGCHAIN_CODEX_OAUTH_AUTH_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    home = os.getenv("LANGCHAIN_CODEX_OAUTH_HOME", "").strip()
+    if home:
+        return Path(home).expanduser() / "auth" / "openai.json"
+    return Path.home() / ".langchain-codex-oauth" / "auth" / "openai.json"
+
+
+class _CatMasterCodexOAuthTokenProvider:
+    """Use LangChain's ChatGPT OAuth store, with read-only legacy migration.
+
+    CatMaster previously documented `langchain-codex-oauth` for local login.
+    The LangChain OpenAI Codex model uses `~/.langchain/chatgpt-auth.json`
+    instead. To avoid breaking already-authenticated local deploys, this
+    provider falls back to the old JSON file only when the LangChain store is
+    missing. It does not depend on, import, or call the old adapter package.
+    """
+
+    def __init__(self, provider: Any, token_cls: Any) -> None:
+        self._provider = provider
+        self._token_cls = token_cls
+        self._legacy_token: Any | None = None
+        self._legacy_warned = False
+
+    def _load_legacy_token(self) -> Any | None:
+        cached = self._legacy_token
+        expires_at = getattr(cached, "expires_at", None)
+        if cached is not None and isinstance(expires_at, datetime) and datetime.now(timezone.utc) < expires_at:
+            return cached
+
+        path = _legacy_codex_oauth_auth_path()
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Failed to read legacy Codex OAuth token store at {path}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Legacy Codex OAuth token store is not a JSON object: {path}")
+
+        access = str(data.get("access") or "")
+        refresh = str(data.get("refresh") or "")
+        account_id = str(data.get("account_id") or "")
+        try:
+            expires_ms = int(data.get("expires") or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Legacy Codex OAuth token store has invalid expires field: {path}") from exc
+        if not (access and refresh and account_id and expires_ms):
+            raise RuntimeError(f"Legacy Codex OAuth token store is incomplete: {path}")
+
+        expires_at = datetime.fromtimestamp(expires_ms / 1000, tz=timezone.utc)
+        if datetime.now(timezone.utc) >= expires_at:
+            raise FileNotFoundError(
+                "Legacy langchain-codex-oauth credentials are expired. "
+                "Run `python -c \"from langchain_openai.chatgpt_oauth import "
+                "login_chatgpt_device; login_chatgpt_device()\"` to create "
+                "LangChain's ChatGPT OAuth token store."
+            )
+        if not self._legacy_warned:
+            _logger.warning(
+                "Using legacy langchain-codex-oauth credentials from %s. "
+                "Re-login with langchain_openai.chatgpt_oauth.login_chatgpt_device() "
+                "to create LangChain's refreshable token store.",
+                path,
+            )
+            self._legacy_warned = True
+        self._legacy_token = self._token_cls(
+            access_token=access,
+            refresh_token=refresh,
+            expires_at=expires_at,
+            account_id=account_id,
+        )
+        return self._legacy_token
+
+    def get_token(self) -> Any:
+        try:
+            return self._provider.get_token()
+        except FileNotFoundError:
+            token = self._load_legacy_token()
+            if token is not None:
+                return token
+            raise
+
+    async def aget_token(self) -> Any:
+        return await asyncio.to_thread(self.get_token)
+
+    def get_access_token(self) -> str:
+        return self.get_token().access_token
+
+    async def aget_access_token(self) -> str:
+        token = await self.aget_token()
+        return token.access_token
+
+
 def build_chat_model(cfg: LLMConfig) -> Any:
     """Build a LangChain ChatModel from an LLMConfig."""
     if cfg.provider == "openrouter":
@@ -540,14 +670,28 @@ def build_chat_model(cfg: LLMConfig) -> Any:
 
     if cfg.provider == "codex_oauth":
         try:
-            from langchain_codex_oauth import ChatCodexOAuth
+            from langchain_openai.chat_models.codex import _ChatOpenAICodex
+            from langchain_openai.chatgpt_oauth import (
+                _ChatGPTToken,
+                _FileChatGPTOAuthTokenProvider,
+            )
         except ImportError as exc:  # pragma: no cover - dependency guidance
             raise RuntimeError(
-                "provider=codex_oauth requires langchain-codex-oauth. "
-                "Install it with `python -m pip install langchain-codex-oauth`."
+                "provider=codex_oauth requires langchain-openai with Codex OAuth support. "
+                "Install the pinned CatMaster environment or `python -m pip install langchain-openai==1.3.3`."
             ) from exc
 
         kwargs = _provider_chat_kwargs_for(cfg, "codex_oauth")
+        system_prompt_mode = kwargs.pop("system_prompt_mode", None)
+        if system_prompt_mode is not None:
+            _logger.warning(
+                "Ignoring codex_oauth.chat_kwargs.system_prompt_mode=%r; "
+                "_ChatOpenAICodex lifts SystemMessage content into Responses API instructions.",
+                system_prompt_mode,
+            )
+        text_verbosity = kwargs.pop("text_verbosity", None)
+        if text_verbosity is not None and "verbosity" not in kwargs:
+            kwargs["verbosity"] = text_verbosity
         if cfg.base_url:
             kwargs.setdefault("base_url", cfg.base_url)
         if cfg.timeout_s is not None:
@@ -560,10 +704,29 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         if max_tokens is None and cfg.max_output_tokens is not None:
             max_tokens = cfg.max_output_tokens
         if max_tokens is not None:
-            kwargs.setdefault("max_tokens", max_tokens)
+            kwargs.setdefault("max_completion_tokens", max_tokens)
+        reasoning_config = _resolve_reasoning_config(cfg)
+        if "reasoning_effort" not in kwargs and cfg.reasoning_effort:
+            kwargs["reasoning_effort"] = cfg.reasoning_effort
+        if "reasoning_effort" not in kwargs and isinstance(reasoning_config, dict):
+            effort = reasoning_config.get("effort")
+            if isinstance(effort, str) and effort.strip():
+                kwargs["reasoning_effort"] = effort.strip()
+        kwargs.setdefault(
+            "instructions",
+            "You are CatMaster's Codex OAuth runtime. Use bound tools and DeepAgents "
+            "filesystem/subagent tools when they are needed to complete the user task.",
+        )
+        kwargs.setdefault(
+            "token_provider",
+            _CatMasterCodexOAuthTokenProvider(
+                _FileChatGPTOAuthTokenProvider.from_default_store(),
+                _ChatGPTToken,
+            ),
+        )
         kwargs.setdefault("model", cfg.model)
 
-        return ChatCodexOAuth(**kwargs)
+        return _ChatOpenAICodex(**kwargs)
 
     if cfg.provider in ("openai", "oai_compatible", "deepseek"):
         if cfg.provider == "deepseek":

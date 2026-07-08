@@ -81,6 +81,12 @@ assistant-ui extension points for rendering, and keep heavy content behind
 artifact preview/content/download routes rather than embedding large payloads in
 chat history.
 
+assistant-ui attachment adapters are the composer source of truth. Attachment
+state sent to the backend must include stable filename, MIME, size, and content
+fields, and backend/UI metadata should distinguish stored-only, sent as
+image/file/text block, and unsupported/degraded attachments without exposing
+base64 in thread history or monitor events.
+
 ### Streaming First
 
 Prefer:

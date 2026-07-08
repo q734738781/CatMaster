@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sys
+import time
 import types
 
 import pytest
@@ -234,19 +236,47 @@ def test_build_chat_model_does_not_map_anthropic_reasoning(monkeypatch) -> None:
 def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch) -> None:
     captured: dict = {}
 
-    class FakeChatCodexOAuth:
+    class FakeChatOpenAICodex:
         def __init__(self, *args, **kwargs):
             captured.update(kwargs)
 
+    class FakeChatGPTToken:
+        pass
+
+    class FakeFileChatGPTOAuthTokenProvider:
+        @classmethod
+        def from_default_store(cls):
+            return cls()
+
+        def get_token(self):
+            raise FileNotFoundError("missing official store")
+
+        async def aget_token(self):
+            return self.get_token()
+
+        def get_access_token(self):
+            return self.get_token().access_token
+
+        async def aget_access_token(self):
+            return (await self.aget_token()).access_token
+
     monkeypatch.setitem(
         sys.modules,
-        "langchain_codex_oauth",
-        types.SimpleNamespace(ChatCodexOAuth=FakeChatCodexOAuth),
+        "langchain_openai.chat_models.codex",
+        types.SimpleNamespace(_ChatOpenAICodex=FakeChatOpenAICodex),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai.chatgpt_oauth",
+        types.SimpleNamespace(
+            _ChatGPTToken=FakeChatGPTToken,
+            _FileChatGPTOAuthTokenProvider=FakeFileChatGPTOAuthTokenProvider,
+        ),
     )
 
     cfg = LLMConfig(
         provider="codex_oauth",
-        model="gpt-5.2-codex",
+        model="gpt-5.5",
         base_url="https://chatgpt.com/backend-api/codex",
         temperature=0.1,
         max_tokens=2048,
@@ -257,6 +287,7 @@ def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch)
                 "chat_kwargs": {
                     "system_prompt_mode": "strict",
                     "text_verbosity": "medium",
+                    "reasoning_effort": "high",
                 }
             }
         },
@@ -264,15 +295,56 @@ def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch)
 
     build_chat_model(cfg)
 
-    assert captured.get("model") == "gpt-5.2-codex"
+    assert captured.get("model") == "gpt-5.5"
     assert captured.get("base_url") == "https://chatgpt.com/backend-api/codex"
     assert captured.get("temperature") == 0.1
-    assert captured.get("max_tokens") == 2048
+    assert captured.get("max_completion_tokens") == 2048
     assert captured.get("timeout") == 60
     assert captured.get("max_retries") == 2
-    assert captured.get("system_prompt_mode") == "strict"
-    assert captured.get("text_verbosity") == "medium"
+    assert captured.get("reasoning_effort") == "high"
+    assert captured.get("verbosity") == "medium"
+    assert captured.get("instructions")
+    assert captured.get("token_provider") is not None
+    assert "system_prompt_mode" not in captured
+    assert "text_verbosity" not in captured
     assert "api_key" not in captured
+
+
+def test_codex_oauth_token_provider_reads_legacy_store(monkeypatch, tmp_path) -> None:
+    from catmaster.llm.factory import _CatMasterCodexOAuthTokenProvider
+
+    class MissingOfficialProvider:
+        def get_token(self):
+            raise FileNotFoundError("missing official store")
+
+    class FakeToken:
+        def __init__(self, *, access_token, refresh_token, expires_at, account_id):
+            self.access_token = access_token
+            self.refresh_token = refresh_token
+            self.expires_at = expires_at
+            self.account_id = account_id
+
+    legacy_path = tmp_path / "openai.json"
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "type": "oauth",
+                "access": "legacy-access",
+                "refresh": "legacy-refresh",
+                "expires": int((time.time() + 3600) * 1000),
+                "account_id": "legacy-account",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LANGCHAIN_CODEX_OAUTH_AUTH_PATH", str(legacy_path))
+
+    provider = _CatMasterCodexOAuthTokenProvider(MissingOfficialProvider(), FakeToken)
+    token = provider.get_token()
+
+    assert token.access_token == "legacy-access"
+    assert token.refresh_token == "legacy-refresh"
+    assert token.account_id == "legacy-account"
 
 
 def test_build_chat_model_passes_deepseek_official_reasoning_effort(monkeypatch) -> None:

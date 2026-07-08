@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import mimetypes
 import re
@@ -13,6 +12,17 @@ from fastapi import HTTPException
 
 from catmaster.llm.config import LLMProfile
 from catmaster.runtime import RunControl
+from catmaster.runtime.multimodal_blocks import (
+    ModelMultimodalCapability,
+    PreparedAttachment,
+    build_turn_content,
+    file_to_content_block,
+    guess_mime_type,
+    infer_attachment_kind,
+    multimodal_prepare_summary,
+    parse_data_url,
+    text_attachment_block,
+)
 
 from .artifact_registry import ArtifactRegistry
 from .thread_events import ThreadEventBroker
@@ -22,6 +32,13 @@ from .thread_store import ThreadStore, new_id
 logger = logging.getLogger(__name__)
 
 UPLOAD_LIMIT_BYTES = 512 * 1024 * 1024
+_ENTRYPOINT_TO_MODEL_ROLE = {
+    "research": "research_lead",
+    "experiment": "task_runner",
+    "writing": "write_director",
+    "peer_review": "write_reviewer",
+    "literature_review": "literature_deep_research",
+}
 
 
 def _safe_attachment_filename(filename: str) -> str:
@@ -67,11 +84,29 @@ class ThreadAgentLoopService:
         self.normalize_entrypoint = normalize_entrypoint
         self.should_stop = should_stop
 
-    def prepare_submit_attachments(self, thread_id: str, attachments: list[dict[str, Any]]) -> tuple[list[MessagePart], str]:
+    def _capability_for_entrypoint(
+        self,
+        *,
+        profile: LLMProfile,
+        entrypoint: str,
+    ) -> ModelMultimodalCapability:
+        role = _ENTRYPOINT_TO_MODEL_ROLE.get(str(entrypoint or "").strip(), "task_runner")
+        try:
+            cfg = profile.config_for_role(role)
+        except Exception:
+            cfg = profile.main
+        return ModelMultimodalCapability.from_llm_config(cfg)
+
+    def prepare_submit_attachments(
+        self,
+        thread_id: str,
+        attachments: list[dict[str, Any]],
+        *,
+        capability: ModelMultimodalCapability,
+    ) -> list[PreparedAttachment]:
         if not attachments:
-            return [], ""
-        parts: list[MessagePart] = []
-        prompt_rows: list[str] = []
+            return []
+        prepared: list[PreparedAttachment] = []
         attachment_root = self.workspace / "files" / "attachments" / thread_id
         attachment_root.mkdir(parents=True, exist_ok=True)
         seen: set[tuple[str, str, str]] = set()
@@ -87,64 +122,48 @@ class ThreadAgentLoopService:
             if key in seen:
                 continue
             seen.add(key)
-            if kind == "image" and data.startswith("data:"):
-                part, prompt_row = self._store_image_attachment(
-                    thread_id=thread_id,
-                    index=index,
-                    name=name,
-                    mime=mime,
-                    data=data,
-                )
-                if part is not None:
-                    parts.append(part)
-                    prompt_rows.append(prompt_row)
-            elif text:
-                excerpt = text[:20_000]
-                parts.append(
-                    MessagePart(
-                        id=new_id("part_text"),
-                        type="text",
-                        status="completed",
-                        text=excerpt,
-                        meta={
-                            "source": "composer_attachment",
-                            "name": name,
-                            "mime_type": mime,
-                            "truncated": len(text) > len(excerpt),
-                        },
+            if data.startswith("data:"):
+                try:
+                    data_mime, blob = parse_data_url(data)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=f"Attachment {name} is invalid: {exc}") from exc
+                prepared.append(
+                    self._store_binary_attachment(
+                        thread_id=thread_id,
+                        index=index,
+                        name=name,
+                        mime=mime or data_mime,
+                        blob=blob,
+                        capability=capability,
                     )
                 )
-                prompt_rows.append(f"- text attachment `{name}` included inline")
-        if not prompt_rows:
-            return parts, ""
-        return parts, "\n\nAttached user files:\n" + "\n".join(prompt_rows)
+            elif text:
+                prepared.append(
+                    self._store_text_attachment(
+                        thread_id=thread_id,
+                        index=index,
+                        name=name,
+                        mime=mime or "text/plain",
+                        text=text,
+                    )
+                )
+        return prepared
 
-    def _store_image_attachment(self, *, thread_id: str, index: int, name: str, mime: str, data: str) -> tuple[MessagePart | None, str]:
-        header, _, encoded = data.partition(",")
-        if not encoded:
-            return None, ""
-        mime_from_header = header[5:].split(";", 1)[0].strip() if header.startswith("data:") else ""
-        mime = mime or mime_from_header
-        try:
-            blob = base64.b64decode(encoded, validate=True)
-        except Exception:
-            return None, ""
-        if len(blob) > UPLOAD_LIMIT_BYTES:
-            raise HTTPException(status_code=413, detail=f"Attachment {name} exceeds upload limit.")
-        suffix = Path(name).suffix or mimetypes.guess_extension(mime or "") or ".png"
+    def _target_for_attachment(
+        self,
+        *,
+        thread_id: str,
+        index: int,
+        name: str,
+        mime: str,
+        default_suffix: str = ".bin",
+    ) -> Path:
+        suffix = Path(name).suffix or mimetypes.guess_extension(mime or "") or default_suffix
         stem = Path(name).stem or f"image_{index}"
-        target = self.workspace / "files" / "attachments" / thread_id / f"{index:03d}_{_safe_attachment_filename(stem + suffix)}"
-        target.write_bytes(blob)
-        rel_path = str(target.relative_to(self.workspace)).replace("\\", "/")
-        artifact = self.artifact_registry.register_path(
-            rel_path,
-            thread_id=thread_id,
-            title=name,
-            summary="User-submitted image attachment.",
-            mime_type=mime,
-            meta={"source": "composer_attachment", "original_name": name},
-        )
-        part = ArtifactPart(
+        return self.workspace / "files" / "attachments" / thread_id / f"{index:03d}_{_safe_attachment_filename(stem + suffix)}"
+
+    def _artifact_part_from_record(self, artifact: Any) -> ArtifactPart:
+        return ArtifactPart(
             id=new_id("part_artifact"),
             status="completed",
             artifact_id=artifact.artifact_id,
@@ -154,7 +173,146 @@ class ThreadAgentLoopService:
             path=artifact.path,
             meta=artifact.model_dump(mode="json"),
         )
-        return part, f"- image attachment `{name}` saved as `{artifact.path}`"
+
+    def _store_binary_attachment(
+        self,
+        *,
+        thread_id: str,
+        index: int,
+        name: str,
+        mime: str,
+        blob: bytes,
+        capability: ModelMultimodalCapability,
+    ) -> PreparedAttachment:
+        if len(blob) > UPLOAD_LIMIT_BYTES:
+            raise HTTPException(status_code=413, detail=f"Attachment {name} exceeds upload limit.")
+        mime = guess_mime_type(name, mime)
+        kind = infer_attachment_kind(name, mime)
+        target = self._target_for_attachment(thread_id=thread_id, index=index, name=name, mime=mime)
+        target.write_bytes(blob)
+        rel_path = str(target.relative_to(self.workspace)).replace("\\", "/")
+        artifact = self.artifact_registry.register_path(
+            rel_path,
+            thread_id=thread_id,
+            title=name,
+            summary=f"User-submitted {kind} attachment.",
+            mime_type=mime,
+            meta={"source": "composer_attachment", "original_name": name, "kind": kind, "size_bytes": len(blob)},
+        )
+        warnings: list[str] = []
+        current_turn_block: dict[str, Any] | None = None
+        if not capability.supports_kind(kind):
+            warnings.append(f"configured model capability does not enable {kind} blocks")
+        elif len(blob) > capability.current_turn_inline_limit_bytes:
+            warnings.append(
+                f"attachment exceeds current-turn inline limit ({capability.current_turn_inline_limit_bytes} bytes)"
+            )
+        elif kind in {"image", "pdf", "document", "audio", "video"}:
+            current_turn_block = file_to_content_block(target, mime_type=mime, kind=kind, filename=name)
+        elif kind == "text":
+            current_turn_block = text_attachment_block(
+                blob.decode("utf-8", errors="replace"),
+                filename=name,
+                workspace_path=artifact.path,
+            )
+        else:
+            warnings.append("unsupported attachment type stored as artifact only")
+        return PreparedAttachment(
+            artifact_id=artifact.artifact_id,
+            workspace_path=artifact.path,
+            filename=name,
+            mime_type=mime,
+            size_bytes=len(blob),
+            kind=kind,
+            current_turn_block=current_turn_block,
+            history_part=self._artifact_part_from_record(artifact),
+            warnings=warnings,
+        )
+
+    def _store_text_attachment(
+        self,
+        *,
+        thread_id: str,
+        index: int,
+        name: str,
+        mime: str,
+        text: str,
+    ) -> PreparedAttachment:
+        blob = str(text or "").encode("utf-8")
+        if len(blob) > UPLOAD_LIMIT_BYTES:
+            raise HTTPException(status_code=413, detail=f"Attachment {name} exceeds upload limit.")
+        mime = guess_mime_type(name, mime or "text/plain")
+        target = self._target_for_attachment(thread_id=thread_id, index=index, name=name, mime=mime, default_suffix=".txt")
+        target.write_bytes(blob)
+        rel_path = str(target.relative_to(self.workspace)).replace("\\", "/")
+        artifact = self.artifact_registry.register_path(
+            rel_path,
+            thread_id=thread_id,
+            title=name,
+            summary="User-submitted text attachment.",
+            mime_type=mime,
+            meta={"source": "composer_attachment", "original_name": name, "kind": "text", "size_bytes": len(blob)},
+        )
+        return PreparedAttachment(
+            artifact_id=artifact.artifact_id,
+            workspace_path=artifact.path,
+            filename=name,
+            mime_type=mime,
+            size_bytes=len(blob),
+            kind="text",
+            current_turn_block=text_attachment_block(text, filename=name, workspace_path=artifact.path),
+            history_part=self._artifact_part_from_record(artifact),
+            warnings=[],
+        )
+
+    def rebuild_prepared_attachments(
+        self,
+        metadata: list[dict[str, Any]],
+        *,
+        capability: ModelMultimodalCapability,
+    ) -> list[PreparedAttachment]:
+        prepared: list[PreparedAttachment] = []
+        for row in metadata:
+            if not isinstance(row, dict):
+                continue
+            rel_path = str(row.get("workspace_path") or "").strip()
+            filename = _safe_attachment_filename(str(row.get("filename") or Path(rel_path).name or "attachment"))
+            mime = guess_mime_type(filename, str(row.get("mime_type") or ""))
+            kind = str(row.get("kind") or infer_attachment_kind(filename, mime)).strip().lower()
+            path = self.workspace.joinpath(*Path(rel_path).parts)
+            warnings = [str(item) for item in list(row.get("warnings") or []) if str(item).strip()]
+            current_turn_block: dict[str, Any] | None = None
+            size_bytes = int(row.get("size_bytes") or 0)
+            if not path.exists():
+                warnings.append("stored attachment file is missing")
+            elif not capability.supports_kind(kind):
+                warnings.append(f"configured model capability does not enable {kind} blocks")
+            elif size_bytes > capability.current_turn_inline_limit_bytes:
+                warnings.append(
+                    f"attachment exceeds current-turn inline limit ({capability.current_turn_inline_limit_bytes} bytes)"
+                )
+            elif kind in {"image", "pdf", "document", "audio", "video"}:
+                current_turn_block = file_to_content_block(path, mime_type=mime, kind=kind, filename=filename)
+            elif kind == "text":
+                current_turn_block = text_attachment_block(
+                    path.read_text(encoding="utf-8", errors="replace"),
+                    filename=filename,
+                    workspace_path=rel_path,
+                )
+            prepared.append(
+                PreparedAttachment(
+                    artifact_id=str(row.get("artifact_id") or ""),
+                    workspace_path=rel_path,
+                    filename=filename,
+                    mime_type=mime,
+                    size_bytes=size_bytes,
+                    kind=kind,
+                    current_turn_block=current_turn_block,
+                    history_part=None,
+                    warnings=warnings,
+                )
+            )
+        return prepared
 
     def append_user_message(
         self,
@@ -163,6 +321,7 @@ class ThreadAgentLoopService:
         *,
         attachment_parts: list[MessagePart] | None = None,
         meta: dict[str, Any] | None = None,
+        structured_sidecar: dict[str, Any] | None = None,
     ) -> ThreadMessage:
         parts = [MessagePart(id=new_id("part_text"), type="text", text=str(text or ""), status="completed")]
         parts.extend(attachment_parts or [])
@@ -173,6 +332,7 @@ class ThreadAgentLoopService:
             status="completed",
             parts=parts,
             meta=dict(meta or {}),
+            structured_sidecar=dict(structured_sidecar or {}),
         )
         self.store.append_message(message)
         self.broker.emit(thread_id, "message.created", message_id=message.id, status="completed", data={"message": message.model_dump(mode="json")})
@@ -275,13 +435,21 @@ class ThreadAgentLoopService:
 
     async def submit(self, *, thread_id: str, payload: Any) -> dict[str, Any]:
         text = str(payload.text or "").strip()
-        attachment_parts, attachment_prompt = self.prepare_submit_attachments(thread_id, list(payload.attachments or []))
+        thread = self.store.get_thread(thread_id)
+        normalized_entrypoint = self.normalize_entrypoint(payload.entrypoint or thread.entrypoint)
+        llm_profile = LLMProfile.from_env_or_file(payload.model_config or None)
+        capability = self._capability_for_entrypoint(profile=llm_profile, entrypoint=normalized_entrypoint)
+        prepared_attachments = self.prepare_submit_attachments(
+            thread_id,
+            list(payload.attachments or []),
+            capability=capability,
+        )
+        attachment_parts = [item.history_part for item in prepared_attachments if item.history_part is not None]
+        attachment_sidecar = [item.sidecar() for item in prepared_attachments]
         if not text and not attachment_parts:
             raise HTTPException(status_code=400, detail="Message text is required.")
         prompt_text = text or "User submitted attachments."
-        if attachment_prompt:
-            prompt_text = f"{prompt_text}{attachment_prompt}"
-        thread = self.store.get_thread(thread_id)
+        turn_content = build_turn_content(prompt_text, prepared_attachments)
         permission_mode = self.permission_mode_for_thread(thread, getattr(payload, "permission_mode", "") or dict(thread.meta or {}).get("permission_mode"))
         current_permission_mode = self.permission_mode_for_thread(thread, "")
         if permission_mode != current_permission_mode:
@@ -289,28 +457,42 @@ class ThreadAgentLoopService:
         task = self.thread_tasks.get(thread_id)
         running = bool(task and not task.done()) or thread.status in {ThreadStatus.RUNNING, ThreadStatus.STOPPING}
         if running:
-            user_message = self.append_user_message(thread_id, text, attachment_parts=attachment_parts, meta={"kind": "steering"})
+            user_message = self.append_user_message(
+                thread_id,
+                text,
+                attachment_parts=attachment_parts,
+                meta={"kind": "steering"},
+                structured_sidecar={"attachments": attachment_sidecar},
+            )
             pending = list(thread.pending_steering or [])
             pending.append(
                 {
                     "text": prompt_text,
-                    "entrypoint": self.normalize_entrypoint(payload.entrypoint or thread.entrypoint),
+                    "entrypoint": normalized_entrypoint,
                     "model_config": payload.model_config,
                     "permission_mode": permission_mode,
                     "message_id": user_message.id,
+                    "attachments": attachment_sidecar,
                     "created_at": time.time(),
                 }
             )
             thread = self.store.update_thread(thread_id, pending_steering=pending)
             self.broker.emit(thread_id, "thread.updated", status=str(thread.status.value), data={"thread": thread.model_dump(mode="json"), "steering_queued": True})
             return {"accepted": True, "queued": True, "thread": thread, "message": user_message}
-        user_message = self.append_user_message(thread_id, text, attachment_parts=attachment_parts)
+        user_message = self.append_user_message(
+            thread_id,
+            text,
+            attachment_parts=attachment_parts,
+            structured_sidecar={"attachments": attachment_sidecar},
+        )
         assistant_message = await self.launch_turn(
             thread_id=thread_id,
             prompt=prompt_text,
-            entrypoint=self.normalize_entrypoint(payload.entrypoint or thread.entrypoint),
+            entrypoint=normalized_entrypoint,
             model_config=payload.model_config,
             permission_mode=permission_mode,
+            turn_content=turn_content,
+            attachment_metadata=attachment_sidecar,
         )
         return {"accepted": True, "queued": False, "thread": self.store.get_thread(thread_id), "message": user_message, "assistant_message": assistant_message}
 
@@ -357,6 +539,8 @@ class ThreadAgentLoopService:
         entrypoint: str,
         model_config: str = "",
         permission_mode: str = "",
+        turn_content: str | list[dict[str, Any]] | None = None,
+        attachment_metadata: list[dict[str, Any]] | None = None,
         resume_decisions: list[dict[str, Any]] | None = None,
         resume_tool_inputs: list[dict[str, Any]] | None = None,
         existing_user_message_id: str = "",
@@ -370,6 +554,30 @@ class ThreadAgentLoopService:
             thread_id,
             meta={"permission_mode": turn_permission_mode, "entrypoint": normalized_entrypoint},
         )
+        attachment_rows = [dict(item) for item in list(attachment_metadata or []) if isinstance(item, dict)]
+        if turn_content is None and attachment_rows:
+            profile = LLMProfile.from_env_or_file(model_config or None)
+            capability = self._capability_for_entrypoint(profile=profile, entrypoint=normalized_entrypoint)
+            rebuilt_attachments = self.rebuild_prepared_attachments(attachment_rows, capability=capability)
+            turn_content = build_turn_content(prompt, rebuilt_attachments)
+            attachment_rows = [item.sidecar() for item in rebuilt_attachments]
+        event_attachments: list[PreparedAttachment] = []
+        if attachment_rows:
+            event_attachments = [
+                PreparedAttachment(
+                    artifact_id=str(row.get("artifact_id") or ""),
+                    workspace_path=str(row.get("workspace_path") or ""),
+                    filename=str(row.get("filename") or ""),
+                    mime_type=str(row.get("mime_type") or ""),
+                    size_bytes=int(row.get("size_bytes") or 0),
+                    kind=str(row.get("kind") or ""),
+                    current_turn_block={"type": str(row.get("sent_as") or "content_block")}
+                    if bool(row.get("sent_to_model"))
+                    else None,
+                    warnings=[str(item) for item in list(row.get("warnings") or []) if str(item).strip()],
+                )
+                for row in attachment_rows
+            ]
 
         async def _execute() -> None:
             try:
@@ -388,6 +596,20 @@ class ThreadAgentLoopService:
                     assistant_message.id,
                     meta={"run_id": built.run_context.run_id, "permission_mode": turn_permission_mode},
                 )
+                if event_attachments:
+                    self.broker.emit(
+                        thread_id,
+                        "multimodal.prepared",
+                        message_id=assistant_message.id,
+                        status="completed",
+                        data={
+                            "run_id": built.run_context.run_id,
+                            "thread_id": thread_id,
+                            "message_id": assistant_message.id,
+                            "entrypoint": normalized_entrypoint,
+                            **multimodal_prepare_summary(event_attachments),
+                        },
+                    )
                 streaming_runner = self.streaming_runner_cls(
                     runner=built.runner,
                     thread_store=self.store,
@@ -408,6 +630,7 @@ class ThreadAgentLoopService:
                 else:
                     await streaming_runner.arun_turn(
                         prompt=prompt,
+                        content=turn_content,
                         entrypoint=normalized_entrypoint,
                         thread_id=thread_id,
                         message_id=assistant_message.id,
@@ -438,6 +661,9 @@ class ThreadAgentLoopService:
                             entrypoint=str(steering.get("entrypoint") or entrypoint),
                             model_config=str(steering.get("model_config") or model_config),
                             permission_mode=str(steering.get("permission_mode") or self.permission_mode_for_thread(latest, "")),
+                            attachment_metadata=[
+                                dict(item) for item in list(steering.get("attachments") or []) if isinstance(item, dict)
+                            ],
                             existing_user_message_id=str(steering.get("message_id") or ""),
                         )
                 except Exception:

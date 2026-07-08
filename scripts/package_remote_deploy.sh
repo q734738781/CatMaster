@@ -143,7 +143,7 @@ copy_runtime_path() {
     rsync "${RSYNC_ARGS[@]}" "$src/" "$dst/"
   elif [[ -f "$src" ]]; then
     mkdir -p "$(dirname "$dst")"
-    rsync "${RSYNC_ARGS[@]}" "$src" "$dst"
+    rsync -a "$src" "$dst"
   else
     echo "Skipping missing path: $rel" >&2
   fi
@@ -158,7 +158,7 @@ packaged_at_local=$(date '+%Y-%m-%dT%H:%M:%S%z')
 package_profile=runtime-webui-deploy
 package_root=$PACKAGE_ROOT_NAME
 archive_name=$ARCHIVE_NAME
-included_config_templates=configs/dpdispatcher/*_template.yaml
+included_config_templates=configs/dpdispatcher/*_template.yaml,configs/llm*.template.yaml
 excluded_private_configs=configs/dpdispatcher/{machines,resources,tasks}.yaml
 excluded_private_files=.env,.sesskey
 EOF
@@ -202,11 +202,139 @@ write_deploy_readme() {
     printf '%s\n' 'cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml'
     printf '%s\n' 'cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml'
     printf '%s\n' 'cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml'
+    printf '%s\n' '# choose one LLM template, then edit as needed:'
+    printf '%s\n' '# cp configs/llm.template.yaml configs/llm.yaml'
+    printf '%s\n' '# cp configs/llm.full.template.yaml configs/llm.yaml'
+    printf '%s\n' '# cp configs/llm_codex_oauth.template.yaml configs/llm.yaml'
     printf '%s\n' '# provide configs/llm.yaml or export provider keys such as OPENROUTER_API_KEY'
     printf '%s\n' '# edit configs/dpdispatcher/{machines,resources,tasks}.yaml for your cluster'
     printf '%s\n' '```'
     printf '\n'
     printf '%s\n' 'Keep real API keys and SSH credentials out of the archive. Use environment variables, local ignored files, or machine-level secret management.'
+    printf '\n'
+    cat <<'EOF'
+### Codex OAuth local profile
+
+OpenRouter/API-key based configuration remains the default CatMaster deployment path. Use this optional profile only when you want a local Codex test lane backed by a signed-in ChatGPT/Codex account instead of `OPENROUTER_API_KEY`.
+
+The archive includes `configs/llm_codex_oauth.template.yaml` for this path. It uses the pinned `langchain-openai` Codex OAuth model (`langchain_openai.chat_models.codex._ChatOpenAICodex`) and defaults to:
+
+- provider: `codex_oauth`
+- model: `gpt-5.5`
+- `provider_options.codex_oauth.chat_kwargs.reasoning_effort: high`
+- `provider_options.codex_oauth.chat_kwargs.verbosity: medium`
+
+The OAuth token provider stores credentials under the user home directory. Do not package, commit, or share those credentials, and do not use this profile for shared multi-user hosting.
+
+#### 1. Activate the environment
+
+```bash
+conda activate catmaster
+python -m pip show langchain-openai
+```
+
+#### 2. Login once on the target machine
+
+For a local desktop session:
+
+```bash
+python - <<'PY'
+from langchain_openai.chatgpt_oauth import login_chatgpt
+
+login_chatgpt()
+PY
+```
+
+For SSH, headless, or remote machines, use the device-code flow and open the printed verification URL in your browser:
+
+```bash
+python - <<'PY'
+from langchain_openai.chatgpt_oauth import login_chatgpt_device
+
+login_chatgpt_device()
+PY
+```
+
+The account must have ChatGPT Plus/Pro or another plan with Codex access. If the upstream Codex consumer endpoint changes, upgrade the pinned `langchain-openai` version after testing the tool-calling smoke workflow.
+
+#### 3. Enable the OAuth LLM profile
+
+```bash
+cp configs/llm_codex_oauth.template.yaml configs/llm.yaml
+```
+
+The important part of the template is:
+
+```yaml
+models:
+  codex-oauth-main:
+    provider: codex_oauth
+    model: gpt-5.5
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          reasoning_effort: high
+          verbosity: medium
+```
+
+CatMaster passes Codex-specific knobs through `provider_options.codex_oauth.chat_kwargs` to `_ChatOpenAICodex`. Legacy `text_verbosity` is mapped to `verbosity`, and legacy `system_prompt_mode` is ignored because `_ChatOpenAICodex` lifts `SystemMessage` content into the Responses API `instructions` field itself.
+
+#### 4. Verify config loading without calling the model
+
+```bash
+python - <<'PY'
+from catmaster.llm.config import LLMProfile
+
+profile = LLMProfile.from_env_or_file("configs/llm.yaml")
+cfg = profile.config_for_role("task_runner")
+print(cfg.provider)
+print(cfg.model)
+print(cfg.provider_options)
+PY
+```
+
+Expected values are `codex_oauth`, `gpt-5.5`, and a `chat_kwargs` mapping containing `reasoning_effort: high` and `verbosity: medium`.
+
+#### 5. Optional live smoke test
+
+This makes a real Codex request and consumes account usage:
+
+```bash
+python - <<'PY'
+from catmaster.llm.config import LLMProfile
+from catmaster.llm.factory import build_chat_model
+
+profile = LLMProfile.from_env_or_file("configs/llm.yaml")
+model = build_chat_model(profile.config_for_role("task_runner"))
+resp = model.invoke("Reply with exactly: codex oauth ok")
+print(getattr(resp, "content", resp))
+PY
+```
+
+#### Troubleshooting
+
+- `No ChatGPT OAuth token found` or auth refresh errors: rerun the `login_chatgpt_device()` command above.
+- If you previously logged in with `langchain-codex-oauth`, CatMaster can temporarily read the old `~/.langchain-codex-oauth/auth/openai.json` token when it is still valid, but this is a migration fallback only. Re-login with `langchain_openai.chatgpt_oauth` for refreshable credentials.
+- Model or authorization errors: confirm the account has Codex access; if necessary, edit `model: gpt-5.5` to another Codex-supported model.
+- Usage-limit errors: wait for the ChatGPT/Codex quota window or switch back to the OpenRouter/API-key profile.
+- Never copy the OAuth credential directory into the deployment archive. Re-authenticate per target user/machine.
+
+EOF
+    printf '%s\n' '### PySR Julia backend'
+    printf '\n'
+    printf '%s\n' '`pysr` is installed in the CatMaster environment, but the Julia backend must be available before symbolic-regression tools run. On first import, `juliacall`/`juliapkg` may download Julia and precompile `SymbolicRegression.jl`; do this during deployment, not during an agent run:'
+    printf '\n'
+    printf '%s\n' '```bash'
+    printf '%s\n' 'conda activate catmaster'
+    printf '%s\n' 'python scripts/pysr_julia_smoke.py --fit'
+    printf '%s\n' '```'
+    printf '\n'
+    printf '%s\n' 'For offline or firewalled machines, install Julia yourself and point JuliaCall at it before running the smoke test:'
+    printf '\n'
+    printf '%s\n' '```bash'
+    printf '%s\n' 'export PYTHON_JULIACALL_BINDIR=/opt/julia/bin'
+    printf '%s\n' 'python scripts/pysr_julia_smoke.py --julia-bindir "$PYTHON_JULIACALL_BINDIR" --fit'
+    printf '%s\n' '```'
     printf '\n'
     printf '%s\n' 'For UMA, keep `HF_TOKEN` only in the remote UMA source script or a remote secret file, never in task params or staged files. Point `HF_HOME`, `HF_HUB_CACHE`, `TRANSFORMERS_CACHE`, and `TORCH_HOME` to persistent remote cache directories. If compute nodes have no internet access, prewarm the model cache once before enabling `HF_HUB_OFFLINE=1`:'
     printf '\n'
@@ -267,7 +395,7 @@ verify_archive() {
   private_hits="$(printf '%s\n' "$tar_list" | grep -E "$private_pattern" || true)"
   config_hits="$(printf '%s\n' "$tar_list" \
     | grep -E "(^|/)configs(/|$)" \
-    | grep -v -E "^$PACKAGE_ROOT_NAME/configs/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/(machines_template|resources_template|tasks_template)\.yaml$" \
+    | grep -v -E "^$PACKAGE_ROOT_NAME/configs/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/(machines_template|resources_template|tasks_template)\.yaml$|^$PACKAGE_ROOT_NAME/configs/(llm\.template|llm\.full\.template|llm_codex_oauth\.template|tool_output|tool_policy)\.yaml$" \
     || true)"
   env_hits="$(printf '%s\n' "$tar_list" | grep -E '(^|/)\.env($|\.)' | grep -v -E '(^|/)\.env\.example$' || true)"
   if [[ -n "$private_hits" || -n "$config_hits" || -n "$env_hits" ]]; then
@@ -285,6 +413,9 @@ verify_archive() {
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/machines_template.yaml"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/resources_template.yaml"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/tasks_template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/llm.template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/llm.full.template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/llm_codex_oauth.template.yaml"
     "$PACKAGE_ROOT_NAME/catmaster/webui/static/app.js"
     "$PACKAGE_ROOT_NAME/catmaster/webui/static/app.css"
   )
@@ -460,10 +591,15 @@ RUNTIME_PATHS=(
   "configs/dpdispatcher/machines_template.yaml"
   "configs/dpdispatcher/resources_template.yaml"
   "configs/dpdispatcher/tasks_template.yaml"
+  "configs/llm.template.yaml"
+  "configs/llm.full.template.yaml"
+  "configs/llm_codex_oauth.template.yaml"
+  "configs/tool_output.yaml"
+  "configs/tool_policy.yaml"
   "main.py"
   "README.md"
   "LICENSE"
-  "AGENTS.MD"
+  "AGENTS.md"
   ".env.example"
   "start_webui.sh"
 )

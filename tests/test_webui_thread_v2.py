@@ -469,10 +469,11 @@ def test_submit_image_attachment_registers_artifact_without_persisting_data_url(
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     thread_id = client.post("/api/workspaces/default/threads", json={}).json()["thread"]["thread_id"]
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     async def _fake_arun_turn(self, *, prompt, thread_id, message_id, text_part_id, **_kwargs):
         captured["prompt"] = prompt
+        captured["content"] = _kwargs.get("content")
         self.thread_store.add_text_delta(thread_id, message_id, text_part_id, "ok")
         self.thread_store.update_message(thread_id, message_id, status="completed")
         self.thread_store.update_thread(thread_id, status="idle", active_message_id="", active_run_id="")
@@ -509,10 +510,86 @@ def test_submit_image_attachment_registers_artifact_without_persisting_data_url(
     artifact_parts = [part for part in user_message["parts"] if part["type"] == "artifact"]
     assert len(artifact_parts) == 1
     assert artifact_parts[0]["path"].startswith("files/attachments/")
-    assert "data:image/png" not in user_message.model_dump_json() if hasattr(user_message, "model_dump_json") else "data:image/png" not in str(user_message)
-    assert "data:image/png" not in captured["prompt"]
-    assert "figure.png" in captured["prompt"]
+    assert "data:image/png" not in json.dumps(user_message)
+    assert "data:image/png" not in str(captured["prompt"])
+    content = captured["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert "figure.png" in content[0]["text"]
+    assert content[1]["type"] == "image"
+    assert content[1]["base64"] == image_data
+    assert content[1]["mime_type"] == "image/png"
     assert (workspace / artifact_parts[0]["path"]).exists()
+    multimodal_events = [event for event in ThreadEventBroker(workspace=workspace).replay(thread_id) if event.event == "multimodal.prepared"]
+    assert multimodal_events
+    event_data = multimodal_events[-1].data
+    assert event_data["attachment_count"] == 1
+    assert event_data["attachments"][0]["sent_to_model"] is True
+    assert event_data["attachments"][0]["sent_as"] == "image"
+    assert "base64" not in json.dumps(event_data)
+
+
+def test_submit_pdf_attachment_passes_file_block_without_persisting_data_url(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path)
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    thread_id = client.post("/api/workspaces/default/threads", json={}).json()["thread"]["thread_id"]
+    captured: dict[str, object] = {}
+
+    async def _fake_arun_turn(self, *, prompt, thread_id, message_id, text_part_id, **_kwargs):
+        captured["prompt"] = prompt
+        captured["content"] = _kwargs.get("content")
+        self.thread_store.add_text_delta(thread_id, message_id, text_part_id, "ok")
+        self.thread_store.update_message(thread_id, message_id, status="completed")
+        self.thread_store.update_thread(thread_id, status="idle", active_message_id="", active_run_id="")
+        return {"status": "done"}
+
+    monkeypatch.setattr(server.StreamingSpecialistRunner, "arun_turn", _fake_arun_turn)
+    monkeypatch.setattr(
+        server,
+        "build_specialist_runner",
+        lambda **_kwargs: SimpleNamespace(
+            runner=object(),
+            run_context=SimpleNamespace(run_id="run_fake", run_dir=tmp_path / "run_fake"),
+        ),
+    )
+
+    pdf_data = base64.b64encode(b"%PDF-1.4 fake").decode("ascii")
+    submitted = client.post(
+        f"/api/threads/{thread_id}/submit",
+        json={
+            "text": "inspect this PDF",
+            "attachments": [
+                {
+                    "type": "file",
+                    "filename": "paper.pdf",
+                    "mime_type": "application/pdf",
+                    "data": f"data:application/pdf;base64,{pdf_data}",
+                }
+            ],
+        },
+    )
+
+    assert submitted.status_code == 200
+    user_message = submitted.json()["message"]
+    assert "data:application/pdf" not in str(user_message)
+    content = captured["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "file"
+    assert content[1]["base64"] == pdf_data
+    assert content[1]["mime_type"] == "application/pdf"
+    assert content[1]["filename"] == "paper.pdf"
+    multimodal_events = [
+        event
+        for event in ThreadEventBroker(workspace=workspace).replay(thread_id)
+        if event.event == "multimodal.prepared"
+    ]
+    assert multimodal_events
+    event_data = multimodal_events[-1].data
+    assert event_data["attachments"][0]["sent_to_model"] is True
+    assert event_data["attachments"][0]["sent_as"] == "file"
+    assert "base64" not in json.dumps(event_data)
 
 
 def test_agent_loop_service_launches_turn_and_queues_steering(tmp_path: Path) -> None:

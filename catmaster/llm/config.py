@@ -442,6 +442,7 @@ class LLMConfig:
 
     default_headers: Dict[str, str] = field(default_factory=dict)
     provider_options: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    multimodal: Dict[str, Any] = field(default_factory=dict)
     print_http_raw_post: bool = False
 
     langchain_class: Optional[str] = None
@@ -460,6 +461,7 @@ class LLMConfig:
 
         default_headers = data.get("default_headers") or {}
         provider_options = data.get("provider_options") or {}
+        multimodal = data.get("multimodal") or {}
         reasoning = data.get("reasoning") or {}
         langchain_kwargs = data.get("langchain_kwargs") or {}
         extra = data.get("extra") or {}
@@ -483,6 +485,7 @@ class LLMConfig:
             base_url=_to_str_or_none(data.get("base_url")),
             default_headers=dict(default_headers) if isinstance(default_headers, dict) else {},
             provider_options=_normalize_provider_options(provider_options),
+            multimodal=dict(multimodal) if isinstance(multimodal, dict) else {},
             print_http_raw_post=_to_bool(
                 data.get("print_http_raw_post"),
                 default=cls.print_http_raw_post,

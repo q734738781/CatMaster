@@ -26,7 +26,7 @@ Do not use DeepAgent checkpoints as the user-visible run status source.
 
 ## Middleware Added By CatMaster
 
-`SpecialistRunner._build_default_middleware()` currently injects three custom
+`SpecialistRunner._build_default_middleware()` currently injects two custom
 middleware objects.
 
 ### `catmaster_retry_semantic_model_failures`
@@ -36,64 +36,47 @@ Purpose:
 - Retry model responses that are syntactically accepted but unusable.
 - Retry provider/schema exceptions that commonly come from OpenRouter transport
   or SDK validation instability.
-- Sanitize old replayed `ToolMessage` history before model invocation.
 
 Related functions:
 
 - `_validate_model_response_for_retry`
 - `_validate_ai_message_for_retry`
 - `_is_retryable_model_exception`
-- `_sanitize_model_request_for_history`
 
 Keep this layer while using OpenRouter and long-lived DeepAgent threads. It is
-the final defense for existing checkpoints that may already contain bad message
-blocks.
+the final defense for transient provider/schema failures and unusable assistant
+outputs. It must not rewrite multimodal `ToolMessage` content; provider-specific
+compatibility handling belongs at the model adapter boundary.
 
 Possible future removal:
 
 - The retry logic can be narrowed if provider errors become rare and covered by
   the model client's own retry policy.
-- The request sanitizer can be removed only after old thread stores have been
-  migrated or discarded and upstream no longer writes replay-unsafe multimodal
-  tool content.
 
-### `catmaster_textualize_multimodal_tool_results`
+### Removed: `catmaster_textualize_multimodal_tool_results`
 
-Purpose:
+CatMaster previously inserted a tool-result middleware named
+`catmaster_textualize_multimodal_tool_results`. That layer has been removed.
+It erased the DeepAgents-native multimodal path by converting fresh
+`read_file` image/PDF/file content blocks into text before the next model call
+could consume them.
 
-- Convert non-text `ToolMessage.content` into a compact textual placeholder
-  before it enters long-lived agent history.
-- Preserve useful continuity data such as tool name, file path, MIME type, and
-  block id.
-- Avoid persisting base64 images/PDF pages into `deepagent_threads.sqlite`.
-
-Related functions:
-
-- `_sanitize_tool_result_for_history`
-- `_sanitize_tool_message_for_history`
-- `_tool_content_needs_textualization`
-- `_textualized_tool_content`
-- `_multimodal_tool_block_reference`
-
-This exists because DeepAgents' built-in `read_file` can return messages like:
+DeepAgents' built-in `read_file` can return messages like:
 
 ```json
 {"type": "image", "base64": "...", "mime_type": "image/png"}
 ```
 
-Those blocks are useful for the current model call, but they are not safe as
-long-term `tool` history across provider bridges. OpenRouter's SDK expects
-provider-native blocks such as `image_url`, and some paths reject multimodal
-`tool.content` entirely.
+Those blocks are the desired active-path representation. They should remain
+available to the next model call whenever the selected provider/model supports
+the media type. Do not reintroduce a blanket tool-output textualizer.
 
-Keep this layer. It is the preferred durable fix because it prevents new
-checkpoint pollution.
-
-Possible future removal:
-
-- Remove only if DeepAgents changes `read_file`/filesystem middleware to avoid
-  inline binary/multimodal tool history, or if CatMaster stops using long-lived
-  DeepAgent thread persistence.
+Durable thread history must still avoid raw user-upload base64. The WebUI stores
+uploaded binaries as artifacts and only passes inline content blocks in the
+current turn. DeepAgents `read_file` tool outputs are owned by the DeepAgents
+runtime; if provider replay compatibility is needed, handle it at the provider
+adapter boundary or through an explicit legacy-thread migration, not by mutating
+fresh tool results globally.
 
 ### `catmaster_nonfatal_tool_errors`
 
@@ -125,7 +108,7 @@ Related functions:
 
 - `_sanitize_openrouter_message_dicts`
 - `_sanitize_openrouter_content`
-- `_unsupported_openrouter_block_text`
+- `_openrouter_data_url`
 - `_attach_openrouter_cache_control`
 
 This is not a provider-wide shim. CatMaster now depends on
@@ -141,11 +124,18 @@ Older checkpoints may contain LangChain-style blocks such as:
 ```
 
 The OpenRouter SDK expects provider-native chat blocks such as `image_url`, and
-some provider paths reject multimodal content on `tool` messages entirely. The
-factory sanitizer converts unsupported replayed blocks into textual
-placeholders before the SDK validates the request. For `role=tool`, it is more
-strict: any non-text block is textualized, even if the block type is otherwise
-valid for user chat input.
+PDF/file inputs use OpenRouter's `file` block shape. The factory sanitizer
+therefore converts CatMaster/LangChain standard content blocks into native
+OpenRouter blocks at request time:
+
+- `{"type": "image", "base64": "...", "mime_type": "..."}`
+  becomes an `image_url` data URL block.
+- `{"type": "file", "base64": "...", "mime_type": "...", "filename": "..."}`
+  becomes an OpenRouter `file` block with `file_data`.
+- Existing provider-native `image_url` and `file` blocks pass through unchanged.
+
+Only genuinely unsupported replayed blocks are degraded to a textual placeholder
+before SDK validation.
 
 Keep this sanitizer while old checkpoints exist and OpenRouter is used. It is
 intentionally scoped to CatMaster's `ChatOpenRouter` subclass at
@@ -153,9 +143,9 @@ intentionally scoped to CatMaster's `ChatOpenRouter` subclass at
 
 Possible future removal:
 
-- Remove after old checkpoints are migrated or discarded and the runtime-level
-  tool textualizer has been deployed long enough that no new polluted
-  checkpoints are produced.
+- Remove after old checkpoints are migrated or discarded and OpenRouter/LangChain
+  accept the standard content block shapes CatMaster emits without local
+  conversion.
 - Do not re-add a global `langchain_openrouter` monkey patch unless a focused
   test proves the upstream wrapper regressed.
 
@@ -187,8 +177,9 @@ Interactions that are currently justified:
 - Non-fatal tool error conversion.
 - Model retry for empty/invalid assistant output.
 - Provider/schema retry for OpenRouter validation/EOF failures.
-- Textualizing non-text tool history before persistence/model replay.
-- OpenRouter request-boundary sanitation for legacy checkpoints.
+- WebUI upload artifact storage plus current-turn content block injection.
+- OpenRouter request-boundary conversion for standard image/file blocks and
+  legacy checkpoint compatibility.
 
 Interactions that should not be added:
 
@@ -213,6 +204,8 @@ Interaction already removed:
   `langchain-openrouter>=0.2.1` / `openrouter>=0.9.1` handles file blocks with
   the new SDK message classes, so CatMaster no longer replaces
   `_wrap_messages_for_sdk`.
+- Runtime `ToolMessage` multimodal textualization. Fresh DeepAgents `read_file`
+  media blocks now remain multimodal through the next model call.
 
 ## Maintenance Checklist
 

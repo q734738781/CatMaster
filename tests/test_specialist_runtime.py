@@ -443,9 +443,10 @@ def test_default_tool_error_middleware_returns_tool_message() -> None:
     assert result.tool_call_id == "call-1"
 
 
-def test_tool_result_middleware_textualizes_multimodal_tool_messages() -> None:
+def test_tool_result_middleware_preserves_multimodal_tool_messages() -> None:
     middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    history_mw = middleware[1]
+    assert all(getattr(item, "name", "") != "catmaster_textualize_multimodal_tool_results" for item in middleware)
+    tool_mw = middleware[-1]
 
     class _Request:
         tool_call = {
@@ -474,15 +475,15 @@ def test_tool_result_middleware_textualizes_multimodal_tool_messages() -> None:
         )
 
     async def _run():
-        return await history_mw.awrap_tool_call(_Request(), _handler)
+        return await tool_mw.awrap_tool_call(_Request(), _handler)
 
     result = asyncio.run(_run())
 
     assert isinstance(result, ToolMessage)
-    assert isinstance(result.content, str)
-    assert "image tool content omitted from persistent history" in result.content
-    assert "path=/paper/page.png" in result.content
-    assert "not-for-history" not in result.content
+    assert isinstance(result.content, list)
+    assert result.content[0]["type"] == "image"
+    assert result.content[0]["base64"] == "not-for-history"
+    assert result.additional_kwargs["read_file_path"] == "/paper/page.png"
     assert result.tool_call_id == "call-1"
 
 
@@ -513,7 +514,7 @@ def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.Mo
     assert sleeps == [60.0, 180.0]
 
 
-def test_model_retry_middleware_sanitizes_multimodal_tool_history() -> None:
+def test_model_retry_middleware_preserves_multimodal_tool_history() -> None:
     middleware = runtime_mod.SpecialistRunner._build_default_middleware()
     model_mw = middleware[0]
     seen_messages = []
@@ -554,9 +555,10 @@ def test_model_retry_middleware_sanitizes_multimodal_tool_history() -> None:
 
     assert isinstance(result, ModelResponse)
     assert isinstance(seen_messages[0], ToolMessage)
-    assert isinstance(seen_messages[0].content, str)
-    assert "not-for-model-history" not in seen_messages[0].content
-    assert "path=/paper/page.png" in seen_messages[0].content
+    assert isinstance(seen_messages[0].content, list)
+    assert seen_messages[0].content[0]["type"] == "image"
+    assert seen_messages[0].content[0]["base64"] == "not-for-model-history"
+    assert seen_messages[0].additional_kwargs["read_file_path"] == "/paper/page.png"
 
 
 def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
@@ -1157,7 +1159,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
-        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in agent_kwargs["system_prompt"]
+        assert "Multimodal discipline: current-turn images, PDFs, and other supported attachments may arrive as DeepAgents/LangChain content blocks." in agent_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
@@ -1172,7 +1174,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in materials_worker_kwargs["system_prompt"]
-        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in materials_worker_kwargs["system_prompt"]
+        assert "Multimodal discipline: current-turn images, PDFs, and other supported attachments may arrive as DeepAgents/LangChain content blocks." in materials_worker_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in materials_worker_kwargs["system_prompt"]
         assert "obtain POTCARs through the pymatgen interface" in materials_worker_kwargs["system_prompt"]
         assert "If a handy Python package is missing for a bounded local step" in materials_worker_kwargs["system_prompt"]
@@ -1191,7 +1193,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "If the ML logic is longer than a short throwaway snippet and no managed tool covers it" in ml_worker_kwargs["system_prompt"]
         assert "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`" in ml_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in ml_worker_kwargs["system_prompt"]
-        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in ml_worker_kwargs["system_prompt"]
+        assert "Multimodal discipline: current-turn images, PDFs, and other supported attachments may arrive as DeepAgents/LangChain content blocks." in ml_worker_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in ml_worker_kwargs["system_prompt"]
         assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in ml_worker_kwargs["system_prompt"]
         assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in ml_worker_kwargs["system_prompt"]
@@ -1250,7 +1252,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
-        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in agent_kwargs["system_prompt"]
+        assert "Multimodal discipline: current-turn images, PDFs, and other supported attachments may arrive as DeepAgents/LangChain content blocks." in agent_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
         assert "Handle only one section or one bounded organization/integration task at a time" in writing_worker_kwargs["system_prompt"]
         assert "compact author packet" in writing_worker_kwargs["system_prompt"]
@@ -1268,7 +1270,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "without changing claim strength, scientific scope, evidence selection" in writing_polisher_kwargs["system_prompt"]
         assert "For journal-facing citations and BibTeX, use publication-style metadata only" in writing_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in writing_worker_kwargs["system_prompt"]
-        assert "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread." in writing_worker_kwargs["system_prompt"]
+        assert "Multimodal discipline: current-turn images, PDFs, and other supported attachments may arrive as DeepAgents/LangChain content blocks." in writing_worker_kwargs["system_prompt"]
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in writing_worker_kwargs["system_prompt"]
     else:
         assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)

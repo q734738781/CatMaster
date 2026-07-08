@@ -152,11 +152,11 @@ models:
           #   - token-efficient-tools-2025-02-19
 
   # -------------------------------------------------------------------------
-  # Codex OAuth example (non-official package; no API key)
+  # Codex OAuth example (langchain-openai ChatGPT OAuth; no API key)
   # -------------------------------------------------------------------------
   "codex-oauth-main":
     provider: codex_oauth
-    model: gpt-5.2-codex
+    model: gpt-5.5
 
     temperature: null
     top_p: null
@@ -169,13 +169,12 @@ models:
 
     default_headers: {}
 
-    # Provider-bound options passed directly to langchain_codex_oauth.ChatCodexOAuth.
+    # Provider-bound options passed to langchain_openai.chat_models.codex._ChatOpenAICodex.
     provider_options:
       codex_oauth:
         chat_kwargs:
-          system_prompt_mode: strict
-          # text_verbosity: medium
-          # reasoning_effort: medium
+          reasoning_effort: high
+          verbosity: medium
 
 agents:
   proposal: "openrouter-main"

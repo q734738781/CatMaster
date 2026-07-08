@@ -3,6 +3,12 @@ from __future__ import annotations
 from catmaster.llm.factory import _sanitize_openrouter_message_dicts
 
 
+def _assert_openrouter_tool_message_accepts(message: dict) -> None:
+    from openrouter.components.chattoolmessage import ChatToolMessage
+
+    ChatToolMessage.model_validate(message)
+
+
 def test_openrouter_sanitizer_preserves_non_tool_file_messages() -> None:
     sanitized = _sanitize_openrouter_message_dicts(
         [
@@ -30,7 +36,7 @@ def test_openrouter_sanitizer_preserves_non_tool_file_messages() -> None:
     assert sanitized[1]["content"][1]["type"] == "file"
 
 
-def test_openrouter_sanitizer_textualizes_replayed_tool_image_blocks() -> None:
+def test_openrouter_sanitizer_converts_tool_image_blocks() -> None:
     sanitized = _sanitize_openrouter_message_dicts(
         [
             {
@@ -40,6 +46,7 @@ def test_openrouter_sanitizer_textualizes_replayed_tool_image_blocks() -> None:
                     {
                         "type": "image",
                         "id": "img_123",
+                        "base64": "ZmFrZQ==",
                         "mime_type": "image/jpeg",
                     }
                 ],
@@ -50,12 +57,12 @@ def test_openrouter_sanitizer_textualizes_replayed_tool_image_blocks() -> None:
     message = sanitized[0]
 
     assert message["role"] == "tool"
-    assert message["content"][0]["type"] == "text"
-    assert "image block omitted" in message["content"][0]["text"]
-    assert "img_123" in message["content"][0]["text"]
+    assert message["content"][0]["type"] == "image_url"
+    assert message["content"][0]["image_url"]["url"] == "data:image/jpeg;base64,ZmFrZQ=="
+    _assert_openrouter_tool_message_accepts(message)
 
 
-def test_openrouter_sanitizer_textualizes_any_non_text_tool_block() -> None:
+def test_openrouter_sanitizer_preserves_tool_multimodal_blocks() -> None:
     sanitized = _sanitize_openrouter_message_dicts(
         [
             {
@@ -72,6 +79,7 @@ def test_openrouter_sanitizer_textualizes_any_non_text_tool_block() -> None:
                         "type": "file",
                         "filename": "figure.pdf",
                         "mime_type": "application/pdf",
+                        "base64": "JVBERi0=",
                     },
                 ],
             },
@@ -81,7 +89,9 @@ def test_openrouter_sanitizer_textualizes_any_non_text_tool_block() -> None:
     content = sanitized[0]["content"]
 
     assert content[0] == {"type": "text", "text": "image generated"}
-    assert content[1]["type"] == "text"
-    assert "image_url block omitted" in content[1]["text"]
-    assert content[2]["type"] == "text"
-    assert "figure.pdf" in content[2]["text"]
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"] == "data:image/png;base64,ZmFrZQ=="
+    assert content[2]["type"] == "file"
+    assert content[2]["file"]["filename"] == "figure.pdf"
+    assert content[2]["file"]["file_data"] == "data:application/pdf;base64,JVBERi0="
+    _assert_openrouter_tool_message_accepts(sanitized[0])

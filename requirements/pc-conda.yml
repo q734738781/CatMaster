@@ -54,7 +54,6 @@ dependencies:
       - langchain-openai==1.3.3
       - langchain-openrouter==0.2.5
       - langchain-anthropic==1.4.8
-      - langchain-codex-oauth==1.0.0
       - langchain-deepseek==1.1.0
       - langchain-google-genai==4.2.7
       - langgraph==1.2.7

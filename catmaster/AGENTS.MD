@@ -164,18 +164,18 @@ For active-path generated artifacts inside the workspace `files/` tree:
 
 ### Multimodal tool-content rules
 
-Active specialist threads may use multimodal model input in the current turn when the model and provider support it, but do not assume raw multimodal tool outputs are safe to replay indefinitely through every provider bridge or message role.
+Active specialist threads use DeepAgents-native multimodal input in the current turn when the model and provider support it. Treat current-turn user attachments and fresh DeepAgents `read_file` results as standard LangChain/DeepAgents content blocks, not as paths-only prompt text.
 
 Maintenance rules for active-path code:
 
-- Keep long-lived `tool` message history text-first. Prefer concise textual tool outputs plus workspace artifact paths over inline base64 image/file payloads.
-- If a tool naturally returns binary or multimodal content, persist the artifact as a file and keep only a short textual summary, file path, and MIME hint in model-visible history when possible.
-- Do not depend on LangChain-standard multimodal blocks like `{"type": "image", ...}` being replay-safe for provider-backed `tool` history. Provider wire formats may require provider-native blocks such as OpenAI-style `image_url`, and some bridges reject non-text `tool.content`.
-- When a later turn needs image, PDF, or PPT/PPTX understanding, re-open the artifact with `read_file` for small or moderate files. Do not rely on old inline image or file payloads surviving indefinitely inside the thread store.
+- User-submitted images, PDFs, documents, audio, and video should be stored as workspace artifacts first, then sent to the first model call as standard content blocks when the configured model capability allows it.
+- Persisted WebUI thread messages must keep artifact references, MIME, size, and sent/degraded status. Do not persist raw base64 media payloads in `messages.jsonl` or thread metadata.
+- Fresh `read_file` results for supported non-text files must remain multimodal through the next model call. Do not add middleware that blanket-textualizes `ToolMessage` content immediately after tool execution.
+- Provider-specific compatibility handling belongs at the provider adapter boundary. If an old replayed message is incompatible with a provider wire schema, degrade it there to an explicit path/MIME text reference rather than mutating fresh DeepAgent state.
+- When a later turn needs image, PDF, PPT/PPTX, audio, or video understanding, re-open the stored artifact with `read_file(file_path=...)`. Do not rely on old inline media surviving indefinitely inside replayed history.
 - Prefer attachments, file IDs, file paths, or generated artifact URLs over embedding large base64 blobs in multi-turn history.
-- If runtime compatibility is uncertain, sanitize non-text `tool` messages before model invocation instead of dropping the whole thread. Preserve only the minimum textual placeholder needed for continuity.
 
-This is a replay-safety rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while avoiding provider/schema failures from replaying raw multimodal `tool` history across turns.
+This is a replay-safety rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while preserving current-turn and fresh tool-result multimodal context.
 
 ## 4) Research Kernel
 

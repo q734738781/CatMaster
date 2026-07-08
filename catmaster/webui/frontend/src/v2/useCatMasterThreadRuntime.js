@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  CompositeAttachmentAdapter,
-  SimpleImageAttachmentAdapter,
-  SimpleTextAttachmentAdapter,
-  useExternalStoreRuntime,
-} from "@assistant-ui/react";
+import { useExternalStoreRuntime } from "@assistant-ui/react";
 
+import { CatMasterAttachmentAdapter } from "./catmasterAttachmentAdapter.js";
 import { catMessagesToAssistant, requestFromAssistantAppend, upsertById } from "./messageAdapters.js";
 import { applyThreadEvent } from "./threadEventReducer.js";
 
@@ -132,6 +128,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
       "tool_call.failed",
       "artifact.created",
       "artifact.updated",
+      "multimodal.prepared",
       "interrupt.created",
       "interrupt.updated",
       "interrupt.resolved",
@@ -204,10 +201,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
   }, [thread, onThreadUpdate]);
 
   const assistantMessages = useMemo(() => catMessagesToAssistant(messages), [messages]);
-  const attachmentAdapter = useMemo(() => new CompositeAttachmentAdapter([
-    new SimpleImageAttachmentAdapter(),
-    new SimpleTextAttachmentAdapter(),
-  ]), []);
+  const attachmentAdapter = useMemo(() => new CatMasterAttachmentAdapter(), []);
   const runtime = useExternalStoreRuntime({
     messages: assistantMessages,
     isRunning: threadIsRunning(thread),

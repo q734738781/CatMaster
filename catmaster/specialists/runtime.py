@@ -1819,8 +1819,9 @@ class SpecialistRunner:
     @staticmethod
     def _multimodal_policy() -> str:
         return (
-            "Multimodal discipline: use `general-purpose` for multimodal analysis so that multimodal context stays isolated from the parent thread. "
-            "For PDFs, first extract with fitz into workspace text artifacts and analyze those artifacts."
+            "Multimodal discipline: current-turn images, PDFs, and other supported attachments may arrive as DeepAgents/LangChain content blocks. "
+            "Inspect stored media with the built-in `read_file(file_path=...)`; for supported non-text files it returns multimodal content blocks to the next model call. "
+            "Use `general-purpose` only when delegation is needed for normal context-isolation reasons, not as a required workaround for multimodal analysis."
         )
 
     @staticmethod
@@ -2443,7 +2444,6 @@ class SpecialistRunner:
 
         @wrap_model_call(name="catmaster_retry_semantic_model_failures")
         async def _retry_invalid_model_responses(request: Any, handler: Any) -> Any:
-            request = cls._sanitize_model_request_for_history(request)
             max_attempts = len(cls._MODEL_RESPONSE_RETRY_DELAYS_S) + 1
             for attempt_index in range(max_attempts):
                 try:
@@ -2460,13 +2460,6 @@ class SpecialistRunner:
             raise SpecialistRetryableModelResponseError("Unexpected model retry loop exit.")
 
         middleware.append(_retry_invalid_model_responses)
-
-        @wrap_tool_call(name="catmaster_textualize_multimodal_tool_results")
-        async def _textualize_multimodal_tool_results(request: Any, handler: Any) -> Any:
-            result = await handler(request)
-            return cls._sanitize_tool_result_for_history(result)
-
-        middleware.append(_textualize_multimodal_tool_results)
 
         @wrap_tool_call(name="catmaster_nonfatal_tool_errors")
         async def _handle_tool_errors(request: Any, handler: Any) -> Any:
@@ -2675,125 +2668,6 @@ class SpecialistRunner:
         if "body." in text and ".tool.content" in text:
             return True
         return any(fragment in text for fragment in retryable_fragments[:15])
-
-    @classmethod
-    def _sanitize_tool_result_for_history(cls, result: Any) -> Any:
-        if isinstance(result, ToolMessage):
-            return cls._sanitize_tool_message_for_history(result)
-        if isinstance(result, Command):
-            update = getattr(result, "update", None)
-            if isinstance(update, dict) and isinstance(update.get("messages"), list):
-                updated_messages = [
-                    cls._sanitize_tool_message_for_history(item) if isinstance(item, ToolMessage) else item
-                    for item in update["messages"]
-                ]
-                return Command(
-                    graph=getattr(result, "graph", None),
-                    update={**update, "messages": updated_messages},
-                    resume=getattr(result, "resume", None),
-                    goto=getattr(result, "goto", ()),
-                )
-        return result
-
-    @classmethod
-    def _sanitize_model_request_for_history(cls, request: Any) -> Any:
-        messages = getattr(request, "messages", None)
-        override = getattr(request, "override", None)
-        if not isinstance(messages, list) or not callable(override):
-            return request
-        sanitized = [cls._sanitize_tool_message_for_history(item) if isinstance(item, ToolMessage) else item for item in messages]
-        if all(left is right for left, right in zip(messages, sanitized, strict=False)):
-            return request
-        return override(messages=sanitized)
-
-    @classmethod
-    def _sanitize_tool_message_for_history(cls, message: ToolMessage) -> ToolMessage:
-        content = getattr(message, "content", None)
-        if not cls._tool_content_needs_textualization(content):
-            return message
-        text = cls._textualized_tool_content(
-            content,
-            tool_name=str(getattr(message, "name", "") or ""),
-            additional_kwargs=getattr(message, "additional_kwargs", None),
-        )
-        return ToolMessage(
-            content=text,
-            additional_kwargs=dict(getattr(message, "additional_kwargs", None) or {}),
-            response_metadata=dict(getattr(message, "response_metadata", None) or {}),
-            name=getattr(message, "name", None),
-            id=getattr(message, "id", None),
-            tool_call_id=str(getattr(message, "tool_call_id", "") or "tool_result"),
-            artifact=getattr(message, "artifact", None),
-            status=getattr(message, "status", "success"),
-        )
-
-    @staticmethod
-    def _tool_content_needs_textualization(content: Any) -> bool:
-        if not isinstance(content, list):
-            return False
-        for item in content:
-            if isinstance(item, str):
-                continue
-            if not isinstance(item, dict):
-                return True
-            item_type = str(item.get("type") or "").strip().lower()
-            if item_type != "text":
-                return True
-        return False
-
-    @classmethod
-    def _textualized_tool_content(
-        cls,
-        content: Any,
-        *,
-        tool_name: str = "",
-        additional_kwargs: Any = None,
-    ) -> str:
-        if not isinstance(content, list):
-            return str(content or "").strip()
-        lines: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                if item.strip():
-                    lines.append(item.strip())
-                continue
-            if isinstance(item, dict):
-                item_type = str(item.get("type") or "content").strip() or "content"
-                if item_type == "text" and isinstance(item.get("text"), str):
-                    text = str(item.get("text") or "").strip()
-                    if text:
-                        lines.append(text)
-                    continue
-                lines.append(cls._multimodal_tool_block_reference(item, tool_name=tool_name, additional_kwargs=additional_kwargs))
-                continue
-            lines.append(f"[{type(item).__name__} tool content omitted from persistent history]")
-        return "\n".join(line for line in lines if line).strip() or "[tool result omitted from persistent history]"
-
-    @staticmethod
-    def _multimodal_tool_block_reference(
-        block: dict[str, Any],
-        *,
-        tool_name: str = "",
-        additional_kwargs: Any = None,
-    ) -> str:
-        block_type = str(block.get("type") or "content").strip() or "content"
-        mime_type = str(block.get("mime_type") or "").strip()
-        path = ""
-        if isinstance(additional_kwargs, dict):
-            path = str(additional_kwargs.get("read_file_path") or "").strip()
-            mime_type = mime_type or str(additional_kwargs.get("read_file_media_type") or "").strip()
-        block_id = str(block.get("id") or "").strip()
-        details = []
-        if tool_name:
-            details.append(f"tool={tool_name}")
-        if path:
-            details.append(f"path={path}")
-        if mime_type:
-            details.append(f"mime_type={mime_type}")
-        if block_id:
-            details.append(f"id={block_id}")
-        suffix = f" ({', '.join(details)})" if details else ""
-        return f"[{block_type} tool content omitted from persistent history{suffix}]"
 
     @classmethod
     def _validate_model_response_for_retry(cls, response: Any) -> None:

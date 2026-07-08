@@ -172,7 +172,7 @@ models:
 
   codex-oauth-main:
     provider: codex_oauth
-    model: gpt-5.2-codex
+    model: gpt-5.5
     temperature: null
     top_p: null
     max_tokens: null
@@ -188,9 +188,8 @@ models:
     provider_options:
       codex_oauth:
         chat_kwargs:
-          system_prompt_mode: strict
-          # text_verbosity: medium
-          # reasoning_effort: medium
+          reasoning_effort: high
+          verbosity: medium
     print_http_raw_post: false
     langchain_class: null
     langchain_kwargs: {}
