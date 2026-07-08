@@ -419,11 +419,42 @@ class CatMasterStreamTranslator:
             if name and isinstance(args, dict):
                 self.resume_tool_inputs_by_name.setdefault(name, []).append(_json_safe(args))
         self.completed_tool_messages: set[str] = set()
+        self.historical_completed_tool_call_ids = self._historical_completed_tool_call_ids()
         self.interrupt_id = ""
         self.reasoning_part_id = ""
         self.reasoning_text_emitted = ""
         self.observed_reasoning_event_id = 0
         self.subagent_parts_by_source: dict[str, str] = {}
+
+    def _historical_completed_tool_call_ids(self) -> set[str]:
+        """Tool ids already represented by earlier WebUI messages.
+
+        LangGraph `values` streams are full state snapshots. On a later turn the
+        checkpoint state can include ToolMessages from prior turns; those should
+        not be projected into the new assistant message as fresh tool calls.
+        Pending HITL tool calls are intentionally excluded so a resumed tool can
+        still be rendered when it finally completes.
+        """
+        out: set[str] = set()
+        try:
+            messages = self.store.list_messages(self.thread_id)
+        except Exception:
+            return out
+        for message in messages:
+            if message.id == self.message_id:
+                continue
+            for part in message.parts:
+                if part.type != "tool-call":
+                    continue
+                meta = dict(part.meta or {})
+                call_id = str(meta.get("tool_call_id") or getattr(part, "tool_call_id", "") or "").strip()
+                if not call_id:
+                    continue
+                status = str(part.status or "").strip().lower()
+                has_output = "output" in meta and meta.get("output") not in (None, "")
+                if status in {"completed", "failed"} or has_output:
+                    out.add(call_id)
+        return out
 
     def apply_v3_event(self, event: Any) -> None:
         method = _event_method(event)
@@ -1142,11 +1173,22 @@ class CatMasterStreamTranslator:
         self.store.update_part(self.thread_id, self.message_id, part_id, **updates)
 
     def _handle_tool_message(self, message: ToolMessage) -> None:
-        message_key = str(getattr(message, "id", "") or id(message))
+        call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+        if call_id and call_id in self.historical_completed_tool_call_ids and call_id not in self.tool_parts_by_call_id:
+            return
+        output_text = _message_text(message)
+        message_key = str(getattr(message, "id", "") or "").strip()
+        if not message_key:
+            message_key = self._canonical_tool_input(
+                {
+                    "tool_call_id": call_id,
+                    "name": str(getattr(message, "name", "") or ""),
+                    "output": output_text,
+                }
+            ) or str(id(message))
         if message_key in self.completed_tool_messages:
             return
         self.completed_tool_messages.add(message_key)
-        call_id = str(getattr(message, "tool_call_id", "") or "").strip()
         part_id = self.tool_parts_by_call_id.get(call_id)
         if not part_id:
             tool_name = str(getattr(message, "name", "") or call_id or "tool")
@@ -1180,7 +1222,7 @@ class CatMasterStreamTranslator:
                 "part_id": part_id or "",
                 "tool": self.tool_names_by_call_id.get(call_id, str(getattr(message, "name", "") or "")),
                 "input": self._best_tool_input(call_id) or self._tool_part_meta(part_id or "").get("input", {}),
-                "output": _json_safe(_message_text(message)),
+                "output": _json_safe(output_text),
                 **self.tool_stream_meta_by_call_id.get(call_id, {}),
             },
         )

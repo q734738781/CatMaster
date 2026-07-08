@@ -1056,6 +1056,106 @@ def test_extract_sidecar_artifact_paths_ignores_artifact_ids() -> None:
     assert paths == ["reports/sidecar.md", "tables/results.csv", "figures/plot.png"]
 
 
+def test_stream_translator_ignores_historical_tool_messages_from_state_snapshots(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    previous = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="completed",
+        parts=[
+            MessagePart(
+                id="part_tool_old",
+                type="tool-call",
+                text="old output",
+                status="completed",
+                meta={"tool_call_id": "tc_old", "tool": "ls", "input": {"path": "/"}, "output": "old output"},
+            )
+        ],
+    )
+    store.append_message(previous)
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_snapshot",
+    )
+
+    translator.apply_v3_event(
+        {
+            "method": "values",
+            "params": {
+                "data": {
+                    "messages": [
+                        ToolMessage(content="old output", tool_call_id="tc_old", name="ls"),
+                    ]
+                }
+            },
+        }
+    )
+
+    saved = store.get_message(thread.thread_id, message.id)
+    assert [part for part in saved.parts if part.type == "tool-call"] == []
+    assert broker.replay(thread.thread_id) == []
+    assert translator.last_values["messages"]
+
+
+def test_stream_translator_deduplicates_repeated_tool_messages_without_message_ids(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_snapshot_dedupe",
+    )
+
+    translator.apply_v3_event(
+        {"method": "tool_calls", "params": {"data": {"id": "tc_new", "name": "ls", "args": {"path": "/new"}}}}
+    )
+    for _ in range(2):
+        translator.apply_v3_event(
+            {
+                "method": "values",
+                "params": {"data": {"messages": [ToolMessage(content="new output", tool_call_id="tc_new", name="ls")]}},
+            }
+        )
+
+    saved = store.get_message(thread.thread_id, message.id)
+    tool_parts = [part for part in saved.parts if part.type == "tool-call"]
+    completed_events = [event for event in broker.replay(thread.thread_id) if event.event == "tool_call.completed"]
+    assert len(tool_parts) == 1
+    assert len(completed_events) == 1
+    assert tool_parts[0].meta["input"] == {"path": "/new"}
+
+
 def test_stream_translator_merges_token_tool_and_artifact_parts(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     (workspace / "files" / "out.csv").write_text("x\n1\n", encoding="utf-8")
