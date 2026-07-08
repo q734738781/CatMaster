@@ -143,8 +143,8 @@ Small batches are supported when the user provides a definite DOI/title/PMID lis
 
 Recommended limits:
 
-- normal batch: 5-10 papers
-- upper practical batch: 15-20 papers, with pauses and a manifest
+- normal full-text download batch: 5-10 papers
+- upper practical full-text download batch: 15-20 papers per batch, with pauses and a manifest; this is not a literature-review coverage target or citation-count cap
 - stop immediately if publisher checks, CAPTCHA, institutional login expiry, or unusual download prompts appear
 
 Do not turn a broad keyword search into unlimited automatic downloading. Do not download whole journal issues, volumes, or large result sets.

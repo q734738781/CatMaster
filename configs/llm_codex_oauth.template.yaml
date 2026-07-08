@@ -64,5 +64,9 @@ writing:
 agent_runtime:
   recursion_limit: 9999
   max_tool_calls: 120
+  # _ChatOpenAICodex(gpt-5.5) exposes a 1.05M token profile. Without this cap,
+  # DeepAgents' default 85% trigger would wait until roughly 892k tokens.
+  # Retained context remains DeepAgents' default 10% of the capped profile.
+  deepagent_context_trigger_token_cap: 256000
   print_state_messages: false
   print_http_raw_post: false

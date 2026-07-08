@@ -8,6 +8,7 @@ import { interruptActions, repeatInterruptDecision } from "./interruptPayload.js
 import { applyThreadEvent } from "./threadEventReducer.js";
 import { artifactForSelection } from "./artifactSelection.js";
 import { todoGroupsFromMessages } from "./todoPanel.js";
+import { normalizeMathMarkdown } from "./markdown.js";
 
 test("catMessageToAssistant converts text, tool, artifact, and interrupt parts", () => {
   const converted = catMessageToAssistant({
@@ -33,6 +34,13 @@ test("catMessageToAssistant converts text, tool, artifact, and interrupt parts",
   assert.equal(converted.content[2].data.type, "artifact");
   assert.equal(converted.content[3].type, "data");
   assert.equal(converted.content[3].data.type, "interrupt");
+});
+
+test("normalizeMathMarkdown converts common LLM math delimiters", () => {
+  const source = "inline \\(E=mc^2\\) and display:\\n\\[x^2 + y^2 = z^2\\]";
+  const normalized = normalizeMathMarkdown(source);
+  assert.match(normalized, /inline \$E=mc\^2\$/);
+  assert.match(normalized, /\$\$\nx\^2 \+ y\^2 = z\^2\n\$\$/);
 });
 
 test("applyThreadEvent preserves tool call agent source metadata", () => {

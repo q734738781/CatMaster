@@ -42,6 +42,12 @@ class _FakeProfile:
         return SimpleNamespace(model=f"{role}-model", provider="langchain", base_url=None)
 
 
+class _FakeProfileWithRuntime(_FakeProfile):
+    agent_runtime = SimpleNamespace(
+        deepagent_context_trigger_token_cap=256_000,
+    )
+
+
 class _FakeToolStrategy:
     def __init__(self, schema, handle_errors: bool = False) -> None:
         self.schema = schema
@@ -120,12 +126,66 @@ class _FailingToolInput(BaseModel):
     value: str
 
 
+def test_deepagent_context_profile_cap_limits_fraction_summarization_window(tmp_path: Path) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfileWithRuntime(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="research",
+    )
+    model = SimpleNamespace(
+        model="gpt-5.5",
+        profile={
+            "max_input_tokens": 1_050_000,
+            "max_output_tokens": 128_000,
+            "tool_calling": True,
+        },
+    )
+
+    capped = built.runner._apply_deepagent_context_profile_cap(model, role="research_lead")
+
+    assert capped.profile["max_input_tokens"] == 301_176
+    assert int(capped.profile["max_input_tokens"] * 0.85) <= 256_000
+    assert int(capped.profile["max_input_tokens"] * 0.10) == 30_117
+    assert capped.profile["max_output_tokens"] == 128_000
+    assert capped.profile["tool_calling"] is True
+
+
+def test_deepagent_context_profile_cap_can_be_disabled(tmp_path: Path) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+
+    class _DisabledProfile(_FakeProfile):
+        agent_runtime = SimpleNamespace(
+            deepagent_context_trigger_token_cap=None,
+        )
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_DisabledProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="research",
+    )
+    model = SimpleNamespace(model="gpt-5.5", profile={"max_input_tokens": 1_050_000})
+
+    capped = built.runner._apply_deepagent_context_profile_cap(model, role="research_lead")
+
+    assert capped.profile["max_input_tokens"] == 1_050_000
+
+
 def test_real_registry_covers_specialist_allowlists() -> None:
     registry = get_tool_registry()
     registered = set(registry.tools)
 
     assert "write_note" not in registered
     assert _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST <= registered
+    assert {"mp_search_materials", "mp_download_structure"} <= _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
     assert _RESEARCH_TOOL_ALLOWLIST <= registered
     assert _WRITING_TOOL_ALLOWLIST <= registered
     assert _MATERIALS_WORKER_TOOL_ALLOWLIST <= registered
@@ -268,6 +328,29 @@ def test_writing_reporting_contract_allows_summary_first_closeout() -> None:
     assert "Do not add a placeholder `Facts` section" in contract
 
 
+def test_litreview_downloader_batch_limit_is_not_review_coverage_target() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    for relpath in (
+        "skills/litreview_agent/nature-downloader/SKILL.md",
+        "skills/research_specialist/nature-downloader/SKILL.md",
+    ):
+        text = (repo_root / relpath).read_text(encoding="utf-8")
+        assert "full-text download batch" in text
+        assert "not a literature-review coverage target or citation-count cap" in text
+
+
+def test_litreview_academic_search_defaults_reviews_to_perspective_scale() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    for relpath in (
+        "skills/litreview_agent/nature-academic-search/SKILL.md",
+        "skills/research_specialist/nature-academic-search/SKILL.md",
+    ):
+        text = (repo_root / relpath).read_text(encoding="utf-8")
+        assert "Review-scale default" in text
+        assert "50-60+ candidate papers" in text
+        assert "do not treat 15-20 papers as the normal depth" in text
+
+
 def test_report_parser_supports_review_target() -> None:
     runner = runtime_mod.SpecialistRunner(
         llm_profile=_FakeProfile(),
@@ -322,6 +405,17 @@ def test_common_worker_prompts_require_relevant_skill_check() -> None:
     assert expected in runtime_mod.SpecialistRunner._writing_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._writing_polisher_prompt()
     assert expected in runtime_mod.SpecialistRunner._peer_review_worker_prompt()
+
+
+def test_experiment_specialist_can_use_materials_project_tools_directly() -> None:
+    experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
+    materials_prompt = runtime_mod.SpecialistRunner._materials_worker_prompt()
+
+    assert {"mp_search_materials", "mp_download_structure"} <= runtime_mod._EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+    assert "direct Materials Project lookup/download tools" in experiment_prompt
+    assert "if you cannot see MP tools" not in experiment_prompt
+    assert "For Materials Project search or structure download steps" in materials_prompt
+    assert "report precise API-key" in materials_prompt
 
 
 def test_specialist_prompts_require_explicit_follow_on_delegate_judgment() -> None:
@@ -1075,6 +1169,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert litreview_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
+        assert "50-60+ candidate papers" in litreview_agent_kwargs["system_prompt"]
+        assert "screened candidate pool" in litreview_agent_kwargs["system_prompt"]
         nested_subagents = {subagent.kwargs["name"]: subagent.kwargs for subagent in litreview_agent_kwargs["subagents"]}
         assert "runnable" in nested_subagents["literature_agent"]
         assert "runnable" in nested_subagents["metadata_agent"]
@@ -1118,7 +1214,10 @@ def test_specialist_lanes_start_with_staged_skills(
         assert literature_agent_kwargs["skills"] == ["/.deepagents/skills/litreview_agent"]
         assert metadata_agent_kwargs["skills"] == ["/.deepagents/skills/litreview_agent"]
         assert "broad-review and orientation layer" in literature_agent_kwargs["system_prompt"]
+        assert "fixed public-evidence template" in literature_agent_kwargs["system_prompt"]
+        assert "50-60+ candidate papers" in literature_agent_kwargs["system_prompt"]
         assert "scholarly metadata tools" in metadata_agent_kwargs["system_prompt"]
+        assert "50-60+ deduplicated candidate records" in metadata_agent_kwargs["system_prompt"]
     elif entrypoint == "experiment":
         materials_worker_kwargs = _find_created_agent("materials_worker")
         ml_worker_kwargs = _find_created_agent("ml_worker")
@@ -1137,6 +1236,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert orca_worker_kwargs["skills"] == ["/.deepagents/skills/orca_xtb_worker", "/.deepagents/skills/execution"]
         assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        assert {"mp_search_materials", "mp_download_structure"} <= {tool.name for tool in agent_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
         assert "parent-maintained project memory" in materials_worker_kwargs["system_prompt"]
         assert "Instruction context files" not in materials_worker_kwargs["system_prompt"]

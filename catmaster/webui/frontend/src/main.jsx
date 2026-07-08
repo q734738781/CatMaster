@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import CatMasterWorkspace from "./v2/CatMasterWorkspace";
 import "./styles.css";
+import "katex/dist/katex.min.css";
 
 const root = document.getElementById("app");
 

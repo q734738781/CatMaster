@@ -8,6 +8,8 @@ description: Use this skill for materials discovery and bulk structure selection
 ## Overview
 Use this skill to turn an open-ended catalyst search into a shortlist of downloaded bulk structures with traceable Materials Project provenance.
 
+ExperimentSpecialist may use the MP lookup tools directly for lightweight database retrieval. When this skill is invoked inside a delegated materials workflow, perform the lookup here and report precise API-key, client-package, criteria, or field blockers rather than saying materials discovery is generally unavailable.
+
 ## Quick Start
 1. Define search criteria and requested fields before querying Materials Project.
 2. Choose a non-empty `criteria`, non-empty `fields`, and an `output_csv_rel` ledger path before calling `mp_search_materials`.

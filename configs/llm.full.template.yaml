@@ -308,6 +308,11 @@ writing:
 agent_runtime:
   recursion_limit: 300
   max_tool_calls: 120
+  # DeepAgents computes summarization as 85% trigger / 10% keep of model.profile.max_input_tokens.
+  # Cap only the effective trigger window so very-long-context profiles do not delay
+  # compaction into the 800k-900k range. Set to 0/null to disable this cap.
+  # The retained context remains DeepAgents' default 10% of the capped profile.
+  deepagent_context_trigger_token_cap: 256000
   print_state_messages: false
   print_http_raw_post: false
 

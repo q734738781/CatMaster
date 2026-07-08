@@ -148,7 +148,11 @@ _WRITING_TOOL_ALLOWLIST = {
     "review_pdf_manuscript",
 }
 _RESEARCH_TOOL_ALLOWLIST: set[str] = set()
-_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {"get_avail_remote_task"}
+_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {
+    "get_avail_remote_task",
+    "mp_search_materials",
+    "mp_download_structure",
+}
 _PEER_REVIEW_TOOL_ALLOWLIST = {"peer_review_request"}
 _PEER_REVIEW_WORKER_TOOL_ALLOWLIST = set(_PEER_REVIEW_TOOL_ALLOWLIST)
 _METADATA_AGENT_TOOL_ALLOWLIST = {
@@ -187,6 +191,7 @@ _WRITING_WORKER_TOOL_ALLOWLIST = {
 }
 _LITREVIEW_COMPACT_TRIGGER_TOKENS = 65_000
 _LITREVIEW_COMPACT_KEEP_TOKENS = 6_500
+_DEEPAGENT_SUMMARIZATION_TRIGGER_FRACTION = 0.85
 _DEEPAGENT_MEMORY_POLICY = (
     "Persistent project memory:\n"
     "- DeepAgents `/memories/AGENTS.md` is the single long-term memory store for durable user preferences, project conventions, reusable conclusions, and stable workflow guidance.\n"
@@ -797,6 +802,54 @@ class SpecialistRunner:
             "Do not start execution. Return the full revised ProposalCheckpoint only."
         )
 
+    def _build_deepagent_chat_model(self, role: str) -> Any:
+        model = build_chat_model(self.llm_profile.config_for_role(role))
+        return self._apply_deepagent_context_profile_cap(model, role=role)
+
+    def _apply_deepagent_context_profile_cap(self, model: Any, *, role: str) -> Any:
+        cap = self._deepagent_profile_max_input_token_cap()
+        if cap is None:
+            return model
+        profile = getattr(model, "profile", None)
+        if not isinstance(profile, dict):
+            return model
+        current_max = profile.get("max_input_tokens")
+        if not isinstance(current_max, int) or current_max <= cap:
+            return model
+
+        capped_profile = dict(profile)
+        capped_profile["max_input_tokens"] = cap
+        copied = self._copy_chat_model_with_profile(model, capped_profile)
+        logger.info(
+            "Capped DeepAgents context profile for role=%s model=%s max_input_tokens=%s -> %s",
+            role,
+            getattr(model, "model", getattr(model, "model_name", "")),
+            current_max,
+            cap,
+        )
+        return copied
+
+    def _deepagent_profile_max_input_token_cap(self) -> int | None:
+        agent_runtime = getattr(self.llm_profile, "agent_runtime", None)
+        trigger_cap = getattr(agent_runtime, "deepagent_context_trigger_token_cap", None)
+        if isinstance(trigger_cap, int) and trigger_cap > 0:
+            return max(1, int(trigger_cap / _DEEPAGENT_SUMMARIZATION_TRIGGER_FRACTION))
+        return None
+
+    @staticmethod
+    def _copy_chat_model_with_profile(model: Any, profile: dict[str, Any]) -> Any:
+        model_copy = getattr(model, "model_copy", None)
+        if callable(model_copy):
+            try:
+                return model_copy(update={"profile": profile})
+            except Exception:
+                pass
+        try:
+            setattr(model, "profile", profile)
+        except Exception:
+            logger.warning("Unable to cap DeepAgents model profile for %s", type(model).__name__, exc_info=True)
+        return model
+
     def _read_current_proposal_text(self) -> str:
         proposal_path = self.run_context.run_dir / PROPOSAL_FILE
         if not proposal_path.exists():
@@ -876,10 +929,8 @@ class SpecialistRunner:
             return self._build_litreview_agent(runtime=runtime)
         create_deep_agent = self._load_create_deep_agent()
         tools = self._specialist_tools(entrypoint)
-        # TODO: Revisit explicit summarization tuning for OpenRouter-backed specialists
-        # via an official config path instead of patching model.profile at runtime.
         kwargs: dict[str, Any] = {
-            "model": build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])),
+            "model": self._build_deepagent_chat_model(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint]),
             "tools": tools,
             "system_prompt": self._system_prompt(entrypoint, thread_id=thread_id),
             "middleware": self._build_default_middleware(),
@@ -1063,7 +1114,7 @@ class SpecialistRunner:
         try:
             create_summarization_tool_middleware = self._load_create_summarization_tool_middleware()
             compact_tool_middleware = create_summarization_tool_middleware(
-                build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
+                self._build_deepagent_chat_model("literature_deep_research"),
                 runtime["backend"],
             )
         except Exception as exc:
@@ -1130,7 +1181,7 @@ class SpecialistRunner:
     ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
         kwargs: dict[str, Any] = {
-            "model": build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])),
+            "model": self._build_deepagent_chat_model(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint]),
             "tools": self._specialist_tools(entrypoint),
             "system_prompt": self._system_prompt(entrypoint),
             # `create_deep_agent` already injects its standard stack, including
@@ -1165,7 +1216,7 @@ class SpecialistRunner:
     ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
         kwargs: dict[str, Any] = {
-            "model": build_chat_model(self.llm_profile.config_for_role(model_role)),
+            "model": self._build_deepagent_chat_model(model_role),
             "tools": tools,
             "system_prompt": system_prompt,
             "middleware": [
@@ -1186,7 +1237,7 @@ class SpecialistRunner:
     def _build_litreview_agent(self, *, runtime: dict[str, Any]) -> Any:
         create_deep_agent = self._load_create_deep_agent()
         kwargs: dict[str, Any] = {
-            "model": build_chat_model(self.llm_profile.config_for_role("literature_deep_research")),
+            "model": self._build_deepagent_chat_model("literature_deep_research"),
             "tools": self._augment_with_default_autonomous_tools([]),
             "system_prompt": self._litreview_wrapper_prompt(),
             "middleware": self._subagent_middleware(runtime=runtime, include_memory_middleware=False),
@@ -1684,7 +1735,7 @@ class SpecialistRunner:
             "You are ExperimentSpecialist.\n"
             "Your default role is coordination, dispatch, and decision-making across the experiment lane, not personally executing the substantive domain work.\n"
             "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, deciding the next bounded handoff, and bounded experiment-facing summaries grounded in completed workspace evidence.\n"
-            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `dynamics_worker` for CP2K AIMD, CP2K reusable run-health summaries, LAMMPS minimization/MD/restart work, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct public-source checking only when a quick external check is needed.\n"
+            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, MACE screening/NEB/relaxation, and materials-side post-analysis; use `dynamics_worker` for CP2K AIMD, CP2K reusable run-health summaries, LAMMPS minimization/MD/restart work, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct Materials Project lookup/download tools for lightweight database retrieval, and use direct public-source checking only when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
             "For worker-owned calculation briefs, use the remote task catalog only to avoid misleading local fallback instructions; submission belongs to the worker. Do not suggest local executable fallback for scientific engines unless the user asked for local-only execution or a dry run.\n"
             f"{cls._experiment_layered_capability_visibility_policy()}\n"
@@ -1953,6 +2004,7 @@ class SpecialistRunner:
             "You are materials_worker for ExperimentSpecialist.\n"
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
             "This worker owns structure/calc/result workflows: modeling, VASP execution, surrogate-forcefield screening, and materials-side analysis.\n"
+            "For Materials Project search or structure download steps inside a delegated materials workflow, report precise API-key, client-package, query-criteria, or requested-field blockers instead of saying materials discovery is generally unavailable.\n"
             "Typical MACE work here includes surrogate screening, relaxation, single-point ranking, and path optimization when those steps serve one materials workflow; MACE MD sampling belongs to `dynamics_worker`.\n"
             "For MACE or other ML-potential relaxations, single-points, and path calculations, use the registered managed batch path first when it fits; do not run local calculators just because the package is importable.\n"
             "For VASP, CP2K, and managed MACE execution, local command capability is for stage prep and analysis only; engine execution stays on the managed remote path.\n"
@@ -2079,11 +2131,11 @@ class SpecialistRunner:
             f"{cls._deepagent_memory_policy(allow_memory_write=False)}\n"
             f"{cls._workspace_path_discipline()}\n"
             "Only save a reusable markdown note under `/notes/literature/` or another stable workspace path when the user asked for a saved artifact or when a durable handoff/writing reference is clearly worth the extra file.\n"
-            "Return a polished markdown answer with exactly these sections in order: `Answer`, `Public Evidence`, `Interpretation`, and `Files`.\n"
-            "`Answer` should synthesize the best available public evidence in a few compact paragraphs.\n"
-            "`Public Evidence` should be a flat bullet list with source titles, concrete factual takeaways, and source URLs.\n"
-            "`Interpretation` should separate direct evidence from your inference, identify uncertainty, and say when metadata verification is still needed from `metadata_agent`.\n"
-            "`Files` should list any saved reusable note paths, or `(none reported)` if nothing was persisted."
+            "Answer in the user's requested language and shape, using task-appropriate markdown headings instead of a fixed public-evidence template.\n"
+            "For review-style requests, state the coverage shape naturally: how many records or public sources were inspected, which papers are highlighted as representative/key examples, and why that breadth fits the request.\n"
+            "Do not let 15-20 papers become the default review depth. When the user asks for a review, research progress overview, systematic landscape, or perspective-style synthesis without asking for a quick/brief answer, plan perspective-level coverage: aim to screen roughly 50-60+ candidate papers and include or save a bibliography/candidate table at that scale when feasible. The narrative answer may still highlight a smaller set of key papers.\n"
+            "Separate direct evidence from your inference, identify uncertainty, and say when metadata verification is still needed from `metadata_agent`.\n"
+            "List saved reusable note paths only if you persisted files; otherwise omit a files section or say `(none reported)` when a file status section is useful."
         )
 
     @classmethod
@@ -2094,7 +2146,9 @@ class SpecialistRunner:
             "Delegate broad public-web orientation, review synthesis, landing-page inspection, and public-source evidence gathering to `literature_agent`.\n"
             "Delegate exact DOI/year/venue/authors/citation verification and scholarly record disambiguation to `metadata_agent`.\n"
             "Use whichever subagent is necessary, and use both when a review needs both broad evidence and citation-grade metadata.\n"
-            "Keep the final answer compact and decision-relevant. Save a reusable note under `/notes/literature/` or another stable workspace path only when the user asked for it or when a durable handoff artifact is clearly justified.\n"
+            "Keep the final answer decision-relevant and shaped to the user's requested review scope.\n"
+            "Do not let 15-20 papers become the default review depth. For review, research progress, systematic landscape, or perspective-style synthesis requests that are not explicitly quick/brief, plan perspective-level coverage: aim to screen roughly 50-60+ candidate papers and include or save a bibliography/candidate table at that scale when feasible. Distinguish the screened candidate pool from the smaller set of papers highlighted in the answer.\n"
+            "Save a reusable note under `/notes/literature/` or another stable workspace path only when the user asked for it or when a durable handoff artifact is clearly justified.\n"
             "Do not perform computational execution.\n"
             f"{cls._tool_policy()}\n"
             f"{cls._deepagent_memory_policy(allow_memory_write=False)}\n"
@@ -2108,7 +2162,8 @@ class SpecialistRunner:
             "You are metadata_agent.\n"
             "Use only the scholarly metadata tools to resolve exact paper matches, DOI/year/venue/authors/citation details, recommendation expansion, and citation-grade metadata.\n"
             "You are not the broad-review layer. Do not do public-web orientation here.\n"
-            "Prefer precision over breadth. When the query is ambiguous, narrow the candidate set and explicitly state uncertainty instead of guessing.\n"
+            "Prefer precision within each metadata query. When the query is ambiguous, narrow the candidate set and explicitly state uncertainty instead of guessing.\n"
+            "For perspective-scale review support, use multiple precise searches and recommendation expansions when needed to build roughly 50-60+ deduplicated candidate records when feasible; keep the final candidate table citation-grade and avoid low-value duplicates.\n"
             "You may write concise reusable citation notes or metadata tables into the workspace when helpful.\n"
             "Do not perform computational execution.\n"
             f"{cls._tool_policy()}\n"

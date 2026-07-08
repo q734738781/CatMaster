@@ -85,6 +85,7 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
                 "agent_runtime:",
                 "  recursion_limit: 512",
                 "  max_tool_calls: 72",
+                "  deepagent_context_trigger_token_cap: 180000",
                 "  print_state_messages: true",
                 "  print_http_raw_post: true",
                 "writing:",
@@ -107,6 +108,7 @@ def test_llm_profile_reads_models_agents_and_policies(tmp_path: Path) -> None:
     assert profile.agent_policies.proposal.browse_tools_enabled is False
     assert profile.agent_runtime.recursion_limit == 512
     assert profile.agent_runtime.max_tool_calls == 72
+    assert profile.agent_runtime.deepagent_context_trigger_token_cap == 180000
     assert profile.agent_runtime.print_state_messages is True
     assert profile.agent_runtime.print_http_raw_post is True
     assert profile.writing.author_name == "CatMaster"
@@ -493,8 +495,36 @@ def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.agent_runtime.recursion_limit == 1_000_000
     assert profile.agent_runtime.max_tool_calls == 120
+    assert profile.agent_runtime.deepagent_context_trigger_token_cap == 256_000
     assert profile.agent_runtime.print_state_messages is False
     assert profile.agent_runtime.print_http_raw_post is False
+
+
+def test_llm_profile_agent_runtime_context_trigger_cap_can_be_disabled(tmp_path: Path) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  'openai/gpt-5.2':",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2",
+                "agents:",
+                "  proposal: 'openai/gpt-5.2'",
+                "  director: 'openai/gpt-5.2'",
+                "  task_runner: 'openai/gpt-5.2'",
+                "  memory_patch: 'openai/gpt-5.2'",
+                "  summary: 'openai/gpt-5.2'",
+                "agent_runtime:",
+                "  deepagent_context_trigger_token_cap: null",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.agent_runtime.deepagent_context_trigger_token_cap is None
 
 
 def test_llm_profile_from_env_ignores_legacy_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:

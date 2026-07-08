@@ -1688,14 +1688,14 @@ body.v2-resizing-columns * {
   height: 7px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e9e9e9;
+  background: #e3e8e3;
 }
 
 .v2-live-progress-bar span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #2563eb;
+  background: #2f6f55;
 }
 
 .v2-live-progress-counts {
@@ -4665,6 +4665,14 @@ body.v2-resizing-columns * {
 .v2-file-dot.kind-text { background: #69707c; }
 
 .v2-thread-scroll {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.v2-thread-viewport {
+  flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   padding: 20px 18px;
@@ -4728,9 +4736,52 @@ body.v2-resizing-columns * {
 }
 
 .v2-message-text {
+  min-width: 0;
+  max-width: 100%;
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.v2-message-text pre,
+.v2-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.v2-message-text code,
+.v2-markdown code {
+  overflow-wrap: anywhere;
+}
+
+.v2-message-text table,
+.v2-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.v2-message-text th,
+.v2-message-text td,
+.v2-markdown th,
+.v2-markdown td {
+  border: 1px solid #e0e0d8;
+  padding: 4px 7px;
+}
+
+.v2-message-text .katex,
+.v2-markdown .katex {
+  overflow-wrap: normal;
+}
+
+.v2-message-text .katex-display,
+.v2-markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0 4px;
 }
 
 .v2-message-text p:first-child {
@@ -4742,9 +4793,9 @@ body.v2-resizing-columns * {
 }
 
 .v2-progress-card {
-  border: 1px solid #d6ded8;
+  border: 1px solid #cbd7cf;
   border-radius: 6px;
-  background: #f7faf7;
+  background: #f5f8f5;
   overflow: hidden;
 }
 
@@ -4755,7 +4806,7 @@ body.v2-resizing-columns * {
   gap: 10px;
   min-height: 32px;
   padding: 7px 10px;
-  border-bottom: 1px solid #d6ded8;
+  border-bottom: 1px solid #cbd7cf;
   color: #244f3d;
 }
 
@@ -4777,7 +4828,7 @@ body.v2-resizing-columns * {
 }
 
 .v2-progress-history {
-  border-top: 1px solid #d6ded8;
+  border-top: 1px solid #cbd7cf;
 }
 
 .v2-progress-history summary {
@@ -5802,7 +5853,7 @@ body.v2-resizing-columns * {
     padding-bottom: 10px;
   }
 
-  .v2-thread-scroll {
+  .v2-thread-viewport {
     padding-top: 16px;
     padding-bottom: 16px;
   }

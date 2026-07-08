@@ -7,6 +7,7 @@ import rehypeKatex from "rehype-katex";
 import Papa from "papaparse";
 
 import { apiFetch } from "../useCatMasterThreadRuntime";
+import { normalizeMathMarkdown } from "../markdown";
 
 const JSMOL_SCRIPT_SRC = "/static/vendor/jsmol/JSmol.min.js";
 
@@ -40,9 +41,10 @@ function jsmolUrlSpecifier(url, fileType) {
 }
 
 function MarkdownContent({ text }) {
+  const source = normalizeMathMarkdown(text);
   return (
     <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-      {String(text || "")}
+      {source}
     </Markdown>
   );
 }

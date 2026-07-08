@@ -157,10 +157,33 @@ class AgentPoliciesConfig:
         )
 
 
+def _runtime_token_cap(data: Dict[str, Any], key: str, *, default: int | None) -> int | None:
+    if key not in data:
+        return default
+    raw = data.get(key)
+    if raw is None or raw == "":
+        return None
+    value = _to_int(raw)
+    if value is None or value <= 0:
+        return None
+    return value
+
+
+def _env_runtime_token_cap(name: str, *, default: int | None) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    value = _to_int(raw)
+    if value is None or value <= 0:
+        return None
+    return value
+
+
 @dataclass
 class AgentRuntimeConfig:
     recursion_limit: int = 300
     max_tool_calls: int = 120
+    deepagent_context_trigger_token_cap: int | None = 256_000
     print_state_messages: bool = False
     print_http_raw_post: bool = False
 
@@ -192,6 +215,11 @@ class AgentRuntimeConfig:
         return cls(
             recursion_limit=recursion_limit,
             max_tool_calls=max_tool_calls,
+            deepagent_context_trigger_token_cap=_runtime_token_cap(
+                data,
+                "deepagent_context_trigger_token_cap",
+                default=cls.deepagent_context_trigger_token_cap,
+            ),
             print_state_messages=_to_bool(
                 data.get("print_state_messages"),
                 default=cls.print_state_messages,
@@ -644,6 +672,10 @@ class LLMProfile:
             max_tool_calls = AgentRuntimeConfig.max_tool_calls
         else:
             max_tool_calls = env_max_tool_calls
+        env_context_trigger_cap = _env_runtime_token_cap(
+            "CATMASTER_DEEPAGENT_CONTEXT_TRIGGER_TOKEN_CAP",
+            default=AgentRuntimeConfig.deepagent_context_trigger_token_cap,
+        )
         raw_http_env = os.getenv("CATMASTER_PRINT_HTTP_RAW_POST")
         if raw_http_env is None or not str(raw_http_env).strip():
             print_http_raw_post = False
@@ -662,6 +694,7 @@ class LLMProfile:
             agent_runtime=AgentRuntimeConfig(
                 recursion_limit=recursion_limit,
                 max_tool_calls=max_tool_calls,
+                deepagent_context_trigger_token_cap=env_context_trigger_cap,
                 print_state_messages=False,
                 print_http_raw_post=print_http_raw_post,
             ),

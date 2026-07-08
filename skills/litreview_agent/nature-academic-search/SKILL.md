@@ -48,6 +48,16 @@ Map the user's need to one or more `workflow` values:
 
 A combined request (for example search then export) may need more than one. State the detected workflow(s) in one short line before proceeding.
 
+### Review-scale default
+
+When the user asks for a review, research progress overview, systematic
+landscape, or perspective-style synthesis and does not explicitly ask for a
+quick or brief answer, treat the search as perspective-level by default. Aim to
+screen roughly 50-60+ candidate papers when feasible, deduplicate them, and
+return or save a bibliography/candidate table at that scale. The final prose can
+highlight fewer key papers, but do not treat 15-20 papers as the normal depth
+for a review.
+
 ### 3. Load the matching workflow fragment(s)
 
 Read the file mapped for each detected workflow (under `references/workflows/`). Do **not** read every workflow. Each workflow file links to the shared modules it needs.

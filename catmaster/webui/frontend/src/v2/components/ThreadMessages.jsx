@@ -7,12 +7,14 @@ import ReactMarkdown from "react-markdown";
 import { Bot, CircleAlert, FileBox, Hammer, Network, UserRound } from "lucide-react";
 
 import { interruptActions, repeatInterruptDecision } from "../interruptPayload";
+import { normalizeMathMarkdown } from "../markdown";
 
 function MarkdownBlock({ text }) {
+  const source = normalizeMathMarkdown(text);
   return (
     <div className="v2-message-text">
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-        {String(text || "")}
+        {source}
       </ReactMarkdown>
     </div>
   );

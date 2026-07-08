@@ -204,11 +204,21 @@ Keep `hypotheses` to the currently active 3-5 items only.
 
 The active specialist output contract is intentionally soft and compact.
 
-Final specialist responses should contain only these sections:
+Final specialist responses should answer the user's request first and use the
+shape the user asked for. Use compact `Summary` / `Facts` / `Files` sections
+only for handoff-style closeouts where they make the result easier to inspect;
+do not force those headings on ordinary conversational answers or literature
+reviews.
 
-- `Summary`
-- `Facts`
-- `Files`
+For review-style or literature answers, use task-appropriate headings and state
+the coverage boundary. Distinguish screened or retrieved candidates from the
+smaller set of papers highlighted as key examples. Do not let 15-20 papers
+become the default review depth. When the user asks for a review, research
+progress overview, systematic landscape, or perspective-style synthesis and has
+not asked for a quick/brief answer, plan perspective-level coverage: aim to
+screen roughly 50-60+ candidate papers and include or save a bibliography or
+candidate table at that scale when feasible. A concise narrative may still
+highlight a smaller key-paper set.
 
 Do not reintroduce heavy structured payloads like:
 
