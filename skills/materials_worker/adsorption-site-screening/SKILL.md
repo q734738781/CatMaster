@@ -9,11 +9,12 @@ description: Use this skill for adsorption-site enumeration and adsorbate placem
 Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and emit batch-ready adsorption structures with metadata.
 
 ## Quick Start
-1. Start from a validated slab and a canonical adsorbate file.
-2. Run `enumerate_adsorption_sites` first and keep the returned `sites_json_rel`.
-3. Use `place_adsorbate` for one chosen site or `generate_batch_adsorption_structures` for a screening set.
-4. For a screening batch, choose the slab source, adsorbate source, site family, distance, and `max_structures` from the task intent before calling the tool.
-5. Preserve the returned `ads_indices` metadata for downstream relaxations and thermochemistry.
+1. Start from a validated, termination-reviewed slab and a canonical adsorbate file.
+2. Prefer an orthogonal adsorption slab; if the slab is non-orthogonal, keep the exception explicit.
+3. Run `enumerate_adsorption_sites` first and keep the returned `sites_json_rel`.
+4. Use `place_adsorbate` for one chosen site or `generate_batch_adsorption_structures` for a screening set.
+5. For a screening batch, choose the slab source, adsorbate source, site family, distance, and `max_structures` from the task intent before calling the tool.
+6. Preserve the returned `ads_indices` metadata for downstream relaxations and thermochemistry.
 
 ## Allowed tools
 - `enumerate_adsorption_sites`
@@ -24,6 +25,7 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 
 ### 1. Enumerate before placing
 - Do not call placement tools on guessed paths. First create or locate the exact slab and adsorbate files under the workspace, then reuse returned paths.
+- Before enumeration, confirm the slab has a known selected termination and recorded `orthogonal` setting. If not, use `slab-construction-and-surface-modeling` or `surface-and-termination-screening` first instead of treating an arbitrary POSCAR as adsorption-ready.
 - `enumerate_adsorption_sites` writes a JSON site list and returns `default_site_label`.
 - Each enumerated site row includes Cartesian `cart_coords`; the `ontop_0` / `bridge_1` / `hollow_2` labels used by `place_adsorbate` come from this enumeration.
 - In `mode=all`, the candidate families are `ontop`, `bridge`, and `hollow`.
@@ -45,11 +47,14 @@ Use this skill to enumerate adsorption sites, place adsorbates reproducibly, and
 - `ads_indices.json` rows include the slab source, slab id, site label, generated POSCAR path, newly added adsorbate indices, and merged adsorbate indices.
 
 ## Method-critical defaults
+- The slab termination provenance must be reviewed before adsorption placement. If only one unknown slab is supplied, report the missing termination provenance and remaining uncertainty.
+- For new adsorption-ready slabs, prefer `orthogonal=true` upstream and preserve that choice across all generated candidates.
 - If the screening is intended for quantitative ranking, preserve metadata and reference-state traceability needed for downstream consistent energy evaluation.
 - Do not generate candidate structures without carrying forward the adsorbate indices and site provenance required for later interpretation.
 
 ## Output Contract
 Return:
+- slab termination provenance and `orthogonal` setting when known
 - site source (`sites_json_rel` or explicit label)
 - generated structure path or `output_dir_rel`
 - `ads_indices` metadata path(s)

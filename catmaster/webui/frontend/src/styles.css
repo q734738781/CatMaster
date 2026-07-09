@@ -4670,16 +4670,40 @@ body.v2-resizing-columns * {
   overflow: hidden;
 }
 
+.v2-thread-root {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .v2-thread-viewport {
   flex: 1;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 20px 18px;
 }
 
+.v2-thread-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+.v2-thread-viewport::-webkit-scrollbar-thumb {
+  background: #c8d0ca;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+}
+
+.v2-thread-viewport::-webkit-scrollbar-track {
+  background: #f3f4f1;
+}
+
 .v2-thread-messages {
-  max-width: 980px;
+  width: 100%;
+  max-width: 1360px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -5749,7 +5773,7 @@ body.v2-resizing-columns * {
 }
 
 .v2-thread-messages {
-  max-width: 1040px;
+  max-width: 1360px;
   gap: 16px;
 }
 

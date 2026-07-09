@@ -46,7 +46,14 @@ class SlabBuildInput(BaseModel):
     vacuum_thickness: float = Field(15.0, ge=0.0, description="Vacuum thickness (Å).")
     supercell: List[int] = Field([1, 1, 1], min_length=3, max_length=3, description="Supercell replication [a,b,c] for slab structure after generation.")
     get_symmetry_slab: bool = Field(False, description="If true, returned slabs will ensure top and bottom surfaces are identical. Use it for surface energy calculation.")
-    orthogonal: bool = Field(False, description="If true, convert each slab to an orthogonal c-oriented cell. Useful for grain boundary generation.")
+    orthogonal: bool = Field(
+        False,
+        description=(
+            "If true, convert each slab to an orthogonal c-oriented cell. "
+            "Project preference: use true for adsorption-ready slabs unless the native non-orthogonal "
+            "surface cell is intentionally required; keep the choice fixed across compared terminations."
+        ),
+    )
     lll_reduce: bool = Field(
         False,
         description="Apply LLL reduction during slab generation. Not recommended to use unless necessary.",

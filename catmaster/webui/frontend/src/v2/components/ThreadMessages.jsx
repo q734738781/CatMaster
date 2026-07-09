@@ -421,7 +421,7 @@ export default function ThreadMessages({ messages, loading, error, onSelect, onR
     return <div className="v2-empty">Start a thread from the composer.</div>;
   }
   return (
-    <ThreadPrimitive.Root>
+    <ThreadPrimitive.Root className="v2-thread-root">
       <ThreadPrimitive.Viewport className="v2-thread-viewport" autoScroll>
         <div className="v2-thread-messages">
           <ThreadPrimitive.Messages>
