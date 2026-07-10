@@ -38,6 +38,8 @@ AgentRole = Literal[
     "image_analyzer",
     "literature_synthesizer",
     "literature_deep_research",
+    "self_evolution_proposer",
+    "self_evolution_reviewer",
 ]
 
 _DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
@@ -55,6 +57,8 @@ OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
     "image_analyzer": "task_runner",
     "literature_synthesizer": "director",
     "literature_deep_research": "literature_synthesizer",
+    "self_evolution_proposer": "memory_patch",
+    "self_evolution_reviewer": "write_reviewer",
 }
 AGENT_ROLES: tuple[AgentRole, ...] = (
     "proposal",
@@ -73,6 +77,8 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "image_analyzer",
     "literature_synthesizer",
     "literature_deep_research",
+    "self_evolution_proposer",
+    "self_evolution_reviewer",
 )
 AGENT_ROLE_ALIASES: dict[str, str] = {
     "proposal_agent": "proposal",
@@ -91,6 +97,8 @@ AGENT_ROLE_ALIASES: dict[str, str] = {
     "literature_agent": "literature_synthesizer",
     "litreview_agent": "literature_deep_research",
     "metadata_agent": "literature_deep_research",
+    "self_evolution_proposer_agent": "self_evolution_proposer",
+    "self_evolution_reviewer_agent": "self_evolution_reviewer",
 }
 LITERATURE_ROLE_ALIASES: dict[str, str] = {
     **AGENT_ROLE_ALIASES,

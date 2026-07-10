@@ -54,6 +54,8 @@ agents:
   image_analyzer: codex-oauth-main
   literature_synthesizer: codex-oauth-main
   literature_deep_research: codex-oauth-main
+  self_evolution_proposer: codex-oauth-main
+  self_evolution_reviewer: codex-oauth-main
 
 peer_review_models:
   - codex-oauth-main

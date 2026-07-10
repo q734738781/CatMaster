@@ -69,6 +69,7 @@ class ThreadAgentLoopService:
         interrupt_on_for_permission_mode: Callable[[Any], dict[str, Any]],
         normalize_entrypoint: Callable[[str], str],
         should_stop: Callable[[str], bool],
+        on_turn_finished: Callable[..., Any] | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.workspace_id = str(workspace_id or self.workspace.name)
@@ -83,6 +84,7 @@ class ThreadAgentLoopService:
         self.interrupt_on_for_permission_mode = interrupt_on_for_permission_mode
         self.normalize_entrypoint = normalize_entrypoint
         self.should_stop = should_stop
+        self.on_turn_finished = on_turn_finished
 
     def _capability_for_entrypoint(
         self,
@@ -493,6 +495,7 @@ class ThreadAgentLoopService:
             permission_mode=permission_mode,
             turn_content=turn_content,
             attachment_metadata=attachment_sidecar,
+            existing_user_message_id=user_message.id,
         )
         return {"accepted": True, "queued": False, "thread": self.store.get_thread(thread_id), "message": user_message, "assistant_message": assistant_message}
 
@@ -550,6 +553,14 @@ class ThreadAgentLoopService:
         if thread.entrypoint != normalized_entrypoint:
             thread = self.store.update_thread(thread_id, entrypoint=normalized_entrypoint)
         turn_permission_mode = self.permission_mode_for_thread(thread, permission_mode)
+        prior_assistant_message_id = next(
+            (
+                message.id
+                for message in reversed(self.store.list_messages(thread_id))
+                if str(message.role or "").lower() == "assistant"
+            ),
+            "",
+        )
         assistant_message, text_part_id = self.append_assistant_message(
             thread_id,
             meta={"permission_mode": turn_permission_mode, "entrypoint": normalized_entrypoint},
@@ -580,6 +591,8 @@ class ThreadAgentLoopService:
             ]
 
         async def _execute() -> None:
+            active_run_context = None
+            terminal_status = ""
             try:
                 llm_profile = LLMProfile.from_env_or_file(model_config or None)
                 built = self.build_runner(
@@ -591,6 +604,7 @@ class ThreadAgentLoopService:
                     preferred_entrypoint=normalized_entrypoint,
                     interrupt_on=self.interrupt_on_for_permission_mode(turn_permission_mode),
                 )
+                active_run_context = built.run_context
                 self.store.update_message(
                     assistant_message.thread_id,
                     assistant_message.id,
@@ -637,13 +651,33 @@ class ThreadAgentLoopService:
                         text_part_id=text_part_id,
                         deepagent_thread_id=thread.deepagent_thread_id,
                     )
+                terminal_status = "done"
             except asyncio.CancelledError:
+                terminal_status = "stopped"
                 self.store.update_thread(thread_id, status=ThreadStatus.STOPPED, active_message_id="", active_run_id="")
                 self.broker.emit(thread_id, "thread.status", message_id=assistant_message.id, status="stopped", data={"status": "stopped"})
             except Exception as exc:
+                terminal_status = "error"
                 self.store.update_thread(thread_id, status=ThreadStatus.ERROR, active_message_id="", active_run_id="")
                 self.broker.emit(thread_id, "error", message_id=assistant_message.id, status="error", data={"error": str(exc)})
             finally:
+                if self.on_turn_finished is not None and active_run_context is not None:
+                    try:
+                        self.on_turn_finished(
+                            workspace=self.workspace,
+                            workspace_id=self.workspace_id,
+                            thread_id=thread_id,
+                            message_id=str(existing_user_message_id or ""),
+                            prior_assistant_message_id=prior_assistant_message_id,
+                            assistant_message_id=assistant_message.id,
+                            run_id=active_run_context.run_id,
+                            run_dir=active_run_context.run_dir,
+                            entrypoint=normalized_entrypoint,
+                            terminal_status=terminal_status or "unknown",
+                            model_config=model_config,
+                        )
+                    except Exception:
+                        logger.exception("Failed to enqueue self-evolution job for thread %s", thread_id)
                 current = self.thread_tasks.get(thread_id)
                 task = asyncio.current_task()
                 if current is task:
@@ -669,7 +703,6 @@ class ThreadAgentLoopService:
                 except Exception:
                     logger.exception("Failed to apply queued steering for thread %s", thread_id)
 
-        _ = existing_user_message_id
         task = asyncio.create_task(_execute())
         self.thread_tasks[thread_id] = task
         self.store.update_thread(thread_id, status=ThreadStatus.RUNNING, active_message_id=assistant_message.id)

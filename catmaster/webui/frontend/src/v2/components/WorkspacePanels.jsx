@@ -433,6 +433,65 @@ function MonitorCodeBlock({ title, text }) {
   );
 }
 
+function SelfEvolutionPanel({ payload, onDecision, onRollback }) {
+  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+  const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+  return (
+    <section className="v2-monitor-panel">
+      <div className="v2-monitor-panel-head"><GitBranch size={15} /><h3>Self-Evolution</h3></div>
+      <div className="v2-raw-list">
+        {candidates.map((candidate) => {
+          const status = String(candidate.status || "");
+          const canDecide = status === "approved";
+          const canRollback = status === "promoted";
+          return (
+            <details key={candidate.candidate_id} className="v2-raw-row">
+              <summary>
+                <span>{candidate.kind || "candidate"}</span>
+                <small>{status}</small>
+              </summary>
+              <div className="v2-inline-actions">
+                {canDecide ? (
+                  <>
+                    <button type="button" className="v2-ghost-btn" onClick={() => onDecision(candidate, "promote")}>Promote</button>
+                    <button type="button" className="v2-ghost-btn" onClick={() => onDecision(candidate, "reject")}>Reject</button>
+                  </>
+                ) : null}
+                {canRollback ? <button type="button" className="v2-ghost-btn" onClick={() => onRollback(candidate)}>Rollback</button> : null}
+              </div>
+              <pre>{jsonText({
+                candidate_id: candidate.candidate_id,
+                target: candidate.target,
+                rationale: candidate.rationale,
+                validation: candidate.validation,
+                review: candidate.review,
+                promotion: candidate.promotion,
+              })}</pre>
+            </details>
+          );
+        })}
+        {!candidates.length ? <div className="v2-empty">No self-evolution candidates for this run.</div> : null}
+        {jobs.map((job) => (
+          <details key={job.job_id} className="v2-raw-row">
+            <summary>
+              <span>{job.trigger_kind || "learning job"}</span>
+              <small>{job.status || "unknown"}</small>
+            </summary>
+            <pre>{jsonText({
+              job_id: job.job_id,
+              run_id: job.run_id,
+              attempt_count: job.attempt_count,
+              candidate_id: job.candidate_id,
+              error: job.error,
+            })}</pre>
+          </details>
+        ))}
+        {!jobs.length ? <div className="v2-empty">No self-evolution jobs for this run.</div> : null}
+      </div>
+    </section>
+  );
+}
+
 function MonitorList({ rows, empty = "No rows." }) {
   const normalized = monitorRowsFromMap(rows);
   if (!normalized.length) return <div className="v2-empty">{empty}</div>;
@@ -773,6 +832,35 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
     }
   }
 
+  async function decideSelfEvolutionCandidate(candidate, action) {
+    if (!ctx || !candidate?.candidate_id) return;
+    setError("");
+    try {
+      const body = { project_space: workspaceName, action };
+      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/decision`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      await loadDetails();
+    } catch (err) {
+      setError(err.message || String(err));
+    }
+  }
+
+  async function rollbackSelfEvolutionCandidate(candidate) {
+    if (!ctx || !candidate?.candidate_id) return;
+    setError("");
+    try {
+      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/rollback`, {
+        method: "POST",
+        body: JSON.stringify({ project_space: workspaceName }),
+      });
+      await loadDetails();
+    } catch (err) {
+      setError(err.message || String(err));
+    }
+  }
+
   useEffect(() => {
     if (activeSubtab === "details" && !details) loadDetails();
   }, [activeSubtab, selectedRun, ctx, workspaceName]);
@@ -903,6 +991,11 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
       ) : null}
       {activeSubtab === "details" ? (
         <div className="v2-monitor-columns">
+          <SelfEvolutionPanel
+            payload={details?.self_evolution}
+            onDecision={decideSelfEvolutionCandidate}
+            onRollback={rollbackSelfEvolutionCandidate}
+          />
           <MonitorCodeBlock title="Task State" text={details?.task_state || ""} />
           <MonitorCodeBlock title="Memory" text={details?.memory || ""} />
         </div>

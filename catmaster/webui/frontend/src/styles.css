@@ -1852,6 +1852,18 @@ body.v2-resizing-columns * {
   color: #767676;
 }
 
+.v2-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 9px 0;
+}
+
+.v2-inline-actions .v2-ghost-btn {
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
 .v2-raw-row pre {
   margin: 0;
   padding: 8px 9px;

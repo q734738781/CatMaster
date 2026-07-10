@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import os
 import re
 import shutil
 import tempfile
 import zipfile
+from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -23,6 +25,8 @@ import uvicorn
 from catmaster.specialists import build_specialist_runner, default_thread_interrupt_on
 from catmaster.specialists.streaming_runner import StreamingSpecialistRunner
 from catmaster.runtime.observability_store import ObservabilityStore
+from catmaster.runtime.self_evolution import SelfEvolutionCoordinator, SelfEvolutionStore
+from catmaster.runtime.self_evolution.promotion import PromotionConflict
 from catmaster.tools.base import ensure_project_space_layout, system_root
 
 from .agent_loop import ThreadAgentLoopService
@@ -40,6 +44,7 @@ from .thread_models import (
 from .thread_store import ThreadStore
 
 TEXT_PREVIEW_LIMIT_BYTES = 160_000
+logger = logging.getLogger(__name__)
 TEXT_KIND_PROBE_BYTES = 8_192
 AUTO_TEXT_KIND_MAX_BYTES = 8 * 1024 * 1024
 DIRECTORY_PREVIEW_LIMIT = 40
@@ -1296,6 +1301,7 @@ def _build_details(
         "artifacts": artifact_rows,
         "proposal": session.read_proposal(run_dir, workspace=workspace),
         "task_state": session.read_task_state(run_dir, workspace=workspace),
+        "self_evolution": _self_evolution_for_run(workspace=workspace, workspace_id=_workspace_name, run_id=selected_run),
     }
     if include_legacy_traces:
         payload.update(
@@ -1306,6 +1312,74 @@ def _build_details(
             }
         )
     return payload
+
+
+def _read_json_file(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _candidate_mentions_run(candidate: dict[str, Any], run_id: str) -> bool:
+    target = str(run_id or "").strip()
+    return not target or str(candidate.get("run_id") or "").strip() == target
+
+
+def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run_id: str) -> dict[str, Any]:
+    if workspace is None:
+        return {"candidates": [], "jobs": []}
+    store = SelfEvolutionStore(workspace, project_id=workspace_id)
+    candidates = [item.to_dict() for item in store.list_candidates() if _candidate_mentions_run(item.to_dict(), run_id)]
+    jobs = [
+        item.to_dict()
+        for item in store.list_jobs()
+        if not str(run_id or "").strip() or item.run_id == str(run_id).strip()
+    ]
+    return {
+        "candidates": candidates[:50],
+        "candidate_count": len(candidates),
+        "jobs": jobs[-50:],
+        "job_count": len(jobs),
+        "error_count": sum(str(item.get("status") or "") == "error" for item in jobs),
+    }
+
+
+def _read_self_evolution_candidate(store: SelfEvolutionStore, candidate_id: str):
+    try:
+        candidate = store.read_candidate(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid learning candidate id.") from exc
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Learning candidate not found.")
+    return candidate
+
+
+def _self_evolution_candidate_detail(*, workspace: Path, workspace_id: str, candidate_id: str) -> dict[str, Any]:
+    store = SelfEvolutionStore(workspace, project_id=workspace_id)
+    candidate = _read_self_evolution_candidate(store, candidate_id)
+    candidate_dir = store.candidate_dir(candidate.candidate_id)
+    validation = _read_json_file(candidate_dir / "validation.json")
+    patch_text = ""
+    patch_path = (
+        candidate_dir / "memories" / "AGENTS.md"
+        if candidate.action == "memory"
+        else candidate_dir / "proposed" / candidate.group / candidate.name / "SKILL.md"
+    )
+    if patch_path.is_file() and patch_path.stat().st_size <= TEXT_PREVIEW_LIMIT_BYTES:
+        patch_text = patch_path.read_text(encoding="utf-8", errors="replace")
+    bundle_files = [
+        str(path.relative_to(candidate_dir))
+        for path in sorted(candidate_dir.rglob("*"))
+        if path.is_file()
+    ]
+    return {
+        "candidate": candidate.to_dict(),
+        "validation_report": validation,
+        "patch_text": patch_text,
+        "bundle_files": bundle_files,
+        "candidate_dir": str(candidate_dir),
+    }
 
 
 def _build_events(
@@ -1477,7 +1551,25 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     default_project_space_root = str(Path(project_space_root).expanduser().resolve())
     registry = SessionRegistry(default_project_space_root=default_project_space_root)
     auth = AuthManager(auth_root=Path(default_project_space_root) / ".webui_auth", enabled=not no_login)
-    app = FastAPI(title="CatMaster WebUI")
+    self_evolution_wakeup: asyncio.Event | None = None
+    self_evolution_worker_task: asyncio.Task[Any] | None = None
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        nonlocal self_evolution_wakeup, self_evolution_worker_task
+        self_evolution_wakeup = asyncio.Event()
+        self_evolution_worker_task = asyncio.create_task(_self_evolution_worker_loop())
+        try:
+            yield
+        finally:
+            if self_evolution_worker_task is not None:
+                self_evolution_worker_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self_evolution_worker_task
+            self_evolution_worker_task = None
+            self_evolution_wakeup = None
+
+    app = FastAPI(title="CatMaster WebUI", lifespan=_lifespan)
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     thread_brokers: dict[str, ThreadEventBroker] = {}
@@ -1590,6 +1682,76 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     def _thread_should_stop(thread_id: str) -> bool:
         return str(thread_id or "") in thread_stop_flags
 
+    def _enqueue_self_evolution_post_run(**kwargs: Any) -> None:
+        try:
+            workspace = Path(kwargs.get("workspace") or "").expanduser().resolve()
+            workspace_id = str(kwargs.get("workspace_id") or workspace.name)
+            coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_id)
+            job = coordinator.enqueue_post_run(
+                run_id=str(kwargs.get("run_id") or ""),
+                thread_id=str(kwargs.get("thread_id") or ""),
+                message_id=str(kwargs.get("message_id") or ""),
+                entrypoint=str(kwargs.get("entrypoint") or ""),
+                terminal_status=str(kwargs.get("terminal_status") or ""),
+                run_dir=kwargs.get("run_dir") or "",
+                payload={
+                    "prior_assistant_message_id": str(kwargs.get("prior_assistant_message_id") or ""),
+                    "assistant_message_id": str(kwargs.get("assistant_message_id") or ""),
+                },
+                model_config=str(kwargs.get("model_config") or ""),
+            )
+            _ = job
+            if self_evolution_wakeup is not None:
+                self_evolution_wakeup.set()
+        except Exception:
+            logger.exception("Failed to enqueue self-evolution post-run job")
+
+    def _known_project_spaces() -> list[Path]:
+        root = registry.default_project_space_root.expanduser().resolve()
+        out: list[Path] = []
+        if (root / "files").is_dir() and (root / "metadata").is_dir():
+            out.append(root)
+        for candidate in list(root.glob("*")) + list(root.glob("users/*")):
+            if candidate.is_dir() and (candidate / "files").is_dir() and (candidate / "metadata").is_dir():
+                out.append(candidate.resolve())
+        seen: set[str] = set()
+        unique: list[Path] = []
+        for item in out:
+            key = str(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+        return unique
+
+    async def _self_evolution_worker_loop() -> None:
+        poll_interval = max(1, int(os.getenv("CATMASTER_SELF_EVOLUTION_WORKER_POLL_SEC", "5") or "5"))
+        recovered_workspaces: set[str] = set()
+        while True:
+            try:
+                for workspace in _known_project_spaces():
+                    workspace_id = registry._project_space_name_from_path(
+                        str(workspace), root=registry.default_project_space_root
+                    ) or workspace.name
+                    coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_id)
+                    workspace_key = str(workspace)
+                    if workspace_key not in recovered_workspaces:
+                        await asyncio.to_thread(coordinator.store.requeue_running_jobs)
+                        recovered_workspaces.add(workspace_key)
+                    await asyncio.to_thread(coordinator.process_pending_jobs, limit=4)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Self-evolution durable worker pass failed")
+            if self_evolution_wakeup is None:
+                await asyncio.sleep(poll_interval)
+                continue
+            self_evolution_wakeup.clear()
+            try:
+                await asyncio.wait_for(self_evolution_wakeup.wait(), timeout=poll_interval)
+            except TimeoutError:
+                pass
+
     def _agent_loop(workspace: Path, workspace_id: str) -> ThreadAgentLoopService:
         return ThreadAgentLoopService(
             workspace=workspace,
@@ -1605,6 +1767,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
             interrupt_on_for_permission_mode=_interrupt_on_for_permission_mode,
             normalize_entrypoint=_entrypoint,
             should_stop=_thread_should_stop,
+            on_turn_finished=_enqueue_self_evolution_post_run,
         )
 
     def _entrypoint(value: str) -> str:
@@ -2074,6 +2237,109 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     def _session_memory(ctx: str, run: str = "", source: str = "all", project_space: str = ""):
         identity, _session = _bound_session(ctx)
         return JSONResponse(_build_memory(registry=registry, ctx=ctx, username=identity.username, run_name=run, source=source, project_space=project_space))
+
+    @app.get("/api/session/{ctx}/self-evolution/candidates")
+    def _session_self_evolution_candidates(ctx: str, project_space: str = "", run: str = ""):
+        identity, session = _bound_session(ctx)
+        workspace, workspace_name = _workspace_for_request(registry, session, project_space)
+        if workspace is None:
+            raise HTTPException(status_code=400, detail="Open a project space first.")
+        return JSONResponse(_self_evolution_for_run(workspace=workspace, workspace_id=workspace_name, run_id=run))
+
+    @app.get("/api/session/{ctx}/self-evolution/candidates/{candidate_id}")
+    def _session_self_evolution_candidate_detail(ctx: str, candidate_id: str, project_space: str = ""):
+        _identity, session = _bound_session(ctx)
+        workspace, workspace_name = _workspace_for_request(registry, session, project_space)
+        if workspace is None:
+            raise HTTPException(status_code=400, detail="Open a project space first.")
+        return JSONResponse(_self_evolution_candidate_detail(workspace=workspace, workspace_id=workspace_name, candidate_id=candidate_id))
+
+    @app.post("/api/session/{ctx}/self-evolution/process")
+    async def _session_self_evolution_process(ctx: str, request: Request):
+        _identity, session = _bound_session(ctx)
+        payload = await _json_body(request)
+        workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
+        if workspace is None:
+            raise HTTPException(status_code=400, detail="Open a project space first.")
+        limit = _coerce_int(payload.get("limit"), 20)
+        coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_name)
+        jobs = await asyncio.to_thread(coordinator.process_pending_jobs, limit=limit)
+        return JSONResponse({"processed": [job.to_dict() for job in jobs]})
+
+    @app.post("/api/session/{ctx}/self-evolution/learn")
+    async def _session_self_evolution_learn(ctx: str, request: Request):
+        _identity, session = _bound_session(ctx)
+        payload = await _json_body(request)
+        workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
+        if workspace is None:
+            raise HTTPException(status_code=400, detail="Open a project space first.")
+        run_name = str(payload.get("run") or payload.get("run_id") or "").strip()
+        if not run_name:
+            raise HTTPException(status_code=400, detail="run or run_id is required.")
+        run_dir, selected_run = _run_dir_for_name(session, run_name, workspace=workspace)
+        coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_name)
+        job = coordinator.store.enqueue_job(
+            trigger_kind="explicit_learn",
+            run_id=selected_run,
+            run_dir=run_dir,
+            payload={"requested_by": "webui", "note": str(payload.get("note") or "")},
+            model_config=str(payload.get("model_config") or ""),
+        )
+        if self_evolution_wakeup is not None:
+            self_evolution_wakeup.set()
+        return JSONResponse({"queued": True, "job": job.to_dict()})
+
+    @app.post("/api/session/{ctx}/self-evolution/candidates/{candidate_id}/rollback")
+    async def _session_self_evolution_candidate_rollback(ctx: str, candidate_id: str, request: Request):
+        _identity, session = _bound_session(ctx)
+        payload = await _json_body(request)
+        workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
+        if workspace is None:
+            raise HTTPException(status_code=400, detail="Open a project space first.")
+        coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_name)
+        candidate = _read_self_evolution_candidate(coordinator.store, candidate_id)
+        try:
+            rolled_back = await asyncio.to_thread(coordinator.promotion.rollback, candidate)
+        except PromotionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse({"rolled_back": True, "candidate": rolled_back.to_dict()})
+
+    @app.post("/api/session/{ctx}/self-evolution/candidates/{candidate_id}/decision")
+    async def _session_self_evolution_candidate_decision(ctx: str, candidate_id: str, request: Request):
+        _identity, session = _bound_session(ctx)
+        payload = await _json_body(request)
+        workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
+        if workspace is None:
+            raise HTTPException(status_code=400, detail="Open a project space first.")
+        coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_name)
+        candidate = _read_self_evolution_candidate(coordinator.store, candidate_id)
+        action = str(payload.get("action") or "").strip().lower()
+        if action == "reject":
+            if candidate.status != "approved":
+                raise HTTPException(status_code=400, detail="Only an observe-mode approved candidate can be rejected manually.")
+            candidate.status = "rejected"
+            candidate.review = {
+                **dict(candidate.review or {}),
+                "manual_decision": "reject",
+                "manual_rationale": str(payload.get("rationale") or "Manual WebUI rejection.").strip(),
+            }
+            coordinator.store.write_candidate(candidate)
+            return JSONResponse({"updated": True, "candidate": candidate.to_dict()})
+        if action in {"approve", "promote"}:
+            if candidate.status != "approved":
+                raise HTTPException(status_code=400, detail="Only an observe-mode approved candidate can be promoted manually.")
+            report = coordinator.gate.run(candidate)
+            coordinator.store.write_validation_report(report)
+            if not report.valid:
+                raise HTTPException(status_code=400, detail="Candidate no longer passes validation.")
+            try:
+                promoted = await asyncio.to_thread(coordinator.promotion.promote, candidate, report)
+            except PromotionConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            return JSONResponse({"updated": True, "candidate": promoted.to_dict(), "validation_report": report.to_dict()})
+        raise HTTPException(status_code=400, detail="action must be promote or reject.")
 
     @app.get("/api/session/{ctx}/files/tree")
     def _session_files_tree(ctx: str, path: str = "", project_space: str = ""):
