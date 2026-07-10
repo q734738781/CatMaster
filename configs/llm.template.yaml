@@ -201,6 +201,10 @@ agents:
   tool_selector: "openrouter-main"
   memory_patch: "openrouter-main"
   summary: "openrouter-main"
+  # Optional independent background-learning roles. If omitted, proposer falls
+  # back to memory_patch and reviewer falls back to write_reviewer.
+  self_evolution_proposer: "openrouter-main-xhigh"
+  self_evolution_reviewer: "openrouter-main-xhigh"
 
 peer_review_models:
   # Explicit reviewer model-label list. One entry here produces one reviewer report.

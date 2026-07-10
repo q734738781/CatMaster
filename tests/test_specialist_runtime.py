@@ -84,7 +84,8 @@ class _FakeDeepAgent:
         self.kwargs = kwargs
 
     async def ainvoke(self, payload, config=None):
-        _ = config
+        self.kwargs["_last_payload"] = payload
+        self.kwargs["_last_config"] = config
         assert payload["messages"][0]["role"] == "user"
         name = self.kwargs["name"]
         if name == "research_specialist":
@@ -124,6 +125,17 @@ class _FakeUsageCallback:
 
 class _FailingToolInput(BaseModel):
     value: str
+
+
+def _assert_native_skill_groups(agent_kwargs: dict, *groups: str) -> None:
+    assert list(agent_kwargs.get("skills") or []) == [
+        *(f"/.deepagents/skills/{group}" for group in groups),
+        *(f"/.deepagents/self_develop_skills/{group}" for group in groups),
+    ]
+
+
+def _assert_native_memory(agent_kwargs: dict) -> None:
+    assert agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
 
 
 def test_deepagent_context_profile_cap_limits_fraction_summarization_window(tmp_path: Path) -> None:
@@ -986,6 +998,12 @@ def test_specialist_lanes_start_with_staged_skills(
     workspace = tmp_path / "project_space"
     workspace.mkdir(parents=True)
     (workspace / "AGENTS.md").write_text("Project-level instructions.", encoding="utf-8")
+    override = workspace / "metadata" / "self_evolution" / "self_develop_skills" / "materials_worker" / "workspace-demo"
+    override.mkdir(parents=True)
+    (override / "SKILL.md").write_text(
+        "---\nname: workspace-demo\ndescription: Workspace override used for runtime staging tests.\n---\n# workspace-demo\n",
+        encoding="utf-8",
+    )
 
     created_agents: list[dict] = []
 
@@ -1043,17 +1061,19 @@ def test_specialist_lanes_start_with_staged_skills(
     agent_kwargs = created_agents[-1]
     expected_agent_name = "litreview_agent" if entrypoint == "literature_review" else f"{entrypoint}_specialist"
     assert agent_kwargs["name"] == expected_agent_name
-    expected_entry_skills = {
-        "research": ["/.deepagents/skills/research_specialist"],
-        "literature_review": ["/.deepagents/skills/litreview_agent"],
-        "writing": ["/.deepagents/skills/writing_specialist"],
-        "peer_review": ["/.deepagents/skills/writing_specialist"],
+    expected_entry_group = {
+        "research": "research_specialist",
+        "literature_review": "litreview_agent",
+        "writing": "writing_specialist",
+        "peer_review": "writing_specialist",
     }.get(entrypoint)
-    if expected_entry_skills:
-        assert agent_kwargs["skills"] == expected_entry_skills
+    if expected_entry_group:
+        _assert_native_skill_groups(agent_kwargs, expected_entry_group)
     else:
         assert "skills" not in agent_kwargs
-    assert agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
+    _assert_native_memory(agent_kwargs)
+    internal_thread_id = agent_kwargs["_last_config"]["configurable"]["thread_id"]
+    assert internal_thread_id.endswith(f"::run::{built.run_context.run_id}")
     assert "search_memory" not in {tool.name for tool in agent_kwargs["tools"]}
     assert "manage_memory" not in {tool.name for tool in agent_kwargs["tools"]}
     assert "Persistent project memory" in agent_kwargs["system_prompt"]
@@ -1126,7 +1146,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
         assert "skills" not in experiment_agent_kwargs
-        assert experiment_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
+        _assert_native_memory(experiment_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
             "materials_worker",
             "ml_worker",
@@ -1139,8 +1159,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert writing_agents, "expected nested writing specialist to be created"
         writing_agent_kwargs = writing_agents[0]
         assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert writing_agent_kwargs["skills"] == ["/.deepagents/skills/writing_specialist"]
-        assert writing_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
+        _assert_native_skill_groups(writing_agent_kwargs, "writing_specialist")
+        _assert_native_memory(writing_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
             "writing_worker_agent",
             "writing_polisher_agent",
@@ -1151,7 +1171,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert peer_review_agents, "expected nested peer-review specialist to be created"
         peer_review_agent_kwargs = peer_review_agents[0]
         assert {tool.name for tool in peer_review_agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert peer_review_agent_kwargs["skills"] == ["/.deepagents/skills/writing_specialist"]
+        _assert_native_skill_groups(peer_review_agent_kwargs, "writing_specialist")
+        _assert_native_memory(peer_review_agent_kwargs)
         assert "Act like a journal editor coordinating external peer review" in peer_review_agent_kwargs["system_prompt"]
         assert "explicit `ReviewTarget` or manuscript PDF path" in peer_review_agent_kwargs["system_prompt"]
         assert "delegate the bounded review episode to `peer_review_worker_agent`" in peer_review_agent_kwargs["system_prompt"]
@@ -1165,8 +1186,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert litreview_agents, "expected nested litreview agent to be created"
         litreview_agent_kwargs = litreview_agents[0]
         assert {tool.name for tool in litreview_agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert litreview_agent_kwargs["skills"] == ["/.deepagents/skills/litreview_agent"]
-        assert litreview_agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
+        _assert_native_skill_groups(litreview_agent_kwargs, "litreview_agent")
+        _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
         assert "50-60+ candidate papers" in litreview_agent_kwargs["system_prompt"]
@@ -1179,12 +1200,14 @@ def test_specialist_lanes_start_with_staged_skills(
             tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
         )
         assert litreview_literature_kwargs["model"] == {"model": "literature_synthesizer-model"}
-        assert litreview_literature_kwargs["skills"] == ["/.deepagents/skills/litreview_agent"]
+        _assert_native_skill_groups(litreview_literature_kwargs, "litreview_agent")
+        _assert_native_memory(litreview_literature_kwargs)
         metadata_agent_kwargs = _find_created_agent(
             "metadata_agent",
             tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
         )
-        assert metadata_agent_kwargs["skills"] == ["/.deepagents/skills/litreview_agent"]
+        _assert_native_skill_groups(metadata_agent_kwargs, "litreview_agent")
+        _assert_native_memory(metadata_agent_kwargs)
         metadata_middleware = metadata_agent_kwargs["middleware"]
         compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
         assert compact_tool.summarizer["model"] == {"model": "literature_deep_research-model"}
@@ -1211,8 +1234,10 @@ def test_specialist_lanes_start_with_staged_skills(
         )
         assert literature_agent_kwargs["model"] == {"model": "literature_synthesizer-model"}
         assert metadata_agent_kwargs["model"] == {"model": "literature_deep_research-model"}
-        assert literature_agent_kwargs["skills"] == ["/.deepagents/skills/litreview_agent"]
-        assert metadata_agent_kwargs["skills"] == ["/.deepagents/skills/litreview_agent"]
+        _assert_native_skill_groups(literature_agent_kwargs, "litreview_agent")
+        _assert_native_skill_groups(metadata_agent_kwargs, "litreview_agent")
+        _assert_native_memory(literature_agent_kwargs)
+        _assert_native_memory(metadata_agent_kwargs)
         assert "broad-review and orientation layer" in literature_agent_kwargs["system_prompt"]
         assert "fixed public-evidence template" in literature_agent_kwargs["system_prompt"]
         assert "50-60+ candidate papers" in literature_agent_kwargs["system_prompt"]
@@ -1228,13 +1253,13 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["dynamics_worker"]
         assert "runnable" in subagents_by_name["orca_xtb_worker"]
         assert {tool.name for tool in materials_worker_kwargs["tools"]} == (_MATERIALS_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert materials_worker_kwargs["skills"] == ["/.deepagents/skills/materials_worker", "/.deepagents/skills/execution"]
+        _assert_native_skill_groups(materials_worker_kwargs, "materials_worker", "execution")
         assert {tool.name for tool in dynamics_worker_kwargs["tools"]} == (_DYNAMICS_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert dynamics_worker_kwargs["skills"] == ["/.deepagents/skills/dynamics_worker", "/.deepagents/skills/execution"]
+        _assert_native_skill_groups(dynamics_worker_kwargs, "dynamics_worker", "execution")
         assert {tool.name for tool in ml_worker_kwargs["tools"]} == (_ML_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert ml_worker_kwargs["skills"] == ["/.deepagents/skills/ml_worker", "/.deepagents/skills/execution"]
+        _assert_native_skill_groups(ml_worker_kwargs, "ml_worker", "execution")
         assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert orca_worker_kwargs["skills"] == ["/.deepagents/skills/orca_xtb_worker", "/.deepagents/skills/execution"]
+        _assert_native_skill_groups(orca_worker_kwargs, "orca_xtb_worker", "execution")
         assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert {"mp_search_materials", "mp_download_structure"} <= {tool.name for tool in agent_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
@@ -1329,9 +1354,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["writing_worker_agent"]
         assert "runnable" in subagents_by_name["writing_polisher_agent"]
         assert {tool.name for tool in writing_worker_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert writing_worker_kwargs["skills"] == ["/.deepagents/skills/writing_specialist"]
+        _assert_native_skill_groups(writing_worker_kwargs, "writing_specialist")
         assert {tool.name for tool in writing_polisher_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert writing_polisher_kwargs["skills"] == ["/.deepagents/skills/writing_specialist"]
+        _assert_native_skill_groups(writing_polisher_kwargs, "writing_specialist")
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
@@ -1384,18 +1409,19 @@ def test_specialist_lanes_start_with_staged_skills(
         peer_review_worker_kwargs = _find_created_agent("peer_review_worker_agent")
         assert "runnable" in subagents_by_name["peer_review_worker_agent"]
         assert {tool.name for tool in peer_review_worker_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert peer_review_worker_kwargs["skills"] == ["/.deepagents/skills/writing_specialist"]
+        _assert_native_skill_groups(peer_review_worker_kwargs, "writing_specialist")
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in peer_review_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in peer_review_worker_kwargs["system_prompt"]
         assert "dedicated peer-review request capability on that PDF exactly once" in peer_review_worker_kwargs["system_prompt"]
 
-    staged_agents = workspace / "files" / ".deepagents" / "AGENTS.md"
-    staged_materials = workspace / "files" / ".deepagents" / "skills" / "materials_worker"
-    staged_writing = workspace / "files" / ".deepagents" / "skills" / "writing_specialist"
-    staged_researcher = workspace / "files" / ".deepagents" / "skills" / "research_specialist"
-    staged_literature = workspace / "files" / ".deepagents" / "skills" / "litreview_agent"
-    staged_quantum_chemistry = workspace / "files" / ".deepagents" / "skills" / "orca_xtb_worker"
-    staged_execution = workspace / "files" / ".deepagents" / "skills" / "execution"
+    deepagents_root = workspace / "files" / ".deepagents"
+    staged_agents = deepagents_root / "AGENTS.md"
+    staged_materials = deepagents_root / "skills" / "materials_worker"
+    staged_writing = deepagents_root / "skills" / "writing_specialist"
+    staged_researcher = deepagents_root / "skills" / "research_specialist"
+    staged_literature = deepagents_root / "skills" / "litreview_agent"
+    staged_quantum_chemistry = deepagents_root / "skills" / "orca_xtb_worker"
+    staged_execution = deepagents_root / "skills" / "execution"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
     assert staged_materials.is_dir()
     assert staged_writing.is_dir()
@@ -1403,7 +1429,9 @@ def test_specialist_lanes_start_with_staged_skills(
     assert staged_literature.is_dir()
     assert staged_quantum_chemistry.is_dir()
     assert staged_execution.is_dir()
-    staged_machine_learning = workspace / "files" / ".deepagents" / "skills" / "ml_worker"
+    staged_workspace_override = deepagents_root / "self_develop_skills" / "materials_worker" / "workspace-demo" / "SKILL.md"
+    assert staged_workspace_override.is_file()
+    staged_machine_learning = deepagents_root / "skills" / "ml_worker"
     assert staged_machine_learning.is_dir()
     repo_root = Path(runtime_mod.__file__).resolve().parents[2]
 
@@ -1418,11 +1446,11 @@ def test_specialist_lanes_start_with_staged_skills(
     assert _skill_names(staged_literature) == _skill_names(repo_root / "skills" / "litreview_agent")
     assert _skill_names(staged_writing) == _skill_names(repo_root / "skills" / "writing_specialist")
     assert _skill_names(staged_writing)
-
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint
     assert run_state["status"] == "done"
     assert run_state["summary"]
+    assert "skill_projection" not in run_state
     assert isinstance(run_state.get("facts"), list)
     if entrypoint == "research":
         assert run_state["research_kernel_path"].endswith("/kernel.json")
@@ -1502,8 +1530,9 @@ def test_specialist_run_passes_project_id_to_runtime_config(tmp_path: Path, monk
     assert result["status"] == "done"
     config = captured["config"]
     assert isinstance(config, dict)
-    assert config["configurable"]["thread_id"] == "thread-123"
+    assert config["configurable"]["thread_id"] == f"thread-123::run::{built.run_context.run_id}"
     assert config["configurable"]["project_id"] == "proj_memory_ns"
+    assert config["metadata"]["catmaster_thread_id"] == "thread-123"
 
 
 def test_proposal_review_flag_is_ignored_and_run_executes_immediately(

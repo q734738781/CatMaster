@@ -293,6 +293,8 @@ agents:
   image_analyzer: openrouter-main
   literature_synthesizer: openrouter-main
   literature_deep_research: openrouter-deep
+  self_evolution_proposer: openrouter-deep
+  self_evolution_reviewer: openrouter-deep
 
 peer_review_models:
   - openrouter-deep

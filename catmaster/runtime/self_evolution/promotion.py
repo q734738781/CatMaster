@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import contextlib
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
+from .models import LearningCandidate, ValidationReport
+from .storage import SelfEvolutionStore, hash_text, hash_tree, utc_now
+
+
+class PromotionConflict(RuntimeError):
+    pass
+
+
+class PromotionManager:
+    def __init__(self, store: SelfEvolutionStore, *, repo_root: Path | str | None = None) -> None:
+        self.store = store
+        self.repo_root = Path(repo_root or Path(__file__).resolve().parents[3]).expanduser().resolve()
+
+    def promote(self, candidate: LearningCandidate, report: ValidationReport) -> LearningCandidate:
+        if candidate.status != "approved":
+            raise ValueError("only approved candidates can be promoted")
+        if not report.valid:
+            raise ValueError("candidate validation did not pass")
+        with self.store.promotion_lock():
+            if candidate.action == "memory":
+                self._promote_memory(candidate)
+            else:
+                self._promote_skill(candidate)
+            candidate.status = "promoted"
+            candidate.promotion = {**dict(candidate.promotion), "promoted_at": utc_now()}
+            self.store.write_candidate(candidate)
+            self.store.append_audit_event(
+                {
+                    "event": "candidate_promoted",
+                    "candidate_id": candidate.candidate_id,
+                    "action": candidate.action,
+                    "group": candidate.group,
+                    "name": candidate.name,
+                    "promotion": candidate.promotion,
+                }
+            )
+        return candidate
+
+    def _promote_memory(self, candidate: LearningCandidate) -> None:
+        candidate_dir = self.store.candidate_dir(candidate.candidate_id)
+        source = candidate_dir / "memories" / "AGENTS.md"
+        updated = source.read_text(encoding="utf-8")
+        proposed_hash = hash_text(updated)
+        if not candidate.bundle_hash or proposed_hash != candidate.bundle_hash:
+            raise PromotionConflict("reviewed memory file changed before promotion")
+
+        current = self.store.read_memory_text()
+        current_hash = hash_text(current)
+        if current_hash != candidate.base_target_hash:
+            raise PromotionConflict(
+                f"workspace memory changed after proposal: expected {candidate.base_target_hash or '<missing>'}, "
+                f"current {current_hash or '<missing>'}"
+            )
+
+        before = candidate_dir / "before" / "memories" / "AGENTS.md"
+        before.parent.mkdir(parents=True, exist_ok=True)
+        before.write_text(current, encoding="utf-8")
+        swapped, observed_hash = self.store.compare_and_swap_memory(
+            expected_hash=current_hash,
+            new_text=updated,
+        )
+        if not swapped:
+            raise PromotionConflict(f"workspace memory changed during promotion: current {observed_hash or '<missing>'}")
+        candidate.promotion = {
+            "target_path": "/memories/AGENTS.md",
+            "before_hash": current_hash,
+            "promoted_hash": proposed_hash,
+        }
+
+    def _effective_skill_path(self, candidate: LearningCandidate) -> tuple[Path, bool]:
+        workspace_target = self.store.self_develop_skills_dir / candidate.group / candidate.name
+        if workspace_target.is_dir():
+            return workspace_target, True
+        return self.repo_root / "skills" / candidate.group / candidate.name, False
+
+    def _promote_skill(self, candidate: LearningCandidate) -> None:
+        source = self.store.candidate_dir(candidate.candidate_id) / "proposed" / candidate.group / candidate.name
+        source_hash = hash_tree(source)
+        if not source_hash or source_hash != candidate.bundle_hash:
+            raise PromotionConflict("reviewed skill bundle changed before promotion")
+
+        current_effective, had_workspace_target = self._effective_skill_path(candidate)
+        current_hash = hash_tree(current_effective)
+        if current_hash != candidate.base_target_hash:
+            raise PromotionConflict(
+                f"skill target changed after proposal: expected {candidate.base_target_hash or '<missing>'}, "
+                f"current {current_hash or '<missing>'}"
+            )
+
+        target = self.store.self_develop_skills_dir / candidate.group / candidate.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        before = self.store.candidate_dir(candidate.candidate_id) / "before" / "workspace_bundle"
+        if before.exists():
+            shutil.rmtree(before)
+        before.parent.mkdir(parents=True, exist_ok=True)
+
+        temp = Path(tempfile.mkdtemp(prefix=f".{candidate.name}.candidate-", dir=str(target.parent)))
+        try:
+            shutil.copytree(source, temp, dirs_exist_ok=True)
+            if hash_tree(temp) != source_hash:
+                raise PromotionConflict("temporary skill bundle hash differs from reviewed bundle")
+            if target.exists():
+                os.replace(target, before)
+            try:
+                os.replace(temp, target)
+            except Exception:
+                if before.exists() and not target.exists():
+                    os.replace(before, target)
+                raise
+        finally:
+            if temp.exists():
+                shutil.rmtree(temp)
+
+        candidate.promotion = {
+            "target_path": str(target.relative_to(self.store.root)),
+            "had_workspace_target": had_workspace_target,
+            "before_hash": current_hash,
+            "promoted_hash": hash_tree(target),
+        }
+
+    def rollback(self, candidate: LearningCandidate) -> LearningCandidate:
+        if candidate.status != "promoted":
+            raise ValueError("only promoted candidates can be rolled back")
+        with self.store.promotion_lock():
+            if candidate.action == "memory":
+                self._rollback_memory(candidate)
+            else:
+                self._rollback_skill(candidate)
+            candidate.status = "rolled_back"
+            candidate.promotion = {**dict(candidate.promotion), "rolled_back_at": utc_now()}
+            self.store.write_candidate(candidate)
+            self.store.append_audit_event(
+                {
+                    "event": "candidate_rolled_back",
+                    "candidate_id": candidate.candidate_id,
+                    "action": candidate.action,
+                    "group": candidate.group,
+                    "name": candidate.name,
+                }
+            )
+        return candidate
+
+    def _rollback_memory(self, candidate: LearningCandidate) -> None:
+        before = self.store.candidate_dir(candidate.candidate_id) / "before" / "memories" / "AGENTS.md"
+        if not before.is_file():
+            raise PromotionConflict("prior workspace memory file is missing")
+        current = self.store.read_memory_text()
+        current_hash = hash_text(current)
+        promoted_hash = str(candidate.promotion.get("promoted_hash") or "")
+        if current_hash != promoted_hash:
+            raise PromotionConflict("workspace memory changed after this candidate was promoted")
+        restored = before.read_text(encoding="utf-8")
+        swapped, observed_hash = self.store.compare_and_swap_memory(
+            expected_hash=current_hash,
+            new_text=restored,
+        )
+        if not swapped:
+            raise PromotionConflict(f"workspace memory changed during rollback: current {observed_hash or '<missing>'}")
+        candidate.promotion["rollback_hash"] = hash_text(restored)
+
+    def _rollback_skill(self, candidate: LearningCandidate) -> None:
+        target = self.store.self_develop_skills_dir / candidate.group / candidate.name
+        promoted_hash = str(candidate.promotion.get("promoted_hash") or "")
+        if hash_tree(target) != promoted_hash:
+            raise PromotionConflict("workspace skill changed after this candidate was promoted")
+        before = self.store.candidate_dir(candidate.candidate_id) / "before" / "workspace_bundle"
+        discard = target.parent / f".{candidate.name}.rollback-{candidate.candidate_id}"
+        with contextlib.suppress(FileNotFoundError):
+            if discard.is_dir():
+                shutil.rmtree(discard)
+            else:
+                discard.unlink()
+        os.replace(target, discard)
+        try:
+            if bool(candidate.promotion.get("had_workspace_target")):
+                if not before.is_dir():
+                    raise PromotionConflict("prior workspace skill bundle is missing")
+                os.replace(before, target)
+        except Exception:
+            if discard.exists() and not target.exists():
+                os.replace(discard, target)
+            raise
+        finally:
+            if discard.exists():
+                shutil.rmtree(discard)
+        candidate.promotion["rollback_hash"] = hash_tree(target)
+
+
+__all__ = ["PromotionConflict", "PromotionManager"]

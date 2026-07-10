@@ -207,7 +207,18 @@ _DEEPAGENT_MEMORY_READONLY_POLICY = (
     "- Treat `/memories/AGENTS.md` as parent-maintained project memory in this subagent context: if durable memory should change, include a concise proposed update in your result for the parent specialist to curate.\n"
     "- Do not store transient requests, step logs, one-off scratch paths, unverified speculation, secrets, credentials, or API keys."
 )
+_SKILL_GROUPS = (
+    "materials_worker",
+    "dynamics_worker",
+    "ml_worker",
+    "orca_xtb_worker",
+    "research_specialist",
+    "litreview_agent",
+    "execution",
+    "writing_specialist",
+)
 _SKILLS_ROOT = "/.deepagents/skills"
+_SELF_DEVELOP_SKILLS_ROOT = "/.deepagents/self_develop_skills"
 
 
 class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
@@ -547,14 +558,18 @@ class SpecialistRunner:
                             {"messages": messages},
                             config={
                                 "configurable": {
-                                    "thread_id": thread_id,
+                                    "thread_id": self._deepagent_checkpoint_thread_id(thread_id),
                                     "project_id": str(self.run_context.project_id or "").strip(),
                                 },
                                 "callbacks": self._langchain_callbacks(
                                     usage_handler=usage_handler,
                                     default_agent_name=f"{entrypoint}_specialist",
                                 ),
-                                "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
+                                "metadata": {
+                                    "lc_agent_name": f"{entrypoint}_specialist",
+                                    "catmaster_thread_id": thread_id,
+                                    "catmaster_run_id": self.run_context.run_id,
+                                },
                             },
                         )
                     parsed = self._finalize_report(self._coerce_report(raw=result))
@@ -929,18 +944,22 @@ class SpecialistRunner:
             return self._build_litreview_agent(runtime=runtime)
         create_deep_agent = self._load_create_deep_agent()
         tools = self._specialist_tools(entrypoint)
+        entry_skills = self._entry_skill_roots(entrypoint)
         kwargs: dict[str, Any] = {
             "model": self._build_deepagent_chat_model(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint]),
             "tools": tools,
             "system_prompt": self._system_prompt(entrypoint, thread_id=thread_id),
-            "middleware": self._build_default_middleware(),
+            "middleware": self._catmaster_agent_middleware(
+                runtime=runtime,
+                skills=entry_skills,
+                agent_name=f"{entrypoint}_specialist",
+            ),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
             "backend": runtime["backend"],
             "name": f"{entrypoint}_specialist",
             "memory": self._memory_sources(),
         }
-        entry_skills = self._entry_skill_roots(entrypoint)
         if entry_skills:
             kwargs["skills"] = entry_skills
         self._apply_interrupt_on(kwargs)
@@ -997,8 +1016,7 @@ class SpecialistRunner:
                     audience="materials_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("materials_worker"),
-                    self._skills_group_virtual_path("execution"),
+                    *self._skill_roots_for_groups("materials_worker", "execution"),
                 ],
                 runtime=runtime,
             ),
@@ -1014,8 +1032,7 @@ class SpecialistRunner:
                     audience="ml_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("ml_worker"),
-                    self._skills_group_virtual_path("execution"),
+                    *self._skill_roots_for_groups("ml_worker", "execution"),
                 ],
                 runtime=runtime,
             ),
@@ -1031,8 +1048,7 @@ class SpecialistRunner:
                     audience="dynamics_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("dynamics_worker"),
-                    self._skills_group_virtual_path("execution"),
+                    *self._skill_roots_for_groups("dynamics_worker", "execution"),
                 ],
                 runtime=runtime,
             ),
@@ -1048,8 +1064,7 @@ class SpecialistRunner:
                     audience="orca_xtb_worker",
                 ),
                 skills=[
-                    self._skills_group_virtual_path("orca_xtb_worker"),
-                    self._skills_group_virtual_path("execution"),
+                    *self._skill_roots_for_groups("orca_xtb_worker", "execution"),
                 ],
                 runtime=runtime,
             ),
@@ -1065,7 +1080,7 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("writing_specialist")],
+                skills=self._skill_roots_for_group("writing_specialist"),
                 runtime=runtime,
             ),
             self._compiled_worker_subagent(
@@ -1076,7 +1091,7 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("writing_specialist")],
+                skills=self._skill_roots_for_group("writing_specialist"),
                 runtime=runtime,
             ),
         ]
@@ -1091,23 +1106,10 @@ class SpecialistRunner:
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_PEER_REVIEW_WORKER_TOOL_ALLOWLIST),
                 ),
-                skills=[self._skills_group_virtual_path("writing_specialist")],
+                skills=self._skill_roots_for_group("writing_specialist"),
                 runtime=runtime,
             ),
         ]
-
-    def _subagent_middleware(
-        self,
-        *,
-        runtime: dict[str, Any],
-        include_memory_middleware: bool = True,
-    ) -> list[Any]:
-        middleware = [
-            *self._build_default_middleware(),
-        ]
-        if include_memory_middleware:
-            middleware.append(self._new_memory_middleware(backend=runtime["backend"]))
-        return middleware
 
     def _metadata_middleware(self, *, runtime: dict[str, Any]) -> list[Any]:
         middleware: list[Any] = []
@@ -1180,21 +1182,22 @@ class SpecialistRunner:
         runtime: dict[str, Any],
     ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
+        entry_skills = self._entry_skill_roots(entrypoint)
         kwargs: dict[str, Any] = {
             "model": self._build_deepagent_chat_model(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint]),
             "tools": self._specialist_tools(entrypoint),
             "system_prompt": self._system_prompt(entrypoint),
-            # `create_deep_agent` already injects its standard stack, including
-            # MemoryMiddleware when `memory=` is provided. Only pass additional
-            # CatMaster middleware here to avoid duplicate middleware instances.
-            "middleware": self._build_default_middleware(),
+            "middleware": self._catmaster_agent_middleware(
+                runtime=runtime,
+                skills=entry_skills,
+                agent_name=f"{entrypoint}_specialist",
+            ),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
             "backend": runtime["backend"],
             "name": f"{entrypoint}_specialist",
             "memory": self._memory_sources(),
         }
-        entry_skills = self._entry_skill_roots(entrypoint)
         if entry_skills:
             kwargs["skills"] = entry_skills
         self._apply_interrupt_on(kwargs)
@@ -1219,34 +1222,42 @@ class SpecialistRunner:
             "model": self._build_deepagent_chat_model(model_role),
             "tools": tools,
             "system_prompt": system_prompt,
-            "middleware": [
-                *self._build_default_middleware(),
-                *(middleware or []),
-            ],
+            "middleware": self._catmaster_agent_middleware(
+                runtime=runtime,
+                skills=list(skills or []),
+                agent_name=name,
+                extra=list(middleware or []),
+            ),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
             "backend": runtime["backend"],
             "name": name,
             "memory": self._memory_sources(),
         }
-        self._apply_interrupt_on(kwargs)
         if skills:
-            kwargs["skills"] = skills
+            kwargs["skills"] = list(skills)
+        self._apply_interrupt_on(kwargs)
         return create_deep_agent(**kwargs)
 
     def _build_litreview_agent(self, *, runtime: dict[str, Any]) -> Any:
         create_deep_agent = self._load_create_deep_agent()
+        litreview_skills = self._skill_roots_for_group("litreview_agent")
         kwargs: dict[str, Any] = {
             "model": self._build_deepagent_chat_model("literature_deep_research"),
             "tools": self._augment_with_default_autonomous_tools([]),
             "system_prompt": self._litreview_wrapper_prompt(),
-            "middleware": self._subagent_middleware(runtime=runtime, include_memory_middleware=False),
+            "middleware": self._catmaster_agent_middleware(
+                runtime=runtime,
+                skills=litreview_skills,
+                agent_name="litreview_agent",
+                extra=self._metadata_middleware(runtime=runtime),
+            ),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
             "backend": runtime["backend"],
             "name": "litreview_agent",
             "memory": self._memory_sources(),
-            "skills": [self._skills_group_virtual_path("litreview_agent")],
+            "skills": litreview_skills,
             "subagents": [
                 self._compiled_worker_subagent(
                     name="literature_agent",
@@ -1256,7 +1267,7 @@ class SpecialistRunner:
                     tools=self._augment_with_default_autonomous_tools(
                         self._named_tools(_LITREVIEW_AGENT_TOOL_ALLOWLIST),
                     ),
-                    skills=[self._skills_group_virtual_path("litreview_agent")],
+                    skills=self._skill_roots_for_group("litreview_agent"),
                     runtime=runtime,
                 ),
                 self._compiled_worker_subagent(
@@ -1267,7 +1278,7 @@ class SpecialistRunner:
                     tools=self._augment_with_default_autonomous_tools(
                         self._named_tools(_METADATA_AGENT_TOOL_ALLOWLIST),
                     ),
-                    skills=[self._skills_group_virtual_path("litreview_agent")],
+                    skills=self._skill_roots_for_group("litreview_agent"),
                     middleware=self._metadata_middleware(runtime=runtime),
                     runtime=runtime,
                 ),
@@ -1487,43 +1498,57 @@ class SpecialistRunner:
             response_format="content_and_artifact",
         )
 
+    @staticmethod
+    def _replace_staged_tree(*, source: Path, target: Path) -> None:
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.exists():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            target.mkdir(parents=True, exist_ok=True)
+
     def _stage_deepagent_assets(self, files_root: Path) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         deepagents_root = files_root / ".deepagents"
-        base = deepagents_root / "skills"
-        layouts = {
-            base / "materials_worker": repo_root / "skills" / "materials_worker",
-            base / "dynamics_worker": repo_root / "skills" / "dynamics_worker",
-            base / "ml_worker": repo_root / "skills" / "ml_worker",
-            base / "orca_xtb_worker": repo_root / "skills" / "orca_xtb_worker",
-            base / "research_specialist": repo_root / "skills" / "research_specialist",
-            base / "litreview_agent": repo_root / "skills" / "litreview_agent",
-            base / "execution": repo_root / "skills" / "execution",
-            base / "writing_specialist": repo_root / "skills" / "writing_specialist",
-        }
-        for target, source in layouts.items():
-            if not source.exists():
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(source, target, dirs_exist_ok=True)
+        built_in_root = deepagents_root / "skills"
+        override_root = deepagents_root / "self_develop_skills"
+        canonical_override_root = system_root(self.run_context.workspace) / "self_evolution" / "self_develop_skills"
+        for group in _SKILL_GROUPS:
+            self._replace_staged_tree(
+                source=repo_root / "skills" / group,
+                target=built_in_root / group,
+            )
+            self._replace_staged_tree(
+                source=canonical_override_root / group,
+                target=override_root / group,
+            )
         staged_agents = deepagents_root / "AGENTS.md"
-        if not staged_agents.exists():
-            workspace_agents = Path(self.run_context.workspace) / "AGENTS.md"
-            if workspace_agents.exists():
-                staged_agents.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(workspace_agents, staged_agents)
+        workspace_agents = Path(self.run_context.workspace) / "AGENTS.md"
+        if workspace_agents.exists():
+            staged_agents.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(workspace_agents, staged_agents)
+
+    def _skill_roots_for_group(self, group_name: str) -> list[str]:
+        return self._skill_roots_for_groups(group_name)
 
     @staticmethod
-    def _skills_group_virtual_path(group_name: str) -> str:
-        return f"{_SKILLS_ROOT}/{str(group_name or '').strip()}"
+    def _skill_roots_for_groups(*group_names: str) -> list[str]:
+        groups = [str(group or "").strip() for group in group_names if str(group or "").strip()]
+        return [
+            *(f"{_SKILLS_ROOT}/{group}" for group in groups),
+            *(f"{_SELF_DEVELOP_SKILLS_ROOT}/{group}" for group in groups),
+        ]
 
     def _entry_skill_roots(self, entrypoint: SpecialistEntrypoint) -> list[str]:
         if entrypoint == "research":
-            return [self._skills_group_virtual_path("research_specialist")]
+            return self._skill_roots_for_group("research_specialist")
         if entrypoint == "literature_review":
-            return [self._skills_group_virtual_path("litreview_agent")]
+            return self._skill_roots_for_group("litreview_agent")
         if entrypoint in {"writing", "peer_review"}:
-            return [self._skills_group_virtual_path("writing_specialist")]
+            return self._skill_roots_for_group("writing_specialist")
         return []
 
     def _resolve_thread_id(self, payload: dict[str, Any]) -> str:
@@ -1534,6 +1559,10 @@ class SpecialistRunner:
         if chat_session_id:
             return chat_session_id
         return self.run_context.run_id
+
+    def _deepagent_checkpoint_thread_id(self, thread_id: str) -> str:
+        user_thread = str(thread_id or self.run_context.run_id).strip() or self.run_context.run_id
+        return f"{user_thread}::run::{self.run_context.run_id}"
 
     @staticmethod
     def _coerce_conversation_messages(raw: Any) -> list[dict[str, str]]:
@@ -1587,6 +1616,17 @@ class SpecialistRunner:
     def _memory_sources(self) -> list[str]:
         return ["/.deepagents/AGENTS.md", MEMORY_FILE_PATH]
 
+    def _catmaster_agent_middleware(
+        self,
+        *,
+        runtime: dict[str, Any],
+        skills: list[str],
+        agent_name: str,
+        extra: list[Any] | None = None,
+    ) -> list[Any]:
+        _ = (runtime, skills, agent_name)
+        return [*self._build_default_middleware(), *(extra or [])]
+
     def _memory_namespace(self) -> tuple[str, ...]:
         project_id = str(self.run_context.project_id or "default").strip() or "default"
         return ("catmaster", project_id, "filesystem")
@@ -1610,10 +1650,6 @@ class SpecialistRunner:
             "- Do not store secrets, credentials, or API keys.\n"
         )
         await store.aput(namespace, "/AGENTS.md", create_file_data(content))
-
-    def _new_memory_middleware(self, *, backend: Any) -> Any:
-        MemoryMiddleware = self._load_memory_middleware()
-        return MemoryMiddleware(backend=backend, sources=self._memory_sources())
 
     @classmethod
     def _base_system_prompt(
