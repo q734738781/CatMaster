@@ -26,6 +26,30 @@ node -v
 npm -v
 ```
 
+### 安装 LitReview 浏览器 MCP
+
+Literature Review lane 使用 `agent-browser` 提供受控浏览器、动态网页和用户已授权的机构访问会话。Node.js 需要 22 或更高版本；`requirements/pc-conda.yml` 已在 CatMaster 环境中包含兼容的 Node 工具链。
+
+```bash
+npm install -g agent-browser@0.31.1
+agent-browser install
+agent-browser doctor --offline --quick
+agent-browser mcp --help
+```
+
+CatMaster 会自行启动 MCP 子进程，不要把 Codex 的全局 MCP 配置复制到 CatMaster。LitReview 打开页面时会按配置启动受控 Chrome，或复用当前已运行的 Chrome。用户可能已经处于校园网、机构代理或已登录的浏览器 profile 中，此时直接打开 DOI/出版商页面就可能获得全文；不要仅因检索结果没有开放获取链接就默认全文不可访问。需要交互式机构登录时，由用户本人在受控 Chrome profile/session 中完成；密码、cookie、OTP、session 导出和浏览器状态文件都不能写入 YAML、环境变量模板、prompt 或项目空间。浏览器 profile 属于本机状态，不会进入部署包。
+
+可选的本地会话配置：
+
+```bash
+export CATMASTER_AGENT_BROWSER_PROFILE="$HOME/.config/catmaster/browser-profile"
+export CATMASTER_AGENT_BROWSER_HEADED=true
+# 或复用当前已运行的 Chrome：
+export CATMASTER_AGENT_BROWSER_AUTO_CONNECT=true
+```
+
+首次机构登录通常需要 headed 模式。遇到 CAPTCHA、二维码、短信/OTP、安全警告或不明确的授权确认时，agent 必须停下并交给用户操作。无图形登录会话的远程部署仍可使用已有本地文件和全文语料库，但不能声称获得了机构授权浏览访问。
+
 ## 2. 配置 LLM
 
 CatMaster 默认读取：
@@ -82,7 +106,7 @@ export ANTHROPIC_API_KEY="..."
 可选服务：
 
 ```bash
-export TAVILY_API_KEY="..."   # 公共网页/文献检索
+export TAVILY_API_KEY="..."   # LitReview 和其他 agent 的直接网页搜索
 export MP_API_KEY="..."       # Materials Project 结构检索
 ```
 
@@ -116,7 +140,7 @@ Codex OAuth 使用 `langchain-openai` 的 `_ChatOpenAICodex`，不使用 API key
 python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 ```
 
-`configs/llm_codex_oauth.template.yaml` 是本地 Codex OAuth 部署 profile；`configs/llm.template.yaml` 和 `configs/llm.full.template.yaml` 中也有示例。旧 `langchain-codex-oauth` token store 只作为兼容 fallback 读取，新环境不要再依赖第三方 adapter。
+`configs/llm_codex_oauth.template.yaml` 是本地 Codex OAuth 部署 profile，默认使用已验证的 `gpt-5.6-sol` 和 `high` 推理强度；`configs/llm.template.yaml` 和 `configs/llm.full.template.yaml` 中也有示例。旧 `langchain-codex-oauth` token store 只作为兼容 fallback 读取，新环境不要再依赖第三方 adapter。
 
 ## 6. 准备项目空间
 

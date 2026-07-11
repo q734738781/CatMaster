@@ -26,6 +26,30 @@ node -v
 npm -v
 ```
 
+### Install The LitReview Browser MCP
+
+The Literature Review lane uses `agent-browser` for controlled browsing, dynamic pages, and user-authorized institutional sessions. Node.js 22 or newer is required; `requirements/pc-conda.yml` already includes a compatible Node toolchain in the CatMaster environment.
+
+```bash
+npm install -g agent-browser@0.31.1
+agent-browser install
+agent-browser doctor --offline --quick
+agent-browser mcp --help
+```
+
+CatMaster starts the MCP subprocess itself; do not copy a global Codex MCP entry into CatMaster. When LitReview opens a page, it starts the configured controlled Chrome session or reuses an already-running Chrome connection. The user may already be on an institutional network or proxy, or have an authenticated browser profile, so opening a DOI or publisher page can provide full text directly; do not assume that full text is unavailable merely because discovery found no open-access link. Complete any interactive institutional login yourself in the controlled Chrome profile/session. Never place passwords, cookies, OTP codes, session exports, or browser state in YAML, environment templates, prompts, or project files. Browser profiles are machine-local state and are excluded from deployment archives.
+
+Optional local session configuration:
+
+```bash
+export CATMASTER_AGENT_BROWSER_PROFILE="$HOME/.config/catmaster/browser-profile"
+export CATMASTER_AGENT_BROWSER_HEADED=true
+# Or reuse an already-running Chrome session:
+export CATMASTER_AGENT_BROWSER_AUTO_CONNECT=true
+```
+
+The first institutional login usually requires headed mode. The agent must stop for CAPTCHA, QR login, SMS/OTP, security warnings, or unclear consent. A headless remote deployment without an authenticated browser can still query previously ingested local files, but it cannot claim institution-authorized browser access.
+
 ## 2. Configure The LLM
 
 CatMaster reads this default file:
@@ -82,7 +106,7 @@ export ANTHROPIC_API_KEY="..."
 Optional services:
 
 ```bash
-export TAVILY_API_KEY="..."   # public web / literature search
+export TAVILY_API_KEY="..."   # direct web search for LitReview and other agents
 export MP_API_KEY="..."       # Materials Project access
 ```
 
@@ -116,7 +140,7 @@ Codex OAuth uses `langchain-openai`'s `_ChatOpenAICodex` and does not use an API
 python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 ```
 
-`configs/llm_codex_oauth.template.yaml` is the local Codex OAuth deployment profile; examples are also included in `configs/llm.template.yaml` and `configs/llm.full.template.yaml`. The legacy `langchain-codex-oauth` token store is read only as a compatibility fallback; new environments should not depend on the third-party adapter.
+`configs/llm_codex_oauth.template.yaml` is the local Codex OAuth deployment profile and defaults to the validated `gpt-5.6-sol` model with `high` reasoning; examples are also included in `configs/llm.template.yaml` and `configs/llm.full.template.yaml`. The legacy `langchain-codex-oauth` token store is read only as a compatibility fallback; new environments should not depend on the third-party adapter.
 
 ## 6. Prepare A Project Space
 

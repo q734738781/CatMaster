@@ -232,6 +232,14 @@ def _resolve_calculation_dir(raw_path: str, *, tool_name: str) -> _ResolvedCalcu
 
 
 def _resolve_vaspkit_executable() -> Path | None:
+    configured = str(os.environ.get("CATMASTER_VASPKIT_BIN") or "").strip()
+    if configured:
+        expanded = Path(os.path.expandvars(configured)).expanduser()
+        candidates = [expanded / "vaspkit"] if expanded.is_dir() else [expanded]
+        for candidate in candidates:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate.resolve()
+
     resolved = shutil.which("vaspkit")
     if resolved:
         candidate = Path(resolved).expanduser().resolve()
@@ -258,7 +266,10 @@ def _require_vaspkit_executable(*, tool_name: str, calculation_dir: str) -> Path
     if executable is None:
         _fail(
             tool_name,
-            message="vaspkit executable was not found. Ensure it is installed and reachable from PATH.",
+            message=(
+                "vaspkit executable was not found. Set CATMASTER_VASPKIT_BIN to its launcher or "
+                "install it on PATH."
+            ),
             data={"calculation_dir": calculation_dir},
             error_code="missing_vaspkit",
         )

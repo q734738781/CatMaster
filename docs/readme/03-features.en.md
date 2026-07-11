@@ -124,6 +124,7 @@ Treat each child directory under vasp_inputs/ as one VASP stage. Use remote_subm
 Install only what your tasks require:
 
 - OVITO: structure rendering and exported structure views.
+- VESTA: report-style atomistic figures, multi-view export, and multimodal structure inspection; see [External materials programs](04-external-tools.en.md).
 - LaTeX / `pdflatex`: TeX manuscript compilation.
 - VASPKIT: adsorbate and gas-phase thermochemistry corrections.
 - ORCA, xTB, CREST: quantum chemistry, semiempirical calculations, and conformer search.

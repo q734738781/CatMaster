@@ -48,6 +48,10 @@ from catmaster.tools.analysis.vaspkit_thermo import (
     vaspkit_adsorbate_thermo_correction,
     vaspkit_gas_thermo_correction,
 )
+from catmaster.tools.analysis.vesta_render import (
+    RenderVestaViewsInput,
+    render_vesta_views,
+)
 
 __all__ = [
     "CompileTextInput",
@@ -78,4 +82,6 @@ __all__ = [
     "VaspkitGasThermoCorrectionInput",
     "vaspkit_adsorbate_thermo_correction",
     "vaspkit_gas_thermo_correction",
+    "RenderVestaViewsInput",
+    "render_vesta_views",
 ]

@@ -17,6 +17,7 @@ SKILL_GROUPS: tuple[str, ...] = (
     "research_specialist",
     "litreview_agent",
     "writing_specialist",
+    "writing_quality",
     "execution",
 )
 

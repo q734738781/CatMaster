@@ -184,7 +184,21 @@ write_deploy_readme() {
     printf '%s\n' 'conda activate catmaster'
     printf '%s\n' '# Optional MACE/GPU add-on for machines that execute local or remote GPU boot scripts:'
     printf '%s\n' '# pip install -r requirements/gpu.txt'
+    printf '%s\n' '# Then install exactly one cuEquivariance kernel add-on selected from torch.version.cuda:'
+    printf '%s\n' '# pip install -r requirements/gpu-cueq-cu12.txt  # CUDA 12.x'
+    printf '%s\n' '# pip install -r requirements/gpu-cueq-cu13.txt  # CUDA 13.x'
     printf '%s\n' '```'
+    printf '\n'
+    printf '%s\n' 'For a local or desktop deployment that uses the Literature Review browser path, install the pinned agent-browser CLI as well:'
+    printf '\n'
+    printf '%s\n' '```bash'
+    printf '%s\n' 'npm install -g agent-browser@0.31.1'
+    printf '%s\n' 'agent-browser install'
+    printf '%s\n' 'agent-browser doctor --offline --quick'
+    printf '%s\n' 'agent-browser mcp --help'
+    printf '%s\n' '```'
+    printf '\n'
+    printf '%s\n' 'CatMaster starts the MCP subprocess. Browser profiles, cookies, credentials, OTPs, and exported session state are local machine data and are not included in this archive. A headless remote deployment without a user-authenticated browser can still use previously ingested local literature files, but cannot claim institution-authorized browser access.'
     printf '\n'
     printf '%s\n' 'Create a separate environment for FairChem UMA. Do not install UMA into the MACE environment:'
     printf '\n'
@@ -220,8 +234,8 @@ OpenRouter/API-key based configuration remains the default CatMaster deployment 
 The archive includes `configs/llm_codex_oauth.template.yaml` for this path. It uses the pinned `langchain-openai` Codex OAuth model (`langchain_openai.chat_models.codex._ChatOpenAICodex`) and defaults to:
 
 - provider: `codex_oauth`
-- model: `gpt-5.5`
-- `provider_options.codex_oauth.chat_kwargs.reasoning_effort: high`
+- model: `gpt-5.6-sol`
+- `provider_options.codex_oauth.chat_kwargs.reasoning.effort: high`
 - `provider_options.codex_oauth.chat_kwargs.verbosity: medium`
 
 The OAuth token provider stores credentials under the user home directory. Do not package, commit, or share those credentials, and do not use this profile for shared multi-user hosting.
@@ -269,11 +283,13 @@ The important part of the template is:
 models:
   codex-oauth-main:
     provider: codex_oauth
-    model: gpt-5.5
+    model: gpt-5.6-sol
     provider_options:
       codex_oauth:
         chat_kwargs:
-          reasoning_effort: high
+          reasoning:
+            effort: high
+            summary: auto
           verbosity: medium
 ```
 
@@ -293,7 +309,7 @@ print(cfg.provider_options)
 PY
 ```
 
-Expected values are `codex_oauth`, `gpt-5.5`, and a `chat_kwargs` mapping containing `reasoning_effort: high` and `verbosity: medium`.
+Expected values are `codex_oauth`, `gpt-5.6-sol`, and a `chat_kwargs` mapping containing `reasoning.effort: high` and `verbosity: medium`.
 
 #### 5. Optional live smoke test
 
@@ -315,7 +331,7 @@ PY
 
 - `No ChatGPT OAuth token found` or auth refresh errors: rerun the `login_chatgpt_device()` command above.
 - If you previously logged in with `langchain-codex-oauth`, CatMaster can temporarily read the old `~/.langchain-codex-oauth/auth/openai.json` token when it is still valid, but this is a migration fallback only. Re-login with `langchain_openai.chatgpt_oauth` for refreshable credentials.
-- Model or authorization errors: confirm the account has Codex access; if necessary, edit `model: gpt-5.5` to another Codex-supported model.
+- Model or authorization errors: confirm the account has Codex access; if necessary, edit `model: gpt-5.6-sol` to another Codex-supported model.
 - Usage-limit errors: wait for the ChatGPT/Codex quota window or switch back to the OpenRouter/API-key profile.
 - Never copy the OAuth credential directory into the deployment archive. Re-authenticate per target user/machine.
 

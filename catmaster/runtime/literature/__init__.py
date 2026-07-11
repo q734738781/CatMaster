@@ -1,5 +1,10 @@
-from .context_pack import LiteratureContextPack
-from .depth_policy import resolve_depth
+from .citations import FinalizeCitationsInput, finalize_citations
+from .corpus import (
+    IngestLiteratureFilesInput,
+    QueryLiteratureCorpusInput,
+    ingest_literature_files,
+    query_literature_corpus,
+)
 from .models import (
     FindInPageResult,
     InPageMatch,
@@ -14,16 +19,12 @@ from .models import (
 from .openalex_client import OpenAlexClient
 from .online_search_adapter import OnlineSearchAdapter
 from .semanticscholar_client import SemanticScholarClient, SemanticScholarRateLimitError
-from .store import LiteratureStore
-from .subagent import LiteratureSubagent
-from .synthesizer import synthesize_deep_report, synthesize_standard
 from .tools import (
     FindInPageInput,
     GetOpenAlexRecordInput,
     GetSemanticScholarRecordInput,
     OpenPublicPageInput,
     RecommendSemanticScholarInput,
-    RunLiteratureResearchInput,
     SearchOpenAlexInput,
     SearchPublicWebInput,
     SearchSemanticScholarInput,
@@ -33,7 +34,6 @@ from .tools import (
     get_semantic_scholar_record,
     open_public_page,
     recommend_semantic_scholar,
-    run_literature_research,
     search_openalex,
     search_public_web,
     search_semantic_scholar,
@@ -50,18 +50,16 @@ __all__ = [
     "InPageMatch",
     "FindInPageResult",
     "LiteratureEvidenceRow",
-    "LiteratureContextPack",
     "OpenAlexClient",
     "SemanticScholarClient",
     "SemanticScholarRateLimitError",
     "OnlineSearchAdapter",
-    "LiteratureStore",
-    "LiteratureSubagent",
-    "resolve_depth",
-    "synthesize_standard",
-    "synthesize_deep_report",
-    "RunLiteratureResearchInput",
-    "run_literature_research",
+    "IngestLiteratureFilesInput",
+    "QueryLiteratureCorpusInput",
+    "FinalizeCitationsInput",
+    "ingest_literature_files",
+    "query_literature_corpus",
+    "finalize_citations",
     "WebSearchInput",
     "web_search",
     "SearchOpenAlexInput",

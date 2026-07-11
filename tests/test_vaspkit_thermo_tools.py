@@ -32,6 +32,16 @@ def test_resolve_vaspkit_executable_expands_tilde_in_path(tmp_path: Path, monkey
     assert resolved == executable.resolve()
 
 
+def test_resolve_vaspkit_executable_prefers_explicit_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    executable = tmp_path / "custom-vaspkit"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    monkeypatch.setenv("CATMASTER_VASPKIT_BIN", str(executable))
+    monkeypatch.setenv("PATH", "")
+
+    assert _resolve_vaspkit_executable() == executable.resolve()
+
+
 def _require_vaspkit() -> None:
     if _resolve_vaspkit_executable() is None:
         pytest.skip("vaspkit executable is not available in this environment")

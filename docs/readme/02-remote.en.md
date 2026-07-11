@@ -74,6 +74,14 @@ Common keys:
 - `lammps_cpu`: LAMMPS CPU jobs.
 - `mace_gpu`: MACE GPU jobs.
 - `uma_gpu`: FairChem UMA GPU jobs, preferably in a conda environment separate from MACE.
+
+For optional MACE cuEquivariance acceleration, install `requirements/gpu.txt`
+and exactly one kernel add-on selected from `torch.version.cuda`: use
+`requirements/gpu-cueq-cu12.txt` for CUDA 12.x or
+`requirements/gpu-cueq-cu13.txt` for CUDA 13.x. The NVIDIA driver version does
+not select the wheel. Keep `enable_cueq` and `compile_mode` explicit in MD
+calculator config until the target model, system size, and GPU have been
+benchmarked.
 - `general_cpu`: custom CPU boot scripts.
 - `general_gpu`: custom GPU boot scripts.
 - `xtb_cpu`, `crest_cpu`, `orca_cpu`: molecular quantum chemistry and conformer jobs.

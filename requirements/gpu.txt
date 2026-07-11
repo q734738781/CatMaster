@@ -5,7 +5,9 @@
 # requirements/pc-conda.yml on machines that also run local MACE/GPU tools.
 # Keep shared scientific pins compatible with requirements/pc-conda.yml.
 torch==2.9.0
-mace-torch==0.3.15
+mace-torch==0.3.16
+cuequivariance==0.10.0
+cuequivariance-torch==0.10.0
 ase==3.27.0
 numpy==2.2.6
 scipy==1.17.1

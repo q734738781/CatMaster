@@ -36,7 +36,6 @@ AgentRole = Literal[
     "summary",
     "tool_selector",
     "image_analyzer",
-    "literature_synthesizer",
     "literature_deep_research",
     "self_evolution_proposer",
     "self_evolution_reviewer",
@@ -55,8 +54,7 @@ OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
     "tex_compile_fixer": "academic_polisher",
     "tool_selector": "task_runner",
     "image_analyzer": "task_runner",
-    "literature_synthesizer": "director",
-    "literature_deep_research": "literature_synthesizer",
+    "literature_deep_research": "director",
     "self_evolution_proposer": "memory_patch",
     "self_evolution_reviewer": "write_reviewer",
 }
@@ -75,7 +73,6 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "summary",
     "tool_selector",
     "image_analyzer",
-    "literature_synthesizer",
     "literature_deep_research",
     "self_evolution_proposer",
     "self_evolution_reviewer",
@@ -94,9 +91,7 @@ AGENT_ROLE_ALIASES: dict[str, str] = {
     "memory_patcher": "memory_patch",
     "run_summary": "summary",
     "tool_router": "tool_selector",
-    "literature_agent": "literature_synthesizer",
     "litreview_agent": "literature_deep_research",
-    "metadata_agent": "literature_deep_research",
     "self_evolution_proposer_agent": "self_evolution_proposer",
     "self_evolution_reviewer_agent": "self_evolution_reviewer",
 }
@@ -191,7 +186,7 @@ def _env_runtime_token_cap(name: str, *, default: int | None) -> int | None:
 class AgentRuntimeConfig:
     recursion_limit: int = 300
     max_tool_calls: int = 120
-    deepagent_context_trigger_token_cap: int | None = 256_000
+    deepagent_context_trigger_token_cap: int | None = 270_000
     print_state_messages: bool = False
     print_http_raw_post: bool = False
 
@@ -625,10 +620,6 @@ class LLMProfile:
         if label not in self.models:
             raise ValueError(f"image_generation.model_label references unknown model label: {label!r}")
         return self.models[label]
-
-    @property
-    def literature_synthesizer(self) -> LLMConfig:
-        return self.config_for_role("literature_synthesizer")
 
     @property
     def literature_deep_research(self) -> LLMConfig:

@@ -135,7 +135,6 @@ def test_llm_profile_accepts_current_specialist_alias_role_names(tmp_path: Path)
                 "  writing_specialist: 'main-online'",
                 "  writing_worker_agent: 'main-online'",
                 "  peer_review_specialist: 'main-online'",
-                "  literature_agent: 'main-online'",
                 "  litreview_agent: 'main-online'",
                 "  memory_patcher: 'main-online'",
                 "  run_summary: 'summary-mini'",
@@ -148,8 +147,8 @@ def test_llm_profile_accepts_current_specialist_alias_role_names(tmp_path: Path)
 
     assert profile.config_for_role("experiment_specialist").model == "openai/gpt-5.4"
     assert profile.config_for_role("task_runner").model == "openai/gpt-5.4"
-    assert profile.config_for_role("literature_agent").model == "openai/gpt-5.4"
-    assert profile.config_for_role("literature_synthesizer").model == "openai/gpt-5.4"
+    assert profile.config_for_role("litreview_agent").model == "openai/gpt-5.4"
+    assert profile.config_for_role("literature_deep_research").model == "openai/gpt-5.4"
     assert profile.label_for_role("run_summary") == "summary-mini"
     assert profile.summary.model == "openai/gpt-5.4-mini"
 
@@ -383,7 +382,7 @@ def test_llm_profile_image_generation_falls_back_to_image_analyzer_when_omitted(
     assert profile.image_generation.image_config == {}
 
 
-def test_llm_profile_literature_synthesizer_fallbacks_to_director(tmp_path: Path) -> None:
+def test_llm_profile_literature_deep_research_fallbacks_to_director(tmp_path: Path) -> None:
     cfg = tmp_path / "llm.yaml"
     cfg.write_text(
         "\n".join(
@@ -399,34 +398,6 @@ def test_llm_profile_literature_synthesizer_fallbacks_to_director(tmp_path: Path
                 "  proposal: 'openai/gpt-5.2'",
                 "  director: 'openai/gpt-5-nano'",
                 "  task_runner: 'openai/gpt-5.2'",
-                "  memory_patch: 'openai/gpt-5.2'",
-                "  summary: 'openai/gpt-5.2'",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    profile = LLMProfile.from_env_or_file(str(cfg))
-    assert profile.literature_synthesizer.model == "openai/gpt-5-nano"
-
-
-def test_llm_profile_literature_deep_research_fallbacks_to_synthesizer(tmp_path: Path) -> None:
-    cfg = tmp_path / "llm.yaml"
-    cfg.write_text(
-        "\n".join(
-            [
-                "models:",
-                "  'openai/gpt-5.2':",
-                "    provider: openrouter",
-                "    model: openai/gpt-5.2",
-                "  'openai/gpt-5-nano':",
-                "    provider: openrouter",
-                "    model: openai/gpt-5-nano",
-                "agents:",
-                "  proposal: 'openai/gpt-5.2'",
-                "  director: 'openai/gpt-5.2'",
-                "  task_runner: 'openai/gpt-5.2'",
-                "  literature_synthesizer: 'openai/gpt-5-nano'",
                 "  memory_patch: 'openai/gpt-5.2'",
                 "  summary: 'openai/gpt-5.2'",
             ]
@@ -495,7 +466,7 @@ def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.agent_runtime.recursion_limit == 1_000_000
     assert profile.agent_runtime.max_tool_calls == 120
-    assert profile.agent_runtime.deepagent_context_trigger_token_cap == 256_000
+    assert profile.agent_runtime.deepagent_context_trigger_token_cap == 270_000
     assert profile.agent_runtime.print_state_messages is False
     assert profile.agent_runtime.print_http_raw_post is False
 

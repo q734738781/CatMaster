@@ -100,6 +100,6 @@ def test_render_structure_panel_cli_accepts_custom_views_json(tmp_path: Path) ->
     assert metadata["atom_scale"] == 0.45
 
 
-def test_render_structure_views_tool_is_not_registered() -> None:
+def test_render_vesta_views_tool_is_registered() -> None:
     registry = get_tool_registry()
-    assert "render_structure_views" not in registry.tools
+    assert "render_vesta_views" in registry.tools

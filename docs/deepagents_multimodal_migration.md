@@ -13,12 +13,12 @@ persistence and replay safety.
 Local package versions checked in the `catmaster` environment:
 
 - `deepagents==0.6.12`
-- `langchain==1.3.11`
-- `langchain-core==1.4.8`
-- `langchain-openai==1.3.3`
+- `langchain==1.3.13`
+- `langchain-core==1.4.9`
+- `langchain-openai==1.3.5`
 - `langchain-openrouter==0.2.5`
 - `langchain-anthropic==1.4.8`
-- `openai==2.44.0`
+- `openai==2.45.0`
 - WebUI `@assistant-ui/react==0.14.24`
 
 Official/current behavior used as the target:

@@ -1,0 +1,3 @@
+# cuEquivariance CUDA 12.x kernel add-on.
+# Install after gpu.txt only when torch.version.cuda starts with "12".
+cuequivariance-ops-torch-cu12==0.10.0

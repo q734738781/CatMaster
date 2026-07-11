@@ -68,7 +68,7 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
         serialized={"name": "demo_tool"},
         input_str='{"alpha": 1}',
         run_id=rid,
-        metadata={"lc_agent_name": "literature_agent"},
+        metadata={"lc_agent_name": "litreview_agent"},
     )
 
     handler.on_tool_end(
@@ -90,14 +90,14 @@ def test_ui_event_handler_emits_tool_status_for_tool_message() -> None:
     assert start_events
     start_payload = start_events[-1].payload
     assert start_payload.get("tool") == "demo_tool"
-    assert start_payload.get("agent_name") == "literature_agent"
+    assert start_payload.get("agent_name") == "litreview_agent"
     assert start_payload.get("toolcall_id") == str(rid)
     assert "alpha" in str(start_payload.get("params_compact") or "")
     payload = end_events[-1].payload
     assert payload.get("tool") == "demo_tool"
     assert payload.get("status") == "success"
     assert payload.get("toolcall_id") == str(rid)
-    assert payload.get("agent_name") == "literature_agent"
+    assert payload.get("agent_name") == "litreview_agent"
     assert "alpha" in str(payload.get("params_compact") or "")
 
 

@@ -74,6 +74,13 @@ configs/dpdispatcher/resources.yaml
 - `lammps_cpu`：LAMMPS CPU 任务。
 - `mace_gpu`：MACE GPU 任务。
 - `uma_gpu`：FairChem UMA GPU 任务，建议使用独立于 MACE 的 conda 环境。
+
+如需启用 MACE cuEquivariance 加速，先安装 `requirements/gpu.txt`，然后按
+`torch.version.cuda` 只选择一个 kernel add-on：CUDA 12.x 使用
+`requirements/gpu-cueq-cu12.txt`，CUDA 13.x 使用
+`requirements/gpu-cueq-cu13.txt`。不要根据 NVIDIA 驱动版本选择 wheel。
+在目标模型、体系规模和 GPU 完成基准测试前，MD 配置中的 `enable_cueq`
+和 `compile_mode` 应保持显式设置，不要作为无条件默认值。
 - `general_cpu`：自定义 CPU boot script。
 - `general_gpu`：自定义 GPU boot script。
 - `xtb_cpu`、`crest_cpu`、`orca_cpu`：分子量化和构象任务。

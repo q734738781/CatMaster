@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.remote.gpu.mace_md import _config_from_compact_payload, _validate_config
+from catmaster.remote.gpu.mace_md import _config_from_compact_payload, _timing_statistics, _validate_config
 from catmaster.specialists.runtime import _DYNAMICS_WORKER_TOOL_ALLOWLIST, _MATERIALS_WORKER_TOOL_ALLOWLIST
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.execution.mace_dispatch import MaceMDBatchInput, mace_md_batch
@@ -58,6 +58,39 @@ def test_mace_md_batch_supports_npt_with_grouped_barostat() -> None:
         md_config={"dynamics": {"ensemble": "npt"}},
     )
     assert params.md_config["dynamics"]["ensemble"] == "npt"
+
+
+def test_mace_md_acceleration_config_is_validated() -> None:
+    config = _validate_config(
+        _config_from_compact_payload(
+            {
+                "md_config": {
+                    "calculator": {
+                        "enable_cueq": True,
+                        "compile_mode": "reduce-overhead",
+                    }
+                }
+            }
+        )
+    )
+    assert config["calculator"]["enable_cueq"] is True
+    assert config["calculator"]["compile_mode"] == "reduce-overhead"
+
+    with pytest.raises(ValueError, match="compile_mode"):
+        _validate_config(
+            _config_from_compact_payload(
+                {"md_config": {"calculator": {"compile_mode": "fastest"}}}
+            )
+        )
+
+
+def test_mace_md_step_timing_statistics_separate_warmup() -> None:
+    stats = _timing_statistics([5.0, 3.0, 1.0, 1.0, 1.0], warmup_steps=2)
+    assert stats["all_steps"]["count"] == 5
+    assert stats["first_step_s"] == 5.0
+    assert stats["warmup_steps_excluded"] == 2
+    assert stats["steady_state"]["count"] == 3
+    assert stats["steady_state"]["median"] == 1.0
 
 
 def test_mace_md_batch_requires_berendsen_npt_compressibility() -> None:

@@ -124,6 +124,7 @@ WebUI 的文件视图可以浏览项目空间里的文件、上传文件、预�
 只在需要对应功能时安装：
 
 - OVITO：结构渲染和结构视图导出。
+- VESTA：报告风格的原子结构图、多视角导出和多模态结构检查；配置见[外部材料软件](04-external-tools.zh.md)。
 - LaTeX / `pdflatex`：TeX 文稿编译。
 - VASPKIT：吸附物和气相热力学校正。
 - ORCA、xTB、CREST：量化、半经验和构象搜索。

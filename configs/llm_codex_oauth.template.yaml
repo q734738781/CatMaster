@@ -10,13 +10,13 @@
 #   python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 #
 # Copy this file to configs/llm.yaml on the deployment target. The default
-# matches current Codex guidance: GPT-5.5 with high reasoning effort and
+# matches the validated local OAuth lane: GPT-5.6 Sol with high reasoning and
 # Responses API reasoning summaries for monitor observability.
 
 models:
   codex-oauth-main:
     provider: codex_oauth
-    model: gpt-5.5
+    model: gpt-5.6-sol
 
     temperature: null
     top_p: null
@@ -28,6 +28,8 @@ models:
     base_url: null
 
     default_headers: {}
+    timeout_s: 120
+    max_retries: 3
 
     provider_options:
       codex_oauth:
@@ -52,7 +54,6 @@ agents:
   summary: codex-oauth-main
   tool_selector: codex-oauth-main
   image_analyzer: codex-oauth-main
-  literature_synthesizer: codex-oauth-main
   literature_deep_research: codex-oauth-main
   self_evolution_proposer: codex-oauth-main
   self_evolution_reviewer: codex-oauth-main
@@ -66,9 +67,10 @@ writing:
 agent_runtime:
   recursion_limit: 9999
   max_tool_calls: 120
-  # _ChatOpenAICodex(gpt-5.5) exposes a 1.05M token profile. Without this cap,
+  # _ChatOpenAICodex(gpt-5.6-sol) exposes a 1.05M token profile. Without this cap,
   # DeepAgents' default 85% trigger would wait until roughly 892k tokens.
   # Retained context remains DeepAgents' default 10% of the capped profile.
-  deepagent_context_trigger_token_cap: 256000
+  # Trigger below 272k to leave a small margin before long-context pricing applies.
+  deepagent_context_trigger_token_cap: 270000
   print_state_messages: false
   print_http_raw_post: false

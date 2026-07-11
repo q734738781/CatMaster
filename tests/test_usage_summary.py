@@ -84,7 +84,7 @@ def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> 
         },
         call_counts_by_model={"model-a": 2},
         usage_metadata_by_role={
-            "literature_agent": {
+            "litreview_agent": {
                 "model-a": {
                     "input_tokens": 25,
                     "output_tokens": 4,
@@ -92,7 +92,7 @@ def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> 
                 }
             }
         },
-        call_counts_by_role={"literature_agent": 1},
+        call_counts_by_role={"litreview_agent": 1},
         append=True,
     )
 
@@ -103,7 +103,7 @@ def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> 
     assert second["input_cached_tokens"] == 45
     assert second["reasoning_tokens"] == 2
     assert second["calls"] == 3
-    assert second["by_role"][0]["name"] == "literature_agent"
+    assert second["by_role"][0]["name"] == "litreview_agent"
     assert second["by_role"][0]["calls"] == 1
 
 

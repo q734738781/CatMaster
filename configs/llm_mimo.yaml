@@ -132,7 +132,6 @@ agents:
   academic_polisher: "google/gemini-3.1-pro-preview"
   tex_compile_fixer: "openai/gpt-5.5:medium"
   image_analyzer: "openai/gpt-5.5:medium"
-  literature_synthesizer: "openai/gpt-5.5:medium"
   literature_deep_research: "openai/gpt-5.5:high"
   memory_patch: "openai/gpt-5.5:medium"
   tool_selector: "openai/gpt-5.4-mini"

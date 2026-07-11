@@ -206,6 +206,7 @@ class SkillCatalog:
             resolved_repo_root / "skills" / "research_specialist",
             resolved_repo_root / "skills" / "litreview_agent",
             resolved_repo_root / "skills" / "writing_specialist",
+            resolved_repo_root / "skills" / "writing_quality",
         ]
         return cls(
             source_roots=roots,
@@ -263,7 +264,7 @@ class SkillCatalog:
                         if not lanes:
                             lanes = ["literature_review", "research"]
                         if not roles:
-                            roles = ["literature_synthesizer", "literature_deep_research", "research_lead"]
+                            roles = ["literature_deep_research", "research_lead"]
                         if not tags:
                             tags = ["literature"]
                     elif source_root_name in {

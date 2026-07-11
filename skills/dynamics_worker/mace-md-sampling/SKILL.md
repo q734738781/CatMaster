@@ -41,6 +41,7 @@ stage/
 
 ### 2. Keep MD controls grouped
 - Use one `md_config` object with optional `calculator`, `dynamics`, `thermostat`, `barostat`, and `output` groups.
+- Acceleration is opt-in. The validated default for the current `mace_gpu` route is `calculator.enable_cueq=false` with compilation disabled. Accepted compile modes are `default`, `reduce-overhead`, and `max-autotune` when an explicitly validated workload needs one.
 - Omitted defaults are NVT, 300 K, 1 fs, 1000 steps, Bussi thermostat, and trajectory/log every 10 steps.
 - Set `dynamics.ensemble` to `nve`, `nvt`, or `npt`; choose thermostat/barostat keys only when the method needs them.
 - For NPT Berendsen, set `barostat.compressibility_bar_inv` explicitly.
@@ -58,8 +59,12 @@ stage/
 ## Method-critical defaults
 - Default to `dynamics.ensemble="nvt"` with `thermostat.type="bussi"` for generic thermal sampling unless the scientific question requires energy conservation (`nve`) or pressure control (`npt`).
 - Keep `calculator.default_dtype="float32"` by default for MD throughput. Use `float64` only when explicitly checking numerical sensitivity.
+- For the current `mace_gpu` route (MACE-MH-1, RTX 4090), use `calculator.enable_cueq=false` and leave `calculator.compile_mode` disabled by default. A 32-atom Cu test remained fastest with this baseline at 500 and 2000 steps; cuEq was slower, while `reduce-overhead` compilation became much slower at 2000 steps despite matching energies and forces.
+- Do not add a per-run benchmark stage or select acceleration from step count alone. Enable cuEq or compilation only when a recorded benchmark for the same model family, comparable system size, GPU class, and runtime stack supports it, or when the user explicitly requests an acceleration experiment.
+- Do not combine cuEq with `reduce-overhead` on the current validated stack; that combination failed CUDA graph capture in the recorded smoke test.
+- Select the cuEquivariance ops wheel from `torch.version.cuda`: CUDA 12.x uses `cuequivariance-ops-torch-cu12`, while CUDA 13.x uses `cuequivariance-ops-torch-cu13`. Do not infer the wheel from the NVIDIA driver version alone.
 - For NPT, use only structures with a real 3D periodic cell; prefer `barostat.type="isotropic_mtk"` unless anisotropic cell fluctuations are part of the question.
-- Keep timestep, steps, ensemble, thermostat/barostat, targets, total simulated time, dtype, device, and dispersion visible in summaries.
+- Keep timestep, steps, ensemble, thermostat/barostat, targets, total simulated time, dtype, device, dispersion, cuEq state, compile mode, total elapsed time, pre-step startup overhead, steady-state steps/s, and the step-timing CSV visible in summaries.
 - Do not treat a completed short MACE MD run as converged diffusion or mechanistic evidence without a credible production window.
 
 ## Output Contract

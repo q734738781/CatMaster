@@ -827,8 +827,8 @@ const LANE_GUIDE = {
   },
   literature_review: {
     title: "Literature Review",
-    summary: "Launch LitReview Agent directly for source-grounded literature synthesis, public evidence inspection, and citation metadata checks.",
-    subagents: ["literature_agent", "metadata_agent"],
+    summary: "Launch LitReview Agent directly for web discovery, authorized browser reading, local full-text evidence, and finalized citations.",
+    subagents: ["general-purpose"],
   },
   writing: {
     title: "Writing",

@@ -5,7 +5,7 @@
 models:
   openrouter-main:
     provider: openrouter
-    model: openai/gpt-5.2
+    model: openai/gpt-5.6-sol
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -37,7 +37,7 @@ models:
 
   openrouter-deep:
     provider: openrouter
-    model: openai/gpt-5.5
+    model: openai/gpt-5.6-sol
     temperature: 1.0
     top_p: null
     max_tokens: null
@@ -172,7 +172,7 @@ models:
 
   codex-oauth-main:
     provider: codex_oauth
-    model: gpt-5.5
+    model: gpt-5.6-sol
     temperature: null
     top_p: null
     max_tokens: null
@@ -291,7 +291,6 @@ agents:
   summary: openrouter-main
   tool_selector: openrouter-main
   image_analyzer: openrouter-main
-  literature_synthesizer: openrouter-main
   literature_deep_research: openrouter-deep
   self_evolution_proposer: openrouter-deep
   self_evolution_reviewer: openrouter-deep
@@ -314,7 +313,7 @@ agent_runtime:
   # Cap only the effective trigger window so very-long-context profiles do not delay
   # compaction into the 800k-900k range. Set to 0/null to disable this cap.
   # The retained context remains DeepAgents' default 10% of the capped profile.
-  deepagent_context_trigger_token_cap: 256000
+  deepagent_context_trigger_token_cap: 270000
   print_state_messages: false
   print_http_raw_post: false
 

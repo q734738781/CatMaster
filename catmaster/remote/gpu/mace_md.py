@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
 import json
 import os
 import time
@@ -101,6 +102,38 @@ def _positive_int(value: Any, *, name: str) -> int:
     return parsed
 
 
+def _timing_statistics(values: list[float], *, warmup_steps: int = 10) -> dict[str, Any]:
+    def _stats(samples: list[float]) -> dict[str, float | int | None]:
+        if not samples:
+            return {"count": 0, "mean": None, "median": None, "p05": None, "p95": None, "min": None, "max": None}
+        array = np.asarray(samples, dtype=float)
+        return {
+            "count": int(array.size),
+            "mean": float(np.mean(array)),
+            "median": float(np.median(array)),
+            "p05": float(np.percentile(array, 5)),
+            "p95": float(np.percentile(array, 95)),
+            "min": float(np.min(array)),
+            "max": float(np.max(array)),
+        }
+
+    skipped = min(max(int(warmup_steps), 0), len(values))
+    return {
+        "all_steps": _stats(values),
+        "steady_state": _stats(values[skipped:]),
+        "warmup_steps_excluded": skipped,
+        "first_step_s": float(values[0]) if values else None,
+    }
+
+
+def _write_step_timings(path: Path, rows: list[tuple[int, float]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["step", "elapsed_s", "steps_per_s"])
+        for step, elapsed in rows:
+            writer.writerow([step, f"{elapsed:.12g}", f"{1.0 / max(elapsed, 1e-12):.12g}"])
+
+
 def _default_config() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -110,6 +143,7 @@ def _default_config() -> dict[str, Any]:
             "dispersion": False,
             "default_dtype": "float32",
             "enable_cueq": False,
+            "compile_mode": None,
             "compute_atomic_stresses": False,
         },
         "dynamics": {
@@ -171,7 +205,7 @@ def _config_from_compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
         md_config["barostat"] = _merge_dict(_default_barostat_config(), md_config["barostat"])
     cfg = _merge_dict(cfg, md_config)
     calc = cfg["calculator"]
-    for key in ("model", "head", "dispersion", "default_dtype"):
+    for key in ("model", "head", "dispersion", "default_dtype", "enable_cueq", "compile_mode"):
         if key in payload:
             calc[key] = payload[key]
     return cfg
@@ -263,6 +297,16 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     calc["head"] = str(calc.get("head") or "").strip() or None
     calc["dispersion"] = bool(calc.get("dispersion", False))
     calc["enable_cueq"] = bool(calc.get("enable_cueq", False))
+    compile_mode = calc.get("compile_mode")
+    if compile_mode in (None, "", "none", "None"):
+        calc["compile_mode"] = None
+    else:
+        compile_mode = str(compile_mode).strip()
+        if compile_mode not in {"default", "reduce-overhead", "max-autotune"}:
+            raise ValueError(
+                "calculator.compile_mode must be one of: none, default, reduce-overhead, max-autotune."
+            )
+        calc["compile_mode"] = compile_mode
     calc["compute_atomic_stresses"] = bool(calc.get("compute_atomic_stresses", False))
     return config
 
@@ -282,7 +326,13 @@ def _make_calculator(config: dict[str, Any], *, device: str):
     if calc.get("head"):
         kwargs["head"] = calc["head"]
     if calc.get("enable_cueq"):
+        if not device.startswith("cuda"):
+            raise ValueError("calculator.enable_cueq requires a CUDA device.")
         kwargs["enable_cueq"] = True
+    if calc.get("compile_mode"):
+        if not device.startswith("cuda"):
+            raise ValueError("calculator.compile_mode requires a CUDA device for this managed MD path.")
+        kwargs["compile_mode"] = calc["compile_mode"]
     if calc.get("compute_atomic_stresses"):
         kwargs["compute_atomic_stresses"] = True
     return mace_mp(**kwargs), device
@@ -472,11 +522,24 @@ def _run_md_single(
         "completed": False,
         "error": None,
     }
+    run_started = time.perf_counter()
+    step_timings: list[tuple[int, float]] = []
+    timing_previous = [run_started]
+
+    def _record_step_timing() -> None:
+        now = time.perf_counter()
+        step = int(getattr(dyn, "nsteps", 0))
+        if step <= 0:
+            timing_previous[0] = now
+            return
+        step_timings.append((step, now - timing_previous[0]))
+        timing_previous[0] = now
     _write_json(summary_path, summary)
 
     try:
         dyn.attach(traj.write, interval=int(out_cfg["traj_interval"]))
         dyn.attach(logger, interval=int(out_cfg["log_interval"]))
+        dyn.attach(_record_step_timing, interval=1)
         dyn.run(int(dyn_cfg["steps"]))
 
         has_lattice = atoms.cell is not None and getattr(atoms.cell, "volume", 0) > 1e-6
@@ -484,6 +547,13 @@ def _run_md_single(
         write(output_dir / final_name, atoms, format="vasp" if has_lattice else "xyz")
         final_energy = float(atoms.get_potential_energy())
         forces = atoms.get_forces()
+        elapsed_s = time.perf_counter() - run_started
+        timing_path = output_dir / "step_timings.csv"
+        _write_step_timings(timing_path, step_timings)
+        timing_values = [elapsed for _, elapsed in step_timings]
+        timed_steps_elapsed_s = float(sum(timing_values))
+        timing_statistics = _timing_statistics(timing_values)
+        steady_mean = timing_statistics["steady_state"]["mean"]
         summary.update(
             {
                 "completed": True,
@@ -493,16 +563,28 @@ def _run_md_single(
                 "trajectory": traj_path.name,
                 "log": log_path.name,
                 "output_structure": final_name,
+                "elapsed_s": elapsed_s,
+                "steps_per_s": float(dyn_cfg["steps"]) / max(elapsed_s, 1e-12),
+                "step_timings": timing_path.name,
+                "step_timing_statistics_s": timing_statistics,
+                "timed_steps_elapsed_s": timed_steps_elapsed_s,
+                "pre_step_overhead_s": max(elapsed_s - timed_steps_elapsed_s, 0.0),
+                "steady_state_steps_per_s": (
+                    1.0 / float(steady_mean) if steady_mean not in (None, 0.0) else None
+                ),
             }
         )
         _write_json(summary_path, summary)
         return summary
     except Exception as exc:
+        if step_timings:
+            _write_step_timings(output_dir / "step_timings.csv", step_timings)
         summary.update(
             {
                 "completed": False,
                 "finished_at": _now_iso(),
                 "error": repr(exc),
+                "elapsed_s": time.perf_counter() - run_started,
                 "traceback": traceback.format_exc(),
             }
         )

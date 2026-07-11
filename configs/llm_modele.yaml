@@ -146,8 +146,7 @@ agents:
   # Current runtime worker / helper agents
   writing_worker_agent: "deepseek-v4-pro"
   writing_polisher_agent: "google/gemini-3.1-pro-preview"
-  literature_agent: "openai/gpt-5.5:medium"
-  litreview_agent: "openai/gpt-5.5:medium"
+  litreview_agent: "openai/gpt-5.5:high"
 
   # Internal utility roles
   latex_fixer: "openai/gpt-5.5:medium"

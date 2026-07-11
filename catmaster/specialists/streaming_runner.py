@@ -143,8 +143,6 @@ _INTERNAL_AGENT_MARKERS = {
     "dynamics_worker",
     "orca_xtb_worker",
     "litreview_agent",
-    "literature_agent",
-    "metadata_agent",
     "writing_worker_agent",
     "writing_polisher_agent",
     "peer_review_worker_agent",

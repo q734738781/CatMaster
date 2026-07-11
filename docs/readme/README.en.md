@@ -10,6 +10,8 @@ This guide is written for users with basic Linux experience: opening a terminal,
    Learn the WebUI, task lanes, project spaces, run history, and prompt patterns.
 3. [Remote setup](02-remote.en.md)
    Read this only when you need cluster submission through DPDispatcher.
+4. [External materials programs](04-external-tools.en.md)
+   Configure VASPKIT, VESTA, and headless structure-rendering dependencies when needed.
 
 Chinese guide:
 
@@ -17,6 +19,7 @@ Chinese guide:
 - [本地配置要点](01-local.zh.md)
 - [远程配置要点](02-remote.zh.md)
 - [功能介绍与日常使用](03-features.zh.md)
+- [外部材料软件](04-external-tools.zh.md)
 
 ## Public Web Demo
 

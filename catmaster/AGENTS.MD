@@ -21,11 +21,13 @@ interaction layers are in [deepagents_interactions.md](../docs/deepagents_intera
 
 ### Public entrypoints
 
-The active runtime exposes exactly three lanes:
+The active runtime exposes these lanes:
 
 - `research`
 - `experiment`
 - `writing`
+- `peer_review`
+- `literature_review`
 
 They are built in [runtime.py](specialists/runtime.py).
 
@@ -79,27 +81,32 @@ Agent-visible tool schema rules:
 
 ## 2) Current literature architecture
 
-All agent-visible public web search should flow through the registered public-source checking capability.
+CatMaster has one active literature Agent construction path: the DeepAgents
+`litreview_agent`, used directly by `literature_review` and compiled once under
+`research`. Do not add a second LangGraph/LangChain literature Agent behind a
+tool or compatibility route.
 
-Literature support is split into two forms:
+`litreview_agent` receives:
 
-- `litreview_agent`
-  - Used by `research`
-  - A compiled DeepAgent subagent
-  - Internally delegates to:
-    - `literature_agent` for broad public-web review, source inspection, and source-local page lookup
-    - `metadata_agent` for exact scholarly metadata
+- one direct Tavily `web_search` capability for efficient discovery;
+- a filtered, stateful `agent-browser` MCP surface for dynamic pages and
+  user-authorized browser sessions;
+- local full-text corpus ingest/query tools;
+- one deterministic batch citation finalizer.
 
-All autonomous specialists and workers also receive a default public-source checking capability. That means:
+It declares no custom literature or metadata worker. DeepAgents' native
+`general-purpose` subagent is the only child and inherits the same tools and
+browser session for bounded context-isolated work.
 
-- `ExperimentSpecialist`, `WritingSpecialist`, and worker agents may run their own narrow web checks directly.
-- Broad review, source inspection, and citation-grade reconciliation still belong to `litreview_agent`.
+`open_public_page`, `find_in_page`, OpenAlex, and Semantic Scholar tools are not
+part of the LitReview model-visible surface. OpenAlex may remain an internal
+deterministic fallback during final citation resolution. Other specialists and
+workers may still receive `web_search` for narrow checks.
 
 Physical/chemical property lookups are a literature-first case: answer from public literature, citation-grade metadata, or existing workspace evidence before proposing new calculations. Missing property evidence is not implicit approval to run DFT; ask for or invite an explicit calculation instruction when the property is computable.
 
-The metadata side is intentionally separate from broad review and is implemented by dedicated scholarly search, exact-record lookup, and recommendation tools.
-
-These are for exact paper metadata, DOI/year/venue/authors/citation resolution, and seed-paper expansion. They are not the broad-review layer.
+Final metadata normalization happens only after paper selection in one bounded
+deterministic call. Do not reintroduce a per-record LLM metadata loop.
 
 ## 3) Runtime state and persistence
 

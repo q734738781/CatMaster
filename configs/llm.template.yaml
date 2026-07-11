@@ -12,7 +12,7 @@ models:
   # -------------------------------------------------------------------------
   "openrouter-main":
     provider: openrouter
-    model: openai/gpt-5.2
+    model: openai/gpt-5.6-sol
 
     temperature: 1.0
     top_p: null
@@ -43,7 +43,7 @@ models:
   # Optional OpenRouter example for deeper research synthesis
   "openrouter-main-xhigh":
     provider: openrouter
-    model: openai/gpt-5.5
+    model: openai/gpt-5.6-sol
 
     temperature: 1.0
     top_p: null
@@ -156,7 +156,7 @@ models:
   # -------------------------------------------------------------------------
   "codex-oauth-main":
     provider: codex_oauth
-    model: gpt-5.5
+    model: gpt-5.6-sol
 
     temperature: null
     top_p: null
@@ -168,6 +168,8 @@ models:
     base_url: null
 
     default_headers: {}
+    timeout_s: 120
+    max_retries: 3
 
     # Provider-bound options passed to langchain_openai.chat_models.codex._ChatOpenAICodex.
     provider_options:
@@ -192,10 +194,7 @@ agents:
   # Optional: if omitted, it falls back to `task_runner`.
   image_analyzer: "openrouter-main"
   # Optional: if omitted, it falls back to `director`.
-  # Public-web literature search is handled by Tavily in the literature tools, not an LLM role.
-  literature_synthesizer: "openrouter-main"
-  # Optional: if omitted, it falls back to `literature_synthesizer`.
-  # Recommended: keep this on the plain base model and let `web_search` handle external grounding.
+  # Tavily discovery and agent-browser reading are tools on this one DeepAgent role.
   literature_deep_research: "openrouter-main-xhigh"
   # Optional: if omitted, it falls back to `task_runner`.
   tool_selector: "openrouter-main"
@@ -226,7 +225,7 @@ agent_runtime:
   # Cap only the effective trigger window so very-long-context profiles do not delay
   # compaction into the 800k-900k range. Set to 0/null to disable this cap.
   # The retained context remains DeepAgents' default 10% of the capped profile.
-  deepagent_context_trigger_token_cap: 256000
+  deepagent_context_trigger_token_cap: 270000
   print_state_messages: false
   print_http_raw_post: false
 

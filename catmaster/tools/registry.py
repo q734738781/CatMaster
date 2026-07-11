@@ -142,6 +142,7 @@ class ToolRegistry:
             peer_review_request,
             polish_academic_prose,
             review_pdf_manuscript,
+            render_vesta_views,
             vaspkit_adsorbate_thermo_correction,
             vaspkit_gas_thermo_correction,
             CompileTextInput,
@@ -155,6 +156,7 @@ class ToolRegistry:
             PeerReviewRequestInput,
             PolishAcademicProseInput,
             ReviewPdfManuscriptInput,
+            RenderVestaViewsInput,
             VaspkitAdsorbateThermoCorrectionInput,
             VaspkitGasThermoCorrectionInput,
         )
@@ -165,13 +167,18 @@ class ToolRegistry:
             calculate_al_candidates,
         )
         from catmaster.runtime.literature import (
+            FinalizeCitationsInput,
             FindInPageInput,
             GetOpenAlexRecordInput,
             GetSemanticScholarRecordInput,
+            IngestLiteratureFilesInput,
             OpenPublicPageInput,
+            QueryLiteratureCorpusInput,
             RecommendSemanticScholarInput,
             WebSearchInput,
-            run_literature_research,
+            finalize_citations,
+            ingest_literature_files,
+            query_literature_corpus,
             web_search,
             search_openalex,
             search_semantic_scholar,
@@ -180,7 +187,6 @@ class ToolRegistry:
             recommend_semantic_scholar,
             open_public_page,
             find_in_page,
-            RunLiteratureResearchInput,
             SearchOpenAlexInput,
             SearchSemanticScholarInput,
         )
@@ -262,6 +268,7 @@ class ToolRegistry:
         self.register_tool("peer_review_request", peer_review_request, PeerReviewRequestInput)
         self.register_tool("polish_academic_prose", polish_academic_prose, PolishAcademicProseInput)
         self.register_tool("review_pdf_manuscript", review_pdf_manuscript, ReviewPdfManuscriptInput)
+        self.register_tool("render_vesta_views", render_vesta_views, RenderVestaViewsInput)
         self.register_tool(
             "vaspkit_adsorbate_thermo_correction",
             vaspkit_adsorbate_thermo_correction,
@@ -272,7 +279,9 @@ class ToolRegistry:
             vaspkit_gas_thermo_correction,
             VaspkitGasThermoCorrectionInput,
         )
-        self.register_tool("run_literature_research", run_literature_research, RunLiteratureResearchInput)
+        self.register_tool("ingest_literature_files", ingest_literature_files, IngestLiteratureFilesInput)
+        self.register_tool("query_literature_corpus", query_literature_corpus, QueryLiteratureCorpusInput)
+        self.register_tool("finalize_citations", finalize_citations, FinalizeCitationsInput)
         self.register_tool("search_openalex", search_openalex, SearchOpenAlexInput)
         self.register_tool("search_semantic_scholar", search_semantic_scholar, SearchSemanticScholarInput)
         self.register_tool("get_openalex_record", get_openalex_record, GetOpenAlexRecordInput)

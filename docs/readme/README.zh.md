@@ -10,6 +10,8 @@
    了解 WebUI、任务模式、项目空间、运行历史和常见提示词写法。
 3. [远程配置要点](02-remote.zh.md)
    只有需要提交集群任务时再读，覆盖 DPDispatcher 的机器、资源和任务配置。
+4. [外部材料软件](04-external-tools.zh.md)
+   按需配置 VASPKIT、VESTA，以及无图形环境下的结构渲染依赖。
 
 英文版：
 
@@ -17,6 +19,7 @@
 - [Local setup](01-local.en.md)
 - [Remote setup](02-remote.en.md)
 - [Features and workflows](03-features.en.md)
+- [External materials programs](04-external-tools.en.md)
 
 ## 公共 Web Demo
 

@@ -182,6 +182,8 @@ class MaceMDBatchInput(BaseModel):
             "Free-form MD config object. Keep it minimal; for example "
             "{'dynamics': {'ensemble': 'nve'}} or "
             "{'dynamics': {'ensemble': 'nvt'}, 'thermostat': {'type': 'langevin'}}. "
+            "Optional CUDA acceleration belongs under calculator, for example "
+            "{'calculator': {'enable_cueq': true, 'compile_mode': 'reduce-overhead'}}. "
             "Use the MACE MD skill for full ASE parameter templates."
         ),
     )

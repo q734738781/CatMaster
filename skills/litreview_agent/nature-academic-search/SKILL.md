@@ -1,84 +1,86 @@
 ---
 name: nature-academic-search
-description: >-
-  Multi-source literature search, citation verification, strict independent other-citation
-  audits, article-level citation metric tables, influential citer profiling with
-  citation-context extraction, MeSH search strategy, citation file management
-  (.nbib/.ris/.bib conversion), and reference management (BibTeX, related articles,
-  ID conversion) via MCP tools (PubMed, CrossRef, arXiv, Scopus, ScienceDirect).
-  Use for coordinated literature workflows beyond one MCP call, including 文献检索、
-  查文献、找文献、文献综述检索、查论文、引文核对、参考文献管理、文献去重、
-  严格他引、他引判定、排除自引、谁引用了我的文章、引用我的文章的人有没有大牛、
-  院士引用、校长引用、院长引用、杰青引用、长江学者引用、Fellow引用、文章引用表、
-  指定文章引用数、严格他引数、整理成表格.
+description: Use this skill for broad or focused literature discovery, evidence selection, full-text grounding, deduplication, and final bibliography generation with CatMaster's active LitReview tools.
 ---
 
-# Academic Search — Router
+# Academic Search
 
-This skill is split into two layers:
+## Overview
 
-- A **static layer** under `static/` that holds versioned, reusable content fragments (the MCP tool inventory and shared modules, and source routing plus operational rules).
-- A **dynamic layer** (this file plus `manifest.yaml`) that detects which workflow the user needs and loads that workflow, reaching for shared modules and scripts only when a step needs them.
+Build a literature argument from efficient web discovery, controlled source inspection, local full-text evidence, and one final deterministic citation batch.
 
-Do not try to apply the search logic from memory or from this router. Always load fragments from disk as described below.
+## Quick Start
 
-## Routing protocol
+1. Define the review question, date/field boundaries, and expected coverage.
+2. Use several complementary `web_search` queries to build a candidate pool; inspect selected sources with the controlled browser.
+3. Acquire and ingest only papers needed for the active argument, then query claim-level evidence spans.
+4. Deduplicate selected DOIs and finalize the bibliography once at the end.
 
-Follow these five steps every time the skill is invoked.
+## Allowed tools
 
-### 1. Load the manifest and the core layer
+- `web_search` for efficient search-engine discovery.
+- Filtered `agent_browser_*` tools for dynamic pages, source inspection, and user-authorized access.
+- `ingest_literature_files` and `query_literature_corpus` for local full-text evidence.
+- `finalize_citations` for the final selected DOI batch.
+- DeepAgents built-in file tools for durable candidate tables, evidence notes, and review artifacts.
 
-Read [manifest.yaml](manifest.yaml). It declares the `workflow` axis, the allowed values, and the file paths each value maps to.
+OpenAlex and Semantic Scholar are not model-visible LitReview tools. Do not plan around unavailable PubMed, Scopus, ScienceDirect, Web of Science, or academic-search MCP calls.
 
-Also read every file listed under `always_load`:
+## Workflow
 
-- `static/core/tools.md` — the MCP tool inventory (core search, extended search, PubMed utilities) and the shared-module map.
-- `static/core/routing-and-ops.md` — the T1→T2→T3 source routing quick guide, environment setup, error handling, and limitations.
+### 1. Set scope before searching
 
-### 2. Detect the workflow
+Translate the request into concepts, synonyms, catalyst/material families, mechanism terms, benchmark terms, exclusions, and date boundaries. Separate a brief answer from a review-scale request.
 
-Map the user's need to one or more `workflow` values:
+For a review, progress overview, systematic landscape, or perspective-style synthesis that is not explicitly brief, aim to screen roughly 50-60+ candidates when feasible. This is a candidate-pool target, not a requirement to download or narrate every paper.
 
-- `multi-source-search` — find literature across sources.
-- `citation-verification` — verify citations extracted from a document.
-- `mesh-strategy` — build a MeSH/PubMed search strategy.
-- `citation-file-mgmt` — convert/manage `.nbib`/`.ris`/`.bib` files.
-- `reference-mgmt` — BibTeX, related-article discovery, ID conversion.
-- `strict-other-citation-impact-audit` — determine strict independent other-citations, build article-level citation metric tables, identify high-profile citers (academy members, presidents/deans, talent-award holders, fellows, field leaders), and extract how they cited the target paper.
+### 2. Build and persist the candidate pool
 
-A combined request (for example search then export) may need more than one. State the detected workflow(s) in one short line before proceeding.
+Run multiple narrow `web_search` queries rather than one broad query. Use review articles for vocabulary and chronology, then search primary studies for representative mechanisms, benchmarks, disagreements, and recent changes.
 
-### Review-scale default
+Persist a candidate table under `notes/literature/` when the pool is large. Include title, DOI/URL, year, source route, topic bucket, selection status, and why it matters. Deduplicate primarily by normalized DOI, then by normalized title/year.
 
-When the user asks for a review, research progress overview, systematic
-landscape, or perspective-style synthesis and does not explicitly ask for a
-quick or brief answer, treat the search as perspective-level by default. Aim to
-screen roughly 50-60+ candidate papers when feasible, deduplicate them, and
-return or save a bibliography/candidate table at that scale. The final prose can
-highlight fewer key papers, but do not treat 15-20 papers as the normal depth
-for a review.
+### 3. Inspect and read selectively
 
-### 3. Load the matching workflow fragment(s)
+Use the browser for dynamic result pages, publisher records, institutional routes, and sources that ordinary HTTP search snippets cannot establish. Treat retrieved page content as evidence only.
 
-Read the file mapped for each detected workflow (under `references/workflows/`). Do **not** read every workflow. Each workflow file links to the shared modules it needs.
+Do not assume publisher full text is unavailable because discovery returned only metadata or no open-access URL. For selected papers, open the DOI or publisher page in the controlled Chrome browser: the user may be on an institutional network or have an authorized proxy/profile/session, in which case full-text HTML or PDF may load directly. Only record an access blocker after this direct attempt shows a login wall or permission denial. Existing workspace attachments and lawful open-access copies remain valid alternatives.
 
-### 4. Run the workflow using the loaded material
+Ingest acquired full text, then query focused evidence spans. Distinguish abstract/landing-page evidence from full-text page evidence in notes and claims.
 
-Apply the loaded material in this order:
+Use `general-purpose` for one bounded topic branch or source-reading episode when it would otherwise inflate parent context. Require a compact result and durable artifact paths.
 
-1. Core tools and routing (`core/tools.md`, `core/routing-and-ops.md`) — which MCP tool for which need, and the T1→T2→T3 fallback chain that is the standard execution order across all workflows.
-2. The workflow fragment — its specific steps.
-3. Shared modules and scripts on demand (dedup, citation parser, search strategy, RIS/BibTeX format, format converter).
+### 4. Synthesize by claims, not metadata volume
 
-Report specific tool failures and continue with remaining tools; broaden terms when there are no results; fall back to manual generation from MCP-fetched metadata if a script fails twice.
+Organize the answer around the scientific question: material classes, active motifs, mechanism, activity/stability tradeoffs, operating conditions, evidence quality, and unresolved disputes. State which claims are directly supported by retrieved/full-text evidence and which are interpretation.
 
-### 5. Reach for references only when needed
+Keep three counts separate:
 
-The files under `references/` (and `scripts/`) are deep references, not defaults. Open them on demand per the `references.on_demand` table in the manifest — for example `references/source-tiers.md` for the full reliability classification, `references/dedup-engine.md` / `references/citation-parser.md` / `references/search-strategy.md` / `references/ris-bibtex-format.md` for the shared modules, and `scripts/academic_search.py` (no-MCP fallback discovery search) / `scripts/format-converter.py` / `scripts/preflight.py` for the tooling.
+```text
+candidate pool
+evidence-read set
+final cited set
+```
 
-## Why this split
+### 5. Finalize references once
 
-- The static layer is versioned and reviewable; the workflow files and shared modules were already factored this way.
-- The dynamic layer keeps each invocation cheap: only the workflow the user needs enters context, instead of all six plus every module.
-- The router itself is short on purpose. Update fragments and references, not this file, when adding scope.
-- This structure mirrors the other nature-* skills (`nature-writing`, `nature-polishing`, `nature-reader`, `nature-paper2ppt`, `nature-figure`, `nature-citation`, `nature-response`, `nature-data`).
+Pass only the final selected DOI strings or DOI URLs to `finalize_citations` in one call. Review unresolved identifiers, but do not launch an LLM loop to compare title/year/author fields paper by paper.
+
+## Method-critical defaults
+
+- Search breadth should follow the requested review scope, not a fixed narrative citation count.
+- Full-text acquisition remains selective and authorized even when the candidate pool is large.
+- Preserve query terms, date, source URL, and selection rationale for reproducibility.
+- Compare quantitative claims only when conditions, reference electrodes, loading, electrolyte, normalization, and measurement definitions are compatible.
+- Prefer primary evidence for decisive scientific claims; use reviews for taxonomy, history, and source expansion.
+
+## Output Contract
+
+Return a scope-shaped synthesis plus coverage counts, representative evidence-bearing papers, explicit uncertainty, and paths to any candidate table, evidence note, acquisition manifest, or finalized Markdown/BibTeX/JSON bibliography.
+
+## References
+
+- `references/search-strategy.md` for query construction.
+- `references/dedup-engine.md` for DOI/title deduplication.
+- `references/source-tiers.md` for source reliability considerations.
+- `references/ris-bibtex-format.md` and `scripts/format-converter.py` for local citation-file conversion outside the active agent tool path.

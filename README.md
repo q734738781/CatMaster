@@ -58,6 +58,7 @@ For a step-by-step setup, use the user guide series:
 - 本地配置：[docs/readme/01-local.zh.md](docs/readme/01-local.zh.md)
 - 远程配置：[docs/readme/02-remote.zh.md](docs/readme/02-remote.zh.md)
 - 功能使用：[docs/readme/03-features.zh.md](docs/readme/03-features.zh.md)
+- 外部材料软件：[docs/readme/04-external-tools.zh.md](docs/readme/04-external-tools.zh.md)
 
 English guide:
 
@@ -65,12 +66,18 @@ English guide:
 - Local setup: [docs/readme/01-local.en.md](docs/readme/01-local.en.md)
 - Remote setup: [docs/readme/02-remote.en.md](docs/readme/02-remote.en.md)
 - Features and workflows: [docs/readme/03-features.en.md](docs/readme/03-features.en.md)
+- External materials programs: [docs/readme/04-external-tools.en.md](docs/readme/04-external-tools.en.md)
 
 ## Minimal Local Launch
 
 ```bash
 conda env create -f requirements/pc-conda.yml
 conda activate catmaster
+
+npm install -g agent-browser@0.31.1
+agent-browser install
+agent-browser doctor --offline --quick
+agent-browser mcp --help
 
 cp configs/llm.template.yaml configs/llm.yaml
 export OPENROUTER_API_KEY="..."
@@ -84,6 +91,16 @@ Then open:
 ```text
 http://127.0.0.1:7990
 ```
+
+`agent-browser` is required for the Literature Review lane's controlled and
+institution-authenticated browser path. CatMaster starts its MCP subprocess;
+do not copy a global Codex MCP entry into CatMaster. It starts the configured
+controlled Chrome session or reuses a running Chrome connection. Institutional
+network, proxy, or existing profile access may expose publisher full text
+directly, so the agent tests the DOI/publisher page before declaring it
+unavailable. Log in yourself in the selected browser profile or Chrome session,
+and never put passwords, cookies, OTP codes, or exported browser state in
+project files or configuration.
 
 If you need a different provider, remote execution, optional external programs, or troubleshooting notes, follow the full guide above.
 

@@ -19,13 +19,10 @@ from catmaster.specialists.runtime import (
     _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
     _DYNAMICS_WORKER_TOOL_ALLOWLIST,
     _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST,
+    _LITREVIEW_LOCAL_TOOL_ALLOWLIST,
     _MATERIALS_WORKER_TOOL_ALLOWLIST,
-    _METADATA_AGENT_TOOL_ALLOWLIST,
     _ML_WORKER_TOOL_ALLOWLIST,
     _ORCA_XTB_WORKER_TOOL_ALLOWLIST,
-    _LITREVIEW_AGENT_TOOL_ALLOWLIST,
-    _LITREVIEW_COMPACT_KEEP_TOKENS,
-    _LITREVIEW_COMPACT_TRIGGER_TOKENS,
     _RESEARCH_TOOL_ALLOWLIST,
     _WRITING_WORKER_TOOL_ALLOWLIST,
     _WRITING_TOOL_ALLOWLIST,
@@ -202,13 +199,12 @@ def test_real_registry_covers_specialist_allowlists() -> None:
     assert _WRITING_TOOL_ALLOWLIST <= registered
     assert _MATERIALS_WORKER_TOOL_ALLOWLIST <= registered
     assert _DYNAMICS_WORKER_TOOL_ALLOWLIST <= registered
-    assert _METADATA_AGENT_TOOL_ALLOWLIST <= registered
-    assert _LITREVIEW_AGENT_TOOL_ALLOWLIST <= registered
+    assert _LITREVIEW_LOCAL_TOOL_ALLOWLIST <= registered
     assert _WRITING_WORKER_TOOL_ALLOWLIST <= registered
     assert "bash" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
     assert "bash" not in _RESEARCH_TOOL_ALLOWLIST
     assert "bash" not in _WRITING_TOOL_ALLOWLIST
-    assert "run_literature_research" in registered
+    assert "run_literature_research" not in registered
 
 
 def test_specialist_callbacks_include_ui_event_handler(tmp_path: Path) -> None:
@@ -340,27 +336,33 @@ def test_writing_reporting_contract_allows_summary_first_closeout() -> None:
     assert "Do not add a placeholder `Facts` section" in contract
 
 
+def test_prose_quality_policy_requires_skill_without_changing_science() -> None:
+    policy = runtime_mod.SpecialistRunner._prose_quality_policy()
+    assert "read and apply the `avoid-ai-writing` skill" in policy
+    assert "report, literature synthesis, review" in policy
+    assert "preserve claim strength" in policy
+    assert "numbers, units, equations, citations, uncertainty" in policy
+    assert "raw logs" in policy
+    assert "machine-readable files" in policy
+
+
 def test_litreview_downloader_batch_limit_is_not_review_coverage_target() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    for relpath in (
-        "skills/litreview_agent/nature-downloader/SKILL.md",
-        "skills/research_specialist/nature-downloader/SKILL.md",
-    ):
-        text = (repo_root / relpath).read_text(encoding="utf-8")
-        assert "full-text download batch" in text
-        assert "not a literature-review coverage target or citation-count cap" in text
+    text = (repo_root / "skills/litreview_agent/nature-downloader/SKILL.md").read_text(encoding="utf-8")
+    assert "full-text acquisition should remain a decision-relevant subset" in text
+    assert "review may screen many candidates" in text
+    assert "access as unknown until tested" in text
+    assert "open its DOI or publisher page in the controlled Chrome browser" in text
+    assert not (repo_root / "skills/research_specialist/nature-downloader").exists()
 
 
 def test_litreview_academic_search_defaults_reviews_to_perspective_scale() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    for relpath in (
-        "skills/litreview_agent/nature-academic-search/SKILL.md",
-        "skills/research_specialist/nature-academic-search/SKILL.md",
-    ):
-        text = (repo_root / relpath).read_text(encoding="utf-8")
-        assert "Review-scale default" in text
-        assert "50-60+ candidate papers" in text
-        assert "do not treat 15-20 papers as the normal depth" in text
+    text = (repo_root / "skills/litreview_agent/nature-academic-search/SKILL.md").read_text(encoding="utf-8")
+    assert "50-60+ candidates" in text
+    assert "candidate-pool target" in text
+    assert "full-text acquisition remains selective" in text.lower()
+    assert not (repo_root / "skills/research_specialist/nature-academic-search").exists()
 
 
 def test_report_parser_supports_review_target() -> None:
@@ -984,7 +986,7 @@ def test_run_impl_retries_invalid_final_report_and_recovers(
     [
         ("research", ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
         ("experiment", ["materials_worker", "ml_worker", "dynamics_worker", "orca_xtb_worker"]),
-        ("literature_review", ["literature_agent", "metadata_agent"]),
+        ("literature_review", []),
         ("writing", ["writing_worker_agent", "writing_polisher_agent"]),
         ("peer_review", ["peer_review_worker_agent"]),
     ],
@@ -1028,11 +1030,6 @@ def test_specialist_lanes_start_with_staged_skills(
     )
     monkeypatch.setattr(
         runtime_mod.SpecialistRunner,
-        "_load_create_summarization_tool_middleware",
-        staticmethod(lambda: (lambda model, backend: _FakeCompactConversationMiddleware({"model": model, "backend": backend}))),
-    )
-    monkeypatch.setattr(
-        runtime_mod.SpecialistRunner,
         "_load_memory_middleware",
         staticmethod(lambda: _FakeMemoryMiddleware),
     )
@@ -1061,16 +1058,14 @@ def test_specialist_lanes_start_with_staged_skills(
     agent_kwargs = created_agents[-1]
     expected_agent_name = "litreview_agent" if entrypoint == "literature_review" else f"{entrypoint}_specialist"
     assert agent_kwargs["name"] == expected_agent_name
-    expected_entry_group = {
-        "research": "research_specialist",
-        "literature_review": "litreview_agent",
-        "writing": "writing_specialist",
-        "peer_review": "writing_specialist",
-    }.get(entrypoint)
-    if expected_entry_group:
-        _assert_native_skill_groups(agent_kwargs, expected_entry_group)
-    else:
-        assert "skills" not in agent_kwargs
+    expected_entry_groups = {
+        "research": ("research_specialist",),
+        "experiment": ("writing_quality",),
+        "literature_review": ("litreview_agent", "writing_quality"),
+        "writing": ("writing_specialist", "writing_quality"),
+        "peer_review": ("writing_specialist", "writing_quality"),
+    }[entrypoint]
+    _assert_native_skill_groups(agent_kwargs, *expected_entry_groups)
     _assert_native_memory(agent_kwargs)
     internal_thread_id = agent_kwargs["_last_config"]["configurable"]["thread_id"]
     assert internal_thread_id.endswith(f"::run::{built.run_context.run_id}")
@@ -1122,7 +1117,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "do not force fixed `Summary` / `Facts` / `Files` headings" in agent_kwargs["system_prompt"]
         assert "dispatch the next bounded specialist step or return a precise blocker" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
-        assert "metadata_agent" in agent_kwargs["system_prompt"]
+        assert "metadata_agent" not in agent_kwargs["system_prompt"]
         assert "paper, manuscript, journal-style LaTeX draft" in agent_kwargs["system_prompt"]
         assert "experiment report, validation summary, QC note" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
@@ -1145,7 +1140,8 @@ def test_specialist_lanes_start_with_staged_skills(
         experiment_agent_kwargs = experiment_agents[0]
         assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
-        assert "skills" not in experiment_agent_kwargs
+        _assert_native_skill_groups(experiment_agent_kwargs, "writing_quality")
+        assert "read and apply the `avoid-ai-writing` skill" in experiment_agent_kwargs["system_prompt"]
         _assert_native_memory(experiment_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
             "materials_worker",
@@ -1159,7 +1155,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert writing_agents, "expected nested writing specialist to be created"
         writing_agent_kwargs = writing_agents[0]
         assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        _assert_native_skill_groups(writing_agent_kwargs, "writing_specialist")
+        _assert_native_skill_groups(writing_agent_kwargs, "writing_specialist", "writing_quality")
         _assert_native_memory(writing_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
             "writing_worker_agent",
@@ -1171,7 +1167,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert peer_review_agents, "expected nested peer-review specialist to be created"
         peer_review_agent_kwargs = peer_review_agents[0]
         assert {tool.name for tool in peer_review_agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        _assert_native_skill_groups(peer_review_agent_kwargs, "writing_specialist")
+        _assert_native_skill_groups(peer_review_agent_kwargs, "writing_specialist", "writing_quality")
         _assert_native_memory(peer_review_agent_kwargs)
         assert "Act like a journal editor coordinating external peer review" in peer_review_agent_kwargs["system_prompt"]
         assert "explicit `ReviewTarget` or manuscript PDF path" in peer_review_agent_kwargs["system_prompt"]
@@ -1185,64 +1181,30 @@ def test_specialist_lanes_start_with_staged_skills(
         litreview_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "litreview_agent"]
         assert litreview_agents, "expected nested litreview agent to be created"
         litreview_agent_kwargs = litreview_agents[0]
-        assert {tool.name for tool in litreview_agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        _assert_native_skill_groups(litreview_agent_kwargs, "litreview_agent")
+        assert {tool.name for tool in litreview_agent_kwargs["tools"]} == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+        _assert_native_skill_groups(litreview_agent_kwargs, "litreview_agent", "writing_quality")
         _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
-        assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["literature_agent", "metadata_agent"]
-        assert "50-60+ candidate papers" in litreview_agent_kwargs["system_prompt"]
-        assert "screened candidate pool" in litreview_agent_kwargs["system_prompt"]
-        nested_subagents = {subagent.kwargs["name"]: subagent.kwargs for subagent in litreview_agent_kwargs["subagents"]}
-        assert "runnable" in nested_subagents["literature_agent"]
-        assert "runnable" in nested_subagents["metadata_agent"]
-        litreview_literature_kwargs = _find_created_agent(
-            "literature_agent",
-            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
-        )
-        assert litreview_literature_kwargs["model"] == {"model": "literature_synthesizer-model"}
-        _assert_native_skill_groups(litreview_literature_kwargs, "litreview_agent")
-        _assert_native_memory(litreview_literature_kwargs)
-        metadata_agent_kwargs = _find_created_agent(
-            "metadata_agent",
-            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
-        )
-        _assert_native_skill_groups(metadata_agent_kwargs, "litreview_agent")
-        _assert_native_memory(metadata_agent_kwargs)
-        metadata_middleware = metadata_agent_kwargs["middleware"]
-        compact_tool = next(item for item in metadata_middleware if isinstance(item, _FakeCompactConversationMiddleware))
-        assert compact_tool.summarizer["model"] == {"model": "literature_deep_research-model"}
-        assert compact_tool.summarizer["backend"] is not None
-        assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in metadata_middleware)
-        literature_middleware = litreview_literature_kwargs["middleware"]
-        assert not any(isinstance(item, _FakeMemoryMiddleware) for item in literature_middleware)
-        assert not any(isinstance(item, _FakeMemoryMiddleware) for item in metadata_middleware)
-        assert not any(isinstance(item, _FakeSummarizationMiddleware) for item in literature_middleware)
+        assert not litreview_agent_kwargs.get("subagents")
+        assert "50-60+ candidates" in litreview_agent_kwargs["system_prompt"]
+        assert "candidate pool" in litreview_agent_kwargs["system_prompt"]
+        assert "read and apply the `avoid-ai-writing` skill" in litreview_agent_kwargs["system_prompt"]
+        assert "metadata_agent" not in litreview_agent_kwargs["system_prompt"]
+        assert "literature_agent" not in litreview_agent_kwargs["system_prompt"]
     elif entrypoint == "literature_review":
-        assert {tool.name for tool in agent_kwargs["tools"]} == (_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        assert "top-level literature-review orchestrator" in agent_kwargs["system_prompt"]
-        assert "Delegate broad public-web orientation" in agent_kwargs["system_prompt"]
-        assert "Delegate exact DOI/year/venue/authors/citation verification" in agent_kwargs["system_prompt"]
+        assert {tool.name for tool in agent_kwargs["tools"]} == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+        _assert_native_skill_groups(agent_kwargs, "litreview_agent", "writing_quality")
+        assert "Own the review question" in agent_kwargs["system_prompt"]
+        assert "full-text access as unknown until tested" in agent_kwargs["system_prompt"]
+        assert "real browser access attempt" in agent_kwargs["system_prompt"]
+        assert "local literature corpus" in agent_kwargs["system_prompt"]
+        assert "deterministic batch" in agent_kwargs["system_prompt"]
+        assert "read and apply the `avoid-ai-writing` skill" in agent_kwargs["system_prompt"]
         assert "Do not perform computational execution" in agent_kwargs["system_prompt"]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in agent_kwargs["middleware"])
-        literature_agent_kwargs = _find_created_agent(
-            "literature_agent",
-            tool_names=_LITREVIEW_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
-        )
-        metadata_agent_kwargs = _find_created_agent(
-            "metadata_agent",
-            tool_names=_METADATA_AGENT_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
-        )
-        assert literature_agent_kwargs["model"] == {"model": "literature_synthesizer-model"}
-        assert metadata_agent_kwargs["model"] == {"model": "literature_deep_research-model"}
-        _assert_native_skill_groups(literature_agent_kwargs, "litreview_agent")
-        _assert_native_skill_groups(metadata_agent_kwargs, "litreview_agent")
-        _assert_native_memory(literature_agent_kwargs)
-        _assert_native_memory(metadata_agent_kwargs)
-        assert "broad-review and orientation layer" in literature_agent_kwargs["system_prompt"]
-        assert "fixed public-evidence template" in literature_agent_kwargs["system_prompt"]
-        assert "50-60+ candidate papers" in literature_agent_kwargs["system_prompt"]
-        assert "scholarly metadata tools" in metadata_agent_kwargs["system_prompt"]
-        assert "50-60+ deduplicated candidate records" in metadata_agent_kwargs["system_prompt"]
+        assert not agent_kwargs.get("subagents")
+        assert not _created_agents_named("literature_agent")
+        assert not _created_agents_named("metadata_agent")
     elif entrypoint == "experiment":
         materials_worker_kwargs = _find_created_agent("materials_worker")
         ml_worker_kwargs = _find_created_agent("ml_worker")
@@ -1261,12 +1223,14 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(orca_worker_kwargs, "orca_xtb_worker", "execution")
         assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        _assert_native_skill_groups(agent_kwargs, "writing_quality")
         assert {"mp_search_materials", "mp_download_structure"} <= {tool.name for tool in agent_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
         assert "parent-maintained project memory" in materials_worker_kwargs["system_prompt"]
         assert "Instruction context files" not in materials_worker_kwargs["system_prompt"]
         assert "dataset/model lifecycle tasks" in ml_worker_kwargs["system_prompt"]
         assert "default role is coordination, dispatch, and decision-making across the experiment lane" in agent_kwargs["system_prompt"]
+        assert "read and apply the `avoid-ai-writing` skill" in agent_kwargs["system_prompt"]
         assert "Keep direct work in the specialist thread minimal and coordination-oriented" in agent_kwargs["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself." in agent_kwargs["system_prompt"]
@@ -1348,18 +1312,20 @@ def test_specialist_lanes_start_with_staged_skills(
         )
     elif entrypoint == "writing":
         assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        _assert_native_skill_groups(agent_kwargs, "writing_specialist", "writing_quality")
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         writing_worker_kwargs = _find_created_agent("writing_worker_agent")
         writing_polisher_kwargs = _find_created_agent("writing_polisher_agent")
         assert "runnable" in subagents_by_name["writing_worker_agent"]
         assert "runnable" in subagents_by_name["writing_polisher_agent"]
         assert {tool.name for tool in writing_worker_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        _assert_native_skill_groups(writing_worker_kwargs, "writing_specialist")
+        _assert_native_skill_groups(writing_worker_kwargs, "writing_specialist", "writing_quality")
         assert {tool.name for tool in writing_polisher_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        _assert_native_skill_groups(writing_polisher_kwargs, "writing_specialist")
+        _assert_native_skill_groups(writing_polisher_kwargs, "writing_specialist", "writing_quality")
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
+        assert "read and apply the `avoid-ai-writing` skill" in agent_kwargs["system_prompt"]
         assert "narrow background supplementation" in agent_kwargs["system_prompt"]
         assert "Each writing-worker handoff should cover only one section or one bounded organization/integration task" in agent_kwargs["system_prompt"]
         assert "figures, tables, and concise explanatory schematics as part of the default deliverable" in agent_kwargs["system_prompt"]
@@ -1399,6 +1365,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in writing_worker_kwargs["system_prompt"]
     else:
         assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        _assert_native_skill_groups(agent_kwargs, "writing_specialist", "writing_quality")
         assert "Act like a journal editor coordinating external peer review" in agent_kwargs["system_prompt"]
         assert "Reviewer Comments" in agent_kwargs["system_prompt"]
         assert "save the full review as one durable workspace markdown memo" in agent_kwargs["system_prompt"]
@@ -1409,7 +1376,7 @@ def test_specialist_lanes_start_with_staged_skills(
         peer_review_worker_kwargs = _find_created_agent("peer_review_worker_agent")
         assert "runnable" in subagents_by_name["peer_review_worker_agent"]
         assert {tool.name for tool in peer_review_worker_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        _assert_native_skill_groups(peer_review_worker_kwargs, "writing_specialist")
+        _assert_native_skill_groups(peer_review_worker_kwargs, "writing_specialist", "writing_quality")
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in peer_review_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in peer_review_worker_kwargs["system_prompt"]
         assert "dedicated peer-review request capability on that PDF exactly once" in peer_review_worker_kwargs["system_prompt"]
@@ -1420,6 +1387,7 @@ def test_specialist_lanes_start_with_staged_skills(
     staged_writing = deepagents_root / "skills" / "writing_specialist"
     staged_researcher = deepagents_root / "skills" / "research_specialist"
     staged_literature = deepagents_root / "skills" / "litreview_agent"
+    staged_writing_quality = deepagents_root / "skills" / "writing_quality"
     staged_quantum_chemistry = deepagents_root / "skills" / "orca_xtb_worker"
     staged_execution = deepagents_root / "skills" / "execution"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
@@ -1427,6 +1395,7 @@ def test_specialist_lanes_start_with_staged_skills(
     assert staged_writing.is_dir()
     assert staged_researcher.is_dir()
     assert staged_literature.is_dir()
+    assert staged_writing_quality.is_dir()
     assert staged_quantum_chemistry.is_dir()
     assert staged_execution.is_dir()
     staged_workspace_override = deepagents_root / "self_develop_skills" / "materials_worker" / "workspace-demo" / "SKILL.md"
@@ -1445,6 +1414,7 @@ def test_specialist_lanes_start_with_staged_skills(
     assert _skill_names(staged_researcher) == _skill_names(repo_root / "skills" / "research_specialist")
     assert _skill_names(staged_literature) == _skill_names(repo_root / "skills" / "litreview_agent")
     assert _skill_names(staged_writing) == _skill_names(repo_root / "skills" / "writing_specialist")
+    assert _skill_names(staged_writing_quality) == {"avoid-ai-writing"}
     assert _skill_names(staged_writing)
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint

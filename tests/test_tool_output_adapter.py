@@ -161,7 +161,7 @@ def test_adapt_tool_return_can_suppress_content_offload_ref(tmp_path) -> None:
     raw_result = (
         "literature summary with inline refs",
         {
-            "tool_name": "run_literature_research",
+            "tool_name": "query_literature_corpus",
             "suppress_content_offload_ref": True,
             "data": {
                 "summary": "x" * 600,
@@ -171,7 +171,7 @@ def test_adapt_tool_return_can_suppress_content_offload_ref(tmp_path) -> None:
     )
 
     content, artifact = adapt_tool_return(
-        tool_name="run_literature_research",
+        tool_name="query_literature_corpus",
         raw_result=raw_result,
         workspace_files_root=tmp_path,
         output_config=config,
