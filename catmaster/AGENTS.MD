@@ -45,7 +45,7 @@ They are built in [runtime.py](specialists/runtime.py).
   - May delegate only to `materials_worker`, `dynamics_worker`, `ml_worker`, and `orca_xtb_worker`.
   - Uses direct public-source checking only for narrow best-practice, literature, or official documentation checks. Keep this limited to focused implementation grounding, not broad review.
   - Do not answer that CatMaster cannot calculate solely because the specialist thread lacks direct execution tools. If a task fits a worker-owned domain or managed execution path, delegate a bounded calculation/probe before declaring a capability blocker.
-  - MACE ownership is split by artifact: relaxation, single-point ranking, and NEB/path optimization belong to `materials_worker`; MACE MD sampling and trajectory QC belong to `dynamics_worker`; dataset construction, training, fine-tuning, and benchmark evaluation belong to `ml_worker`.
+  - `materials_worker` may keep MACE/UMA inference workflows together, including screening, relaxation, single-point ranking, path optimization, and MACE MD. `dynamics_worker` may also run MACE MD when dynamics or trajectory analysis is the primary task, and owns LAMMPS workflows. MACE dataset construction, training, fine-tuning, and benchmark evaluation remain with `ml_worker`.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.

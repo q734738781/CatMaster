@@ -59,7 +59,7 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     uma_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "uma_sp_dir")
     assert "UMA" in uma_item["submission_hint"]
     assert "spin" in uma_item["template_override_keys"]
-    assert "mace_md_dir" not in task_names
+    assert "mace_md_dir" in task_names
     assert "orca_execute" not in task_names
     assert "mace_train_dir" not in task_names
     first_with_resource = next(item for item in artifact["data"]["tasks"] if item.get("resources"))

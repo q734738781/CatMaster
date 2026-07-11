@@ -169,7 +169,7 @@ uma_relax_dir:
   task_work_path: "."
 
 mace_md_dir:
-  audiences: [dynamics_worker]
+  audiences: [materials_worker, dynamics_worker]
   description: "Run MACE MD for structures staged under input/."
   boot_script: "catmaster/remote/gpu/mace_md.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_md_dir"

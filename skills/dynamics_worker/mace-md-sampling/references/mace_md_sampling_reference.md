@@ -35,7 +35,7 @@ Use baseline inference (`enable_cueq=false`, compilation disabled) as the empiri
 
 ## SOP implications for the skill body
 
-- Keep MACE MD in `dynamics_worker`, not `materials_worker`.
+- Use `dynamics_worker` for dynamics-first MACE MD work; a connected materials workflow may run the same managed task from `materials_worker`.
 - Prepare `input/` and `params/md_params.json` before submission.
 - Submit through `remote_submission(task_name="mace_md_dir")`; do not use the legacy `mace_md_batch` wrapper.
 - Report actual device, dtype, total simulated time, ensemble, thermostat/barostat, and trajectory/log artifacts before scientific interpretation.

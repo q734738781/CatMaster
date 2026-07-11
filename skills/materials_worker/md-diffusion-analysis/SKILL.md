@@ -1,15 +1,15 @@
 ---
 name: md-diffusion-analysis
-description: Use this skill for VASP MD execution and post-analysis when the goal is trajectory-based MSD/RDF/diffusion evidence rather than a generic VASP run log. MACE MD belongs to dynamics_worker.
+description: Use this skill for VASP MD execution and post-analysis when the goal is trajectory-based MSD/RDF/diffusion evidence rather than a generic VASP run log.
 ---
 
 # md-diffusion-analysis
 
 ## Overview
-Use this skill to prepare a VASP MD stage, dispatch it, and summarize the resulting trajectory with MSD, RDF, and diffusion-fit artifacts. Do not use it for a generic VASP run log, one-off thermalization checks, or when the trajectory is too short to support diffusion claims. For MACE MD sampling, delegate to `dynamics_worker` and `mace-md-sampling`.
+Use this skill to prepare a VASP MD stage, dispatch it, and summarize the resulting trajectory with MSD, RDF, and diffusion-fit artifacts. Do not use it for a generic VASP run log, one-off thermalization checks, or when the trajectory is too short to support diffusion claims.
 
 ## Quick Start
-1. Confirm this is a VASP MD run. If it is MACE MD, hand off to `dynamics_worker`.
+1. Confirm this is a VASP MD run.
 2. Prepare inputs with `vasp_prepare(preset="md", ...)` and make controls explicit through `user_incar_patch`.
 3. Submit the prepared VASP stage with managed remote execution.
 4. Decide what part of the trajectory is equilibration and what part is production.
@@ -27,8 +27,6 @@ Use this skill to prepare a VASP MD stage, dispatch it, and summarize the result
 - Keep the default Nose-Hoover/NVT starter only when it matches the scientific question.
 - Use `user_incar_patch` in the same `vasp_prepare` call to set the actual timestep, thermostat, or temperature schedule needed for the run.
 - Surface the intended ensemble semantics explicitly; do not leave the reader guessing whether the run is being interpreted as NVT-like sampling, annealing, or another protocol.
-
-For MACE MD, do not run from this materials-side skill. The dynamics-side `mace-md-sampling` skill owns `mace_md_dir`, grouped MD controls, trajectory output, and trajectory analysis.
 
 ### 2. Separate equilibration from production
 - Report how much trajectory is being discarded as warmup before any diffusion fit.

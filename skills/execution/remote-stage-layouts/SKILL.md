@@ -177,7 +177,7 @@ Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata_path
 - UMA relaxations are screening/preoptimization steps. For molecular quantum-chemistry claims, use ORCA/xTB follow-up validation rather than treating UMA as final quantum evidence.
 
 ## mace_md_dir
-Dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`.
+Materials- or dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`.
 
 Common params: `params_path`, `device`.
 
