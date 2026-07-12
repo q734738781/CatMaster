@@ -18,6 +18,10 @@ from ase.md import MDLogger
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary, ZeroRotation
 
 
+_RESTART_INFO_KEY = "_catmaster_md_restart"
+_RESTART_SCHEMA_VERSION = 1
+
+
 def _resolve_device(preference: str) -> str:
     import torch
 
@@ -56,7 +60,7 @@ def _collect_structure_files(root: Path) -> List[Path]:
             if fname in {"POSCAR", "CONTCAR"}:
                 files.append(p)
                 continue
-            if p.suffix.lower() in {".vasp", ".poscar", ".cif", ".xyz"}:
+            if p.suffix.lower() in {".vasp", ".poscar", ".cif", ".xyz", ".traj"}:
                 files.append(p)
     return sorted(files, key=lambda p: str(p))
 
@@ -155,6 +159,7 @@ def _default_config() -> dict[str, Any]:
             "seed": 2026,
             "zero_rotation": False,
             "force_temp": False,
+            "reinitialize_velocities": False,
         },
         "thermostat": {
             "type": "bussi",
@@ -243,8 +248,11 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     dyn["timestep_fs"] = _positive_float(dyn["timestep_fs"], name="dynamics.timestep_fs")
     dyn["steps"] = _positive_int(dyn["steps"], name="dynamics.steps")
     dyn["seed"] = int(dyn.get("seed", 2026))
+    if dyn["seed"] < 0:
+        raise ValueError("dynamics.seed must be a non-negative integer.")
     dyn["zero_rotation"] = bool(dyn.get("zero_rotation", False))
     dyn["force_temp"] = bool(dyn.get("force_temp", False))
+    dyn["reinitialize_velocities"] = bool(dyn.get("reinitialize_velocities", False))
 
     thermostat_type = str(thermo.get("type", "")).lower()
     if thermostat_type not in {"bussi", "nhc", "langevin", "berendsen"}:
@@ -451,6 +459,136 @@ def _make_dynamics(atoms, config: dict[str, Any], *, rng: np.random.Generator):
     raise ValueError(f"Unsupported barostat: {barostat['type']}")
 
 
+def _prepare_initial_velocities(
+    atoms,
+    *,
+    dyn_cfg: dict[str, Any],
+    rng: np.random.Generator,
+) -> str:
+    has_input_momenta = atoms.has("momenta")
+    if has_input_momenta and not dyn_cfg["reinitialize_velocities"]:
+        velocities = atoms.get_velocities()
+        if velocities is None or not np.all(np.isfinite(velocities)):
+            raise ValueError("Input momenta must produce finite velocities.")
+        return "input_last_frame"
+
+    initial_temperature_K = dyn_cfg.get("initial_temperature_K") or dyn_cfg["temperature_K"]
+    MaxwellBoltzmannDistribution(
+        atoms,
+        temperature_K=float(initial_temperature_K),
+        force_temp=bool(dyn_cfg["force_temp"]),
+        rng=rng,
+    )
+    Stationary(atoms)
+    if dyn_cfg["zero_rotation"]:
+        ZeroRotation(atoms)
+    if dyn_cfg["reinitialize_velocities"]:
+        return "generated_explicit_reinitialization"
+    return "generated_missing_input_velocities"
+
+
+def _integrator_id(config: dict[str, Any]) -> str:
+    dyn_cfg = config["dynamics"]
+    if dyn_cfg["ensemble"] == "nvt":
+        return f"nvt:{config['thermostat']['type']}"
+    if dyn_cfg["ensemble"] == "npt":
+        return f"npt:{config['barostat']['type']}"
+    return "nve:verlet"
+
+
+def _prepare_rng(
+    atoms,
+    *,
+    config: dict[str, Any],
+    seed: int,
+) -> tuple[np.random.Generator, str, dict[str, Any] | None]:
+    checkpoint = atoms.info.pop(_RESTART_INFO_KEY, None)
+    rng = np.random.default_rng(int(seed))
+    if checkpoint is None:
+        return rng, "configured_seed", None
+    if not isinstance(checkpoint, dict):
+        raise ValueError("CatMaster MD restart metadata must be an object.")
+    if config["dynamics"]["reinitialize_velocities"]:
+        return rng, "configured_seed", checkpoint
+    if checkpoint.get("schema_version") != _RESTART_SCHEMA_VERSION:
+        raise ValueError("Unsupported CatMaster MD restart schema version.")
+    if checkpoint.get("integrator") != _integrator_id(config):
+        return rng, "configured_seed", checkpoint
+    state = checkpoint.get("rng_state")
+    if not isinstance(state, dict):
+        raise ValueError("CatMaster MD restart metadata is missing rng_state.")
+    if state.get("bit_generator") != type(rng.bit_generator).__name__:
+        raise ValueError("CatMaster MD restart RNG is incompatible with the current NumPy generator.")
+    rng.bit_generator.state = state
+    return rng, "restart_checkpoint", checkpoint
+
+
+def _restore_integrator_state(dyn, checkpoint: dict[str, Any] | None, *, rng_source: str) -> str:
+    if rng_source != "restart_checkpoint" or checkpoint is None:
+        return "not_restored"
+    state = checkpoint.get("integrator_state")
+    if not isinstance(state, dict):
+        return "not_present"
+    if type(dyn).__name__ == "Bussi" and "transferred_energy" in state:
+        dyn.transferred_energy = float(state["transferred_energy"])
+        return "restored"
+    if type(dyn).__name__ == "Langevin":
+        return "not_required"
+    return "not_supported"
+
+
+def _write_restart_trajectory(
+    path: Path,
+    *,
+    atoms,
+    config: dict[str, Any],
+    rng: np.random.Generator,
+    seed: int,
+    dyn,
+) -> None:
+    integrator_state: dict[str, Any] = {}
+    if type(dyn).__name__ == "Bussi":
+        integrator_state["transferred_energy"] = float(dyn.transferred_energy)
+    restart_atoms = atoms.copy()
+    restart_atoms.info[_RESTART_INFO_KEY] = {
+        "schema_version": _RESTART_SCHEMA_VERSION,
+        "integrator": _integrator_id(config),
+        "rng_seed": int(seed),
+        "rng_state": rng.bit_generator.state,
+        "integrator_state": integrator_state,
+    }
+    write(path, restart_atoms)
+
+
+def _write_checkpoint_frame(
+    trajectory: Trajectory,
+    *,
+    atoms,
+    config: dict[str, Any],
+    rng: np.random.Generator,
+    seed: int,
+    dyn,
+) -> None:
+    previous = atoms.info.get(_RESTART_INFO_KEY)
+    integrator_state: dict[str, Any] = {}
+    if type(dyn).__name__ == "Bussi":
+        integrator_state["transferred_energy"] = float(dyn.transferred_energy)
+    atoms.info[_RESTART_INFO_KEY] = {
+        "schema_version": _RESTART_SCHEMA_VERSION,
+        "integrator": _integrator_id(config),
+        "rng_seed": int(seed),
+        "rng_state": rng.bit_generator.state,
+        "integrator_state": integrator_state,
+    }
+    try:
+        trajectory.write(atoms)
+    finally:
+        if previous is None:
+            atoms.info.pop(_RESTART_INFO_KEY, None)
+        else:
+            atoms.info[_RESTART_INFO_KEY] = previous
+
+
 def _run_md_single(
     *,
     structure_path: Path,
@@ -473,23 +611,19 @@ def _run_md_single(
         except Exception:
             pass
 
-    atoms = read(str(structure_path), index=0)
+    atoms = read(str(structure_path), index=-1)
     atoms.calc = calc
 
-    rng = np.random.default_rng(int(seed))
-    initial_temperature_K = dyn_cfg.get("initial_temperature_K") or dyn_cfg["temperature_K"]
-    MaxwellBoltzmannDistribution(
+    rng, rng_source, restart_checkpoint = _prepare_rng(
         atoms,
-        temperature_K=float(initial_temperature_K),
-        force_temp=bool(dyn_cfg["force_temp"]),
-        rng=rng,
+        config=config,
+        seed=seed,
     )
-    Stationary(atoms)
-    if dyn_cfg["zero_rotation"]:
-        ZeroRotation(atoms)
+    velocity_source = _prepare_initial_velocities(atoms, dyn_cfg=dyn_cfg, rng=rng)
 
     with contextlib.suppress(Exception):
         write(output_dir / "start.vasp", atoms, format="vasp")
+    write(output_dir / "start.traj", atoms)
 
     traj_path = output_dir / "md.traj"
     log_path = output_dir / "md.log"
@@ -499,6 +633,11 @@ def _run_md_single(
                 path.unlink()
 
     dyn = _make_dynamics(atoms, config, rng=rng)
+    integrator_state_source = _restore_integrator_state(
+        dyn,
+        restart_checkpoint,
+        rng_source=rng_source,
+    )
     traj = Trajectory(str(traj_path), mode="w", atoms=atoms)
     logger = MDLogger(
         dyn,
@@ -517,6 +656,12 @@ def _run_md_single(
         "thermostat": config["thermostat"] if dyn_cfg["ensemble"] == "nvt" else config["thermostat"],
         "barostat": config.get("barostat") if dyn_cfg["ensemble"] == "npt" else None,
         "output": out_cfg,
+        "input_frame": -1,
+        "velocity_source": velocity_source,
+        "rng_seed": int(seed),
+        "rng_source": rng_source,
+        "integrator_state_source": integrator_state_source,
+        "start_trajectory": "start.traj",
         "total_time_ps": float(dyn_cfg["steps"]) * float(dyn_cfg["timestep_fs"]) / 1000.0,
         "started_at": _now_iso(),
         "completed": False,
@@ -537,7 +682,16 @@ def _run_md_single(
     _write_json(summary_path, summary)
 
     try:
-        dyn.attach(traj.write, interval=int(out_cfg["traj_interval"]))
+        dyn.attach(
+            _write_checkpoint_frame,
+            interval=int(out_cfg["traj_interval"]),
+            trajectory=traj,
+            atoms=atoms,
+            config=config,
+            rng=rng,
+            seed=seed,
+            dyn=dyn,
+        )
         dyn.attach(logger, interval=int(out_cfg["log_interval"]))
         dyn.attach(_record_step_timing, interval=1)
         dyn.run(int(dyn_cfg["steps"]))
@@ -545,6 +699,15 @@ def _run_md_single(
         has_lattice = atoms.cell is not None and getattr(atoms.cell, "volume", 0) > 1e-6
         final_name = "final.vasp" if has_lattice else "final.xyz"
         write(output_dir / final_name, atoms, format="vasp" if has_lattice else "xyz")
+        restart_path = output_dir / "restart.traj"
+        _write_restart_trajectory(
+            restart_path,
+            atoms=atoms,
+            config=config,
+            rng=rng,
+            seed=seed,
+            dyn=dyn,
+        )
         final_energy = float(atoms.get_potential_energy())
         forces = atoms.get_forces()
         elapsed_s = time.perf_counter() - run_started
@@ -563,6 +726,7 @@ def _run_md_single(
                 "trajectory": traj_path.name,
                 "log": log_path.name,
                 "output_structure": final_name,
+                "restart_trajectory": restart_path.name,
                 "elapsed_s": elapsed_s,
                 "steps_per_s": float(dyn_cfg["steps"]) / max(elapsed_s, 1e-12),
                 "step_timings": timing_path.name,

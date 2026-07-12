@@ -8,7 +8,7 @@ torch==2.9.0
 mace-torch==0.3.16
 cuequivariance==0.10.0
 cuequivariance-torch==0.10.0
-ase==3.27.0
+ase==3.29.0
 numpy==2.2.6
 scipy==1.17.1
 pandas==2.3.3

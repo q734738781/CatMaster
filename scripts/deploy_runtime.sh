@@ -119,6 +119,7 @@ RSYNC_ARGS=(
   --exclude "__pycache__/"
   --exclude "*.pyc"
   --exclude ".venv/"
+  --exclude "node_modules/"
   --exclude "project_space/"
   --exclude "workspace/"
   --exclude "dpdispatcher.log"

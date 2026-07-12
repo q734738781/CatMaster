@@ -14,6 +14,8 @@ This file is a local, source-grounded note for `mace-md-sampling`.
 
 - `mace_md_dir` runs the project remote script `mace_md.py` over structures under `input/` and writes outputs under `output/`.
 - The remote script loads grouped controls from a params JSON. The compact payload shape is `{"md_config": ...}` plus calculator overrides such as `model`, `head`, `dispersion`, and `default_dtype`.
+- Input discovery includes ASE `.traj`. The runner reads the last frame, preserves finite input momenta by default, and records `velocity_source`; it generates velocities only when momenta are absent or `dynamics.reinitialize_velocities=true` is explicitly set.
+- `dynamics.seed` is the base RNG seed for generated velocities and stochastic thermostats. It defaults to `2026`; sorted batch inputs use consecutive seeds and record the per-structure value as `rng_seed`. Compatible `restart.traj` inputs restore their embedded RNG state instead.
 - Supported dynamics ensembles are `nve`, `nvt`, and `npt`.
 - Supported thermostat types are `bussi`, `nhc`, `langevin`, and `berendsen`.
 - Supported NPT barostat types are `isotropic_mtk`, `full_mtk`, and `berendsen`; Berendsen NPT requires `compressibility_bar_inv`.
@@ -37,5 +39,6 @@ Use baseline inference (`enable_cueq=false`, compilation disabled) as the empiri
 
 - Use `dynamics_worker` for dynamics-first MACE MD work; a connected materials workflow may run the same managed task from `materials_worker`.
 - Prepare `input/` and `params/md_params.json` before submission.
+- Prefer the previous `restart.traj`, not `final.vasp`, for a segmented run because the restart artifact is always written at the true final step. New CatMaster `md.traj` frames also embed positions, constraints, momenta, RNG state, and Bussi energy-transfer accounting; legacy or external trajectories may contain only their stored atomic state. NHC/MTK extended states are not checkpointed.
 - Submit through `remote_submission(task_name="mace_md_dir")`; do not use the legacy `mace_md_batch` wrapper.
 - Report actual device, dtype, total simulated time, ensemble, thermostat/barostat, and trajectory/log artifacts before scientific interpretation.

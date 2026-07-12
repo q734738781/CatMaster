@@ -177,9 +177,9 @@ Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata_path
 - UMA relaxations are screening/preoptimization steps. For molecular quantum-chemistry claims, use ORCA/xTB follow-up validation rather than treating UMA as final quantum evidence.
 
 ## mace_md_dir
-Materials- or dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`.
+Materials- or dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`. ASE `.traj` inputs are supported; the runner reads the last frame and preserves its momenta unless explicit velocity reinitialization is requested. For segmented CSVR/Bussi or Langevin runs, stage the prior `restart.traj` so its final frame and RNG checkpoint are restored.
 
-Common params: `params_path`, `device`.
+Common params: `params_path`, `device`. Inside `md_params.json`, use `md_config.dynamics.seed` to control velocity initialization and stochastic Bussi/Langevin sampling.
 
 ## mace_neb_dir
 Stage directory must contain `input/` with one prepared path task directory per NEB job. Outputs are written to `output/`.

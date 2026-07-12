@@ -28,13 +28,13 @@ Use this skill for MACE MD in `dynamics_worker`. MACE relaxation, single-point r
 
 ### 1. Prepare the stage layout
 - Stage directory must contain `input/` with ASE-readable structures.
-- Write grouped MD controls to `params/md_params.json`; pass `params={"params_path": "params/md_params.json"}` to `remote_submission`.
+- Write grouped MD controls to `params/md_params.json`; pass `template_overrides={"params_path": "params/md_params.json"}` to `remote_submission`.
 - Use the task catalog entry `mace_md_dir`. Do not submit MACE MD through `mace_relax_dir` or `mace_sp_dir`.
 
 ```text
 stage/
   input/
-    POSCAR or *.vasp/*.cif/*.xyz
+    POSCAR or *.vasp/*.cif/*.xyz/*.traj
   params/
     md_params.json
 ```
@@ -43,6 +43,8 @@ stage/
 - Use one `md_config` object with optional `calculator`, `dynamics`, `thermostat`, `barostat`, and `output` groups.
 - Acceleration is opt-in. The validated default for the current `mace_gpu` route is `calculator.enable_cueq=false` with compilation disabled. Accepted compile modes are `default`, `reduce-overhead`, and `max-autotune` when an explicitly validated workload needs one.
 - Omitted defaults are NVT, 300 K, 1 fs, 1000 steps, Bussi thermostat, and trajectory/log every 10 steps.
+- The runner always reads the last input frame. It preserves input momenta when present and generates Maxwell-Boltzmann velocities only when they are absent. Set `dynamics.reinitialize_velocities=true` only when the workflow explicitly requires replacing existing velocities.
+- Set `dynamics.seed` explicitly for reproducible velocity generation and stochastic Bussi/Langevin sampling. The default is `2026`; batch inputs use `seed + sorted_input_index`, and each structure records its actual `rng_seed` in `summary.json`. A compatible CatMaster `restart.traj` restores its embedded RNG state instead of restarting from this seed.
 - Set `dynamics.ensemble` to `nve`, `nvt`, or `npt`; choose thermostat/barostat keys only when the method needs them.
 - For NPT Berendsen, set `barostat.compressibility_bar_inv` explicitly.
 
@@ -65,6 +67,8 @@ stage/
 - Select the cuEquivariance ops wheel from `torch.version.cuda`: CUDA 12.x uses `cuequivariance-ops-torch-cu12`, while CUDA 13.x uses `cuequivariance-ops-torch-cu13`. Do not infer the wheel from the NVIDIA driver version alone.
 - For NPT, use only structures with a real 3D periodic cell; prefer `barostat.type="isotropic_mtk"` unless anisotropic cell fluctuations are part of the question.
 - Keep timestep, steps, ensemble, thermostat/barostat, targets, total simulated time, dtype, device, dispersion, cuEq state, compile mode, total elapsed time, pre-step startup overhead, steady-state steps/s, and the step-timing CSV visible in summaries.
+- For segmented runs, prefer the previous `restart.traj` because it always contains the true final step. New CatMaster `md.traj` files also embed matching RNG/integrator checkpoint metadata in every saved frame, so their last frame can be resumed exactly; legacy or external trajectories without that metadata preserve positions and velocities but start stochastic sampling from `dynamics.seed`. Check `velocity_source`, `rng_source`, and `integrator_state_source` in `summary.json`.
+- Exact segmented continuation is currently supported for unchanged Bussi/CSVR runs; Langevin restores its random stream but has no additional evolving thermostat state. NHC/MTK extended chain and barostat states are not checkpointed, so do not claim exact continuation for those methods.
 - Do not treat a completed short MACE MD run as converged diffusion or mechanistic evidence without a credible production window.
 
 ## Output Contract

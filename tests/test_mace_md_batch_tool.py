@@ -4,10 +4,22 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+from ase import Atoms
+from ase.calculators.lj import LennardJones
+from ase.io import read
+from ase.io.trajectory import Trajectory
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
-from catmaster.remote.gpu.mace_md import _config_from_compact_payload, _timing_statistics, _validate_config
+from catmaster.remote.gpu.mace_md import (
+    _collect_structure_files,
+    _config_from_compact_payload,
+    _prepare_initial_velocities,
+    _run_md_single,
+    _timing_statistics,
+    _validate_config,
+)
 from catmaster.specialists.runtime import _DYNAMICS_WORKER_TOOL_ALLOWLIST, _MATERIALS_WORKER_TOOL_ALLOWLIST
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.execution.mace_dispatch import MaceMDBatchInput, mace_md_batch
@@ -82,6 +94,199 @@ def test_mace_md_acceleration_config_is_validated() -> None:
                 {"md_config": {"calculator": {"compile_mode": "fastest"}}}
             )
         )
+
+
+def test_mace_md_defaults_to_preserving_input_velocities() -> None:
+    config = _validate_config(_config_from_compact_payload({}))
+    assert config["dynamics"]["reinitialize_velocities"] is False
+    assert config["dynamics"]["seed"] == 2026
+
+    atoms = Atoms("Ar2", positions=[[0, 0, 0], [3.5, 0, 0]], cell=[10, 10, 10], pbc=True)
+    momenta = np.asarray([[1.0, 2.0, 3.0], [-1.0, -2.0, -3.0]])
+    atoms.set_momenta(momenta)
+
+    source = _prepare_initial_velocities(
+        atoms,
+        dyn_cfg=config["dynamics"],
+        rng=np.random.default_rng(7),
+    )
+
+    assert source == "input_last_frame"
+    np.testing.assert_allclose(atoms.get_momenta(), momenta)
+
+
+def test_mace_md_seed_controls_generated_velocities() -> None:
+    config = _validate_config(
+        _config_from_compact_payload({"md_config": {"dynamics": {"seed": 17}}})
+    )
+    assert config["dynamics"]["seed"] == 17
+
+    momenta = []
+    for seed in (17, 17, 18):
+        atoms = Atoms("Ar2", positions=[[0, 0, 0], [3.5, 0, 0]], cell=[10, 10, 10], pbc=True)
+        _prepare_initial_velocities(
+            atoms,
+            dyn_cfg=config["dynamics"],
+            rng=np.random.default_rng(seed),
+        )
+        momenta.append(atoms.get_momenta().copy())
+
+    np.testing.assert_allclose(momenta[0], momenta[1])
+    assert not np.allclose(momenta[0], momenta[2])
+
+
+def test_mace_md_generates_velocities_only_when_missing_or_explicit() -> None:
+    config = _validate_config(_config_from_compact_payload({}))
+    atoms = Atoms("Ar2", positions=[[0, 0, 0], [3.5, 0, 0]], cell=[10, 10, 10], pbc=True)
+
+    source = _prepare_initial_velocities(
+        atoms,
+        dyn_cfg=config["dynamics"],
+        rng=np.random.default_rng(7),
+    )
+    assert source == "generated_missing_input_velocities"
+    assert atoms.has("momenta")
+
+    original = atoms.get_momenta().copy()
+    config["dynamics"]["reinitialize_velocities"] = True
+    source = _prepare_initial_velocities(
+        atoms,
+        dyn_cfg=config["dynamics"],
+        rng=np.random.default_rng(8),
+    )
+    assert source == "generated_explicit_reinitialization"
+    assert not np.allclose(atoms.get_momenta(), original)
+
+
+def test_mace_md_accepts_trajectory_and_starts_from_last_frame(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    source_path = input_dir / "restart.traj"
+    atoms = Atoms("Ar2", positions=[[0, 0, 0], [3.5, 0, 0]], cell=[10, 10, 10], pbc=True)
+    with Trajectory(source_path, "w") as trajectory:
+        atoms.set_momenta([[1.0, 0, 0], [-1.0, 0, 0]])
+        trajectory.write(atoms)
+        atoms.positions[1, 0] = 3.6
+        atoms.set_momenta([[2.0, 0, 0], [-2.0, 0, 0]])
+        trajectory.write(atoms)
+
+    assert _collect_structure_files(input_dir) == [source_path]
+    config = _validate_config(
+        _config_from_compact_payload(
+            {
+                "md_config": {
+                    "dynamics": {"ensemble": "nve", "steps": 1},
+                    "output": {"traj_interval": 1, "log_interval": 1},
+                }
+            }
+        )
+    )
+    summary = _run_md_single(
+        structure_path=source_path,
+        output_dir=tmp_path / "output",
+        calc=LennardJones(),
+        config=config,
+        device="cpu",
+        seed=2026,
+    )
+    staged = read(tmp_path / "output" / "start.traj", index=-1)
+
+    assert summary["velocity_source"] == "input_last_frame"
+    assert summary["rng_seed"] == 2026
+    assert summary["rng_source"] == "configured_seed"
+    assert summary["restart_trajectory"] == "restart.traj"
+    assert summary["input_frame"] == -1
+    assert staged.positions[1, 0] == pytest.approx(3.6)
+    np.testing.assert_allclose(staged.get_momenta(), [[2.0, 0, 0], [-2.0, 0, 0]])
+
+
+@pytest.mark.parametrize(
+    ("thermostat", "integrator_state_source"),
+    [("bussi", "restored"), ("langevin", "not_required")],
+)
+def test_mace_md_stochastic_restart_matches_uninterrupted_run(
+    tmp_path: Path,
+    thermostat: str,
+    integrator_state_source: str,
+) -> None:
+    source = tmp_path / "source.traj"
+    atoms = Atoms("Ar2", positions=[[0, 0, 0], [3.5, 0, 0]], cell=[10, 10, 10], pbc=True)
+    atoms.write(source)
+
+    def config(steps: int) -> dict:
+        return _validate_config(
+            _config_from_compact_payload(
+                {
+                    "md_config": {
+                        "dynamics": {"ensemble": "nvt", "steps": steps, "seed": 17},
+                        "thermostat": {"type": thermostat},
+                        "output": {"traj_interval": 5, "log_interval": 20},
+                    }
+                }
+            )
+        )
+
+    uninterrupted = _run_md_single(
+        structure_path=source,
+        output_dir=tmp_path / "uninterrupted",
+        calc=LennardJones(),
+        config=config(10),
+        device="cpu",
+        seed=17,
+    )
+    first = _run_md_single(
+        structure_path=source,
+        output_dir=tmp_path / "first",
+        calc=LennardJones(),
+        config=config(5),
+        device="cpu",
+        seed=17,
+    )
+    second = _run_md_single(
+        structure_path=tmp_path / "first" / "restart.traj",
+        output_dir=tmp_path / "second",
+        calc=LennardJones(),
+        config=config(5),
+        device="cpu",
+        seed=17,
+    )
+    second_from_md = _run_md_single(
+        structure_path=tmp_path / "first" / "md.traj",
+        output_dir=tmp_path / "second_from_md",
+        calc=LennardJones(),
+        config=config(5),
+        device="cpu",
+        seed=999,
+    )
+
+    uninterrupted_atoms = read(tmp_path / "uninterrupted" / "restart.traj", index=-1)
+    restarted_atoms = read(tmp_path / "second" / "restart.traj", index=-1)
+    restarted_from_md_atoms = read(tmp_path / "second_from_md" / "restart.traj", index=-1)
+    np.testing.assert_allclose(restarted_atoms.positions, uninterrupted_atoms.positions, rtol=0, atol=1e-14)
+    np.testing.assert_allclose(
+        restarted_atoms.get_momenta(),
+        uninterrupted_atoms.get_momenta(),
+        rtol=0,
+        atol=1e-14,
+    )
+    np.testing.assert_allclose(
+        restarted_from_md_atoms.positions,
+        uninterrupted_atoms.positions,
+        rtol=0,
+        atol=1e-14,
+    )
+    np.testing.assert_allclose(
+        restarted_from_md_atoms.get_momenta(),
+        uninterrupted_atoms.get_momenta(),
+        rtol=0,
+        atol=1e-14,
+    )
+    assert uninterrupted["rng_source"] == "configured_seed"
+    assert first["rng_source"] == "configured_seed"
+    assert second["rng_source"] == "restart_checkpoint"
+    assert second["integrator_state_source"] == integrator_state_source
+    assert second_from_md["rng_source"] == "restart_checkpoint"
+    assert second_from_md["integrator_state_source"] == integrator_state_source
 
 
 def test_mace_md_step_timing_statistics_separate_warmup() -> None:
