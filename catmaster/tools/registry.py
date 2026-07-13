@@ -143,6 +143,7 @@ class ToolRegistry:
             polish_academic_prose,
             review_pdf_manuscript,
             render_vesta_views,
+            render_markdown_pdf,
             vaspkit_adsorbate_thermo_correction,
             vaspkit_gas_thermo_correction,
             CompileTextInput,
@@ -157,6 +158,7 @@ class ToolRegistry:
             PolishAcademicProseInput,
             ReviewPdfManuscriptInput,
             RenderVestaViewsInput,
+            RenderMarkdownPdfInput,
             VaspkitAdsorbateThermoCorrectionInput,
             VaspkitGasThermoCorrectionInput,
         )
@@ -263,6 +265,7 @@ class ToolRegistry:
         self.register_tool("analyze_orca_results", analyze_orca_results, AnalyzeOrcaResultsInput)
         self.register_tool("generate_nanobanana_figure", generate_nanobanana_figure, GenerateNanoBananaFigureInput)
         self.register_tool("compile_text", compile_text, CompileTextInput)
+        self.register_tool("render_markdown_pdf", render_markdown_pdf, RenderMarkdownPdfInput)
         self.register_alias("agentic_compile_tex", "compile_text")
         self.register_tool("peer_review_pdf_manuscript", peer_review_pdf_manuscript, PeerReviewPdfManuscriptInput)
         self.register_tool("peer_review_request", peer_review_request, PeerReviewRequestInput)

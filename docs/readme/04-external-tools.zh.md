@@ -71,7 +71,33 @@ command -v xvfb-run || true
 
 默认使用 VESTA 自动取景。对 slab 需要更多面内环境时，让 agent 使用 `supercell=[2,2,1]`；不要为了填满画面而重复真空方向。视觉结论只能用于结构 sanity check、位点和终止面上下文以及报告展示，关键键长、配位数和排序仍应由数值分析确认。
 
-## 4. 许可证与部署
+## 4. Markdown 到 PDF
+
+Writing Agent 的 `render_markdown_pdf` 使用 Pandoc 生成内嵌资源的 HTML5/MathML，再由 headless Chrome 打印 PDF。纯 Markdown 转 PDF 不会先改写成 LaTeX。control-plane 主机需要：
+
+```bash
+conda env update -n catmaster -f requirements/pc-conda.yml
+command -v pandoc
+command -v google-chrome || command -v chromium
+fc-match "Microsoft YaHei"
+fc-match "Noto Sans CJK SC"
+```
+
+`requirements/pc-conda.yml` 固定 Pandoc 版本。Chrome/Chromium 和字体由本机安装，不能假定计算节点已具备。可执行文件不在标准 `PATH` 时显式设置：
+
+```bash
+export CATMASTER_PANDOC_BIN=/path/to/pandoc
+export CATMASTER_CHROME_BIN=/path/to/google-chrome
+```
+
+中文和中英混排报告默认使用 Microsoft YaHei；缺失时工具明确回退到 Noto Sans CJK SC，并在返回 metadata 中记录实际字体。CatMaster 不分发微软雅黑字体文件；请使用已有合法系统字体。Ubuntu/Debian 可安装 Noto fallback：
+
+```bash
+sudo apt-get install -y fontconfig fonts-noto-cjk
+fc-cache -f
+```
+
+## 5. 许可证与部署
 
 VESTA 官方许可证不允许未经书面许可重新分发其安装文件，因此 CatMaster 主仓库、Deploy 目录和远程部署包都不包含 VESTA 二进制。每台需要渲染的机器都要单独安装并配置路径。
 

@@ -27,7 +27,9 @@ from catmaster.runtime.self_evolution.agents import (
     prepare_candidate_workspace,
 )
 from catmaster.runtime.self_evolution.storage import hash_text, hash_tree, utc_now
+from catmaster.runtime.self_evolution.settings import resolve_self_evolution_mode
 from catmaster.runtime.self_evolution.trace import collect_turn_trace
+from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.specialists.runtime import SpecialistRunner, build_specialist_runner
 from catmaster.tools.base import ensure_project_space_layout
 
@@ -101,6 +103,119 @@ def _run_dir(workspace: Path, *, run_id: str = "run-one", prompt: str = "Please 
         encoding="utf-8",
     )
     return run_dir
+
+
+def test_self_evolution_defaults_to_human_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CATMASTER_SELF_EVOLUTION_MODE", raising=False)
+
+    assert resolve_self_evolution_mode() == "observe"
+    assert resolve_self_evolution_mode("auto") == "auto"
+
+
+def test_default_human_approval_keeps_reviewed_candidate_unpromoted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CATMASTER_SELF_EVOLUTION_MODE", raising=False)
+    workspace = tmp_path / "workspace"
+    ensure_project_space_layout(workspace, create=True)
+    coordinator = SelfEvolutionCoordinator(
+        workspace=workspace,
+        project_id="demo",
+        repo_root=_repo(tmp_path),
+        proposer=_BundleProposer(),
+        reviewer=_Reviewer("approve"),
+    )
+    coordinator.enqueue_post_run(
+        run_id="run-one",
+        thread_id="thread-one",
+        terminal_status="done",
+        run_dir=_run_dir(workspace, prompt="Correct this reusable workflow."),
+    )
+
+    job = coordinator.process_pending_jobs()[0]
+    candidate = coordinator.store.read_candidate(job.candidate_id)
+
+    assert candidate is not None and candidate.status == "approved"
+    assert not (coordinator.store.self_develop_skills_dir / "materials_worker" / "demo-workflow").exists()
+    assert (
+        coordinator.store.candidate_dir(candidate.candidate_id)
+        / "proposed"
+        / "materials_worker"
+        / "demo-workflow"
+        / "SKILL.md"
+    ).is_file()
+    assert (coordinator.store.candidate_dir(candidate.candidate_id) / "current" / "catalog.md").is_file()
+
+
+def test_trace_projection_keeps_full_tool_sequence_without_raw_llm_payloads(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    run_dir = _run_dir(workspace)
+    store = ObservabilityStore(run_dir)
+
+    store.record_raw_callback(
+        "TOOL_RAW_INPUT",
+        category="tool",
+        payload={
+            "callback_run_id": "tool-early",
+            "agent_name": "materials_worker",
+            "tool": "build_slab",
+            "params_compact": '{"miller_index": [1, 0, 0]}',
+        },
+    )
+    store.record_raw_callback(
+        "TOOL_CALL_END",
+        category="tool",
+        payload={
+            "callback_run_id": "tool-early",
+            "agent_name": "materials_worker",
+            "tool": "build_slab",
+            "status": "success",
+            "projection": {"content_preview": "created slab"},
+        },
+    )
+    for index in range(600):
+        store.record_raw_callback(
+            "LLM_RAW_RESPONSE",
+            category="llm",
+            payload={"callback_run_id": f"raw-{index}", "raw_response": "x" * 2_000},
+        )
+    store.record_raw_callback(
+        "TOOL_RAW_INPUT",
+        category="tool",
+        payload={
+            "callback_run_id": "tool-late",
+            "agent_name": "materials_worker",
+            "tool": "build_slab",
+            "params_compact": '{"miller_index": [0, 0, 1]}',
+        },
+    )
+    store.record_raw_callback(
+        "TOOL_CALL_END",
+        category="tool",
+        payload={
+            "callback_run_id": "tool-late",
+            "agent_name": "materials_worker",
+            "tool": "build_slab",
+            "status": "error",
+            "error": "termination selection failed",
+            "projection": {"content_preview": "termination selection failed"},
+        },
+    )
+
+    trace = collect_turn_trace(run_dir=run_dir)
+    markdown = trace.to_markdown()
+    sequence = next(event for event in trace.events if event["name"] == "tool_sequence")
+    errors = [event for event in trace.events if event["name"] == "tool_error"]
+
+    assert sequence["payload"]["calls"] == [
+        "1: materials_worker/build_slab [success]",
+        "2: materials_worker/build_slab [error]",
+    ]
+    assert len(errors) == 1
+    assert "termination selection failed" in errors[0]["payload"]["result"]
+    assert "LLM_RAW_RESPONSE" not in markdown
+    assert len(markdown) < 50_000
 
 
 class _IgnoreProposer:

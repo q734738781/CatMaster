@@ -240,7 +240,10 @@ class SelfEvolutionCoordinator:
                 error=str(candidate.promotion["error"]),
             )
         finally:
-            self._cleanup_review_context(candidate_root)
+            # Observe mode keeps the frozen base so a human can inspect an exact
+            # bundle diff before choosing Promote or Reject.
+            if candidate.status != "approved":
+                self._cleanup_review_context(candidate_root)
         return self.store.finish_job(job, status="done", candidate_id=candidate_id)
 
     def _base_target_hash(self, *, action: str, group: str, name: str, candidate_root: Path) -> str:

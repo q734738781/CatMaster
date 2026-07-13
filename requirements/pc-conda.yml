@@ -42,6 +42,7 @@ dependencies:
   # WebUI frontend toolchain. Keep Node in the same environment so backend,
   # tests, and frontend rebuilds survive machine-level Node/npm changes.
   - nodejs>=22,<25
+  - pandoc=3.9.0.2
 
   # Fast-moving LLM/WebUI/runtime packages are installed by pip but kept in
   # this single conda environment file so local setup has one source of truth.

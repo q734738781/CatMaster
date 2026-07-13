@@ -9,7 +9,7 @@ SELF_EVOLUTION_MODE_ENV = "CATMASTER_SELF_EVOLUTION_MODE"
 
 
 def resolve_self_evolution_mode(value: str | None = None) -> SelfEvolutionMode:
-    raw = str(value if value is not None else os.getenv(SELF_EVOLUTION_MODE_ENV, "auto")).strip().lower()
+    raw = str(value if value is not None else os.getenv(SELF_EVOLUTION_MODE_ENV, "observe")).strip().lower()
     if raw not in {"off", "observe", "auto"}:
         raise ValueError(f"{SELF_EVOLUTION_MODE_ENV} must be one of: off, observe, auto; got {raw!r}")
     return raw  # type: ignore[return-value]

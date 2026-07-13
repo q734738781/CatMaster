@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,21 +10,15 @@ from catmaster.runtime.observability_store import ObservabilityStore
 
 
 TERMINAL_STATUSES = {"done", "error", "interrupted_paused", "stopped", "blocked"}
-_TRACE_EVENT_NAMES = {
-    "CHAT_MESSAGE",
-    "LLM_CALL_END",
-    "TOOL_CALL_START",
+_TRACE_EVENT_NAMES = (
+    "LLM_ERROR",
     "TOOL_CALL_END",
-    "TOOL_CALL_ERROR",
     "TOOL_RAW_INPUT",
-    "TOOL_RAW_OUTPUT",
-    "RUN_STATE_CHANGE",
-    "RUN_END",
-    "artifact.created",
-    "tool.started",
-    "tool.completed",
-    "tool.failed",
-}
+)
+_TRACE_EVENT_PAGE_SIZE = 2_000
+_TRACE_MAX_SOURCE_EVENTS = 20_000
+_TRACE_EXAMPLE_TEXT_LIMIT = 1_200
+_TRACE_ERROR_TEXT_LIMIT = 4_000
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -41,21 +36,189 @@ def _compact_text(value: Any, limit: int) -> str:
     return text[: max(0, limit - 24)].rstrip() + "\n...[truncated by host]"
 
 
-def _compact_value(value: Any, *, text_limit: int = 4000, depth: int = 0) -> Any:
-    if depth >= 4:
-        return _compact_text(value, text_limit)
-    if isinstance(value, str):
-        return _compact_text(value, text_limit)
-    if isinstance(value, dict):
-        return {
-            str(key): _compact_value(item, text_limit=text_limit, depth=depth + 1)
-            for key, item in list(value.items())[:80]
-        }
-    if isinstance(value, list):
-        return [_compact_value(item, text_limit=text_limit, depth=depth + 1) for item in value[:80]]
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    return _compact_text(value, text_limit)
+def _callback_id(event: dict[str, Any]) -> str:
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    return str(event.get("callback_run_id") or payload.get("callback_run_id") or "").strip()
+
+
+def _read_relevant_events(store: ObservabilityStore) -> tuple[list[dict[str, Any]], bool]:
+    pages: list[list[dict[str, Any]]] = []
+    before_id = 0
+    remaining = _TRACE_MAX_SOURCE_EVENTS
+    truncated = False
+    while remaining > 0:
+        page = store.read_events_page(
+            limit=min(_TRACE_EVENT_PAGE_SIZE, remaining),
+            before_id=before_id,
+            names=_TRACE_EVENT_NAMES,
+            include_legacy_trace_records=True,
+        )
+        events = [item for item in list(page.get("events") or []) if isinstance(item, dict)]
+        if not events:
+            break
+        pages.append(events)
+        remaining -= len(events)
+        if not bool(page.get("has_more")):
+            break
+        before_id = int(page.get("min_id") or 0)
+        if before_id <= 0:
+            break
+    else:
+        truncated = True
+    if pages and remaining <= 0:
+        truncated = True
+    events = [item for page in reversed(pages) for item in page]
+    events.sort(key=lambda item: int(item.get("id") or 0))
+    return events, truncated
+
+
+def _tool_input(payload: dict[str, Any], *, limit: int) -> str:
+    value = payload.get("params_compact")
+    if not value:
+        value = json.dumps(payload.get("params_full") or {}, ensure_ascii=False, default=str)
+    return _compact_text(value, limit)
+
+
+def _tool_result(payload: dict[str, Any], *, limit: int) -> str:
+    projection = payload.get("projection") if isinstance(payload.get("projection"), dict) else {}
+    return _compact_text(
+        projection.get("content_preview") or projection.get("error") or payload.get("error") or "",
+        limit,
+    )
+
+
+def _compact_trace_events(raw_events: list[dict[str, Any]], *, source_truncated: bool) -> list[dict[str, Any]]:
+    inputs: dict[str, dict[str, Any]] = {}
+    calls: list[dict[str, Any]] = []
+    llm_errors: list[dict[str, Any]] = []
+    seen_llm_errors: set[tuple[str, str]] = set()
+    for event in raw_events:
+        name = str(event.get("name") or event.get("event") or "").strip()
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        callback_id = _callback_id(event)
+        if name == "TOOL_RAW_INPUT":
+            if callback_id:
+                inputs[callback_id] = payload
+            continue
+        if name == "LLM_ERROR":
+            error = _compact_text(payload.get("error") or "", _TRACE_ERROR_TEXT_LIMIT)
+            dedupe_key = (callback_id, error)
+            if dedupe_key in seen_llm_errors:
+                continue
+            seen_llm_errors.add(dedupe_key)
+            llm_errors.append(
+                {
+                    "id": event.get("id"),
+                    "ts": event.get("ts") or event.get("created_at"),
+                    "name": "llm_error",
+                    "agent_name": event.get("agent_name"),
+                    "payload": {
+                        "model": payload.get("model"),
+                        "error": error,
+                    },
+                }
+            )
+            continue
+        if name != "TOOL_CALL_END":
+            continue
+        input_payload = inputs.get(callback_id, {})
+        status = str(event.get("status") or payload.get("status") or payload.get("tool_status") or "unknown").strip()
+        calls.append(
+            {
+                "id": event.get("id"),
+                "ts": event.get("ts") or event.get("created_at"),
+                "agent_name": str(event.get("agent_name") or payload.get("agent_name") or "").strip(),
+                "tool": str(event.get("tool") or payload.get("tool") or payload.get("tool_name") or "").strip(),
+                "status": status,
+                "input_payload": input_payload,
+                "result_payload": payload,
+            }
+        )
+
+    counts = Counter((call["agent_name"], call["tool"], call["status"]) for call in calls)
+    summary_rows = [
+        {"agent_name": agent, "tool": tool, "status": status, "count": count}
+        for (agent, tool, status), count in sorted(counts.items())
+    ]
+    sequence = [
+        f"{index + 1}: {call['agent_name'] or '<unknown>'}/{call['tool'] or '<unknown>'} [{call['status']}]"
+        for index, call in enumerate(calls)
+    ]
+
+    first_by_tool: dict[tuple[str, str], dict[str, Any]] = {}
+    last_by_tool: dict[tuple[str, str], dict[str, Any]] = {}
+    error_calls: list[dict[str, Any]] = []
+    for call in calls:
+        key = (call["agent_name"], call["tool"])
+        first_by_tool.setdefault(key, call)
+        last_by_tool[key] = call
+        if call["status"].lower() not in {"ok", "success", "completed", "done"}:
+            error_calls.append(call)
+
+    example_calls: list[dict[str, Any]] = []
+    seen_examples: set[int] = set()
+    for key in sorted(first_by_tool):
+        for call in (first_by_tool[key], last_by_tool[key]):
+            call_id = int(call.get("id") or 0)
+            if call_id in seen_examples:
+                continue
+            seen_examples.add(call_id)
+            example_calls.append(call)
+
+    compact: list[dict[str, Any]] = [
+        {
+            "id": None,
+            "ts": None,
+            "name": "trace_projection",
+            "agent_name": None,
+            "tool": None,
+            "payload": {
+                "source_event_count": len(raw_events),
+                "source_truncated": source_truncated,
+                "tool_call_count": len(calls),
+                "llm_error_count": len(llm_errors),
+                "note": "Raw LLM payloads and duplicate lifecycle events are intentionally excluded.",
+            },
+        },
+        {
+            "id": None,
+            "ts": None,
+            "name": "tool_summary",
+            "agent_name": None,
+            "tool": None,
+            "payload": {"rows": summary_rows},
+        },
+        {
+            "id": None,
+            "ts": None,
+            "name": "tool_sequence",
+            "agent_name": None,
+            "tool": None,
+            "payload": {"calls": sequence},
+        },
+    ]
+
+    for label, selected, text_limit in (
+        ("tool_example", example_calls, _TRACE_EXAMPLE_TEXT_LIMIT),
+        ("tool_error", error_calls, _TRACE_ERROR_TEXT_LIMIT),
+    ):
+        for call in selected:
+            compact.append(
+                {
+                    "id": call.get("id"),
+                    "ts": call.get("ts"),
+                    "name": label,
+                    "agent_name": call.get("agent_name"),
+                    "tool": call.get("tool"),
+                    "payload": {
+                        "status": call.get("status"),
+                        "input": _tool_input(call["input_payload"], limit=text_limit),
+                        "result": _tool_result(call["result_payload"], limit=text_limit),
+                    },
+                }
+            )
+    compact.extend(llm_errors)
+    return compact
 
 
 @dataclass
@@ -119,23 +282,8 @@ def collect_turn_trace(
     fallback = dict(fallback or {})
     state = _read_json(run_path / "run_state.json")
     meta = _read_json(run_path / "meta.json")
-    page = ObservabilityStore(run_path).read_events_page(limit=500, include_legacy_trace_records=True)
-    raw_events = [item for item in list(page.get("events") or []) if isinstance(item, dict)]
-    selected_events: list[dict[str, Any]] = []
-    for event in raw_events:
-        name = str(event.get("name") or event.get("event") or "").strip()
-        if name not in _TRACE_EVENT_NAMES and not name.startswith(("TOOL_", "LLM_")):
-            continue
-        selected_events.append(
-            {
-                "id": event.get("id"),
-                "ts": event.get("ts") or event.get("created_at"),
-                "name": name,
-                "agent_name": event.get("agent_name"),
-                "tool": event.get("tool"),
-                "payload": _compact_value(event.get("payload") if isinstance(event.get("payload"), dict) else {}),
-            }
-        )
+    raw_events, source_truncated = _read_relevant_events(ObservabilityStore(run_path))
+    selected_events = _compact_trace_events(raw_events, source_truncated=source_truncated)
 
     return TurnTrace(
         run_id=str(state.get("run_id") or meta.get("run_id") or fallback.get("run_id") or run_path.name).strip(),

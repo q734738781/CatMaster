@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import mimetypes
@@ -26,6 +27,7 @@ from catmaster.specialists import build_specialist_runner, default_thread_interr
 from catmaster.specialists.streaming_runner import StreamingSpecialistRunner
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.self_evolution import SelfEvolutionCoordinator, SelfEvolutionStore
+from catmaster.runtime.self_evolution.models import SKILL_GROUPS
 from catmaster.runtime.self_evolution.promotion import PromotionConflict
 from catmaster.tools.base import ensure_project_space_layout, system_root
 
@@ -44,6 +46,7 @@ from .thread_models import (
 from .thread_store import ThreadStore
 
 TEXT_PREVIEW_LIMIT_BYTES = 160_000
+SELF_EVOLUTION_DIFF_LIMIT_CHARS = 60_000
 logger = logging.getLogger(__name__)
 TEXT_KIND_PROBE_BYTES = 8_192
 AUTO_TEXT_KIND_MAX_BYTES = 8 * 1024 * 1024
@@ -1326,11 +1329,86 @@ def _candidate_mentions_run(candidate: dict[str, Any], run_id: str) -> bool:
     return not target or str(candidate.get("run_id") or "").strip() == target
 
 
+def _candidate_change_preview(store: SelfEvolutionStore, candidate: Any) -> tuple[str, bool]:
+    candidate_dir = store.candidate_dir(candidate.candidate_id)
+    if candidate.action == "memory":
+        file_pairs = [
+            (
+                Path("AGENTS.md"),
+                candidate_dir / "current" / "AGENTS.md",
+                candidate_dir / "memories" / "AGENTS.md",
+            )
+        ]
+        before_label = "current"
+        after_label = "proposed"
+    else:
+        group = str(candidate.group or "").strip()
+        name = str(candidate.name or "").strip()
+        if group not in SKILL_GROUPS or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+            return "", False
+        before_root = candidate_dir / "current" / "target"
+        after_root = candidate_dir / "proposed" / group / name
+        relative_files = {
+            path.relative_to(before_root)
+            for path in before_root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        } | {
+            path.relative_to(after_root)
+            for path in after_root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        file_pairs = [(relative, before_root / relative, after_root / relative) for relative in sorted(relative_files)]
+        before_label = f"current/{group}/{name}"
+        after_label = f"proposed/{group}/{name}"
+
+    chunks: list[str] = []
+    truncated = False
+    for relative, before_path, after_path in file_pairs:
+        before_bytes = before_path.read_bytes() if before_path.is_file() else b""
+        after_bytes = after_path.read_bytes() if after_path.is_file() else b""
+        if before_bytes == after_bytes:
+            continue
+        if b"\0" in before_bytes or b"\0" in after_bytes:
+            chunks.append(f"Binary file changed: {relative.as_posix()}\n")
+            continue
+        before_text = before_bytes.decode("utf-8", errors="replace")
+        after_text = after_bytes.decode("utf-8", errors="replace")
+        diff = "\n".join(
+            difflib.unified_diff(
+                before_text.splitlines(),
+                after_text.splitlines(),
+                fromfile=f"{before_label}/{relative.as_posix()}",
+                tofile=f"{after_label}/{relative.as_posix()}",
+                lineterm="",
+            )
+        )
+        if diff:
+            chunks.append(diff + "\n")
+        if sum(len(chunk) for chunk in chunks) > SELF_EVOLUTION_DIFF_LIMIT_CHARS:
+            truncated = True
+            break
+    preview = "\n".join(chunks)
+    if len(preview) > SELF_EVOLUTION_DIFF_LIMIT_CHARS:
+        preview = preview[:SELF_EVOLUTION_DIFF_LIMIT_CHARS].rstrip()
+        truncated = True
+    if truncated:
+        preview += "\n...[diff truncated by host]"
+    return preview, truncated
+
+
 def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run_id: str) -> dict[str, Any]:
     if workspace is None:
         return {"candidates": [], "jobs": []}
     store = SelfEvolutionStore(workspace, project_id=workspace_id)
-    candidates = [item.to_dict() for item in store.list_candidates() if _candidate_mentions_run(item.to_dict(), run_id)]
+    candidates: list[dict[str, Any]] = []
+    for item in store.list_candidates():
+        data = item.to_dict()
+        if not _candidate_mentions_run(data, run_id):
+            continue
+        change_preview, change_preview_truncated = _candidate_change_preview(store, item)
+        data["change_preview"] = change_preview
+        data["change_preview_truncated"] = change_preview_truncated
+        candidates.append(data)
     jobs = [
         item.to_dict()
         for item in store.list_jobs()
@@ -1361,22 +1439,25 @@ def _self_evolution_candidate_detail(*, workspace: Path, workspace_id: str, cand
     candidate_dir = store.candidate_dir(candidate.candidate_id)
     validation = _read_json_file(candidate_dir / "validation.json")
     patch_text = ""
-    patch_path = (
-        candidate_dir / "memories" / "AGENTS.md"
-        if candidate.action == "memory"
-        else candidate_dir / "proposed" / candidate.group / candidate.name / "SKILL.md"
-    )
-    if patch_path.is_file() and patch_path.stat().st_size <= TEXT_PREVIEW_LIMIT_BYTES:
+    patch_path: Path | None = candidate_dir / "memories" / "AGENTS.md" if candidate.action == "memory" else None
+    group = str(candidate.group or "").strip()
+    name = str(candidate.name or "").strip()
+    if candidate.action == "skill" and group in SKILL_GROUPS and re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        patch_path = candidate_dir / "proposed" / group / name / "SKILL.md"
+    if patch_path is not None and patch_path.is_file() and patch_path.stat().st_size <= TEXT_PREVIEW_LIMIT_BYTES:
         patch_text = patch_path.read_text(encoding="utf-8", errors="replace")
     bundle_files = [
         str(path.relative_to(candidate_dir))
         for path in sorted(candidate_dir.rglob("*"))
         if path.is_file()
     ]
+    change_preview, change_preview_truncated = _candidate_change_preview(store, candidate)
     return {
         "candidate": candidate.to_dict(),
         "validation_report": validation,
         "patch_text": patch_text,
+        "change_preview": change_preview,
+        "change_preview_truncated": change_preview_truncated,
         "bundle_files": bundle_files,
         "candidate_dir": str(candidate_dir),
     }
@@ -1547,6 +1628,25 @@ def _static_file_response(*, static_dir: Path, file_name: str) -> FileResponse:
     return FileResponse(candidate)
 
 
+def _discover_project_spaces(project_space_root: Path | str) -> list[Path]:
+    root = Path(project_space_root).expanduser().resolve()
+    candidates = [root]
+    for pattern in ("*", "users/*", "users/*/*"):
+        candidates.extend(root.glob(pattern))
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate.is_dir() or not (candidate / "files").is_dir() or not (candidate / "metadata").is_dir():
+            continue
+        resolved = candidate.resolve()
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(resolved)
+    return unique
+
+
 def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     default_project_space_root = str(Path(project_space_root).expanduser().resolve())
     registry = SessionRegistry(default_project_space_root=default_project_space_root)
@@ -1707,22 +1807,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
             logger.exception("Failed to enqueue self-evolution post-run job")
 
     def _known_project_spaces() -> list[Path]:
-        root = registry.default_project_space_root.expanduser().resolve()
-        out: list[Path] = []
-        if (root / "files").is_dir() and (root / "metadata").is_dir():
-            out.append(root)
-        for candidate in list(root.glob("*")) + list(root.glob("users/*")):
-            if candidate.is_dir() and (candidate / "files").is_dir() and (candidate / "metadata").is_dir():
-                out.append(candidate.resolve())
-        seen: set[str] = set()
-        unique: list[Path] = []
-        for item in out:
-            key = str(item)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(item)
-        return unique
+        return _discover_project_spaces(registry.default_project_space_root)
 
     async def _self_evolution_worker_loop() -> None:
         poll_interval = max(1, int(os.getenv("CATMASTER_SELF_EVOLUTION_WORKER_POLL_SEC", "5") or "5"))

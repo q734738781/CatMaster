@@ -453,7 +453,7 @@ function SelfEvolutionPanel({ payload, onDecision, onRollback }) {
               <div className="v2-inline-actions">
                 {canDecide ? (
                   <>
-                    <button type="button" className="v2-ghost-btn" onClick={() => onDecision(candidate, "promote")}>Promote</button>
+                    <button type="button" className="v2-ghost-btn" onClick={() => onDecision(candidate, "promote")}>Approve &amp; Promote</button>
                     <button type="button" className="v2-ghost-btn" onClick={() => onDecision(candidate, "reject")}>Reject</button>
                   </>
                 ) : null}
@@ -467,6 +467,7 @@ function SelfEvolutionPanel({ payload, onDecision, onRollback }) {
                 review: candidate.review,
                 promotion: candidate.promotion,
               })}</pre>
+              <pre>{candidate.change_preview || "(No frozen change preview is available for this candidate.)"}</pre>
             </details>
           );
         })}

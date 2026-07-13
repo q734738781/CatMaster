@@ -14,6 +14,10 @@ from catmaster.tools.analysis.generate_nanobanana_figure import (
     GenerateNanoBananaFigureInput,
     generate_nanobanana_figure,
 )
+from catmaster.tools.analysis.markdown_pdf import (
+    RenderMarkdownPdfInput,
+    render_markdown_pdf,
+)
 from catmaster.tools.analysis.polish_academic_prose import (
     PolishAcademicProseInput,
     polish_academic_prose,
@@ -62,6 +66,8 @@ __all__ = [
     "identify_structure_fragments",
     "GenerateNanoBananaFigureInput",
     "generate_nanobanana_figure",
+    "RenderMarkdownPdfInput",
+    "render_markdown_pdf",
     "PolishAcademicProseInput",
     "polish_academic_prose",
     "PeerReviewPdfManuscriptInput",

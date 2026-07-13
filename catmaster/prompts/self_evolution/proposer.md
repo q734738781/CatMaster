@@ -17,8 +17,8 @@ Choose exactly one action:
 
 - `ignore`: ordinary task objectives, temporary constraints, local edits,
   questions, unsupported guesses, or feedback too narrow to generalize;
-- `memory`: a stable user preference or workspace fact that does not prescribe
-  a task workflow;
+- `memory`: an explicitly durable user preference or normative workspace
+  convention that does not prescribe a task workflow;
 - `skill`: a reusable workflow activation rule, tool choice, sequence,
   method-critical default, validation step, failure recovery rule, or output
   evidence contract.
@@ -33,7 +33,13 @@ the same Markdown file model as DeepAgents memory. Preserve unrelated existing
 content. Update or remove stale or conflicting guidance instead of appending a
 duplicate. Keep scope and uncertainty explicit. Do not store run-specific
 paths, logs, speculative scientific conclusions, credentials, or a restatement
-of the current task.
+of the current task. Experimental or computational results, benchmark timings,
+hardware-specific performance, literature interpretations, and package-version
+observations belong in project artifacts, not memory. A result may justify a
+skill change when it supports a reusable workflow or validation rule, but the
+result itself is not durable memory. When user intent does not clearly establish
+a lasting preference or convention, return `ignore` rather than converting an
+observed fact into memory.
 
 For `skill`:
 
@@ -49,6 +55,8 @@ For `skill`:
 
 The final bundle must be usable, specific, and no broader than the trace. Do not
 invent tools, successful outcomes, APIs, references, or scientific defaults.
+Reject stale workarounds: package- or tool-version-specific behavior must still
+apply to the current source/environment before it can justify a skill update.
 Tool-schema, tool-code, and system-prompt changes are out of scope; return
 `ignore` when the needed fix cannot be expressed honestly as memory or a skill.
 

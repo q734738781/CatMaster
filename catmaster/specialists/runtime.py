@@ -183,6 +183,7 @@ _WRITING_WORKER_TOOL_ALLOWLIST = {
     "polish_academic_prose",
     "generate_nanobanana_figure",
     "compile_text",
+    "render_markdown_pdf",
 }
 _DEEPAGENT_SUMMARIZATION_TRIGGER_FRACTION = 0.85
 _DEEPAGENT_MEMORY_POLICY = (
@@ -1070,7 +1071,7 @@ class SpecialistRunner:
         return [
             self._compiled_worker_subagent(
                 name="writing_worker_agent",
-                description="Draft or revise context-heavy sections in isolation and return compact manuscript-ready outputs.",
+                description="Draft or revise bounded writing content, or render a direct Markdown PDF artifact, in isolation.",
                 model_role="section_writer",
                 system_prompt=self._writing_worker_prompt(),
                 tools=self._augment_with_default_autonomous_tools(
@@ -1735,6 +1736,7 @@ class SpecialistRunner:
                 "After that review returns, reconcile the manuscript against the accepted suggestions and run one more bounded polishing/revision pass before treating the manuscript as final.\n"
                 "If an external-model peer review is requested from the parent, make sure the canonical manuscript PDF is clearly exposed as `ReviewTarget` in your closeout so downstream review uses the right artifact.\n"
                 "When the requested deliverable is a short note, compact summary, or quick status writeup, prioritize clarity and sufficiency over making it figure-heavy unless the user explicitly asks for visuals.\n"
+                "Treat a Markdown-to-PDF request as direct format conversion and delegate it to `writing_worker_agent` even when no prose revision is needed. Preserve the Markdown source and use the registered Markdown PDF capability. Do not rewrite the document as LaTeX unless the user explicitly requests TeX or a journal template requires it.\n"
                 "Keep the main writing thread focused on planning, dispatch, evidence selection, and final reconciliation.\n"
                 "Do not handle TeX compile/fix passes in the main thread.\n"
                 "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
@@ -2397,6 +2399,7 @@ class SpecialistRunner:
             "For the current implementation, keep Supporting Information in the same manuscript file rather than a separate SI manuscript: place it after the references as a clear supporting-information section or appendix. Supporting data files may still live in separate workspace folders.\n"
             "Use `generate_nanobanana_figure` for conceptual, mechanistic, or workflow figures. Prefer it over hand-built matplotlib diagrams for those figure types, and reserve plotting libraries for quantitative or data-native visualizations.\n"
             "For short notes or compact summaries, do not manufacture extra visuals unless they are explicitly requested or clearly necessary for comprehension.\n"
+            "Treat a Markdown-to-PDF request as direct format conversion: preserve the Markdown source and use the registered Markdown PDF capability. Do not rewrite the document as LaTeX unless the parent explicitly requests TeX or a journal template requires it.\n"
             "When writing a paper/manuscript title, produce a compact journal-style title that foregrounds the material system and the main scientific result. Avoid titles that read like project summaries, workflow descriptions, or sentence-length claims.\n"
             "For LaTeX manuscripts, do not batch figures into a later block. Insert each figure environment close to the paragraph that first discusses it, prefer conservative placement controls such as `[htbp]`, and if compilation still pushes a figure too far away, repair it by moving the float closer to first mention or inserting `\\FloatBarrier` when the template already supports it.\n"
             "Return concise manuscript-ready output summaries and any output artifact paths.\n"

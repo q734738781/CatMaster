@@ -13,7 +13,9 @@ from fastapi.testclient import TestClient
 from starlette.routing import Match
 
 from catmaster.webui import server
-from catmaster.webui.server import create_app
+from catmaster.webui.server import _candidate_change_preview, _discover_project_spaces, create_app
+from catmaster.runtime.self_evolution import LearningCandidate, SelfEvolutionStore
+from catmaster.runtime.self_evolution.storage import hash_tree, utc_now
 from catmaster.webui.session import WebSession
 from catmaster.webui.web_reporter import WebReporter
 from catmaster.runtime.machine_time_stats import append_machine_time_record
@@ -23,6 +25,56 @@ from catmaster.ui.events import make_event
 
 def _scope(path: str) -> dict:
     return {"type": "http", "path": path, "method": "GET", "root_path": ""}
+
+
+def test_self_evolution_worker_discovers_authenticated_user_workspaces(tmp_path: Path) -> None:
+    direct = tmp_path / "direct"
+    authenticated = tmp_path / "users" / "alice" / "project-one"
+    incomplete = tmp_path / "users" / "bob" / "not-a-workspace"
+    for workspace in (direct, authenticated):
+        (workspace / "files").mkdir(parents=True)
+        (workspace / "metadata").mkdir()
+    (incomplete / "files").mkdir(parents=True)
+
+    discovered = _discover_project_spaces(tmp_path)
+
+    assert discovered == [direct.resolve(), authenticated.resolve()]
+
+
+def test_self_evolution_human_review_preview_includes_complete_bundle_diff(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "files").mkdir(parents=True)
+    (workspace / "metadata").mkdir()
+    store = SelfEvolutionStore(workspace, project_id="demo")
+    candidate = LearningCandidate(
+        candidate_id="sec_preview",
+        project_id="demo",
+        run_id="run-one",
+        thread_id="thread-one",
+        action="skill",
+        status="approved",
+        group="materials_worker",
+        name="demo-skill",
+        created_at=utc_now(),
+    )
+    root = store.reset_candidate_dir(candidate.candidate_id)
+    before = root / "current" / "target"
+    after = root / "proposed" / candidate.group / candidate.name
+    (before / "scripts").mkdir(parents=True)
+    (after / "scripts").mkdir(parents=True)
+    (before / "SKILL.md").write_text("# demo\n\nold rule\n", encoding="utf-8")
+    (after / "SKILL.md").write_text("# demo\n\nnew rule\n", encoding="utf-8")
+    (after / "scripts" / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
+    candidate.bundle_hash = hash_tree(after)
+    store.write_candidate(candidate)
+
+    preview, truncated = _candidate_change_preview(store, candidate)
+
+    assert truncated is False
+    assert "-old rule" in preview
+    assert "+new rule" in preview
+    assert "scripts/helper.py" in preview
+    assert "+VALUE = 1" in preview
 
 
 def test_monitor_path_redirect_route_precedes_root_mount(tmp_path: Path) -> None:

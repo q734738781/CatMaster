@@ -71,7 +71,33 @@ command -v xvfb-run || true
 
 The tool uses VESTA auto-fit by default. For slab context, request `supercell=[2,2,1]`; do not repeat the vacuum direction merely to fill the image. Visual evidence supports geometry sanity checks, site and termination context, and reporting, while critical distances, coordination, and rankings still require numerical validation.
 
-## 4. License and Deployment
+## 4. Markdown to PDF
+
+The Writing Agent's `render_markdown_pdf` tool uses Pandoc to produce embedded HTML5/MathML and then prints it with headless Chrome. A plain Markdown-to-PDF request does not rewrite the source as LaTeX. The control-plane host needs:
+
+```bash
+conda env update -n catmaster -f requirements/pc-conda.yml
+command -v pandoc
+command -v google-chrome || command -v chromium
+fc-match "Microsoft YaHei"
+fc-match "Noto Sans CJK SC"
+```
+
+`requirements/pc-conda.yml` pins Pandoc. Chrome/Chromium and fonts are host-installed dependencies and are not assumed to exist on compute nodes. Configure nonstandard executable locations explicitly:
+
+```bash
+export CATMASTER_PANDOC_BIN=/path/to/pandoc
+export CATMASTER_CHROME_BIN=/path/to/google-chrome
+```
+
+Chinese and mixed Chinese-English reports default to Microsoft YaHei. If it is unavailable, the tool explicitly falls back to Noto Sans CJK SC and records the resolved font in metadata. CatMaster does not redistribute Microsoft YaHei font files. On Ubuntu/Debian, install the portable fallback with:
+
+```bash
+sudo apt-get install -y fontconfig fonts-noto-cjk
+fc-cache -f
+```
+
+## 5. License and Deployment
 
 The official VESTA license prohibits redistribution of its distributed files without written permission. CatMaster therefore does not include the VESTA binary in the main repository, Deploy directory, or remote archive. Install it separately on every host that performs rendering.
 
