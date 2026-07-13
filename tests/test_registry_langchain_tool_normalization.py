@@ -75,7 +75,6 @@ def test_wrapper_passes_workspace_files_root(monkeypatch: pytest.MonkeyPatch, tm
         *,
         tool_name,
         raw_result,
-        tool_args=None,
         workspace_files_root=None,
         output_config=None,
     ):

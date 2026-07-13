@@ -22,7 +22,7 @@ def main() -> None:
     reg = get_tool_registry()
     tool = reg.get_tool_function("mace_relax")
 
-    res = tool({"structure_file": str(dest.relative_to(root)), "fmax": 0.05, "maxsteps": 20})
+    res = tool({"structure_file": str(dest.relative_to(root)), "fmax": 0.05, "steps": 20})
 
     (out_dir / "run.json").write_text(json.dumps(res, indent=2, ensure_ascii=False), encoding="utf-8")
 

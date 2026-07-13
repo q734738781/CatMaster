@@ -251,7 +251,7 @@ def _submit_remote(
     task_name: str,
     audience: str,
     check_interval: int,
-    params: dict[str, Any] | None = None,
+    template_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _content, artifact = _invoke_tool(
         ctx,
@@ -259,7 +259,7 @@ def _submit_remote(
         {
             "work_dir": work_dir,
             "task_name": task_name,
-            "params": params or {},
+            "template_overrides": template_overrides or {},
             "config": {"check_interval": int(check_interval)},
         },
         audience=audience,
@@ -290,7 +290,7 @@ def run_mace_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
         task_name="mace_sp_dir",
         audience="materials_worker",
         check_interval=args.mace_check_interval,
-        params={
+        template_overrides={
             "model": args.mace_model,
             "head": args.mace_head,
             "default_dtype": args.mace_dtype,
@@ -359,7 +359,7 @@ def run_uma_mol_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any
         task_name="uma_sp_dir",
         audience="orca_xtb_worker",
         check_interval=args.uma_check_interval,
-        params={
+        template_overrides={
             "model": args.uma_model,
             "uma_task": "omol",
             "charge": 0,
@@ -388,7 +388,7 @@ def run_uma_mol_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, 
         task_name="uma_relax_dir",
         audience="orca_xtb_worker",
         check_interval=args.uma_check_interval,
-        params={
+        template_overrides={
             "model": args.uma_model,
             "uma_task": "omol",
             "charge": 0,
@@ -424,7 +424,7 @@ def run_uma_mat_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any
         task_name="uma_sp_dir",
         audience="materials_worker",
         check_interval=args.uma_check_interval,
-        params={
+        template_overrides={
             "model": args.uma_model,
             "uma_task": args.uma_task,
             "charge": 0,
@@ -453,7 +453,7 @@ def run_uma_mat_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, 
         task_name="uma_relax_dir",
         audience="materials_worker",
         check_interval=args.uma_check_interval,
-        params={
+        template_overrides={
             "model": args.uma_model,
             "uma_task": args.uma_task,
             "charge": 0,
@@ -535,7 +535,7 @@ def run_xtb_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
         task_name="xtb_run",
         audience="orca_xtb_worker",
         check_interval=args.xtb_check_interval,
-        params={"input_name": "input.xyz", "mode": "sp", "gfn": args.xtb_gfn, "charge": 0, "uhf": 2},
+        template_overrides={"input": "input.xyz", "mode": "sp", "gfn": args.xtb_gfn, "charge": 0, "uhf": 2},
     )
     _status_ok(stage_dir)
     summary = _read_json(stage_dir / "xtb_summary.json")
@@ -713,8 +713,8 @@ def run_crest_quick(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, An
         task_name="crest_run",
         audience="orca_xtb_worker",
         check_interval=args.crest_check_interval,
-        params={
-            "input_name": "input.xyz",
+        template_overrides={
+            "input": "input.xyz",
             "mode": "standard",
             "method": args.crest_method,
             "ewin": args.crest_ewin,

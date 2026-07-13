@@ -12,6 +12,9 @@ from ase import Atoms
 from ase.io import read as ase_read
 
 
+_EVALUATION_PARAM_KEYS = {"dataset_file", "model", "head", "default_dtype", "device"}
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -96,6 +99,11 @@ def _reference_stress(atoms: Atoms) -> np.ndarray | None:
 
 def run_evaluation(dataset_root: Path, output_root: Path, params_path: Path) -> dict[str, Any]:
     params = _read_json(params_path)
+    if not isinstance(params, dict):
+        raise ValueError("Evaluation params JSON must contain an object.")
+    unknown = sorted(str(key) for key in params if key not in _EVALUATION_PARAM_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown evaluation parameter key(s): {', '.join(unknown)}")
     dataset_file = dataset_root / str(params["dataset_file"])
     output_root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []

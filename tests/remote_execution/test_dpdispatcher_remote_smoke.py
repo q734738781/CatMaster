@@ -180,7 +180,7 @@ def test_agent_tool_mace_sp_remote(tmp_path: Path) -> None:
     payload = {
         "work_dir": "remote_execution/mace_o2_sp_stage",
         "task_name": "mace_sp_dir",
-        "params": {
+        "template_overrides": {
             "model": os.environ.get("CATMASTER_REMOTE_MACE_MODEL", "mh-1").strip() or "mh-1",
             "head": os.environ.get("CATMASTER_REMOTE_MACE_HEAD", "omat_pbe"),
             "default_dtype": os.environ.get("CATMASTER_REMOTE_MACE_DTYPE", "float32").strip() or "float32",
@@ -224,7 +224,7 @@ def test_agent_tool_uma_omol_sp_remote(tmp_path: Path) -> None:
     payload = {
         "work_dir": "remote_execution/uma_h2o_sp_stage",
         "task_name": "uma_sp_dir",
-        "params": {
+        "template_overrides": {
             "model": _uma_model(),
             "uma_task": "omol",
             "charge": 0,
@@ -271,7 +271,7 @@ def test_agent_tool_uma_periodic_sp_remote(tmp_path: Path) -> None:
     payload = {
         "work_dir": "remote_execution/uma_o2_periodic_sp_stage",
         "task_name": "uma_sp_dir",
-        "params": {
+        "template_overrides": {
             "model": _uma_model(),
             "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
             "charge": 0,
@@ -318,7 +318,7 @@ def test_agent_tool_uma_omol_relax_remote(tmp_path: Path) -> None:
     payload = {
         "work_dir": "remote_execution/uma_h2o_relax_stage",
         "task_name": "uma_relax_dir",
-        "params": {
+        "template_overrides": {
             "model": _uma_model(),
             "uma_task": "omol",
             "charge": 0,
@@ -373,7 +373,7 @@ def test_agent_tool_uma_periodic_relax_remote(tmp_path: Path) -> None:
     payload = {
         "work_dir": "remote_execution/uma_o2_periodic_relax_stage",
         "task_name": "uma_relax_dir",
-        "params": {
+        "template_overrides": {
             "model": _uma_model(),
             "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
             "charge": 0,

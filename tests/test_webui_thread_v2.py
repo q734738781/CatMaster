@@ -2004,6 +2004,103 @@ def test_streaming_adapter_falls_back_to_astream_event_schema(tmp_path: Path) ->
     assert [event.event for event in broker.replay(thread.thread_id)] == ["message.delta", "message.delta"]
 
 
+def test_streaming_adapter_emits_v3_tool_start_before_tool_finishes(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=registry,
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_v3_tool_lifecycle",
+    )
+
+    import asyncio
+
+    waiting_for_tool = asyncio.Event()
+    release_tool = asyncio.Event()
+    tool_message = ToolMessage(content="STREAM_DONE", tool_call_id="call_slow", name="execute")
+
+    class FakeV3Agent:
+        async def astream_events(self, _payload, config=None, version="v3"):
+            yield {
+                "method": "tools",
+                "params": {
+                    "namespace": [],
+                    "data": {
+                        "event": "tool-started",
+                        "tool_call_id": "call_slow",
+                        "tool_name": "execute",
+                        "input": {"command": "sleep 12", "timeout": 30},
+                    },
+                },
+            }
+            waiting_for_tool.set()
+            await release_tool.wait()
+            yield {
+                "method": "tools",
+                "params": {
+                    "namespace": [],
+                    "data": {
+                        "event": "tool-finished",
+                        "tool_call_id": "call_slow",
+                        "tool_name": "execute",
+                        "output": tool_message,
+                    },
+                },
+            }
+            yield {"method": "values", "params": {"namespace": [], "data": {"messages": [tool_message]}}}
+
+    runner = StreamingSpecialistRunner(
+        runner=SimpleNamespace(run_context=SimpleNamespace(run_dir=tmp_path, run_id="run_v3_tool_lifecycle")),  # type: ignore[arg-type]
+        thread_store=store,
+        event_broker=broker,
+        artifact_registry=registry,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            runner._consume_agent_stream(
+                FakeV3Agent(),
+                input_payload={"messages": [{"role": "user", "content": "Run the slow tool."}]},
+                config={},
+                translator=translator,
+            )
+        )
+        await asyncio.wait_for(waiting_for_tool.wait(), timeout=1.0)
+        live_events = [event.event for event in broker.replay(thread.thread_id)]
+        assert live_events == ["tool_call.started"]
+        running_message = store.get_message(thread.thread_id, message.id)
+        running_part = next(part for part in running_message.parts if part.type == "tool-call")
+        assert running_part.status == "running"
+        assert running_part.meta["input"] == {"command": "sleep 12", "timeout": 30}
+        release_tool.set()
+        await task
+
+    asyncio.run(_run())
+
+    final_events = [event.event for event in broker.replay(thread.thread_id)]
+    assert final_events == ["tool_call.started", "tool_call.completed"]
+    saved = store.get_message(thread.thread_id, message.id)
+    tool_parts = [part for part in saved.parts if part.type == "tool-call"]
+    assert len(tool_parts) == 1
+    assert tool_parts[0].status == "completed"
+    assert tool_parts[0].text == "STREAM_DONE"
+
+
 def test_streaming_adapter_flushes_observed_reasoning_before_stop(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     run_id = "run_stop_reasoning"

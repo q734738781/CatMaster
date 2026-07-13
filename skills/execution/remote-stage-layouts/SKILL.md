@@ -16,18 +16,18 @@ allowed-tools: "ls read_file write_file edit_file execute get_avail_remote_task 
 2. Read the matching layout section below.
 3. Create a clean workspace-relative stage directory.
 4. Verify the exact files with `ls` or `find`.
-5. Submit with `remote_submission` for one stage. When there are two or more independent prepared stages for the same `task_name`, `params`, and `config`, make a parent root and prefer one `remote_submission_batch` call.
+5. Submit with `remote_submission` for one stage. When there are two or more independent prepared stages for the same `task_name`, `template_overrides`, and `config`, make a parent root and prefer one `remote_submission_batch` call.
 
 Never pass a raw project input tree to low-level remote submission unless it already matches the declared layout.
 Do not use `execute` to import, wrap, or call CatMaster managed tool implementations; call the exposed `remote_submission` or `remote_submission_batch` tool directly.
 
 ## Submission Decision
 - Use `remote_submission` when `work_dir` itself is one prepared stage matching the selected `task_name` layout. The boot script runs directly in `work_dir`.
-- Prefer `remote_submission_batch` when there are two or more independent prepared stages for the same `task_name`, `params`, and `config`; do not issue multiple parallel `remote_submission` calls for that case.
+- Prefer `remote_submission_batch` when there are two or more independent prepared stages for the same `task_name`, `template_overrides`, and `config`; do not issue multiple parallel `remote_submission` calls for that case.
 - Use `remote_submission_batch` only when `work_dir` is a parent batch root and each first-level child directory is a complete independent stage for the same `task_name`. The parent directory is not the task cwd; the boot script runs once inside each first-level child directory.
 - A single stage may contain many scientific inputs if the task layout says so. This is still `remote_submission`, not `remote_submission_batch`. Common example: `mace_sp_dir`, `mace_relax_dir`, `uma_sp_dir`, or `uma_relax_dir` with many structures under one `input/`.
 - `remote_submission_batch` does not recursively discover nested jobs. It submits only first-level child directories.
-- `remote_submission_batch` applies the same `task_name`, `params`, and `config` to every first-level child. Do not use it when children need different task templates or incompatible params.
+- `remote_submission_batch` applies the same `task_name`, `template_overrides`, and `config` to every first-level child. Do not use it when children need different task templates or incompatible overrides.
 
 ```text
 single stage -> remote_submission
@@ -65,7 +65,7 @@ mace_stage/
 - Domain task resource defaults are shown through `get_avail_remote_task(return_resource=true)`. For registered tasks, do not pass `config.resources`; the task resource card owns machine/environment initialization. Override only exposed sizing fields such as `cpu_per_node` or `gpu_per_node` when intentionally requested.
 - For worker tools, do not pass `config.machine`; machine-level selection is a backend/admin detail.
 - For batch submission, every first-level child of `work_dir` is submitted as one task; nested discovery is not performed.
-- Use `template_overrides` for registered task command-template values; `params` is the legacy alias. Use this for method-critical defaults such as MACE `head`/`fmax` or UMA `uma_task`/`spin`.
+- Use `template_overrides` for registered task command-template values. Only use keys returned by `get_avail_remote_task`; unknown keys fail instead of being ignored. Use this for method-critical defaults such as MACE `head`/`fmax` or UMA `uma_task`/`spin`.
 - Use `config` only for custom-boot resource-card selection, allowed sizing overrides, and submission controls.
 - Do not edit copied `task_script/` files or add `sitecustomize.py` to change built-in template defaults. Built-in boot scripts are copied by the submission tool, and template values belong in `template_overrides`.
 
@@ -122,14 +122,14 @@ stage/
 ```
 
 ## xtb_run
-Stage directory must contain the molecular input file named by `params.input_name`; default is `input.xyz`.
+Stage directory must contain the molecular input file named by `template_overrides.input`; default is `input.xyz`.
 
-Common params: `mode`, `gfn`, `solvent_model`, `solvent`, `charge`, `uhf`, `opt_level`.
+Common template overrides: `input`, `mode`, `gfn`, `solvent_model`, `solvent`, `charge`, `uhf`, `opt_level`.
 
 ## crest_run
-Stage directory must contain the molecular input file named by `params.input_name`; default is `input.xyz`.
+Stage directory must contain the molecular input file named by `template_overrides.input`; default is `input.xyz`.
 
-Optional constrained runs may include a constraint file and set `params.constraint_file`.
+Optional constrained runs may include a constraint file and set `template_overrides.constraint_file`.
 
 ## mace_sp_dir
 Stage directory must contain `input/` with periodic structures. Outputs are written to `output/`.
@@ -143,7 +143,7 @@ stage/
 Common template overrides: `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU; pass `device=cuda` only when CUDA execution is required.
 
 ## mace_relax_dir
-Same layout as `mace_sp_dir`, with relaxation template overrides such as `fmax`, `maxsteps`, and `relax_lattice`. Common overrides also include `device`; managed GPU tasks default to `device=auto`, which prioritizes completion and may fall back to CPU. Pass `device=cuda` only for hard GPU validation.
+Same layout as `mace_sp_dir`, with relaxation template overrides such as `fmax`, `steps`, and `relax_lattice`. Common overrides also include `device`; managed GPU tasks default to `device=auto`, which prioritizes completion and may fall back to CPU. Pass `device=cuda` only for hard GPU validation.
 
 ## uma_sp_dir
 Stage directory must contain `input/` with structures for FairChem UMA single-point inference. Outputs are written to `output/`.
@@ -156,36 +156,36 @@ stage/
     uma_metadata.json
 ```
 
-Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`.
+Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata`, `device`.
 
 - `model` defaults to `uma-s-1p2`.
 - `uma_task=auto` makes a conservative molecule-vs-periodic choice: periodic structures with valid cells use `omat`; nonperiodic structures use `omol`.
 - For catalysis, oxide catalysis, electrocatalysis, DAC/MOF, or molecular crystals, set `uma_task` explicitly (`oc20`, `oc22`, `oc25`, `odac`, or `omc`) instead of relying on `auto`.
 - `omol` requires correct `charge` and `spin` values. FairChem examples use the `spin` field as the spin-state value expected by OMOL, for example singlet `spin=1` and triplet `spin=3`.
 - Non-`omol` tasks should normally use `charge=0` and `spin=0`; CatMaster's UMA boot scripts reject nonzero values for those tasks to avoid mixing molecular spin metadata into materials/catalysis tasks.
-- The optional `params/uma_metadata.json` can override `task`, `charge`, and `spin` per input file. If used, pass `template_overrides={"metadata_path": "params/uma_metadata.json"}`.
+- The optional `params/uma_metadata.json` can override `uma_task`, `charge`, and `spin` per input file. If used, pass `template_overrides={"metadata": "params/uma_metadata.json"}`.
 
 Use `remote_submission` for one UMA stage even when `input/` contains many structures. Use `remote_submission_batch` only when the parent directory contains multiple independent UMA stage directories.
 
 ## uma_relax_dir
 Same layout as `uma_sp_dir`, with relaxation template overrides such as `fmax`, `steps`, `optimizer`, and `relax_cell`.
 
-Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata_path`, `device`, `fmax`, `steps`, `optimizer`, `relax_cell`.
+Common template overrides: `model`, `uma_task`, `charge`, `spin`, `metadata`, `device`, `fmax`, `steps`, `optimizer`, `relax_cell`.
 
 - `relax_cell=false` is the default and should remain the default for first-pass screening.
 - `relax_cell=true` is only enabled for `uma_task=omat` in CatMaster. Other UMA tasks either target nonperiodic systems or may not have stress-label supervision.
 - UMA relaxations are screening/preoptimization steps. For molecular quantum-chemistry claims, use ORCA/xTB follow-up validation rather than treating UMA as final quantum evidence.
 
 ## mace_md_dir
-Materials- or dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params_path` is `params/md_params.json`. ASE `.traj` inputs are supported; the runner reads the last frame and preserves its momenta unless explicit velocity reinitialization is requested. For segmented CSVR/Bussi or Langevin runs, stage the prior `restart.traj` so its final frame and RNG checkpoint are restored.
+Materials- or dynamics-worker task. Stage directory must contain `input/` and a params JSON file. Default `params` is `params/md_params.json`. ASE `.traj` inputs are supported; the runner reads the last frame and preserves its momenta unless explicit velocity reinitialization is requested. For segmented CSVR/Bussi or Langevin runs, stage the prior `restart.traj` so its final frame and RNG checkpoint are restored.
 
-Common params: `params_path`, `device`. Inside `md_params.json`, use `md_config.dynamics.seed` to control velocity initialization and stochastic Bussi/Langevin sampling.
+Common template overrides: `params`, `device`. Inside `md_params.json`, use `md_config.dynamics.seed` to control velocity initialization and stochastic Bussi/Langevin sampling.
 
 ## mace_neb_dir
 Stage directory must contain `input/` with one prepared path task directory per NEB job. Outputs are written to `output/`.
 Each path task should be generated or checked by the NEB preparation workflow before submission. Do not submit a tree with atom-order mismatches. If the preparation artifact reports `short_distance_count > 0`, treat it as strong evidence of potentially abnormal interpolation and verify or remediate the image tree before deciding to submit.
 
-Common params: `mode`, `fmax`, `steps`, `climb`, `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU.
+Common template overrides: `mode`, `fmax`, `steps`, `climb`, `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU.
 
 ## mace_train_dir
 Stage directory must contain a dataset directory and training params JSON:
@@ -197,7 +197,7 @@ stage/
     train_params.json
 ```
 
-Defaults are `dataset_root=dataset`, `params_path=params/train_params.json`, and `output_root=output`.
+Defaults are `dataset_root=dataset`, `params=params/train_params.json`, and `output_root=output`. Training JSON uses exact MACE CLI names such as `name`, `E0s`, and `lr`; additional flags belong in `cli_args` under their exact long-option name without leading `--`.
 
 ## mace_eval_dir
 Stage directory must contain a dataset directory and evaluation params JSON:
@@ -209,4 +209,4 @@ stage/
     eval_params.json
 ```
 
-Defaults are `dataset_root=dataset`, `params_path=params/eval_params.json`, and `output_root=output`.
+Defaults are `dataset_root=dataset`, `params=params/eval_params.json`, and `output_root=output`.

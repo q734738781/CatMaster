@@ -28,7 +28,7 @@ Use this skill for MACE MD in `dynamics_worker`. MACE relaxation, single-point r
 
 ### 1. Prepare the stage layout
 - Stage directory must contain `input/` with ASE-readable structures.
-- Write grouped MD controls to `params/md_params.json`; pass `template_overrides={"params_path": "params/md_params.json"}` to `remote_submission`.
+- Write grouped MD controls to `params/md_params.json`; pass `template_overrides={"params": "params/md_params.json"}` to `remote_submission`.
 - Use the task catalog entry `mace_md_dir`. Do not submit MACE MD through `mace_relax_dir` or `mace_sp_dir`.
 
 ```text

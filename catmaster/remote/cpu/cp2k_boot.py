@@ -51,7 +51,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="CP2K boot wrapper for DPDispatcher tasks")
     parser.add_argument("--input", default="job.inp", help="CP2K input filename")
     parser.add_argument("--output", default="job.out", help="CP2K output filename")
-    parser.add_argument("--cp2k-bin", default="cp2k.psmp", help="CP2K executable")
+    parser.add_argument("--cp2k_bin", default="cp2k.psmp", help="CP2K executable")
     parser.add_argument("--launcher", default="mpirun", help="MPI launcher")
     parser.add_argument("--nprocs", type=int, default=None, help="MPI ranks")
     parser.add_argument("--log", default="cp2k_stdout.out", help="Wrapper log file")

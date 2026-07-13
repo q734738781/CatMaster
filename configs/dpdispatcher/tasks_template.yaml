@@ -10,7 +10,7 @@ vasp_execute:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute"
   resources: vasp_cpu
   requires: [vasp]
-  command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
+  command: "python task_script/vasp_boot.py --auto_ncore --auto_gamma"
   forward_files:
     - "*"
     - "task_script/vasp_boot.py"
@@ -25,7 +25,7 @@ vasp_execute_neb:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute_neb"
   resources: vasp_cpu_neb
   requires: [vasp]
-  command: "python task_script/vasp_boot.py --auto-ncore --auto-gamma"
+  command: "python task_script/vasp_boot.py --auto_ncore --auto_gamma"
   forward_files:
     - "*"
     - "task_script/vasp_boot.py"
@@ -40,7 +40,7 @@ cp2k_execute:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#cp2k_execute"
   resources: cp2k_cpu
   requires: [cp2k]
-  command: "python task_script/cp2k_boot.py --cp2k-bin cp2k.psmp"
+  command: "python task_script/cp2k_boot.py --cp2k_bin cp2k.psmp"
   forward_files:
     - "*"
     - "task_script/cp2k_boot.py"
@@ -70,12 +70,12 @@ mace_relax_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_relax_dir"
   resources: mace_gpu
   requires: [mace]
-  command: "python task_script/mace_relax.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {maxsteps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype} --device {device}"
+  command: "python task_script/mace_relax.py --input {input} --output_root {output_root} --fmax {fmax} --steps {steps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype} --device {device}"
   defaults:
-    input_path: input
+    input: input
     output_root: output
     fmax: 0.02
-    maxsteps: 500
+    steps: 500
     model: mh-1
     head: omat_pbe
     dispersion: false
@@ -96,9 +96,9 @@ mace_sp_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_sp_dir"
   resources: mace_gpu
   requires: [mace]
-  command: "python task_script/mace_sp.py --input {input_path} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
+  command: "python task_script/mace_sp.py --input {input} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
   defaults:
-    input_path: input
+    input: input
     output_root: output
     model: mh-1
     head: omat_pbe
@@ -119,15 +119,15 @@ uma_sp_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#uma_sp_dir"
   resources: uma_gpu
   requires: [uma]
-  command: "python task_script/uma_sp.py --input {input_path} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata_path} --device {device}"
+  command: "python task_script/uma_sp.py --input {input} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata} --device {device}"
   defaults:
-    input_path: input
+    input: input
     output_root: output
     model: uma-s-1p2
     uma_task: auto
     charge: 0
     spin: 0
-    metadata_path: __none__
+    metadata: __none__
     device: auto
   forward_files:
     - "input"
@@ -145,15 +145,15 @@ uma_relax_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#uma_relax_dir"
   resources: uma_gpu
   requires: [uma]
-  command: "python task_script/uma_relax.py --input {input_path} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata_path} --device {device} --fmax {fmax} --steps {steps} --optimizer {optimizer} --relax_cell {relax_cell}"
+  command: "python task_script/uma_relax.py --input {input} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata} --device {device} --fmax {fmax} --steps {steps} --optimizer {optimizer} --relax_cell {relax_cell}"
   defaults:
-    input_path: input
+    input: input
     output_root: output
     model: uma-s-1p2
     uma_task: auto
     charge: 0
     spin: 0
-    metadata_path: __none__
+    metadata: __none__
     device: auto
     fmax: 0.02
     steps: 500
@@ -175,11 +175,11 @@ mace_md_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_md_dir"
   resources: mace_gpu
   requires: [mace]
-  command: "python task_script/mace_md.py --input {input_path} --output_root {output_root} --params {params_path} --device {device}"
+  command: "python task_script/mace_md.py --input {input} --output_root {output_root} --params {params} --device {device}"
   defaults:
-    input_path: input
+    input: input
     output_root: output
-    params_path: params/md_params.json
+    params: params/md_params.json
     device: auto
   forward_files:
     - "input"
@@ -196,9 +196,9 @@ mace_neb_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_neb_dir"
   resources: mace_gpu
   requires: [mace]
-  command: "python task_script/mace_neb.py --input {input_path} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
+  command: "python task_script/mace_neb.py --input {input} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
   defaults:
-    input_path: input
+    input: input
     output_root: output
     fmax: 0.05
     steps: 300
@@ -227,11 +227,11 @@ mace_train_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_train_dir"
   resources: mace_gpu
   requires: [mace]
-  command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params}"
   defaults:
     dataset_root: dataset
     output_root: output
-    params_path: params/train_params.json
+    params: params/train_params.json
   forward_files:
     - "dataset"
     - "params"
@@ -247,11 +247,11 @@ mace_eval_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_eval_dir"
   resources: mace_gpu
   requires: [mace]
-  command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params_path}"
+  command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params}"
   defaults:
     dataset_root: dataset
     output_root: output
-    params_path: params/eval_params.json
+    params: params/eval_params.json
   forward_files:
     - "dataset"
     - "params"
@@ -267,9 +267,9 @@ xtb_run:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#xtb_run"
   resources: xtb_cpu
   requires: [xtb]
-  command: "python task_script/xtb_boot.py --input {input_name} --mode {mode} --gfn {gfn} --solvent-model {solvent_model} --solvent {solvent} --charge {charge} --uhf {uhf} --opt-level {opt_level} --temperature {temperature} --md-time-ps {md_time_ps} --timestep-fs {timestep_fs} --md-dump-fs {md_dump_fs}"
+  command: "python task_script/xtb_boot.py --input {input} --mode {mode} --gfn {gfn} --solvent_model {solvent_model} --solvent {solvent} --charge {charge} --uhf {uhf} --opt_level {opt_level} --temperature {temperature} --md_time_ps {md_time_ps} --timestep_fs {timestep_fs} --md_dump_fs {md_dump_fs}"
   defaults:
-    input_name: input.xyz
+    input: input.xyz
     mode: opt
     gfn: gfn2
     solvent_model: none
@@ -295,9 +295,9 @@ crest_run:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#crest_run"
   resources: crest_cpu
   requires: [crest]
-  command: "python task_script/crest_boot.py --input {input_name} --mode {mode} --method {method} --ewin {ewin} --rthr {rthr} --ethr {ethr} --bthr {bthr} --charge {charge} --uhf {uhf} --solvent {solvent} --constraint-file {constraint_file}"
+  command: "python task_script/crest_boot.py --input {input} --mode {mode} --method {method} --ewin {ewin} --rthr {rthr} --ethr {ethr} --bthr {bthr} --charge {charge} --uhf {uhf} --solvent {solvent} --constraint_file {constraint_file}"
   defaults:
-    input_name: input.xyz
+    input: input.xyz
     mode: standard
     method: gfn2
     ewin: 6.0

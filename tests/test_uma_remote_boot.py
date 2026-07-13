@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
+import pytest
 from ase import Atoms
 
 
@@ -42,7 +44,7 @@ def test_uma_metadata_merges_defaults_and_item_overrides(tmp_path: Path) -> None
     struct.write_text("1\nx\nH 0 0 0\n", encoding="utf-8")
 
     metadata = {
-        "defaults": {"task": "omol", "charge": 1, "spin": 2},
+        "defaults": {"uma_task": "omol", "charge": 1, "spin": 2},
         "items": {"nested/mol.xyz": {"charge": 0, "spin": 1}},
     }
     cfg = uma_common.resolve_item_config(
@@ -57,6 +59,20 @@ def test_uma_metadata_merges_defaults_and_item_overrides(tmp_path: Path) -> None
     assert cfg.uma_task == "omol"
     assert cfg.charge == 0
     assert cfg.spin == 1
+
+
+def test_uma_metadata_rejects_aliases_and_missing_files(tmp_path: Path) -> None:
+    uma_common = _load_uma_common()
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        json.dumps({"defaults": {"task": "omol"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Unknown UMA metadata.defaults key.*task"):
+        uma_common.load_metadata(str(metadata_path))
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        uma_common.load_metadata(str(tmp_path / "missing.json"))
 
 
 def test_uma_rejects_nonzero_charge_spin_for_material_task() -> None:

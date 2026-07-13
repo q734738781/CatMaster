@@ -89,7 +89,6 @@ def test_local_tool_backend_passes_workspace_files_root(monkeypatch, tmp_path) -
         *,
         tool_name,
         raw_result,
-        tool_args=None,
         workspace_files_root=None,
         output_config=None,
     ):
@@ -137,3 +136,29 @@ def test_local_tool_backend_returns_error_for_async_tool_callable(tmp_path) -> N
 
     assert output.status == "error"
     assert "sync-only" in str(output.content)
+
+
+def test_local_tool_backend_validation_error_does_not_repeat_input_in_output(tmp_path) -> None:
+    registry = ToolRegistry(register_all_tools=False)
+    registry.register_tool("dummy_tool", dummy_tool, DummyInput)
+    backend = LocalToolBackend(
+        registry=registry,
+        tool_executor=ToolExecutor(registry),
+        artifact_store=ArtifactStore(tmp_path),
+    )
+
+    output = backend.call(
+        "dummy_tool",
+        json.dumps({"text": "hello", "unknown": "do-not-repeat"}),
+        toolcall_key="call-invalid-1",
+        call_id="call-invalid-1",
+    )
+
+    assert output.status == "error"
+    assert "do-not-repeat" not in str(output.content)
+    assert "do-not-repeat" not in json.dumps(output.artifact or {})
+    assert "raw_params" not in (output.artifact or {})
+    input_payload = json.loads(
+        (tmp_path / "toolcalls" / "call-invalid-1" / "input.json").read_text(encoding="utf-8")
+    )
+    assert input_payload["raw_params"]["unknown"] == "do-not-repeat"

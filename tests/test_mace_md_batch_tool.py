@@ -312,13 +312,20 @@ def test_mace_md_batch_requires_berendsen_npt_compressibility() -> None:
         )
 
 
+def test_mace_md_rejects_unknown_nested_config_key() -> None:
+    with pytest.raises(ValueError, match="Unknown md_config.dynamics key.*temperature"):
+        _config_from_compact_payload(
+            {"md_config": {"dynamics": {"temperature": 900}}}
+        )
+
+
 def test_mace_md_dir_task_command_has_no_historical_gpu_or_scale_options() -> None:
     cfg = TaskRegistry().get("mace_md_dir")
     assert cfg.audiences == ["materials_worker", "dynamics_worker"]
     assert "mace_md.py" in cfg.command
     assert "--gpu_ids" not in cfg.command
     assert "--scales" not in cfg.command
-    assert "--params {params_path}" in cfg.command
+    assert "--params {params}" in cfg.command
     assert "--device {device}" in cfg.command
     assert "--ensemble" not in cfg.command
     assert "--temperature_K" not in cfg.command

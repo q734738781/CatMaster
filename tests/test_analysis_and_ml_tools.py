@@ -18,10 +18,19 @@ from catmaster.tools.analysis import results_analysis
 from catmaster.tools.base import workspace_scope
 from catmaster.tools.machine_learning.dataset_tools import build_dataset_from_runs
 from catmaster.tools.machine_learning.mace_ml import (
+    MaceTrainInput,
     calculate_al_candidates,
     mace_evaluate,
     mace_train,
 )
+
+
+def test_mace_train_input_uses_unique_official_cli_names() -> None:
+    fields = MaceTrainInput.model_fields
+    assert {"name", "E0s", "lr", "weight_pt_head", "cli_args"}.issubset(fields)
+    assert {"model_name", "e0s", "learning_rate", "weight_pt", "extra_cli_args"}.isdisjoint(fields)
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        MaceTrainInput(dataset_dir="dataset", output_root="output", e0s="estimated")
 
 
 def _write_poscar(path: Path, structure: Structure) -> None:
@@ -300,7 +309,7 @@ def test_mace_train_and_evaluate_stage_and_collect(monkeypatch, tmp_path: Path) 
         if train_params.exists():
             payload = json.loads(train_params.read_text(encoding="utf-8"))
             assert payload["foundation_head"] == "omat_pbe"
-            assert payload["e0s"] == "assets/e0s/e0s/e0s.json"
+            assert payload["E0s"] == "assets/e0s/e0s/e0s.json"
             assert payload["multiheads_finetuning"] is True
             assert payload["pt_train_file"] == "assets/replay/replay/replay.pt"
             assert payload["forces_weight"] == 10.0
@@ -357,7 +366,7 @@ def test_mace_train_and_evaluate_stage_and_collect(monkeypatch, tmp_path: Path) 
                 "output_root": "train_out",
                 "foundation_model": "finetune-model",
                 "foundation_head": "omat_pbe",
-                "e0s": "e0s/e0s.json",
+                "E0s": "e0s/e0s.json",
                 "pt_train_file": "replay/replay.pt",
                 "weight_decay": 1.0e-6,
                 "scheduler": "ReduceLROnPlateau",
@@ -403,19 +412,19 @@ def test_remote_mace_train_resolves_staged_paths(tmp_path: Path, monkeypatch) ->
     params_path.write_text(
         json.dumps(
             {
-                "model_name": "x",
+                "name": "x",
                 "train_file": "train.extxyz",
                 "valid_file": None,
                 "test_file": None,
                 "foundation_model": "assets/models/best.model",
                 "foundation_head": "omat_pbe",
-                "e0s": "assets/e0s/e0s.json",
+                "E0s": "assets/e0s/e0s.json",
                 "multiheads_finetuning": False,
                 "pt_train_file": "omat",
                 "num_samples_pt": 0,
                 "filter_type_pt": "combinations",
                 "subselect_pt": "fps",
-                "weight_pt": 1.0,
+                "weight_pt_head": 1.0,
                 "atomic_numbers": [],
                 "compute_stress": True,
                 "energy_weight": 1.0,
@@ -423,7 +432,7 @@ def test_remote_mace_train_resolves_staged_paths(tmp_path: Path, monkeypatch) ->
                 "stress_weight": 1.0,
                 "max_num_epochs": 1,
                 "batch_size": 1,
-                "learning_rate": 1e-4,
+                "lr": 1e-4,
                 "weight_decay": 1.0e-6,
                 "scheduler": "ReduceLROnPlateau",
                 "patience": 5,

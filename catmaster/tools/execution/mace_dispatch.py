@@ -57,7 +57,7 @@ class MaceRelaxInput(BaseModel):
         description="Output directory for relaxation results. Defaults to the input file's directory.",
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
-    maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
+    steps: int = Field(500, ge=1, description="Maximum optimization steps passed to --steps.")
     model: str = Field(
         "mh-1",
         description=(
@@ -92,7 +92,7 @@ class MaceRelaxBatchInput(BaseModel):
         description="Output root for mirrored batch results. Must be outside input_dir.",
     )
     fmax: float = Field(0.02, gt=0, description="Force threshold for relaxation in eV/Angstrom.")
-    maxsteps: int = Field(500, ge=1, description="Max steps for relaxation.")
+    steps: int = Field(500, ge=1, description="Maximum optimization steps passed to --steps.")
     model: str = Field(
         "mh-1",
         description="MACE model identifier or workspace-local trained-model path.",
@@ -558,11 +558,10 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     cfg = reg.get("mace_relax_dir")
 
     ctx = {
-        "input_path": "input",
+        "input": "input",
         "output_root": "output",
         "fmax": params.fmax,
-        "maxsteps": params.maxsteps,
-        "steps": params.maxsteps,
+        "steps": params.steps,
         "model": model_arg,
         "head": head_arg,
         "dispersion": "true" if dispersion else "false",
@@ -763,7 +762,7 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     model_arg = shlex.quote(model_spec.command_arg)
 
     ctx = {
-        "input_path": "input",
+        "input": "input",
         "output_root": "output",
         "model": model_arg,
         "head": head_arg,
@@ -974,9 +973,9 @@ def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     params_path.write_text(json.dumps(params_payload, indent=2) + "\n", encoding="utf-8")
 
     ctx = {
-        "input_path": "input",
+        "input": "input",
         "output_root": "output",
-        "params_path": "params/md_params.json",
+        "params": "params/md_params.json",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
@@ -1130,8 +1129,7 @@ def _build_mace_relax_request(
         "structure_file": dest_structure.name,
         "structure": dest_structure.name,
         "fmax": params.fmax,
-        "maxsteps": params.maxsteps,
-        "steps": params.maxsteps,
+        "steps": params.steps,
         "model": shlex.quote(model_spec.command_arg),
         "head": shlex.quote(_resolve_mace_head(getattr(params, "head", None)) or ""),
         "dispersion": "true" if bool(getattr(params, "dispersion", False)) else "false",

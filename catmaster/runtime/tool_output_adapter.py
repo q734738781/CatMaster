@@ -25,6 +25,19 @@ from langchain_core.messages import ToolMessage
 from catmaster.runtime.tool_output_config import ToolOutputConfig, get_tool_output_config
 
 
+_INPUT_ECHO_KEYS = {"raw_params", "tool_args", "validated_params"}
+
+
+def _strip_input_echoes(artifact: dict[str, Any]) -> None:
+    for key in _INPUT_ECHO_KEYS:
+        artifact.pop(key, None)
+    if isinstance(artifact.get("data"), Mapping):
+        data = dict(artifact["data"])
+        for key in _INPUT_ECHO_KEYS:
+            data.pop(key, None)
+        artifact["data"] = data
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
@@ -178,6 +191,7 @@ def tool_error_to_message(
             "error": str(exc),
             "traceback_summary": _snippet(tb_text, 1_200),
         }
+    _strip_input_echoes(artifact)
     return ToolMessage(
         content=message,
         artifact=artifact,
@@ -191,7 +205,6 @@ def adapt_tool_return(
     *,
     tool_name: str,
     raw_result: Any,
-    tool_args: Mapping[str, Any] | None = None,
     workspace_files_root: Path | None = None,
     output_config: ToolOutputConfig | None = None,
 ) -> tuple[Any, dict[str, Any]]:
@@ -230,7 +243,7 @@ def adapt_tool_return(
                     "Tool response_format=content_and_artifact requires a 2-tuple "
                     "of (content, artifact)."
                 ),
-                artifact={"raw_value": _json_safe(raw_result), "tool_args": _json_safe(tool_args or {})},
+                artifact={"raw_value": _json_safe(raw_result)},
                 error_code="invalid_return_tuple",
             )
         content, raw_artifact = raw_result
@@ -238,7 +251,7 @@ def adapt_tool_return(
             raise CatMasterToolExecutionError(
                 tool_name=tool_name,
                 public_message=f"Invalid artifact type: {type(raw_artifact).__name__}",
-                artifact={"raw_artifact": _json_safe(raw_artifact), "tool_args": _json_safe(tool_args or {})},
+                artifact={"raw_artifact": _json_safe(raw_artifact)},
                 error_code="invalid_artifact_type",
             )
         artifact = dict(raw_artifact)
@@ -249,14 +262,13 @@ def adapt_tool_return(
                 f"Invalid tool return type: {type(raw_result).__name__}. "
                 "Expected tuple(content, artifact) or ToolMessage."
             ),
-            artifact={"raw_value": _json_safe(raw_result), "tool_args": _json_safe(tool_args or {})},
+            artifact={"raw_value": _json_safe(raw_result)},
             retryable=False,
             error_code="invalid_return_type",
         )
 
     suppress_content_offload_ref = bool(artifact.pop("suppress_content_offload_ref", False))
-    if config.include_tool_args:
-        artifact.setdefault("tool_args", _json_safe(tool_args or {}))
+    _strip_input_echoes(artifact)
     data = artifact.get("data")
     if isinstance(data, Mapping) and data:
         normalized_data, field_refs = _offload_data_fields(
@@ -288,7 +300,7 @@ def adapt_tool_return(
             "offload_refs": [offload_ref],
             "summary": _snippet(text or f"{tool_name} completed."),
         }
-        for key in ("warnings", "highlights", "tool_args", "raw_kind", "field_offload_refs"):
+        for key in ("warnings", "highlights", "raw_kind", "field_offload_refs"):
             if key in previous_artifact:
                 artifact[key] = _json_safe(previous_artifact.get(key))
         summary = content_to_text(content).strip() or f"{tool_name} completed."

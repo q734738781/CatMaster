@@ -56,8 +56,8 @@ def main() -> int:
     parser.add_argument("--charge", type=int, default=0)
     parser.add_argument("--uhf", type=int, default=0)
     parser.add_argument("--solvent", default="", help="Optional ALPB solvent")
-    parser.add_argument("--constraint-file", default="", help="Constraint file in xTB syntax")
-    parser.add_argument("--crest-bin", default="crest", help="CREST executable name")
+    parser.add_argument("--constraint_file", default="", help="Constraint file in xTB syntax")
+    parser.add_argument("--crest_bin", default="crest", help="CREST executable name")
     parser.add_argument("--log", default="crest_stdout.out", help="Combined stdout/stderr log")
     args = parser.parse_args()
 

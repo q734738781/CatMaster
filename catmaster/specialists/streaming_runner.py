@@ -408,6 +408,7 @@ class CatMasterStreamTranslator:
         self.tool_inputs_by_call_id: dict[str, Any] = {}
         self.tool_arg_buffers_by_call_id: dict[str, str] = {}
         self.tool_stream_meta_by_call_id: dict[str, dict[str, Any]] = {}
+        self.completed_tool_call_ids: set[str] = set()
         self.resume_tool_inputs_by_name: dict[str, list[Any]] = {}
         for item in resume_tool_inputs or []:
             if not isinstance(item, dict):
@@ -470,6 +471,12 @@ class CatMasterStreamTranslator:
             self._handle_model_end_text(data, metadata=metadata)
             self._handle_final_tool_calls(data, metadata=metadata)
             return
+        if method == "tools":
+            # LangGraph v3 exposes the live tool lifecycle on the documented
+            # `tools` channel. Keep the legacy callback-style branches below
+            # for older stream adapters, but do not wait for their end event.
+            self._handle_v3_tool_event(data, metadata=metadata)
+            return
         if method == "on_tool_start":
             name = str((event.get("name") if isinstance(event, dict) else getattr(event, "name", "")) or "").strip()
             payload = {"id": str(data.get("id") or name or "tool") if isinstance(data, dict) else name, "name": name, "args": data.get("input") if isinstance(data, dict) else {}}
@@ -498,6 +505,120 @@ class CatMasterStreamTranslator:
             return
         if method in {"tool_calls", "tool_call"}:
             self._handle_tool_call_payload(data, metadata=metadata)
+
+    def _handle_v3_tool_event(self, data: Any, *, metadata: dict[str, Any]) -> None:
+        rows = data if isinstance(data, list) else [data]
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            event_type = str(row.get("event") or "").strip()
+            call_id = str(row.get("tool_call_id") or "").strip()
+            if not event_type or not call_id:
+                continue
+            tool_name = str(row.get("tool_name") or self.tool_names_by_call_id.get(call_id, "") or call_id).strip()
+            if event_type == "tool-started":
+                self._handle_tool_call_payload(
+                    {
+                        "id": call_id,
+                        "name": tool_name,
+                        "args": row.get("input") if row.get("input") is not None else {},
+                    },
+                    metadata=metadata,
+                )
+                continue
+            if event_type == "tool-output-delta":
+                part_id = self.tool_parts_by_call_id.get(call_id, "")
+                if not part_id:
+                    self._handle_tool_call_payload({"id": call_id, "name": tool_name, "args": {}}, metadata=metadata)
+                    part_id = self.tool_parts_by_call_id.get(call_id, "")
+                delta = _json_safe(row.get("delta"))
+                if part_id:
+                    current_meta = self._tool_part_meta(part_id)
+                    self._update_tool_part_meta(
+                        part_id,
+                        tool_call_id=call_id,
+                        tool=tool_name,
+                        input_payload=current_meta.get("input", {}),
+                        stream_meta={**self._tool_stream_fields(metadata), "output_delta": delta},
+                    )
+                self._emit(
+                    "tool_call.delta",
+                    status="running",
+                    data={
+                        "tool_call_id": call_id,
+                        "part_id": part_id,
+                        "tool": tool_name,
+                        "input": self._best_tool_input(call_id),
+                        "delta": delta,
+                        **self._tool_stream_fields(metadata),
+                    },
+                )
+                continue
+            if event_type == "tool-finished":
+                output = row.get("output")
+                if isinstance(output, ToolMessage):
+                    self._handle_tool_message(output)
+                else:
+                    self._finish_v3_tool_call(
+                        call_id=call_id,
+                        tool_name=tool_name,
+                        output=output,
+                        metadata=metadata,
+                    )
+                continue
+            if event_type == "tool-error":
+                self._finish_v3_tool_call(
+                    call_id=call_id,
+                    tool_name=tool_name,
+                    output=str(row.get("message") or "Tool execution failed."),
+                    metadata=metadata,
+                    failed=True,
+                )
+
+    def _finish_v3_tool_call(
+        self,
+        *,
+        call_id: str,
+        tool_name: str,
+        output: Any,
+        metadata: dict[str, Any],
+        failed: bool = False,
+    ) -> None:
+        if call_id in self.completed_tool_call_ids:
+            return
+        part_id = self.tool_parts_by_call_id.get(call_id, "")
+        if not part_id:
+            self._handle_tool_call_payload({"id": call_id, "name": tool_name, "args": {}}, metadata=metadata)
+            part_id = self.tool_parts_by_call_id.get(call_id, "")
+        input_payload = self._best_tool_input(call_id)
+        stream_fields = self._tool_stream_fields(metadata)
+        if part_id:
+            current_meta = self._tool_part_meta(part_id)
+            if input_payload in (None, {}, ""):
+                input_payload = current_meta.get("input", {})
+            self._update_tool_part_meta(
+                part_id,
+                tool_call_id=call_id,
+                tool=tool_name,
+                input_payload=input_payload,
+                output=_json_safe(output),
+                status="failed" if failed else "completed",
+                text=_message_text(output),
+                stream_meta=stream_fields,
+            )
+        self.completed_tool_call_ids.add(call_id)
+        self._emit(
+            "tool_call.failed" if failed else "tool_call.completed",
+            status="failed" if failed else "completed",
+            data={
+                "tool_call_id": call_id,
+                "part_id": part_id,
+                "tool": tool_name,
+                "input": input_payload,
+                "output": _json_safe(output),
+                **stream_fields,
+            },
+        )
 
     def apply_astream_chunk(self, chunk: Any) -> None:
         if isinstance(chunk, tuple) and len(chunk) == 2:
@@ -1174,6 +1295,8 @@ class CatMasterStreamTranslator:
         call_id = str(getattr(message, "tool_call_id", "") or "").strip()
         if call_id and call_id in self.historical_completed_tool_call_ids and call_id not in self.tool_parts_by_call_id:
             return
+        if call_id and call_id in self.completed_tool_call_ids:
+            return
         output_text = _message_text(message)
         message_key = str(getattr(message, "id", "") or "").strip()
         if not message_key:
@@ -1194,6 +1317,7 @@ class CatMasterStreamTranslator:
             self._handle_tool_call_payload({"id": fallback_call_id, "name": tool_name, "args": {}})
             call_id = fallback_call_id
             part_id = self.tool_parts_by_call_id.get(call_id, "")
+        self.completed_tool_call_ids.add(call_id)
         if part_id:
             current_meta = self._tool_part_meta(part_id)
             tool_name = str(getattr(message, "name", "") or current_meta.get("tool") or call_id or "tool")

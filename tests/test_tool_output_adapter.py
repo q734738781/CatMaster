@@ -19,14 +19,12 @@ def test_adapt_tool_return_offload_refs_are_unique_per_call(tmp_path) -> None:
     _, artifact_1 = adapt_tool_return(
         tool_name="dummy_tool",
         raw_result=raw_result,
-        tool_args={"text": "a"},
         workspace_files_root=tmp_path,
         output_config=config,
     )
     _, artifact_2 = adapt_tool_return(
         tool_name="dummy_tool",
         raw_result=raw_result,
-        tool_args={"text": "b"},
         workspace_files_root=tmp_path,
         output_config=config,
     )
@@ -124,7 +122,6 @@ def test_adapt_tool_return_offload_preserves_observability_metadata(tmp_path) ->
     content, artifact = adapt_tool_return(
         tool_name="dummy_tool",
         raw_result=raw_result,
-        tool_args={"text": "hello"},
         workspace_files_root=tmp_path,
         output_config=config,
     )
@@ -141,19 +138,34 @@ def test_adapt_tool_return_offload_preserves_observability_metadata(tmp_path) ->
     assert "tool_args" not in payload
 
 
-def test_adapt_tool_return_can_include_tool_args_when_enabled(tmp_path) -> None:
-    config = ToolOutputConfig(offload_chars=20_000, include_tool_args=True)
-    raw_result = ("done", {"tool_name": "dummy_tool", "data": {"summary": "done"}})
+def test_adapt_tool_return_never_copies_tool_args_into_output_artifact(tmp_path) -> None:
+    config = ToolOutputConfig(offload_chars=20_000)
+    raw_result = (
+        "done",
+        {
+            "tool_name": "dummy_tool",
+            "tool_args": {"text": "top-level"},
+            "raw_params": {"text": "top-level-raw"},
+            "validated_params": {"text": "top-level-validated"},
+            "data": {
+                "summary": "done",
+                "tool_args": {"text": "nested"},
+                "raw_params": {"text": "nested-raw"},
+                "validated_params": {"text": "nested-validated"},
+            },
+        },
+    )
 
     _content, artifact = adapt_tool_return(
         tool_name="dummy_tool",
         raw_result=raw_result,
-        tool_args={"text": "hello"},
         workspace_files_root=tmp_path,
         output_config=config,
     )
 
-    assert artifact.get("tool_args") == {"text": "hello"}
+    for key in ("tool_args", "raw_params", "validated_params"):
+        assert key not in artifact
+        assert key not in artifact["data"]
 
 
 def test_adapt_tool_return_can_suppress_content_offload_ref(tmp_path) -> None:

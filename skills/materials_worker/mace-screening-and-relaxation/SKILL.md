@@ -11,7 +11,7 @@ Use this skill to keep MACE inference calculations together when they operate on
 ## Quick Start
 1. Prepare a clean stage directory containing an `input/` folder with the structures to evaluate.
 2. Choose `mace_relax_dir` for geometry cleanup, `mace_sp_dir` for static ranking, or `mace_md_dir` for MD.
-3. Pass calculator and run controls through `template_overrides` (`params` is the legacy alias).
+3. Pass calculator and run controls through catalog-declared `template_overrides` keys.
 4. Submit with `remote_submission` for one stage, or `remote_submission_batch` when the batch root has one first-level child stage per task.
 5. Use stage-local outputs plus receipt/context fields to decide which candidates advance to VASP.
 

@@ -200,11 +200,45 @@ def _merge_dict(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str
     return merged
 
 
+def _assert_known_keys(payload: dict[str, Any], allowed: set[str], *, path: str) -> None:
+    unknown = sorted(str(key) for key in payload if key not in allowed)
+    if unknown:
+        raise ValueError(f"Unknown {path} key(s): {', '.join(unknown)}")
+
+
+def _validate_full_config_keys(payload: dict[str, Any], *, path: str = "MD config") -> None:
+    defaults = _default_config()
+    _assert_known_keys(payload, set(defaults), path=path)
+    for group in ("calculator", "dynamics", "thermostat", "output"):
+        if group not in payload:
+            continue
+        value = payload[group]
+        if not isinstance(value, dict):
+            raise ValueError(f"{path}.{group} must be an object.")
+        _assert_known_keys(value, set(defaults[group]), path=f"{path}.{group}")
+    if "barostat" in payload and payload["barostat"] is not None:
+        barostat = payload["barostat"]
+        if not isinstance(barostat, dict):
+            raise ValueError(f"{path}.barostat must be an object or null.")
+        _assert_known_keys(barostat, set(_default_barostat_config()), path=f"{path}.barostat")
+
+
 def _config_from_compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    compact_keys = {
+        "model",
+        "head",
+        "dispersion",
+        "default_dtype",
+        "enable_cueq",
+        "compile_mode",
+        "md_config",
+    }
+    _assert_known_keys(payload, compact_keys, path="compact MD parameter")
     cfg = _default_config()
     md_config = payload.get("md_config") or {}
     if not isinstance(md_config, dict):
         raise ValueError("md_config must be an object.")
+    _validate_full_config_keys(md_config, path="md_config")
     if isinstance(md_config.get("barostat"), dict):
         md_config = dict(md_config)
         md_config["barostat"] = _merge_dict(_default_barostat_config(), md_config["barostat"])
@@ -225,10 +259,12 @@ def _load_config(path: str | None) -> dict[str, Any]:
         raise ValueError("params JSON must contain an object.")
     if "md_config" in payload:
         return _config_from_compact_payload(payload)
+    _validate_full_config_keys(payload)
     return _merge_dict(cfg, payload)
 
 
 def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
+    _validate_full_config_keys(config)
     calc = config["calculator"]
     dyn = config["dynamics"]
     thermo = config["thermostat"]
@@ -777,7 +813,11 @@ def run_mace_md_batch(
     if _is_within(output_root_path, input_root):
         raise ValueError("output_root must not be inside input_path.")
 
-    md_config = _validate_config(_merge_dict(_load_config(params_path), config or {}))
+    config_overrides = config or {}
+    if not isinstance(config_overrides, dict):
+        raise ValueError("config must be an object.")
+    _validate_full_config_keys(config_overrides, path="config override")
+    md_config = _validate_config(_merge_dict(_load_config(params_path), config_overrides))
     structures = _collect_structure_files(input_root)
     if not structures:
         raise ValueError(f"No structure files found in directory: {input_root}")

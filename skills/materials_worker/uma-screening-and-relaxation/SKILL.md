@@ -54,4 +54,4 @@ Relaxation:
 {"uma_task": "omat", "fmax": 0.02, "steps": 500, "relax_cell": false}
 ```
 
-For mixed task batches, write `params/uma_metadata.json` and pass `template_overrides={"metadata_path": "params/uma_metadata.json"}`.
+For mixed task batches, write `params/uma_metadata.json` and pass `template_overrides={"metadata": "params/uma_metadata.json"}`. Metadata entries use the exact keys `uma_task`, `charge`, and `spin`.

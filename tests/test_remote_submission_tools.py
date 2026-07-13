@@ -161,7 +161,7 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
                 {
                     "work_dir": "stage/mace_sp",
                     "task_name": "mace_sp_dir",
-                    "params": {"model": "medium-mpa-0", "default_dtype": "float32"},
+                    "template_overrides": {"model": "medium-mpa-0", "default_dtype": "float32"},
                     "config": {"check_interval": 7, "clean_remote": True, "cpu_per_node": 8},
                 }
     )
@@ -215,7 +215,7 @@ def test_remote_submission_copies_uma_helper_and_skips_missing_optional_metadata
                 {
                     "work_dir": "stage/uma_sp",
                     "task_name": "uma_sp_dir",
-                    "params": {"uma_task": "omol", "charge": 0, "spin": 1},
+                    "template_overrides": {"uma_task": "omol", "charge": 0, "spin": 1},
                 }
             )
 
@@ -293,7 +293,7 @@ def test_remote_submission_quotes_template_params(
                 {
                     "work_dir": "stage",
                     "task_name": "mace_sp_dir",
-                    "params": {"head": "", "model": "model with spaces"},
+                    "template_overrides": {"head": "", "model": "model with spaces"},
                 }
             )
 
@@ -301,7 +301,7 @@ def test_remote_submission_quotes_template_params(
     assert "--model 'model with spaces'" in captured["command"]
 
 
-def test_remote_submission_template_overrides_alias_renders_command(
+def test_remote_submission_template_overrides_render_command(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -324,8 +324,7 @@ def test_remote_submission_template_overrides_alias_renders_command(
     assert "template_overrides" in schema
     assert schema["template_overrides"]["type"] == "object"
     assert "anyOf" not in schema["template_overrides"]
-    assert schema["params"]["type"] == "object"
-    assert "anyOf" not in schema["params"]
+    assert "params" not in schema
     assert schema["config"]["type"] == "object"
     assert "anyOf" not in schema["config"]
     assert schema["task_name"]["type"] == "string"
@@ -342,7 +341,7 @@ def test_remote_submission_template_overrides_alias_renders_command(
                 {
                     "work_dir": "stage",
                     "task_name": "mace_relax_dir",
-                    "template_overrides": {"head": "omol", "fmax": 0.03, "maxsteps": 100},
+                    "template_overrides": {"head": "omol", "fmax": 0.03, "steps": 100},
                 }
             )
 
@@ -356,16 +355,29 @@ def test_remote_submission_accepts_legacy_null_object_fields() -> None:
         work_dir="stage",
         task_name="mace_relax_dir",
         boot_script=None,
-        params=None,
         template_overrides=None,
         config=None,
     )
 
     assert parsed.task_name == "mace_relax_dir"
     assert parsed.boot_script == ""
-    assert parsed.params == {}
     assert parsed.template_overrides == {}
     assert parsed.config == {}
+
+
+def test_remote_submission_rejects_unknown_template_override_key(tmp_path: Path) -> None:
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage"
+        (stage / "input").mkdir(parents=True)
+        with toolcall_context("submit", audience="materials_worker"):
+            with pytest.raises(CatMasterToolExecutionError, match="Unknown template_overrides key.*maxsteps"):
+                remote_submission(
+                    {
+                        "work_dir": "stage",
+                        "task_name": "mace_relax_dir",
+                        "template_overrides": {"maxsteps": 100},
+                    }
+                )
 
 
 def test_remote_submission_batch_maps_first_level_children(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

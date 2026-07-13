@@ -85,7 +85,7 @@ def _resolve_lammps_binary(requested: str, *, mode: str, gpu_count: int) -> tupl
     raise FileNotFoundError(
         "Unable to resolve LAMMPS executable. "
         f"requested={raw!r}; tried={', '.join(tried) if tried else '(none)'}; "
-        "set CATMASTER_LAMMPS_BIN or pass --lammps-bin to override."
+        "set CATMASTER_LAMMPS_BIN or pass --lammps_bin to override."
     )
 
 
@@ -169,9 +169,9 @@ def _run_lammps(command: list[str], output_log: Path, env: dict[str, str]) -> su
 def main() -> int:
     parser = argparse.ArgumentParser(description="LAMMPS boot wrapper for DPDispatcher tasks")
     parser.add_argument("--input", default="in.lammps", help="LAMMPS input script")
-    parser.add_argument("--lammps-bin", default="auto", help="LAMMPS executable or `auto`")
+    parser.add_argument("--lammps_bin", default="auto", help="LAMMPS executable or `auto`")
     parser.add_argument("--gpu", default="auto", choices=["auto", "off", "gpu", "kokkos"], help="GPU acceleration selection")
-    parser.add_argument("--allow-cpu-fallback", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--allow_cpu_fallback", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--log", default="lammps_stdout.out", help="Wrapper log path")
     args = parser.parse_args()
 

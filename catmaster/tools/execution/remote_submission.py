@@ -73,14 +73,14 @@ _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
         "Use for one prepared stage directory. `work_dir` is the stage itself, and the boot script "
         "runs directly in that stage cwd. A stage may contain internal batch inputs when the layout says so, "
         "for example MACE `input/` with many structures. If you have two or more independent prepared "
-        "stages for the same task_name/params/config, prefer one remote_submission_batch parent root instead "
+        "stages for the same task_name/template_overrides/config, prefer one remote_submission_batch parent root instead "
         "of multiple parallel remote_submission calls."
     ),
     "remote_submission_batch": (
-        "Preferred when there are multiple independent prepared stages for the same task_name/params/config. "
+        "Preferred when there are multiple independent prepared stages for the same task_name/template_overrides/config. "
         "Use a parent batch root whose first-level children are independent stages. "
         "The boot script runs once inside each first-level child directory. Each child is submitted "
-        "as one DPDispatcher task with the same task_name, params, and config. No recursive nested "
+        "as one DPDispatcher task with the same task_name, template_overrides, and config. No recursive nested "
         "discovery is performed."
     ),
     "registered_task_config": (
@@ -90,7 +90,7 @@ _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
     ),
     "template_overrides": (
         "For registered task_name templates, pass command-template overrides through template_overrides "
-        "(legacy name: params). Use this for method-critical values such as MACE head/fmax or UMA "
+        "using only keys declared by the task catalog. Use this for method-critical values such as MACE head/fmax or UMA "
         "uma_task/spin. Do not patch copied task_script files or sitecustomize to change template defaults."
     ),
 }
@@ -128,10 +128,10 @@ def _catalog_content(*, tasks: list[dict[str, Any]]) -> str:
         "Submission decision:",
         "- remote_submission: work_dir is one prepared stage; the boot script runs directly in that directory.",
         "- remote_submission_batch: work_dir is a parent root; the boot script runs once inside each first-level child directory.",
-        "- If two or more independent stages share the same task_name, params, and config, prefer one remote_submission_batch call over multiple parallel remote_submission calls.",
+        "- If two or more independent stages share the same task_name, template_overrides, and config, prefer one remote_submission_batch call over multiple parallel remote_submission calls.",
         "- Do not use remote_submission_batch just because a single stage contains many inputs; MACE *_dir stages commonly batch internally under input/.",
         "- For registered task_name templates, omit config.resources/config.machine unless an explicit sizing override is needed.",
-        "- For registered task_name templates, use template_overrides (or legacy params) for command defaults such as MACE head/fmax or UMA spin; do not patch copied task_script/sitecustomize files.",
+        "- For registered task_name templates, use only catalog-declared template_overrides keys for command defaults such as MACE head/fmax or UMA spin; do not patch copied task_script/sitecustomize files.",
         "Tasks:",
     ]
     for item in tasks:
@@ -188,7 +188,7 @@ class RemoteSubmissionInput(BaseModel):
     script runs directly with `work_dir` as cwd. If that layout internally accepts
     many inputs, such as a MACE stage containing `input/` with many structures,
     it is still one stage and should use this tool. For two or more independent
-    prepared stages that share the same task_name/params/config, prefer
+    prepared stages that share the same task_name/template_overrides/config, prefer
     remote_submission_batch instead of parallel remote_submission calls.
     """
 
@@ -212,18 +212,12 @@ class RemoteSubmissionInput(BaseModel):
             "unless config.resources selects another visible card such as general_gpu."
         ),
     )
-    params: dict[str, Any] = Field(
-        default_factory=dict,
-        description=(
-            "Legacy alias for template_overrides. For registered task_name templates, these values override "
-            "command placeholders such as MACE head/fmax or UMA uma_task/spin."
-        ),
-    )
     template_overrides: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Registered task command-template overrides. Use this to override task defaults such as "
-            "{'head': 'omol'} for mace_relax_dir or {'uma_task': 'omol', 'spin': 3} for uma_relax_dir. "
+            "Registered task command-template overrides using only keys listed by get_avail_remote_task. "
+            "For example, {'head': 'omol'} for mace_relax_dir or "
+            "{'uma_task': 'omol', 'spin': 3} for uma_relax_dir. "
             "This does not change resource cards; use config only for allowed resource/submission controls."
         ),
     )
@@ -241,7 +235,7 @@ class RemoteSubmissionInput(BaseModel):
         if not isinstance(data, dict):
             return data
         normalized = dict(data)
-        for key in ("params", "template_overrides", "config"):
+        for key in ("template_overrides", "config"):
             if normalized.get(key) is None:
                 normalized[key] = {}
         for key in ("task_name", "boot_script"):
@@ -255,28 +249,24 @@ class RemoteSubmissionInput(BaseModel):
         has_script = bool(str(self.boot_script or "").strip())
         if has_task == has_script:
             raise ValueError("Exactly one of task_name or boot_script is required.")
-        if self.params and self.template_overrides:
-            raise ValueError("Use either template_overrides or legacy params, not both.")
+        if has_script and self.template_overrides:
+            raise ValueError("template_overrides is only valid with a registered task_name.")
         return self
 
 
-def _template_params(payload: RemoteSubmissionInput) -> dict[str, Any] | None:
-    if payload.template_overrides:
-        return dict(payload.template_overrides)
-    if payload.params:
-        return dict(payload.params)
-    return None
+def _template_overrides(payload: RemoteSubmissionInput) -> dict[str, Any] | None:
+    return dict(payload.template_overrides) if payload.template_overrides else None
 
 
 class RemoteSubmissionBatchInput(RemoteSubmissionInput):
     """[remote/execute] Submit a parent batch root as multiple DPDispatcher tasks.
 
     Prefer this when there are two or more independent prepared stages for the
-    same task_name/params/config. Use only when `work_dir` contains one
+    same task_name/template_overrides/config. Use only when `work_dir` contains one
     first-level child directory per task and every child independently matches
     the same selected task layout. The boot script runs once inside each
     first-level child directory, not once in the parent. No recursive nested
-    discovery is performed; the same `task_name`, params, and config are applied
+    discovery is performed; the same `task_name`, template_overrides, and config are applied
     to every child.
     """
 
@@ -352,12 +342,23 @@ def _current_audience(config: dict[str, Any] | None = None) -> str:
     return ""
 
 
-def _normalize_params(cfg: TaskConfig | None, params: dict[str, Any] | None) -> dict[str, Any]:
+def _render_template_values(
+    cfg: TaskConfig | None,
+    template_overrides: dict[str, Any] | None,
+) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     if cfg is not None:
         merged.update(dict(cfg.defaults or {}))
-    if params:
-        merged.update(dict(params))
+    if template_overrides:
+        accepted = set(cfg.defaults or {}) if cfg is not None else set()
+        unknown = sorted(str(key) for key in template_overrides if key not in accepted)
+        if unknown:
+            accepted_text = ", ".join(sorted(accepted)) or "none"
+            raise ValueError(
+                f"Unknown template_overrides key(s): {', '.join(unknown)}. "
+                f"Accepted keys: {accepted_text}."
+            )
+        merged.update(dict(template_overrides))
     out: dict[str, Any] = {}
     for key, value in merged.items():
         if isinstance(value, bool):
@@ -656,7 +657,7 @@ def _build_task_spec(
     boot_script_src: Path | None,
     stage_dir: Path,
     stage_name: str | None,
-    params: dict[str, Any] | None,
+    template_overrides: dict[str, Any] | None,
 ) -> TaskSpec:
     script_rel = _copy_boot_script(boot_script_src, stage_dir)
     if cfg is None:
@@ -665,12 +666,12 @@ def _build_task_spec(
         backward_files = ["*"]
         task_work_path = _task_work_path(stage_name, ".")
     else:
-        ctx = _normalize_params(cfg, params)
+        ctx = _render_template_values(cfg, template_overrides)
         rendered = render_task_fields(cfg, ctx, stage_dir)
         command = format_template(cfg.command, _shell_quote_params(ctx))
         missing = _unresolved_placeholders(command)
         if missing:
-            raise ValueError(f"Missing params for task '{task_name}': {', '.join(missing)}")
+            raise ValueError(f"Missing template values for task '{task_name}': {', '.join(missing)}")
         forward_files = list(rendered["forward_files"])
         _copy_task_script_forward_dependencies(
             script_src=boot_script_src,
@@ -898,16 +899,16 @@ def _prepare_common(payload: RemoteSubmissionInput) -> tuple[Path, str, TaskConf
 
 
 def remote_submission(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    params = RemoteSubmissionInput(**payload)
+    request = RemoteSubmissionInput(**payload)
     try:
-        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote = _prepare_common(params)
+        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote = _prepare_common(request)
         task = _build_task_spec(
             cfg=cfg,
             task_name=task_name,
             boot_script_src=boot_script_src,
             stage_dir=work_dir,
             stage_name=None,
-            params=_template_params(params),
+            template_overrides=_template_overrides(request),
         )
         return _submit(
             tool_name="remote_submission",
@@ -927,9 +928,9 @@ def remote_submission(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def remote_submission_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    params = RemoteSubmissionBatchInput(**payload)
+    request = RemoteSubmissionBatchInput(**payload)
     try:
-        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote = _prepare_common(params)
+        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote = _prepare_common(request)
         children = sorted(path for path in work_dir.iterdir() if path.is_dir())
         if not children:
             raise ValueError("remote_submission_batch requires first-level child task directories under work_dir.")
@@ -940,7 +941,7 @@ def remote_submission_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any
                 boot_script_src=boot_script_src,
                 stage_dir=child,
                 stage_name=child.name,
-                params=_template_params(params),
+                template_overrides=_template_overrides(request),
             )
             for child in children
         ]
@@ -979,7 +980,7 @@ def _resource_visible_in_general_catalog(cfg: dict[str, Any]) -> bool:
 
 
 def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    params = GetAvailRemoteTaskInput(**payload)
+    request = GetAvailRemoteTaskInput(**payload)
     audience = _current_audience()
     registry = TaskRegistry()
     register = MachineRegister()
@@ -993,7 +994,7 @@ def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
             "template_defaults": dict(cfg.defaults),
             "template_override_keys": list(cfg.defaults.keys()),
         }
-        if params.return_resource and cfg.resources:
+        if request.return_resource and cfg.resources:
             resources_cfg = register.get_resources(cfg.resources)
             item["resources"] = _resource_summary(cfg.resources, resources_cfg, register=register)
         tasks.append(item)

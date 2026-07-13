@@ -1067,6 +1067,10 @@ def test_specialist_lanes_start_with_staged_skills(
     }[entrypoint]
     _assert_native_skill_groups(agent_kwargs, *expected_entry_groups)
     _assert_native_memory(agent_kwargs)
+    assert any(
+        type(item).__name__ == "ReloadDeepAgentContextMiddleware"
+        for item in agent_kwargs["middleware"]
+    )
     internal_thread_id = agent_kwargs["_last_config"]["configurable"]["thread_id"]
     assert internal_thread_id.endswith(f"::run::{built.run_context.run_id}")
     assert "search_memory" not in {tool.name for tool in agent_kwargs["tools"]}

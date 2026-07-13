@@ -94,9 +94,9 @@ def main() -> None:
         mace_payload = {
             "work_dir": str(mace_root),
             "task_name": "mace_relax_dir",
-            "params": {
+            "template_overrides": {
                 "fmax": 0.05,
-                "maxsteps": 300,
+                "steps": 300,
                 "model": "mh-1",
                 "head": "omat_pbe",
                 "relax_lattice": args.mace_relax_lattice,

@@ -426,7 +426,7 @@ def xtb_run_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         work_prefix="xtb_batch",
         script_name="xtb_boot.py",
         context_builder=lambda *, stage_dir, input_name: {
-            "input_name": input_name,
+            "input": input_name,
             "mode": params.mode,
             "gfn": params.gfn,
             "solvent_model": params.solvent_model,
@@ -483,7 +483,7 @@ def crest_conformer_search(payload: dict[str, Any]) -> tuple[str, dict[str, Any]
         work_prefix="crest_batch",
         script_name="crest_boot.py",
         context_builder=lambda *, stage_dir, input_name: {
-            "input_name": input_name,
+            "input": input_name,
             "mode": params.mode,
             "method": params.method,
             "ewin": params.ewin,

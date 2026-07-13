@@ -117,7 +117,7 @@ def _try_orca_2json() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="ORCA boot wrapper for DPDispatcher tasks")
     parser.add_argument("--input", default="job.inp", help="ORCA input filename")
-    parser.add_argument("--orca-bin", default="auto", help="ORCA executable or `auto`")
+    parser.add_argument("--orca_bin", default="auto", help="ORCA executable or `auto`")
     parser.add_argument("--log", default="orca_stdout.out", help="Wrapper log path")
     args = parser.parse_args()
 

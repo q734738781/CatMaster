@@ -288,7 +288,7 @@ def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
 
     ctx = {
-        "input_path": "input",
+        "input": "input",
         "output_root": "output",
         "fmax": params.fmax,
         "steps": params.steps,

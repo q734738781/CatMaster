@@ -517,7 +517,6 @@ def _make_langchain_tool(
         return adapt_tool_return(
             tool_name=name,
             raw_result=result,
-            tool_args=kwargs,
             workspace_files_root=_workspace_files_root(),
         )
 
@@ -536,7 +535,6 @@ def _make_langchain_tool(
         return adapt_tool_return(
             tool_name=name,
             raw_result=result,
-            tool_args=kwargs,
             workspace_files_root=_workspace_files_root(),
         )
 

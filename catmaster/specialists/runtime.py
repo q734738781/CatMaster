@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.artifact_callback import LangChainStepLogger, ObservabilityCallbackHandler, UIEventHandler
+from catmaster.runtime.deepagent_context_refresh import ReloadDeepAgentContextMiddleware
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.run_control import RunControl
@@ -1398,7 +1399,7 @@ class SpecialistRunner:
         return augmented
 
     @staticmethod
-    def _nonfatal_tool_error_result(tool_name: str, exc: Exception, tool_args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    def _nonfatal_tool_error_result(tool_name: str, exc: Exception) -> tuple[str, dict[str, Any]]:
         if isinstance(exc, CatMasterToolExecutionError):
             message = str(exc.public_message or f"{tool_name} failed.").strip()
             data = dict(exc.artifact.get("data") or {}) if isinstance(exc.artifact, dict) else {}
@@ -1409,7 +1410,6 @@ class SpecialistRunner:
                     "message": message,
                     "retryable": bool(exc.retryable),
                     "error_code": str(exc.error_code or ""),
-                    "tool_args": dict(tool_args or {}),
                 }
             )
             artifact = {"tool_name": tool_name, "data": data}
@@ -1422,7 +1422,6 @@ class SpecialistRunner:
                 "tool_name": tool_name,
                 "message": message,
                 "error_type": type(exc).__name__,
-                "tool_args": dict(tool_args or {}),
             },
         }
         return content_to_text(message), artifact
@@ -1447,7 +1446,7 @@ class SpecialistRunner:
                 self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
                 return result
             except Exception as exc:
-                return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+                return self._nonfatal_tool_error_result(tool.name, exc)
 
         async def _awrapped(runtime=None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
             self._raise_if_interrupt_requested(phase="before_tool_call", details={"tool": tool.name})
@@ -1457,7 +1456,7 @@ class SpecialistRunner:
                     self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
                     return result
                 except Exception as exc:
-                    return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+                    return self._nonfatal_tool_error_result(tool.name, exc)
             if func is None:
                 raise NotImplementedError(f"Tool {tool.name} does not support async invocation.")
             try:
@@ -1465,7 +1464,7 @@ class SpecialistRunner:
                 self._raise_if_interrupt_requested(phase="after_tool_call", details={"tool": tool.name})
                 return result
             except Exception as exc:
-                return self._nonfatal_tool_error_result(tool.name, exc, kwargs)
+                return self._nonfatal_tool_error_result(tool.name, exc)
 
         _wrapped.__name__ = tool.name
         _awrapped.__name__ = f"{tool.name}_async"
@@ -1511,6 +1510,8 @@ class SpecialistRunner:
         if workspace_agents.exists():
             staged_agents.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(workspace_agents, staged_agents)
+        elif staged_agents.exists():
+            staged_agents.unlink()
 
     def _skill_roots_for_group(self, group_name: str) -> list[str]:
         return self._skill_roots_for_groups(group_name)
@@ -1607,8 +1608,13 @@ class SpecialistRunner:
         agent_name: str,
         extra: list[Any] | None = None,
     ) -> list[Any]:
-        _ = (runtime, skills, agent_name)
-        return [*self._build_default_middleware(), *(extra or [])]
+        _ = agent_name
+        context_refresh = ReloadDeepAgentContextMiddleware(
+            backend=runtime["backend"],
+            skills=skills,
+            memory=self._memory_sources(),
+        )
+        return [*self._build_default_middleware(), context_refresh, *(extra or [])]
 
     def _memory_namespace(self) -> tuple[str, ...]:
         project_id = str(self.run_context.project_id or "default").strip() or "default"
@@ -2529,7 +2535,6 @@ class SpecialistRunner:
                 content, artifact = SpecialistRunner._nonfatal_tool_error_result(
                     tool_name,
                     exc,
-                    tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {},
                 )
                 return ToolMessage(
                     content=content,
@@ -2908,7 +2913,6 @@ class SpecialistRunner:
                     _content, artifact = self._nonfatal_tool_error_result(
                         "compile_text",
                         exc,
-                        {"source_path": tex_path},
                     )
             data = dict(artifact.get("data") or {}) if isinstance(artifact, dict) else {}
             compiled_ok = bool(data.get("compiled_ok"))

@@ -11,7 +11,7 @@ from ase import Atoms
 from ase.io import iread as ase_iread
 from ase.io import read as ase_read
 from ase.io import write as ase_write
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
@@ -235,16 +235,14 @@ def _greedy_select(features: np.ndarray, *, selection_size: int, disagreement: n
 class MaceTrainInput(BaseModel):
     """[ml/execute] Launch a remote MACE training or fine-tuning job using the validated reference-script style MACE CLI contract."""
 
+    model_config = ConfigDict(extra="forbid")
+
     dataset_dir: str = Field(..., description="Dataset directory containing train.extxyz and optional valid/test splits.")
     output_root: str = Field(..., description="Output directory where trained model artifacts and logs will be collected.")
     train_file: str = Field("train.extxyz", description="Training dataset filename relative to dataset_dir.")
     valid_file: Optional[str] = Field("valid.extxyz", description="Validation dataset filename relative to dataset_dir.")
     test_file: Optional[str] = Field("test.extxyz", description="Optional test dataset filename relative to dataset_dir.")
-    model_name: str = Field("mace_finetune", description="Short run name used in training output artifacts.")
-    name: Optional[str] = Field(
-        None,
-        description="Official-CLI alias for model_name.",
-    )
+    name: str = Field("mace_finetune", description="Run name passed unchanged to the MACE --name flag.")
     foundation_model: Optional[str] = Field(
         "mh-1",
         description=(
@@ -252,25 +250,13 @@ class MaceTrainInput(BaseModel):
             "Defaults to the validated repo baseline `mh-1`."
         ),
     )
-    base_model: Optional[str] = Field(
-        None,
-        description="Backward-compatible alias for foundation_model.",
-    )
     foundation_head: Optional[str] = Field(
         "omat_pbe",
         description="Foundation-model head for multi-head models. Use empty string to disable.",
     )
-    head: Optional[str] = Field(
-        None,
-        description="Backward-compatible alias for foundation_head.",
-    )
-    e0s: str = Field(
+    E0s: str = Field(
         "estimated",
-        description="E0s mode or JSON path. Use 'estimated' or a workspace-local E0 JSON file.",
-    )
-    E0s: Optional[str] = Field(
-        None,
-        description="Official-CLI alias for e0s.",
+        description="Value passed unchanged to the MACE --E0s flag: 'estimated' or a workspace-local E0 JSON file.",
     )
     multiheads_finetuning: bool = Field(
         True,
@@ -283,7 +269,7 @@ class MaceTrainInput(BaseModel):
     num_samples_pt: int = Field(50000, ge=0, description="Replay sample count passed to --num_samples_pt.")
     filter_type_pt: str = Field("combinations", description="Replay filtering mode passed to --filter_type_pt.")
     subselect_pt: str = Field("fps", description="Replay subselect mode passed to --subselect_pt.")
-    weight_pt: float = Field(1.0, ge=0.0, description="Replay weight passed to --weight_pt.")
+    weight_pt_head: float = Field(1.0, ge=0.0, description="Replay-head weight passed to --weight_pt_head.")
     atomic_numbers: list[int] = Field(
         default_factory=list,
         description="Explicit atomic numbers list passed to --atomic_numbers for replay finetuning.",
@@ -294,12 +280,7 @@ class MaceTrainInput(BaseModel):
     stress_weight: float = Field(1.0, ge=0.0, description="Stress loss weight.")
     max_num_epochs: int = Field(25, ge=1, description="Maximum training epochs passed to the MACE training CLI.")
     batch_size: int = Field(4, ge=1, description="Batch size passed to the MACE training CLI.")
-    learning_rate: float = Field(1e-4, gt=0.0, description="Learning rate passed to the MACE training CLI.")
-    lr: Optional[float] = Field(
-        None,
-        gt=0.0,
-        description="Official-CLI alias for learning_rate.",
-    )
+    lr: float = Field(1e-4, gt=0.0, description="Learning rate passed unchanged to the MACE --lr flag.")
     default_dtype: Literal["float32", "float64"] = Field("float32", description="Torch dtype used for training.")
     device: str = Field("cuda", description="Training device passed to the MACE CLI, typically cuda.")
     seed: int = Field(42, description="Random seed passed to the MACE CLI.")
@@ -311,39 +292,21 @@ class MaceTrainInput(BaseModel):
     valid_batch_size: int | None = Field(None, ge=1, description="Optional official MACE CLI validation batch size.")
     save_all_checkpoints: bool | None = Field(None, description="Optional official MACE CLI save_all_checkpoints flag.")
     keep_checkpoints: bool | None = Field(None, description="Optional official MACE CLI keep_checkpoints flag.")
-    extra_cli_args: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Backward-compatible alias for cli_args.",
-    )
     cli_args: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Additional official MACE CLI flags rendered into the training command. "
+            "Additional official MACE CLI flags keyed by the exact long-option name without leading '--'. "
+            "Use underscores exactly as the CLI defines them; aliases and hyphen-to-underscore rewriting are not applied. "
             "Workspace-local file/dir values are automatically staged and rewritten for the remote job."
         ),
     )
     check_interval: int = Field(30, description="Polling interval in seconds while waiting for DPDispatcher.")
 
-    @model_validator(mode="after")
-    def _normalize_aliases(self) -> "MaceTrainInput":
-        if self.name:
-            self.model_name = self.name
-        if self.foundation_model is None and self.base_model is not None:
-            self.foundation_model = self.base_model
-        if self.foundation_head is None and self.head is not None:
-            self.foundation_head = self.head
-        if self.E0s is not None:
-            self.e0s = self.E0s
-        if self.lr is not None:
-            self.learning_rate = self.lr
-        merged_cli_args = dict(self.extra_cli_args or {})
-        merged_cli_args.update(self.cli_args or {})
-        self.cli_args = merged_cli_args
-        return self
-
 
 class MaceEvaluateInput(BaseModel):
     """[ml/analysis] Run remote MACE evaluation on an extxyz dataset and collect error metrics and per-configuration outputs."""
+
+    model_config = ConfigDict(extra="forbid")
 
     dataset_dir: str = Field(..., description="Dataset directory containing the extxyz file to evaluate.")
     output_root: str = Field(..., description="Output directory where evaluation metrics and plots will be collected.")
@@ -476,7 +439,7 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if params.foundation_model:
         model_spec = _stage_mace_model(params.foundation_model, stage_root=stage_root)
         foundation_model = model_spec.command_arg
-    e0s_arg = _stage_optional_input_value(params.e0s, stage_root=stage_root, subdir="e0s")
+    e0s_arg = _stage_optional_input_value(params.E0s, stage_root=stage_root, subdir="e0s")
     pt_train_file_arg = _stage_optional_input_value(params.pt_train_file, stage_root=stage_root, subdir="replay")
     cli_args = _stage_optional_input_value(params.cli_args, stage_root=stage_root, subdir="cli_args")
     atomic_numbers = list(params.atomic_numbers or [])
@@ -520,19 +483,19 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     _write_json(
         params_path,
         {
-            "model_name": params.model_name,
+            "name": params.name,
             "train_file": params.train_file,
             "valid_file": params.valid_file if (stage_dataset / str(params.valid_file or "")).exists() else None,
             "test_file": params.test_file if (stage_dataset / str(params.test_file or "")).exists() else None,
             "foundation_model": foundation_model,
             "foundation_head": foundation_head,
-            "e0s": e0s_arg,
+            "E0s": e0s_arg,
             "multiheads_finetuning": params.multiheads_finetuning,
             "pt_train_file": pt_train_file_arg,
             "num_samples_pt": params.num_samples_pt,
             "filter_type_pt": params.filter_type_pt,
             "subselect_pt": params.subselect_pt,
-            "weight_pt": params.weight_pt,
+            "weight_pt_head": params.weight_pt_head,
             "atomic_numbers": atomic_numbers,
             "compute_stress": params.compute_stress,
             "energy_weight": params.energy_weight,
@@ -540,7 +503,7 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "stress_weight": params.stress_weight,
             "max_num_epochs": params.max_num_epochs,
             "batch_size": params.batch_size,
-            "learning_rate": params.learning_rate,
+            "lr": params.lr,
             "weight_decay": params.weight_decay,
             "scheduler": params.scheduler,
             "patience": params.patience,
@@ -553,13 +516,12 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "seed": params.seed,
             "restart_latest": params.restart_latest,
             "cli_args": cli_args,
-            "extra_cli_args": cli_args,
         },
     )
     ctx = {
         "dataset_root": "dataset",
         "output_root": "output",
-        "params_path": "params/train_params.json",
+        "params": "params/train_params.json",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     if model_spec and model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:
@@ -630,10 +592,10 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "output_root_rel": workspace_relpath(output_root),
         "batch_state_rel": workspace_relpath(state_path),
         "work_base": work_base,
-        "model_name": params.model_name,
+        "name": params.name,
         "foundation_model": params.foundation_model,
         "foundation_head": foundation_head,
-        "e0s": params.e0s,
+        "E0s": params.E0s,
         "multiheads_finetuning": params.multiheads_finetuning,
         "atomic_numbers": atomic_numbers,
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
@@ -703,7 +665,7 @@ def mace_evaluate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     ctx = {
         "dataset_root": "dataset",
         "output_root": "output",
-        "params_path": "params/eval_params.json",
+        "params": "params/eval_params.json",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
     if model_spec.asset_dir_rel and model_spec.asset_dir_rel not in rendered["forward_files"]:

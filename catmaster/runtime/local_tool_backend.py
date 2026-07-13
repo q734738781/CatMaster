@@ -90,7 +90,6 @@ class LocalToolBackend(ToolBackend):
                     "attempt_count": attempt,
                     "max_attempts": max_attempts,
                     "next_step": validation.get("next_step") or "",
-                    "raw_params": raw_params,
                 },
                 retryable=bool(max_attempts and attempt < max_attempts),
                 error_code="validation_error",
@@ -125,7 +124,6 @@ class LocalToolBackend(ToolBackend):
                 content, artifact = adapt_tool_return(
                     tool_name=name,
                     raw_result=raw_output,
-                    tool_args=payload,
                     workspace_files_root=workspace_root(self.workspace),
                 )
                 message = ToolMessage(

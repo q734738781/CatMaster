@@ -130,15 +130,37 @@ def load_metadata(metadata_path: str | None) -> dict[str, Any]:
         return {}
     path = Path(raw)
     if not path.is_file():
-        return {}
+        raise FileNotFoundError(f"UMA metadata file does not exist: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("UMA metadata must be a JSON object.")
+    unknown = sorted(str(key) for key in data if key not in {"defaults", "items"})
+    if unknown:
+        raise ValueError(f"Unknown UMA metadata key(s): {', '.join(unknown)}")
+    defaults = data.get("defaults")
+    if defaults is not None:
+        if not isinstance(defaults, dict):
+            raise ValueError("UMA metadata.defaults must be an object.")
+        _validate_item_config_keys(defaults, path="UMA metadata.defaults")
+    items = data.get("items")
+    if items is not None:
+        if not isinstance(items, dict):
+            raise ValueError("UMA metadata.items must be an object keyed by staged structure path.")
+        for item_name, item in items.items():
+            if not isinstance(item, dict):
+                raise ValueError(f"UMA metadata.items[{item_name!r}] must be an object.")
+            _validate_item_config_keys(item, path=f"UMA metadata.items[{item_name!r}]")
     return data
 
 
+def _validate_item_config_keys(data: dict[str, Any], *, path: str) -> None:
+    unknown = sorted(str(key) for key in data if key not in {"uma_task", "charge", "spin"})
+    if unknown:
+        raise ValueError(f"Unknown {path} key(s): {', '.join(unknown)}")
+
+
 def _coerce_item_config(data: dict[str, Any], *, fallback: UmaItemConfig) -> UmaItemConfig:
-    task = data.get("uma_task", data.get("task", fallback.uma_task))
+    task = data.get("uma_task", fallback.uma_task)
     charge = data.get("charge", fallback.charge)
     spin = data.get("spin", fallback.spin)
     return UmaItemConfig(

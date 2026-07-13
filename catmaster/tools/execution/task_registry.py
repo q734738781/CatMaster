@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 logger = logging.getLogger(__name__)
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _load_file(path: Path) -> Dict:
@@ -58,7 +60,7 @@ DEFAULT_TASK_PATHS = [
 class TaskConfig(BaseModel):
     """Single task template loaded from YAML/JSON."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     command: str
     resources: str | None = None
@@ -73,6 +75,21 @@ class TaskConfig(BaseModel):
     backward_files: List[str] = Field(default_factory=list)
     forward_common_files: List[str] = Field(default_factory=list)
     backward_common_files: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _defaults_match_command_placeholders(self) -> "TaskConfig":
+        placeholders = set(_PLACEHOLDER_RE.findall(self.command or ""))
+        defaults = set(self.defaults)
+        if placeholders != defaults:
+            missing = sorted(placeholders - defaults)
+            unused = sorted(defaults - placeholders)
+            details: list[str] = []
+            if missing:
+                details.append("missing defaults: " + ", ".join(missing))
+            if unused:
+                details.append("unused defaults: " + ", ".join(unused))
+            raise ValueError("Task command/default mismatch (" + "; ".join(details) + ")")
+        return self
 
 
 class TaskRegistry:

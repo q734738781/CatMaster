@@ -3,4 +3,3 @@ offload:
   preview_chars: 3000
   offload_chars: 20000
   offload_dir_rel: "_tool_outputs"
-  include_tool_args: false

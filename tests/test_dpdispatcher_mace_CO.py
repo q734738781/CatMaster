@@ -41,7 +41,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run CO MACE relax via DPDispatcher")
     parser.add_argument("--workspace", default="demo_mace_CO", help="Workspace under project files root")
     parser.add_argument("--fmax", type=float, default=0.05, help="Relaxation force threshold")
-    parser.add_argument("--maxsteps", type=int, default=400, help="Max relaxation steps")
+    parser.add_argument("--steps", type=int, default=400, help="Maximum relaxation steps")
     parser.add_argument("--model", default="mh-1", help="MACE model name")
     parser.add_argument("--head", default="omat_pbe", help="MACE model head")
     parser.add_argument(
@@ -60,9 +60,9 @@ def main() -> None:
     payload = {
         "work_dir": str(stage),
         "task_name": "mace_relax_dir",
-        "params": {
+        "template_overrides": {
             "fmax": args.fmax,
-            "maxsteps": args.maxsteps,
+            "steps": args.steps,
             "model": args.model,
             "head": args.head,
             "relax_lattice": args.relax_lattice,
