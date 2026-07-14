@@ -27,6 +27,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 
 ### 2. Train as one remote job
 - The training stage must contain the dataset, optional foundation model, optional E0 JSON, optional replay/statistics/local CLI assets, and `params/train_params.json`.
+- Do not split one train/valid/test dataset across inference-style structure chunks. Training batch size and distributed-training behavior belong to the MACE training configuration; an independent model, seed, or hyperparameter trial is a separate complete training stage.
 - Report stage-local outputs plus receipt/context fields, not just that the submission launched.
 - The reference-validated route is replay-style finetuning with explicit `foundation_head`, `multiheads_finetuning`, `pt_train_file`, replay sampling knobs, and explicit loss weights.
 - If the user did not ask for a custom ablation, keep the validated baseline explicit: `mh-1`, `omat_pbe`, and `estimated`/fixed estimated E0s. Do not silently swap to another foundation model or another head.
@@ -34,6 +35,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 
 ### 3. Benchmark separately
 - The training run can already carry `test.extxyz`; use `mace_eval_dir` when you need an additional benchmark pass on a retained checkpoint or an alternate split.
+- Keep one checkpoint-and-dataset evaluation as one complete evaluation stage. Do not manually shard the held-out dataset into remote stages unless the evaluation workflow explicitly supports deterministic shard merging.
 - Keep the evaluation output root separate from the training root.
 - Choose the evaluation device explicitly when the remote resource is not guaranteed to expose CUDA.
 

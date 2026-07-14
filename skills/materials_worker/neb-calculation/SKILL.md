@@ -49,6 +49,7 @@ Use this skill once the pathway inputs are already prepared and the question is 
 
 ### 5. Managed MACE NEB
 - Use `task_name="mace_neb_dir"` for managed MACE NEB rather than ad hoc scripts.
+- Prepare one complete stage per independent MACE NEB path and use `remote_submission_batch` for multiple paths. The current runner processes multiple path directories inside one stage sequentially and constructs the path calculator separately, so grouping independent long paths under one `input/` does not provide useful model-reuse parallelism.
 - Keep `default_dtype=float64` by default for MACE pathway optimization.
 - Use `plain` mode for a fixed image set and `autoneb` only when the workflow explicitly benefits from adaptive image insertion.
 - Keep `climb` as an explicit decision rather than an implicit default.

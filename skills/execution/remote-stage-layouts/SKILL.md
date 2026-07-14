@@ -26,6 +26,7 @@ Do not use `execute` to import, wrap, or call CatMaster managed tool implementat
 - Prefer `remote_submission_batch` when there are two or more independent prepared stages for the same `task_name`, `template_overrides`, and `config`; do not issue multiple parallel `remote_submission` calls for that case.
 - Use `remote_submission_batch` only when `work_dir` is a parent batch root and each first-level child directory is a complete independent stage for the same `task_name`. The parent directory is not the task cwd; the boot script runs once inside each first-level child directory.
 - A single stage may contain many scientific inputs if the task layout says so. This is still `remote_submission`, not `remote_submission_batch`. Common example: `mace_sp_dir`, `mace_relax_dir`, `uma_sp_dir`, or `uma_relax_dir` with many structures under one `input/`.
+- For large input batches, read the relevant domain skill's parallelization and chunking guidance before preparing the stage layout; use that workload-specific guidance to decide how many scientific inputs belong in each stage.
 - `remote_submission_batch` does not recursively discover nested jobs. It submits only first-level child directories.
 - `remote_submission_batch` applies the same `task_name`, `template_overrides`, and `config` to every first-level child. Do not use it when children need different task templates or incompatible overrides.
 

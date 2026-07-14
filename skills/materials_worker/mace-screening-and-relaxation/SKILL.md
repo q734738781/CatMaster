@@ -39,8 +39,10 @@ Use this skill to keep MACE inference calculations together when they operate on
 - A materials workflow may continue from MACE relaxation into `mace_md_dir` without changing workers; preserve structure provenance and atom constraints across the stage transition.
 - Use `dynamics_worker` instead when the primary work is a standalone dynamics protocol, restart, or trajectory-health investigation.
 
-### 3. Use the stage layout expected by the remote task
+### 3. Parallelization and stage layout
 - For `mace_sp_dir` and `mace_relax_dir`, the stage contains `input/`; `mace_md_dir` additionally contains `params/md_params.json`. Each writes downloaded results under `output/`.
+- For a large batch of independent, similarly sized short MACE geometry optimizations, partition the inputs conservatively into roughly 30-50 structures per stage and submit the prepared stages with `remote_submission_batch`. This is a throughput default that amortizes repeated model startup, not a universal optimum; use smaller balanced stages when system sizes or expected convergence lengths differ substantially.
+- A single-point calculation performs only one inference per structure, so do not apply the 30-50 relaxation chunk mechanically to `mace_sp_dir`. Keep substantially larger single-point input groups per stage, and split only a genuinely large pool into coarse stages after considering structure size and expected inference cost.
 - For batch submission, every first-level child under `work_dir` must be one complete MACE stage; nested discovery is not performed.
 
 ### 4. Use collected evidence, not launch success alone

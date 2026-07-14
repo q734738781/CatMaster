@@ -55,3 +55,9 @@ Relaxation:
 ```
 
 For mixed task batches, write `params/uma_metadata.json` and pass `template_overrides={"metadata": "params/uma_metadata.json"}`. Metadata entries use the exact keys `uma_task`, `charge`, and `spin`.
+
+## Parallelization and chunking
+- The managed UMA runners load and cache one predictor per stage, then process the structures in that stage sequentially. Multiple files under one `input/` reuse the predictor but do not run concurrently.
+- For a large batch of independent, similarly sized UMA geometry optimizations, use roughly 30-50 structures per stage as the same conservative starting point used for short MLFF relaxation batches. Use smaller balanced stages when structure sizes or expected convergence lengths differ substantially.
+- UMA single-point screening is much shorter per structure than relaxation. Keep substantially larger single-point groups per stage instead of applying the 30-50 relaxation chunk mechanically, and only coarse-split a genuinely large screening pool.
+- When splitting is appropriate, make each first-level child a complete UMA stage and submit the parent with `remote_submission_batch`; let the remote scheduler control actual concurrency.

@@ -48,8 +48,10 @@ stage/
 - Set `dynamics.ensemble` to `nve`, `nvt`, or `npt`; choose thermostat/barostat keys only when the method needs them.
 - For NPT Berendsen, set `barostat.compressibility_bar_inv` explicitly.
 
-### 3. Submit through managed MACE MD
+### 3. Parallelize independent MD trajectories
 - Use only `task_name="mace_md_dir"` for MACE MD execution.
+- Prepare one complete first-level stage per independent long MD trajectory and submit those stages with `remote_submission_batch`; do not place multiple independent production trajectories in one stage merely to reuse one model load, because the runner advances inputs in that stage sequentially. Let the remote scheduler determine how many trajectory stages run concurrently.
+- Continuation segments of the same trajectory are dependent work, not parallel replicas: submit the next segment only after the preceding restart artifact is available.
 - Managed MACE GPU tasks default to `device="auto"` so exploratory jobs can still produce results when CUDA is unavailable. After completion, inspect `status.json` or `output/batch_summary.json` and report the actual device used.
 - Use `device="cuda"` only when the user explicitly asks for GPU validation or a GPU-required production run.
 
