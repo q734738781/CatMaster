@@ -73,18 +73,18 @@ _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
         "Use for one prepared stage directory. `work_dir` is the stage itself, and the boot script "
         "runs directly in that stage cwd. A stage may contain internal batch inputs when the layout says so, "
         "for example MACE `input/` with many structures. If you have two or more independent prepared "
-        "stages for the same task_name/template_overrides/config, prefer one remote_submission_batch parent root instead "
+        "stages for the same task_name/template_overrides/submission_config, prefer one remote_submission_batch parent root instead "
         "of multiple parallel remote_submission calls."
     ),
     "remote_submission_batch": (
-        "Preferred when there are multiple independent prepared stages for the same task_name/template_overrides/config. "
+        "Preferred when there are multiple independent prepared stages for the same task_name/template_overrides/submission_config. "
         "Use a parent batch root whose first-level children are independent stages. "
         "The boot script runs once inside each first-level child directory. Each child is submitted "
-        "as one DPDispatcher task with the same task_name, template_overrides, and config. No recursive nested "
+        "as one DPDispatcher task with the same task_name, template_overrides, and submission_config. No recursive nested "
         "discovery is performed."
     ),
     "registered_task_config": (
-        "For registered task_name templates, normally omit config.resources and config.machine. "
+        "For registered task_name templates, normally omit submission_config.resources and submission_config.machine. "
         "The task's resource card owns the machine and environment; override only explicit sizing fields "
         "such as cpu_per_node or gpu_per_node when intentionally requested."
     ),
@@ -128,9 +128,9 @@ def _catalog_content(*, tasks: list[dict[str, Any]]) -> str:
         "Submission decision:",
         "- remote_submission: work_dir is one prepared stage; the boot script runs directly in that directory.",
         "- remote_submission_batch: work_dir is a parent root; the boot script runs once inside each first-level child directory.",
-        "- If two or more independent stages share the same task_name, template_overrides, and config, prefer one remote_submission_batch call over multiple parallel remote_submission calls.",
+        "- If two or more independent stages share the same task_name, template_overrides, and submission_config, prefer one remote_submission_batch call over multiple parallel remote_submission calls.",
         "- Do not use remote_submission_batch just because a single stage contains many inputs; MACE *_dir stages commonly batch internally under input/.",
-        "- For registered task_name templates, omit config.resources/config.machine unless an explicit sizing override is needed.",
+        "- For registered task_name templates, omit submission_config.resources/submission_config.machine unless an explicit sizing override is needed.",
         "- For registered task_name templates, use only catalog-declared template_overrides keys for command defaults such as MACE head/fmax or UMA spin; do not patch copied task_script/sitecustomize files.",
         "Tasks:",
     ]
@@ -168,16 +168,16 @@ def _parse_bool(value: Any, *, field: str) -> bool:
             return True
         if text in {"0", "false", "f", "no", "n", "off"}:
             return False
-    raise ValueError(f"config.{field} must be a boolean.")
+    raise ValueError(f"submission_config.{field} must be a boolean.")
 
 
 def _parse_positive_int(value: Any, *, field: str) -> int:
     try:
         parsed = int(value)
     except Exception as exc:
-        raise ValueError(f"config.{field} must be a positive integer.") from exc
+        raise ValueError(f"submission_config.{field} must be a positive integer.") from exc
     if parsed <= 0:
-        raise ValueError(f"config.{field} must be a positive integer.")
+        raise ValueError(f"submission_config.{field} must be a positive integer.")
     return parsed
 
 
@@ -188,7 +188,7 @@ class RemoteSubmissionInput(BaseModel):
     script runs directly with `work_dir` as cwd. If that layout internally accepts
     many inputs, such as a MACE stage containing `input/` with many structures,
     it is still one stage and should use this tool. For two or more independent
-    prepared stages that share the same task_name/template_overrides/config, prefer
+    prepared stages that share the same task_name/template_overrides/submission_config, prefer
     remote_submission_batch instead of parallel remote_submission calls.
     """
 
@@ -209,7 +209,7 @@ class RemoteSubmissionInput(BaseModel):
         "",
         description=(
             "Workspace-relative custom boot script path. Leave empty when using task_name. Uses the default general CPU resource card "
-            "unless config.resources selects another visible card such as general_gpu."
+            "unless submission_config.resources selects another visible card such as general_gpu."
         ),
     )
     template_overrides: dict[str, Any] = Field(
@@ -218,10 +218,10 @@ class RemoteSubmissionInput(BaseModel):
             "Registered task command-template overrides using only keys listed by get_avail_remote_task. "
             "For example, {'head': 'omol'} for mace_relax_dir or "
             "{'uma_task': 'omol', 'spin': 3} for uma_relax_dir. "
-            "This does not change resource cards; use config only for allowed resource/submission controls."
+            "This does not change resource cards; use submission_config only for allowed resource/submission controls."
         ),
     )
-    config: dict[str, Any] = Field(
+    submission_config: dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "Optional resource-card override such as {'resources': 'general_gpu'}, plus safe resource "
@@ -235,7 +235,10 @@ class RemoteSubmissionInput(BaseModel):
         if not isinstance(data, dict):
             return data
         normalized = dict(data)
-        for key in ("template_overrides", "config"):
+        legacy_config = normalized.pop("config", None)
+        if "submission_config" not in normalized and legacy_config is not None:
+            normalized["submission_config"] = legacy_config
+        for key in ("template_overrides", "submission_config"):
             if normalized.get(key) is None:
                 normalized[key] = {}
         for key in ("task_name", "boot_script"):
@@ -262,11 +265,11 @@ class RemoteSubmissionBatchInput(RemoteSubmissionInput):
     """[remote/execute] Submit a parent batch root as multiple DPDispatcher tasks.
 
     Prefer this when there are two or more independent prepared stages for the
-    same task_name/template_overrides/config. Use only when `work_dir` contains one
+    same task_name/template_overrides/submission_config. Use only when `work_dir` contains one
     first-level child directory per task and every child independently matches
     the same selected task layout. The boot script runs once inside each
     first-level child directory, not once in the parent. No recursive nested
-    discovery is performed; the same `task_name`, template_overrides, and config are applied
+    discovery is performed; the same `task_name`, template_overrides, and submission_config are applied
     to every child.
     """
 
@@ -504,7 +507,7 @@ def _default_custom_boot_resources(*, audience: str, registry: TaskRegistry, reg
         return candidates[0]
     if len(candidates) > 1:
         raise ValueError(
-            "config.resources is required when multiple default custom boot resources are visible: "
+            "submission_config.resources is required when multiple default custom boot resources are visible: "
             + ", ".join(sorted(candidates))
         )
     return ""
@@ -517,16 +520,16 @@ def _extract_submission_config(config: dict[str, Any] | None, *, audience: str =
     machine = raw.pop("machine", None)
     forbidden = sorted(key for key in raw if key in _FORBIDDEN_CONFIG_FIELDS)
     if forbidden:
-        raise ValueError(f"Forbidden remote config field(s): {', '.join(forbidden)}")
+        raise ValueError(f"Forbidden remote submission_config field(s): {', '.join(forbidden)}")
 
     nested = raw.pop("overrides", None)
     overrides: dict[str, Any] = {}
     if nested is not None:
         if not isinstance(nested, dict):
-            raise ValueError("config.overrides must be an object when provided.")
+            raise ValueError("submission_config.overrides must be an object when provided.")
         nested_forbidden = sorted(key for key in nested if key in _FORBIDDEN_CONFIG_FIELDS)
         if nested_forbidden:
-            raise ValueError(f"Forbidden remote config override field(s): {', '.join(nested_forbidden)}")
+            raise ValueError(f"Forbidden remote submission_config override field(s): {', '.join(nested_forbidden)}")
         overrides.update(nested)
 
     check_interval = _parse_positive_int(raw.pop("check_interval", 30), field="check_interval")
@@ -534,7 +537,7 @@ def _extract_submission_config(config: dict[str, Any] | None, *, audience: str =
     safe_fields = _WORKER_RESOURCE_OVERRIDE_FIELDS if audience else _SAFE_RESOURCE_OVERRIDE_FIELDS
     for key, value in raw.items():
         if key not in safe_fields:
-            raise ValueError(f"Unsupported remote config field: {key}")
+            raise ValueError(f"Unsupported remote submission_config field: {key}")
         overrides[key] = value
     for key in overrides:
         if key not in safe_fields:
@@ -610,7 +613,9 @@ def _resolve_resources_spec(
     override_key = str(config_overrides.get("_resources_key") or "").strip()
     machine_key = str(config_overrides.get("_machine_key") or "").strip()
     if machine_key and audience:
-        raise PermissionError("config.machine is not available to worker tools; use config.resources resource cards.")
+        raise PermissionError(
+            "submission_config.machine is not available to worker tools; use submission_config.resources resource cards."
+        )
     default_key = str(cfg.resources or "").strip() if cfg is not None else ""
     if cfg is not None and audience and override_key and override_key != default_key:
         raise PermissionError(
@@ -634,10 +639,12 @@ def _resolve_resources_spec(
     elif cfg is None:
         resources_key = _default_custom_boot_resources(audience=audience, registry=registry, register=register)
         if not resources_key:
-            raise ValueError("config.resources is required when using a custom boot_script without a visible default resource card.")
+            raise ValueError(
+                "submission_config.resources is required when using a custom boot_script without a visible default resource card."
+            )
         resource_cfg = dict(register.get_resources(resources_key))
     else:
-        raise ValueError("config.resources is required because this task has no default resource card.")
+        raise ValueError("submission_config.resources is required because this task has no default resource card.")
 
     if machine_key:
         register.get_machine(machine_key)
@@ -867,14 +874,16 @@ def _submit(
         f"{tool_name} completed.\n"
         f"task_name={task_name or 'custom_boot_script'} tasks={len(tasks)} resources={resources_key}\n"
         f"task_state_counts={json.dumps(state_counts, ensure_ascii=False, sort_keys=True)}\n"
-        f"work_dir_rel={data['work_dir_rel']} remote_context_id={data.get('remote_context_id', '')} "
-        f"duration_s={data.get('duration_s', '')}"
+        f"work_dir_rel={data['work_dir_rel']}\n"
+        f"remote_context_id={data.get('remote_context_id', '')} "
+        f"submission_hash={data.get('submission_hash', '')}\n"
+        f"receipt_rel={data.get('receipt_rel', '')} duration_s={data.get('duration_s', '')}"
     )
     return _success(tool_name, content=content, data=data, execution_time=result.duration_s if result else None)
 
 
 def _prepare_common(payload: RemoteSubmissionInput) -> tuple[Path, str, TaskConfig | None, Path | None, str, MachineRegister, int, bool]:
-    config = dict(payload.config or {})
+    config = dict(payload.submission_config or {})
     audience = _current_audience(config)
     cfg, resolved_task_name, boot_script_src = _task_and_script(
         task_name=str(payload.task_name or "").strip(),

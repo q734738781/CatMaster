@@ -171,18 +171,21 @@ For active-path generated artifacts inside the workspace `files/` tree:
 
 ### Multimodal tool-content rules
 
-Active specialist threads use DeepAgents-native multimodal input in the current turn when the model and provider support it. Treat current-turn user attachments and fresh DeepAgents `read_file` results as standard LangChain/DeepAgents content blocks, not as paths-only prompt text.
+Active specialist threads use bounded document ingestion plus DeepAgents-native multimodal input when the model and provider support it. Images remain multimodal content blocks; PDF and modern Office documents are parsed through bounded document paths so raw document bytes do not enter checkpoint history.
 
 Maintenance rules for active-path code:
 
-- User-submitted images, PDFs, documents, audio, and video should be stored as workspace artifacts first, then sent to the first model call as standard content blocks when the configured model capability allows it.
+- User-submitted images, documents, audio, and video should be stored as workspace artifacts first. Images and supported media may be sent to the first model call as standard content blocks when the configured model capability allows it. PDF, DOCX, XLSX, and PPTX should be sent as bounded parsed text; render only selected PDF pages when visual inspection is needed.
 - Persisted WebUI thread messages must keep artifact references, MIME, size, and sent/degraded status. Do not persist raw base64 media payloads in `messages.jsonl` or thread metadata.
-- Fresh `read_file` results for supported non-text files must remain multimodal through the next model call. Do not add middleware that blanket-textualizes `ToolMessage` content immediately after tool execution.
-- Provider-specific compatibility handling belongs at the provider adapter boundary. If an old replayed message is incompatible with a provider wire schema, degrade it there to an explicit path/MIME text reference rather than mutating fresh DeepAgent state.
-- When a later turn needs image, PDF, PPT/PPTX, audio, or video understanding, re-open the stored artifact with `read_file(file_path=...)`. Do not rely on old inline media surviving indefinitely inside replayed history.
+- Fresh `read_file` image results must remain multimodal through the next model call. Do not blanket-textualize image `ToolMessage` content immediately after tool execution.
+- Do not use `read_file` for PDF, DOCX, XLSX, or PPTX. `read_document` returns bounded parsed text directly and must stay below the large-tool-result eviction threshold. Use `pages` for PDF pages and PPTX slides only. Visual PDF analysis should render a bounded page selection to images, then inspect those images.
+- Office content extraction belongs to `python-docx`, `openpyxl`, and `python-pptx`; do not manually unzip OOXML and parse its XML. A ZIP metadata preflight may reject encrypted or oversized containers before those libraries open them.
+- Never implement document overflow handling by writing a `read_file` result to disk and telling the agent to call `read_file` again. That creates a recursive read/offload loop.
+- Replay compatibility handling belongs immediately before the model/provider call. Degrade old inline PDF/Office payloads to explicit path/MIME text references without mutating image results or requiring another file-tool call.
+- When a later turn needs image, audio, or video understanding, re-open the stored artifact with `read_file(file_path=...)`. For PDF/Office documents, use `read_document(file_path=..., pages=...)`; PDF pages may also be rendered selectively. Do not rely on old inline media surviving indefinitely inside replayed history.
 - Prefer attachments, file IDs, file paths, or generated artifact URLs over embedding large base64 blobs in multi-turn history.
 
-This is a replay-safety rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while preserving current-turn and fresh tool-result multimodal context.
+This is a replay-safety rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while preserving current-turn and fresh image/tool-result multimodal context.
 
 ## 4) Research Kernel
 

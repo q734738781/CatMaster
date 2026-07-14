@@ -31,6 +31,10 @@ function threadIsRunning(thread) {
   return ["running", "stopping"].includes(String(thread?.status || "").toLowerCase());
 }
 
+export function isEmergencyStopAttempt(attempt) {
+  return Number(attempt) >= 3;
+}
+
 export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArtifact }) {
   const [messages, setMessages] = useState([]);
   const [artifacts, setArtifacts] = useState([]);
@@ -38,6 +42,16 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const eventSourceRef = useRef(null);
+  const stopAttemptRef = useRef(0);
+  const stopAttemptThreadRef = useRef("");
+
+  useEffect(() => {
+    const threadId = String(thread?.thread_id || "");
+    if (stopAttemptThreadRef.current !== threadId || !threadIsRunning(thread)) {
+      stopAttemptThreadRef.current = threadId;
+      stopAttemptRef.current = 0;
+    }
+  }, [thread?.thread_id, thread?.status]);
 
   const refreshMessages = useCallback(async () => {
     if (!thread?.thread_id) return;
@@ -210,7 +224,13 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
       await submitText(request.text, request.attachments);
     },
     onCancel: async () => {
-      await stop(false);
+      const threadId = String(thread?.thread_id || "");
+      if (stopAttemptThreadRef.current !== threadId) {
+        stopAttemptThreadRef.current = threadId;
+        stopAttemptRef.current = 0;
+      }
+      stopAttemptRef.current += 1;
+      await stop(isEmergencyStopAttempt(stopAttemptRef.current));
     },
     adapters: {
       attachments: attachmentAdapter,

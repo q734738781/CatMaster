@@ -529,7 +529,7 @@ def test_submit_image_attachment_registers_artifact_without_persisting_data_url(
     assert "base64" not in json.dumps(event_data)
 
 
-def test_submit_pdf_attachment_passes_file_block_without_persisting_data_url(tmp_path: Path, monkeypatch) -> None:
+def test_submit_pdf_attachment_passes_bounded_text_without_persisting_data_url(tmp_path: Path, monkeypatch) -> None:
     workspace = _workspace(tmp_path)
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
@@ -545,6 +545,10 @@ def test_submit_pdf_attachment_passes_file_block_without_persisting_data_url(tmp
         return {"status": "done"}
 
     monkeypatch.setattr(server.StreamingSpecialistRunner, "arun_turn", _fake_arun_turn)
+    monkeypatch.setattr(
+        "catmaster.webui.agent_loop.read_document",
+        lambda *_args, **_kwargs: "PDF source: `/attachments/paper.pdf`\n\n--- Page 1 ---\nbounded PDF text",
+    )
     monkeypatch.setattr(
         server,
         "build_specialist_runner",
@@ -576,10 +580,9 @@ def test_submit_pdf_attachment_passes_file_block_without_persisting_data_url(tmp
     content = captured["content"]
     assert isinstance(content, list)
     assert content[0]["type"] == "text"
-    assert content[1]["type"] == "file"
-    assert content[1]["base64"] == pdf_data
-    assert content[1]["mime_type"] == "application/pdf"
-    assert content[1]["filename"] == "paper.pdf"
+    assert content[1]["type"] == "text"
+    assert "bounded PDF text" in content[1]["text"]
+    assert pdf_data not in str(content)
     multimodal_events = [
         event
         for event in ThreadEventBroker(workspace=workspace).replay(thread_id)
@@ -588,8 +591,61 @@ def test_submit_pdf_attachment_passes_file_block_without_persisting_data_url(tmp
     assert multimodal_events
     event_data = multimodal_events[-1].data
     assert event_data["attachments"][0]["sent_to_model"] is True
-    assert event_data["attachments"][0]["sent_as"] == "file"
+    assert event_data["attachments"][0]["sent_as"] == "text_excerpt"
     assert "base64" not in json.dumps(event_data)
+
+
+def test_submit_docx_attachment_passes_parsed_text_instead_of_office_bytes(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path)
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    thread_id = client.post("/api/workspaces/default/threads", json={}).json()["thread"]["thread_id"]
+    captured: dict[str, object] = {}
+
+    async def _fake_arun_turn(self, *, prompt, thread_id, message_id, text_part_id, **_kwargs):
+        captured["content"] = _kwargs.get("content")
+        self.thread_store.add_text_delta(thread_id, message_id, text_part_id, "ok")
+        self.thread_store.update_message(thread_id, message_id, status="completed")
+        self.thread_store.update_thread(thread_id, status="idle", active_message_id="", active_run_id="")
+        return {"status": "done"}
+
+    monkeypatch.setattr(server.StreamingSpecialistRunner, "arun_turn", _fake_arun_turn)
+    monkeypatch.setattr(
+        "catmaster.webui.agent_loop.read_document",
+        lambda *_args, **_kwargs: "DOCX source: `/attachments/report.docx`\n\nParsed Word paragraph",
+    )
+    monkeypatch.setattr(
+        server,
+        "build_specialist_runner",
+        lambda **_kwargs: SimpleNamespace(
+            runner=object(),
+            run_context=SimpleNamespace(run_id="run_fake", run_dir=tmp_path / "run_fake"),
+        ),
+    )
+
+    office_bytes = base64.b64encode(b"PK fake docx bytes").decode("ascii")
+    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    submitted = client.post(
+        f"/api/threads/{thread_id}/submit",
+        json={
+            "text": "inspect this report",
+            "attachments": [
+                {
+                    "type": "file",
+                    "filename": "report.docx",
+                    "mime_type": mime,
+                    "data": f"data:{mime};base64,{office_bytes}",
+                }
+            ],
+        },
+    )
+
+    assert submitted.status_code == 200
+    content = captured["content"]
+    assert isinstance(content, list)
+    assert content[1]["type"] == "text"
+    assert "Parsed Word paragraph" in content[1]["text"]
+    assert office_bytes not in str(content)
 
 
 def test_agent_loop_service_launches_turn_and_queues_steering(tmp_path: Path) -> None:
@@ -1296,6 +1352,59 @@ def test_stream_translator_merges_incremental_tool_call_args(tmp_path: Path) -> 
     completed_events = [event for event in events if event.event == "tool_call.completed"]
     assert delta_events[-1].data["input"] == {"path": "notes/summary.md", "content": "ok"}
     assert completed_events[-1].data["input"] == {"path": "notes/summary.md", "content": "ok"}
+
+
+def test_stream_translator_omits_injected_runtime_from_v3_tool_input(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_injected_runtime",
+    )
+
+    class _RuntimeLike:
+        def __str__(self) -> str:
+            raise AssertionError("Injected ToolRuntime must not be serialized")
+
+    translator.apply_v3_event(
+        {
+            "method": "tools",
+            "params": {
+                "data": {
+                    "event": "tool-started",
+                    "tool_call_id": "tc_runtime",
+                    "tool_name": "read_file",
+                    "input": {
+                        "file_path": "/notes/report.md",
+                        "runtime": _RuntimeLike(),
+                        "config": {"tags": ["internal"]},
+                    },
+                }
+            },
+        }
+    )
+
+    expected = {"file_path": "/notes/report.md"}
+    saved = store.get_message(thread.thread_id, message.id)
+    tool_part = next(part for part in saved.parts if part.type == "tool-call")
+    assert tool_part.meta["input"] == expected
+    started = [event for event in broker.replay(thread.thread_id) if event.event == "tool_call.started"][-1]
+    assert started.data["input"] == expected
 
 
 def test_stream_translator_labels_tool_calls_with_agent_source(tmp_path: Path) -> None:

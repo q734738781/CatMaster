@@ -6,6 +6,7 @@ import importlib
 import json
 
 import pytest
+from langchain_core.messages import ToolMessage
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.runtime.tool_runtime import toolcall_context
@@ -20,6 +21,7 @@ from catmaster.tools.execution.remote_submission import (
 from catmaster.tools.execution.dpdispatcher_runner import DPDispatcherDispatchError
 from catmaster.tools.execution.machine_registry import MachineRegister
 from catmaster.tools.execution.task_registry import TaskRegistry
+from catmaster.tools.registry import ToolRegistry
 
 remote_submission_mod = importlib.import_module("catmaster.tools.execution.remote_submission")
 
@@ -162,7 +164,7 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
                     "work_dir": "stage/mace_sp",
                     "task_name": "mace_sp_dir",
                     "template_overrides": {"model": "medium-mpa-0", "default_dtype": "float32"},
-                    "config": {"check_interval": 7, "clean_remote": True, "cpu_per_node": 8},
+                    "submission_config": {"check_interval": 7, "clean_remote": True, "cpu_per_node": 8},
                 }
     )
 
@@ -181,6 +183,9 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
     assert artifact["data"]["remote_context_id"] == "dp_test"
     assert artifact["data"]["submission_hash"] == "abc123"
     assert artifact["data"]["duration_s"] == 0.1
+    assert "remote_context_id=dp_test" in content
+    assert "submission_hash=abc123" in content
+    assert "receipt_rel=.deepagents/dpdispatcher/receipts/dp_test.json" in content
     assert "duration_s=0.1" in content
     assert "jobs" not in artifact["data"]
 
@@ -325,8 +330,9 @@ def test_remote_submission_template_overrides_render_command(
     assert schema["template_overrides"]["type"] == "object"
     assert "anyOf" not in schema["template_overrides"]
     assert "params" not in schema
-    assert schema["config"]["type"] == "object"
-    assert "anyOf" not in schema["config"]
+    assert schema["submission_config"]["type"] == "object"
+    assert "anyOf" not in schema["submission_config"]
+    assert "config" not in schema
     assert schema["task_name"]["type"] == "string"
     assert "anyOf" not in schema["task_name"]
     assert schema["boot_script"]["type"] == "string"
@@ -350,7 +356,7 @@ def test_remote_submission_template_overrides_render_command(
     assert "--steps 100" in captured["command"]
 
 
-def test_remote_submission_accepts_legacy_null_object_fields() -> None:
+def test_remote_submission_accepts_legacy_config_and_null_object_fields() -> None:
     parsed = RemoteSubmissionInput(
         work_dir="stage",
         task_name="mace_relax_dir",
@@ -362,7 +368,14 @@ def test_remote_submission_accepts_legacy_null_object_fields() -> None:
     assert parsed.task_name == "mace_relax_dir"
     assert parsed.boot_script == ""
     assert parsed.template_overrides == {}
-    assert parsed.config == {}
+    assert parsed.submission_config == {}
+
+    legacy = RemoteSubmissionInput(
+        work_dir="stage",
+        boot_script="run.sh",
+        config={"resources": "general_gpu"},
+    )
+    assert legacy.submission_config == {"resources": "general_gpu"}
 
 
 def test_remote_submission_rejects_unknown_template_override_key(tmp_path: Path) -> None:
@@ -525,7 +538,7 @@ def test_remote_submission_parses_boolean_controls(monkeypatch: pytest.MonkeyPat
                 {
                     "work_dir": "stage",
                     "task_name": "vasp_execute",
-                    "config": {"clean_remote": "false", "check_interval": "9"},
+                    "submission_config": {"clean_remote": "false", "check_interval": "9"},
                 }
             )
 
@@ -566,7 +579,7 @@ def test_custom_boot_script_can_build_resource_from_machine_without_worker_audie
                 {
                     "work_dir": "stage",
                     "boot_script": "run_custom.sh",
-                    "config": {
+                    "submission_config": {
                         "machine": "cpu_server_2",
                         "cpu_per_node": 90,
                         "queue_name": "batch",
@@ -613,7 +626,7 @@ def test_task_submission_can_override_machine_resource_template(
                 {
                     "work_dir": "neb_stage",
                     "task_name": "vasp_execute_neb",
-                    "config": {"machine": "cpu_server_2", "cpu_per_node": 90, "group_size": 5},
+                    "submission_config": {"machine": "cpu_server_2", "cpu_per_node": 90, "group_size": 5},
                 }
             )
 
@@ -635,10 +648,10 @@ def test_worker_submission_rejects_machine_override(tmp_path: Path) -> None:
                     {
                         "work_dir": "stage",
                         "boot_script": "run_custom.sh",
-                        "config": {"machine": "cpu_server_2", "cpu_per_node": 4},
+                        "submission_config": {"machine": "cpu_server_2", "cpu_per_node": 4},
                     }
                 )
-    assert "config.machine is not available to worker tools" in str(excinfo.value)
+    assert "submission_config.machine is not available to worker tools" in str(excinfo.value)
 
 
 def test_worker_registered_task_rejects_resource_card_swap(tmp_path: Path) -> None:
@@ -651,7 +664,7 @@ def test_worker_registered_task_rejects_resource_card_swap(tmp_path: Path) -> No
                     {
                         "work_dir": "stage",
                         "task_name": "vasp_execute",
-                        "config": {"resources": "general_cpu"},
+                        "submission_config": {"resources": "general_cpu"},
                     }
                 )
     assert "task-bound resource card" in str(excinfo.value)
@@ -668,7 +681,7 @@ def test_worker_custom_boot_rejects_domain_resource_card(tmp_path: Path) -> None
                     {
                         "work_dir": "stage",
                         "boot_script": "run_custom.sh",
-                        "config": {"resources": "vasp_cpu"},
+                        "submission_config": {"resources": "vasp_cpu"},
                     }
                 )
     assert "not available for custom boot_script" in str(excinfo.value)
@@ -749,7 +762,7 @@ def test_custom_boot_script_can_select_general_gpu_resource_card(
                 {
                     "work_dir": "stage",
                     "boot_script": "run_custom.py",
-                    "config": {"resources": "general_gpu"},
+                    "submission_config": {"resources": "general_gpu"},
                 }
             )
 
@@ -757,6 +770,66 @@ def test_custom_boot_script_can_select_general_gpu_resource_card(
     assert captured["resources"] == "general_gpu"
     assert captured["resource_cfg"]["gpu_per_node"] == 1
     assert artifact["data"]["resources"] == "general_gpu"
+
+
+def test_langchain_tool_surface_preserves_custom_gpu_submission_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = config_path
+        captured["resources"] = req.resources
+        captured["resource_cfg"] = dict(register.get_resources(req.resources))
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={
+                "remote_context_id": "dp_langchain_general_gpu",
+                "submission_hash": "hash_langchain_general_gpu",
+                "receipt_rel": "receipt.json",
+            },
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+    files_root = tmp_path / "files"
+    (files_root / "stage").mkdir(parents=True)
+    (files_root / "run_custom.py").write_text("print('custom gpu')\n", encoding="utf-8")
+    tool = next(
+        tool
+        for tool in ToolRegistry().as_langchain_tools(
+            allowlist=["remote_submission"],
+            workspace=str(tmp_path),
+            audience="materials_worker",
+        )
+        if tool.name == "remote_submission"
+    )
+
+    properties = tool.args_schema["properties"]
+    assert "submission_config" in properties
+    assert "config" not in properties
+    result = tool.invoke(
+        {
+            "name": "remote_submission",
+            "args": {
+                "work_dir": "stage",
+                "boot_script": "run_custom.py",
+                "submission_config": {"resources": "general_gpu"},
+            },
+            "id": "call_remote_submission_receipt",
+            "type": "tool_call",
+        }
+    )
+
+    assert captured["resources"] == "general_gpu"
+    assert captured["resource_cfg"]["gpu_per_node"] == 1
+    assert isinstance(result, ToolMessage)
+    assert "remote_context_id=dp_langchain_general_gpu" in result.content
+    assert "submission_hash=hash_langchain_general_gpu" in result.content
+    assert "receipt_rel=receipt.json" in result.content
 
 
 def test_remote_submission_rejects_forbidden_resource_override(tmp_path: Path) -> None:
@@ -769,10 +842,10 @@ def test_remote_submission_rejects_forbidden_resource_override(tmp_path: Path) -
                     {
                         "work_dir": "stage",
                         "task_name": "vasp_execute",
-                        "config": {"remote_root": "/tmp/unsafe"},
+                        "submission_config": {"remote_root": "/tmp/unsafe"},
                     }
                 )
-    assert "Forbidden remote config field" in str(excinfo.value)
+    assert "Forbidden remote submission_config field" in str(excinfo.value)
 
 
 def test_remote_submission_rejects_non_positive_check_interval(tmp_path: Path) -> None:
@@ -785,10 +858,10 @@ def test_remote_submission_rejects_non_positive_check_interval(tmp_path: Path) -
                     {
                         "work_dir": "stage",
                         "task_name": "vasp_execute",
-                        "config": {"check_interval": 0},
+                        "submission_config": {"check_interval": 0},
                     }
                 )
-    assert "config.check_interval must be a positive integer" in str(excinfo.value)
+    assert "submission_config.check_interval must be a positive integer" in str(excinfo.value)
 
 
 def test_remote_submission_rejects_cross_audience_task(tmp_path: Path) -> None:

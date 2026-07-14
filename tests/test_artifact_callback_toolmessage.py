@@ -131,7 +131,7 @@ def test_artifact_persistence_non_json_tool_message_is_failed(tmp_path) -> None:
     assert records[0]["status"] == "error"
 
 
-def test_artifact_persistence_tool_start_json_safes_non_serializable_inputs(tmp_path) -> None:
+def test_artifact_persistence_tool_start_omits_injected_runtime(tmp_path) -> None:
     store = ArtifactStore(tmp_path)
     trace = TraceStore(tmp_path)
     handler = ArtifactPersistenceHandler(store, trace, run_id="run_x")
@@ -152,7 +152,7 @@ def test_artifact_persistence_tool_start_json_safes_non_serializable_inputs(tmp_
     assert input_files
     payload = json.loads(input_files[0].read_text(encoding="utf-8"))
     assert payload["raw_params"]["path"] == "x.txt"
-    assert payload["raw_params"]["runtime"] == "<ToolRuntime stub>"
+    assert "runtime" not in payload["raw_params"]
 
 
 def test_ui_event_handler_emits_llm_preview_and_tool_plan() -> None:

@@ -25,6 +25,7 @@ from .schemas import ResearchGoalRecord, SpecialistEntrypoint
 logger = logging.getLogger(__name__)
 
 _APPROVAL_DECISIONS = {"approve", "edit", "reject", "respond"}
+_INJECTED_TOOL_INPUT_KEYS = {"config", "runtime"}
 
 
 def _model_dump(value: Any) -> dict[str, Any]:
@@ -65,6 +66,17 @@ def _json_safe(value: Any, *, max_text: int = 12_000) -> Any:
         return _json_safe(_model_dump(value), max_text=max_text)
     except Exception:
         return str(value)
+
+
+def _agent_tool_input(value: Any) -> Any:
+    """Project a tool event onto arguments that were visible to the model."""
+    if isinstance(value, dict):
+        value = {
+            key: item
+            for key, item in value.items()
+            if str(key) not in _INJECTED_TOOL_INPUT_KEYS
+        }
+    return _json_safe(value)
 
 
 def _message_text(message: Any) -> str:
@@ -416,7 +428,7 @@ class CatMasterStreamTranslator:
             name = str(item.get("name") or item.get("tool") or "").strip()
             args = item.get("args") if "args" in item else item.get("input")
             if name and isinstance(args, dict):
-                self.resume_tool_inputs_by_name.setdefault(name, []).append(_json_safe(args))
+                self.resume_tool_inputs_by_name.setdefault(name, []).append(_agent_tool_input(args))
         self.completed_tool_messages: set[str] = set()
         self.historical_completed_tool_call_ids = self._historical_completed_tool_call_ids()
         self.interrupt_id = ""
@@ -1146,7 +1158,7 @@ class CatMasterStreamTranslator:
     @staticmethod
     def _canonical_tool_input(value: Any) -> str:
         try:
-            return json.dumps(_json_safe(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            return json.dumps(_agent_tool_input(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         except Exception:
             return ""
 
@@ -1177,7 +1189,7 @@ class CatMasterStreamTranslator:
             else:
                 parsed = self.tool_inputs_by_call_id.get(call_id, {})
         else:
-            parsed = _json_safe(value or {})
+            parsed = _agent_tool_input(value or {})
         if parsed == {}:
             observed = self._lookup_observed_tool_input(call_id)
             if observed is not None:
@@ -1186,15 +1198,17 @@ class CatMasterStreamTranslator:
             resumed = self._consume_resume_tool_input(call_id, str(row.get("name") or row.get("tool") or ""))
             if resumed is not None:
                 parsed = resumed
+        parsed = _agent_tool_input(parsed)
         self.tool_inputs_by_call_id[call_id] = parsed
         return parsed
 
     def _best_tool_input(self, call_id: str) -> Any:
         cached = self.tool_inputs_by_call_id.get(call_id)
         if cached not in (None, {}):
-            return cached
+            return _agent_tool_input(cached)
         observed = self._lookup_observed_tool_input(call_id)
         if observed is not None:
+            observed = _agent_tool_input(observed)
             self.tool_inputs_by_call_id[call_id] = observed
             return observed
         return cached or {}

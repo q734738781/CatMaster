@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from catmaster.llm.config import LLMProfile
 from catmaster.runtime import RunControl
+from catmaster.runtime.document_access import MAX_DOCUMENT_TEXT_CHARS, read_document
 from catmaster.runtime.multimodal_blocks import (
     ModelMultimodalCapability,
     PreparedAttachment,
@@ -176,6 +177,32 @@ class ThreadAgentLoopService:
             meta=artifact.model_dump(mode="json"),
         )
 
+    def _document_attachment_block(
+        self,
+        path: Path,
+        *,
+        filename: str,
+        workspace_path: str,
+        warnings: list[str],
+    ) -> dict[str, Any] | None:
+        files_root = (self.workspace / "files").resolve()
+        try:
+            relative = path.resolve().relative_to(files_root)
+        except ValueError:
+            warnings.append("Document attachment is outside the workspace files root")
+            return None
+        virtual_path = "/" + str(relative).replace("\\", "/")
+        extracted = read_document(files_root, file_path=virtual_path)
+        if extracted.startswith("Error reading document:"):
+            warnings.append(extracted)
+            return None
+        return text_attachment_block(
+            extracted,
+            filename=filename,
+            workspace_path=workspace_path,
+            limit=MAX_DOCUMENT_TEXT_CHARS,
+        )
+
     def _store_binary_attachment(
         self,
         *,
@@ -203,13 +230,20 @@ class ThreadAgentLoopService:
         )
         warnings: list[str] = []
         current_turn_block: dict[str, Any] | None = None
-        if not capability.supports_kind(kind):
+        if kind in {"pdf", "document"}:
+            current_turn_block = self._document_attachment_block(
+                target,
+                filename=name,
+                workspace_path=artifact.path,
+                warnings=warnings,
+            )
+        elif not capability.supports_kind(kind):
             warnings.append(f"configured model capability does not enable {kind} blocks")
         elif len(blob) > capability.current_turn_inline_limit_bytes:
             warnings.append(
                 f"attachment exceeds current-turn inline limit ({capability.current_turn_inline_limit_bytes} bytes)"
             )
-        elif kind in {"image", "pdf", "document", "audio", "video"}:
+        elif kind in {"image", "audio", "video"}:
             current_turn_block = file_to_content_block(target, mime_type=mime, kind=kind, filename=name)
         elif kind == "text":
             current_turn_block = text_attachment_block(
@@ -287,13 +321,20 @@ class ThreadAgentLoopService:
             size_bytes = int(row.get("size_bytes") or 0)
             if not path.exists():
                 warnings.append("stored attachment file is missing")
+            elif kind in {"pdf", "document"}:
+                current_turn_block = self._document_attachment_block(
+                    path,
+                    filename=filename,
+                    workspace_path=rel_path,
+                    warnings=warnings,
+                )
             elif not capability.supports_kind(kind):
                 warnings.append(f"configured model capability does not enable {kind} blocks")
             elif size_bytes > capability.current_turn_inline_limit_bytes:
                 warnings.append(
                     f"attachment exceeds current-turn inline limit ({capability.current_turn_inline_limit_bytes} bytes)"
                 )
-            elif kind in {"image", "pdf", "document", "audio", "video"}:
+            elif kind in {"image", "audio", "video"}:
                 current_turn_block = file_to_content_block(path, mime_type=mime, kind=kind, filename=filename)
             elif kind == "text":
                 current_turn_block = text_attachment_block(

@@ -67,7 +67,7 @@ def main() -> None:
             "head": args.head,
             "relax_lattice": args.relax_lattice,
         },
-        "config": {"check_interval": args.check_interval},
+        "submission_config": {"check_interval": args.check_interval},
     }
 
     print("Planned payload (CO MACE batch):")

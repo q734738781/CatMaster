@@ -62,11 +62,11 @@ mace_stage/
 - Multiple same-template independent jobs should be grouped under one parent and submitted with `remote_submission_batch`; this keeps them in one DPDispatcher submission and one result-download lifecycle.
 - Built-in boot scripts are copied automatically from the task catalog.
 - `get_avail_resources` lists general custom-boot resource cards. Use `general_cpu` for custom pure-Python/ASE CPU scripts and `general_gpu` for custom GPU scripts when visible; otherwise rely on the card marked `default_for_custom_boot`.
-- Domain task resource defaults are shown through `get_avail_remote_task(return_resource=true)`. For registered tasks, do not pass `config.resources`; the task resource card owns machine/environment initialization. Override only exposed sizing fields such as `cpu_per_node` or `gpu_per_node` when intentionally requested.
-- For worker tools, do not pass `config.machine`; machine-level selection is a backend/admin detail.
+- Domain task resource defaults are shown through `get_avail_remote_task(return_resource=true)`. For registered tasks, do not pass `submission_config.resources`; the task resource card owns machine/environment initialization. Override only exposed sizing fields such as `cpu_per_node` or `gpu_per_node` when intentionally requested.
+- For worker tools, do not pass `submission_config.machine`; machine-level selection is a backend/admin detail.
 - For batch submission, every first-level child of `work_dir` is submitted as one task; nested discovery is not performed.
 - Use `template_overrides` for registered task command-template values. Only use keys returned by `get_avail_remote_task`; unknown keys fail instead of being ignored. Use this for method-critical defaults such as MACE `head`/`fmax` or UMA `uma_task`/`spin`.
-- Use `config` only for custom-boot resource-card selection, allowed sizing overrides, and submission controls.
+- Use `submission_config` only for custom-boot resource-card selection, allowed sizing overrides, and submission controls.
 - Do not edit copied `task_script/` files or add `sitecustomize.py` to change built-in template defaults. Built-in boot scripts are copied by the submission tool, and template values belong in `template_overrides`.
 
 ## vasp_execute
@@ -143,7 +143,9 @@ stage/
 Common template overrides: `model`, `head`, `dispersion`, `default_dtype`, `device`. Managed GPU MACE tasks default to `device=auto`, which may fall back to CPU; pass `device=cuda` only when CUDA execution is required.
 
 ## mace_relax_dir
-Same layout as `mace_sp_dir`, with relaxation template overrides such as `fmax`, `steps`, and `relax_lattice`. Common overrides also include `device`; managed GPU tasks default to `device=auto`, which prioritizes completion and may fall back to CPU. Pass `device=cuda` only for hard GPU validation.
+Same layout as `mace_sp_dir`, with relaxation template overrides such as `fmax`, `steps`, `relax_lattice`, and `enable_cueq`. Common overrides also include `model`, `head`, `dispersion`, `default_dtype`, and `device`.
+
+`enable_cueq=false` remains the default. When enabling it, also pass `device=cuda`; cuEquivariance is CUDA-only and the runner fails explicitly rather than falling back to CPU. Use the registered override instead of creating a custom boot script.
 
 ## uma_sp_dir
 Stage directory must contain `input/` with structures for FairChem UMA single-point inference. Outputs are written to `output/`.

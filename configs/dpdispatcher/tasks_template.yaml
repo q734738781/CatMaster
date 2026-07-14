@@ -70,7 +70,7 @@ mace_relax_dir:
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_relax_dir"
   resources: mace_gpu
   requires: [mace]
-  command: "python task_script/mace_relax.py --input {input} --output_root {output_root} --fmax {fmax} --steps {steps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype} --device {device}"
+  command: "python task_script/mace_relax.py --input {input} --output_root {output_root} --fmax {fmax} --steps {steps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype} --enable_cueq {enable_cueq} --device {device}"
   defaults:
     input: input
     output_root: output
@@ -81,6 +81,7 @@ mace_relax_dir:
     dispersion: false
     relax_lattice: false
     default_dtype: float64
+    enable_cueq: false
     device: auto
   forward_files:
     - "input"

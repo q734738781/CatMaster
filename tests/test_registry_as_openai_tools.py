@@ -112,6 +112,14 @@ def test_registered_tools_export_valid_openai_tool_shapes() -> None:
         assert tool["parameters"].get("additionalProperties") is False
 
 
+def test_registered_tools_do_not_export_langchain_reserved_argument_names() -> None:
+    registry = ToolRegistry()
+
+    for tool in registry.as_openai_tools():
+        properties = tool["parameters"].get("properties", {})
+        assert not ({"config", "runtime"} & set(properties)), tool["name"]
+
+
 def test_registered_tools_do_not_export_optional_null_schema_markers() -> None:
     registry = ToolRegistry()
 

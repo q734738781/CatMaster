@@ -12,7 +12,12 @@ DEFAULT_TEXT_ATTACHMENT_CHAR_LIMIT = 20_000
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
 AUDIO_SUFFIXES = {".wav", ".mp3", ".aiff", ".aac", ".ogg", ".flac"}
 VIDEO_SUFFIXES = {".mp4", ".mpeg", ".mov", ".avi", ".flv", ".mpg", ".webm", ".wmv", ".3gpp"}
-DOCUMENT_SUFFIXES = {".pdf", ".ppt", ".pptx"}
+DOCUMENT_SUFFIXES = {".docx", ".xlsx", ".pptx"}
+DOCUMENT_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
 TEXT_SUFFIXES = {
     ".csv",
     ".css",
@@ -187,7 +192,7 @@ def infer_attachment_kind(filename: str, mime_type: str = "") -> str:
         return "video"
     if mime.startswith("text/") or suffix in TEXT_SUFFIXES:
         return "text"
-    if suffix in DOCUMENT_SUFFIXES:
+    if mime in DOCUMENT_MIME_TYPES or suffix in DOCUMENT_SUFFIXES:
         return "document"
     return "unsupported"
 
@@ -253,7 +258,10 @@ def attachment_summary_text(user_text: str, attachments: list[PreparedAttachment
         for warning in attachment.warnings:
             rows.append(f"  - warning: {warning}")
     rows.append("")
-    rows.append("For later turns, reopen stored media with `read_file(file_path=...)` before inspecting visual or document content.")
+    rows.append(
+        "For later turns, use `read_document(file_path=..., pages=...)` for stored PDF, DOCX, XLSX, or PPTX files; "
+        "use `read_file(file_path=...)` for stored images and other supported non-document media."
+    )
     return text + "\n" + "\n".join(rows)
 
 

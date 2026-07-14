@@ -46,6 +46,10 @@ def test_attachment_kind_detection_and_file_blocks(tmp_path) -> None:
         "mime_type": "application/pdf",
         "filename": "paper.pdf",
     }
+    assert infer_attachment_kind("report.docx") == "document"
+    assert infer_attachment_kind("results.xlsx") == "document"
+    assert infer_attachment_kind("slides.pptx") == "document"
+    assert infer_attachment_kind("legacy.ppt") == "unsupported"
 
 
 def test_build_turn_content_uses_blocks_but_sidecar_has_no_base64() -> None:

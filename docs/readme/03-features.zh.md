@@ -22,6 +22,8 @@
 
 WebUI 的文件视图可以浏览项目空间里的文件、上传文件、预览文本和下载 workspace zip。
 
+上传的 PDF、DOCX、XLSX 和 PPTX 会先保存为 workspace artifact，再通过有界文档解析器提取文本和表格；agent 不需要也不应手动解压 Office 文件。图片保留为视觉内容，音频和视频按所选模型的多模态能力处理。旧版 `.doc`、`.xls` 和 `.ppt` 二进制格式目前只保存、不解析。
+
 ## 2. 任务模式
 
 ### Experiment

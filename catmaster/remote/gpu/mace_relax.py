@@ -30,6 +30,8 @@ def run_mace(
     dispersion: bool = False,
     relax_lattice: bool = False,
     device: str = "auto",
+    default_dtype: str = "float64",
+    enable_cueq: bool = False,
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
     """
@@ -44,6 +46,8 @@ def run_mace(
         dispersion: Enable D3 dispersion correction in mace_mp.
         relax_lattice: Whether to relax cell vectors together with atomic positions.
         device: Device to use (auto/cpu/cuda)
+        default_dtype: Floating-point precision for the MACE calculator.
+        enable_cueq: Enable cuEquivariance acceleration on CUDA.
         output_root: Directory to write outputs; defaults to the structure file's directory.
     
     Returns:
@@ -59,6 +63,8 @@ def run_mace(
         dispersion=dispersion,
         relax_lattice=relax_lattice,
         device=device,
+        default_dtype=default_dtype,
+        enable_cueq=enable_cueq,
     )
 
 
@@ -110,6 +116,7 @@ def _run_mace_single(
     relax_lattice: bool,
     device: str,
     default_dtype: str,
+    enable_cueq: bool,
     calc=None,
 ) -> Dict[str, object]:
     from ase.io import read, write
@@ -117,18 +124,20 @@ def _run_mace_single(
     from ase.io.trajectory import Trajectory
     from ase.optimize import FIRE
     import numpy as np
-    from mace.calculators import mace_mp
-
     device = _resolve_device(device)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     atoms = read(str(structure_path))
     if calc is None:
-        kwargs = {"model": model, "dispersion": dispersion, "device": device, "default_dtype": default_dtype}
-        if head:
-            kwargs["head"] = head
-        calc = mace_mp(**kwargs)
+        calc, device = _make_calculator(
+            model=model,
+            head=head,
+            dispersion=dispersion,
+            device=device,
+            default_dtype=default_dtype,
+            enable_cueq=enable_cueq,
+        )
     atoms.calc = calc
 
     traj_path = output_dir / "opt.traj"
@@ -163,6 +172,7 @@ def _run_mace_single(
         "head": head,
         "dispersion": dispersion,
         "default_dtype": default_dtype,
+        "enable_cueq": enable_cueq,
         "relax_lattice": relax_lattice,
         "final_energy_eV": final_energy,
         "fmax": fmax,
@@ -191,6 +201,7 @@ def run_mace_path(
     relax_lattice: bool = False,
     device: str = "auto",
     default_dtype: str = "float64",
+    enable_cueq: bool = False,
     output_root: Optional[str] = None,
 ) -> Dict[str, object]:
     """
@@ -215,12 +226,14 @@ def run_mace_path(
     if not structures:
         raise ValueError(f"No structure files found in directory: {input_path}")
     output_root_path.mkdir(parents=True, exist_ok=True)
-    from mace.calculators import mace_mp
-    device = _resolve_device(device)
-    kwargs = {"model": model, "dispersion": dispersion, "device": device, "default_dtype": default_dtype}
-    if head:
-        kwargs["head"] = head
-    calc = mace_mp(**kwargs)
+    calc, device = _make_calculator(
+        model=model,
+        head=head,
+        dispersion=dispersion,
+        device=device,
+        default_dtype=default_dtype,
+        enable_cueq=enable_cueq,
+    )
 
     results = []
     errors = []
@@ -240,6 +253,7 @@ def run_mace_path(
                 relax_lattice=relax_lattice,
                 device=device,
                 default_dtype=default_dtype,
+                enable_cueq=enable_cueq,
                 calc=calc,
             )
             results.append(
@@ -259,6 +273,7 @@ def run_mace_path(
         "head": head,
         "dispersion": dispersion,
         "default_dtype": default_dtype,
+        "enable_cueq": enable_cueq,
         "relax_lattice": relax_lattice,
         "device": device,
         "fmax": fmax,
@@ -274,6 +289,33 @@ def run_mace_path(
         pass
 
     return batch_summary
+
+
+def _make_calculator(
+    *,
+    model: str,
+    head: Optional[str],
+    dispersion: bool,
+    device: str,
+    default_dtype: str,
+    enable_cueq: bool,
+):
+    from mace.calculators import mace_mp
+
+    resolved_device = _resolve_device(device)
+    kwargs = {
+        "model": model,
+        "dispersion": dispersion,
+        "device": resolved_device,
+        "default_dtype": default_dtype,
+    }
+    if head:
+        kwargs["head"] = head
+    if enable_cueq:
+        if not resolved_device.startswith("cuda"):
+            raise ValueError("enable_cueq requires a CUDA device.")
+        kwargs["enable_cueq"] = True
+    return mace_mp(**kwargs), resolved_device
 
 
 def _parse_bool(value: str) -> bool:
@@ -314,6 +356,12 @@ def _cli() -> None:
         choices=("float32", "float64"),
         help="Floating-point precision for the MACE calculator.",
     )
+    parser.add_argument(
+        "--enable_cueq",
+        type=_parse_bool,
+        default=False,
+        help="Enable cuEquivariance acceleration on CUDA (true|false). Default: false.",
+    )
     parser.add_argument("--device", default="auto", help="Device to use: auto|cpu|cuda|cuda:0")
     parser.add_argument("--output_root", required=True, help="Output root directory")
     args = parser.parse_args()
@@ -332,6 +380,7 @@ def _cli() -> None:
         relax_lattice=args.relax_lattice,
         device=args.device,
         default_dtype=args.default_dtype,
+        enable_cueq=args.enable_cueq,
         output_root=args.output_root,
     )
     print(json.dumps(result, indent=2))

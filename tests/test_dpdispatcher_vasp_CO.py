@@ -42,7 +42,7 @@ def main() -> None:
     payload = {
         "work_dir": str(input_root),
         "task_name": "vasp_execute",
-        "config": {"check_interval": args.check_interval},
+        "submission_config": {"check_interval": args.check_interval},
     }
 
     print("Planned payload (CO VASP batch):")

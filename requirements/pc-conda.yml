@@ -68,6 +68,12 @@ dependencies:
       - pypdf==6.14.2
       - tavily-python==0.7.23
 
+      # Bounded Office document ingestion for agent-visible DOCX/XLSX/PPTX reads.
+      - python-docx==1.2.0
+      - openpyxl==3.1.5
+      - python-pptx==1.0.2
+      - defusedxml==0.7.1
+
       # WebUI/API server and schema layer.
       - fastapi==0.139.0
       - uvicorn==0.50.2

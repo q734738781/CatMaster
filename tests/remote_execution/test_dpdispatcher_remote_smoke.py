@@ -185,7 +185,7 @@ def test_agent_tool_mace_sp_remote(tmp_path: Path) -> None:
             "head": os.environ.get("CATMASTER_REMOTE_MACE_HEAD", "omat_pbe"),
             "default_dtype": os.environ.get("CATMASTER_REMOTE_MACE_DTYPE", "float32").strip() or "float32",
         },
-        "config": {"check_interval": _remote_check_interval(30)},
+        "submission_config": {"check_interval": _remote_check_interval(30)},
     }
 
     _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="materials_worker")
@@ -231,7 +231,7 @@ def test_agent_tool_uma_omol_sp_remote(tmp_path: Path) -> None:
             "spin": int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")),
             "device": _uma_device(),
         },
-        "config": {"check_interval": _uma_check_interval()},
+        "submission_config": {"check_interval": _uma_check_interval()},
     }
 
     _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="orca_xtb_worker")
@@ -278,7 +278,7 @@ def test_agent_tool_uma_periodic_sp_remote(tmp_path: Path) -> None:
             "spin": 0,
             "device": _uma_device(),
         },
-        "config": {"check_interval": _uma_check_interval()},
+        "submission_config": {"check_interval": _uma_check_interval()},
     }
 
     _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="materials_worker")
@@ -329,7 +329,7 @@ def test_agent_tool_uma_omol_relax_remote(tmp_path: Path) -> None:
             "optimizer": "FIRE",
             "relax_cell": "false",
         },
-        "config": {"check_interval": _uma_check_interval()},
+        "submission_config": {"check_interval": _uma_check_interval()},
     }
 
     _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="orca_xtb_worker")
@@ -384,7 +384,7 @@ def test_agent_tool_uma_periodic_relax_remote(tmp_path: Path) -> None:
             "optimizer": "FIRE",
             "relax_cell": "false",
         },
-        "config": {"check_interval": _uma_check_interval()},
+        "submission_config": {"check_interval": _uma_check_interval()},
     }
 
     _content, artifact = _invoke_agent_tool(project_space, "remote_submission", payload, audience="materials_worker")
@@ -455,7 +455,7 @@ def test_vasp_prepare_then_remote_submission_o2_sp_remote(tmp_path: Path) -> Non
             {
                 "work_dir": prepared_rel,
                 "task_name": task_name,
-                "config": {"check_interval": _int_env("CATMASTER_REMOTE_VASP_CHECK_INTERVAL", _remote_check_interval(60))},
+                "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_VASP_CHECK_INTERVAL", _remote_check_interval(60))},
             },
             audience="materials_worker",
         )
@@ -496,7 +496,7 @@ def test_cp2k_prepare_then_remote_submission_o2_sp_remote(tmp_path: Path) -> Non
             {
                 "work_dir": stage_rel,
                 "task_name": "cp2k_execute",
-                "config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
+                "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
             },
             audience="materials_worker",
         )
@@ -540,7 +540,7 @@ def test_cp2k_prepare_then_remote_submission_o2_geo_opt_remote(tmp_path: Path) -
             {
                 "work_dir": stage_rel,
                 "task_name": "cp2k_execute",
-                "config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
+                "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
             },
             audience="materials_worker",
         )
@@ -585,7 +585,7 @@ def test_cp2k_aimd_prepare_then_remote_submission_o2_short_nvt_remote(tmp_path: 
             {
                 "work_dir": stage_rel,
                 "task_name": "cp2k_execute",
-                "config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
+                "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_CP2K_CHECK_INTERVAL", _remote_check_interval(60))},
             },
             audience="dynamics_worker",
         )
@@ -636,7 +636,7 @@ def test_lammps_lj_prepare_then_remote_submission_o2_minimize_remote(tmp_path: P
             {
                 "work_dir": stage_rel,
                 "task_name": "lammps_execute",
-                "config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
+                "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
             },
             audience="dynamics_worker",
         )
@@ -695,7 +695,7 @@ def test_lammps_lj_prepare_then_remote_submission_o2_short_nvt_remote(tmp_path: 
             {
                 "work_dir": stage_rel,
                 "task_name": "lammps_execute",
-                "config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
+                "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
             },
             audience="dynamics_worker",
         )

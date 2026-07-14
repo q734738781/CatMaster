@@ -22,6 +22,7 @@ from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
 from catmaster.runtime.artifact_callback import LangChainStepLogger, ObservabilityCallbackHandler, UIEventHandler
 from catmaster.runtime.deepagent_context_refresh import ReloadDeepAgentContextMiddleware
+from catmaster.runtime.document_access import DocumentAccessMiddleware
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.run_control import RunControl
@@ -1609,12 +1610,13 @@ class SpecialistRunner:
         extra: list[Any] | None = None,
     ) -> list[Any]:
         _ = agent_name
+        document_access = DocumentAccessMiddleware(files_root=workspace_root(self.run_context.workspace))
         context_refresh = ReloadDeepAgentContextMiddleware(
             backend=runtime["backend"],
             skills=skills,
             memory=self._memory_sources(),
         )
-        return [*self._build_default_middleware(), context_refresh, *(extra or [])]
+        return [document_access, *self._build_default_middleware(), context_refresh, *(extra or [])]
 
     def _memory_namespace(self) -> tuple[str, ...]:
         project_id = str(self.run_context.project_id or "default").strip() or "default"
@@ -1899,8 +1901,12 @@ class SpecialistRunner:
     @staticmethod
     def _multimodal_policy() -> str:
         return (
-            "Multimodal discipline: current-turn images, PDFs, and other supported attachments may arrive as DeepAgents/LangChain content blocks. "
-            "Inspect stored media with the built-in `read_file(file_path=...)`; for supported non-text files it returns multimodal content blocks to the next model call. "
+            "Multimodal discipline: current-turn images and other supported attachments may arrive as DeepAgents/LangChain content blocks. "
+            "Do not use `read_file` directly on PDF, DOCX, XLSX, or PPTX files. Use `read_document(file_path=..., pages=...)` for bounded document text and table extraction; "
+            "use pages only for PDF pages or PPTX slides, and leave it empty for DOCX/XLSX. "
+            "when visual PDF evidence is required, render only the relevant pages to PNG or JPEG and inspect those image files. "
+            "Never retry `read_file` on a supported document after a document-access warning, and do not manually unzip OOXML files. "
+            "Inspect stored images and other supported non-document media with the built-in `read_file(file_path=...)`. "
             "Use `general-purpose` only when delegation is needed for normal context-isolation reasons, not as a required workaround for multimodal analysis."
         )
 

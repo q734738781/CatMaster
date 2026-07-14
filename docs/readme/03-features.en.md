@@ -22,6 +22,8 @@ One submission is one run. If a task is interrupted or needs more work, select a
 
 The WebUI file view can browse project-space files, upload files, preview text, and download a workspace zip.
 
+Uploaded PDF, DOCX, XLSX, and PPTX files are stored as workspace artifacts, then passed through bounded text/table extraction; the agent does not need to unzip Office files manually. Images remain visual content, while audio and video follow the selected model's multimodal capability. Legacy binary `.doc`, `.xls`, and `.ppt` files are stored but not parsed.
+
 ## 2. Task Lanes
 
 ### Experiment

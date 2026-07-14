@@ -24,7 +24,7 @@ Use this skill to keep MACE inference calculations together when they operate on
 
 ### 1. Choose the MACE task deliberately
 - Use lightweight local filesystem/Python checks for paths and batch shape before launching managed MACE. Submit one intentional managed batch rather than probing remote execution for setup questions local inspection can answer.
-- `mace_relax_dir` needs `input/`; it can toggle `model`, `head`, `dispersion`, `relax_lattice`, and `device` through `template_overrides`.
+- `mace_relax_dir` needs `input/`; it can toggle `model`, `head`, `dispersion`, `default_dtype`, `relax_lattice`, `enable_cueq`, and `device` through `template_overrides`.
 - Do not edit copied `task_script/` files or use `sitecustomize.py` to force MACE arguments. If the task's default `head`/`model`/relax controls are wrong for the request, set them in `template_overrides`; if that cannot express the required run, report the template gap.
 - `mace_sp_dir` is for energy evaluation only and does not relax geometry.
 - `mace_md_dir` uses grouped controls in `params/md_params.json`; keep the model, head, precision, ensemble, thermostat, timestep, temperature, and output intervals explicit.
@@ -32,6 +32,7 @@ Use this skill to keep MACE inference calculations together when they operate on
 - Set `dynamics.seed` when reproducibility matters; the runner records the actual per-structure `rng_seed` and whether the random stream came from that seed or a restart checkpoint.
 - Do not compare relax and SP outputs as if they were the same screening stage.
 - For geometry optimization with `mace_relax_dir`, keep `default_dtype=float64` by default. Only switch to `float32` when the user explicitly wants a cheaper, lower-rigor screening pass and the numerical looseness is acceptable.
+- cuEquivariance is opt-in for relaxation. Set `enable_cueq=true` together with `device=cuda`; do not replace the registered task with a custom boot script to enable it.
 - Managed MACE GPU tasks default to `device="auto"` so small or exploratory jobs can still produce results when the remote CUDA environment is unavailable. After completion, inspect `status.json` or `output/batch_summary.json` and report the actual device used; if it fell back to CPU, call it a performance downgrade. Use `device="cuda"` only when the user explicitly wants GPU validation or a GPU-required production run.
 
 ### 2. Keep connected MACE work together

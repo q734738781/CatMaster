@@ -103,14 +103,13 @@ def _extract_model_name_from_callback(
 
 
 def _compact_tool_params(raw_params: Any, *, max_chars: int = 220) -> tuple[str, Any]:
-    safe_params = _json_safe(raw_params)
-    if isinstance(safe_params, dict):
-        filtered = {
+    if isinstance(raw_params, dict):
+        raw_params = {
             str(key): value
-            for key, value in safe_params.items()
+            for key, value in raw_params.items()
             if str(key) not in {"runtime", "callbacks", "config", "backend", "store", "checkpointer"}
         }
-        safe_params = filtered
+    safe_params = _json_safe(raw_params)
     if isinstance(safe_params, str):
         compact = _snippet(safe_params, max_chars)
         return compact, safe_params
@@ -539,7 +538,7 @@ class ArtifactPersistenceHandler(BaseCallbackHandler):
 
         raw_params: Any
         if inputs is not None:
-            raw_params = _json_safe(inputs)
+            _, raw_params = _compact_tool_params(inputs)
         else:
             try:
                 raw_params = json.loads(input_str)

@@ -83,7 +83,7 @@ def main() -> None:
         vasp_payload = {
             "work_dir": str(vasp_root),
             "task_name": "vasp_execute",
-            "config": {"check_interval": 60},
+            "submission_config": {"check_interval": 60},
         }
         print("\nVASP Batch Payload:")
         pprint(vasp_payload)
@@ -101,7 +101,7 @@ def main() -> None:
                 "head": "omat_pbe",
                 "relax_lattice": args.mace_relax_lattice,
             },
-            "config": {"check_interval": 10},
+            "submission_config": {"check_interval": 10},
         }
         print("\nMACE Batch Payload:")
         pprint(mace_payload)

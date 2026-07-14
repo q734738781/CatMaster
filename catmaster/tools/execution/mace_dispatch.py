@@ -110,6 +110,10 @@ class MaceRelaxBatchInput(BaseModel):
         "float64",
         description="MACE calculator precision.",
     )
+    enable_cueq: bool = Field(
+        False,
+        description="Enable cuEquivariance acceleration. Requires a CUDA device on the managed MACE resource.",
+    )
     relax_lattice: bool = Field(
         False,
         description="Whether to relax lattice/cell together with atomic positions via ASE FrechetCellFilter.",
@@ -490,6 +494,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     head_arg = shlex.quote(head or "")
     dispersion = bool(params.dispersion)
     relax_lattice = bool(params.relax_lattice)
+    enable_cueq = bool(params.enable_cueq)
 
     input_root = resolve_workspace_path(params.input_dir, must_exist=True)
     if not input_root.is_dir():
@@ -566,6 +571,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "head": head_arg,
         "dispersion": "true" if dispersion else "false",
         "default_dtype": params.default_dtype,
+        "enable_cueq": "true" if enable_cueq else "false",
         "relax_lattice": "true" if relax_lattice else "false",
     }
     rendered = render_task_fields(cfg, ctx, stage_root)
@@ -651,6 +657,7 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "head": head,
         "dispersion": dispersion,
         "default_dtype": params.default_dtype,
+        "enable_cueq": enable_cueq,
         "relax_lattice": relax_lattice,
         **compact_list_for_artifact(
             states,

@@ -9,6 +9,14 @@ import { applyThreadEvent } from "./threadEventReducer.js";
 import { artifactForSelection } from "./artifactSelection.js";
 import { todoGroupsFromMessages } from "./todoPanel.js";
 import { normalizeMathMarkdown } from "./markdown.js";
+import { isEmergencyStopAttempt } from "./useCatMasterThreadRuntime.js";
+
+test("the third stop click escalates to an emergency stop", () => {
+  assert.equal(isEmergencyStopAttempt(1), false);
+  assert.equal(isEmergencyStopAttempt(2), false);
+  assert.equal(isEmergencyStopAttempt(3), true);
+  assert.equal(isEmergencyStopAttempt(4), true);
+});
 
 test("catMessageToAssistant converts text, tool, artifact, and interrupt parts", () => {
   const converted = catMessageToAssistant({
