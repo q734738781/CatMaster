@@ -948,6 +948,7 @@ def make_neb_geometry(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "make_neb_geometry completed.",
         f"num_total_images={data['num_total_images']} num_intermediate_images={params.n_images}",
         f"output_dir={data['output_dir']}",
+        f"summary_json_rel={data['summary_json_rel']}",
         f"min_pair_distance_angstrom={geometry_check['min_pair_distance_angstrom']}",
         f"short_distance_count={geometry_check['short_distance_count']}",
     ]

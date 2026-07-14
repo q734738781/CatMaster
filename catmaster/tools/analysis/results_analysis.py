@@ -620,7 +620,8 @@ def analyze_vasp_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, An
         content = (
             "analyze_vasp_neb_results completed.\n"
             f"result_dir_rel={data['result_dir_rel']} ts_image={data['ts_image']} "
-            f"forward_barrier_ev={forward_barrier:.6f} png_rel={data['png_rel']}"
+            f"forward_barrier_ev={forward_barrier:.6f}\n"
+            f"summary_json_rel={data['summary_json_rel']} csv_rel={data['csv_rel']} png_rel={data['png_rel']}"
         )
         return content, {"tool_name": "analyze_vasp_neb_results", "data": data}
     except CatMasterToolExecutionError:
@@ -782,7 +783,8 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         }
         content = (
             "analyze_trajectory completed.\n"
-            f"result_dir_rel={data['result_dir_rel']} nframes={data['nframes']} png_rel={data['png_rel']}"
+            f"result_dir_rel={data['result_dir_rel']} nframes={data['nframes']}\n"
+            f"summary_json_rel={data['summary_json_rel']} csv_rel={data['csv_rel']} png_rel={data['png_rel']}"
         )
         return content, {"tool_name": "analyze_trajectory", "data": data}
     except CatMasterToolExecutionError:

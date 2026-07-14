@@ -7,9 +7,11 @@ This module is intentionally strict:
 - non-conforming returns raise `CatMasterToolExecutionError`
 
 Post-processing responsibilities:
-- model-visible projection of small file-reference fields
 - large-field offload in artifact `data`
 - whole-artifact offload when oversized
+
+Tool-specific model-visible content is owned by each tool and is never inferred
+from artifact field names here.
 """
 
 from dataclasses import dataclass
@@ -27,80 +29,6 @@ from catmaster.runtime.tool_output_config import ToolOutputConfig, get_tool_outp
 
 
 _INPUT_ECHO_KEYS = {"raw_params", "tool_args", "validated_params"}
-_MAX_INLINE_FILE_REFS_PER_LIST = 12
-_FILE_REFERENCE_TOKENS = {
-    "artifact",
-    "artifacts",
-    "bbl",
-    "bib",
-    "csv",
-    "dependencies",
-    "dir",
-    "directory",
-    "file",
-    "files",
-    "image",
-    "images",
-    "incar",
-    "json",
-    "kpoints",
-    "log",
-    "manifest",
-    "metadata",
-    "path",
-    "paths",
-    "pdf",
-    "poscar",
-    "receipt",
-    "ref",
-    "rel",
-    "report",
-    "root",
-    "structure",
-    "summary",
-    "trajectory",
-    "view",
-    "views",
-    "xyz",
-}
-_KNOWN_FILE_NAMES = {
-    "CONTCAR",
-    "INCAR",
-    "KPOINTS",
-    "OUTCAR",
-    "POSCAR",
-    "POTCAR",
-    "vasprun.xml",
-}
-_KNOWN_FILE_SUFFIXES = {
-    ".bib",
-    ".cif",
-    ".csv",
-    ".docx",
-    ".extxyz",
-    ".gif",
-    ".html",
-    ".jpeg",
-    ".jpg",
-    ".json",
-    ".log",
-    ".md",
-    ".nbib",
-    ".pdf",
-    ".png",
-    ".pptx",
-    ".ris",
-    ".tex",
-    ".tif",
-    ".tiff",
-    ".traj",
-    ".vasp",
-    ".xlsx",
-    ".xml",
-    ".xyz",
-    ".yaml",
-    ".yml",
-}
 
 
 def _strip_input_echoes(artifact: dict[str, Any]) -> None:
@@ -142,107 +70,6 @@ def content_to_text(content: Any) -> str:
         return json.dumps(_json_safe(content), ensure_ascii=False)
     except Exception:
         return str(content)
-
-
-def _is_file_reference_key(key: Any) -> bool:
-    tokens = {token for token in re.split(r"[^a-z0-9]+", str(key or "").lower()) if token}
-    return bool(tokens & _FILE_REFERENCE_TOKENS)
-
-
-def _is_explicit_file_reference_key(key: Any) -> bool:
-    normalized = str(key or "").strip().lower()
-    tokens = {token for token in re.split(r"[^a-z0-9]+", normalized) if token}
-    return bool(tokens & {"dir", "directory", "file", "files", "path", "paths", "ref", "rel", "root"})
-
-
-def _looks_like_file_reference(value: Any, *, explicit_key: bool = False) -> bool:
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    if not text or len(text) > 4_096 or "\n" in text or "\r" in text:
-        return False
-    lowered = text.lower()
-    if lowered.startswith(("data:", "http://", "https://")):
-        return False
-    if explicit_key:
-        return True
-    if text in _KNOWN_FILE_NAMES or "/" in text or "\\" in text:
-        return True
-    return Path(text).suffix.lower() in _KNOWN_FILE_SUFFIXES
-
-
-def _file_reference_projection(data: Mapping[str, Any]) -> tuple[list[tuple[str, str]], list[tuple[str, int]]]:
-    refs: list[tuple[str, str]] = []
-    large_lists: list[tuple[str, int]] = []
-
-    def collect(value: Any, *, label: str, inherited_hint: bool = False) -> list[tuple[str, str]]:
-        if isinstance(value, Mapping):
-            found: list[tuple[str, str]] = []
-            for key, child in value.items():
-                child_label = f"{label}.{key}" if label else str(key)
-                key_hint = _is_file_reference_key(key)
-                if isinstance(child, (list, tuple)):
-                    list_refs = collect(child, label=child_label, inherited_hint=key_hint or inherited_hint)
-                    if len(list_refs) > _MAX_INLINE_FILE_REFS_PER_LIST:
-                        large_lists.append((child_label, len(list_refs)))
-                    else:
-                        found.extend(list_refs)
-                    continue
-                found.extend(collect(child, label=child_label, inherited_hint=key_hint or inherited_hint))
-            return found
-        if isinstance(value, (list, tuple)):
-            found: list[tuple[str, str]] = []
-            for index, child in enumerate(value):
-                found.extend(collect(child, label=f"{label}[{index}]", inherited_hint=inherited_hint))
-            return found
-        if _looks_like_file_reference(value, explicit_key=inherited_hint and _is_explicit_file_reference_key(label)):
-            return [(label, str(value).strip())]
-        if inherited_hint and _looks_like_file_reference(value):
-            return [(label, str(value).strip())]
-        return []
-
-    refs.extend(collect(data, label=""))
-    deduped: list[tuple[str, str]] = []
-    seen_values: set[str] = set()
-    for label, value in refs:
-        if value in seen_values:
-            continue
-        seen_values.add(value)
-        deduped.append((label, value))
-    return deduped, large_lists
-
-
-def _append_text_content(content: Any, extra_text: str) -> Any:
-    note = str(extra_text or "").strip()
-    if not note:
-        return content
-    if isinstance(content, str):
-        base = content.rstrip()
-        return f"{base}\n{note}" if base else note
-    if isinstance(content, list):
-        return [*content, {"type": "text", "text": note}]
-    base = content_to_text(content).strip()
-    return f"{base}\n{note}" if base else note
-
-
-def _project_file_references_into_content(content: Any, data: Mapping[str, Any]) -> Any:
-    refs, large_lists = _file_reference_projection(data)
-    existing = content_to_text(content)
-    missing_refs = [(label, value) for label, value in refs if value not in existing]
-    if not missing_refs and not large_lists:
-        return content
-
-    lines: list[str] = []
-    if missing_refs:
-        lines.append("File references:")
-        lines.extend(f"- {label}={value}" for label, value in missing_refs)
-    if large_lists:
-        lines.append("Large file lists omitted from model context:")
-        lines.extend(
-            f"- {label}: {count} file reference(s); inspect the reported manifest or output root if needed."
-            for label, count in large_lists
-        )
-    return _append_text_content(content, "\n".join(lines))
 
 
 def _snippet(text: str, limit: int = 400) -> str:
@@ -368,9 +195,6 @@ def tool_error_to_message(
             "traceback_summary": _snippet(tb_text, 1_200),
         }
     _strip_input_echoes(artifact)
-    data = artifact.get("data")
-    if isinstance(data, Mapping) and data:
-        message = _project_file_references_into_content(message, data)
     return ToolMessage(
         content=message,
         artifact=artifact,
@@ -452,7 +276,6 @@ def adapt_tool_return(
         content = f"{tool_name} completed."
     data = artifact.get("data")
     if isinstance(data, Mapping) and data:
-        content = _project_file_references_into_content(content, data)
         normalized_data, field_refs = _offload_data_fields(
             tool_name=tool_name,
             data=data,

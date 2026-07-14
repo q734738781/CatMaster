@@ -115,8 +115,10 @@ def test_analyze_vasp_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
     with workspace_scope(tmp_path):
         neb_dir = tmp_path / "files" / "neb"
         neb_dir.mkdir(parents=True, exist_ok=True)
-        _, neb_artifact = results_analysis.analyze_vasp_neb_results({"result_dir": "neb"})
+        neb_content, neb_artifact = results_analysis.analyze_vasp_neb_results({"result_dir": "neb"})
         assert neb_artifact["data"]["ts_image"] == 1
+        for key in ("summary_json_rel", "csv_rel", "png_rel"):
+            assert neb_artifact["data"][key] in neb_content
 
         traj_dir = tmp_path / "files" / "md"
         traj_dir.mkdir(parents=True, exist_ok=True)
@@ -129,7 +131,7 @@ def test_analyze_vasp_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
             " 1 T= 300.0 E0= -10.0 F= -10.1\n 2 T= 305.0 E0= -9.9 F= -10.0\n",
             encoding="utf-8",
         )
-        _, traj_artifact = results_analysis.analyze_trajectory(
+        traj_content, traj_artifact = results_analysis.analyze_trajectory(
             {"path": "md", "timestep_fs": 2.0, "species": "Li", "diffusion_dimension": "xy"}
         )
         assert traj_artifact["data"]["nframes"] == 4
@@ -137,6 +139,8 @@ def test_analyze_vasp_neb_and_trajectory(tmp_path: Path, monkeypatch) -> None:
         assert traj_summary["rdf_species"] == "Li"
         assert traj_summary["diffusion_dimension"] == "xy"
         assert traj_summary["coordinate_mode"] == "unwrapped_cartesian"
+        for key in ("summary_json_rel", "csv_rel", "png_rel"):
+            assert traj_artifact["data"][key] in traj_content
 
 
 def test_analyze_trajectory_keeps_unwrapped_ase_traj_positions_for_msd(tmp_path: Path) -> None:
@@ -180,7 +184,7 @@ def test_build_dataset_from_runs_and_calculate_al_candidates(monkeypatch, tmp_pa
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "vasprun.xml").write_text("<xml />", encoding="utf-8")
 
-        _, artifact = build_dataset_from_runs(
+        dataset_content, artifact = build_dataset_from_runs(
             {
                 "result_root": "runs",
                 "output_dir": "dataset",
@@ -195,12 +199,14 @@ def test_build_dataset_from_runs_and_calculate_al_candidates(monkeypatch, tmp_pa
         assert dataset_frames[0].info["head"] == "omat_pbe"
         assert dataset_frames[0].info["config_type"] == "dft"
         assert dataset_frames[0].info["step_electronic_converged_guess"] is True
+        for key in ("summary_json_rel", "dataset_rel", "train_rel", "valid_rel", "test_rel"):
+            assert data[key] in dataset_content
 
         candidates_dir = tmp_path / "files" / "candidates"
         for idx, shift in enumerate([0.0, 0.1, 0.2]):
             atoms = Structure(Lattice.cubic(3.0 + shift), ["Li"], [[0.0, 0.0, 0.0]])
             _write_poscar(candidates_dir / f"cand_{idx}.vasp", atoms)
-        _, al_artifact = calculate_al_candidates(
+        al_content, al_artifact = calculate_al_candidates(
             {
                 "structure_dir": "candidates",
                 "output_dir": "al_out",
@@ -208,6 +214,8 @@ def test_build_dataset_from_runs_and_calculate_al_candidates(monkeypatch, tmp_pa
             }
         )
         assert al_artifact["data"]["selected_count"] == 2
+        assert al_artifact["data"]["summary_json_rel"] in al_content
+        assert al_artifact["data"]["csv_rel"] in al_content
         assert dataset_dir.joinpath("dataset.extxyz").is_file()
 
 

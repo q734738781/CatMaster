@@ -41,6 +41,7 @@ def test_mp_download_structure_partial_failure_is_success(monkeypatch: pytest.Mo
         )
 
     assert "mp_download_structure completed" in str(content)
+    assert "retrieval/mp/mp-good.vasp" in str(content)
     assert artifact.get("warnings")
     data = (artifact or {}).get("data", {})
     assert len(data.get("results", [])) == 1

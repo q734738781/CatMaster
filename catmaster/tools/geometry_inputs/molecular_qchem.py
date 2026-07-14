@@ -260,7 +260,7 @@ def enumerate_molecular_conformers(payload: dict[str, Any]) -> tuple[str, dict[s
     content = (
         "enumerate_molecular_conformers completed.\n"
         f"count={len(records)} output_dir_rel={data['output_dir_rel']}\n"
-        f"summary_json_rel={data['summary_json_rel']}"
+        f"summary_json_rel={data['summary_json_rel']} summary_csv_rel={data['summary_csv_rel']}"
     )
     return content, {"tool_name": "enumerate_molecular_conformers", "data": data}
 
@@ -391,7 +391,7 @@ def filter_conformer_ensemble(payload: dict[str, Any]) -> tuple[str, dict[str, A
     content = (
         "filter_conformer_ensemble completed.\n"
         f"count={len(kept)} output_dir_rel={data['output_dir_rel']}\n"
-        f"summary_json_rel={data['summary_json_rel']}"
+        f"summary_json_rel={data['summary_json_rel']} summary_csv_rel={data['summary_csv_rel']}"
     )
     return content, {"tool_name": "filter_conformer_ensemble", "data": data}
 
@@ -503,7 +503,7 @@ def extract_optimized_molecules(payload: dict[str, Any]) -> tuple[str, dict[str,
     content = (
         "extract_optimized_molecules completed.\n"
         f"count={len(records)} output_dir_rel={data['output_dir_rel']}\n"
-        f"summary_json_rel={data['summary_json_rel']}"
+        f"summary_json_rel={data['summary_json_rel']} summary_csv_rel={data['summary_csv_rel']}"
     )
     return content, {"tool_name": "extract_optimized_molecules", "data": data}
 

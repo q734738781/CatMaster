@@ -270,7 +270,7 @@ def test_make_neb_geometry_writes_flat_vasp_image_tree(tmp_path: Path) -> None:
         _write_poscar(tmp_path / "files" / "inputs" / "IS.vasp", 0.0)
         _write_poscar(tmp_path / "files" / "inputs" / "FS.vasp", 0.2)
 
-        _content, artifact = make_neb_geometry(
+        content, artifact = make_neb_geometry(
             {
                 "initial_path": "inputs/IS.vasp",
                 "final_path": "inputs/FS.vasp",
@@ -284,6 +284,7 @@ def test_make_neb_geometry_writes_flat_vasp_image_tree(tmp_path: Path) -> None:
     assert data["num_total_images"] == 5
     assert data["image_files"][0] == "neb_images/00.vasp"
     assert data["image_files"][-1] == "neb_images/04.vasp"
+    assert data["summary_json_rel"] in content
     for idx in range(5):
         assert (output_root / f"{idx:02d}.vasp").is_file()
 

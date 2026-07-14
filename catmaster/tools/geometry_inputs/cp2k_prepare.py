@@ -136,7 +136,8 @@ def cp2k_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         }
         content = (
             "cp2k_prepare completed.\n"
-            f"recipe={params.recipe} prepared_count=1 output_root_rel={data['output_root_rel']}"
+            f"recipe={params.recipe} prepared_count=1 output_root_rel={data['output_root_rel']}\n"
+            f"manifest_rel={data['manifest_rel']}"
         )
         return content, {"tool_name": tool_name, "data": data}
 
@@ -173,7 +174,8 @@ def cp2k_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     }
     content = (
         "cp2k_prepare completed.\n"
-        f"recipe={params.recipe} prepared_count={len(records)} output_root_rel={data['output_root_rel']}"
+        f"recipe={params.recipe} prepared_count={len(records)} output_root_rel={data['output_root_rel']}\n"
+        f"manifest_rel={data['manifest_rel']}"
     )
     return content, {"tool_name": tool_name, "data": data}
 

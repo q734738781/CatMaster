@@ -562,7 +562,8 @@ def lammps_prepare(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     }
     content = (
         "lammps_prepare completed.\n"
-        f"recipe={params.recipe} prepared_count={len(records)} output_root_rel={data['output_root_rel']}"
+        f"recipe={params.recipe} prepared_count={len(records)} output_root_rel={data['output_root_rel']}\n"
+        f"manifest_rel={data['manifest_rel']}"
     )
     return content, {"tool_name": tool_name, "data": data}
 
@@ -934,6 +935,8 @@ def md_trajectory_summary(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
         "md_trajectory_summary completed.\n"
         f"trajectory_rel={data['trajectory_rel']} nframes={nframes} summary_json_rel={data['summary_json_rel']}"
     )
+    if final_frame_rel:
+        content += f"\nfinal_frame_rel={final_frame_rel}"
     return content, {"tool_name": tool_name, "data": data}
 
 

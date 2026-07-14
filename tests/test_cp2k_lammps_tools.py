@@ -46,6 +46,7 @@ def test_cp2k_prepare_writes_conventional_dft_stage(tmp_path: Path) -> None:
             }
         )
         assert "cp2k_prepare completed" in content
+        assert artifact["data"]["manifest_rel"] in content
         stage = files_root / artifact["data"]["records"][0]["stage_dir_rel"]
         inp = (stage / "job.inp").read_text(encoding="utf-8")
         manifest = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
@@ -124,7 +125,7 @@ def test_cp2k_aimd_prepare_writes_md_stage(tmp_path: Path) -> None:
     with workspace_scope(project):
         files_root = project / "files"
         _write_o2(files_root)
-        _, artifact = cp2k_aimd_prepare(
+        content, artifact = cp2k_aimd_prepare(
             {
                 "input_path": "structures/O2.xyz",
                 "output_root": "calculations/cp2k/o2_md",
@@ -143,6 +144,7 @@ def test_cp2k_aimd_prepare_writes_md_stage(tmp_path: Path) -> None:
         )
         stage = files_root / artifact["data"]["records"][0]["stage_dir_rel"]
         inp = (stage / "job.inp").read_text(encoding="utf-8")
+        assert artifact["data"]["manifest_rel"] in content
 
     assert "RUN_TYPE MD" in inp
     assert "ENSEMBLE NVT" in inp
@@ -211,7 +213,7 @@ def test_lammps_forcefield_validate_and_prepare_minimize(tmp_path: Path) -> None
                 }
             }
         )
-        _, prep_artifact = lammps_prepare(
+        prep_content, prep_artifact = lammps_prepare(
             {
                 "input_path": "structures/O2.xyz",
                 "output_root": "calculations/lammps/o2_min",
@@ -223,6 +225,7 @@ def test_lammps_forcefield_validate_and_prepare_minimize(tmp_path: Path) -> None
         script = (stage / "in.lammps").read_text(encoding="utf-8")
         data = (stage / "system.data").read_text(encoding="utf-8")
         manifest = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
+        assert prep_artifact["data"]["manifest_rel"] in prep_content
 
     assert "pair_style lj/cut 8.5" in script
     assert "minimize 1e-06 1e-08 1000 10000" in script
@@ -319,7 +322,7 @@ def test_lammps_log_and_trajectory_summaries(tmp_path: Path) -> None:
             encoding="utf-8",
         )
         _, log_artifact = lammps_log_summary({"result_root": "results/lammps_case"})
-        _, traj_artifact = md_trajectory_summary({"path": "results/lammps_case"})
+        traj_content, traj_artifact = md_trajectory_summary({"path": "results/lammps_case"})
         log_payload = json.loads((files_root / log_artifact["data"]["summary_json_rel"]).read_text(encoding="utf-8"))
         traj_payload = json.loads((files_root / traj_artifact["data"]["summary_json_rel"]).read_text(encoding="utf-8"))
 
@@ -331,6 +334,7 @@ def test_lammps_log_and_trajectory_summaries(tmp_path: Path) -> None:
     assert traj_payload["nframes"] == 2
     assert traj_payload["natoms"] == 2
     assert traj_payload["final_frame_rel"].endswith("final_frame.lammpstrj")
+    assert traj_payload["final_frame_rel"] in traj_content
 
 
 def test_cp2k_lammps_remote_task_visibility_by_worker() -> None:

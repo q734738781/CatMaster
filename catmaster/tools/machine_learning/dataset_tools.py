@@ -435,7 +435,9 @@ def build_dataset_from_runs(payload: Dict[str, Any]) -> tuple[str, dict[str, Any
         content = (
             "build_dataset_from_runs completed.\n"
             f"result_root_rel={data['result_root_rel']} frames_written={data['frames_written']} "
-            f"summary_json_rel={data['summary_json_rel']}"
+            f"summary_json_rel={data['summary_json_rel']}\n"
+            f"dataset_rel={data['dataset_rel']} train_rel={data['train_rel']} "
+            f"valid_rel={data['valid_rel']} test_rel={data['test_rel']}"
         )
         return content, {"tool_name": "build_dataset_from_runs", "data": data}
     except CatMasterToolExecutionError:

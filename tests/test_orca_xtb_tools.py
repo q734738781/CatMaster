@@ -179,12 +179,14 @@ def test_analyze_xtb_results_parses_summary(tmp_path: Path) -> None:
             encoding="utf-8",
         )
         (run_dir / "g98.out").write_text("  1  -123.45 cm-1\n  2  345.67 cm-1\n", encoding="utf-8")
-        _, artifact = analyze_xtb_results({"result_root": "results/xtb_case"})
+        content, artifact = analyze_xtb_results({"result_root": "results/xtb_case"})
         summary_path = files_root / artifact["data"]["summary_json_rel"]
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
         assert payload["records"][0]["state"] == "completed"
         assert payload["records"][0]["energy_hartree"] == -5.4321
         assert payload["records"][0]["imaginary_frequency_count"] == 1
+        assert artifact["data"]["summary_json_rel"] in content
+        assert artifact["data"]["summary_csv_rel"] in content
 
 
 def test_analyze_orca_results_parses_output(tmp_path: Path) -> None:
@@ -214,12 +216,14 @@ def test_analyze_orca_results_parses_output(tmp_path: Path) -> None:
             "3\norca\nO 0.0 0.0 0.0\nH 0.7 0.0 0.5\nH -0.7 0.0 0.5\n",
             encoding="utf-8",
         )
-        _, artifact = analyze_orca_results({"result_root": "results/orca_case"})
+        content, artifact = analyze_orca_results({"result_root": "results/orca_case"})
         summary_path = files_root / artifact["data"]["summary_json_rel"]
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
         assert payload["records"][0]["state"] == "completed"
         assert payload["records"][0]["final_energy_hartree"] == -76.123456789
         assert payload["records"][0]["imaginary_frequency_count"] == 1
+        assert artifact["data"]["summary_json_rel"] in content
+        assert artifact["data"]["summary_csv_rel"] in content
 
 
 def test_xtb_run_batch_collects_outputs_with_mock_dispatch(tmp_path: Path, monkeypatch) -> None:

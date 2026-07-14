@@ -41,7 +41,7 @@ def test_enumerate_unique_sites_and_vacancy_generation(tmp_path: Path) -> None:
         payload = json.loads(output_json.read_text(encoding="utf-8"))
         assert {group["species"] for group in payload["groups"]} == {"Na", "Cl"}
 
-        _, vac_artifact = create_vacancy(
+        vac_content, vac_artifact = create_vacancy(
             {
                 "structure_file": "inputs/nacl.vasp",
                 "mode": "one_per_group",
@@ -51,6 +51,7 @@ def test_enumerate_unique_sites_and_vacancy_generation(tmp_path: Path) -> None:
         assert vac_data["structures_generated"] == 2
         batch = json.loads((tmp_path / "files" / vac_data["batch_json_rel"]).read_text(encoding="utf-8"))
         assert len(batch["results"]) == 2
+        assert vac_data["batch_json_rel"] in vac_content
 
 
 def test_substitute_insert_strain_kpath_and_phonon_tools(tmp_path: Path) -> None:
@@ -74,7 +75,7 @@ def test_substitute_insert_strain_kpath_and_phonon_tools(tmp_path: Path) -> None
         substituted = Structure.from_file(tmp_path / "files" / "outputs" / "li_to_na.vasp")
         assert substituted[0].species_string == "Na"
 
-        _, insert_artifact = insert_interstitial_at_coords(
+        insert_content, insert_artifact = insert_interstitial_at_coords(
             {
                 "structure_file": "inputs/li.vasp",
                 "species": "H",
@@ -82,8 +83,9 @@ def test_substitute_insert_strain_kpath_and_phonon_tools(tmp_path: Path) -> None
             }
         )
         assert insert_artifact["data"]["structures_generated"] == 2
+        assert insert_artifact["data"]["batch_json_rel"] in insert_content
 
-        _, strain_artifact = generate_strained_structures(
+        strain_content, strain_artifact = generate_strained_structures(
             {
                 "structure_file": "inputs/li.vasp",
                 "output_dir": "outputs/strains",
@@ -92,6 +94,7 @@ def test_substitute_insert_strain_kpath_and_phonon_tools(tmp_path: Path) -> None
             }
         )
         assert strain_artifact["data"]["structures_generated"] == 4
+        assert strain_artifact["data"]["batch_json_rel"] in strain_content
 
         generate_kpath(
             {
@@ -102,7 +105,7 @@ def test_substitute_insert_strain_kpath_and_phonon_tools(tmp_path: Path) -> None
         kpoints = Kpoints.from_file(tmp_path / "files" / "outputs" / "KPOINTS")
         assert kpoints.style == Kpoints.supported_modes.Line_mode
 
-        _, phonon_artifact = generate_phonon_displacements(
+        phonon_content, phonon_artifact = generate_phonon_displacements(
             {
                 "structure_file": "inputs/li.vasp",
                 "output_dir": "outputs/phonons",
@@ -111,6 +114,7 @@ def test_substitute_insert_strain_kpath_and_phonon_tools(tmp_path: Path) -> None
             }
         )
         assert phonon_artifact["data"]["structures_generated"] >= 1
+        assert phonon_artifact["data"]["metadata_rel"] in phonon_content
 
 
 def test_vasp_band_prepare_preserves_line_mode_kpoints_and_chgcar(tmp_path: Path) -> None:

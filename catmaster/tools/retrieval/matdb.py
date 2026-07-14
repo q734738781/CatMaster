@@ -421,8 +421,10 @@ def mp_download_structure(payload: Dict[str, object]) -> tuple[str, dict[str, An
         )
 
     downloaded_ids_all = [str(item.get("mp_id") or "") for item in results if isinstance(item, dict)]
+    downloaded_paths_all = [str(item.get("structure_rel") or "") for item in results if isinstance(item, dict)]
     failed_ids_all = [str(item.get("mp_id") or "") for item in errors if isinstance(item, dict)]
     downloaded_ids = downloaded_ids_all[:3]
+    downloaded_paths = downloaded_paths_all[:3]
     failed_ids = failed_ids_all[:3]
 
     content = (
@@ -430,6 +432,7 @@ def mp_download_structure(payload: Dict[str, object]) -> tuple[str, dict[str, An
         f"requested={data['requested']} downloaded={data['downloaded']} errors={len(errors)}\n"
         f"output_dir_rel={data['output_dir_rel']}\n"
         f"downloaded_examples={downloaded_ids}\n"
+        f"downloaded_path_examples={downloaded_paths}\n"
         f"failed_examples={failed_ids}"
     )
     if summary_rel:

@@ -735,6 +735,7 @@ def vasp_dimer_prepare(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         f"poscar_rel={data['poscar_rel']}",
         f"raw_mode_rel={data['raw_mode_rel']}",
         f"mass_normalized_mode_rel={data['mass_normalized_mode_rel']}",
+        f"summary_rel={data['summary_rel']}",
     ]
     return _success(tool_name, content="\n".join(lines), data=data)
 
@@ -833,6 +834,7 @@ def make_dimer_mode_from_neb(payload: Dict[str, Any]) -> tuple[str, dict[str, An
         f"ts_image_index={ts_image_index}",
         f"raw_mode_rel={data['raw_mode_rel']}",
         f"mass_normalized_mode_rel={data['mass_normalized_mode_rel']}",
+        f"summary_rel={data['summary_rel']}",
     ]
     return _success(tool_name, content="\n".join(lines), data=data)
 
@@ -942,6 +944,7 @@ def make_dimer_mode_from_mace(payload: Dict[str, Any]) -> tuple[str, dict[str, A
         f"selected_mode_index={selected_index} selected_frequency_cm1={data['selected_frequency_cm1']:.6f}",
         f"raw_mode_rel={data['raw_mode_rel']}",
         f"mass_normalized_mode_rel={data['mass_normalized_mode_rel']}",
+        f"summary_rel={data['summary_rel']}",
     ]
     return _success(tool_name, content="\n".join(lines), data=data, warnings=warnings)
 

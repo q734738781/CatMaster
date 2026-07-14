@@ -841,7 +841,7 @@ def calculate_al_candidates(payload: Dict[str, Any]) -> tuple[str, dict[str, Any
         content = (
             "calculate_al_candidates completed.\n"
             f"output_dir_rel={data['output_dir_rel']} selected_count={data['selected_count']} "
-            f"summary_json_rel={data['summary_json_rel']}"
+            f"summary_json_rel={data['summary_json_rel']} csv_rel={data['csv_rel']}"
         )
         return content, {"tool_name": "calculate_al_candidates", "data": data}
     except CatMasterToolExecutionError:

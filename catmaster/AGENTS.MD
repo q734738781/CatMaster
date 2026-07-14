@@ -300,6 +300,11 @@ Tool functions should:
 - validate inputs with a Pydantic model
 - return LangChain-native `(content, artifact)`
 - raise `CatMasterToolExecutionError` for business failures with a model-visible `public_message`
+- construct `content` explicitly inside each tool as the model-visible operational result; include status, counts, recovery handles, and the small set of newly generated files needed for the next step
+- match `content` to the tool's actual semantics: query, browser, catalog, and numeric-result tools must not synthesize file paths merely to satisfy a common shape
+- keep full structured payloads and large file inventories in `artifact`; for a large file list, expose only its count plus an explicit manifest or output-root path in `content`
+- never infer model-visible content by scanning arbitrary `artifact` or MCP `structuredContent` field names; heterogeneous tools own their own return semantics, and input paths already present in the tool call should not be echoed automatically
+- never assume a LangChain/MCP `artifact` or `structuredContent` field is visible to the model; test each tool's final `ToolMessage.content` when an output path or recovery handle is operationally required
 - keep both the registered input-model docstring and the tool function docstring tagged on the first line with a short `[scope/stage]` label
 - use short, stable labels such as `[structure/discovery]`, `[bulk/modeling]`, `[defect/modeling]`, `[electronic/prepare]`, `[phonon/modeling]`, `[vasp/prepare]`, `[vasp/analysis]`, `[md/analysis]`, `[mace/execute]`, `[ml/prepare]`, `[ml/analysis]`, `[structure/viz]`, `[thermo/gas]`, or `[literature/metadata]`
 

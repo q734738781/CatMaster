@@ -333,6 +333,17 @@ def compile_text(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             f"Compiled cleanly: {'yes' if compiled_ok else 'no'}",
             f"Separate bibliography files: {len(bib_paths)}",
         ]
+        if pdf_path.exists():
+            content_lines.append(f"pdf_path={workspace_relpath(pdf_path)}")
+        if log_path.exists():
+            content_lines.append(f"log_path={workspace_relpath(log_path)}")
+        if bbl_path.exists():
+            content_lines.append(f"bbl_path={workspace_relpath(bbl_path)}")
+        if bib_paths:
+            if len(bib_paths) <= 12:
+                content_lines.append(f"bib_paths={json.dumps(bib_paths, ensure_ascii=False)}")
+            else:
+                content_lines.append(f"bib_paths_count={len(bib_paths)}; inspect the source directory")
         if final_diagnostics:
             content_lines.append("Diagnostics summary:")
             content_lines.extend(f"- {item}" for item in final_diagnostics[:8])

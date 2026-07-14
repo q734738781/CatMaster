@@ -85,6 +85,13 @@ def test_compile_text_runs_bibtex_and_reports_artifacts(monkeypatch, tmp_path: P
     assert artifact["data"]["bib_paths"] == ["manuscript/references.bib"]
     assert artifact["data"]["bbl_path"] == "manuscript/MANUSCRIPT.bbl"
     assert artifact["data"]["log_path"] == "manuscript/MANUSCRIPT.log"
+    for expected in (
+        "pdf_path=manuscript/MANUSCRIPT.pdf",
+        "log_path=manuscript/MANUSCRIPT.log",
+        "bbl_path=manuscript/MANUSCRIPT.bbl",
+        "manuscript/references.bib",
+    ):
+        assert expected in content
     assert commands[:4] == [
         ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "MANUSCRIPT.tex"],
         ["bibtex", "MANUSCRIPT"],

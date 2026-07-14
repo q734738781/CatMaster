@@ -52,7 +52,7 @@ def test_vasp_dimer_prepare_appends_mass_normalized_vectors(tmp_path: Path) -> N
         _write_structure(files_root / "ts_guess.vasp", atoms)
         (files_root / "mode.txt").write_text("1.0 0.0 0.0\n1.0 0.0 0.0\n", encoding="utf-8")
 
-        _content, artifact = vasp_dimer_prepare(
+        content, artifact = vasp_dimer_prepare(
             {
                 "input_path": "ts_guess.vasp",
                 "output_root": "dimer_job",
@@ -72,6 +72,7 @@ def test_vasp_dimer_prepare_appends_mass_normalized_vectors(tmp_path: Path) -> N
     assert data["ibrion"] == 44
     assert Path(tmp_path / "files" / data["raw_mode_rel"]).is_file()
     assert Path(tmp_path / "files" / data["mass_normalized_mode_rel"]).is_file()
+    assert data["summary_rel"] in content
     assert np.allclose(appended, expected, atol=1e-8)
 
 
@@ -83,7 +84,7 @@ def test_make_dimer_mode_from_neb_uses_adjacent_images(tmp_path: Path) -> None:
             atoms = Atoms("H", positions=[[x, 0.0, 0.0]], cell=[10, 10, 10], pbc=[False, False, False])
             _write_structure(images_root / f"{idx:02d}.vasp", atoms)
 
-        _content, artifact = make_dimer_mode_from_neb(
+        content, artifact = make_dimer_mode_from_neb(
             {
                 "images_root": "neb_images",
                 "output_root": "neb_mode",
@@ -99,6 +100,7 @@ def test_make_dimer_mode_from_neb_uses_adjacent_images(tmp_path: Path) -> None:
     assert np.allclose(raw, [[2.0, 0.0, 0.0]])
     assert np.allclose(normalized, [[1.0, 0.0, 0.0]])
     assert summary["neighbor_indices"] == [1, 3]
+    assert data["summary_rel"] in content
 
 
 def test_make_dimer_mode_from_mace_selects_most_imaginary_mode(
@@ -126,7 +128,7 @@ def test_make_dimer_mode_from_mace_selects_most_imaginary_mode(
         atoms = Atoms("HH", positions=[[0, 0, 0], [0.8, 0, 0]], cell=[8, 8, 8], pbc=[False, False, False])
         _write_structure(files_root / "ts_guess.vasp", atoms)
 
-        _content, artifact = make_dimer_mode_from_mace(
+        content, artifact = make_dimer_mode_from_mace(
             {
                 "input_path": "ts_guess.vasp",
                 "output_root": "mace_mode",
@@ -141,6 +143,7 @@ def test_make_dimer_mode_from_mace_selects_most_imaginary_mode(
     assert data["imaginary_mode_count"] == 2
     assert np.allclose(raw[0], [2.0, 0.0, 0.0])
     assert summary["selected_frequency_cm1"] == pytest.approx(-120.0)
+    assert data["summary_rel"] in content
 
 
 def test_mace_analyze_frequencies_exports_all_modes(

@@ -712,7 +712,8 @@ def create_vacancy(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         content = (
             "create_vacancy completed.\n"
             f"input_rel={data['input_rel']} structures_generated={data['structures_generated']} "
-            f"output_dir_rel={data['output_dir_rel']}"
+            f"output_dir_rel={data['output_dir_rel']}\n"
+            f"batch_json_rel={data['batch_json_rel']}"
         )
         return content, {"tool_name": "create_vacancy", "data": data}
     except CatMasterToolExecutionError:
@@ -814,7 +815,8 @@ def substitute_species(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         content = (
             "substitute_species completed.\n"
             f"input_rel={data['input_rel']} structures_generated={data['structures_generated']} "
-            f"output_dir_rel={data['output_dir_rel']}"
+            f"output_dir_rel={data['output_dir_rel']}\n"
+            f"batch_json_rel={data['batch_json_rel']}"
         )
         return content, {"tool_name": "substitute_species", "data": data}
     except CatMasterToolExecutionError:
@@ -892,7 +894,8 @@ def insert_interstitial_at_coords(payload: Dict[str, Any]) -> tuple[str, dict[st
         content = (
             "insert_interstitial_at_coords completed.\n"
             f"input_rel={data['input_rel']} structures_generated={data['structures_generated']} "
-            f"output_dir_rel={data['output_dir_rel']}"
+            f"output_dir_rel={data['output_dir_rel']}\n"
+            f"batch_json_rel={data['batch_json_rel']}"
         )
         return content, {"tool_name": "insert_interstitial_at_coords", "data": data}
     except CatMasterToolExecutionError:
@@ -960,7 +963,8 @@ def generate_strained_structures(payload: Dict[str, Any]) -> tuple[str, dict[str
         content = (
             "generate_strained_structures completed.\n"
             f"input_rel={data['input_rel']} structures_generated={data['structures_generated']} "
-            f"output_dir_rel={data['output_dir_rel']}"
+            f"output_dir_rel={data['output_dir_rel']}\n"
+            f"batch_json_rel={data['batch_json_rel']}"
         )
         return content, {"tool_name": "generate_strained_structures", "data": data}
     except CatMasterToolExecutionError:
@@ -1111,7 +1115,8 @@ def generate_phonon_displacements(payload: Dict[str, Any]) -> tuple[str, dict[st
         content = (
             "generate_phonon_displacements completed.\n"
             f"input_rel={data['input_rel']} structures_generated={data['structures_generated']} "
-            f"output_dir_rel={data['output_dir_rel']}"
+            f"output_dir_rel={data['output_dir_rel']}\n"
+            f"metadata_rel={data['metadata_rel']}"
         )
         return content, {"tool_name": "generate_phonon_displacements", "data": data}
     except CatMasterToolExecutionError:

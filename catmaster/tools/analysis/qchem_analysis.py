@@ -382,7 +382,7 @@ def analyze_xtb_results(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     content = (
         "analyze_xtb_results completed.\n"
         f"count={len(records)} output_dir_rel={data['output_dir_rel']}\n"
-        f"summary_json_rel={data['summary_json_rel']}"
+        f"summary_json_rel={data['summary_json_rel']} summary_csv_rel={data['summary_csv_rel']}"
     )
     return content, {"tool_name": "analyze_xtb_results", "data": data}
 
@@ -409,7 +409,7 @@ def analyze_orca_results(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     content = (
         "analyze_orca_results completed.\n"
         f"count={len(records)} output_dir_rel={data['output_dir_rel']}\n"
-        f"summary_json_rel={data['summary_json_rel']}"
+        f"summary_json_rel={data['summary_json_rel']} summary_csv_rel={data['summary_csv_rel']}"
     )
     return content, {"tool_name": "analyze_orca_results", "data": data}
 
