@@ -148,6 +148,23 @@ def test_default_human_approval_keeps_reviewed_candidate_unpromoted(
     assert (coordinator.store.candidate_dir(candidate.candidate_id) / "current" / "catalog.md").is_file()
 
 
+def test_job_claims_use_the_workspace_id_recorded_at_enqueue_time(tmp_path: Path) -> None:
+    workspace = tmp_path / "users" / "alice" / "project-one"
+    ensure_project_space_layout(workspace, create=True)
+    short_store = SelfEvolutionStore(workspace, project_id="project-one")
+    global_store = SelfEvolutionStore(workspace, project_id="users/alice/project-one")
+    short_store.enqueue_job(trigger_kind="post_run", run_id="run-short", run_dir=_run_dir(workspace, run_id="run-short"))
+    global_store.enqueue_job(trigger_kind="post_run", run_id="run-global", run_dir=_run_dir(workspace, run_id="run-global"))
+
+    assert short_store.queued_project_ids() == ["project-one", "users/alice/project-one"]
+    claimed = short_store.claim_jobs(limit=4, project_id="project-one")
+
+    assert [job.project_id for job in claimed] == ["project-one"]
+    assert [job.project_id for job in global_store.claim_jobs(limit=4, project_id="users/alice/project-one")] == [
+        "users/alice/project-one"
+    ]
+
+
 def test_trace_projection_keeps_full_tool_sequence_without_raw_llm_payloads(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     run_dir = _run_dir(workspace)
@@ -350,6 +367,54 @@ def test_same_user_thread_next_run_reloads_new_workspace_override(tmp_path: Path
         if item["name"] == "slab-construction-and-surface-modeling"
     )
     assert skill["path"].startswith("/.deepagents/self_develop_skills/materials_worker/")
+
+
+def test_workspace_skill_override_is_shared_across_threads_but_isolated_between_workspaces(tmp_path: Path) -> None:
+    class _Profile:
+        def config_for_role(self, role: str):
+            return SimpleNamespace(model=f"{role}-model", provider="langchain", base_url=None)
+
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    for workspace in (alpha, beta):
+        ensure_project_space_layout(workspace, create=True)
+    override = alpha / "metadata" / "self_evolution" / "self_develop_skills" / "materials_worker"
+    _write_skill(override, group="", name="slab-construction-and-surface-modeling", marker="alpha workspace override")
+
+    alpha_runner = build_specialist_runner(
+        workspace=alpha,
+        llm_profile=_Profile(),
+        reporter=None,
+        run_control=None,
+        project_id="alpha",
+        preferred_entrypoint="experiment",
+    ).runner
+    beta_runner = build_specialist_runner(
+        workspace=beta,
+        llm_profile=_Profile(),
+        reporter=None,
+        run_control=None,
+        project_id="beta",
+        preferred_entrypoint="experiment",
+    ).runner
+    alpha_runner._stage_deepagent_assets(alpha / "files")
+    beta_runner._stage_deepagent_assets(beta / "files")
+
+    def _skill_path(runner: SpecialistRunner, workspace: Path) -> str:
+        middleware = SkillsMiddleware(
+            backend=FilesystemBackend(root_dir=workspace / "files", virtual_mode=True),
+            sources=runner._skill_roots_for_group("materials_worker"),
+        )
+        update = middleware.before_agent({}, None, {})
+        return next(
+            item["path"]
+            for item in update["skills_metadata"]
+            if item["name"] == "slab-construction-and-surface-modeling"
+        )
+
+    assert alpha_runner._deepagent_checkpoint_thread_id("thread-a") != alpha_runner._deepagent_checkpoint_thread_id("thread-b")
+    assert _skill_path(alpha_runner, alpha).startswith("/.deepagents/self_develop_skills/materials_worker/")
+    assert _skill_path(beta_runner, beta).startswith("/.deepagents/skills/materials_worker/")
 
 
 def test_prepare_skill_tool_copies_complete_effective_bundle(tmp_path: Path) -> None:
@@ -688,6 +753,40 @@ def test_memory_file_promotion_rejects_concurrent_parent_edit(tmp_path: Path) ->
         PromotionManager(store, repo_root=_repo(tmp_path)).promote(candidate, report)
 
     assert store.read_memory_text() == parent_edit
+
+
+def test_promotion_readiness_explains_stale_skill_candidate(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    ensure_project_space_layout(workspace, create=True)
+    repo = _repo(tmp_path)
+    built_in = _write_skill(repo / "skills", group="materials_worker", name="demo-workflow", marker="built-in")
+    store = SelfEvolutionStore(workspace, project_id="demo")
+    candidate = LearningCandidate(
+        candidate_id="sec_stale",
+        project_id="demo",
+        run_id="run-one",
+        thread_id="thread-one",
+        action="skill",
+        status="approved",
+        group="materials_worker",
+        name="demo-workflow",
+        base_target_hash=hash_tree(built_in),
+        created_at=utc_now(),
+    )
+    root = store.reset_candidate_dir(candidate.candidate_id)
+    proposed = _write_skill(root / "proposed", group="materials_worker", name="demo-workflow", marker="workspace")
+    candidate.bundle_hash = hash_tree(proposed)
+    store.write_candidate(candidate)
+    manager = PromotionManager(store, repo_root=repo)
+
+    assert manager.promotion_readiness(candidate)["ready"] is True
+    (built_in / "SKILL.md").write_text(_skill_text("demo-workflow", "new built-in version"), encoding="utf-8")
+    readiness = manager.promotion_readiness(candidate)
+
+    assert readiness["ready"] is False
+    assert readiness["bundle_unchanged"] is True
+    assert readiness["target_unchanged"] is False
+    assert "regenerate" in readiness["reason"]
 
 
 def test_skill_rollback_removes_new_override_and_reveals_builtin(tmp_path: Path) -> None:

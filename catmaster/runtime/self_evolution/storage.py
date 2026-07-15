@@ -202,14 +202,21 @@ class SelfEvolutionStore:
             raise RuntimeError(f"failed to enqueue self-evolution job {job_id}")
         return self._job_from_row(row)
 
-    def claim_jobs(self, *, limit: int = 4) -> list[SelfEvolutionJob]:
+    def claim_jobs(self, *, limit: int = 4, project_id: str = "") -> list[SelfEvolutionJob]:
         claimed: list[SelfEvolutionJob] = []
+        target_project_id = str(project_id or "").strip()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT ?",
-                (max(1, int(limit)),),
-            ).fetchall()
+            if target_project_id:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE status = 'queued' AND project_id = ? ORDER BY created_at LIMIT ?",
+                    (target_project_id, max(1, int(limit))),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT ?",
+                    (max(1, int(limit)),),
+                ).fetchall()
             now = utc_now()
             for row in rows:
                 conn.execute(
@@ -247,6 +254,13 @@ class SelfEvolutionStore:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM jobs ORDER BY created_at").fetchall()
         return [self._job_from_row(row) for row in rows]
+
+    def queued_project_ids(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT project_id FROM jobs WHERE status = 'queued' ORDER BY project_id"
+            ).fetchall()
+        return [str(row["project_id"] or "").strip() for row in rows if str(row["project_id"] or "").strip()]
 
     def requeue_running_jobs(self) -> int:
         with self._connect() as conn:

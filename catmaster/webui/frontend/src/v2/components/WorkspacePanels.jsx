@@ -4,6 +4,7 @@ import { Grid } from "gridjs-react";
 
 import ArtifactRenderer from "./ArtifactRenderer";
 import { apiFetch } from "../useCatMasterThreadRuntime";
+import { selfEvolutionCandidateTitle, selfEvolutionStatusCounts, sortSelfEvolutionCandidates } from "../selfEvolutionView";
 
 function escapePath(value) {
   return encodeURIComponent(String(value || ""));
@@ -433,31 +434,138 @@ function MonitorCodeBlock({ title, text }) {
   );
 }
 
-function SelfEvolutionPanel({ payload, onDecision, onRollback }) {
-  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+export function SelfEvolutionPanel({ ctx, workspaceName, payload, loading = false, error: loadError = "", onRefresh }) {
+  const [statusFilter, setStatusFilter] = useState("pending");
+  const [busyCandidateId, setBusyCandidateId] = useState("");
+  const [actionError, setActionError] = useState("");
+  const candidates = sortSelfEvolutionCandidates(payload?.candidates);
   const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+  const counts = selfEvolutionStatusCounts(payload);
+  const visibleCandidates = candidates.filter((candidate) => {
+    if (statusFilter === "all") return true;
+    if (statusFilter === "pending") return candidate.status === "approved" || candidate.status === "conflict";
+    return candidate.status === statusFilter;
+  });
+
+  async function decide(candidate, action) {
+    if (!ctx || !candidate?.candidate_id) return;
+    const verb = action === "promote" ? "promote" : "reject";
+    if (!window.confirm(`Confirm ${verb} for ${selfEvolutionCandidateTitle(candidate)} in workspace ${workspaceName}?`)) return;
+    setActionError("");
+    setBusyCandidateId(candidate.candidate_id);
+    try {
+      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ project_space: workspaceName, action }),
+      });
+      await onRefresh?.();
+    } catch (err) {
+      setActionError(err.message || String(err));
+    } finally {
+      setBusyCandidateId("");
+    }
+  }
+
+  async function rollback(candidate) {
+    if (!ctx || !candidate?.candidate_id) return;
+    if (!window.confirm(`Roll back ${selfEvolutionCandidateTitle(candidate)} in workspace ${workspaceName}?`)) return;
+    setActionError("");
+    setBusyCandidateId(candidate.candidate_id);
+    try {
+      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/rollback`, {
+        method: "POST",
+        body: JSON.stringify({ project_space: workspaceName }),
+      });
+      await onRefresh?.();
+    } catch (err) {
+      setActionError(err.message || String(err));
+    } finally {
+      setBusyCandidateId("");
+    }
+  }
+
+  if (payload?.enabled === false) {
+    return (
+      <section className="v2-tab-panel">
+        <div className="v2-panel-toolbar"><div><div className="v2-eyebrow">Workspace</div><h2>Skill Evolution</h2></div></div>
+        <div className="v2-evolution-scope warning">{payload.disabled_reason || "Skill evolution is disabled."}</div>
+      </section>
+    );
+  }
+
   return (
-    <section className="v2-monitor-panel">
-      <div className="v2-monitor-panel-head"><GitBranch size={15} /><h3>Self-Evolution</h3></div>
-      <div className="v2-raw-list">
-        {candidates.map((candidate) => {
+    <section className="v2-tab-panel">
+      <div className="v2-panel-toolbar">
+        <div>
+          <div className="v2-eyebrow">Workspace-scoped learning</div>
+          <h2>Skill Evolution</h2>
+          <div className="v2-muted">{workspaceName || "No workspace selected"}</div>
+        </div>
+        <button type="button" className="v2-ghost-btn" onClick={() => onRefresh?.()} disabled={loading}><RefreshCw size={15} />Refresh</button>
+      </div>
+      {loadError || actionError ? <div className="v2-error">{actionError || loadError}</div> : null}
+      <div className="v2-evolution-scope">
+        <GitBranch size={18} />
+        <div>
+          <strong>Shared by every thread in this workspace</strong>
+          <span>Other workspaces remain isolated. Approved overrides become available when the next run stages its skills.</span>
+        </div>
+        <code>{payload?.mode || "observe"}</code>
+      </div>
+      <div className="v2-monitor-grid">
+        <MonitorMetric icon={GitBranch} label="Pending review" value={formatCount(payload?.pending_review_count ?? counts.approved)} note="human approval required" />
+        <MonitorMetric icon={ListChecks} label="Effective overrides" value={formatCount(payload?.effective_skill_count)} note="workspace skills" />
+        <MonitorMetric icon={Activity} label="Candidates" value={formatCount(payload?.candidate_count ?? candidates.length)} note={`${formatCount(counts.promoted)} promoted`} />
+        <MonitorMetric icon={Clock} label="Learning jobs" value={formatCount(payload?.job_count ?? jobs.length)} note={`${formatCount(payload?.error_count)} errors`} />
+      </div>
+      <div className="v2-evolution-toolbar">
+        <label>
+          <span>Status</span>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="pending">Needs attention</option>
+            <option value="all">All candidates</option>
+            <option value="approved">Approved by reviewer</option>
+            <option value="promoted">Promoted</option>
+            <option value="conflict">Conflict</option>
+            <option value="invalid">Invalid</option>
+            <option value="rejected">Rejected</option>
+            <option value="rolled_back">Rolled back</option>
+          </select>
+        </label>
+        <span>{visibleCandidates.length} shown</span>
+      </div>
+      {loading && !payload ? <div className="v2-muted">Loading workspace learning state...</div> : null}
+      <div className="v2-evolution-columns">
+        <section className="v2-monitor-panel">
+          <div className="v2-monitor-panel-head"><GitBranch size={15} /><h3>Workspace candidates</h3></div>
+          <div className="v2-raw-list">
+          {visibleCandidates.map((candidate) => {
           const status = String(candidate.status || "");
           const canDecide = status === "approved";
           const canRollback = status === "promoted";
+          const readiness = candidate.promotion_readiness || {};
+          const canPromote = canDecide && readiness.ready !== false;
+          const isBusy = busyCandidateId === candidate.candidate_id;
           return (
             <details key={candidate.candidate_id} className="v2-raw-row">
               <summary>
-                <span>{candidate.kind || "candidate"}</span>
-                <small>{status}</small>
+                <span>{selfEvolutionCandidateTitle(candidate)}</span>
+                <small className={`status-${status}`}>{status}</small>
               </summary>
+              <div className="v2-evolution-meta">
+                <code>{candidate.run_id || "no run"}</code>
+                <code>{candidate.thread_id || "no thread"}</code>
+                <span>{candidate.kind || "candidate"}</span>
+              </div>
+              {canDecide && !canPromote ? <div className="v2-evolution-warning">{readiness.reason || "This candidate is stale and must be regenerated."}</div> : null}
               <div className="v2-inline-actions">
                 {canDecide ? (
                   <>
-                    <button type="button" className="v2-ghost-btn" onClick={() => onDecision(candidate, "promote")}>Approve &amp; Promote</button>
-                    <button type="button" className="v2-ghost-btn" onClick={() => onDecision(candidate, "reject")}>Reject</button>
+                    <button type="button" className="v2-primary-btn" disabled={!canPromote || isBusy} onClick={() => decide(candidate, "promote")}>Approve &amp; Promote</button>
+                    <button type="button" className="v2-ghost-btn" disabled={isBusy} onClick={() => decide(candidate, "reject")}>Reject</button>
                   </>
                 ) : null}
-                {canRollback ? <button type="button" className="v2-ghost-btn" onClick={() => onRollback(candidate)}>Rollback</button> : null}
+                {canRollback ? <button type="button" className="v2-ghost-btn" disabled={isBusy} onClick={() => rollback(candidate)}>Rollback</button> : null}
               </div>
               <pre>{jsonText({
                 candidate_id: candidate.candidate_id,
@@ -471,23 +579,21 @@ function SelfEvolutionPanel({ payload, onDecision, onRollback }) {
             </details>
           );
         })}
-        {!candidates.length ? <div className="v2-empty">No self-evolution candidates for this run.</div> : null}
-        {jobs.map((job) => (
-          <details key={job.job_id} className="v2-raw-row">
-            <summary>
-              <span>{job.trigger_kind || "learning job"}</span>
-              <small>{job.status || "unknown"}</small>
-            </summary>
-            <pre>{jsonText({
-              job_id: job.job_id,
-              run_id: job.run_id,
-              attempt_count: job.attempt_count,
-              candidate_id: job.candidate_id,
-              error: job.error,
-            })}</pre>
-          </details>
-        ))}
-        {!jobs.length ? <div className="v2-empty">No self-evolution jobs for this run.</div> : null}
+          {!visibleCandidates.length ? <div className="v2-empty">No workspace candidates match this filter.</div> : null}
+          </div>
+        </section>
+        <section className="v2-monitor-panel">
+          <div className="v2-monitor-panel-head"><Clock size={15} /><h3>Learning jobs</h3></div>
+          <div className="v2-raw-list">
+            {jobs.slice().reverse().map((job) => (
+              <details key={job.job_id} className="v2-raw-row">
+                <summary><span>{job.trigger_kind || "learning job"}</span><small>{job.status || "unknown"}</small></summary>
+                <pre>{jsonText({ job_id: job.job_id, run_id: job.run_id, thread_id: job.thread_id, attempt_count: job.attempt_count, candidate_id: job.candidate_id, error: job.error })}</pre>
+              </details>
+            ))}
+            {!jobs.length ? <div className="v2-empty">No learning jobs have been recorded for this workspace.</div> : null}
+          </div>
+        </section>
       </div>
     </section>
   );
@@ -833,35 +939,6 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
     }
   }
 
-  async function decideSelfEvolutionCandidate(candidate, action) {
-    if (!ctx || !candidate?.candidate_id) return;
-    setError("");
-    try {
-      const body = { project_space: workspaceName, action };
-      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/decision`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      await loadDetails();
-    } catch (err) {
-      setError(err.message || String(err));
-    }
-  }
-
-  async function rollbackSelfEvolutionCandidate(candidate) {
-    if (!ctx || !candidate?.candidate_id) return;
-    setError("");
-    try {
-      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/rollback`, {
-        method: "POST",
-        body: JSON.stringify({ project_space: workspaceName }),
-      });
-      await loadDetails();
-    } catch (err) {
-      setError(err.message || String(err));
-    }
-  }
-
   useEffect(() => {
     if (activeSubtab === "details" && !details) loadDetails();
   }, [activeSubtab, selectedRun, ctx, workspaceName]);
@@ -992,11 +1069,6 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
       ) : null}
       {activeSubtab === "details" ? (
         <div className="v2-monitor-columns">
-          <SelfEvolutionPanel
-            payload={details?.self_evolution}
-            onDecision={decideSelfEvolutionCandidate}
-            onRollback={rollbackSelfEvolutionCandidate}
-          />
           <MonitorCodeBlock title="Task State" text={details?.task_state || ""} />
           <MonitorCodeBlock title="Memory" text={details?.memory || ""} />
         </div>

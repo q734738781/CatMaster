@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { Files, LogIn, LogOut, MonitorDot, RefreshCw, ShieldAlert, ShieldCheck, UserPlus, Workflow } from "lucide-react";
+import { Files, GitBranch, LogIn, LogOut, MonitorDot, RefreshCw, ShieldAlert, ShieldCheck, UserPlus, Workflow } from "lucide-react";
 
 import WorkspaceRail from "./components/WorkspaceRail";
 import ThreadMessages from "./components/ThreadMessages";
 import ThreadComposer from "./components/ThreadComposer";
 import FilePreviewTabs from "./components/FilePreviewTabs";
-import { FilesPanel, MonitorPanel } from "./components/WorkspacePanels";
+import { FilesPanel, MonitorPanel, SelfEvolutionPanel } from "./components/WorkspacePanels";
 import { apiFetch, useCatMasterThreadRuntime } from "./useCatMasterThreadRuntime";
 import { DEFAULT_ENTRYPOINT, entrypointMeta, normalizedEntrypoints, normalizeEntrypoint } from "./entrypoints";
 import { selectionFromHash, selectionToHash, tabFromHash } from "./inspectorSelection";
@@ -178,6 +178,10 @@ export default function CatMasterWorkspace({ boot }) {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [selfEvolutionPayload, setSelfEvolutionPayload] = useState(null);
+  const [selfEvolutionLoading, setSelfEvolutionLoading] = useState(false);
+  const [selfEvolutionError, setSelfEvolutionError] = useState("");
+  const selfEvolutionRequestKey = useRef(0);
 
   const requestedProjectSpace = useMemo(() => {
     if (boot?.project_space) return String(boot.project_space);
@@ -185,6 +189,7 @@ export default function CatMasterWorkspace({ boot }) {
     return new URLSearchParams(window.location.search).get("project_space") || "";
   }, [boot?.project_space]);
   const workspaceName = bootstrap?.workspace_name || "";
+  const selfEvolutionEnabled = auth?.auth_enabled === true;
   const entrypoints = normalizedEntrypoints(bootstrap?.entrypoints);
   const activeThread = useMemo(
     () => threads.find((thread) => thread.thread_id === activeThreadId) || threads[0] || null,
@@ -212,6 +217,8 @@ export default function CatMasterWorkspace({ boot }) {
   const checkAuthAndBootstrap = useCallback(async (projectSpace = "") => {
     setLoading(true);
     setError("");
+    setSelfEvolutionPayload(null);
+    setSelfEvolutionError("");
     try {
       const authStatus = await apiFetch("/api/auth/status");
       setAuth(authStatus);
@@ -245,6 +252,39 @@ export default function CatMasterWorkspace({ boot }) {
   useEffect(() => {
     checkAuthAndBootstrap(requestedProjectSpace);
   }, [checkAuthAndBootstrap, requestedProjectSpace]);
+
+  const refreshSelfEvolution = useCallback(async () => {
+    if (!selfEvolutionEnabled || !bootstrap?.ctx || !workspaceName) {
+      selfEvolutionRequestKey.current += 1;
+      setSelfEvolutionPayload(null);
+      setSelfEvolutionError("");
+      setSelfEvolutionLoading(false);
+      return;
+    }
+    const requestKey = selfEvolutionRequestKey.current + 1;
+    selfEvolutionRequestKey.current = requestKey;
+    setSelfEvolutionLoading(true);
+    setSelfEvolutionError("");
+    try {
+      const payload = await apiFetch(`/api/session/${encodeURIComponent(bootstrap.ctx)}/self-evolution/candidates?project_space=${encodeURIComponent(workspaceName)}`);
+      if (selfEvolutionRequestKey.current === requestKey) setSelfEvolutionPayload(payload);
+    } catch (err) {
+      if (selfEvolutionRequestKey.current === requestKey) setSelfEvolutionError(err.message || String(err));
+    } finally {
+      if (selfEvolutionRequestKey.current === requestKey) setSelfEvolutionLoading(false);
+    }
+  }, [bootstrap?.ctx, selfEvolutionEnabled, workspaceName]);
+
+  useEffect(() => {
+    refreshSelfEvolution();
+    if (!selfEvolutionEnabled) return undefined;
+    const timer = window.setInterval(refreshSelfEvolution, 30000);
+    return () => window.clearInterval(timer);
+  }, [refreshSelfEvolution, selfEvolutionEnabled]);
+
+  useEffect(() => {
+    if (auth && !selfEvolutionEnabled && activeTab === "evolution") setActiveTab("chat");
+  }, [auth, activeTab, selfEvolutionEnabled]);
 
   useEffect(() => {
     const restoreSelection = () => {
@@ -396,6 +436,7 @@ export default function CatMasterWorkspace({ boot }) {
   const permissionMode = activeThread?.meta?.permission_mode === "hitl" ? "hitl" : "auto";
   const selectedEntrypoint = normalizeEntrypoint(activeThread?.entrypoint || bootstrap?.default_entrypoint || DEFAULT_ENTRYPOINT, entrypoints);
   const inspectorVisible = activeTab === "chat";
+  const pendingEvolutionCount = Number(selfEvolutionPayload?.pending_review_count || 0);
 
   function resizeInspector(event) {
     const maxWidth = Math.max(300, Math.min(760, window.innerWidth - 620));
@@ -473,6 +514,12 @@ export default function CatMasterWorkspace({ boot }) {
               <nav className="v2-workspace-tabs" aria-label="Workspace tabs">
                 <button type="button" className={activeTab === "chat" ? "active" : ""} onClick={() => setActiveTab("chat")}>Chat</button>
                 <button type="button" className={activeTab === "monitor" ? "active" : ""} onClick={() => setActiveTab("monitor")}><MonitorDot size={14} />Monitor</button>
+                {selfEvolutionEnabled ? (
+                  <button type="button" className={activeTab === "evolution" ? "active" : ""} onClick={() => { setActiveTab("evolution"); refreshSelfEvolution(); }}>
+                    <GitBranch size={14} />Skill Evolution
+                    {pendingEvolutionCount > 0 ? <span className="v2-tab-badge">{pendingEvolutionCount}</span> : null}
+                  </button>
+                ) : null}
                 <button type="button" className={activeTab === "files" ? "active" : ""} onClick={() => setActiveTab("files")}><Files size={14} />Files</button>
               </nav>
             </div>
@@ -521,6 +568,16 @@ export default function CatMasterWorkspace({ boot }) {
             </>
           ) : null}
           {activeTab === "monitor" ? <MonitorPanel ctx={bootstrap?.ctx || ""} workspaceName={workspaceName} thread={activeThread} entrypoint={selectedEntrypoint} events={runtimeState.events} /> : null}
+          {activeTab === "evolution" && selfEvolutionEnabled ? (
+            <SelfEvolutionPanel
+              ctx={bootstrap?.ctx || ""}
+              workspaceName={workspaceName}
+              payload={selfEvolutionPayload}
+              loading={selfEvolutionLoading}
+              error={selfEvolutionError}
+              onRefresh={refreshSelfEvolution}
+            />
+          ) : null}
           {activeTab === "files" ? (
             <FilesPanel
               ctx={bootstrap?.ctx || ""}

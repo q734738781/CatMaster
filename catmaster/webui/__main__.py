@@ -19,7 +19,7 @@ def main() -> None:
     parser.add_argument(
         "--no-login",
         action="store_true",
-        help="Disable login and open the built-in admin workspace.",
+        help="Disable login and open the built-in admin workspace; WebUI self-evolution is disabled in this mode.",
     )
     parser.add_argument(
         "--timeout-keep-alive",

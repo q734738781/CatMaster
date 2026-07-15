@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from starlette.routing import Match
 
 from catmaster.webui import server
-from catmaster.webui.server import _candidate_change_preview, _discover_project_spaces, create_app
+from catmaster.webui.server import _candidate_change_preview, _discover_project_spaces, _self_evolution_for_run, create_app
 from catmaster.runtime.self_evolution import LearningCandidate, SelfEvolutionStore
 from catmaster.runtime.self_evolution.storage import hash_tree, utc_now
 from catmaster.webui.session import WebSession
@@ -75,6 +75,56 @@ def test_self_evolution_human_review_preview_includes_complete_bundle_diff(tmp_p
     assert "+new rule" in preview
     assert "scripts/helper.py" in preview
     assert "+VALUE = 1" in preview
+
+
+def test_workspace_self_evolution_summary_is_not_thread_or_run_scoped(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "files").mkdir(parents=True)
+    (workspace / "metadata").mkdir()
+    store = SelfEvolutionStore(workspace, project_id="workspace")
+    for candidate_id, run_id, thread_id in (
+        ("sec_one", "run-one", "thread-one"),
+        ("sec_two", "run-two", "thread-two"),
+    ):
+        candidate = LearningCandidate(
+            candidate_id=candidate_id,
+            project_id="workspace",
+            run_id=run_id,
+            thread_id=thread_id,
+            action="skill",
+            status="rejected",
+            group="materials_worker",
+            name=f"demo-{candidate_id}",
+            created_at=utc_now(),
+        )
+        store.reset_candidate_dir(candidate_id)
+        store.write_candidate(candidate)
+
+    all_runs = _self_evolution_for_run(workspace=workspace, workspace_id="workspace", run_id="")
+    one_run = _self_evolution_for_run(workspace=workspace, workspace_id="workspace", run_id="run-one")
+
+    assert all_runs["scope"] == "workspace"
+    assert all_runs["activation"] == "next_run"
+    assert all_runs["candidate_count"] == 2
+    assert {row["thread_id"] for row in all_runs["candidates"]} == {"thread-one", "thread-two"}
+    assert one_run["candidate_count"] == 1
+
+
+def test_no_login_mode_disables_self_evolution_api(tmp_path: Path) -> None:
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+
+    candidates = client.get("/api/session/no-login/self-evolution/candidates")
+    learn = client.post("/api/session/no-login/self-evolution/learn", json={"run": "run-one"})
+    decision = client.post(
+        "/api/session/no-login/self-evolution/candidates/sec_one/decision",
+        json={"action": "promote"},
+    )
+
+    assert candidates.status_code == 403
+    assert learn.status_code == 403
+    assert decision.status_code == 403
+    assert candidates.json()["detail"] == "Self-evolution is disabled in no-login mode."
 
 
 def test_monitor_path_redirect_route_precedes_root_mount(tmp_path: Path) -> None:

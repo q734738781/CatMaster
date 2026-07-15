@@ -83,7 +83,7 @@ class SelfEvolutionCoordinator:
         if not self_evolution_enqueue_enabled(self.mode):
             return []
         processed: list[SelfEvolutionJob] = []
-        for job in self.store.claim_jobs(limit=limit):
+        for job in self.store.claim_jobs(limit=limit, project_id=self.project_id):
             try:
                 processed.append(self._process_job(job))
             except Exception as exc:

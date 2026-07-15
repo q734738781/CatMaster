@@ -5,6 +5,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from .models import LearningCandidate, ValidationReport
 from .storage import SelfEvolutionStore, hash_text, hash_tree, utc_now
@@ -18,6 +19,44 @@ class PromotionManager:
     def __init__(self, store: SelfEvolutionStore, *, repo_root: Path | str | None = None) -> None:
         self.store = store
         self.repo_root = Path(repo_root or Path(__file__).resolve().parents[3]).expanduser().resolve()
+
+    def promotion_readiness(self, candidate: LearningCandidate) -> dict[str, Any]:
+        if candidate.status != "approved":
+            return {
+                "ready": False,
+                "reason": f"Candidate status is {candidate.status or 'unknown'}, not approved.",
+                "bundle_unchanged": False,
+                "target_unchanged": False,
+            }
+
+        candidate_dir = self.store.candidate_dir(candidate.candidate_id)
+        if candidate.action == "memory":
+            source = candidate_dir / "memories" / "AGENTS.md"
+            proposed_hash = hash_text(source.read_text(encoding="utf-8")) if source.is_file() else ""
+            current_hash = self.store.memory_hash()
+            target_label = "workspace memory"
+        else:
+            source = candidate_dir / "proposed" / candidate.group / candidate.name
+            proposed_hash = hash_tree(source)
+            current_target, _had_workspace_target = self._effective_skill_path(candidate)
+            current_hash = hash_tree(current_target)
+            target_label = "effective workspace skill"
+
+        bundle_unchanged = bool(candidate.bundle_hash) and proposed_hash == candidate.bundle_hash
+        target_unchanged = current_hash == candidate.base_target_hash
+        reasons: list[str] = []
+        if not bundle_unchanged:
+            reasons.append("The reviewed candidate bundle changed or is missing.")
+        if not target_unchanged:
+            reasons.append(f"The {target_label} changed after this candidate was proposed; regenerate it from the current version.")
+        return {
+            "ready": bundle_unchanged and target_unchanged,
+            "reason": " ".join(reasons),
+            "bundle_unchanged": bundle_unchanged,
+            "target_unchanged": target_unchanged,
+            "expected_target_hash": candidate.base_target_hash,
+            "current_target_hash": current_hash,
+        }
 
     def promote(self, candidate: LearningCandidate, report: ValidationReport) -> LearningCandidate:
         if candidate.status != "approved":

@@ -28,7 +28,8 @@ from catmaster.specialists.streaming_runner import StreamingSpecialistRunner
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.self_evolution import SelfEvolutionCoordinator, SelfEvolutionStore
 from catmaster.runtime.self_evolution.models import SKILL_GROUPS
-from catmaster.runtime.self_evolution.promotion import PromotionConflict
+from catmaster.runtime.self_evolution.promotion import PromotionConflict, PromotionManager
+from catmaster.runtime.self_evolution.settings import resolve_self_evolution_mode
 from catmaster.tools.base import ensure_project_space_layout, system_root
 
 from .agent_loop import ThreadAgentLoopService
@@ -1289,6 +1290,7 @@ def _build_details(
     run_name: str,
     project_space: str = "",
     include_legacy_traces: bool = False,
+    include_self_evolution: bool = True,
 ) -> dict[str, Any]:
     session = registry.get_session(ctx, username=username)
     workspace, _workspace_name = _workspace_for_request(registry, session, project_space)
@@ -1304,7 +1306,11 @@ def _build_details(
         "artifacts": artifact_rows,
         "proposal": session.read_proposal(run_dir, workspace=workspace),
         "task_state": session.read_task_state(run_dir, workspace=workspace),
-        "self_evolution": _self_evolution_for_run(workspace=workspace, workspace_id=_workspace_name, run_id=selected_run),
+        "self_evolution": (
+            _self_evolution_for_run(workspace=workspace, workspace_id=_workspace_name, run_id=selected_run)
+            if include_self_evolution
+            else {"enabled": False, "disabled_reason": "Self-evolution is disabled in no-login mode."}
+        ),
     }
     if include_legacy_traces:
         payload.update(
@@ -1398,8 +1404,9 @@ def _candidate_change_preview(store: SelfEvolutionStore, candidate: Any) -> tupl
 
 def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run_id: str) -> dict[str, Any]:
     if workspace is None:
-        return {"candidates": [], "jobs": []}
+        return {"enabled": True, "candidates": [], "jobs": []}
     store = SelfEvolutionStore(workspace, project_id=workspace_id)
+    promotion = PromotionManager(store)
     candidates: list[dict[str, Any]] = []
     for item in store.list_candidates():
         data = item.to_dict()
@@ -1408,15 +1415,29 @@ def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run
         change_preview, change_preview_truncated = _candidate_change_preview(store, item)
         data["change_preview"] = change_preview
         data["change_preview_truncated"] = change_preview_truncated
+        data["promotion_readiness"] = promotion.promotion_readiness(item)
         candidates.append(data)
     jobs = [
         item.to_dict()
         for item in store.list_jobs()
         if not str(run_id or "").strip() or item.run_id == str(run_id).strip()
     ]
+    status_counts = {
+        status: sum(str(item.get("status") or "") == status for item in candidates)
+        for status in ("proposed", "invalid", "approved", "rejected", "promoted", "conflict", "rolled_back")
+    }
+    effective_skill_count = sum(1 for _path in store.self_develop_skills_dir.glob("*/*/SKILL.md"))
     return {
+        "enabled": True,
+        "mode": resolve_self_evolution_mode(),
+        "workspace_id": workspace_id,
+        "scope": "workspace",
+        "activation": "next_run",
         "candidates": candidates[:50],
         "candidate_count": len(candidates),
+        "status_counts": status_counts,
+        "pending_review_count": status_counts["approved"],
+        "effective_skill_count": effective_skill_count,
         "jobs": jobs[-50:],
         "job_count": len(jobs),
         "error_count": sum(str(item.get("status") or "") == "error" for item in jobs),
@@ -1657,6 +1678,9 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         nonlocal self_evolution_wakeup, self_evolution_worker_task
+        if not auth.enabled:
+            yield
+            return
         self_evolution_wakeup = asyncio.Event()
         self_evolution_worker_task = asyncio.create_task(_self_evolution_worker_loop())
         try:
@@ -1699,6 +1723,10 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         snapshot["auth"] = auth.public_status(identity)
         snapshot["workspace_root_locked"] = True
         return snapshot
+
+    def _require_self_evolution_enabled() -> None:
+        if not auth.enabled:
+            raise HTTPException(status_code=403, detail="Self-evolution is disabled in no-login mode.")
 
     async def _validated_body(model_cls, request: Request):
         try:
@@ -1783,6 +1811,8 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         return str(thread_id or "") in thread_stop_flags
 
     def _enqueue_self_evolution_post_run(**kwargs: Any) -> None:
+        if not auth.enabled:
+            return
         try:
             workspace = Path(kwargs.get("workspace") or "").expanduser().resolve()
             workspace_id = str(kwargs.get("workspace_id") or workspace.name)
@@ -1815,15 +1845,14 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
         while True:
             try:
                 for workspace in _known_project_spaces():
-                    workspace_id = registry._project_space_name_from_path(
-                        str(workspace), root=registry.default_project_space_root
-                    ) or workspace.name
-                    coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_id)
+                    bootstrap_store = SelfEvolutionStore(workspace, project_id=workspace.name)
                     workspace_key = str(workspace)
                     if workspace_key not in recovered_workspaces:
-                        await asyncio.to_thread(coordinator.store.requeue_running_jobs)
+                        await asyncio.to_thread(bootstrap_store.requeue_running_jobs)
                         recovered_workspaces.add(workspace_key)
-                    await asyncio.to_thread(coordinator.process_pending_jobs, limit=4)
+                    for workspace_id in bootstrap_store.queued_project_ids():
+                        coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_id)
+                        await asyncio.to_thread(coordinator.process_pending_jobs, limit=4)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -2248,6 +2277,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
                 run_name=run,
                 project_space=project_space,
                 include_legacy_traces=include_legacy_traces,
+                include_self_evolution=auth.enabled,
             )
         )
 
@@ -2325,6 +2355,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.get("/api/session/{ctx}/self-evolution/candidates")
     def _session_self_evolution_candidates(ctx: str, project_space: str = "", run: str = ""):
+        _require_self_evolution_enabled()
         identity, session = _bound_session(ctx)
         workspace, workspace_name = _workspace_for_request(registry, session, project_space)
         if workspace is None:
@@ -2333,6 +2364,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.get("/api/session/{ctx}/self-evolution/candidates/{candidate_id}")
     def _session_self_evolution_candidate_detail(ctx: str, candidate_id: str, project_space: str = ""):
+        _require_self_evolution_enabled()
         _identity, session = _bound_session(ctx)
         workspace, workspace_name = _workspace_for_request(registry, session, project_space)
         if workspace is None:
@@ -2341,6 +2373,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.post("/api/session/{ctx}/self-evolution/process")
     async def _session_self_evolution_process(ctx: str, request: Request):
+        _require_self_evolution_enabled()
         _identity, session = _bound_session(ctx)
         payload = await _json_body(request)
         workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
@@ -2353,6 +2386,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.post("/api/session/{ctx}/self-evolution/learn")
     async def _session_self_evolution_learn(ctx: str, request: Request):
+        _require_self_evolution_enabled()
         _identity, session = _bound_session(ctx)
         payload = await _json_body(request)
         workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
@@ -2376,6 +2410,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.post("/api/session/{ctx}/self-evolution/candidates/{candidate_id}/rollback")
     async def _session_self_evolution_candidate_rollback(ctx: str, candidate_id: str, request: Request):
+        _require_self_evolution_enabled()
         _identity, session = _bound_session(ctx)
         payload = await _json_body(request)
         workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
@@ -2393,6 +2428,7 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
 
     @app.post("/api/session/{ctx}/self-evolution/candidates/{candidate_id}/decision")
     async def _session_self_evolution_candidate_decision(ctx: str, candidate_id: str, request: Request):
+        _require_self_evolution_enabled()
         _identity, session = _bound_session(ctx)
         payload = await _json_body(request)
         workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
