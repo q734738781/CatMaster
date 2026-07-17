@@ -20,6 +20,19 @@ vasp_cpu:
   source_list:
     - "<REMOTE_VASP_ENV_SCRIPT>"
 
+vasp_k8s_cpu:
+  kind: domain
+  capabilities: [vasp, k8s]
+  description: "Prepared single-pod VASP execution through a blocking SSH-to-Kubernetes bridge."
+  audiences: [materials_worker]
+  machine: k8s_ssh_server
+  number_node: 1
+  cpu_per_node: 4
+  queue_name: k8s
+  group_size: 1
+  source_list:
+    - "<REMOTE_CATMASTER_K8S_ENV_SCRIPT>"
+
 vasp_cpu_neb:
   kind: domain
   capabilities: [vasp]

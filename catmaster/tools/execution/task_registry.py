@@ -63,6 +63,7 @@ class TaskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     command: str
+    enabled: bool = True
     resources: str | None = None
     audiences: List[str] = Field(default_factory=list)
     description: str = ""
@@ -136,23 +137,24 @@ class TaskRegistry:
     def list_tasks(self, *, audience: str | None = None) -> Dict[str, TaskConfig]:
         audience_name = str(audience or "").strip()
         if not audience_name:
-            return dict(self.tasks)
+            return {name: cfg for name, cfg in self.tasks.items() if cfg.enabled}
         return {
             name: cfg
             for name, cfg in self.tasks.items()
-            if not cfg.audiences or audience_name in cfg.audiences
+            if cfg.enabled and (not cfg.audiences or audience_name in cfg.audiences)
         }
 
     def task_visible_to(self, name: str, *, audience: str | None = None) -> bool:
         cfg = self.get(name)
         audience_name = str(audience or "").strip()
-        return not audience_name or not cfg.audiences or audience_name in cfg.audiences
+        return cfg.enabled and (not audience_name or not cfg.audiences or audience_name in cfg.audiences)
 
     def describe_for_llm(self) -> str:
-        if not self.tasks:
+        visible_tasks = self.list_tasks()
+        if not visible_tasks:
             return "No DPDispatcher task templates found."
         lines = ["Available DPDispatcher tasks:"]
-        for name, cfg in sorted(self.tasks.items()):
+        for name, cfg in sorted(visible_tasks.items()):
             lines.append(f"- {name}: command={cfg.command}")
         return "\n".join(lines)
 

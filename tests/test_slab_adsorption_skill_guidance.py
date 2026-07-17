@@ -30,11 +30,15 @@ def test_materials_task_runner_catalog_resolves_workflow_skills():
 
 def test_slab_adsorption_guidance_preserves_method_critical_defaults():
     slab_text = _skill_text("slab-construction-and-surface-modeling")
+    surface_text = _skill_text("surface-and-termination-screening")
     adsorption_text = _skill_text("adsorption-screening")
 
     assert "orthogonal=true" in slab_text
     assert "Termination provenance review is mandatory" in slab_text
     assert "not a proof from one POSCAR" in slab_text
+    assert "CN=1" in slab_text
+    assert "CN=1" in surface_text
+    assert "screening heuristic" in surface_text
     assert "termination-reviewed slab" in adsorption_text
 
 

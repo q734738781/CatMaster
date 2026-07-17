@@ -233,6 +233,36 @@ def test_remote_submission_copies_uma_helper_and_skips_missing_optional_metadata
     assert (stage / "task_script" / "uma_common.py").is_file()
 
 
+def test_registered_task_stages_declared_helper_before_wildcard_forward_collapse(tmp_path: Path) -> None:
+    script_dir = tmp_path / "script_source"
+    script_dir.mkdir()
+    main_script = script_dir / "main.py"
+    main_script.write_text("print('main')\n", encoding="utf-8")
+    (script_dir / "helper.py").write_text("print('helper')\n", encoding="utf-8")
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    cfg = TaskRegistry().get("vasp_execute").model_copy(
+        update={
+            "command": "python task_script/main.py",
+            "boot_script": str(main_script),
+            "forward_files": ["*", "task_script/main.py", "task_script/helper.py"],
+        }
+    )
+
+    task = remote_submission_mod._build_task_spec(
+        cfg=cfg,
+        task_name="helper_probe",
+        boot_script_src=main_script,
+        stage_dir=stage,
+        stage_name=None,
+        template_overrides=None,
+    )
+
+    assert task.forward_files == ["*"]
+    assert (stage / "task_script" / "main.py").is_file()
+    assert (stage / "task_script" / "helper.py").is_file()
+
+
 def test_remote_submission_uses_unique_work_base_for_same_basename(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

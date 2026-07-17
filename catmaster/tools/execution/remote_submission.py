@@ -683,7 +683,10 @@ def _build_task_spec(
         _copy_task_script_forward_dependencies(
             script_src=boot_script_src,
             stage_dir=stage_dir,
-            forward_files=forward_files,
+            # render_task_fields intentionally collapses ["*", ...] to ["*"].
+            # Dependency discovery must inspect the declared list so helper
+            # scripts are staged before the wildcard upload is assembled.
+            forward_files=list(cfg.forward_files),
         )
         if script_rel and script_rel not in forward_files and "*" not in forward_files:
             forward_files.append(script_rel)

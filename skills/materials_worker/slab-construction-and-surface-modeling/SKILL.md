@@ -11,7 +11,7 @@ Use this skill to build slab models, choose a freezing strategy, and resize the 
 ## Quick Start
 1. Decide whether the slab is for adsorption, surface-energy ranking, or another surface model before calling `build_slab`.
 2. For adsorption-ready slabs, prefer `orthogonal=true` unless the user explicitly needs the native non-orthogonal surface cell.
-3. Build and review the termination family before choosing a slab; do not silently use the first emitted termination.
+3. Build and review the termination family, including a surface-coordination audit, before choosing a slab; do not silently use the first emitted termination.
 4. Apply layer-based, height-based, or explicit-index fixing deliberately.
 5. Use `supercell` only when coverage or lateral separation requires it.
 
@@ -30,6 +30,7 @@ Use this skill to build slab models, choose a freezing strategy, and resize the 
 - For adsorption calculations, pass `orthogonal=true` by default so adsorbate placement, lateral separation, and downstream cell interpretation use a c-oriented orthogonal slab. Use `orthogonal=false` only when preserving the native surface cell is intentional, and report that exception.
 - Keep `slab_thickness`, `vacuum_thickness`, `supercell`, `orthogonal`, and `lll_reduce` fixed across compared slabs unless there is a reason to change them.
 - Treat `termination_index=0` as a label, not a scientific default. Compare the emitted terminations by stoichiometry, exposed species/layers, polarity, symmetry, and visual sanity before selecting one for fixing or adsorption.
+- Numerically inspect both exposed surfaces after cutting. Unless a specific reactive or defective termination is requested, prefer relatively higher surface-atom coordination within the comparable termination family. A large number of `CN=1` surface atoms is a dangling-atom warning and normally grounds rejection or deprioritization because it suggests an empirically high-energy surface; first rule out a bad neighbor cutoff, thin slab, wrong cut/orientation, polarity, or malformed geometry. Do not present this heuristic as a calculated surface energy.
 
 ### 2. Freeze atoms with one clear rule
 - `fix_atoms_by_layers` bins atoms by z using `layer_tol`; `freeze_layers` must not exceed the detected layer count.
@@ -44,6 +45,7 @@ Use this skill to build slab models, choose a freezing strategy, and resize the 
 
 ## Method-critical defaults
 - Keep slab thickness, vacuum thickness, termination choice, and freezing policy fixed across a comparison set.
+- Keep the surface-layer definition and neighbor algorithm/cutoff fixed when comparing coordination distributions across terminations; report per-element low-coordination counts and the indices of any `CN=1` surface atoms.
 - For adsorption-ready slab construction, the project preference is `orthogonal=true`; any non-orthogonal adsorption slab must be intentional and stated.
 - Termination provenance review is mandatory before adsorption or surface ranking. This is not a proof from one POSCAR; record which terminations were generated or supplied, the visible exposed-layer/stoichiometry/polarity evidence used, and any uncertainty. If the task provides only one slab with no provenance, state that the termination has not been reviewed and either inspect it or regenerate the termination family.
 - Do not compare surface calculations if the mask or cell expansion strategy changed silently.
@@ -53,6 +55,7 @@ Return:
 - slab structure path(s)
 - chosen termination or termination set
 - termination provenance evidence or the reason a single provided termination was accepted despite limited certainty
+- surface-coordination evidence and any `CN=1` warning, including the atom indices and criterion used
 - `orthogonal` setting and any exception to the adsorption default
 - fixing strategy and key parameters
 - whether inherited `selective_dynamics` was preserved through any supercell expansion

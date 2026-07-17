@@ -9,7 +9,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from catmaster.tools.execution.task_registry import TaskConfig
+from catmaster.tools.execution.task_registry import TaskConfig, TaskRegistry
 
 
 _PLACEHOLDER_RE = re.compile(r"^\{([A-Za-z_][A-Za-z0-9_]*)\}$")
@@ -78,3 +78,17 @@ def test_task_config_rejects_command_default_mismatch() -> None:
         TaskConfig(command="runner --steps {steps}", defaults={})
     with pytest.raises(ValidationError, match="unused defaults: maxsteps"):
         TaskConfig(command="runner --steps {steps}", defaults={"steps": 10, "maxsteps": 10})
+
+
+def test_disabled_tasks_are_hidden_from_agent_visible_catalogs() -> None:
+    registry = TaskRegistry()
+    registry.tasks = {
+        "enabled_task": TaskConfig(command="echo enabled", enabled=True),
+        "disabled_task": TaskConfig(command="echo disabled", enabled=False),
+    }
+
+    assert set(registry.list_tasks()) == {"enabled_task"}
+    assert set(registry.list_tasks(audience="materials_worker")) == {"enabled_task"}
+    assert registry.task_visible_to("enabled_task", audience="materials_worker") is True
+    assert registry.task_visible_to("disabled_task", audience="materials_worker") is False
+    assert "disabled_task" not in registry.describe_for_llm()

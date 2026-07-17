@@ -4,6 +4,7 @@
 # deployment config, then edit resource bindings or commands if needed.
 
 vasp_execute:
+  enabled: true
   audiences: [materials_worker]
   description: "Run one prepared VASP calculation stage."
   boot_script: "catmaster/remote/cpu/vasp_boot.py"
@@ -13,6 +14,23 @@ vasp_execute:
   command: "python task_script/vasp_boot.py --auto_ncore --auto_gamma"
   forward_files:
     - "*"
+    - "task_script/vasp_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+vasp_execute_k8s:
+  enabled: false
+  audiences: [materials_worker]
+  description: "Equivalent to vasp_execute with the same prepared VASP stage contract, using a blocking SSH-to-Kubernetes execution backend."
+  boot_script: "catmaster/remote/cpu/k8s_vasp_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#vasp_execute"
+  resources: vasp_k8s_cpu
+  requires: [vasp]
+  command: "python task_script/k8s_vasp_boot.py"
+  forward_files:
+    - "*"
+    - "task_script/k8s_vasp_boot.py"
     - "task_script/vasp_boot.py"
   backward_files:
     - "*"
