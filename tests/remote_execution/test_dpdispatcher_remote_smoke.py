@@ -179,11 +179,14 @@ def test_agent_tool_mace_sp_remote(tmp_path: Path) -> None:
 
     payload = {
         "work_dir": "remote_execution/mace_o2_sp_stage",
-        "task_name": "mace_sp_dir",
+        "task_name": "mlff_sp",
         "template_overrides": {
-            "model": os.environ.get("CATMASTER_REMOTE_MACE_MODEL", "mh-1").strip() or "mh-1",
-            "head": os.environ.get("CATMASTER_REMOTE_MACE_HEAD", "omat_pbe"),
-            "default_dtype": os.environ.get("CATMASTER_REMOTE_MACE_DTYPE", "float32").strip() or "float32",
+            "backend": "mace",
+            "backend_config": {
+                "model": os.environ.get("CATMASTER_REMOTE_MACE_MODEL", "mh-1").strip() or "mh-1",
+                "head": os.environ.get("CATMASTER_REMOTE_MACE_HEAD", "omat_pbe"),
+                "default_dtype": os.environ.get("CATMASTER_REMOTE_MACE_DTYPE", "float32").strip() or "float32",
+            },
         },
         "submission_config": {"check_interval": _remote_check_interval(30)},
     }
@@ -223,13 +226,18 @@ def test_agent_tool_uma_omol_sp_remote(tmp_path: Path) -> None:
 
     payload = {
         "work_dir": "remote_execution/uma_h2o_sp_stage",
-        "task_name": "uma_sp_dir",
+        "task_name": "mlff_sp",
         "template_overrides": {
-            "model": _uma_model(),
-            "uma_task": "omol",
-            "charge": 0,
-            "spin": int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")),
-            "device": _uma_device(),
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": _uma_model(),
+                "device": _uma_device(),
+                "defaults": {
+                    "uma_task": "omol",
+                    "charge": 0,
+                    "spin": int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")),
+                },
+            },
         },
         "submission_config": {"check_interval": _uma_check_interval()},
     }
@@ -270,13 +278,18 @@ def test_agent_tool_uma_periodic_sp_remote(tmp_path: Path) -> None:
 
     payload = {
         "work_dir": "remote_execution/uma_o2_periodic_sp_stage",
-        "task_name": "uma_sp_dir",
+        "task_name": "mlff_sp",
         "template_overrides": {
-            "model": _uma_model(),
-            "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
-            "charge": 0,
-            "spin": 0,
-            "device": _uma_device(),
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": _uma_model(),
+                "device": _uma_device(),
+                "defaults": {
+                    "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
+                    "charge": 0,
+                    "spin": 0,
+                },
+            },
         },
         "submission_config": {"check_interval": _uma_check_interval()},
     }
@@ -317,17 +330,24 @@ def test_agent_tool_uma_omol_relax_remote(tmp_path: Path) -> None:
 
     payload = {
         "work_dir": "remote_execution/uma_h2o_relax_stage",
-        "task_name": "uma_relax_dir",
+        "task_name": "mlff_relax",
         "template_overrides": {
-            "model": _uma_model(),
-            "uma_task": "omol",
-            "charge": 0,
-            "spin": int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")),
-            "device": _uma_device(),
-            "fmax": _uma_relax_fmax(),
-            "steps": _uma_relax_steps(),
-            "optimizer": "FIRE",
-            "relax_cell": "false",
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": _uma_model(),
+                "device": _uma_device(),
+                "defaults": {
+                    "uma_task": "omol",
+                    "charge": 0,
+                    "spin": int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")),
+                },
+            },
+            "task_config": {
+                "fmax": _uma_relax_fmax(),
+                "steps": _uma_relax_steps(),
+                "optimizer": "FIRE",
+                "relax_cell": False,
+            },
         },
         "submission_config": {"check_interval": _uma_check_interval()},
     }
@@ -349,7 +369,7 @@ def test_agent_tool_uma_omol_relax_remote(tmp_path: Path) -> None:
 
     summary = results[0].get("summary", {})
     final_energy = summary.get("final_energy_eV")
-    max_force = summary.get("max_force_abs_eVA")
+    max_force = summary.get("max_force_eVA")
     assert isinstance(final_energy, (int, float)) and math.isfinite(float(final_energy))
     assert isinstance(max_force, (int, float)) and math.isfinite(float(max_force))
     assert isinstance(summary.get("converged"), bool)
@@ -372,17 +392,24 @@ def test_agent_tool_uma_periodic_relax_remote(tmp_path: Path) -> None:
 
     payload = {
         "work_dir": "remote_execution/uma_o2_periodic_relax_stage",
-        "task_name": "uma_relax_dir",
+        "task_name": "mlff_relax",
         "template_overrides": {
-            "model": _uma_model(),
-            "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
-            "charge": 0,
-            "spin": 0,
-            "device": _uma_device(),
-            "fmax": _uma_relax_fmax(),
-            "steps": _uma_relax_steps(),
-            "optimizer": "FIRE",
-            "relax_cell": "false",
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": _uma_model(),
+                "device": _uma_device(),
+                "defaults": {
+                    "uma_task": os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat").strip() or "omat",
+                    "charge": 0,
+                    "spin": 0,
+                },
+            },
+            "task_config": {
+                "fmax": _uma_relax_fmax(),
+                "steps": _uma_relax_steps(),
+                "optimizer": "FIRE",
+                "relax_cell": False,
+            },
         },
         "submission_config": {"check_interval": _uma_check_interval()},
     }
@@ -404,7 +431,7 @@ def test_agent_tool_uma_periodic_relax_remote(tmp_path: Path) -> None:
 
     summary = results[0].get("summary", {})
     final_energy = summary.get("final_energy_eV")
-    max_force = summary.get("max_force_abs_eVA")
+    max_force = summary.get("max_force_eVA")
     assert isinstance(final_energy, (int, float)) and math.isfinite(float(final_energy))
     assert isinstance(max_force, (int, float)) and math.isfinite(float(max_force))
     assert isinstance(summary.get("converged"), bool)

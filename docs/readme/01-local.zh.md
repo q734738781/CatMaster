@@ -13,10 +13,10 @@ conda activate catmaster
 
 `requirements/pc-conda.yml` 是 PC/control-plane 环境的唯一入口：科学/材料栈交给 conda 求解，精确 pin 的 LLM/WebUI pip 包也内联在同一个文件里。不要直接用 pip 安装科学栈。
 
-如果这台机器还要跑本地 GPU / MACE 任务，再额外安装 GPU/MACE 依赖。`requirements/gpu.txt` 不是完整 WebUI/agent 环境，不能替代 `requirements/pc-conda.yml`：
+如果这台机器还要跑本地 MACE 任务，再额外安装 MACE provider 依赖。`requirements/mace.txt` 不是完整 WebUI/agent 环境，不能替代 `requirements/pc-conda.yml`：
 
 ```bash
-pip install -r requirements/gpu.txt
+pip install -r requirements/mace.txt
 ```
 
 如果需要重新构建 WebUI 前端或运行部署脚本，确认 Node.js 和 npm 可用：
@@ -140,7 +140,7 @@ Codex OAuth 使用 `langchain-openai` 的 `_ChatOpenAICodex`，不使用 API key
 python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 ```
 
-`configs/llm_codex_oauth.template.yaml` 是本地 Codex OAuth 部署 profile，默认使用已验证的 `gpt-5.6-sol` 和 `high` 推理强度；`configs/llm.template.yaml` 和 `configs/llm.full.template.yaml` 中也有示例。旧 `langchain-codex-oauth` token store 只作为兼容 fallback 读取，新环境不要再依赖第三方 adapter。
+`configs/llm_codex_oauth.template.yaml` 是本地 Codex OAuth 部署 profile，默认使用已验证的 `gpt-5.6-sol` 和 `xhigh` 推理强度；`configs/llm.template.yaml` 和 `configs/llm.full.template.yaml` 中也有示例。旧 `langchain-codex-oauth` token store 只作为兼容 fallback 读取，新环境不要再依赖第三方 adapter。
 
 ## 6. 准备项目空间
 

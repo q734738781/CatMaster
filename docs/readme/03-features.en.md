@@ -149,7 +149,7 @@ External programs can run locally or remotely. Remote executable paths are norma
 
 1. Confirm the stage directory is complete.
 2. Use `remote_submission` or `remote_submission_batch`.
-3. Specify `task_name`, such as `vasp_execute`, `mace_relax_dir`, or `uma_sp_dir`.
+3. Specify `task_name`, such as `vasp_execute`, `mlff_relax`, or `mlff_sp`.
 4. Record `remote_context_id`, `submission_hash`, and `receipt_rel`.
 
 ### Analyze Results

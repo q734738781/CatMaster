@@ -1,16 +1,3 @@
-# GPU/MACE execution dependencies.
-#
-# This file is intentionally not a full CatMaster WebUI/agent environment.
-# Use it for remote MACE boot-script environments, or install it after
-# requirements/pc-conda.yml on machines that also run local MACE/GPU tools.
-# Keep shared scientific pins compatible with requirements/pc-conda.yml.
-torch==2.9.0
-mace-torch==0.3.16
-cuequivariance==0.10.0
-cuequivariance-torch==0.10.0
-ase==3.29.0
-numpy==2.2.6
-scipy==1.17.1
-pandas==2.3.3
-matplotlib==3.10.7
-pyyaml==6.0.3
+# Deprecated compatibility entry point. New deployment docs use mace.txt so a
+# provider-specific MACE environment is not mistaken for a generic GPU stack.
+-r mace.txt

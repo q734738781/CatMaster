@@ -9,10 +9,15 @@ python scripts/remote_execution_smoke.py --list
 python scripts/remote_execution_smoke.py --suite core --check-interval 30
 python scripts/remote_execution_smoke.py --suite all --check-interval 60
 python scripts/remote_execution_smoke.py --suite uma --uma-check-interval 60
+python scripts/remote_execution_smoke.py --suite mlff_si512 --check-interval 30
 ```
 
 The CLI writes a JSON report under `/tmp/catmaster_remote_execution_smoke`
 by default and exercises the current agent-visible `remote_submission` path.
+The `mlff_si512` suite uses one deterministic perturbed 512-atom diamond-Si
+structure for every enabled backend and runs SP, bounded relaxation, and short
+MD through the same task contracts. The `mlff_operations` suite also includes a
+fixed-image NEB smoke for every enabled backend.
 
 Run the whole group explicitly:
 
@@ -96,7 +101,7 @@ CATMASTER_REMOTE_UMA_RELAX_STEPS=5
 
 Expected coverage:
 
-- The MACE test stages one O2 POSCAR under a low-level `mace_sp_dir` stage,
+- The MACE test stages one O2 POSCAR under an `mlff_sp` stage with backend `mace`,
   calls `remote_submission` through `ToolRegistry.as_langchain_tools(...)`,
   and checks `status.json`, `batch_summary.json`, finite single-point energy,
   `summary.json`, and `sp.vasp`.
@@ -115,7 +120,7 @@ Expected coverage:
   `task_name=lammps_execute`, and check `status.json`, `lammps_summary.json`,
   LAMMPS log output, and trajectory output where applicable.
 - The UMA tests are opt-in on top of the global remote gate. They stage H2O
-  for `uma_sp_dir`/`uma_relax_dir` with `audience=orca_xtb_worker` and
+  for `mlff_sp`/`mlff_relax` with backend `fairchem_uma`, `audience=orca_xtb_worker`, and
   `uma_task=omol`, and an O2 periodic VASP structure for
   `audience=materials_worker` with `uma_task=omat` by default. They check
   `status.json`, `batch_summary.json`, finite energy or final energy, max

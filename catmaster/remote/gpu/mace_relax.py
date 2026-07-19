@@ -156,7 +156,8 @@ def _run_mace_single(
 
     final_energy = float(atoms.get_potential_energy())
     final_forces = atoms.get_forces()
-    max_force = float(np.max(np.abs(final_forces)))
+    force_norms = np.linalg.norm(final_forces, axis=1)
+    max_force = float(np.max(force_norms)) if force_norms.size else 0.0
     converged = max_force < fmax
 
     if has_lattice:
@@ -176,7 +177,7 @@ def _run_mace_single(
         "relax_lattice": relax_lattice,
         "final_energy_eV": final_energy,
         "fmax": fmax,
-        "max_force": max_force,
+        "max_force_eVA": max_force,
         "steps": steps,
         "converged": converged,
         "nsteps": opt.nsteps,

@@ -1,0 +1,2 @@
+# MACE cuEquivariance CUDA 12.x kernel add-on. Install after mace.txt.
+cuequivariance-ops-torch-cu12==0.10.0

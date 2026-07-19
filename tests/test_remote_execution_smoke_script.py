@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _load_smoke_module():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "remote_execution_smoke.py"
+    spec = importlib.util.spec_from_file_location("catmaster_remote_execution_smoke", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_remote_execution_smoke_script_lists_cases_without_submitting() -> None:
@@ -25,4 +36,24 @@ def test_remote_execution_smoke_script_lists_cases_without_submitting() -> None:
     assert "uma_mol_sp" in proc.stdout
     assert "uma_mol_relax" in proc.stdout
     assert "cp2k_sp" in proc.stdout
+    assert "mlff_si512: si512_mace_sp" in proc.stdout
+    assert "si512_orb_md" in proc.stdout
+    assert "orb_neb" in proc.stdout
     assert "no_cp2k" not in proc.stdout
+
+
+def test_si512_acceptance_structure_is_deterministic(tmp_path: Path) -> None:
+    from ase.io import read
+    import numpy as np
+
+    smoke = _load_smoke_module()
+    first = tmp_path / "first.vasp"
+    second = tmp_path / "second.vasp"
+    smoke._write_si512_poscar(first, displacement_A=0.01)
+    smoke._write_si512_poscar(second, displacement_A=0.01)
+
+    atoms = read(first)
+    repeated = read(second)
+    assert len(atoms) == 512
+    assert set(atoms.get_chemical_symbols()) == {"Si"}
+    assert np.allclose(atoms.positions, repeated.positions)

@@ -87,7 +87,8 @@ def _run_mace_single_point(
     atoms.calc = calc
     energy = float(atoms.get_potential_energy())
     forces = atoms.get_forces()
-    max_force_abs = float(np.max(np.abs(forces)))
+    force_norms = np.linalg.norm(forces, axis=1)
+    max_force = float(np.max(force_norms)) if force_norms.size else 0.0
 
     has_lattice = atoms.cell is not None and getattr(atoms.cell, "volume", 0) > 1e-6
     if has_lattice:
@@ -104,7 +105,7 @@ def _run_mace_single_point(
         "dispersion": dispersion,
         "default_dtype": default_dtype,
         "energy_eV": energy,
-        "max_force_abs_eVA": max_force_abs,
+        "max_force_eVA": max_force,
         "output_structure": output_structure.name,
     }
     try:

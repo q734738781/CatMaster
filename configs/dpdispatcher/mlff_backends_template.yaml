@@ -1,0 +1,45 @@
+# Copy to mlff_backends.yaml and keep only backends installed on this deployment.
+# Backend profiles choose deployment/resource/model availability; scientific
+# operation schemas and runner implementations remain code-owned.
+mlff_backends:
+  mace:
+    enabled: true
+    default: true
+    resource: mace_gpu
+    operations: [sp, relax, md, neb]
+    default_model: mh-1
+    models:
+      mh-1:
+        enabled: true
+        checkpoint_alias: MACE-MH-1
+
+  fairchem_uma:
+    enabled: false
+    default: false
+    resource: uma_gpu
+    operations: [sp, relax, md, neb]
+    default_model: uma-s-1p2
+    models:
+      uma-s-1p2:
+        enabled: true
+
+  mattersim:
+    enabled: false
+    default: false
+    resource: mattersim_gpu
+    operations: [sp, relax, md, neb]
+    default_model: mattersim-v1-1m
+    models:
+      mattersim-v1-1m:
+        enabled: true
+        checkpoint_alias: MatterSim-v1.0.0-1M
+
+  orb_v3:
+    enabled: false
+    default: false
+    resource: orb_gpu
+    operations: [sp, relax, md, neb]
+    default_model: orb-v3-conservative-inf-omat
+    models:
+      orb-v3-conservative-inf-omat:
+        enabled: true

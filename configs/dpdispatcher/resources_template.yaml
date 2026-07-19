@@ -136,7 +136,7 @@ uma_gpu:
   kind: domain
   capabilities: [uma, fairchem, gpu]
   description: "Managed FairChem UMA GPU execution."
-  audiences: [materials_worker, orca_xtb_worker]
+  audiences: [materials_worker, dynamics_worker, orca_xtb_worker]
   machine: gpu_server
   number_node: 1
   cpu_per_node: 16
@@ -147,6 +147,38 @@ uma_gpu:
     - "#SBATCH --export=ALL"
   source_list:
     - "<REMOTE_UMA_ENV_SCRIPT>"
+
+mattersim_gpu:
+  kind: domain
+  capabilities: [mattersim, gpu]
+  description: "Managed MatterSim GPU execution."
+  audiences: [materials_worker, dynamics_worker]
+  machine: gpu_server
+  number_node: 1
+  cpu_per_node: 16
+  gpu_per_node: 1
+  queue_name: main
+  group_size: 1
+  custom_flags:
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_MATTERSIM_ENV_SCRIPT>"
+
+orb_gpu:
+  kind: domain
+  capabilities: [orb_v3, gpu]
+  description: "Managed ORB-v3 GPU execution."
+  audiences: [materials_worker, dynamics_worker]
+  machine: gpu_server
+  number_node: 1
+  cpu_per_node: 16
+  gpu_per_node: 1
+  queue_name: main
+  group_size: 1
+  custom_flags:
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_ORB_ENV_SCRIPT>"
 
 xtb_cpu:
   kind: domain

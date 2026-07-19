@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional
@@ -20,6 +21,10 @@ from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 _RUN_MARKERS = ("vasprun.xml", "OUTCAR", "OSZICAR", "CONTCAR")
+# Matplotlib maintains process-global state and is not safe when LangGraph runs
+# several analysis tool calls concurrently. Keep numerical work parallel, but
+# serialize the short figure-rendering sections.
+_MATPLOTLIB_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -587,13 +592,16 @@ def analyze_vasp_neb_results(payload: Dict[str, Any]) -> tuple[str, dict[str, An
         png_path = output_dir / "neb_profile.png"
         summary_json = output_dir / "neb_summary.json"
         _write_csv(csv_path, records)
-        plt.figure(figsize=(6.5, 4.0))
-        plt.plot([record["image"] for record in records], relative, marker="o")
-        plt.xlabel("Image")
-        plt.ylabel("Relative energy (eV)")
-        plt.tight_layout()
-        plt.savefig(png_path, dpi=180)
-        plt.close()
+        with _MATPLOTLIB_LOCK:
+            figure = plt.figure(figsize=(6.5, 4.0))
+            try:
+                plt.plot([record["image"] for record in records], relative, marker="o")
+                plt.xlabel("Image")
+                plt.ylabel("Relative energy (eV)")
+                plt.tight_layout()
+                plt.savefig(png_path, dpi=180)
+            finally:
+                plt.close(figure)
         summary = {
             "result_dir_rel": workspace_relpath(result_dir),
             "images_analyzed": len(records),
@@ -726,28 +734,33 @@ def analyze_trajectory(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             ],
         )
 
-        plt.figure(figsize=(6.5, 4.0))
-        plt.plot(time_ps, msd, label="MSD")
-        if diffusion is not None:
-            plt.plot(time_ps, slope * time_ps + intercept, linestyle="--", label="linear fit")
-        plt.xlabel("Time (ps)")
-        plt.ylabel("MSD ($\\AA^2$)")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(msd_png, dpi=180)
-        plt.close()
+        with _MATPLOTLIB_LOCK:
+            figure = plt.figure(figsize=(6.5, 4.0))
+            try:
+                plt.plot(time_ps, msd, label="MSD")
+                if diffusion is not None:
+                    plt.plot(time_ps, slope * time_ps + intercept, linestyle="--", label="linear fit")
+                plt.xlabel("Time (ps)")
+                plt.ylabel("MSD ($\\AA^2$)")
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(msd_png, dpi=180)
+            finally:
+                plt.close(figure)
 
-        if temps or energies:
-            plt.figure(figsize=(6.5, 4.0))
-            if temps:
-                plt.plot(np.arange(len(temps)), temps, label="Temperature (K)")
-            if energies:
-                plt.plot(np.arange(len(energies)), energies, label="Energy")
-            plt.xlabel("Step")
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(thermo_png, dpi=180)
-            plt.close()
+            if temps or energies:
+                figure = plt.figure(figsize=(6.5, 4.0))
+                try:
+                    if temps:
+                        plt.plot(np.arange(len(temps)), temps, label="Temperature (K)")
+                    if energies:
+                        plt.plot(np.arange(len(energies)), energies, label="Energy")
+                    plt.xlabel("Step")
+                    plt.legend()
+                    plt.tight_layout()
+                    plt.savefig(thermo_png, dpi=180)
+                finally:
+                    plt.close(figure)
 
         summary = {
             "trajectory_rel": workspace_relpath(trajectory_path),

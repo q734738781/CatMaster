@@ -28,9 +28,45 @@ from catmaster.tools.execution.mace_dispatch import (
     _write_batch_state,
 )
 from catmaster.tools.execution.task_payloads import render_task_fields
-from catmaster.tools.execution.task_registry import TaskRegistry
+from catmaster.tools.execution.task_registry import TaskConfig
 
 _IMAGE_FILE_RE = re.compile(r"^(?P<idx>\d{2})(?P<ext>\.(vasp|poscar|cif))$", re.IGNORECASE)
+
+
+def _legacy_neb_task() -> TaskConfig:
+    defaults = {
+        "input": "input",
+        "output_root": "output",
+        "fmax": 0.05,
+        "steps": 300,
+        "mode": "plain",
+        "autoneb_target_images": 0,
+        "autoneb_n_simul": 0,
+        "autoneb_space_energy_ratio": 0.5,
+        "autoneb_interpolate_method": "idpp",
+        "climb": False,
+        "model": "mh-1",
+        "head": "omat_pbe",
+        "dispersion": False,
+        "default_dtype": "float64",
+        "device": "auto",
+    }
+    command = (
+        "python task_script/mace_neb.py --input {input} --output_root {output_root} "
+        "--fmax {fmax} --steps {steps} --mode {mode} "
+        "--autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} "
+        "--autoneb_space_energy_ratio {autoneb_space_energy_ratio} "
+        "--autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} "
+        "--model {model} --head {head} --dispersion {dispersion} "
+        "--default_dtype {default_dtype} --device {device}"
+    )
+    return TaskConfig(
+        command=command,
+        resources="mace_gpu",
+        defaults=defaults,
+        forward_files=["input", "task_script/mace_neb.py"],
+        backward_files=["output"],
+    )
 
 
 class AutoNebOptions(BaseModel):
@@ -213,11 +249,8 @@ def _resolve_local_model(model_value: str) -> tuple[str, str, str]:
 def mace_neb_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[mace/execute] Submit a MACE NEB batch through DPDispatcher."""
     params = MaceNebBatchInput(**payload)
-    reg = TaskRegistry()
-    cfg = reg.get("mace_neb_dir")
-    resources_key = cfg.resources
-    if not resources_key:
-        raise KeyError("mace_neb_dir missing resources in task config")
+    cfg = _legacy_neb_task()
+    resources_key = "mace_gpu"
     machine = _resolve_machine_for_resources(resources_key)
     head = _resolve_mace_head(params.head)
 

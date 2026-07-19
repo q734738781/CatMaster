@@ -81,169 +81,72 @@ lammps_execute:
     - "*"
   task_work_path: "."
 
-mace_relax_dir:
-  audiences: [materials_worker]
-  description: "Run MACE relaxations for structures staged under input/."
-  boot_script: "catmaster/remote/gpu/mace_relax.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_relax_dir"
-  resources: mace_gpu
-  requires: [mace]
-  command: "python task_script/mace_relax.py --input {input} --output_root {output_root} --fmax {fmax} --steps {steps} --model {model} --head {head} --dispersion {dispersion} --relax_lattice {relax_lattice} --default_dtype {default_dtype} --enable_cueq {enable_cueq} --device {device}"
-  defaults:
-    input: input
-    output_root: output
-    fmax: 0.02
-    steps: 500
-    model: mh-1
-    head: omat_pbe
-    dispersion: false
-    relax_lattice: false
-    default_dtype: float64
-    enable_cueq: false
-    device: auto
-  forward_files:
-    - "input"
-    - "task_script/mace_relax.py"
-  backward_files:
-    - "output"
-  task_work_path: "."
-
-mace_sp_dir:
-  audiences: [materials_worker]
-  description: "Run MACE single-point calculations for structures staged under input/."
-  boot_script: "catmaster/remote/gpu/mace_sp.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_sp_dir"
-  resources: mace_gpu
-  requires: [mace]
-  command: "python task_script/mace_sp.py --input {input} --output_root {output_root} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
-  defaults:
-    input: input
-    output_root: output
-    model: mh-1
-    head: omat_pbe
-    dispersion: false
-    default_dtype: float64
-    device: auto
-  forward_files:
-    - "input"
-    - "task_script/mace_sp.py"
-  backward_files:
-    - "output"
-  task_work_path: "."
-
-uma_sp_dir:
+mlff_sp:
   audiences: [materials_worker, orca_xtb_worker]
-  description: "Run FairChem UMA single-point calculations for structures staged under input/."
-  boot_script: "catmaster/remote/gpu/uma_sp.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#uma_sp_dir"
-  resources: uma_gpu
-  requires: [uma]
-  command: "python task_script/uma_sp.py --input {input} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata} --device {device}"
-  defaults:
-    input: input
-    output_root: output
-    model: uma-s-1p2
-    uma_task: auto
-    charge: 0
-    spin: 0
-    metadata: __none__
-    device: auto
+  description: "Run MLFF single-point calculations with an enabled backend for structures directly under input/."
+  operation: sp
+  boot_script: "catmaster/remote/mlff/mlff_sp.py"
+  command: "python task_script/mlff_sp.py --run_config .catmaster/generated/run_config.json"
   forward_files:
     - "input"
-    - "?params/uma_metadata.json"
-    - "task_script/uma_sp.py"
-    - "task_script/uma_common.py"
-  backward_files:
-    - "output"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_sp.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
   task_work_path: "."
 
-uma_relax_dir:
+mlff_relax:
   audiences: [materials_worker, orca_xtb_worker]
-  description: "Run FairChem UMA relaxations for structures staged under input/."
-  boot_script: "catmaster/remote/gpu/uma_relax.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#uma_relax_dir"
-  resources: uma_gpu
-  requires: [uma]
-  command: "python task_script/uma_relax.py --input {input} --output_root {output_root} --model {model} --uma_task {uma_task} --charge {charge} --spin {spin} --metadata {metadata} --device {device} --fmax {fmax} --steps {steps} --optimizer {optimizer} --relax_cell {relax_cell}"
-  defaults:
-    input: input
-    output_root: output
-    model: uma-s-1p2
-    uma_task: auto
-    charge: 0
-    spin: 0
-    metadata: __none__
-    device: auto
-    fmax: 0.02
-    steps: 500
-    optimizer: FIRE
-    relax_cell: false
+  description: "Run MLFF structure relaxations with an enabled backend for structures directly under input/."
+  operation: relax
+  boot_script: "catmaster/remote/mlff/mlff_relax.py"
+  command: "python task_script/mlff_relax.py --run_config .catmaster/generated/run_config.json"
   forward_files:
     - "input"
-    - "?params/uma_metadata.json"
-    - "task_script/uma_relax.py"
-    - "task_script/uma_common.py"
-  backward_files:
-    - "output"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_relax.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
   task_work_path: "."
 
-mace_md_dir:
+mlff_md:
   audiences: [materials_worker, dynamics_worker]
-  description: "Run MACE MD for structures staged under input/."
-  boot_script: "catmaster/remote/gpu/mace_md.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_md_dir"
-  resources: mace_gpu
-  requires: [mace]
-  command: "python task_script/mace_md.py --input {input} --output_root {output_root} --params {params} --device {device}"
-  defaults:
-    input: input
-    output_root: output
-    params: params/md_params.json
-    device: auto
+  description: "Run one MLFF trajectory with an enabled backend from the single structure under input/."
+  operation: md
+  boot_script: "catmaster/remote/mlff/mlff_md.py"
+  command: "python task_script/mlff_md.py --run_config .catmaster/generated/run_config.json"
   forward_files:
     - "input"
-    - "params"
-    - "task_script/mace_md.py"
-  backward_files:
-    - "output"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_md.py"
+    - "task_script/mlff_common.py"
+    - "task_script/mlff_dynamics.py"
+  backward_files: ["output"]
   task_work_path: "."
 
-mace_neb_dir:
+mlff_neb:
   audiences: [materials_worker]
-  description: "Run MACE NEB or AutoNEB for prepared path task directories staged under input/."
-  boot_script: "catmaster/remote/gpu/mace_neb.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_neb_dir"
-  resources: mace_gpu
-  requires: [mace]
-  command: "python task_script/mace_neb.py --input {input} --output_root {output_root} --fmax {fmax} --steps {steps} --mode {mode} --autoneb_target_images {autoneb_target_images} --autoneb_n_simul {autoneb_n_simul} --autoneb_space_energy_ratio {autoneb_space_energy_ratio} --autoneb_interpolate_method {autoneb_interpolate_method} --climb {climb} --model {model} --head {head} --dispersion {dispersion} --default_dtype {default_dtype} --device {device}"
-  defaults:
-    input: input
-    output_root: output
-    fmax: 0.05
-    steps: 300
-    mode: plain
-    autoneb_target_images: 0
-    autoneb_n_simul: 0
-    autoneb_space_energy_ratio: 0.5
-    autoneb_interpolate_method: idpp
-    climb: false
-    model: mh-1
-    head: omat_pbe
-    dispersion: false
-    default_dtype: float64
-    device: auto
+  description: "Run one locally prepared fixed-image MLFF NEB path under input/path/."
+  operation: neb
+  boot_script: "catmaster/remote/mlff/mlff_neb.py"
+  command: "python task_script/mlff_neb.py --run_config .catmaster/generated/run_config.json"
   forward_files:
     - "input"
-    - "task_script/mace_neb.py"
-  backward_files:
-    - "output"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_neb.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
   task_work_path: "."
 
-mace_train_dir:
+mace_train:
   audiences: [ml_worker]
   description: "Run MACE training or fine-tuning from staged dataset/ and params/train_params.json."
   boot_script: "catmaster/remote/gpu/mace_train.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_train_dir"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_train"
   resources: mace_gpu
   requires: [mace]
   command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params}"
@@ -259,11 +162,11 @@ mace_train_dir:
     - "output"
   task_work_path: "."
 
-mace_eval_dir:
+mace_eval:
   audiences: [ml_worker]
   description: "Run MACE evaluation from staged dataset/ and params/eval_params.json."
   boot_script: "catmaster/remote/gpu/mace_evaluate.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_eval_dir"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#mace_eval"
   resources: mace_gpu
   requires: [mace]
   command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params}"

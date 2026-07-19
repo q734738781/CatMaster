@@ -2,7 +2,7 @@
 """
 Demonstrate generic remote submission tools for DPDispatcher:
 - remote_submission_batch with task_name=vasp_execute on prepared VASP stage subdirectories
-- remote_submission_batch with task_name=mace_relax_dir on prepared MACE stage subdirectories
+- remote_submission_batch with task_name=mlff_relax on prepared MACE stage subdirectories
 
 Usage:
   python tests/test_dpdispatcher_batch.py --run   # actually submit
@@ -93,13 +93,15 @@ def main() -> None:
         mace_output = workspace / "mace_outputs"
         mace_payload = {
             "work_dir": str(mace_root),
-            "task_name": "mace_relax_dir",
+            "task_name": "mlff_relax",
             "template_overrides": {
-                "fmax": 0.05,
-                "steps": 300,
-                "model": "mh-1",
-                "head": "omat_pbe",
-                "relax_lattice": args.mace_relax_lattice,
+                "backend": "mace",
+                "backend_config": {"model": "mh-1", "head": "omat_pbe"},
+                "task_config": {
+                    "fmax": 0.05,
+                    "steps": 300,
+                    "relax_cell": args.mace_relax_lattice,
+                },
             },
             "submission_config": {"check_interval": 10},
         }

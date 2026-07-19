@@ -149,7 +149,7 @@ WebUI 的文件视图可以浏览项目空间里的文件、上传文件、预�
 
 1. 确认 stage 目录完整。
 2. 选择 `remote_submission` 或 `remote_submission_batch`。
-3. 明确 `task_name`，例如 `vasp_execute`、`mace_relax_dir` 或 `uma_sp_dir`。
+3. 明确 `task_name`，例如 `vasp_execute`、`mlff_relax` 或 `mlff_sp`。
 4. 运行后记录 `remote_context_id`、`submission_hash`、`receipt_rel`。
 
 ### 分析结果

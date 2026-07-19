@@ -176,7 +176,7 @@ models:
       codex_oauth:
         chat_kwargs:
           reasoning:
-            effort: high
+            effort: xhigh
             summary: auto
           verbosity: medium
 

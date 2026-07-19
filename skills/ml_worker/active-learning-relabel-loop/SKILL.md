@@ -12,7 +12,7 @@ Use this skill to rank candidate structures for the next relabel round and maint
 1. Start from either a candidate structure pool or a curated dataset.
 2. Use `calculate_al_candidates` to rank and select the next structures.
 3. After new reference calculations are collected, rebuild the dataset with `build_dataset_from_runs`.
-4. Retrain and benchmark by preparing `mace_train_dir` / `mace_eval_dir` stage layouts and submitting them with `remote_submission`.
+4. Retrain and benchmark by preparing `mace_train` / `mace_eval` stage layouts and submitting them with `remote_submission`.
 
 ## Allowed tools
 - `calculate_al_candidates`

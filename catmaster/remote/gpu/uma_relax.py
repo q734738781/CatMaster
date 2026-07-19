@@ -14,7 +14,7 @@ from uma_common import (
     auto_uma_task,
     collect_structure_files,
     fairchem_version,
-    finite_max_abs,
+    max_force_eva,
     forces_payload,
     has_periodic_cell,
     load_metadata,
@@ -108,7 +108,7 @@ def _run_relax(
 
     final_energy = float(atoms.get_potential_energy())
     final_forces = atoms.get_forces()
-    max_force = finite_max_abs(final_forces)
+    max_force = max_force_eva(final_forces)
     structure_out = output_structure_path(out_dir, atoms, stem="opt")
     write_structure(structure_out, atoms)
     write_json(out_dir / "forces.json", {"forces_eVA": forces_payload(final_forces)})
@@ -127,7 +127,7 @@ def _run_relax(
         "optimizer": str(optimizer),
         "final_energy_eV": final_energy,
         "fmax": float(fmax),
-        "max_force_abs_eVA": max_force,
+        "max_force_eVA": max_force,
         "steps": int(steps),
         "nsteps": int(getattr(opt, "nsteps", 0)),
         "converged": bool(max_force < float(fmax)),

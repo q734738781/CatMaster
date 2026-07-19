@@ -71,6 +71,7 @@ _REMOTE_EXECUTION_TOOL_ALLOWLIST = {
     "remote_submission",
     "remote_submission_batch",
     "get_avail_remote_task",
+    "get_remote_task_spec",
     "get_avail_resources",
 }
 _MATERIALS_WORKER_TOOL_ALLOWLIST = {
@@ -1005,7 +1006,7 @@ class SpecialistRunner:
         return [
             self._compiled_worker_subagent(
                 name="materials_worker",
-                description="Handle bounded materials modeling and MACE/UMA inference workflows, including MACE MD, and return concise results with artifact paths.",
+                description="Handle bounded materials modeling and managed MLFF inference workflows, including single points, relaxations, pathways, and connected MLFF dynamics work, and return concise results with artifact paths.",
                 model_role="task_runner",
                 system_prompt=self._materials_worker_prompt(
                     execution_contract=self._execution_capability_contract(audience="materials_worker")
@@ -1037,7 +1038,7 @@ class SpecialistRunner:
             ),
             self._compiled_worker_subagent(
                 name="dynamics_worker",
-                description="Handle bounded atomistic dynamics subtasks such as MACE MD, CP2K AIMD, LAMMPS minimization/MD, restarts, and trajectory QC.",
+                description="Handle bounded atomistic dynamics subtasks such as managed MLFF MD, CP2K AIMD, LAMMPS minimization/MD, restarts, and trajectory QC.",
                 model_role="task_runner",
                 system_prompt=self._dynamics_worker_prompt(
                     execution_contract=self._execution_capability_contract(audience="dynamics_worker")
@@ -1765,12 +1766,12 @@ class SpecialistRunner:
             "You are ExperimentSpecialist.\n"
             "Your default role is coordination, dispatch, and decision-making across the experiment lane, not personally executing the substantive domain work.\n"
             "Keep direct work in the specialist thread minimal and coordination-oriented: quick workspace inspection, artifact triage, memory updates, deciding the next bounded handoff, and bounded experiment-facing summaries grounded in completed workspace evidence.\n"
-            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, and complete MACE/UMA inference workflows such as screening, relaxation, path optimization, and MACE MD; use `dynamics_worker` for dynamics-first work such as MACE MD, CP2K AIMD, LAMMPS minimization/MD/restarts, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct Materials Project lookup/download tools for lightweight database retrieval, and use direct public-source checking only when a quick external check is needed.\n"
+            "Route by the current working artifact and domain: use `materials_worker` for periodic materials and surface work, including structure preparation, VASP/CP2K conventional DFT or CP2K pathway preparation/execution, and complete managed MLFF inference workflows such as screening, relaxation, path optimization, and connected MLFF dynamics; use `dynamics_worker` for dynamics-first work such as MLFF MD, CP2K AIMD, LAMMPS minimization/MD/restarts, and trajectory QC; use `ml_worker` for dataset construction, model fine-tuning or training, benchmark evaluation, ML workflow development, and active-learning algorithm work; use `orca_xtb_worker` for molecular or cluster quantum-chemistry work such as conformer generation, xTB screening, ORCA preparation/execution, and molecular post-analysis; use direct Materials Project lookup/download tools for lightweight database retrieval, and use direct public-source checking only when a quick external check is needed.\n"
             "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself.\n"
             "For worker-owned calculation briefs, use the remote task catalog only to avoid misleading local fallback instructions; submission belongs to the worker. Do not suggest local executable fallback for scientific engines unless the user asked for local-only execution or a dry run.\n"
             f"{cls._experiment_layered_capability_visibility_policy()}\n"
             f"{cls._physical_chemical_property_lookup_policy()}\n"
-            "In particular, keep a connected MACE/UMA materials workflow in `materials_worker` when practical; use `dynamics_worker` when the primary task is a dynamics protocol, restart, LAMMPS workflow, or trajectory-health analysis. Model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
+            "In particular, keep a connected managed-MLFF materials workflow in `materials_worker` when practical; use `dynamics_worker` when the primary task is a dynamics protocol, restart, LAMMPS workflow, or trajectory-health analysis. Model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
                 "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
                 "Each brief should contain one primary goal and one completion criterion. "
                 "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
@@ -2048,11 +2049,11 @@ class SpecialistRunner:
         return (
             "You are materials_worker for ExperimentSpecialist.\n"
             "Handle a bounded materials execution subtask autonomously inside the workspace.\n"
-            "This worker owns structure/calc/result workflows: modeling, VASP execution, MACE/UMA inference workflows, and materials-side analysis.\n"
+            "This worker owns structure/calc/result workflows: modeling, VASP/CP2K execution, managed MLFF inference workflows, and materials-side analysis.\n"
             "For Materials Project search or structure download steps inside a delegated materials workflow, report precise API-key, client-package, query-criteria, or requested-field blockers instead of saying materials discovery is generally unavailable.\n"
-            "Typical MACE work here includes surrogate screening, relaxation, single-point ranking, path optimization, and MACE MD when those steps serve one connected materials workflow. Dynamics-first MACE MD and trajectory-health tasks may instead go to `dynamics_worker`.\n"
-            "For MACE or other ML-potential relaxations, single-points, and path calculations, use the registered managed batch path first when it fits; do not run local calculators just because the package is importable.\n"
-            "For VASP, CP2K, and managed MACE/UMA execution, local command capability is for stage prep and analysis only; engine execution stays on the managed remote path.\n"
+            "Typical managed MLFF work here includes surrogate screening, relaxation, single-point ranking, path optimization, and connected MLFF dynamics when those steps serve one materials workflow. Dynamics-first MLFF MD and trajectory-health tasks may instead go to `dynamics_worker`.\n"
+            "For ML-potential relaxations, single-points, and path calculations, use the registered managed path first when it fits; do not run local calculators just because a provider package is importable.\n"
+            "For VASP, CP2K, and managed MLFF execution, local command capability is for stage prep and analysis only; engine execution stays on the managed remote path.\n"
             "When no dedicated tool covers a bounded materials task, use local command/Python capability with mature third-party libraries inside the workspace instead of stopping at the missing-tool boundary.\n"
             "When preparing VASP inputs or scripts that need POTCAR access, obtain POTCARs through the pymatgen interface rather than ad hoc shell copying or manual symbol-to-file mapping.\n"
             "For method-parameter choices in materials calculations, honor explicit user requirements first, then choose task- and system-driven overrides; for registered remote templates, put those choices in the declared template-override field rather than relying on defaults or patching copied task scripts. If the choice remains uncertain, use a narrow literature or official documentation check before finalizing the override.\n"
@@ -2110,10 +2111,10 @@ class SpecialistRunner:
         return (
             "You are dynamics_worker for ExperimentSpecialist.\n"
             "Handle a bounded atomistic dynamics subtask autonomously inside the workspace.\n"
-            "This worker owns CP2K AIMD preparation/execution handoff, MACE MD sampling, reusable CP2K run-health summaries, LAMMPS force-field validation, minimization, MD, restart staging, and generic trajectory QC.\n"
+            "This worker owns CP2K AIMD preparation/execution handoff, managed MLFF MD sampling, reusable CP2K run-health summaries, LAMMPS force-field validation, minimization, MD, restart staging, and generic trajectory QC.\n"
             "It does not own general slab, adsorbate, bulk, defect, or conventional DFT structure construction; consume artifacts from `materials_worker` for those steps.\n"
-            "For CP2K AIMD, MACE MD, and LAMMPS execution, use the registered managed remote path when it fits, with prepared stage directories submitted through DPDispatcher.\n"
-            "For CP2K AIMD, LAMMPS, and MACE MD execution, local command capability is for stage prep and analysis only; engine execution stays on the managed remote path.\n"
+            "For CP2K AIMD, MLFF MD, and LAMMPS execution, use the registered managed remote path when it fits, with prepared stage directories submitted through DPDispatcher.\n"
+            "For CP2K AIMD, LAMMPS, and MLFF MD execution, local command capability is for stage prep and analysis only; engine execution stays on the managed remote path.\n"
             "Do not invent force-field parameters, pair coefficients, or complex PLUMED collective variables. Use validated force-field cards and user-provided or curated PLUMED files.\n"
             "For method-parameter choices in dynamics calculations, honor explicit user requirements first, then choose task- and system-driven overrides; if the choice remains uncertain, use a narrow literature or official documentation check before finalizing the override.\n"
             "When no dedicated analysis tool covers a bounded trajectory question, use local command/Python capability with mature third-party libraries inside the workspace instead of forcing a generic parser.\n"

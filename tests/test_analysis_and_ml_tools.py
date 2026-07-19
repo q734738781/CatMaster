@@ -163,6 +163,70 @@ def test_analyze_trajectory_keeps_unwrapped_ase_traj_positions_for_msd(tmp_path:
         assert summary["final_msd_a2"] == pytest.approx(9.0)
 
 
+def test_analyze_trajectory_serializes_matplotlib_for_parallel_tool_calls(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    active_figures = 0
+    counter_lock = threading.Lock()
+    start_barrier = threading.Barrier(4)
+    original_figure = results_analysis.plt.figure
+    original_close = results_analysis.plt.close
+
+    def guarded_figure(*args, **kwargs):
+        nonlocal active_figures
+        with counter_lock:
+            if active_figures:
+                raise RuntimeError("concurrent matplotlib access")
+            active_figures += 1
+        time.sleep(0.02)
+        return original_figure(*args, **kwargs)
+
+    def guarded_close(*args, **kwargs):
+        nonlocal active_figures
+        try:
+            return original_close(*args, **kwargs)
+        finally:
+            with counter_lock:
+                active_figures -= 1
+
+    monkeypatch.setattr(results_analysis.plt, "figure", guarded_figure)
+    monkeypatch.setattr(results_analysis.plt, "close", guarded_close)
+
+    files_root = tmp_path / "files"
+    for index in range(4):
+        trajectory_dir = files_root / f"md_{index}"
+        trajectory_dir.mkdir(parents=True)
+        frames = [
+            Atoms("Li", positions=[[0.1 * step, 0.0, 0.0]], cell=[5, 5, 5], pbc=True)
+            for step in range(3)
+        ]
+        ase_write(str(trajectory_dir / "md.traj"), frames, format="traj")
+
+    def run_analysis(index: int) -> dict[str, object]:
+        start_barrier.wait()
+        with workspace_scope(tmp_path):
+            _, artifact = results_analysis.analyze_trajectory(
+                {
+                    "path": f"md_{index}/md.traj",
+                    "output_dir": f"analysis_{index}",
+                    "timestep_fs": 1.0,
+                    "species": "Li",
+                }
+            )
+        return artifact
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        artifacts = list(executor.map(run_analysis, range(4)))
+
+    assert len(artifacts) == 4
+    assert active_figures == 0
+    assert all((files_root / f"analysis_{index}" / "trajectory_msd.png").is_file() for index in range(4))
+
+
 def test_build_dataset_from_runs_and_calculate_al_candidates(monkeypatch, tmp_path: Path) -> None:
     import catmaster.tools.machine_learning.dataset_tools as dataset_tools
     frames = []

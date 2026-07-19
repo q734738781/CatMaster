@@ -74,11 +74,13 @@ configs/dpdispatcher/resources.yaml
 - `lammps_cpu`：LAMMPS CPU 任务。
 - `mace_gpu`：MACE GPU 任务。
 - `uma_gpu`：FairChem UMA GPU 任务，建议使用独立于 MACE 的 conda 环境。
+- `mattersim_gpu`：使用独立 provider 环境的 MatterSim GPU 任务。
+- `orb_gpu`：使用独立 provider 环境的 ORB-v3 GPU 任务。
 
-如需启用 MACE cuEquivariance 加速，先安装 `requirements/gpu.txt`，然后按
+如需启用 MACE cuEquivariance 加速，先安装 `requirements/mace.txt`，然后按
 `torch.version.cuda` 只选择一个 kernel add-on：CUDA 12.x 使用
-`requirements/gpu-cueq-cu12.txt`，CUDA 13.x 使用
-`requirements/gpu-cueq-cu13.txt`。不要根据 NVIDIA 驱动版本选择 wheel。
+`requirements/mace-cueq-cu12.txt`，CUDA 13.x 使用
+`requirements/mace-cueq-cu13.txt`。不要根据 NVIDIA 驱动版本选择 wheel。
 在目标模型、体系规模和 GPU 完成基准测试前，MD 配置中的 `enable_cueq`
 和 `compile_mode` 应保持显式设置，不要作为无条件默认值。
 - `general_cpu`：自定义 CPU boot script。
@@ -187,17 +189,15 @@ configs/dpdispatcher/tasks.yaml
 - `vasp_execute_neb`
 - `cp2k_execute`
 - `lammps_execute`
-- `mace_relax_dir`
-- `mace_sp_dir`
-- `mace_md_dir`
-- `mace_neb_dir`
-- `mace_train_dir`
-- `mace_eval_dir`
-- `uma_sp_dir`
-- `uma_relax_dir`
+- `mlff_sp`
+- `mlff_relax`
+- `mlff_md`
+- `mlff_neb`
+- `mace_train`
+- `mace_eval`
 - `xtb_run`
 
-每个 task 定义：
+普通 task 定义：
 
 - `resources`：默认用哪个 resource key。
 - `boot_script`：会复制到远程 stage 的启动脚本。
@@ -206,6 +206,11 @@ configs/dpdispatcher/tasks.yaml
 - `forward_files`：上传文件。
 - `backward_files`：下载文件。
 - `task_work_path`：远程命令在哪个 stage 子目录执行。
+
+`mlff_*` task card 使用固定的通用 runner 命令，所选 backend 通过
+`mlff_backends.yaml` 决定 resource；科学参数由
+`template_overrides.backend_config` 与 `task_config` 校验。使用
+`get_remote_task_spec` 查询完整 schema 和当前默认值。
 
 ## 5. 自定义任务
 
@@ -242,19 +247,19 @@ my_python_task:
 对于 MACE relax：
 
 ```text
-将 structures/ 里的结构整理成 mace_relax_dir 需要的 input/ stage，然后用 remote_submission 提交，模型用 mh-1，head 用 omat_pbe。
+将 structures/ 里的结构整理成 mlff_relax 的 input/ stage，先用 get_remote_task_spec 查询 backend=mace 的配置，再用 remote_submission 提交；template_overrides.backend=mace，backend_config 设 model=mh-1、head=omat_pbe，弛豫参数放在 task_config。
 ```
 
 对于周期材料或催化体系的 UMA single point：
 
 ```text
-将 structures/ 里的结构整理成 uma_sp_dir 需要的 input/ stage，用 remote_submission 提交，params 设置 model=uma-s-1p2、uma_task=omat。若是 OC20/OC25/ODAC/OMC 语义任务，不要依赖 auto，明确设置对应 uma_task。
+将 structures/ 里的结构整理成 mlff_sp 的 input/ stage，用 remote_submission 提交；选择 backend=fairchem_uma，在 backend_config 中设置 model=uma-s-1p2，并将 defaults.uma_task 设为 omat。若是 OC20/OC25/ODAC/OMC 语义任务，不要依赖 auto，明确设置对应 UMA task。
 ```
 
 对于分子或团簇的 UMA 预优化：
 
 ```text
-将 molecules/ 里的结构整理成 uma_relax_dir 需要的 input/ stage，用 remote_submission 提交，params 设置 uma_task=omol、charge=0、spin=1、relax_cell=false。后续正式能量、频率、TS 或光谱仍需 ORCA/xTB/DFT 验证。
+将 molecules/ 里的结构整理成 mlff_relax 的 input/ stage，用 remote_submission 提交；选择 backend=fairchem_uma，在 backend_config.defaults 中设置 uma_task=omol、charge=0、spin=1，并在 task_config 中设置 relax_cell=false。后续正式能量、频率、TS 或光谱仍需 ORCA/xTB/DFT 验证。
 ```
 
 `uma_task=auto` 只做保守的分子/周期粗分：有有效周期 cell 时默认 `omat`，否则默认 `omol`。`omol` 的 `charge` 和 `spin` 会写入 ASE `Atoms.info`；非 `omol` 任务请保持 `charge=0`、`spin=0`。
@@ -288,7 +293,7 @@ batch_root/
     POTCAR
 ```
 
-不要因为一个 stage 内部包含多个科学输入就自动改用 `remote_submission_batch`。例如 `mace_sp_dir`、`mace_relax_dir`、`uma_sp_dir` 和 `uma_relax_dir` 的一个 stage 可以在 `input/` 下放多个结构，这仍然是一次 `remote_submission`；只有当你准备了多个独立的 stage 子目录时才用 `remote_submission_batch`。
+不要因为一个 stage 内部包含多个科学输入就自动改用 `remote_submission_batch`。一个 `mlff_sp` 或 `mlff_relax` stage 可以在 `input/` 下放多个兼容结构，这仍然是一次 `remote_submission`；只有当你准备了多个独立的 stage 子目录时才用 `remote_submission_batch`。
 
 ## 8. 真实远程 smoke test
 

@@ -6,6 +6,10 @@ usage() {
 Usage:
   scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--skip-frontend-build] [--sync-start-webui] [--autorun|--no-autorun]
 
+The default runtime sync includes the complete DPDispatcher execution stack:
+Python runners, active local configs, public templates, MLFF backend profiles,
+remote environment scripts, and provider requirements.
+
 Options:
   --target DIR
       Runtime checkout directory to update.
@@ -37,6 +41,42 @@ Options:
   --no-autorun
       Do not start runtime WebUI automatically after deployment.
 EOF
+}
+
+verify_runtime_target() {
+  local required=(
+    "catmaster/tools/execution/dpdispatcher_runner.py"
+    "catmaster/tools/execution/remote_submission.py"
+    "catmaster/tools/execution/mlff_specs.py"
+    "catmaster/tools/execution/mlff_stage.py"
+    "catmaster/remote/cpu/k8s_vasp_boot.py"
+    "catmaster/remote/mlff/mlff_common.py"
+    "configs/dpdispatcher/machines_template.yaml"
+    "configs/dpdispatcher/resources_template.yaml"
+    "configs/dpdispatcher/tasks_template.yaml"
+    "configs/dpdispatcher/mlff_backends_template.yaml"
+    "configs/dpdispatcher/env_templates/catmaster_env_mace.sh"
+    "configs/dpdispatcher/env_templates/catmaster_env_uma.sh"
+    "configs/dpdispatcher/env_templates/catmaster_env_mattersim.sh"
+    "configs/dpdispatcher/env_templates/catmaster_env_orb.sh"
+    "requirements/mace.txt"
+    "requirements/uma.txt"
+    "requirements/mattersim.txt"
+    "requirements/orb.txt"
+    "scripts/remote_execution_smoke.py"
+  )
+  local missing=()
+  local rel
+  for rel in "${required[@]}"; do
+    if [[ ! -e "$TARGET_DIR/$rel" ]]; then
+      missing+=("$rel")
+    fi
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "Deployment is missing required DPDispatcher runtime paths:" >&2
+    printf '  %s\n' "${missing[@]}" >&2
+    exit 1
+  fi
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -146,8 +186,10 @@ fi
 echo
 
 if [[ $DRY_RUN -eq 0 && $SKIP_FRONTEND_BUILD -eq 0 ]]; then
+  DEPLOY_CACHE_DIR="${CATMASTER_DEPLOY_CACHE_DIR:-${TMPDIR:-/tmp}/catmaster-deploy-cache}"
+  mkdir -p "$DEPLOY_CACHE_DIR"
   if [[ -f "$REPO_ROOT/scripts/install_jsmol_assets.py" ]]; then
-    python3 "$REPO_ROOT/scripts/install_jsmol_assets.py" --quiet
+    XDG_CACHE_HOME="$DEPLOY_CACHE_DIR" python3 "$REPO_ROOT/scripts/install_jsmol_assets.py" --quiet
   fi
   FRONTEND_DIR="$REPO_ROOT/catmaster/webui/frontend"
   if [[ -f "$FRONTEND_DIR/package.json" ]]; then
@@ -156,7 +198,7 @@ if [[ $DRY_RUN -eq 0 && $SKIP_FRONTEND_BUILD -eq 0 ]]; then
       exit 1
     fi
     echo "Building WebUI bundle..."
-    (cd "$FRONTEND_DIR" && npm run build)
+    (cd "$FRONTEND_DIR" && XDG_CACHE_HOME="$DEPLOY_CACHE_DIR" npm run build)
     echo
   fi
 fi
@@ -170,9 +212,12 @@ else
     "requirements"
     "skills"
     "scripts"
+    "docs"
     "main.py"
     "README.md"
     "LICENSE"
+    "AGENTS.md"
+    ".env.example"
   )
   if [[ $SYNC_START_WEBUI -eq 1 ]]; then
     RUNTIME_PATHS+=("start_webui.sh")
@@ -191,6 +236,7 @@ else
 fi
 
 if [[ $DRY_RUN -eq 0 ]]; then
+  verify_runtime_target
   COMMIT="unknown"
   if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -201,6 +247,8 @@ if [[ $DRY_RUN -eq 0 ]]; then
 source_repo=$REPO_ROOT
 source_commit=$COMMIT
 deployed_at_utc=$DEPLOY_TIME
+deployment_profile=$([[ $FULL_REPO -eq 1 ]] && echo full-repo || echo runtime)
+dpdispatcher_sync=runtime-code-active-configs-templates-envs-requirements
 EOF
   if [[ ! -f "$TARGET_DIR/start_webui.sh" ]]; then
     if [[ -f "$REPO_ROOT/start_webui.sh" ]]; then

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Code writing date: 2026-07-17
+# Responsible agent: Codex, for the CatMaster remote-execution maintainers.
+# Implementation principle: exercise public managed-submission contracts with
+# deterministic structures and preserve receipts plus normalized outputs.
+# Purpose: reproducible DPDispatcher smoke and 512-atom Si acceptance suites.
 from __future__ import annotations
 
 import argparse
@@ -207,6 +212,73 @@ def _write_o2_poscar(path: Path) -> None:
     )
 
 
+def _write_si_poscar(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "Si diamond remote smoke",
+                "1.0",
+                "0.000000 2.715000 2.715000",
+                "2.715000 0.000000 2.715000",
+                "2.715000 2.715000 0.000000",
+                "Si",
+                "2",
+                "Direct",
+                "0.000000 0.000000 0.000000",
+                "0.250000 0.250000 0.250000",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_si512_poscar(path: Path, *, displacement_A: float, seed: int = 20260717) -> None:
+    from ase.build import bulk
+    from ase.io import write
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atoms = bulk("Si", "diamond", a=5.43, cubic=True).repeat((4, 4, 4))
+    if len(atoms) != 512:
+        raise AssertionError(f"Expected 512 Si atoms, built {len(atoms)}")
+    if displacement_A > 0:
+        rng = np.random.default_rng(seed)
+        atoms.positions += rng.normal(0.0, float(displacement_A), size=atoms.positions.shape)
+        atoms.wrap()
+    atoms.info["catmaster_acceptance"] = {
+        "structure": "diamond-Si 4x4x4 conventional supercell",
+        "atom_count": 512,
+        "lattice_a_A": 5.43,
+        "displacement_A": float(displacement_A),
+        "seed": int(seed),
+    }
+    write(path, atoms, format="vasp", direct=True, sort=True)
+
+
+def _write_o2_neb_image(path: Path, bond_length: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "O2 MLFF NEB remote smoke",
+                "1.0",
+                "15.000000 0.000000 0.000000",
+                "0.000000 15.000000 0.000000",
+                "0.000000 0.000000 15.000000",
+                "O",
+                "2",
+                "Cartesian",
+                "7.500000 7.500000 7.500000",
+                f"7.500000 7.500000 {7.5 + bond_length:.6f}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _status_ok(stage_dir: Path) -> dict[str, Any]:
     status = _read_json(stage_dir / "status.json")
     rc = status.get("returncode")
@@ -260,7 +332,7 @@ def _submit_remote(
             "work_dir": work_dir,
             "task_name": task_name,
             "template_overrides": template_overrides or {},
-            "config": {"check_interval": int(check_interval)},
+            "submission_config": {"check_interval": int(check_interval)},
         },
         audience=audience,
     )
@@ -269,6 +341,34 @@ def _submit_remote(
         raise AssertionError("remote_submission artifact.data is not a dict")
     if not data.get("task_state_counts"):
         raise AssertionError("DPDispatcher returned no task_state_counts")
+    return data
+
+
+def _submit_remote_batch(
+    ctx: SmokeContext,
+    *,
+    work_dir: str,
+    task_name: str,
+    audience: str,
+    check_interval: int,
+    template_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    _content, artifact = _invoke_tool(
+        ctx,
+        "remote_submission_batch",
+        {
+            "work_dir": work_dir,
+            "task_name": task_name,
+            "template_overrides": template_overrides or {},
+            "submission_config": {"check_interval": int(check_interval)},
+        },
+        audience=audience,
+    )
+    data = artifact.get("data") or {}
+    if not isinstance(data, dict):
+        raise AssertionError("remote_submission_batch artifact.data is not a dict")
+    if not data.get("task_state_counts"):
+        raise AssertionError("DPDispatcher batch returned no task_state_counts")
     return data
 
 
@@ -287,14 +387,17 @@ def run_mace_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
     data = _submit_remote(
         ctx,
         work_dir=stage_rel,
-        task_name="mace_sp_dir",
+        task_name="mlff_sp",
         audience="materials_worker",
         check_interval=args.mace_check_interval,
         template_overrides={
-            "model": args.mace_model,
-            "head": args.mace_head,
-            "default_dtype": args.mace_dtype,
-            "device": args.mace_device,
+            "backend": "mace",
+            "backend_config": {
+                "model": args.mace_model,
+                "head": args.mace_head,
+                "default_dtype": args.mace_dtype,
+                "device": args.mace_device,
+            },
         },
     )
     _status_ok(stage_dir)
@@ -304,7 +407,10 @@ def run_mace_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
     results = batch.get("results") or []
     if not results:
         raise AssertionError("MACE batch_summary.json has no results")
-    energy = _finite_number(results[0].get("summary", {}).get("energy_eV"), "MACE energy_eV")
+    summary = results[0].get("summary", {})
+    energy = _finite_number(summary.get("energy_eV"), "MACE energy_eV")
+    if not summary.get("provider_version") or data.get("provider_version") != summary.get("provider_version"):
+        raise AssertionError("MACE normalized output and receipt must record the same provider version")
     if not (stage_dir / "output" / "O2" / "summary.json").is_file():
         raise AssertionError("MACE summary.json was not downloaded")
     return {
@@ -314,6 +420,594 @@ def run_mace_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
         "details": {"energy_eV": energy, "task_data": data},
         **_remote_context(data),
     }
+
+
+def run_mace_sp_batch(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    batch_rel, batch_dir = _case_stage(ctx, "mace_si_sp_batch")
+    for child_name in ("stage_a", "stage_b"):
+        _write_si_poscar(batch_dir / child_name / "input" / "Si.vasp")
+    data = _submit_remote_batch(
+        ctx,
+        work_dir=batch_rel,
+        task_name="mlff_sp",
+        audience="materials_worker",
+        check_interval=args.mace_check_interval,
+        template_overrides={
+            "backend": "mace",
+            "backend_config": {
+                "model": args.mace_model,
+                "head": args.mace_head,
+                "default_dtype": args.mace_dtype,
+                "device": args.mace_device,
+            },
+        },
+    )
+    energies: dict[str, float] = {}
+    for child_name in ("stage_a", "stage_b"):
+        child_dir = batch_dir / child_name
+        _status_ok(child_dir)
+        summary = _read_json(child_dir / "output" / "batch_summary.json")
+        if summary.get("errors"):
+            raise AssertionError(f"MACE batch child {child_name} returned errors: {summary.get('errors')!r}")
+        results = summary.get("results") or []
+        if len(results) != 1:
+            raise AssertionError(f"MACE batch child {child_name} expected one result: {results!r}")
+        energies[child_name] = _finite_number(
+            results[0].get("summary", {}).get("energy_eV"),
+            f"MACE {child_name} energy_eV",
+        )
+        if not (child_dir / "output" / "Si" / "summary.json").is_file():
+            raise AssertionError(f"MACE batch child {child_name} summary.json was not downloaded")
+    if data.get("task_count") != 2:
+        raise AssertionError(f"MACE batch receipt expected task_count=2: {data!r}")
+    if data.get("task_state_counts") != {"finished": 2}:
+        raise AssertionError(f"MACE batch did not finish both child stages: {data!r}")
+    digests = data.get("config_digests") or []
+    if len(digests) != 2:
+        raise AssertionError(f"MACE batch expected two config digests: {digests!r}")
+    if not data.get("provider_version"):
+        raise AssertionError("MACE batch receipt lacks provider_version")
+    return {
+        "stage_rel": batch_rel,
+        "stage_dir": str(batch_dir),
+        "checks": [
+            "remote_submission_batch mapped exactly two first-level child stages",
+            "both DPDispatcher tasks finished with finite energies",
+            "each child downloaded its own status and normalized output",
+        ],
+        "details": {"energies_eV": energies, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def _run_periodic_mlff_sp(
+    ctx: SmokeContext,
+    args: argparse.Namespace,
+    *,
+    case_name: str,
+    backend: str,
+    backend_config: dict[str, Any],
+    check_interval: int,
+) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, case_name)
+    _write_si_poscar(stage_dir / "input" / "Si.vasp")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_sp",
+        audience="materials_worker",
+        check_interval=check_interval,
+        template_overrides={"backend": backend, "backend_config": backend_config},
+    )
+    _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"{backend} returned errors: {batch.get('errors')!r}")
+    results = batch.get("results") or []
+    if len(results) != 1:
+        raise AssertionError(f"{backend} batch summary expected one result: {results!r}")
+    summary = results[0].get("summary") or {}
+    energy = _finite_number(summary.get("energy_eV"), f"{backend} energy_eV")
+    _finite_number(summary.get("max_force_eVA"), f"{backend} max_force_eVA")
+    if not (stage_dir / "output" / "Si" / "summary.json").is_file():
+        raise AssertionError(f"{backend} summary.json was not downloaded")
+    if data.get("backend") != backend:
+        raise AssertionError(f"receipt backend mismatch: {data.get('backend')!r} != {backend!r}")
+    if not summary.get("provider_version") or data.get("provider_version") != summary.get("provider_version"):
+        raise AssertionError(f"{backend} normalized output and receipt provider versions do not match")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "status.json returncode=0",
+            f"{backend} batch_summary has one finite periodic energy and force",
+            "receipt records resolved backend and config digest",
+        ],
+        "details": {"energy_eV": energy, "summary": summary, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def run_mattersim_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_periodic_mlff_sp(
+        ctx,
+        args,
+        case_name="mattersim_si_sp",
+        backend="mattersim",
+        backend_config={"model": args.mattersim_model, "device": args.mattersim_device},
+        check_interval=args.mattersim_check_interval,
+    )
+
+
+def run_orb_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_periodic_mlff_sp(
+        ctx,
+        args,
+        case_name="orb_si_sp",
+        backend="orb_v3",
+        backend_config={
+            "model": args.orb_model,
+            "device": args.orb_device,
+            "precision": args.orb_precision,
+        },
+        check_interval=args.orb_check_interval,
+    )
+
+
+def _run_periodic_mlff_relax(
+    ctx: SmokeContext,
+    *,
+    case_name: str,
+    backend: str,
+    backend_config: dict[str, Any],
+    check_interval: int,
+    steps: int,
+) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, case_name)
+    _write_si_poscar(stage_dir / "input" / "Si.vasp")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_relax",
+        audience="materials_worker",
+        check_interval=check_interval,
+        template_overrides={
+            "backend": backend,
+            "backend_config": backend_config,
+            "task_config": {"fmax": 0.05, "steps": steps, "optimizer": "FIRE", "relax_cell": False},
+        },
+    )
+    _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"{backend} relaxation returned errors: {batch.get('errors')!r}")
+    results = batch.get("results") or []
+    if len(results) != 1:
+        raise AssertionError(f"{backend} relaxation expected one result: {results!r}")
+    summary = results[0].get("summary") or {}
+    energy = _finite_number(summary.get("final_energy_eV"), f"{backend} final_energy_eV")
+    _finite_number(summary.get("max_force_eVA"), f"{backend} max_force_eVA")
+    if not isinstance(summary.get("converged"), bool):
+        raise AssertionError(f"{backend} relaxation lacks boolean converged")
+    if not summary.get("provider_version") or data.get("provider_version") != summary.get("provider_version"):
+        raise AssertionError(f"{backend} relaxation output and receipt provider versions do not match")
+    if not (stage_dir / "output" / "Si" / "opt.vasp").is_file():
+        raise AssertionError(f"{backend} opt.vasp was not downloaded")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "status.json returncode=0",
+            f"{backend} fixed-cell relaxation produced finite energy and force",
+            "output/Si/opt.vasp and config digest exist",
+        ],
+        "details": {"final_energy_eV": energy, "summary": summary, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def run_mace_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_periodic_mlff_relax(
+        ctx,
+        case_name="mace_si_relax",
+        backend="mace",
+        backend_config={
+            "model": args.mace_model,
+            "head": args.mace_head,
+            "default_dtype": args.mace_dtype,
+            "device": args.mace_device,
+        },
+        check_interval=args.mace_check_interval,
+        steps=args.mlff_relax_steps,
+    )
+
+
+def run_mattersim_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_periodic_mlff_relax(
+        ctx,
+        case_name="mattersim_si_relax",
+        backend="mattersim",
+        backend_config={"model": args.mattersim_model, "device": args.mattersim_device},
+        check_interval=args.mattersim_check_interval,
+        steps=args.mlff_relax_steps,
+    )
+
+
+def run_orb_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_periodic_mlff_relax(
+        ctx,
+        case_name="orb_si_relax",
+        backend="orb_v3",
+        backend_config={
+            "model": args.orb_model,
+            "device": args.orb_device,
+            "precision": args.orb_precision,
+        },
+        check_interval=args.orb_check_interval,
+        steps=args.mlff_relax_steps,
+    )
+
+
+def run_mace_md(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, "mace_si_md")
+    _write_si_poscar(stage_dir / "input" / "Si.vasp")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_md",
+        audience="dynamics_worker",
+        check_interval=args.mace_check_interval,
+        template_overrides={
+            "backend": "mace",
+            "backend_config": {
+                "model": args.mace_model,
+                "head": args.mace_head,
+                "default_dtype": "float32",
+                "device": args.mace_device,
+            },
+            "task_config": {
+                "dynamics": {"ensemble": "nvt", "temperature_K": 300.0, "timestep_fs": 0.5, "steps": 2},
+                "output": {"traj_interval": 1, "log_interval": 1},
+            },
+        },
+    )
+    _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"MACE MD returned errors: {batch.get('errors')!r}")
+    if batch.get("backend") != "mace" or not batch.get("config_digest") or not batch.get("provider_version"):
+        raise AssertionError("MACE MD summary lacks backend/config digest/provider version")
+    if data.get("provider_version") != batch.get("provider_version"):
+        raise AssertionError("MACE MD receipt provider version does not match output")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": ["status.json returncode=0", "two-step NVT MD completed", "summary records MACE config digest"],
+        "details": {"summary": batch, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def _si512_backend_config(args: argparse.Namespace, backend: str) -> dict[str, Any]:
+    if backend == "mace":
+        return {
+            "model": args.mace_model,
+            "head": args.mace_head,
+            "default_dtype": args.mace_dtype,
+            "device": args.mace_device,
+        }
+    if backend == "fairchem_uma":
+        return {
+            "model": args.uma_model,
+            "device": args.uma_device,
+            "defaults": {"uma_task": "omat", "charge": 0, "spin": 0},
+        }
+    if backend == "mattersim":
+        return {"model": args.mattersim_model, "device": args.mattersim_device}
+    if backend == "orb_v3":
+        return {
+            "model": args.orb_model,
+            "device": args.orb_device,
+            "precision": args.orb_precision,
+        }
+    raise ValueError(f"Unsupported Si512 backend: {backend}")
+
+
+def _si512_check_interval(args: argparse.Namespace, backend: str) -> int:
+    return int(
+        {
+            "mace": args.mace_check_interval,
+            "fairchem_uma": args.uma_check_interval,
+            "mattersim": args.mattersim_check_interval,
+            "orb_v3": args.orb_check_interval,
+        }[backend]
+    )
+
+
+def _assert_si512_structure(path: Path, *, label: str) -> None:
+    from ase.io import read
+
+    atoms = read(path, index=-1)
+    if len(atoms) != 512 or set(atoms.get_chemical_symbols()) != {"Si"}:
+        raise AssertionError(f"{label} is not a 512-atom elemental Si structure: {path}")
+
+
+def _run_si512_sp(ctx: SmokeContext, args: argparse.Namespace, *, backend: str) -> dict[str, Any]:
+    case_name = f"si512_{backend}_sp"
+    stage_rel, stage_dir = _case_stage(ctx, case_name)
+    source = stage_dir / "input" / "Si512.vasp"
+    _write_si512_poscar(source, displacement_A=args.si512_displacement_a)
+    _assert_si512_structure(source, label="input")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_sp",
+        audience="materials_worker",
+        check_interval=_si512_check_interval(args, backend),
+        template_overrides={"backend": backend, "backend_config": _si512_backend_config(args, backend)},
+    )
+    status = _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"{backend} Si512 SP returned errors: {batch.get('errors')!r}")
+    results = batch.get("results") or []
+    if len(results) != 1:
+        raise AssertionError(f"{backend} Si512 SP expected one result: {results!r}")
+    summary = results[0].get("summary") or {}
+    energy = _finite_number(summary.get("energy_eV"), f"{backend} Si512 energy_eV")
+    max_force = _finite_number(summary.get("max_force_eVA"), f"{backend} Si512 max_force_eVA")
+    output_structure = stage_dir / "output" / "Si512" / str(summary.get("output_structure") or "sp.vasp")
+    _assert_si512_structure(output_structure, label="SP output")
+    if data.get("backend") != backend or data.get("provider_version") != summary.get("provider_version"):
+        raise AssertionError(f"{backend} Si512 SP receipt/output metadata mismatch")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "512-atom Si input and output verified",
+            "status.json returncode=0",
+            "finite energy and force with matching receipt metadata",
+        ],
+        "details": {
+            "atom_count": 512,
+            "energy_eV": energy,
+            "energy_eV_per_atom": energy / 512.0,
+            "max_force_eVA": max_force,
+            "provider_version": summary.get("provider_version"),
+            "status": status,
+            "task_data": data,
+        },
+        **_remote_context(data),
+    }
+
+
+def _run_si512_relax(ctx: SmokeContext, args: argparse.Namespace, *, backend: str) -> dict[str, Any]:
+    case_name = f"si512_{backend}_relax"
+    stage_rel, stage_dir = _case_stage(ctx, case_name)
+    source = stage_dir / "input" / "Si512.vasp"
+    _write_si512_poscar(source, displacement_A=args.si512_displacement_a)
+    _assert_si512_structure(source, label="input")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_relax",
+        audience="materials_worker",
+        check_interval=_si512_check_interval(args, backend),
+        template_overrides={
+            "backend": backend,
+            "backend_config": _si512_backend_config(args, backend),
+            "task_config": {
+                "fmax": args.si512_relax_fmax,
+                "steps": args.si512_relax_steps,
+                "optimizer": "FIRE",
+                "relax_cell": False,
+            },
+        },
+    )
+    status = _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"{backend} Si512 relax returned errors: {batch.get('errors')!r}")
+    results = batch.get("results") or []
+    if len(results) != 1:
+        raise AssertionError(f"{backend} Si512 relax expected one result: {results!r}")
+    summary = results[0].get("summary") or {}
+    energy = _finite_number(summary.get("final_energy_eV"), f"{backend} Si512 final_energy_eV")
+    max_force = _finite_number(summary.get("max_force_eVA"), f"{backend} Si512 max_force_eVA")
+    nsteps = int(summary.get("nsteps", -1))
+    if nsteps < 0 or nsteps > args.si512_relax_steps:
+        raise AssertionError(f"{backend} Si512 invalid relaxation nsteps={nsteps}")
+    output_structure = stage_dir / "output" / "Si512" / str(summary.get("output_structure") or "opt.vasp")
+    _assert_si512_structure(output_structure, label="relax output")
+    if data.get("backend") != backend or data.get("provider_version") != summary.get("provider_version"):
+        raise AssertionError(f"{backend} Si512 relax receipt/output metadata mismatch")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "512-atom perturbed Si input and relaxed output verified",
+            "bounded fixed-cell FIRE relaxation completed",
+            "finite final energy and force with matching receipt metadata",
+        ],
+        "details": {
+            "atom_count": 512,
+            "final_energy_eV": energy,
+            "final_energy_eV_per_atom": energy / 512.0,
+            "max_force_eVA": max_force,
+            "nsteps": nsteps,
+            "converged": summary.get("converged"),
+            "provider_version": summary.get("provider_version"),
+            "status": status,
+            "task_data": data,
+        },
+        **_remote_context(data),
+    }
+
+
+def _run_si512_md(ctx: SmokeContext, args: argparse.Namespace, *, backend: str) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, f"si512_{backend}_md")
+    source = stage_dir / "input" / "Si512.vasp"
+    _write_si512_poscar(source, displacement_A=args.si512_displacement_a)
+    _assert_si512_structure(source, label="input")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_md",
+        audience="dynamics_worker",
+        check_interval=_si512_check_interval(args, backend),
+        template_overrides={
+            "backend": backend,
+            "backend_config": _si512_backend_config(args, backend),
+            "task_config": {
+                "dynamics": {
+                    "ensemble": "nvt",
+                    "temperature_K": 300.0,
+                    "initial_temperature_K": 300.0,
+                    "timestep_fs": args.si512_md_timestep_fs,
+                    "steps": args.si512_md_steps,
+                    "seed": 20260717,
+                    "force_temp": True,
+                },
+                "thermostat": {"type": "bussi", "tau_fs": 100.0},
+                "output": {"traj_interval": 1, "log_interval": 1},
+            },
+        },
+    )
+    status = _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"{backend} Si512 MD returned errors: {batch.get('errors')!r}")
+    summary = _read_json(stage_dir / "output" / "Si512" / "summary.json")
+    if summary.get("completed") is not True:
+        raise AssertionError(f"{backend} Si512 MD did not complete: {summary!r}")
+    final_energy = _finite_number(summary.get("final_energy_eV"), f"{backend} Si512 MD final_energy_eV")
+    max_force = _finite_number(summary.get("max_force_eVA"), f"{backend} Si512 MD max_force_eVA")
+    steps_per_s = _finite_number(summary.get("steps_per_s"), f"{backend} Si512 MD steps_per_s")
+    _assert_si512_structure(stage_dir / "output" / "Si512" / "final.vasp", label="MD output")
+    if data.get("backend") != backend or data.get("provider_version") != summary.get("provider_version"):
+        raise AssertionError(f"{backend} Si512 MD receipt/output metadata mismatch")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "512-atom Si NVT trajectory completed",
+            "trajectory, restart, timing, and final structure downloaded",
+            "receipt and normalized summary metadata match",
+        ],
+        "details": {
+            "atom_count": 512,
+            "steps": args.si512_md_steps,
+            "final_energy_eV": final_energy,
+            "final_energy_eV_per_atom": final_energy / 512.0,
+            "max_force_eVA": max_force,
+            "steps_per_s": steps_per_s,
+            "steady_state_steps_per_s": summary.get("steady_state_steps_per_s"),
+            "elapsed_s": summary.get("elapsed_s"),
+            "provider_version": summary.get("provider_version"),
+            "status": status,
+            "task_data": data,
+        },
+        **_remote_context(data),
+    }
+
+
+def run_si512_mace_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_sp(ctx, args, backend="mace")
+
+
+def run_si512_uma_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_sp(ctx, args, backend="fairchem_uma")
+
+
+def run_si512_mattersim_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_sp(ctx, args, backend="mattersim")
+
+
+def run_si512_orb_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_sp(ctx, args, backend="orb_v3")
+
+
+def run_si512_mace_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_relax(ctx, args, backend="mace")
+
+
+def run_si512_uma_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_relax(ctx, args, backend="fairchem_uma")
+
+
+def run_si512_mattersim_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_relax(ctx, args, backend="mattersim")
+
+
+def run_si512_orb_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_relax(ctx, args, backend="orb_v3")
+
+
+def run_si512_mace_md(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_md(ctx, args, backend="mace")
+
+
+def run_si512_uma_md(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_md(ctx, args, backend="fairchem_uma")
+
+
+def run_si512_mattersim_md(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_md(ctx, args, backend="mattersim")
+
+
+def run_si512_orb_md(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_si512_md(ctx, args, backend="orb_v3")
+
+
+def _run_mlff_neb(ctx: SmokeContext, args: argparse.Namespace, *, backend: str) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, f"{backend}_o2_neb")
+    for index, bond in enumerate((1.10, 1.21, 1.35)):
+        _write_o2_neb_image(stage_dir / "input" / "path" / f"{index:02d}.vasp", bond)
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_neb",
+        audience="materials_worker",
+        check_interval=_si512_check_interval(args, backend),
+        template_overrides={
+            "backend": backend,
+            "backend_config": _si512_backend_config(args, backend),
+            "task_config": {"fmax": 1.0, "steps": 1, "optimizer": "FIRE", "mode": "plain", "climb": False},
+        },
+    )
+    _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if any(item.get("status") == "failed" for item in batch.get("tasks") or []):
+        raise AssertionError(f"{backend} NEB returned failed task: {batch!r}")
+    if batch.get("backend") != backend or not batch.get("config_digest") or not batch.get("provider_version"):
+        raise AssertionError(f"{backend} NEB summary lacks backend/config digest/provider version")
+    if data.get("provider_version") != batch.get("provider_version"):
+        raise AssertionError(f"{backend} NEB receipt provider version does not match output")
+    path_summary = _read_json(stage_dir / "output" / "path" / "summary.json")
+    _finite_number((path_summary.get("results") or {}).get("max_force_eVA"), f"{backend} NEB max_force_eVA")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": ["status.json returncode=0", "three-image plain NEB executed", f"summary records {backend} config digest"],
+        "details": {"summary": batch, "path_summary": path_summary, "task_data": data},
+        **_remote_context(data),
+    }
+
+
+def run_mace_neb(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_mlff_neb(ctx, args, backend="mace")
+
+
+def run_uma_neb(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_mlff_neb(ctx, args, backend="fairchem_uma")
+
+
+def run_mattersim_neb(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_mlff_neb(ctx, args, backend="mattersim")
+
+
+def run_orb_neb(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    return _run_mlff_neb(ctx, args, backend="orb_v3")
 
 
 def _assert_uma_batch_energy(stage_dir: Path, output_name: str) -> tuple[dict[str, Any], float]:
@@ -338,7 +1032,7 @@ def _assert_uma_batch_relax(stage_dir: Path, output_name: str, structure_name: s
         raise AssertionError("UMA relaxation batch_summary.json has no results")
     summary = results[0].get("summary") or {}
     _finite_number(summary.get("final_energy_eV"), "UMA final_energy_eV")
-    _finite_number(summary.get("max_force_abs_eVA"), "UMA max_force_abs_eVA")
+    _finite_number(summary.get("max_force_eVA"), "UMA max_force_eVA")
     if not isinstance(summary.get("converged"), bool):
         raise AssertionError(f"UMA relaxation summary lacks boolean convergence flag: {summary!r}")
     output_dir = stage_dir / "output" / output_name
@@ -349,6 +1043,12 @@ def _assert_uma_batch_relax(stage_dir: Path, output_name: str, structure_name: s
     return batch, summary
 
 
+def _assert_receipt_provider_version(data: dict[str, Any], summary: dict[str, Any], *, backend: str) -> None:
+    version = str(summary.get("provider_version") or "")
+    if not version or data.get("provider_version") != version:
+        raise AssertionError(f"{backend} normalized output and receipt provider versions do not match")
+
+
 def run_uma_mol_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
     stage_rel, stage_dir = _case_stage(ctx, "uma_h2o_sp")
     input_dir = stage_dir / "input"
@@ -356,19 +1056,21 @@ def run_uma_mol_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any
     data = _submit_remote(
         ctx,
         work_dir=stage_rel,
-        task_name="uma_sp_dir",
+        task_name="mlff_sp",
         audience="orca_xtb_worker",
         check_interval=args.uma_check_interval,
         template_overrides={
-            "model": args.uma_model,
-            "uma_task": "omol",
-            "charge": 0,
-            "spin": args.uma_mol_spin,
-            "device": args.uma_device,
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": args.uma_model,
+                "device": args.uma_device,
+                "defaults": {"uma_task": "omol", "charge": 0, "spin": args.uma_mol_spin},
+            },
         },
     )
     _status_ok(stage_dir)
     batch, energy = _assert_uma_batch_energy(stage_dir, "H2O")
+    _assert_receipt_provider_version(data, batch["results"][0]["summary"], backend="fairchem_uma")
     return {
         "stage_rel": stage_rel,
         "stage_dir": str(stage_dir),
@@ -385,22 +1087,26 @@ def run_uma_mol_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, 
     data = _submit_remote(
         ctx,
         work_dir=stage_rel,
-        task_name="uma_relax_dir",
+        task_name="mlff_relax",
         audience="orca_xtb_worker",
         check_interval=args.uma_check_interval,
         template_overrides={
-            "model": args.uma_model,
-            "uma_task": "omol",
-            "charge": 0,
-            "spin": args.uma_mol_spin,
-            "device": args.uma_device,
-            "fmax": args.uma_relax_fmax,
-            "steps": args.uma_relax_steps,
-            "relax_cell": "false",
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": args.uma_model,
+                "device": args.uma_device,
+                "defaults": {"uma_task": "omol", "charge": 0, "spin": args.uma_mol_spin},
+            },
+            "task_config": {
+                "fmax": args.uma_relax_fmax,
+                "steps": args.uma_relax_steps,
+                "relax_cell": False,
+            },
         },
     )
     _status_ok(stage_dir)
     batch, summary = _assert_uma_batch_relax(stage_dir, "H2O", "opt.xyz")
+    _assert_receipt_provider_version(data, summary, backend="fairchem_uma")
     return {
         "stage_rel": stage_rel,
         "stage_dir": str(stage_dir),
@@ -421,19 +1127,21 @@ def run_uma_mat_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any
     data = _submit_remote(
         ctx,
         work_dir=stage_rel,
-        task_name="uma_sp_dir",
+        task_name="mlff_sp",
         audience="materials_worker",
         check_interval=args.uma_check_interval,
         template_overrides={
-            "model": args.uma_model,
-            "uma_task": args.uma_task,
-            "charge": 0,
-            "spin": 0,
-            "device": args.uma_device,
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": args.uma_model,
+                "device": args.uma_device,
+                "defaults": {"uma_task": args.uma_task, "charge": 0, "spin": 0},
+            },
         },
     )
     _status_ok(stage_dir)
     batch, energy = _assert_uma_batch_energy(stage_dir, "O2")
+    _assert_receipt_provider_version(data, batch["results"][0]["summary"], backend="fairchem_uma")
     return {
         "stage_rel": stage_rel,
         "stage_dir": str(stage_dir),
@@ -450,22 +1158,26 @@ def run_uma_mat_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, 
     data = _submit_remote(
         ctx,
         work_dir=stage_rel,
-        task_name="uma_relax_dir",
+        task_name="mlff_relax",
         audience="materials_worker",
         check_interval=args.uma_check_interval,
         template_overrides={
-            "model": args.uma_model,
-            "uma_task": args.uma_task,
-            "charge": 0,
-            "spin": 0,
-            "device": args.uma_device,
-            "fmax": args.uma_relax_fmax,
-            "steps": args.uma_relax_steps,
-            "relax_cell": "false",
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": args.uma_model,
+                "device": args.uma_device,
+                "defaults": {"uma_task": args.uma_task, "charge": 0, "spin": 0},
+            },
+            "task_config": {
+                "fmax": args.uma_relax_fmax,
+                "steps": args.uma_relax_steps,
+                "relax_cell": False,
+            },
         },
     )
     _status_ok(stage_dir)
     batch, summary = _assert_uma_batch_relax(stage_dir, "O2", "opt.vasp")
+    _assert_receipt_provider_version(data, summary, backend="fairchem_uma")
     return {
         "stage_rel": stage_rel,
         "stage_dir": str(stage_dir),
@@ -737,11 +1449,58 @@ def run_crest_quick(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, An
 
 
 CASES: dict[str, CaseSpec] = {
-    "mace_sp": CaseSpec("mace_sp", "MACE GPU O2 single-point energy through mace_sp_dir.", run_mace_sp),
-    "uma_mol_sp": CaseSpec("uma_mol_sp", "FairChem UMA OMOL H2O single-point energy through uma_sp_dir.", run_uma_mol_sp),
-    "uma_mol_relax": CaseSpec("uma_mol_relax", "FairChem UMA OMOL H2O short relaxation through uma_relax_dir.", run_uma_mol_relax),
-    "uma_mat_sp": CaseSpec("uma_mat_sp", "FairChem UMA periodic O2-box single-point energy through uma_sp_dir.", run_uma_mat_sp),
-    "uma_mat_relax": CaseSpec("uma_mat_relax", "FairChem UMA periodic O2-box short relaxation through uma_relax_dir.", run_uma_mat_relax),
+    "mace_sp": CaseSpec("mace_sp", "MACE GPU O2 single-point energy through mlff_sp.", run_mace_sp),
+    "mace_sp_batch": CaseSpec(
+        "mace_sp_batch",
+        "Two independent MACE GPU Si stages through one remote_submission_batch call.",
+        run_mace_sp_batch,
+    ),
+    "mace_relax": CaseSpec("mace_relax", "MACE GPU fixed-cell Si relaxation through mlff_relax.", run_mace_relax),
+    "mace_md": CaseSpec("mace_md", "MACE GPU two-step NVT trajectory through mlff_md.", run_mace_md),
+    "mace_neb": CaseSpec("mace_neb", "MACE GPU three-image fixed-path calculation through mlff_neb.", run_mace_neb),
+    "uma_neb": CaseSpec("uma_neb", "FairChem UMA three-image fixed-path calculation through mlff_neb.", run_uma_neb),
+    "mattersim_neb": CaseSpec("mattersim_neb", "MatterSim three-image fixed-path calculation through mlff_neb.", run_mattersim_neb),
+    "orb_neb": CaseSpec("orb_neb", "ORB-v3 three-image fixed-path calculation through mlff_neb.", run_orb_neb),
+    "mattersim_sp": CaseSpec("mattersim_sp", "MatterSim GPU Si periodic single-point through mlff_sp.", run_mattersim_sp),
+    "mattersim_relax": CaseSpec("mattersim_relax", "MatterSim GPU fixed-cell Si relaxation through mlff_relax.", run_mattersim_relax),
+    "orb_sp": CaseSpec("orb_sp", "ORB-v3 GPU Si periodic single-point through mlff_sp.", run_orb_sp),
+    "orb_relax": CaseSpec("orb_relax", "ORB-v3 GPU fixed-cell Si relaxation through mlff_relax.", run_orb_relax),
+    "uma_mol_sp": CaseSpec("uma_mol_sp", "FairChem UMA OMOL H2O single-point energy through mlff_sp.", run_uma_mol_sp),
+    "uma_mol_relax": CaseSpec("uma_mol_relax", "FairChem UMA OMOL H2O short relaxation through mlff_relax.", run_uma_mol_relax),
+    "uma_mat_sp": CaseSpec("uma_mat_sp", "FairChem UMA periodic O2-box single-point energy through mlff_sp.", run_uma_mat_sp),
+    "uma_mat_relax": CaseSpec("uma_mat_relax", "FairChem UMA periodic O2-box short relaxation through mlff_relax.", run_uma_mat_relax),
+    "si512_mace_sp": CaseSpec("si512_mace_sp", "MACE 512-atom perturbed diamond-Si single point.", run_si512_mace_sp),
+    "si512_uma_sp": CaseSpec("si512_uma_sp", "FairChem UMA 512-atom perturbed diamond-Si single point.", run_si512_uma_sp),
+    "si512_mattersim_sp": CaseSpec(
+        "si512_mattersim_sp",
+        "MatterSim 512-atom perturbed diamond-Si single point.",
+        run_si512_mattersim_sp,
+    ),
+    "si512_orb_sp": CaseSpec("si512_orb_sp", "ORB-v3 512-atom perturbed diamond-Si single point.", run_si512_orb_sp),
+    "si512_mace_relax": CaseSpec("si512_mace_relax", "MACE bounded 512-atom Si fixed-cell relaxation.", run_si512_mace_relax),
+    "si512_uma_relax": CaseSpec("si512_uma_relax", "FairChem UMA bounded 512-atom Si fixed-cell relaxation.", run_si512_uma_relax),
+    "si512_mattersim_relax": CaseSpec(
+        "si512_mattersim_relax",
+        "MatterSim bounded 512-atom Si fixed-cell relaxation.",
+        run_si512_mattersim_relax,
+    ),
+    "si512_orb_relax": CaseSpec("si512_orb_relax", "ORB-v3 bounded 512-atom Si fixed-cell relaxation.", run_si512_orb_relax),
+    "si512_mace_md": CaseSpec("si512_mace_md", "MACE short 512-atom Si NVT trajectory.", run_si512_mace_md),
+    "si512_uma_md": CaseSpec(
+        "si512_uma_md",
+        "FairChem UMA short 512-atom Si NVT trajectory.",
+        run_si512_uma_md,
+    ),
+    "si512_mattersim_md": CaseSpec(
+        "si512_mattersim_md",
+        "MatterSim short 512-atom Si NVT trajectory.",
+        run_si512_mattersim_md,
+    ),
+    "si512_orb_md": CaseSpec(
+        "si512_orb_md",
+        "ORB-v3 short 512-atom Si NVT trajectory.",
+        run_si512_orb_md,
+    ),
     "vasp_sp": CaseSpec("vasp_sp", "VASP CPU O2 static single-point through vasp_prepare + vasp_execute.", run_vasp_sp),
     "xtb_sp": CaseSpec("xtb_sp", "xTB CPU O2 single-point through xtb_run.", run_xtb_sp),
     "orca_sp": CaseSpec("orca_sp", "ORCA CPU O2 triplet single-point through orca_prepare + orca_execute.", run_orca_sp),
@@ -754,6 +1513,33 @@ SUITES: dict[str, list[str]] = {
     "core": ["mace_sp", "xtb_sp", "orca_sp"],
     "materials": ["mace_sp", "vasp_sp"],
     "uma": ["uma_mol_sp", "uma_mol_relax", "uma_mat_sp", "uma_mat_relax"],
+    "mlff_backends": ["mace_sp", "uma_mat_sp", "mattersim_sp", "orb_sp"],
+    "mlff_operations": [
+        "mace_relax",
+        "uma_mat_relax",
+        "mattersim_relax",
+        "orb_relax",
+        "mace_md",
+        "mace_neb",
+        "uma_neb",
+        "mattersim_neb",
+        "orb_neb",
+    ],
+    "mlff_batch": ["mace_sp_batch"],
+    "mlff_si512": [
+        "si512_mace_sp",
+        "si512_uma_sp",
+        "si512_mattersim_sp",
+        "si512_orb_sp",
+        "si512_mace_relax",
+        "si512_uma_relax",
+        "si512_mattersim_relax",
+        "si512_orb_relax",
+        "si512_mace_md",
+        "si512_uma_md",
+        "si512_mattersim_md",
+        "si512_orb_md",
+    ],
     "qchem": ["xtb_sp", "orca_sp"],
     "dynamics": ["cp2k_sp", "lammps_min"],
     "all": ["mace_sp", "vasp_sp", "xtb_sp", "orca_sp", "cp2k_sp", "lammps_min", "crest_quick"],
@@ -858,6 +1644,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id", default="", help="Stable run id. Default is a timestamp.")
     parser.add_argument("--stop-on-failure", action="store_true", help="Stop after the first failed case.")
     parser.add_argument("--check-interval", type=int, default=int(os.environ.get("CATMASTER_REMOTE_CHECK_INTERVAL", "30")))
+    parser.add_argument("--mlff-relax-steps", type=int, default=int(os.environ.get("CATMASTER_REMOTE_MLFF_RELAX_STEPS", "3")))
+    parser.add_argument(
+        "--si512-displacement-a",
+        type=float,
+        default=float(os.environ.get("CATMASTER_REMOTE_SI512_DISPLACEMENT_A", "0.01")),
+        help="Deterministic Cartesian displacement standard deviation applied to the 512-atom Si structure.",
+    )
+    parser.add_argument(
+        "--si512-relax-fmax",
+        type=float,
+        default=float(os.environ.get("CATMASTER_REMOTE_SI512_RELAX_FMAX", "0.02")),
+    )
+    parser.add_argument(
+        "--si512-relax-steps",
+        type=int,
+        default=int(os.environ.get("CATMASTER_REMOTE_SI512_RELAX_STEPS", "5")),
+    )
+    parser.add_argument(
+        "--si512-md-steps",
+        type=int,
+        default=int(os.environ.get("CATMASTER_REMOTE_SI512_MD_STEPS", "12")),
+    )
+    parser.add_argument(
+        "--si512-md-timestep-fs",
+        type=float,
+        default=float(os.environ.get("CATMASTER_REMOTE_SI512_MD_TIMESTEP_FS", "0.5")),
+    )
 
     parser.add_argument("--mace-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_MACE_CHECK_INTERVAL"))
     parser.add_argument("--mace-model", default=os.environ.get("CATMASTER_REMOTE_MACE_MODEL", "mh-1"))
@@ -872,6 +1685,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--uma-mol-spin", type=int, default=int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")))
     parser.add_argument("--uma-relax-fmax", type=float, default=float(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_FMAX", "0.05")))
     parser.add_argument("--uma-relax-steps", type=int, default=int(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_STEPS", "5")))
+
+    parser.add_argument("--mattersim-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_MATTERSIM_CHECK_INTERVAL"))
+    parser.add_argument("--mattersim-model", default=os.environ.get("CATMASTER_REMOTE_MATTERSIM_MODEL", "mattersim-v1-1m"))
+    parser.add_argument("--mattersim-device", default=os.environ.get("CATMASTER_REMOTE_MATTERSIM_DEVICE", "auto"))
+
+    parser.add_argument("--orb-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_ORB_CHECK_INTERVAL"))
+    parser.add_argument("--orb-model", default=os.environ.get("CATMASTER_REMOTE_ORB_MODEL", "orb-v3-conservative-inf-omat"))
+    parser.add_argument("--orb-device", default=os.environ.get("CATMASTER_REMOTE_ORB_DEVICE", "auto"))
+    parser.add_argument(
+        "--orb-precision",
+        choices=("float32-high", "float32-highest", "float64"),
+        default=os.environ.get("CATMASTER_REMOTE_ORB_PRECISION", "float32-high"),
+    )
 
     parser.add_argument("--vasp-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_VASP_CHECK_INTERVAL"))
     parser.add_argument("--vasp-nelm", type=int, default=int(os.environ.get("CATMASTER_REMOTE_VASP_NELM", "40")))
@@ -906,6 +1732,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in (
         "mace_check_interval",
         "uma_check_interval",
+        "mattersim_check_interval",
+        "orb_check_interval",
         "vasp_check_interval",
         "xtb_check_interval",
         "orca_check_interval",

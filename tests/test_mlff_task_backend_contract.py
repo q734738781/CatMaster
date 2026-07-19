@@ -1,0 +1,835 @@
+from __future__ import annotations
+
+import importlib
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+from types import ModuleType
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+from ase import Atoms
+from ase.build import bulk, molecule
+from ase.calculators.calculator import Calculator, all_changes
+from ase.io import write
+
+from catmaster.runtime.tool_runtime import toolcall_context
+from catmaster.tools.base import workspace_scope
+from catmaster.tools.execution.mlff_specs import resolve_mlff_template
+from catmaster.tools.execution.mlff_stage import materialize_mlff_run_config
+from catmaster.tools.execution.remote_submission import (
+    GetRemoteTaskSpecInput,
+    RemoteSubmissionInput,
+    get_remote_task_spec,
+    remote_submission,
+    remote_submission_batch,
+)
+from catmaster.tools.execution.task_registry import TaskRegistry
+from catmaster.tools.registry import ToolRegistry
+
+
+remote_submission_module = importlib.import_module("catmaster.tools.execution.remote_submission")
+mlff_common = importlib.import_module("catmaster.remote.mlff.mlff_common")
+mlff_md = importlib.import_module("catmaster.remote.mlff.mlff_md")
+mlff_neb = importlib.import_module("catmaster.remote.mlff.mlff_neb")
+
+
+def test_registry_cutover_exposes_only_operation_named_mlff_tasks() -> None:
+    registry = TaskRegistry()
+    assert {name for name, cfg in registry.tasks.items() if cfg.operation} == {
+        "mlff_sp",
+        "mlff_relax",
+        "mlff_md",
+        "mlff_neb",
+    }
+    assert not {
+        "mace_sp_dir",
+        "mace_relax_dir",
+        "uma_sp_dir",
+        "uma_relax_dir",
+        "mace_md_dir",
+        "mace_neb_dir",
+        "mace_train_dir",
+        "mace_eval_dir",
+    } & set(registry.tasks)
+    assert {"mace_train", "mace_eval"}.issubset(registry.tasks)
+
+
+@pytest.mark.parametrize(
+    "task_name",
+    [
+        "mace_sp_dir",
+        "mace_relax_dir",
+        "uma_sp_dir",
+        "uma_relax_dir",
+        "mace_md_dir",
+        "mace_neb_dir",
+        "mace_train_dir",
+        "mace_eval_dir",
+    ],
+)
+def test_removed_provider_named_task_specs_are_rejected(task_name: str) -> None:
+    with toolcall_context("spec", audience="materials_worker"):
+        with pytest.raises(KeyError, match="not found in task configs"):
+            get_remote_task_spec({"task_name": task_name})
+
+
+def test_public_mlff_environment_templates_are_shell_syntax_valid() -> None:
+    root = Path(__file__).resolve().parents[1] / "configs" / "dpdispatcher" / "env_templates"
+    expected = {
+        "catmaster_env_mace.sh",
+        "catmaster_env_uma.sh",
+        "catmaster_env_mattersim.sh",
+        "catmaster_env_orb.sh",
+    }
+    scripts = {path.name: path for path in root.glob("*.sh")}
+    assert set(scripts) == expected
+    for path in scripts.values():
+        subprocess.run(["bash", "-n", str(path)], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("task_name", ["mlff_sp", "mlff_relax", "mlff_md", "mlff_neb"])
+@pytest.mark.parametrize("backend", ["mace", "fairchem_uma", "mattersim", "orb_v3"])
+def test_every_enabled_backend_supports_every_managed_mlff_operation(task_name: str, backend: str) -> None:
+    audience = "dynamics_worker" if task_name == "mlff_md" else "materials_worker"
+    resolved = resolve_mlff_template(task_name, {"backend": backend}, audience=audience)
+    assert resolved["resolved_backend"] == backend
+    assert set(resolved["available_backends"]) == {"mace", "fairchem_uma", "mattersim", "orb_v3"}
+
+
+def test_md_and_neb_tasks_stage_shared_operation_dependencies() -> None:
+    registry = TaskRegistry()
+    md_files = registry.get("mlff_md").forward_files
+    neb_files = registry.get("mlff_neb").forward_files
+    assert "task_script/mlff_common.py" in md_files
+    assert "task_script/mlff_dynamics.py" in md_files
+    assert "task_script/mace_md.py" not in md_files
+    assert "task_script/mlff_common.py" in neb_files
+    assert "task_script/mace_neb.py" not in neb_files
+
+
+def test_md_backend_performance_controls_are_schema_visible_and_validated() -> None:
+    uma = resolve_mlff_template(
+        "mlff_md",
+        {"backend": "fairchem_uma", "backend_config": {"inference_settings": "turbo"}},
+        audience="dynamics_worker",
+    )
+    assert uma["normalized_template_overrides"]["backend_config"]["inference_settings"] == "turbo"
+
+    mattersim = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "mattersim",
+            "backend_config": {
+                "dtype": "float32",
+                "compute_stress": False,
+                "direct_graph": False,
+                "compile": False,
+            },
+        },
+        audience="dynamics_worker",
+    )
+    assert mattersim["normalized_template_overrides"]["backend_config"] == {
+        "model": "mattersim-v1-1m",
+        "device": "auto",
+        "dtype": "float32",
+        "compute_stress": False,
+        "direct_graph": False,
+        "compile": False,
+    }
+
+    with pytest.raises(ValueError, match="direct_graph/compile are disabled"):
+        resolve_mlff_template(
+            "mlff_md",
+            {"backend": "mattersim", "backend_config": {"direct_graph": True}},
+            audience="dynamics_worker",
+        )
+
+    orb = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "orb_v3",
+            "backend_config": {
+                "precision": "float32-high",
+                "compile_mode": "on",
+                "edge_method": "knn_alchemi",
+                "half_supercell": "off",
+            },
+        },
+        audience="dynamics_worker",
+    )
+    orb_config = orb["normalized_template_overrides"]["backend_config"]
+    assert orb_config["compile_mode"] == "on"
+    assert orb_config["edge_method"] == "knn_alchemi"
+    assert orb_config["half_supercell"] == "off"
+
+    with pytest.raises(ValueError, match="MatterSim NPT requires"):
+        resolve_mlff_template(
+            "mlff_md",
+            {
+                "backend": "mattersim",
+                "backend_config": {"compute_stress": False},
+                "task_config": {
+                    "dynamics": {"ensemble": "npt"},
+                    "barostat": {"type": "isotropic_mtk"},
+                },
+            },
+            audience="dynamics_worker",
+        )
+
+
+def test_provider_adapters_forward_supported_performance_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    mace_metadata = mlff_common.MaceAdapter().provider_metadata(
+        None,
+        {
+            "head": "omat_pbe",
+            "dispersion": False,
+            "default_dtype": "float32",
+            "enable_cueq": True,
+            "compile_mode": "",
+        },
+        None,
+    )
+    assert mace_metadata["default_dtype"] == "float32"
+    assert mace_metadata["enable_cueq"] is True
+    assert mace_metadata["compile_mode"] == ""
+
+    uma_capture: dict[str, object] = {}
+    fairchem = ModuleType("fairchem")
+    fairchem_core = ModuleType("fairchem.core")
+
+    class FakePretrained:
+        @staticmethod
+        def get_predict_unit(model, **kwargs):
+            uma_capture.update({"model": model, **kwargs})
+            return object()
+
+    class FakeUmaCalculator:
+        def __init__(self, predictor, task_name):
+            self.predictor = predictor
+            self.task_name = task_name
+
+    fairchem_core.pretrained_mlip = FakePretrained
+    fairchem_core.FAIRChemCalculator = FakeUmaCalculator
+    monkeypatch.setitem(sys.modules, "fairchem", fairchem)
+    monkeypatch.setitem(sys.modules, "fairchem.core", fairchem_core)
+    uma_adapter = mlff_common.FairChemUmaAdapter()
+    uma_atoms = Atoms("Si", cell=[5, 5, 5], pbc=True)
+    uma_adapter.calculator_for(
+        uma_atoms,
+        {
+            "model": "uma-s-1p2",
+            "device": "cpu",
+            "uma_task": "omat",
+            "charge": 0,
+            "spin": 0,
+            "inference_settings": "turbo",
+        },
+    )
+    assert uma_capture["inference_settings"] == "turbo"
+
+    mattersim_capture: dict[str, object] = {}
+    mattersim = ModuleType("mattersim")
+    mattersim_forcefield = ModuleType("mattersim.forcefield")
+
+    class FakeMatterSimCalculator:
+        def __init__(self, **kwargs):
+            mattersim_capture.update(kwargs)
+
+    mattersim_forcefield.MatterSimCalculator = FakeMatterSimCalculator
+    monkeypatch.setitem(sys.modules, "mattersim", mattersim)
+    monkeypatch.setitem(sys.modules, "mattersim.forcefield", mattersim_forcefield)
+    mlff_common.MatterSimAdapter().calculator_for(
+        None,
+        {
+            "model": "mattersim-v1-1m",
+            "device": "cpu",
+            "dtype": "float32",
+            "compute_stress": False,
+            "direct_graph": True,
+            "compile": True,
+        },
+    )
+    assert mattersim_capture == {
+        "device": "cpu",
+        "dtype": "float32",
+        "compute_stress": False,
+        "direct_graph": True,
+        "compile": True,
+    }
+
+    orb_loader_capture: dict[str, object] = {}
+    orb_calculator_capture: dict[str, object] = {}
+    orb_models = ModuleType("orb_models")
+    orb_forcefield = ModuleType("orb_models.forcefield")
+    orb_pretrained = ModuleType("orb_models.forcefield.pretrained")
+    orb_inference = ModuleType("orb_models.forcefield.inference")
+    orb_calculator = ModuleType("orb_models.forcefield.inference.calculator")
+
+    def fake_loader(**kwargs):
+        orb_loader_capture.update(kwargs)
+        return object(), object()
+
+    class FakeOrbCalculator:
+        results: dict[str, object] = {}
+
+        def __init__(self, model, **kwargs):
+            del model
+            orb_calculator_capture.update(kwargs)
+
+    orb_pretrained.orb_v3_conservative_inf_omat = fake_loader
+    orb_forcefield.pretrained = orb_pretrained
+    orb_calculator.ORBCalculator = FakeOrbCalculator
+    monkeypatch.setitem(sys.modules, "orb_models", orb_models)
+    monkeypatch.setitem(sys.modules, "orb_models.forcefield", orb_forcefield)
+    monkeypatch.setitem(sys.modules, "orb_models.forcefield.pretrained", orb_pretrained)
+    monkeypatch.setitem(sys.modules, "orb_models.forcefield.inference", orb_inference)
+    monkeypatch.setitem(sys.modules, "orb_models.forcefield.inference.calculator", orb_calculator)
+    mlff_common.OrbV3Adapter().calculator_for(
+        None,
+        {
+            "model": "orb-v3-conservative-inf-omat",
+            "device": "cpu",
+            "precision": "float32-high",
+            "compile_mode": "on",
+            "edge_method": "knn_alchemi",
+            "half_supercell": "off",
+        },
+    )
+    assert orb_loader_capture["compile"] is True
+    assert orb_calculator_capture["edge_method"] == "knn_alchemi"
+    assert orb_calculator_capture["half_supercell"] is False
+
+
+def test_remote_task_spec_returns_one_concrete_non_union_mlff_schema() -> None:
+    with toolcall_context("spec", audience="materials_worker"):
+        content, artifact = get_remote_task_spec(
+            {
+                "task_name": "mlff_relax",
+                "template_overrides": {"backend": "fairchem_uma"},
+                "detail": "full",
+            }
+        )
+    data = artifact["data"]
+    assert data["resolved_backend"] == "fairchem_uma"
+    assert data["errors"] == []
+    schema = data["template_schema"]
+    encoded = json.dumps(schema)
+    assert "anyOf" not in encoded
+    assert "oneOf" not in encoded
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["backend"]["const"] == "fairchem_uma"
+    assert schema["properties"]["backend_config"]["additionalProperties"] is False
+    assert schema["properties"]["task_config"]["additionalProperties"] is False
+    assert data["enabled_models"]
+    assert data["default_backend"] == "mace"
+    assert data["template_defaults"]["backend"] == "mace"
+    assert data["resolved_template_defaults"]["backend"] == "fairchem_uma"
+    assert "registered_default_backend=mace" in content
+    assert "Registered task defaults (used when template_overrides is empty):" in content
+    assert "Resolved defaults for the selected backend:" in content
+    assert '"backend": "fairchem_uma"' in content
+    assert schema["properties"]["backend_config"]["properties"]["model"]["enum"] == data["enabled_models"]
+    assert any(item["path"] == "backend_config.defaults.uma_task" for item in data["backend_fields"])
+    assert any(item["path"] == "task_config.fmax" for item in data["task_fields"])
+    assert "Accepted fields:" in content
+    assert "backend_config.defaults.uma_task" in content
+    assert "task_config.fmax" in content
+    assert "Constraints:" in content
+    assert "Minimal template_overrides example:" in content
+    assert "Concrete template JSON Schema:" in content
+    assert '"additionalProperties": false' in content
+    assert '"const": "fairchem_uma"' in content
+    assert "resource" not in content
+
+
+def test_remote_task_spec_compact_content_keeps_field_table_without_full_schema() -> None:
+    with toolcall_context("spec", audience="materials_worker"):
+        content, _ = get_remote_task_spec(
+            {
+                "task_name": "mlff_sp",
+                "template_overrides": {"backend": "mattersim"},
+                "detail": "compact",
+            }
+        )
+    assert "Accepted fields:" in content
+    assert "backend_config.model" in content
+    assert "enabled_models=mattersim-v1-1m" in content
+    assert 'allowed=["mattersim-v1-1m"]' in content
+    assert "Concrete template JSON Schema:" not in content
+
+
+def test_backend_switch_rejects_provider_field_leak_without_dispatch() -> None:
+    with toolcall_context("spec", audience="materials_worker"):
+        content, artifact = get_remote_task_spec(
+            {
+                "task_name": "mlff_sp",
+                "template_overrides": {
+                    "backend": "fairchem_uma",
+                    "backend_config": {"head": "omat_pbe"},
+                },
+            }
+        )
+    assert "validation=failed" in content
+    assert artifact["data"]["errors"]
+    assert "normalized_template_overrides" not in artifact["data"]
+
+
+def test_agent_visible_spec_and_submission_schemas_are_non_nullable() -> None:
+    registry = ToolRegistry()
+    exported = {item["name"]: item["parameters"] for item in registry.as_openai_tools()}
+    assert "get_remote_task_spec" in exported
+    for name in ("get_remote_task_spec", "remote_submission", "remote_submission_batch"):
+        properties = exported[name]["properties"]
+        assert properties["template_overrides"]["type"] == "object"
+        assert "anyOf" not in json.dumps(properties["template_overrides"])
+    for name in ("remote_submission", "remote_submission_batch"):
+        description = exported[name]["properties"]["submission_config"]["description"]
+        assert "With task_name, do not pass resources or machine" in description
+    parsed = GetRemoteTaskSpecInput(task_name="mlff_sp", template_overrides=None)
+    assert parsed.template_overrides == {}
+    submitted = RemoteSubmissionInput(
+        work_dir="stage",
+        task_name="mlff_sp",
+        template_overrides=None,
+        submission_config=None,
+    )
+    assert submitted.template_overrides == {}
+    assert submitted.submission_config == {}
+
+
+def test_materialized_uma_item_metadata_is_resolved_per_structure(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    write(stage / "input" / "water.xyz", molecule("H2O"))
+    write(stage / "input" / "silicon.vasp", bulk("Si", "diamond", a=5.43))
+    resolved = resolve_mlff_template(
+        "mlff_sp",
+        {
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "defaults": {"uma_task": "auto", "charge": 0, "spin": 0},
+                "items": {"water.xyz": {"spin": 1}},
+            },
+        },
+    )
+    config_path = materialize_mlff_run_config(
+        stage_dir=stage,
+        task_name="mlff_sp",
+        resolved=resolved,
+        explicit_overrides={"backend": "fairchem_uma"},
+    )
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert data["items"]["water.xyz"]["uma_task"] == "omol"
+    assert data["items"]["water.xyz"]["spin"] == 1
+    assert data["items"]["silicon.vasp"]["uma_task"] == "omat"
+    assert "resource" not in data
+    assert len(data["config_digest"]) == 64
+
+
+def test_mace_checkpoint_is_staged_under_models_and_content_hashed(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    write(stage / "input" / "silicon.vasp", bulk("Si", "diamond", a=5.43))
+    checkpoint = stage / "models" / "trained.model"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"synthetic checkpoint bytes")
+    resolved = resolve_mlff_template(
+        "mlff_sp",
+        {
+            "backend": "mace",
+            "backend_config": {"checkpoint_artifact": "models/trained.model"},
+        },
+    )
+    config_path = materialize_mlff_run_config(
+        stage_dir=stage,
+        task_name="mlff_sp",
+        resolved=resolved,
+        explicit_overrides={"backend_config": {"checkpoint_artifact": "models/trained.model"}},
+    )
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    expected_hash = hashlib.sha256(b"synthetic checkpoint bytes").hexdigest()
+    assert data["backend_config"]["checkpoint_sha256"] == expected_hash
+    assert data["backend_config"]["checkpoint_size_bytes"] == len(b"synthetic checkpoint bytes")
+    assert data["items"]["silicon.vasp"]["checkpoint_sha256"] == expected_hash
+
+
+def test_mace_checkpoint_outside_models_is_rejected_before_dispatch(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    write(stage / "input" / "silicon.vasp", bulk("Si", "diamond", a=5.43))
+    (stage / "trained.model").write_bytes(b"wrong location")
+    resolved = resolve_mlff_template(
+        "mlff_sp",
+        {
+            "backend": "mace",
+            "backend_config": {"checkpoint_artifact": "trained.model"},
+        },
+    )
+    with pytest.raises(ValueError, match="under models"):
+        materialize_mlff_run_config(stage_dir=stage, task_name="mlff_sp", resolved=resolved)
+
+
+def test_remote_submission_resolves_backend_resource_and_fixed_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_dispatch(req, *, register=None, config_path=None):
+        del register, config_path
+        dispatch_stage = Path(req.local_root) / req.work_base
+        (dispatch_stage / "output").mkdir(parents=True)
+        (dispatch_stage / "output" / "batch_summary.json").write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "summary": {
+                                "provider_version": "2.21.0",
+                            }
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        captured.update(
+            {
+                "resources": req.resources,
+                "command": req.tasks[0].command,
+                "forward_files": list(req.tasks[0].forward_files),
+                "run_config": json.loads(
+                    (dispatch_stage / ".catmaster" / "generated" / "run_config.json").read_text(encoding="utf-8")
+                ),
+            }
+        )
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(dispatch_stage),
+            work_base=req.work_base,
+            duration_s=0.01,
+            remote_context={"remote_context_id": "dp_mlff", "submission_hash": "hash", "receipt_rel": "receipt.json"},
+        )
+
+    monkeypatch.setattr(remote_submission_module, "dispatch_submission", fake_dispatch)
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage"
+        (stage / "input").mkdir(parents=True)
+        write(stage / "input" / "water.xyz", molecule("H2O"))
+        with toolcall_context("submit", audience="materials_worker"):
+            _, artifact = remote_submission(
+                {
+                    "work_dir": "stage",
+                    "task_name": "mlff_sp",
+                    "template_overrides": {
+                        "backend": "fairchem_uma",
+                        "backend_config": {"defaults": {"uma_task": "omol", "spin": 1}},
+                    },
+                }
+            )
+    assert artifact["data"]["resources"] == "uma_gpu"
+    assert artifact["data"]["backend"] == "fairchem_uma"
+    assert artifact["data"]["provider_version"] == "2.21.0"
+    assert artifact["data"]["provider_versions"] == ["2.21.0"]
+    assert len(artifact["data"]["config_digest"]) == 64
+    assert captured["resources"] == "uma_gpu"
+    assert captured["command"] == "python task_script/mlff_sp.py --run_config .catmaster/generated/run_config.json"
+    assert "task_script/mlff_common.py" in captured["forward_files"]
+    assert captured["run_config"]["backend"] == "fairchem_uma"
+
+
+def test_remote_submission_batch_materializes_each_first_level_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_dispatch(req, *, register=None, config_path=None):
+        del register, config_path
+        dispatch_root = Path(req.local_root) / req.work_base
+        captured["task_paths"] = [task.task_work_path for task in req.tasks]
+        captured["digests"] = [
+            json.loads(
+                (dispatch_root / task.task_work_path / ".catmaster" / "generated" / "run_config.json").read_text(
+                    encoding="utf-8"
+                )
+            )["config_digest"]
+            for task in req.tasks
+        ]
+        return SimpleNamespace(
+            task_states=["finished", "finished"],
+            submission_dir=str(dispatch_root),
+            work_base=req.work_base,
+            duration_s=0.01,
+            remote_context={"remote_context_id": "dp_batch", "submission_hash": "hash", "receipt_rel": "receipt.json"},
+        )
+
+    monkeypatch.setattr(remote_submission_module, "dispatch_submission", fake_dispatch)
+    with workspace_scope(tmp_path):
+        batch = tmp_path / "files" / "batch"
+        for name, atoms in (("stage_a", molecule("H2")), ("stage_b", molecule("H2O"))):
+            (batch / name / "input").mkdir(parents=True)
+            write(batch / name / "input" / f"{name}.xyz", atoms)
+        with toolcall_context("submit", audience="materials_worker"):
+            _, artifact = remote_submission_batch(
+                {
+                    "work_dir": "batch",
+                    "task_name": "mlff_sp",
+                    "template_overrides": {"backend": "mace"},
+                }
+            )
+    assert artifact["data"]["task_count"] == 2
+    assert len(artifact["data"]["config_digests"]) == 2
+    assert captured["task_paths"] == ["stage_a", "stage_b"]
+    assert len(set(captured["digests"])) == 2
+
+
+class _HarmonicCalculator(Calculator):
+    implemented_properties = ["energy", "forces", "stress"]
+
+    def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        positions = np.asarray(atoms.positions, dtype=float)
+        self.results = {
+            "energy": float(0.5 * np.sum(positions**2)),
+            "forces": -positions,
+            "stress": np.zeros(6),
+        }
+
+
+class _NonFiniteCalculator(Calculator):
+    implemented_properties = ["energy", "forces"]
+
+    def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        self.results = {
+            "energy": float("nan"),
+            "forces": np.full((len(atoms), 3), np.nan),
+        }
+
+
+def test_common_runner_reuses_adapter_initialization_within_one_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    write(stage / "input" / "a.xyz", molecule("H2"))
+    write(stage / "input" / "b.xyz", molecule("H2O"))
+    resolved = resolve_mlff_template("mlff_sp", {"backend": "mace"})
+    materialize_mlff_run_config(stage_dir=stage, task_name="mlff_sp", resolved=resolved)
+
+    instances: list[Any] = []
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def __init__(self):
+            self.calculator = _HarmonicCalculator()
+            self.calls = 0
+            instances.append(self)
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            self.calls += 1
+            return self.calculator
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    monkeypatch.setitem(mlff_common._ADAPTER_TYPES, "mace", FakeAdapter)
+    monkeypatch.chdir(stage)
+    summary = mlff_common.run("sp", ".catmaster/generated/run_config.json")
+    assert len(instances) == 1
+    assert instances[0].calls == 2
+    assert len(summary["results"]) == 2
+    assert summary["errors"] == []
+
+
+def test_common_relax_runner_uses_ase_force_norm_convergence(tmp_path: Path) -> None:
+    atoms = Atoms("H", positions=[[0.04, 0.04, 0.04]])
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            return _HarmonicCalculator()
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    summary = mlff_common._run_relax(
+        atoms=atoms,
+        output_dir=tmp_path,
+        config={
+            "backend": "mace",
+            "operation": "relax",
+            "config_digest": "test",
+            "task_config": {"fmax": 0.05, "steps": 0, "optimizer": "FIRE", "relax_cell": False},
+        },
+        item_config={"model": "test", "device": "cpu"},
+        adapter=FakeAdapter(),
+    )
+
+    assert summary["max_force_eVA"] == pytest.approx(np.sqrt(3.0) * 0.04)
+    assert "max_force_abs_eVA" not in summary
+    assert "max_force_norm_eVA" not in summary
+    assert summary["converged"] is False
+
+
+def test_generic_md_runner_uses_adapter_calculator_and_resultant_force(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    atoms = Atoms("Ar2", positions=[[0.2, 0.1, 0.0], [3.5, 0.0, 0.0]], cell=[10, 10, 10], pbc=True)
+    write(stage / "input" / "start.vasp", atoms)
+    resolved = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "mace",
+            "task_config": {
+                "dynamics": {"ensemble": "nve", "steps": 1, "timestep_fs": 0.5},
+                "output": {"traj_interval": 1, "log_interval": 1, "overwrite": True},
+            },
+        },
+    )
+    materialize_mlff_run_config(stage_dir=stage, task_name="mlff_md", resolved=resolved)
+
+    instances: list[Any] = []
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def __init__(self):
+            self.calculator = _HarmonicCalculator()
+            self.calls = 0
+            instances.append(self)
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            self.calls += 1
+            return self.calculator
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {"adapter": "fake"}
+
+    monkeypatch.setitem(mlff_md._ADAPTER_TYPES, "mace", FakeAdapter)
+    monkeypatch.chdir(stage)
+    batch = mlff_md.run(".catmaster/generated/run_config.json")
+    summary = batch["results"][0]["summary"]
+    assert len(instances) == 1
+    assert instances[0].calls == 1
+    assert summary["completed"] is True
+    assert summary["max_force_eVA"] > 0
+    assert "max_force_abs_eVA" not in summary
+    assert summary["provider_metadata"] == {"adapter": "fake"}
+
+
+def test_generic_md_runner_rejects_non_finite_calculator_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    write(
+        stage / "input" / "start.vasp",
+        Atoms("Ar2", positions=[[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], cell=[10, 10, 10], pbc=True),
+    )
+    resolved = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "mace",
+            "task_config": {
+                "dynamics": {"ensemble": "nve", "steps": 1},
+                "output": {"traj_interval": 1, "log_interval": 1, "overwrite": True},
+            },
+        },
+    )
+    materialize_mlff_run_config(stage_dir=stage, task_name="mlff_md", resolved=resolved)
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            return _NonFiniteCalculator()
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    monkeypatch.setitem(mlff_md._ADAPTER_TYPES, "mace", FakeAdapter)
+    monkeypatch.chdir(stage)
+    with pytest.raises(RuntimeError, match="see output/batch_summary.json"):
+        mlff_md.run(".catmaster/generated/run_config.json")
+    summary = json.loads((stage / "output" / "start" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["completed"] is False
+    assert "non-finite potential energy" in summary["error"]
+
+
+def test_generic_neb_runner_reuses_adapter_calculator_across_images(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    path = stage / "input" / "path"
+    path.mkdir(parents=True)
+    for index, x in enumerate((0.1, 0.2, 0.3)):
+        atoms = Atoms("H", positions=[[x, 0.1, 0.1]], cell=[10, 10, 10], pbc=True)
+        write(path / f"{index:02d}.vasp", atoms)
+    resolved = resolve_mlff_template(
+        "mlff_neb",
+        {"backend": "mace", "task_config": {"fmax": 1.0, "steps": 1}},
+    )
+    materialize_mlff_run_config(stage_dir=stage, task_name="mlff_neb", resolved=resolved)
+
+    instances: list[Any] = []
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def __init__(self):
+            self.calculator = _HarmonicCalculator()
+            self.calls = 0
+            instances.append(self)
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            self.calls += 1
+            return self.calculator
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    monkeypatch.setitem(mlff_neb._ADAPTER_TYPES, "mace", FakeAdapter)
+    monkeypatch.chdir(stage)
+    batch = mlff_neb.run(".catmaster/generated/run_config.json")
+    summary = json.loads((stage / "output" / "path" / "summary.json").read_text(encoding="utf-8"))
+    assert len(instances) == 1
+    assert instances[0].calls == 3
+    assert batch["tasks"][0]["status"] == "completed"
+    assert summary["results"]["max_force_eVA"] >= 0
+    assert all("max_force_eVA" in row for row in summary["image_profile"])
+
+
+def test_neb_stage_requires_local_intermediate_images(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    path = stage / "input" / "path"
+    path.mkdir(parents=True)
+    atoms = bulk("Cu", cubic=True)
+    write(path / "00.vasp", atoms)
+    write(path / "01.vasp", atoms)
+    resolved = resolve_mlff_template("mlff_neb", {})
+    with pytest.raises(ValueError, match="intermediate"):
+        materialize_mlff_run_config(stage_dir=stage, task_name="mlff_neb", resolved=resolved)

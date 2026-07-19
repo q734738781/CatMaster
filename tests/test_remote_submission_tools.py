@@ -6,6 +6,8 @@ import importlib
 import json
 
 import pytest
+from ase.build import bulk, molecule
+from ase.io import write
 from langchain_core.messages import ToolMessage
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
@@ -53,17 +55,14 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "remote_submission_batch" in artifact["data"]["submission_guidance"]
     assert "template_overrides" in artifact["data"]["submission_guidance"]
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
-    assert {"vasp_execute", "mace_sp_dir", "uma_sp_dir", "uma_relax_dir"}.issubset(task_names)
-    mace_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mace_sp_dir")
-    assert "input/" in mace_item["submission_hint"]
-    assert "head" in mace_item["template_override_keys"]
-    assert mace_item["template_defaults"]["head"] == "omat_pbe"
-    uma_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "uma_sp_dir")
-    assert "UMA" in uma_item["submission_hint"]
-    assert "spin" in uma_item["template_override_keys"]
-    assert "mace_md_dir" in task_names
+    assert {"vasp_execute", "mlff_sp", "mlff_relax", "mlff_md", "mlff_neb"}.issubset(task_names)
+    mlff_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mlff_sp")
+    assert "input/" in mlff_item["submission_hint"]
+    assert mlff_item["template_override_keys"] == ["backend", "backend_config", "task_config"]
+    assert mlff_item["default_backend"] == "mace"
+    assert {"mace", "fairchem_uma"}.issubset(mlff_item["available_backends"])
     assert "orca_execute" not in task_names
-    assert "mace_train_dir" not in task_names
+    assert "mace_train" not in task_names
     first_with_resource = next(item for item in artifact["data"]["tasks"] if item.get("resources"))
     resource = first_with_resource["resources"]
     assert "machine" not in resource
@@ -92,16 +91,16 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     with toolcall_context("catalog", audience="orca_xtb_worker"):
         _, artifact = get_avail_remote_task({"return_resource": True})
     qchem_task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
-    assert {"xtb_run", "orca_execute", "uma_sp_dir", "uma_relax_dir"}.issubset(qchem_task_names)
-    uma_qchem = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "uma_sp_dir")
-    assert uma_qchem["resources"]["resources"] == "uma_gpu"
+    assert {"xtb_run", "orca_execute", "mlff_sp", "mlff_relax"}.issubset(qchem_task_names)
+    mlff_qchem = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mlff_sp")
+    assert "fairchem_uma" in mlff_qchem["available_backends"]
 
     with toolcall_context("catalog", audience="dynamics_worker"):
         _, artifact = get_avail_remote_task({"return_resource": True})
     dynamics_task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
-    assert "mace_md_dir" in dynamics_task_names
-    assert "mace_sp_dir" not in dynamics_task_names
-    assert "mace_relax_dir" not in dynamics_task_names
+    assert "mlff_md" in dynamics_task_names
+    assert "mlff_sp" not in dynamics_task_names
+    assert "mlff_relax" not in dynamics_task_names
 
 
 def test_remote_task_catalog_references_existing_boot_scripts_and_layout_sections() -> None:
@@ -112,6 +111,14 @@ def test_remote_task_catalog_references_existing_boot_scripts_and_layout_section
 
     assert registry.tasks
     for task_name, cfg in registry.list_tasks().items():
+        if cfg.operation:
+            assert cfg.resources is None
+            assert cfg.layout_ref == ""
+            expected_heading = "mlff_sp and mlff_relax" if task_name in {"mlff_sp", "mlff_relax"} else task_name
+            assert f"#### {expected_heading}" in layout_text
+            assert cfg.boot_script
+            assert (repo_root / str(cfg.boot_script)).is_file(), task_name
+            continue
         assert cfg.resources in register.resources
         if cfg.requires:
             capabilities = set(register.get_resources(str(cfg.resources)).get("capabilities") or [])
@@ -157,13 +164,13 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
     with workspace_scope(tmp_path):
         stage = tmp_path / "files" / "stage" / "mace_sp"
         (stage / "input").mkdir(parents=True)
-        (stage / "input" / "CO.vasp").write_text("dummy", encoding="utf-8")
+        write(stage / "input" / "CO.vasp", bulk("Cu", cubic=True))
         with toolcall_context("submit", audience="materials_worker"):
             content, artifact = remote_submission(
                 {
                     "work_dir": "stage/mace_sp",
-                    "task_name": "mace_sp_dir",
-                    "template_overrides": {"model": "medium-mpa-0", "default_dtype": "float32"},
+                    "task_name": "mlff_sp",
+                    "template_overrides": {"backend": "mace", "backend_config": {"default_dtype": "float32"}},
                     "submission_config": {"check_interval": 7, "clean_remote": True, "cpu_per_node": 8},
                 }
     )
@@ -175,9 +182,11 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
     assert captured["resources"] == "mace_gpu"
     assert captured["check_interval"] == 7
     assert captured["clean_remote"] is True
-    assert "medium-mpa-0" in str(captured["command"])
-    assert "float32" in str(captured["command"])
-    assert (stage / "task_script" / "mace_sp.py").is_file()
+    assert captured["command"] == "python task_script/mlff_sp.py --run_config .catmaster/generated/run_config.json"
+    assert (stage / "task_script" / "mlff_sp.py").is_file()
+    assert (stage / "task_script" / "mlff_common.py").is_file()
+    run_config = json.loads((stage / ".catmaster" / "generated" / "run_config.json").read_text(encoding="utf-8"))
+    assert run_config["backend_config"]["default_dtype"] == "float32"
     assert (stage / "output_marker.txt").read_text(encoding="utf-8") == "downloaded"
     assert artifact["data"]["work_base"] == captured["work_base"]
     assert artifact["data"]["remote_context_id"] == "dp_test"
@@ -190,7 +199,7 @@ def test_remote_submission_builds_one_task_from_stage_layout(monkeypatch: pytest
     assert "jobs" not in artifact["data"]
 
 
-def test_remote_submission_copies_uma_helper_and_skips_missing_optional_metadata(
+def test_remote_submission_copies_common_mlff_helper_and_materializes_uma_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -219,18 +228,23 @@ def test_remote_submission_copies_uma_helper_and_skips_missing_optional_metadata
             remote_submission(
                 {
                     "work_dir": "stage/uma_sp",
-                    "task_name": "uma_sp_dir",
-                    "template_overrides": {"uma_task": "omol", "charge": 0, "spin": 1},
+                    "task_name": "mlff_sp",
+                    "template_overrides": {
+                        "backend": "fairchem_uma",
+                        "backend_config": {"defaults": {"uma_task": "omol", "charge": 0, "spin": 1}},
+                    },
                 }
             )
 
     assert captured["resources"] == "uma_gpu"
-    assert "--uma_task omol" in str(captured["command"])
-    assert "task_script/uma_sp.py" in captured["forward_files"]
-    assert "task_script/uma_common.py" in captured["forward_files"]
-    assert "params/uma_metadata.json" not in captured["forward_files"]
-    assert (stage / "task_script" / "uma_sp.py").is_file()
-    assert (stage / "task_script" / "uma_common.py").is_file()
+    assert captured["command"] == "python task_script/mlff_sp.py --run_config .catmaster/generated/run_config.json"
+    assert "task_script/mlff_sp.py" in captured["forward_files"]
+    assert "task_script/mlff_common.py" in captured["forward_files"]
+    assert (stage / "task_script" / "mlff_sp.py").is_file()
+    assert (stage / "task_script" / "mlff_common.py").is_file()
+    run_config = json.loads((stage / ".catmaster" / "generated" / "run_config.json").read_text(encoding="utf-8"))
+    assert run_config["items"]["H2O.xyz"]["uma_task"] == "omol"
+    assert run_config["items"]["H2O.xyz"]["spin"] == 1
 
 
 def test_registered_task_stages_declared_helper_before_wildcard_forward_collapse(tmp_path: Path) -> None:
@@ -321,19 +335,19 @@ def test_remote_submission_quotes_template_params(
 
     with workspace_scope(tmp_path):
         stage = tmp_path / "files" / "stage"
-        (stage / "input").mkdir(parents=True)
-        (stage / "input" / "CO.vasp").write_text("dummy", encoding="utf-8")
-        with toolcall_context("submit", audience="materials_worker"):
+        stage.mkdir(parents=True)
+        (stage / "input.xyz").write_text("2\nH2\nH 0 0 0\nH 0 0 0.7\n", encoding="utf-8")
+        with toolcall_context("submit", audience="orca_xtb_worker"):
             remote_submission(
                 {
                     "work_dir": "stage",
-                    "task_name": "mace_sp_dir",
-                    "template_overrides": {"head": "", "model": "model with spaces"},
+                    "task_name": "xtb_run",
+                    "template_overrides": {"solvent_model": "alpb", "solvent": "water model"},
                 }
             )
 
-    assert "--head '' --dispersion false" in captured["command"]
-    assert "--model 'model with spaces'" in captured["command"]
+    assert "--solvent_model alpb" in captured["command"]
+    assert "--solvent 'water model'" in captured["command"]
 
 
 def test_remote_submission_template_overrides_render_command(
@@ -362,6 +376,7 @@ def test_remote_submission_template_overrides_render_command(
     assert "params" not in schema
     assert schema["submission_config"]["type"] == "object"
     assert "anyOf" not in schema["submission_config"]
+    assert "With task_name, do not pass resources or machine" in schema["submission_config"]["description"]
     assert "config" not in schema
     assert schema["task_name"]["type"] == "string"
     assert "anyOf" not in schema["task_name"]
@@ -370,32 +385,32 @@ def test_remote_submission_template_overrides_render_command(
 
     with workspace_scope(tmp_path):
         stage = tmp_path / "files" / "stage"
-        (stage / "input").mkdir(parents=True)
-        (stage / "input" / "O2.vasp").write_text("dummy", encoding="utf-8")
-        with toolcall_context("submit", audience="materials_worker"):
+        stage.mkdir(parents=True)
+        (stage / "input.xyz").write_text("2\nH2\nH 0 0 0\nH 0 0 0.7\n", encoding="utf-8")
+        with toolcall_context("submit", audience="orca_xtb_worker"):
             remote_submission(
                 {
                     "work_dir": "stage",
-                    "task_name": "mace_relax_dir",
-                    "template_overrides": {"head": "omol", "fmax": 0.03, "steps": 100},
+                    "task_name": "xtb_run",
+                    "template_overrides": {"mode": "sp", "charge": -1, "uhf": 1},
                 }
             )
 
-    assert "--head omol" in captured["command"]
-    assert "--fmax 0.03" in captured["command"]
-    assert "--steps 100" in captured["command"]
+    assert "--mode sp" in captured["command"]
+    assert "--charge -1" in captured["command"]
+    assert "--uhf 1" in captured["command"]
 
 
 def test_remote_submission_accepts_legacy_config_and_null_object_fields() -> None:
     parsed = RemoteSubmissionInput(
         work_dir="stage",
-        task_name="mace_relax_dir",
+        task_name="mlff_relax",
         boot_script=None,
         template_overrides=None,
         config=None,
     )
 
-    assert parsed.task_name == "mace_relax_dir"
+    assert parsed.task_name == "mlff_relax"
     assert parsed.boot_script == ""
     assert parsed.template_overrides == {}
     assert parsed.submission_config == {}
@@ -412,12 +427,13 @@ def test_remote_submission_rejects_unknown_template_override_key(tmp_path: Path)
     with workspace_scope(tmp_path):
         stage = tmp_path / "files" / "stage"
         (stage / "input").mkdir(parents=True)
+        write(stage / "input" / "Cu.vasp", bulk("Cu", cubic=True))
         with toolcall_context("submit", audience="materials_worker"):
-            with pytest.raises(CatMasterToolExecutionError, match="Unknown template_overrides key.*maxsteps"):
+            with pytest.raises(CatMasterToolExecutionError, match="Unknown MLFF template_overrides key.*maxsteps"):
                 remote_submission(
                     {
                         "work_dir": "stage",
-                        "task_name": "mace_relax_dir",
+                        "task_name": "mlff_relax",
                         "template_overrides": {"maxsteps": 100},
                     }
                 )
@@ -841,6 +857,7 @@ def test_langchain_tool_surface_preserves_custom_gpu_submission_config(
     properties = tool.args_schema["properties"]
     assert "submission_config" in properties
     assert "config" not in properties
+    assert "With task_name, do not pass resources or machine" in properties["submission_config"]["description"]
     result = tool.invoke(
         {
             "name": "remote_submission",
@@ -907,7 +924,7 @@ def test_remote_submission_rejects_cross_audience_task(tmp_path: Path) -> None:
 def test_remote_submission_skills_use_stage_layout_schema() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     vasp_text = (repo_root / "skills" / "materials_worker" / "vasp-batch-execution" / "SKILL.md").read_text(encoding="utf-8")
-    mace_text = (repo_root / "skills" / "materials_worker" / "mace-screening-and-relaxation" / "SKILL.md").read_text(encoding="utf-8")
+    mace_text = (repo_root / "skills" / "materials_worker" / "mlff-screening-and-relaxation" / "SKILL.md").read_text(encoding="utf-8")
 
     for forbidden in ("input_dir", "output_dir", "_BATCH_STATE", "batch_state"):
         assert forbidden not in vasp_text
@@ -919,10 +936,12 @@ def test_remote_submission_skills_use_stage_layout_schema() -> None:
         assert forbidden not in mace_text
     assert "work_dir" in mace_text
     assert "input/" in mace_text
-    assert "mace_md_dir" in mace_text
+    assert "mlff_relax" in mace_text
+    assert 'template_overrides={"backend": "mattersim"}' in mace_text
+    assert 'detail="full"' in mace_text
 
-    mace_md_text = (repo_root / "skills" / "dynamics_worker" / "mace-md-sampling" / "SKILL.md").read_text(encoding="utf-8")
+    mace_md_text = (repo_root / "skills" / "dynamics_worker" / "mlff-md-sampling" / "SKILL.md").read_text(encoding="utf-8")
     assert "work_dir" in mace_md_text
     assert "input/" in mace_md_text
-    assert "params/md_params.json" in mace_md_text
-    assert "md_config" in mace_md_text
+    assert "task_config" in mace_md_text
+    assert "get_remote_task_spec" in mace_md_text

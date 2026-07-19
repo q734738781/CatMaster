@@ -59,7 +59,16 @@ def _manifest_path(target: Path) -> Path:
 
 
 def _cache_zip_path() -> Path:
-    return Path.home() / ".cache" / "catmaster" / "jsmol" / f"Jmol-{JSMOL_VERSION}-binary.zip"
+    explicit = os.getenv("CATMASTER_JSMOL_CACHE_DIR", "").strip()
+    if explicit:
+        cache_root = Path(explicit).expanduser()
+    else:
+        xdg_cache = os.getenv("XDG_CACHE_HOME", "").strip()
+        if xdg_cache:
+            cache_root = Path(xdg_cache).expanduser() / "catmaster" / "jsmol"
+        else:
+            cache_root = Path.home() / ".cache" / "catmaster" / "jsmol"
+    return cache_root / f"Jmol-{JSMOL_VERSION}-binary.zip"
 
 
 def _cache_lock_path() -> Path:

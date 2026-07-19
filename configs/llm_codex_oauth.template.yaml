@@ -3,14 +3,16 @@
 # This is an optional deployment profile for local Codex experiments. The
 # repository's general llm templates remain OpenRouter/API-key oriented.
 #
-# This profile uses langchain-openai's Codex OAuth chat model and relies on
-# local ChatGPT/Codex OAuth credentials, not an API key. Before using it:
+# Text agents use langchain-openai's Codex OAuth chat model and rely on local
+# ChatGPT/Codex OAuth credentials, not an API key. The optional image-generation
+# entry remains on OpenRouter and needs OPENROUTER_API_KEY only when invoked.
+# Before using the text-agent profile:
 #
 #   conda activate catmaster
 #   python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 #
 # Copy this file to configs/llm.yaml on the deployment target. The default
-# matches the validated local OAuth lane: GPT-5.6 Sol with high reasoning and
+# matches the validated local OAuth lane: GPT-5.6 Sol with xhigh reasoning and
 # Responses API reasoning summaries for monitor observability.
 
 models:
@@ -35,9 +37,16 @@ models:
       codex_oauth:
         chat_kwargs:
           reasoning:
-            effort: high
+            effort: xhigh
             summary: auto
           verbosity: medium
+
+  google/nanobanana_2:
+    provider: openrouter
+    model: google/gemini-3.1-flash-image-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
 
 agents:
   proposal: codex-oauth-main
@@ -60,6 +69,11 @@ agents:
 
 peer_review_models:
   - codex-oauth-main
+
+image_generation:
+  model_label: google/nanobanana_2
+  image_config:
+    aspect_ratio: "4:3"
 
 writing:
   author_name: CatMaster

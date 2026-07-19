@@ -24,7 +24,7 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     make_work_base,
 )
 from catmaster.tools.execution.machine_registry import MachineRegister
-from catmaster.tools.execution.task_registry import TaskRegistry
+from catmaster.tools.execution.task_registry import TaskConfig, TaskRegistry
 from catmaster.tools.execution.task_payloads import render_task_fields
 import shutil
 from pydantic import BaseModel, Field, field_validator
@@ -32,6 +32,64 @@ from pydantic import BaseModel, Field, field_validator
 BATCH_STATE_FILENAME = "_BATCH_STATE.json"
 _LOCAL_MODEL_FILE_SUFFIXES = {".model", ".pt", ".pth", ".ckpt"}
 _PREFERRED_MODEL_TOKENS = ("best", "final")
+
+
+def _legacy_mace_task(kind: Literal["relax", "sp", "md"]) -> TaskConfig:
+    """Private compatibility card for deprecated Python wrappers.
+
+    These wrappers are not registered agent tools. Keeping their command
+    rendering local avoids resurrecting removed provider-named task cards.
+    """
+
+    if kind == "relax":
+        command = (
+            "python task_script/mace_relax.py --input {input} --output_root {output_root} "
+            "--fmax {fmax} --steps {steps} --model {model} --head {head} "
+            "--dispersion {dispersion} --relax_lattice {relax_lattice} "
+            "--default_dtype {default_dtype} --enable_cueq {enable_cueq} --device auto"
+        )
+        defaults = {
+            "input": "input",
+            "output_root": "output",
+            "fmax": 0.02,
+            "steps": 500,
+            "model": "mh-1",
+            "head": "omat_pbe",
+            "dispersion": False,
+            "relax_lattice": False,
+            "default_dtype": "float64",
+            "enable_cueq": False,
+        }
+        script = "task_script/mace_relax.py"
+    elif kind == "sp":
+        command = (
+            "python task_script/mace_sp.py --input {input} --output_root {output_root} "
+            "--model {model} --head {head} --dispersion {dispersion} "
+            "--default_dtype {default_dtype} --device auto"
+        )
+        defaults = {
+            "input": "input",
+            "output_root": "output",
+            "model": "mh-1",
+            "head": "omat_pbe",
+            "dispersion": False,
+            "default_dtype": "float64",
+        }
+        script = "task_script/mace_sp.py"
+    else:
+        command = (
+            "python task_script/mace_md.py --input {input} --output_root {output_root} "
+            "--params {params} --device {device}"
+        )
+        defaults = {"input": "input", "output_root": "output", "params": "params/md_params.json", "device": "auto"}
+        script = "task_script/mace_md.py"
+    return TaskConfig(
+        command=command,
+        resources="mace_gpu",
+        defaults=defaults,
+        forward_files=["input", "params", script] if kind == "md" else ["input", script],
+        backward_files=["output"],
+    )
 
 
 @dataclass(frozen=True)
@@ -484,11 +542,8 @@ def _collect_mace_outputs(stage_root: Path, stage_output: Path, output_root: Pat
 def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[mace/execute] Submit a directory batch of MACE relaxations through DPDispatcher."""
     params = MaceRelaxBatchInput(**payload)
-    reg = TaskRegistry()
-    cfg = reg.get("mace_relax_dir")
-    resources_key = cfg.resources
-    if not resources_key:
-        raise KeyError("mace_relax_dir missing resources in task config")
+    cfg = _legacy_mace_task("relax")
+    resources_key = "mace_gpu"
     machine = _resolve_machine_for_resources(resources_key)
     head = _resolve_mace_head(params.head)
     head_arg = shlex.quote(head or "")
@@ -559,8 +614,6 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             error_code="invalid_model",
         )
     model_arg = shlex.quote(model_spec.command_arg)
-
-    cfg = reg.get("mace_relax_dir")
 
     ctx = {
         "input": "input",
@@ -700,11 +753,8 @@ def mace_relax_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[mace/execute] Submit a directory batch of MACE single-point jobs through DPDispatcher."""
     params = MaceSPBatchInput(**payload)
-    reg = TaskRegistry()
-    cfg = reg.get("mace_sp_dir")
-    resources_key = cfg.resources
-    if not resources_key:
-        raise KeyError("mace_sp_dir missing resources in task config")
+    cfg = _legacy_mace_task("sp")
+    resources_key = "mace_gpu"
     machine = _resolve_machine_for_resources(resources_key)
     head = _resolve_mace_head(params.head)
     head_arg = shlex.quote(head or "")
@@ -900,11 +950,8 @@ def mace_sp_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
 def mace_md_batch(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[mace/execute] Submit a directory batch of MACE MD jobs through DPDispatcher."""
     params = MaceMDBatchInput(**payload)
-    reg = TaskRegistry()
-    cfg = reg.get("mace_md_dir")
-    resources_key = cfg.resources
-    if not resources_key:
-        raise KeyError("mace_md_dir missing resources in task config")
+    cfg = _legacy_mace_task("md")
+    resources_key = "mace_gpu"
     machine = _resolve_machine_for_resources(resources_key)
     head = _resolve_mace_head(params.head)
     dispersion = bool(params.dispersion)

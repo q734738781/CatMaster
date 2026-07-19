@@ -1,6 +1,6 @@
 # GPU/UMA execution dependencies.
 #
-# This file is intentionally separate from requirements/gpu.txt because
+# This file is intentionally separate from requirements/mace.txt because
 # FairChem UMA and MACE may require incompatible torch-side dependency sets.
 # Use it for the remote UMA conda/virtualenv activated by the uma_gpu
 # DPDispatcher resource. Verify these pins on the target GPU/CUDA stack before

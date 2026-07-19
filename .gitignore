@@ -25,6 +25,7 @@ POTCAR
 /configs/dpdispatcher/machines.yaml
 /configs/dpdispatcher/resources.yaml
 /configs/dpdispatcher/tasks.yaml
+/configs/dpdispatcher/mlff_backends.yaml
 /configs/dpdispatcher/*_local.yaml
 /configs/dpdispatcher/*.local.yaml
 /reference_scripts

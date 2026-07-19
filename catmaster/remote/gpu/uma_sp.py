@@ -13,7 +13,7 @@ from uma_common import (
     auto_uma_task,
     collect_structure_files,
     fairchem_version,
-    finite_max_abs,
+    max_force_eva,
     forces_payload,
     load_metadata,
     normalize_uma_task,
@@ -77,7 +77,7 @@ def _run_single_point(
         "spin": cfg.spin,
         "fairchem_version": fairchem_version(),
         "energy_eV": energy,
-        "max_force_abs_eVA": finite_max_abs(forces),
+        "max_force_eVA": max_force_eva(forces),
     }
     if stress is not None:
         summary["stress_voigt_eVA3"] = stress

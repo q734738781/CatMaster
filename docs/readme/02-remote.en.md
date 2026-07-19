@@ -74,11 +74,13 @@ Common keys:
 - `lammps_cpu`: LAMMPS CPU jobs.
 - `mace_gpu`: MACE GPU jobs.
 - `uma_gpu`: FairChem UMA GPU jobs, preferably in a conda environment separate from MACE.
+- `mattersim_gpu`: MatterSim GPU jobs in a provider-specific environment.
+- `orb_gpu`: ORB-v3 GPU jobs in a provider-specific environment.
 
-For optional MACE cuEquivariance acceleration, install `requirements/gpu.txt`
+For optional MACE cuEquivariance acceleration, install `requirements/mace.txt`
 and exactly one kernel add-on selected from `torch.version.cuda`: use
-`requirements/gpu-cueq-cu12.txt` for CUDA 12.x or
-`requirements/gpu-cueq-cu13.txt` for CUDA 13.x. The NVIDIA driver version does
+`requirements/mace-cueq-cu12.txt` for CUDA 12.x or
+`requirements/mace-cueq-cu13.txt` for CUDA 13.x. The NVIDIA driver version does
 not select the wheel. Keep `enable_cueq` and `compile_mode` explicit in MD
 calculator config until the target model, system size, and GPU have been
 benchmarked.
@@ -188,17 +190,15 @@ Task keys include:
 - `vasp_execute_neb`
 - `cp2k_execute`
 - `lammps_execute`
-- `mace_relax_dir`
-- `mace_sp_dir`
-- `mace_md_dir`
-- `mace_neb_dir`
-- `mace_train_dir`
-- `mace_eval_dir`
-- `uma_sp_dir`
-- `uma_relax_dir`
+- `mlff_sp`
+- `mlff_relax`
+- `mlff_md`
+- `mlff_neb`
+- `mace_train`
+- `mace_eval`
 - `xtb_run`
 
-Each task defines:
+Ordinary tasks define:
 
 - `resources`: default resource key.
 - `boot_script`: script copied into the remote stage.
@@ -207,6 +207,11 @@ Each task defines:
 - `forward_files`: files to upload.
 - `backward_files`: files to download.
 - `task_work_path`: stage subdirectory where the command runs.
+
+The `mlff_*` task cards use a fixed common runner command. Their selected backend
+chooses the resource through `mlff_backends.yaml`; scientific settings are
+validated under `template_overrides.backend_config` and `task_config`. Use
+`get_remote_task_spec` to inspect the complete schema and current defaults.
 
 ## 5. Add Custom Tasks
 
@@ -243,19 +248,19 @@ Use vasp_inputs/CO_on_Ni_top as a prepared VASP stage. Submit it with remote_sub
 For MACE relax:
 
 ```text
-Convert structures/ into a mace_relax_dir stage with input/, then submit it with remote_submission. Use model=mh-1 and head=omat_pbe.
+Convert structures/ into an mlff_relax stage with input/, inspect get_remote_task_spec for backend=mace, then submit it with remote_submission. Set template_overrides.backend=mace, backend_config model=mh-1/head=omat_pbe, and task_config for relaxation controls.
 ```
 
 For an UMA single point on periodic materials or catalyst structures:
 
 ```text
-Convert structures/ into an uma_sp_dir stage with input/, then submit it with remote_submission. Set params model=uma-s-1p2 and uma_task=omat. For OC20/OC25/ODAC/OMC semantic tasks, do not rely on auto; set the explicit uma_task.
+Convert structures/ into an mlff_sp stage with input/, then submit it with remote_submission. Select backend=fairchem_uma and set backend_config model=uma-s-1p2 plus defaults.uma_task=omat. For OC20/OC25/ODAC/OMC semantic tasks, do not rely on auto; set the explicit UMA task.
 ```
 
 For an UMA pre-optimization of molecules or clusters:
 
 ```text
-Convert molecules/ into an uma_relax_dir stage with input/, then submit it with remote_submission. Set params uma_task=omol, charge=0, spin=1, relax_cell=false. Final energies, frequencies, TS work, or spectra still need ORCA/xTB/DFT validation.
+Convert molecules/ into an mlff_relax stage with input/, then submit it with remote_submission. Select backend=fairchem_uma, set backend_config.defaults to uma_task=omol/charge=0/spin=1, and set task_config.relax_cell=false. Final energies, frequencies, TS work, or spectra still need ORCA/xTB/DFT validation.
 ```
 
 `uma_task=auto` is intentionally conservative: a valid periodic cell defaults to `omat`; otherwise it defaults to `omol`. For `omol`, `charge` and `spin` are written to ASE `Atoms.info`. Keep `charge=0` and `spin=0` for non-`omol` tasks.
@@ -289,7 +294,7 @@ batch_root/
     POTCAR
 ```
 
-Do not switch to `remote_submission_batch` merely because one stage contains many scientific inputs. For example, one `mace_sp_dir`, `mace_relax_dir`, `uma_sp_dir`, or `uma_relax_dir` stage may contain many structures under `input/`; that is still one `remote_submission`. Use `remote_submission_batch` only when you have multiple independent stage child directories.
+Do not switch to `remote_submission_batch` merely because one stage contains many scientific inputs. One `mlff_sp` or `mlff_relax` stage may contain many compatible structures under `input/`; that is still one `remote_submission`. Use `remote_submission_batch` only when you have multiple independent stage child directories.
 
 ## 8. Real Remote Smoke Tests
 

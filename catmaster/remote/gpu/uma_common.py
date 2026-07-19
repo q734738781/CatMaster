@@ -298,13 +298,15 @@ class UmaCalculatorFactory:
         return self._calculators[task]
 
 
-def finite_max_abs(values: Any) -> float:
+def max_force_eva(values: Any) -> float:
     import numpy as np
 
     arr = np.asarray(values, dtype=float)
     if arr.size == 0:
         return 0.0
-    return float(np.max(np.abs(arr)))
+    if arr.ndim != 2 or arr.shape[1] != 3:
+        raise ValueError("Force arrays must have shape (n_atoms, 3).")
+    return float(np.max(np.linalg.norm(arr, axis=1)))
 
 
 def forces_payload(forces: Any) -> list[list[float]]:

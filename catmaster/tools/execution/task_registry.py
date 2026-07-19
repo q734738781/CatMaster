@@ -68,6 +68,7 @@ class TaskConfig(BaseModel):
     audiences: List[str] = Field(default_factory=list)
     description: str = ""
     boot_script: str | None = None
+    operation: str = ""
     layout_ref: str = ""
     defaults: Dict[str, object] = Field(default_factory=dict)
     requires: List[str] = Field(default_factory=list)

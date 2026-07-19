@@ -59,13 +59,15 @@ def main() -> None:
 
     payload = {
         "work_dir": str(stage),
-        "task_name": "mace_relax_dir",
+        "task_name": "mlff_relax",
         "template_overrides": {
-            "fmax": args.fmax,
-            "steps": args.steps,
-            "model": args.model,
-            "head": args.head,
-            "relax_lattice": args.relax_lattice,
+            "backend": "mace",
+            "backend_config": {"model": args.model, "head": args.head},
+            "task_config": {
+                "fmax": args.fmax,
+                "steps": args.steps,
+                "relax_cell": args.relax_lattice,
+            },
         },
         "submission_config": {"check_interval": args.check_interval},
     }

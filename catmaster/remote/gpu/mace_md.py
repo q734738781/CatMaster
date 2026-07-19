@@ -15,7 +15,7 @@ from ase import units
 from ase.io import read, write
 from ase.io.trajectory import Trajectory
 from ase.md import MDLogger
-from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary, ZeroRotation
+from ase.md.velocitydistribution import Stationary, ZeroRotation, thermalize_momenta
 
 
 _RESTART_INFO_KEY = "_catmaster_md_restart"
@@ -356,19 +356,24 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _make_calculator(config: dict[str, Any], *, device: str):
-    from mace.calculators import mace_mp
+    from mace.calculators import MACECalculator, mace_mp
 
     calc = config["calculator"]
     device = _resolve_device(device)
 
+    model = str(calc["model"])
     kwargs: dict[str, Any] = {
-        "model": calc["model"],
         "device": device,
         "default_dtype": calc["default_dtype"],
-        "dispersion": bool(calc["dispersion"]),
     }
     if calc.get("head"):
         kwargs["head"] = calc["head"]
+    if Path(model).is_file():
+        if calc.get("dispersion"):
+            raise ValueError("MACE dispersion is not supported with a staged checkpoint.")
+        kwargs["model_paths"] = model
+        return MACECalculator(**kwargs), device
+    kwargs.update({"model": model, "dispersion": bool(calc["dispersion"])})
     if calc.get("enable_cueq"):
         if not device.startswith("cuda"):
             raise ValueError("calculator.enable_cueq requires a CUDA device.")
@@ -509,10 +514,10 @@ def _prepare_initial_velocities(
         return "input_last_frame"
 
     initial_temperature_K = dyn_cfg.get("initial_temperature_K") or dyn_cfg["temperature_K"]
-    MaxwellBoltzmannDistribution(
+    thermalize_momenta(
         atoms,
-        temperature_K=float(initial_temperature_K),
-        force_temp=bool(dyn_cfg["force_temp"]),
+        float(initial_temperature_K),
+        exact_temperature=bool(dyn_cfg["force_temp"]),
         rng=rng,
     )
     Stationary(atoms)
@@ -758,7 +763,7 @@ def _run_md_single(
                 "completed": True,
                 "finished_at": _now_iso(),
                 "final_energy_eV": final_energy,
-                "max_force_abs_eVA": float(np.max(np.abs(forces))),
+                "max_force_eVA": float(np.max(np.linalg.norm(forces, axis=1))),
                 "trajectory": traj_path.name,
                 "log": log_path.name,
                 "output_structure": final_name,

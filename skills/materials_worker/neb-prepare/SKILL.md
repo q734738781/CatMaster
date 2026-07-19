@@ -49,6 +49,7 @@ Use this skill when the job is to prepare a pathway calculation rather than exec
 ### 3. Build the shared image tree
 - Use `make_neb_geometry` to generate the flat numbered image tree (`00.vasp`, `01.vasp`, ...).
 - Prefer this flat image-tree layout as the common handoff format.
+- Treat this locally materialized tree as the only valid remote NEB geometry input. Do not submit endpoints and expect a remote runner to interpolate them in place.
 - Inspect `make_neb_geometry` warnings before handing the tree to execution. A minimum interatomic distance below about `0.8 Å` in any image is strong evidence that abnormal interpolation or atom overlap may be present; recheck endpoint atom mapping, use `remap_neb_endpoint_atoms` for same-species permutations, try `interp_method="idpp"`, or remodel the event as a shorter primitive hop.
 - Endpoint atom count, element sequence, and lattice mismatches are hard errors. Do not bypass them by manually copying image files into a later execution stage.
 - If the output directory already exists, require `overwrite=true` rather than silently mixing trees.
@@ -85,6 +86,7 @@ Return:
 - validated endpoint pair or the reason it is not NEB-ready
 - chosen image-count rationale
 - image-tree root
+- confirmation that the tree contains contiguous numbered endpoint/intermediate files and is ready to be copied into one remote stage
 - prepared NEB root plus `INCAR` and `neb_incar_patch.json`
 - if dimer preparation was requested, the raw mode path and dimer-ready `POSCAR` path
 

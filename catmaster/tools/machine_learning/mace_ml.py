@@ -412,10 +412,10 @@ def mace_train(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[ml/execute] Submit a MACE training or fine-tuning job through DPDispatcher."""
     params = MaceTrainInput(**payload)
     reg = TaskRegistry()
-    cfg = reg.get("mace_train_dir")
+    cfg = reg.get("mace_train")
     resources_key = cfg.resources
     if not resources_key:
-        raise KeyError("mace_train_dir missing resources in task config")
+        raise KeyError("mace_train missing resources in task config")
     machine = _resolve_machine_for_resources(resources_key)
     dataset_dir = resolve_workspace_path(params.dataset_dir, must_exist=True)
     if not dataset_dir.is_dir():
@@ -622,10 +622,10 @@ def mace_evaluate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """[ml/analysis] Submit a remote MACE evaluation job for an extxyz dataset through DPDispatcher."""
     params = MaceEvaluateInput(**payload)
     reg = TaskRegistry()
-    cfg = reg.get("mace_eval_dir")
+    cfg = reg.get("mace_eval")
     resources_key = cfg.resources
     if not resources_key:
-        raise KeyError("mace_eval_dir missing resources in task config")
+        raise KeyError("mace_eval missing resources in task config")
     machine = _resolve_machine_for_resources(resources_key)
     dataset_dir = resolve_workspace_path(params.dataset_dir, must_exist=True)
     if not dataset_dir.is_dir():

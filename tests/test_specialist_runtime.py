@@ -1238,7 +1238,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Keep direct work in the specialist thread minimal and coordination-oriented" in agent_kwargs["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself." in agent_kwargs["system_prompt"]
-        assert "keep a connected MACE/UMA materials workflow in `materials_worker`" in agent_kwargs["system_prompt"]
+        assert "keep a connected managed-MLFF materials workflow in `materials_worker`" in agent_kwargs["system_prompt"]
         assert "use `dynamics_worker` when the primary task is a dynamics protocol, restart, LAMMPS workflow, or trajectory-health analysis" in agent_kwargs["system_prompt"]
         assert "Model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`" in agent_kwargs["system_prompt"]
         assert "use `orca_xtb_worker` for molecular or cluster quantum-chemistry work" in agent_kwargs["system_prompt"]
@@ -1262,8 +1262,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "If the scope is complete, state the executed scope, key evidence paths, and residual limitations" in agent_kwargs["system_prompt"]
         assert "remote_submission" in {tool.name for tool in materials_worker_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in materials_worker_kwargs["tools"]}
-        assert "Typical MACE work here includes surrogate screening, relaxation, single-point ranking, path optimization, and MACE MD" in materials_worker_kwargs["system_prompt"]
-        assert "Dynamics-first MACE MD and trajectory-health tasks may instead go to `dynamics_worker`" in materials_worker_kwargs["system_prompt"]
+        assert "Typical managed MLFF work here includes surrogate screening, relaxation, single-point ranking, path optimization" in materials_worker_kwargs["system_prompt"]
+        assert "Dynamics-first MLFF MD and trajectory-health tasks may instead go to `dynamics_worker`" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in materials_worker_kwargs["system_prompt"]
@@ -1275,7 +1275,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "registered managed execution in this worker is authoritative" in materials_worker_kwargs["system_prompt"]
         assert "Before low-level managed remote submission, read the task catalog or mounted execution skill" in materials_worker_kwargs["system_prompt"]
         assert "If managed submission fails with receipt/context fields" in materials_worker_kwargs["system_prompt"]
-        assert "CP2K AIMD preparation/execution handoff, MACE MD sampling" in dynamics_worker_kwargs["system_prompt"]
+        assert "CP2K AIMD preparation/execution handoff, managed MLFF MD sampling" in dynamics_worker_kwargs["system_prompt"]
         assert "Do not invent force-field parameters" in dynamics_worker_kwargs["system_prompt"]
         assert "registered managed execution in this worker is authoritative" in dynamics_worker_kwargs["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in ml_worker_kwargs["system_prompt"]

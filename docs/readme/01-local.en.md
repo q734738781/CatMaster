@@ -13,10 +13,10 @@ conda activate catmaster
 
 `requirements/pc-conda.yml` is the single source of truth for the PC/control-plane environment. It lets conda solve the scientific/materials stack and keeps the exact-pinned LLM/WebUI pip packages inline in the same file. Do not install the scientific stack directly with pip.
 
-If this machine will also run local GPU / MACE tasks, install the GPU/MACE add-on dependencies as well. `requirements/gpu.txt` is not a complete WebUI/agent environment and does not replace `requirements/pc-conda.yml`:
+If this machine will also run local MACE tasks, install the provider-specific MACE dependencies as well. `requirements/mace.txt` is not a complete WebUI/agent environment and does not replace `requirements/pc-conda.yml`:
 
 ```bash
-pip install -r requirements/gpu.txt
+pip install -r requirements/mace.txt
 ```
 
 If you need to rebuild the WebUI frontend or use the deployment script, confirm Node.js and npm are available:
@@ -140,7 +140,7 @@ Codex OAuth uses `langchain-openai`'s `_ChatOpenAICodex` and does not use an API
 python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 ```
 
-`configs/llm_codex_oauth.template.yaml` is the local Codex OAuth deployment profile and defaults to the validated `gpt-5.6-sol` model with `high` reasoning; examples are also included in `configs/llm.template.yaml` and `configs/llm.full.template.yaml`. The legacy `langchain-codex-oauth` token store is read only as a compatibility fallback; new environments should not depend on the third-party adapter.
+`configs/llm_codex_oauth.template.yaml` is the local Codex OAuth deployment profile and defaults to the validated `gpt-5.6-sol` model with `xhigh` reasoning; examples are also included in `configs/llm.template.yaml` and `configs/llm.full.template.yaml`. The legacy `langchain-codex-oauth` token store is read only as a compatibility fallback; new environments should not depend on the third-party adapter.
 
 ## 6. Prepare A Project Space
 

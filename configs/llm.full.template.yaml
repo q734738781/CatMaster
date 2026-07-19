@@ -189,7 +189,7 @@ models:
       codex_oauth:
         chat_kwargs:
           reasoning:
-            effort: high
+            effort: xhigh
             summary: auto
           verbosity: medium
     print_http_raw_post: false

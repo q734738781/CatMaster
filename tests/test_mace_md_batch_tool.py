@@ -319,14 +319,14 @@ def test_mace_md_rejects_unknown_nested_config_key() -> None:
         )
 
 
-def test_mace_md_dir_task_command_has_no_historical_gpu_or_scale_options() -> None:
-    cfg = TaskRegistry().get("mace_md_dir")
+def test_mlff_md_task_command_has_no_historical_gpu_or_scale_options() -> None:
+    cfg = TaskRegistry().get("mlff_md")
     assert cfg.audiences == ["materials_worker", "dynamics_worker"]
-    assert "mace_md.py" in cfg.command
+    assert cfg.operation == "md"
+    assert "mlff_md.py" in cfg.command
     assert "--gpu_ids" not in cfg.command
     assert "--scales" not in cfg.command
-    assert "--params {params}" in cfg.command
-    assert "--device {device}" in cfg.command
+    assert "--run_config .catmaster/generated/run_config.json" in cfg.command
     assert "--ensemble" not in cfg.command
     assert "--temperature_K" not in cfg.command
     assert "--steps" not in cfg.command

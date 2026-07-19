@@ -106,12 +106,14 @@ class ToolRegistry:
         # Execution tools  
         from catmaster.tools.execution import (
             get_avail_remote_task,
+            get_remote_task_spec,
             get_avail_resources,
             remote_submission,
             remote_submission_batch,
         )
         from catmaster.tools.execution import (
             GetAvailRemoteTaskInput,
+            GetRemoteTaskSpecInput,
             GetAvailResourcesInput,
             RemoteSubmissionBatchInput,
             RemoteSubmissionInput,
@@ -230,6 +232,7 @@ class ToolRegistry:
         self.register_tool("remote_submission", remote_submission, RemoteSubmissionInput)
         self.register_tool("remote_submission_batch", remote_submission_batch, RemoteSubmissionBatchInput)
         self.register_tool("get_avail_remote_task", get_avail_remote_task, GetAvailRemoteTaskInput)
+        self.register_tool("get_remote_task_spec", get_remote_task_spec, GetRemoteTaskSpecInput)
         self.register_tool("get_avail_resources", get_avail_resources, GetAvailResourcesInput)
         self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
         self.register_tool("vasp_band_prepare", vasp_band_prepare, VaspBandPrepareInput)

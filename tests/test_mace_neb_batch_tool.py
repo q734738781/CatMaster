@@ -439,9 +439,9 @@ def test_write_profile_outputs_does_not_call_forcefit_plot(tmp_path: Path, monke
             raise AssertionError("forcefit.plot should not be called")
 
     rows = [
-        {"image_index": 0, "path_A": 0.0, "energy_eV": -1.0, "relative_energy_eV": 0.0, "max_force_eV_per_A": 0.0, "rms_force_eV_per_A": 0.0},
-        {"image_index": 1, "path_A": 0.8, "energy_eV": -0.8, "relative_energy_eV": 0.2, "max_force_eV_per_A": 0.1, "rms_force_eV_per_A": 0.1},
-        {"image_index": 2, "path_A": 1.6, "energy_eV": -0.9, "relative_energy_eV": 0.1, "max_force_eV_per_A": 0.1, "rms_force_eV_per_A": 0.1},
+        {"image_index": 0, "path_A": 0.0, "energy_eV": -1.0, "relative_energy_eV": 0.0, "max_force_eVA": 0.0, "rms_force_eV_per_A": 0.0},
+        {"image_index": 1, "path_A": 0.8, "energy_eV": -0.8, "relative_energy_eV": 0.2, "max_force_eVA": 0.1, "rms_force_eV_per_A": 0.1},
+        {"image_index": 2, "path_A": 1.6, "energy_eV": -0.9, "relative_energy_eV": 0.1, "max_force_eVA": 0.1, "rms_force_eV_per_A": 0.1},
     ]
     energies_csv = tmp_path / "image_energies.csv"
     profile_png = tmp_path / "profile.png"

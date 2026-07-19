@@ -104,13 +104,12 @@ def test_mace_relax_batch_accepts_relax_lattice_field(tmp_path: Path) -> None:
     assert "must not be inside input_dir" in str(excinfo.value)
 
 
-def test_mace_relax_dir_task_command_has_relax_lattice_placeholder() -> None:
-    cfg = TaskRegistry().get("mace_relax_dir")
-    assert "--relax_lattice {relax_lattice}" in cfg.command
-    assert "--default_dtype {default_dtype}" in cfg.command
-    assert "--enable_cueq {enable_cueq}" in cfg.command
-    assert cfg.defaults["enable_cueq"] is False
-    assert cfg.defaults["device"] == "auto"
+def test_mlff_relax_task_uses_fixed_run_config_command() -> None:
+    cfg = TaskRegistry().get("mlff_relax")
+    assert cfg.operation == "relax"
+    assert cfg.defaults == {}
+    assert cfg.command.endswith("--run_config .catmaster/generated/run_config.json")
+    assert "relax_lattice" not in cfg.command
 
 
 def test_mace_relax_batch_stages_local_model_file_for_dpdispatcher(

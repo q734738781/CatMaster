@@ -11,8 +11,8 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 ## Quick Start
 1. Start from a dataset directory that already contains explicit split files.
 2. For the validated baseline, use `foundation_model=mh-1` or an explicit staged/local foundation-model path, and `foundation_head=omat_pbe`.
-3. Launch training by preparing the `mace_train_dir` stage layout and calling `remote_submission`, choosing `e0s="estimated"` or a fixed E0 JSON path explicitly in the staged params.
-4. Use `mace_eval_dir` through `remote_submission` only when you need an extra post-training benchmark pass; the training run itself may already include `test.extxyz`.
+3. Launch training by preparing the `mace_train` stage layout and calling `remote_submission`, choosing `e0s="estimated"` or a fixed E0 JSON path explicitly in the staged params.
+4. Use `mace_eval` through `remote_submission` only when you need an extra post-training benchmark pass; the training run itself may already include `test.extxyz`.
 5. Do not replace the managed remote training task with a local training wrapper when the catalog task already fits the job.
 
 ## Allowed tools
@@ -34,7 +34,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 - When the user needs additional official MACE CLI knobs beyond the common first-class fields, pass them through `cli_args` rather than writing a local wrapper script.
 
 ### 3. Benchmark separately
-- The training run can already carry `test.extxyz`; use `mace_eval_dir` when you need an additional benchmark pass on a retained checkpoint or an alternate split.
+- The training run can already carry `test.extxyz`; use `mace_eval` when you need an additional benchmark pass on a retained checkpoint or an alternate split.
 - Keep one checkpoint-and-dataset evaluation as one complete evaluation stage. Do not manually shard the held-out dataset into remote stages unless the evaluation workflow explicitly supports deterministic shard merging.
 - Keep the evaluation output root separate from the training root.
 - Choose the evaluation device explicitly when the remote resource is not guaranteed to expose CUDA.
@@ -46,7 +46,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 ## Method-critical defaults
 - The validated baseline in this repo is `mace-mh-1` with `foundation_head=omat_pbe`, explicit replay controls, `compute_stress=True`, `energy_weight=1.0`, `forces_weight=10.0`, `stress_weight=1.0`, `default_dtype=float32`, `batch_size=4` as the conservative starting point, and `seed=42`.
 - For typical fine-tuning runs in this workflow, use an epoch cap in the `15-25` range as the default starting band. Keep `25` as the normal upper cap unless the user explicitly asks for a longer ablation, and prefer the best validation checkpoint over blindly extending epochs.
-- Prefer the managed remote task path for that baseline. Only fall back to custom local scripts when the requested workflow is genuinely outside what `mace_train_dir` / `mace_eval_dir` can express.
+- Prefer the managed remote task path for that baseline. Only fall back to custom local scripts when the requested workflow is genuinely outside what `mace_train` / `mace_eval` can express.
 - Surface the foundation-model choice, head, E0 strategy, replay controls, batch size, learning rate, and epoch cap when they differ across runs.
 - Treat benchmark coverage honestly: the evaluator reports energy/force metrics, and reports stress metrics only when reference stress is present in the dataset and the model/calculator exposes stress.
 - Do not compare metrics across different train/valid/test splits as if they came from the same benchmark.

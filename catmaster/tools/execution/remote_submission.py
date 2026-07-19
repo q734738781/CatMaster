@@ -7,7 +7,7 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from catmaster.runtime.machine_time_stats import append_machine_time_record, build_machine_time_record
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.runtime.tool_runtime import current_run_dir, current_tool_audience, current_toolcall_key
-from catmaster.tools.base import resolve_workspace_path, system_root, workspace_relpath
+from catmaster.tools.base import resolve_workspace_path, system_root, workspace_relpath, workspace_root
 from catmaster.tools.execution.dpdispatcher_runner import (
     BatchDispatchRequest,
     TaskSpec,
@@ -28,6 +28,13 @@ from catmaster.tools.execution.dpdispatcher_runner import (
     write_dispatch_attempt_receipt,
 )
 from catmaster.tools.execution.machine_registry import MachineRegister
+from catmaster.tools.execution.mlff_specs import (
+    MlffBackendRegistry,
+    format_spec_error,
+    mlff_operation_for_task,
+    resolve_mlff_template,
+)
+from catmaster.tools.execution.mlff_stage import materialize_mlff_run_config
 from catmaster.tools.execution.task_payloads import render_task_fields
 from catmaster.tools.execution.task_registry import TaskConfig, TaskRegistry, format_template
 
@@ -72,7 +79,7 @@ _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
     "remote_submission": (
         "Use for one prepared stage directory. `work_dir` is the stage itself, and the boot script "
         "runs directly in that stage cwd. A stage may contain internal batch inputs when the layout says so, "
-        "for example MACE `input/` with many structures. If you have two or more independent prepared "
+        "for example an MLFF SP/relax `input/` with many structures. If you have two or more independent prepared "
         "stages for the same task_name/template_overrides/submission_config, prefer one remote_submission_batch parent root instead "
         "of multiple parallel remote_submission calls."
     ),
@@ -84,30 +91,33 @@ _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
         "discovery is performed."
     ),
     "registered_task_config": (
-        "For registered task_name templates, normally omit submission_config.resources and submission_config.machine. "
-        "The task's resource card owns the machine and environment; override only explicit sizing fields "
-        "such as cpu_per_node or gpu_per_node when intentionally requested."
+        "For registered task_name templates, always omit submission_config.resources and submission_config.machine. "
+        "The selected task/backend resolves its own resource card, machine, and environment. Only pass explicit "
+        "cpu_per_node or gpu_per_node sizing overrides when the user requested them."
     ),
     "template_overrides": (
         "For registered task_name templates, pass command-template overrides through template_overrides "
-        "using only keys declared by the task catalog. Use this for method-critical values such as MACE head/fmax or UMA "
-        "uma_task/spin. Do not patch copied task_script files or sitecustomize to change template defaults."
+        "using only keys declared by get_remote_task_spec. MLFF tasks use nested backend/backend_config/task_config; "
+        "retained tasks keep their catalog-declared flat shape. Do not patch copied task_script files or sitecustomize."
     ),
 }
 
 
 def _catalog_task_hint(task_name: str) -> str:
-    if task_name.startswith("mace_"):
+    if task_name in {"mlff_sp", "mlff_relax"}:
         return (
-            "MACE *_dir layouts are usually one stage with input/ and output/; use remote_submission "
-            "for one such stage even when input/ contains many structures. Use remote_submission_batch "
-            "only for a parent root containing multiple independent MACE stage directories."
+            "One MLFF stage contains one or more structure files directly under input/ and initializes its selected "
+            "model once. Use remote_submission_batch only for a parent root containing multiple independent stages."
         )
-    if task_name.startswith("uma_"):
+    if task_name == "mlff_md":
         return (
-            "UMA *_dir layouts are usually one stage with input/ and output/; use remote_submission "
-            "for one such stage even when input/ contains many structures. Use remote_submission_batch "
-            "only for a parent root containing multiple independent UMA stage directories."
+            "One MLFF MD stage contains exactly one trajectory source under input/. Use remote_submission_batch "
+            "for multiple independent trajectories, one complete stage per first-level child."
+        )
+    if task_name == "mlff_neb":
+        return (
+            "One MLFF NEB stage contains exactly one complete locally prepared path under input/path/. "
+            "Use remote_submission_batch for multiple independent paths."
         )
     if task_name.startswith("vasp_"):
         return (
@@ -129,9 +139,9 @@ def _catalog_content(*, tasks: list[dict[str, Any]]) -> str:
         "- remote_submission: work_dir is one prepared stage; the boot script runs directly in that directory.",
         "- remote_submission_batch: work_dir is a parent root; the boot script runs once inside each first-level child directory.",
         "- If two or more independent stages share the same task_name, template_overrides, and submission_config, prefer one remote_submission_batch call over multiple parallel remote_submission calls.",
-        "- Do not use remote_submission_batch just because a single stage contains many inputs; MACE *_dir stages commonly batch internally under input/.",
-        "- For registered task_name templates, omit submission_config.resources/submission_config.machine unless an explicit sizing override is needed.",
-        "- For registered task_name templates, use only catalog-declared template_overrides keys for command defaults such as MACE head/fmax or UMA spin; do not patch copied task_script/sitecustomize files.",
+        "- Do not use remote_submission_batch just because a single MLFF SP/relax stage contains many inputs; that stage reuses one model initialization.",
+        "- For registered task_name templates, never pass submission_config.resources or submission_config.machine; the selected task/backend resolves them.",
+        "- Query get_remote_task_spec before method-critical overrides. MLFF uses nested backend/backend_config/task_config; retained tasks keep flat overrides.",
         "Tasks:",
     ]
     for item in tasks:
@@ -186,7 +196,7 @@ class RemoteSubmissionInput(BaseModel):
 
     Use this when `work_dir` itself matches the selected task layout. The boot
     script runs directly with `work_dir` as cwd. If that layout internally accepts
-    many inputs, such as a MACE stage containing `input/` with many structures,
+    many inputs, such as an MLFF SP/relax stage containing `input/` with many structures,
     it is still one stage and should use this tool. For two or more independent
     prepared stages that share the same task_name/template_overrides/submission_config, prefer
     remote_submission_batch instead of parallel remote_submission calls.
@@ -215,17 +225,19 @@ class RemoteSubmissionInput(BaseModel):
     template_overrides: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Registered task command-template overrides using only keys listed by get_avail_remote_task. "
-            "For example, {'head': 'omol'} for mace_relax_dir or "
-            "{'uma_task': 'omol', 'spin': 3} for uma_relax_dir. "
+            "Registered task overrides using only keys returned by get_remote_task_spec. "
+            "MLFF tasks accept nested backend/backend_config/task_config; retained tasks keep their existing flat shape. "
+            "Omit or pass {} to use registered defaults. "
             "This does not change resource cards; use submission_config only for allowed resource/submission controls."
         ),
     )
     submission_config: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Optional resource-card override such as {'resources': 'general_gpu'}, plus safe resource "
-            "overrides and submission controls."
+            "Submission controls. With task_name, do not pass resources or machine: the registered task/backend "
+            "resolves them; normally omit this object or use only check_interval/clean_remote, and use "
+            "cpu_per_node/gpu_per_node only when explicitly requested. With boot_script, resources may select a "
+            "visible general card, for example {'resources': 'general_gpu'}."
         ),
     )
 
@@ -288,6 +300,36 @@ class GetAvailRemoteTaskInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     return_resource: bool = Field(False, description="When true, include each task's default resource summary.")
+
+
+class GetRemoteTaskSpecInput(BaseModel):
+    """[remote/catalog] Resolve and validate overrides for one registered remote task without submitting it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_name: str = Field(..., min_length=1, description="Registered task name returned by get_avail_remote_task.")
+    template_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Candidate partial overrides to validate. Omit or pass {} to inspect the registered default backend. "
+            "For a non-default MLFF backend, include {'backend': '<name>'} in the first query; that concrete response "
+            "already includes its defaults, so a separate {} query is unnecessary."
+        ),
+    )
+    detail: Literal["compact", "full"] = Field(
+        "compact",
+        description="compact returns a field table; full also returns the complete concrete template JSON Schema.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_null_overrides(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if normalized.get("template_overrides") is None:
+            normalized["template_overrides"] = {}
+        return normalized
 
 
 class GetAvailResourcesInput(BaseModel):
@@ -422,6 +464,10 @@ def _copy_task_script_forward_dependencies(
         if dst.exists():
             continue
         src = script_src.parent / path.name
+        if not src.is_file():
+            candidates = sorted((_REPO_ROOT / "catmaster" / "remote").glob(f"*/{path.name}"))
+            if len(candidates) == 1:
+                src = candidates[0]
         if src.is_file():
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
@@ -665,6 +711,7 @@ def _build_task_spec(
     stage_dir: Path,
     stage_name: str | None,
     template_overrides: dict[str, Any] | None,
+    mlff_resolved: dict[str, Any] | None = None,
 ) -> TaskSpec:
     script_rel = _copy_boot_script(boot_script_src, stage_dir)
     if cfg is None:
@@ -673,7 +720,18 @@ def _build_task_spec(
         backward_files = ["*"]
         task_work_path = _task_work_path(stage_name, ".")
     else:
-        ctx = _render_template_values(cfg, template_overrides)
+        if cfg.operation:
+            if mlff_resolved is None:
+                raise ValueError(f"Missing resolved MLFF configuration for task '{task_name}'.")
+            materialize_mlff_run_config(
+                stage_dir=stage_dir,
+                task_name=task_name,
+                resolved=mlff_resolved,
+                explicit_overrides=template_overrides,
+            )
+            ctx: dict[str, Any] = {}
+        else:
+            ctx = _render_template_values(cfg, template_overrides)
         rendered = render_task_fields(cfg, ctx, stage_dir)
         command = format_template(cfg.command, _shell_quote_params(ctx))
         missing = _unresolved_placeholders(command)
@@ -728,6 +786,85 @@ def _sync_dispatch_workspace_back(dispatch_dir: Path, work_dir: Path) -> None:
     shutil.copytree(dispatch_dir, work_dir, dirs_exist_ok=True, symlinks=True)
 
 
+def _mlff_execution_metadata(
+    *,
+    dispatch_dir: Path,
+    tasks: list[TaskSpec],
+    cfg: TaskConfig | None,
+) -> dict[str, Any]:
+    if cfg is None or not cfg.operation:
+        return {}
+    configs: list[dict[str, Any]] = []
+    for task in tasks:
+        path = dispatch_dir / task.task_work_path / ".catmaster" / "generated" / "run_config.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        configs.append(payload)
+    digests = [str(item.get("config_digest") or "") for item in configs if item.get("config_digest")]
+    out: dict[str, Any] = {
+        "operation": cfg.operation,
+        "backend": str(configs[0].get("backend") or "") if configs else "",
+        "config_digests": digests,
+    }
+    if len(digests) == 1:
+        out["config_digest"] = digests[0]
+    return out
+
+
+def _mlff_output_metadata(
+    *,
+    work_dir: Path,
+    tasks: list[TaskSpec],
+    cfg: TaskConfig | None,
+) -> dict[str, Any]:
+    """Collect remote provider versions from downloaded normalized summaries."""
+
+    if cfg is None or not cfg.operation:
+        return {}
+    versions: set[str] = set()
+    for task in tasks:
+        summary_path = work_dir / task.task_work_path / "output" / "batch_summary.json"
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        direct = str(payload.get("provider_version") or "").strip()
+        if direct and direct != "unknown":
+            versions.add(direct)
+        for result in payload.get("results") or []:
+            if not isinstance(result, dict):
+                continue
+            summary = result.get("summary") or {}
+            if not isinstance(summary, dict):
+                continue
+            version = str(summary.get("provider_version") or "").strip()
+            if version and version != "unknown":
+                versions.add(version)
+    if not versions:
+        return {}
+    ordered = sorted(versions)
+    out: dict[str, Any] = {"provider_versions": ordered}
+    if len(ordered) == 1:
+        out["provider_version"] = ordered[0]
+    return out
+
+
+def _annotate_remote_receipt(receipt_rel: str, values: dict[str, Any]) -> None:
+    if not receipt_rel or not values:
+        return
+    path = workspace_root() / receipt_rel
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return
+        payload.update(values)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    except Exception:
+        return
+
+
 def _record_machine_time(
     *,
     status: str,
@@ -779,6 +916,7 @@ def _submit(
     clean_remote: bool,
 ) -> tuple[str, dict[str, Any]]:
     local_root, work_base, dispatch_dir = _prepare_dispatch_workspace(work_dir, tool_name=tool_name)
+    mlff_metadata = _mlff_execution_metadata(dispatch_dir=dispatch_dir, tasks=tasks, cfg=cfg)
     req = BatchDispatchRequest(
         machine=str(register.get_resources(resources_key).get("machine") or ""),
         resources=resources_key,
@@ -812,6 +950,7 @@ def _submit(
             setattr(sync_error, "remote_context", remote_context)
         sync_error.__cause__ = sync_exc
         dispatch_error = sync_error
+    mlff_metadata.update(_mlff_output_metadata(work_dir=work_dir, tasks=tasks, cfg=cfg))
     if dispatch_error is not None:
         remote_context = remote_context_from_exception(dispatch_error)
         if remote_context and "duration_s" not in remote_context:
@@ -834,7 +973,18 @@ def _submit(
             "work_base": work_base,
             "resources": resources_key,
             **remote_context,
+            **mlff_metadata,
         }
+        _annotate_remote_receipt(
+            str(remote_context.get("receipt_rel") or ""),
+            {
+                "task_name": task_name,
+                "work_dir_rel": workspace_relpath(work_dir),
+                "work_base": work_base,
+                "resources": resources_key,
+                **mlff_metadata,
+            },
+        )
         _record_machine_time(
             status="failed",
             tool_name=tool_name,
@@ -860,7 +1010,18 @@ def _submit(
         "task_state_counts": state_counts,
         "submission_dir": workspace_relpath(Path(result.submission_dir)) if result and result.submission_dir else "",
         **remote_context_from_result(result),
+        **mlff_metadata,
     }
+    _annotate_remote_receipt(
+        str(data.get("receipt_rel") or ""),
+        {
+            "task_name": task_name,
+            "work_dir_rel": workspace_relpath(work_dir),
+            "work_base": data["work_base"],
+            "resources": resources_key,
+            **mlff_metadata,
+        },
+    )
     _record_machine_time(
         status="success",
         tool_name=tool_name,
@@ -885,7 +1046,9 @@ def _submit(
     return _success(tool_name, content=content, data=data, execution_time=result.duration_s if result else None)
 
 
-def _prepare_common(payload: RemoteSubmissionInput) -> tuple[Path, str, TaskConfig | None, Path | None, str, MachineRegister, int, bool]:
+def _prepare_common(
+    payload: RemoteSubmissionInput,
+) -> tuple[Path, str, TaskConfig | None, Path | None, str, MachineRegister, int, bool, dict[str, Any] | None]:
     config = dict(payload.submission_config or {})
     audience = _current_audience(config)
     cfg, resolved_task_name, boot_script_src = _task_and_script(
@@ -896,8 +1059,22 @@ def _prepare_common(payload: RemoteSubmissionInput) -> tuple[Path, str, TaskConf
     registry = TaskRegistry()
     base_register = MachineRegister()
     overrides, check_interval, clean_remote = _extract_submission_config(config, audience=audience)
+    mlff_resolved: dict[str, Any] | None = None
+    resource_cfg_owner = cfg
+    if cfg is not None and cfg.operation:
+        expected = mlff_operation_for_task(resolved_task_name)
+        if expected is None or cfg.operation != expected:
+            raise ValueError(
+                f"Task '{resolved_task_name}' has an invalid MLFF operation marker: {cfg.operation!r}."
+            )
+        mlff_resolved = resolve_mlff_template(
+            resolved_task_name,
+            _template_overrides(payload),
+            audience=audience,
+        )
+        resource_cfg_owner = cfg.model_copy(update={"resources": str(mlff_resolved["resource"])})
     resources_key, resource_cfg = _resolve_resources_spec(
-        cfg=cfg,
+        cfg=resource_cfg_owner,
         config_overrides=overrides,
         audience=audience,
         registry=registry,
@@ -907,13 +1084,23 @@ def _prepare_common(payload: RemoteSubmissionInput) -> tuple[Path, str, TaskConf
     work_dir = resolve_workspace_path(payload.work_dir, must_exist=True)
     if not work_dir.is_dir():
         raise NotADirectoryError(f"work_dir is not a directory: {work_dir}")
-    return work_dir, resolved_task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote
+    return (
+        work_dir,
+        resolved_task_name,
+        cfg,
+        boot_script_src,
+        resources_key,
+        register,
+        check_interval,
+        clean_remote,
+        mlff_resolved,
+    )
 
 
 def remote_submission(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     request = RemoteSubmissionInput(**payload)
     try:
-        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote = _prepare_common(request)
+        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote, mlff_resolved = _prepare_common(request)
         task = _build_task_spec(
             cfg=cfg,
             task_name=task_name,
@@ -921,6 +1108,7 @@ def remote_submission(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             stage_dir=work_dir,
             stage_name=None,
             template_overrides=_template_overrides(request),
+            mlff_resolved=mlff_resolved,
         )
         return _submit(
             tool_name="remote_submission",
@@ -942,7 +1130,7 @@ def remote_submission(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 def remote_submission_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     request = RemoteSubmissionBatchInput(**payload)
     try:
-        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote = _prepare_common(request)
+        work_dir, task_name, cfg, boot_script_src, resources_key, register, check_interval, clean_remote, mlff_resolved = _prepare_common(request)
         children = sorted(path for path in work_dir.iterdir() if path.is_dir())
         if not children:
             raise ValueError("remote_submission_batch requires first-level child task directories under work_dir.")
@@ -954,6 +1142,7 @@ def remote_submission_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any
                 stage_dir=child,
                 stage_name=child.name,
                 template_overrides=_template_overrides(request),
+                mlff_resolved=mlff_resolved,
             )
             for child in children
         ]
@@ -991,6 +1180,189 @@ def _resource_visible_in_general_catalog(cfg: dict[str, Any]) -> bool:
     return _resource_allows_custom_boot(cfg)
 
 
+def _schema_type_for_default(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "value"
+
+
+def _flat_task_spec(cfg: TaskConfig, task_name: str, overrides: dict[str, Any]) -> dict[str, Any]:
+    defaults = dict(cfg.defaults or {})
+    properties = {
+        str(key): {
+            "type": _schema_type_for_default(value),
+            "default": value,
+        }
+        for key, value in defaults.items()
+    }
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+    }
+    unknown = sorted(str(key) for key in overrides if key not in defaults)
+    errors: list[dict[str, Any]] = []
+    if unknown:
+        errors.append(
+            {
+                "path": "",
+                "message": (
+                    f"Unknown template_overrides key(s): {', '.join(unknown)}. "
+                    f"Accepted keys: {', '.join(sorted(defaults)) or 'none'}."
+                ),
+                "type": "validation_error",
+            }
+        )
+    else:
+        for key, value in overrides.items():
+            expected = properties[str(key)]["type"]
+            actual = _schema_type_for_default(value)
+            # JSON numbers accept integer values as a safe subtype.
+            if expected != "value" and actual != expected and not (expected == "number" and actual == "integer"):
+                errors.append(
+                    {
+                        "path": str(key),
+                        "message": f"Expected {expected}, received {actual}.",
+                        "type": "type_error",
+                    }
+                )
+    normalized = dict(defaults)
+    if not errors:
+        normalized.update(overrides)
+    fields = [
+        {
+            "path": str(key),
+            "type": item["type"],
+            "required": False,
+            "default": item["default"],
+        }
+        for key, item in properties.items()
+    ]
+    out: dict[str, Any] = {
+        "task_name": task_name,
+        "template_defaults": defaults,
+        "template_override_keys": list(defaults),
+        "fields": fields,
+        "backend_fields": [],
+        "task_fields": fields,
+        "constraints": [],
+        "errors": errors,
+        "warnings": [],
+        "example": {},
+        "template_schema": schema,
+    }
+    if not errors:
+        out["normalized_template_overrides"] = normalized
+    return out
+
+
+def _mlff_task_spec(
+    *,
+    task_name: str,
+    overrides: dict[str, Any],
+    audience: str,
+) -> dict[str, Any]:
+    try:
+        out = resolve_mlff_template(task_name, overrides, audience=audience)
+    except Exception as exc:
+        # Preserve a usable concrete schema when the candidate values are bad.
+        backend = str(overrides.get("backend") or "").strip()
+        selector = {"backend": backend} if backend else {}
+        try:
+            out = resolve_mlff_template(task_name, selector, audience=audience)
+        except Exception:
+            out = {
+                "task_name": task_name,
+                "resolved_backend": backend,
+                "available_backends": MlffBackendRegistry().effective_names(
+                    mlff_operation_for_task(task_name) or "sp", audience=audience
+                ),
+                "template_defaults": {},
+                "resolved_template_defaults": {},
+                "template_override_keys": ["backend", "backend_config", "task_config"],
+                "template_schema": {},
+                "fields": [],
+                "constraints": [],
+                "warnings": [],
+                "example": {},
+            }
+        out.pop("normalized_template_overrides", None)
+        out.update(format_spec_error(exc))
+    # Deployment wiring is intentionally private even though the submission
+    # integration consumes it from the same resolver.
+    out.pop("resource", None)
+    fields = list(out.pop("fields", []))
+    out["backend_fields"] = [item for item in fields if str(item.get("path", "")).startswith("backend_config.")]
+    out["task_fields"] = [item for item in fields if str(item.get("path", "")).startswith("task_config.")]
+    return out
+
+
+def _task_spec_content(data: dict[str, Any], *, detail: str) -> str:
+    lines = [f"Remote task spec: {data.get('task_name', '')}"]
+    if data.get("resolved_backend"):
+        lines.append(f"resolved_backend={data['resolved_backend']}")
+    if data.get("default_backend"):
+        lines.append(f"registered_default_backend={data['default_backend']}")
+    if data.get("available_backends") is not None:
+        lines.append("available_backends=" + ", ".join(data.get("available_backends") or []) or "available_backends=none")
+    if data.get("enabled_models") is not None:
+        lines.append("enabled_models=" + ", ".join(data.get("enabled_models") or []) or "enabled_models=none")
+    errors = data.get("errors") or []
+    if errors:
+        lines.append(f"validation=failed errors={len(errors)}")
+        for item in errors:
+            path = str(item.get("path") or "template_overrides")
+            lines.append(f"- {path}: {item.get('message', '')}")
+    else:
+        lines.append("validation=ok")
+    fields = list(data.get("backend_fields") or []) + list(data.get("task_fields") or [])
+    if fields:
+        lines.append("Accepted fields:")
+        for item in fields:
+            attributes: list[str] = []
+            if item.get("required"):
+                attributes.append("required")
+            for key in (
+                "default",
+                "const",
+                "allowed",
+                "minimum",
+                "maximum",
+                "exclusive_minimum",
+                "exclusive_maximum",
+            ):
+                if key in item:
+                    attributes.append(f"{key}={json.dumps(item[key], ensure_ascii=False)}")
+            suffix = " " + " ".join(attributes) if attributes else ""
+            lines.append(f"- {item.get('path')}: {item.get('type')}{suffix}")
+            if detail == "full" and item.get("description"):
+                lines.append(f"  description: {item['description']}")
+    if detail == "full":
+        constraints = list(data.get("constraints") or [])
+        if constraints:
+            lines.append("Constraints:")
+            lines.extend(f"- {item}" for item in constraints)
+        lines.append("Registered task defaults (used when template_overrides is empty):")
+        lines.append(json.dumps(data.get("template_defaults") or {}, ensure_ascii=False, indent=2, sort_keys=True))
+        lines.append("Resolved defaults for the selected backend:")
+        lines.append(json.dumps(data.get("resolved_template_defaults") or {}, ensure_ascii=False, indent=2, sort_keys=True))
+        lines.append("Minimal template_overrides example:")
+        lines.append(json.dumps(data.get("example") or {}, ensure_ascii=False, indent=2, sort_keys=True))
+        lines.append("Concrete template JSON Schema:")
+        lines.append(json.dumps(data.get("template_schema") or {}, ensure_ascii=False, indent=2, sort_keys=True))
+    return "\n".join(lines)
+
+
 def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     request = GetAvailRemoteTaskInput(**payload)
     audience = _current_audience()
@@ -998,6 +1370,28 @@ def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
     register = MachineRegister()
     tasks: list[dict[str, Any]] = []
     for name, cfg in sorted(registry.list_tasks(audience=audience).items()):
+        if cfg.operation:
+            operation = mlff_operation_for_task(name)
+            if operation is None or cfg.operation != operation:
+                continue
+            backend_registry = MlffBackendRegistry()
+            available = backend_registry.effective_names(operation, audience=audience, machines=register)
+            if not available:
+                continue
+            default_backend = backend_registry.default_name(operation, audience=audience)
+            selected = default_backend or available[0]
+            spec = resolve_mlff_template(name, {"backend": selected}, audience=audience, registry=backend_registry)
+            item = {
+                "task_name": name,
+                "description": cfg.description,
+                "submission_hint": _catalog_task_hint(name),
+                "available_backends": available,
+                "default_backend": default_backend,
+                "template_defaults": spec["template_defaults"],
+                "template_override_keys": spec["template_override_keys"],
+            }
+            tasks.append(item)
+            continue
         item: dict[str, Any] = {
             "task_name": name,
             "description": cfg.description,
@@ -1013,6 +1407,31 @@ def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
     data = {"audience": audience, "submission_guidance": dict(_REMOTE_SUBMISSION_GUIDANCE), "tasks": tasks}
     content = _catalog_content(tasks=tasks)
     return _success("get_avail_remote_task", content=content, data=data)
+
+
+def get_remote_task_spec(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    request = GetRemoteTaskSpecInput(**payload)
+    audience = _current_audience()
+    registry = TaskRegistry()
+    task_name = request.task_name.strip()
+    cfg = registry.get(task_name)
+    if not registry.task_visible_to(task_name, audience=audience):
+        raise PermissionError(f"Remote task '{task_name}' is not visible to audience '{audience}'.")
+    if cfg.operation:
+        expected = mlff_operation_for_task(task_name)
+        if expected is None or cfg.operation != expected:
+            raise ValueError(f"Task '{task_name}' has an invalid MLFF operation marker: {cfg.operation!r}.")
+        data = _mlff_task_spec(
+            task_name=task_name,
+            overrides=dict(request.template_overrides),
+            audience=audience,
+        )
+    else:
+        data = _flat_task_spec(cfg, task_name, dict(request.template_overrides))
+    if request.detail == "compact":
+        data.pop("template_schema", None)
+    content = _task_spec_content(data, detail=request.detail)
+    return _success("get_remote_task_spec", content=content, data=data)
 
 
 def get_avail_resources(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -1053,9 +1472,11 @@ __all__ = [
     "RemoteSubmissionInput",
     "RemoteSubmissionBatchInput",
     "GetAvailRemoteTaskInput",
+    "GetRemoteTaskSpecInput",
     "GetAvailResourcesInput",
     "remote_submission",
     "remote_submission_batch",
     "get_avail_remote_task",
+    "get_remote_task_spec",
     "get_avail_resources",
 ]

@@ -120,15 +120,17 @@ git_source_status() {
 }
 
 build_frontend() {
+  local deploy_cache_dir="${CATMASTER_DEPLOY_CACHE_DIR:-${TMPDIR:-/tmp}/catmaster-deploy-cache}"
+  mkdir -p "$deploy_cache_dir"
   if [[ -f "$REPO_ROOT/scripts/install_jsmol_assets.py" ]]; then
-    python3 "$REPO_ROOT/scripts/install_jsmol_assets.py" --quiet
+    XDG_CACHE_HOME="$deploy_cache_dir" python3 "$REPO_ROOT/scripts/install_jsmol_assets.py" --quiet
   fi
 
   local frontend_dir="$REPO_ROOT/catmaster/webui/frontend"
   if [[ -f "$frontend_dir/package.json" ]]; then
     require_command npm
     echo "Building WebUI bundle..."
-    (cd "$frontend_dir" && npm run build)
+    (cd "$frontend_dir" && XDG_CACHE_HOME="$deploy_cache_dir" npm run build)
     echo
   fi
 }
@@ -182,11 +184,14 @@ write_deploy_readme() {
     printf '%s\n' '```bash'
     printf '%s\n' 'conda env create -f requirements/pc-conda.yml'
     printf '%s\n' 'conda activate catmaster'
-    printf '%s\n' '# Optional MACE/GPU add-on for machines that execute local or remote GPU boot scripts:'
-    printf '%s\n' '# pip install -r requirements/gpu.txt'
+    printf '%s\n' '# Optional isolated provider environments for remote MLFF execution:'
+    printf '%s\n' '# pip install -r requirements/mace.txt'
+    printf '%s\n' '# pip install -r requirements/uma.txt'
+    printf '%s\n' '# pip install -r requirements/mattersim.txt'
+    printf '%s\n' '# pip install -r requirements/orb.txt'
     printf '%s\n' '# Then install exactly one cuEquivariance kernel add-on selected from torch.version.cuda:'
-    printf '%s\n' '# pip install -r requirements/gpu-cueq-cu12.txt  # CUDA 12.x'
-    printf '%s\n' '# pip install -r requirements/gpu-cueq-cu13.txt  # CUDA 13.x'
+    printf '%s\n' '# pip install -r requirements/mace-cueq-cu12.txt  # CUDA 12.x'
+    printf '%s\n' '# pip install -r requirements/mace-cueq-cu13.txt  # CUDA 13.x'
     printf '%s\n' '```'
     printf '\n'
     printf '%s\n' 'For a local or desktop deployment that uses the Literature Review browser path, install the pinned agent-browser CLI as well:'
@@ -216,12 +221,13 @@ write_deploy_readme() {
     printf '%s\n' 'cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml'
     printf '%s\n' 'cp configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml'
     printf '%s\n' 'cp configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml'
+    printf '%s\n' 'cp configs/dpdispatcher/mlff_backends_template.yaml configs/dpdispatcher/mlff_backends.yaml'
     printf '%s\n' '# choose one LLM template, then edit as needed:'
     printf '%s\n' '# cp configs/llm.template.yaml configs/llm.yaml'
     printf '%s\n' '# cp configs/llm.full.template.yaml configs/llm.yaml'
     printf '%s\n' '# cp configs/llm_codex_oauth.template.yaml configs/llm.yaml'
     printf '%s\n' '# provide configs/llm.yaml or export provider keys such as OPENROUTER_API_KEY'
-    printf '%s\n' '# edit configs/dpdispatcher/{machines,resources,tasks}.yaml for your cluster'
+    printf '%s\n' '# edit configs/dpdispatcher/{machines,resources,tasks,mlff_backends}.yaml for your cluster'
     printf '%s\n' '```'
     printf '\n'
     printf '%s\n' 'Keep real API keys and SSH credentials out of the archive. Use environment variables, local ignored files, or machine-level secret management.'
@@ -229,13 +235,13 @@ write_deploy_readme() {
     cat <<'EOF'
 ### Codex OAuth local profile
 
-OpenRouter/API-key based configuration remains the default CatMaster deployment path. Use this optional profile only when you want a local Codex test lane backed by a signed-in ChatGPT/Codex account instead of `OPENROUTER_API_KEY`.
+The default CatMaster text-agent profile uses a signed-in ChatGPT/Codex account through Codex OAuth. OpenRouter remains available for explicitly configured capabilities such as image generation.
 
 The archive includes `configs/llm_codex_oauth.template.yaml` for this path. It uses the pinned `langchain-openai` Codex OAuth model (`langchain_openai.chat_models.codex._ChatOpenAICodex`) and defaults to:
 
 - provider: `codex_oauth`
 - model: `gpt-5.6-sol`
-- `provider_options.codex_oauth.chat_kwargs.reasoning.effort: high`
+- `provider_options.codex_oauth.chat_kwargs.reasoning.effort: xhigh`
 - `provider_options.codex_oauth.chat_kwargs.verbosity: medium`
 
 The OAuth token provider stores credentials under the user home directory. Do not package, commit, or share those credentials, and do not use this profile for shared multi-user hosting.
@@ -288,7 +294,7 @@ models:
       codex_oauth:
         chat_kwargs:
           reasoning:
-            effort: high
+            effort: xhigh
             summary: auto
           verbosity: medium
 ```
@@ -309,7 +315,7 @@ print(cfg.provider_options)
 PY
 ```
 
-Expected values are `codex_oauth`, `gpt-5.6-sol`, and a `chat_kwargs` mapping containing `reasoning.effort: high` and `verbosity: medium`.
+Expected values are `codex_oauth`, `gpt-5.6-sol`, and a `chat_kwargs` mapping containing `reasoning.effort: xhigh` and `verbosity: medium`.
 
 #### 5. Optional live smoke test
 
@@ -411,7 +417,7 @@ verify_archive() {
   private_hits="$(printf '%s\n' "$tar_list" | grep -E "$private_pattern" || true)"
   config_hits="$(printf '%s\n' "$tar_list" \
     | grep -E "(^|/)configs(/|$)" \
-    | grep -v -E "^$PACKAGE_ROOT_NAME/configs/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/(machines_template|resources_template|tasks_template)\.yaml$|^$PACKAGE_ROOT_NAME/configs/(llm\.template|llm\.full\.template|llm_codex_oauth\.template|tool_output|tool_policy)\.yaml$" \
+    | grep -v -E "^$PACKAGE_ROOT_NAME/configs/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/?$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/[^/]+\.sh$|^$PACKAGE_ROOT_NAME/configs/dpdispatcher/(machines_template|resources_template|tasks_template|mlff_backends_template)\.yaml$|^$PACKAGE_ROOT_NAME/configs/(llm\.template|llm\.full\.template|llm_codex_oauth\.template|tool_output|tool_policy)\.yaml$" \
     || true)"
   env_hits="$(printf '%s\n' "$tar_list" | grep -E '(^|/)\.env($|\.)' | grep -v -E '(^|/)\.env\.example$' || true)"
   if [[ -n "$private_hits" || -n "$config_hits" || -n "$env_hits" ]]; then
@@ -426,9 +432,24 @@ verify_archive() {
     "$PACKAGE_ROOT_NAME/.deploy_info"
     "$PACKAGE_ROOT_NAME/.env.example"
     "$PACKAGE_ROOT_NAME/scripts/remote_execution_smoke.py"
+    "$PACKAGE_ROOT_NAME/catmaster/tools/execution/dpdispatcher_runner.py"
+    "$PACKAGE_ROOT_NAME/catmaster/tools/execution/remote_submission.py"
+    "$PACKAGE_ROOT_NAME/catmaster/tools/execution/mlff_specs.py"
+    "$PACKAGE_ROOT_NAME/catmaster/tools/execution/mlff_stage.py"
+    "$PACKAGE_ROOT_NAME/catmaster/remote/cpu/k8s_vasp_boot.py"
+    "$PACKAGE_ROOT_NAME/catmaster/remote/mlff/mlff_common.py"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/machines_template.yaml"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/resources_template.yaml"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/tasks_template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/mlff_backends_template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_mace.sh"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_uma.sh"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_mattersim.sh"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_orb.sh"
+    "$PACKAGE_ROOT_NAME/requirements/mace.txt"
+    "$PACKAGE_ROOT_NAME/requirements/uma.txt"
+    "$PACKAGE_ROOT_NAME/requirements/mattersim.txt"
+    "$PACKAGE_ROOT_NAME/requirements/orb.txt"
     "$PACKAGE_ROOT_NAME/configs/llm.template.yaml"
     "$PACKAGE_ROOT_NAME/configs/llm.full.template.yaml"
     "$PACKAGE_ROOT_NAME/configs/llm_codex_oauth.template.yaml"
@@ -607,6 +628,8 @@ RUNTIME_PATHS=(
   "configs/dpdispatcher/machines_template.yaml"
   "configs/dpdispatcher/resources_template.yaml"
   "configs/dpdispatcher/tasks_template.yaml"
+  "configs/dpdispatcher/mlff_backends_template.yaml"
+  "configs/dpdispatcher/env_templates"
   "configs/llm.template.yaml"
   "configs/llm.full.template.yaml"
   "configs/llm_codex_oauth.template.yaml"

@@ -12,11 +12,12 @@ Use this skill once the pathway inputs are already prepared and the question is 
 1. Decide whether the task is a NEB refinement workflow or a dimer-refinement workflow.
 2. Confirm the prepared root, execution branch, climb policy, dtype, output root, and whether the run is coarse convergence or refinement.
 3. Dispatch the prepared calculation root through `remote_submission` or `remote_submission_batch`, normally with `task_name="vasp_execute_neb"` for VASP pathway work.
-4. For MACE pathway optimization, prepare the MACE NEB stage layout and submit with `task_name="mace_neb_dir"`.
+4. For MLFF pathway optimization, use `mlff-path-optimization` and submit the complete local path with `task_name="mlff_neb"`.
 5. Keep coarse convergence and refinement as separate episodes instead of mixing them into one opaque run root.
 
 ## Allowed tools
 - `get_avail_remote_task`
+- `get_remote_task_spec`
 - `remote_submission`
 - `remote_submission_batch`
 
@@ -47,12 +48,12 @@ Use this skill once the pathway inputs are already prepared and the question is 
 - Report the prepared root, task name, and output root together.
 - Treat launch success as only one checkpoint; it does not prove the pathway is physically meaningful.
 
-### 5. Managed MACE NEB
-- Use `task_name="mace_neb_dir"` for managed MACE NEB rather than ad hoc scripts.
-- Prepare one complete stage per independent MACE NEB path and use `remote_submission_batch` for multiple paths. The current runner processes multiple path directories inside one stage sequentially and constructs the path calculator separately, so grouping independent long paths under one `input/` does not provide useful model-reuse parallelism.
-- Keep `default_dtype=float64` by default for MACE pathway optimization.
-- Use `plain` mode for a fixed image set and `autoneb` only when the workflow explicitly benefits from adaptive image insertion.
-- Keep `climb` as an explicit decision rather than an implicit default.
+### 5. Managed MLFF NEB
+- Use `task_name="mlff_neb"`; for a non-default backend, query `get_remote_task_spec(task_name="mlff_neb", template_overrides={"backend": "<enabled-backend>"}, detail="full")` before setting backend or convergence overrides.
+- Copy one locally interpolated flat image tree into `stage/input/path/`, with contiguous `00.vasp` through `NN.vasp` files. Endpoint-only input is invalid.
+- Use `remote_submission_batch` for multiple paths, one complete path stage per first-level child.
+- Keep `float64` by default for MACE pathway optimization and use fixed-image plain mode. Remote AutoNEB interpolation is unsupported.
+- Keep `climb` as an explicit refinement decision rather than an implicit default.
 
 ## Method-critical defaults
 - `plain-NEB -> CI-NEB` is the default robust VASP barrier workflow.
@@ -72,3 +73,4 @@ Return:
 ## References
 - Use `neb-prepare` before this skill if the image tree or dimer inputs are not ready yet.
 - Use `neb-analysis` after collection to interpret the barrier, profile shape, and common pitfalls.
+- Use `mlff-path-optimization` for the complete operation-specific managed MLFF protocol.

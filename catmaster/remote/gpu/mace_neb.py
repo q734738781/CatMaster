@@ -215,7 +215,7 @@ def _collect_profile_rows(images: list[Any]) -> tuple[Any, list[dict[str, Any]]]
                 "image_index": idx,
                 "path_A": float(forcefit.path[idx]),
                 "energy_eV": float(atoms.get_potential_energy()),
-                "max_force_eV_per_A": float(norms.max()) if norms.size else 0.0,
+                "max_force_eVA": float(norms.max()) if norms.size else 0.0,
                 "rms_force_eV_per_A": float(np.sqrt(np.mean(norms**2))) if norms.size else 0.0,
             }
         )
@@ -236,7 +236,7 @@ def _write_profile_outputs(*, rows: list[dict[str, Any]], forcefit: Any, energie
                 "path_A",
                 "energy_eV",
                 "relative_energy_eV",
-                "max_force_eV_per_A",
+                "max_force_eVA",
                 "rms_force_eV_per_A",
             ],
         )
@@ -290,7 +290,7 @@ def _summarize_run(
     max_image = max(rows, key=lambda row: row["energy_eV"])
     max_neb_force = _compute_projected_neb_force(images, climb=climb)
     if max_neb_force is None:
-        max_neb_force = max((row["max_force_eV_per_A"] for row in rows), default=0.0)
+        max_neb_force = max((row["max_force_eVA"] for row in rows), default=0.0)
 
     artifacts = {
         "summary_rel": "summary.json",
@@ -313,7 +313,7 @@ def _summarize_run(
                 "number_of_images_total": len(images),
                 "number_of_intermediate_images": max(0, len(images) - 2),
                 "converged": bool(summary.get("results", {}).get("converged", True)),
-                "max_neb_force_eV_per_A": float(max_neb_force),
+                "max_force_eVA": float(max_neb_force),
             },
             "artifacts": artifacts,
         }
