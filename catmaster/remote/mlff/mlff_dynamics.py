@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import json
+import math
 import time
 import traceback
 from pathlib import Path
@@ -216,6 +217,69 @@ def _make_dynamics(atoms: Any, task: dict[str, Any], *, rng: np.random.Generator
     raise ValueError(f"Unsupported barostat: {barostat_type}")
 
 
+def _temperature_schedule(dynamics_config: dict[str, Any]) -> dict[str, Any]:
+    """Return the resolved target-temperature schedule for one MD segment."""
+
+    start_k = float(dynamics_config["temperature_K"])
+    configured_end_k = float(dynamics_config.get("temperature_end_K") or 0.0)
+    variable = configured_end_k > 0 and not math.isclose(configured_end_k, start_k)
+    return {
+        "mode": "linear" if variable else "constant",
+        "start_K": start_k,
+        "end_K": configured_end_k if variable else start_k,
+        "steps": int(dynamics_config["steps"]),
+        "update_interval_steps": 1 if variable else 0,
+        "temperature_api": "set_temperature" if variable else "constructor",
+    }
+
+
+def _run_dynamics(dynamics: Any, dynamics_config: dict[str, Any]) -> dict[str, Any]:
+    """Run constant-temperature MD or a public-ASE-API linear schedule."""
+
+    schedule = _temperature_schedule(dynamics_config)
+    steps = int(schedule["steps"])
+    if schedule["mode"] == "constant":
+        dynamics.run(steps)
+        return schedule
+
+    setter = getattr(dynamics, "set_temperature", None)
+    if not callable(setter):
+        raise ValueError(
+            f"{type(dynamics).__name__} does not expose ASE set_temperature(); "
+            "choose a supported thermostat/barostat for variable-temperature MD."
+        )
+    if steps < 2:
+        raise ValueError("A variable-temperature schedule requires at least two MD steps.")
+
+    # Dynamics.irun() yields the initial state before advancing the first step.
+    # Set each target immediately before its corresponding integration step,
+    # using only ASE's public generator and temperature setter interfaces.
+    iterator = iter(dynamics.irun(steps))
+    try:
+        next(iterator)
+    except StopIteration as exc:  # pragma: no cover - defensive API guard
+        raise RuntimeError("ASE dynamics stopped before the first scheduled MD step.") from exc
+
+    start_k = float(schedule["start_K"])
+    end_k = float(schedule["end_K"])
+    initial_nsteps = int(getattr(dynamics, "nsteps", 0))
+    for index in range(steps):
+        fraction = index / (steps - 1)
+        setter(temperature_K=start_k + (end_k - start_k) * fraction)
+        try:
+            next(iterator)
+        except StopIteration as exc:
+            raise RuntimeError(
+                f"ASE dynamics stopped after {getattr(dynamics, 'nsteps', 0)} steps "
+                f"during a {steps}-step temperature schedule."
+            ) from exc
+
+    completed_steps = int(getattr(dynamics, "nsteps", 0)) - initial_nsteps
+    if completed_steps != steps:  # pragma: no cover - defensive API guard
+        raise RuntimeError(f"ASE dynamics completed {completed_steps} of {steps} scheduled MD steps.")
+    return schedule
+
+
 def _prepare_initial_velocities(
     atoms: Any,
     *,
@@ -369,6 +433,7 @@ def run_single(
                 path.unlink()
 
     dynamics = _make_dynamics(atoms, task, rng=rng)
+    temperature_schedule = _temperature_schedule(dynamics_config)
     integrator_state_source = _restore_integrator_state(
         dynamics,
         restart_checkpoint,
@@ -394,6 +459,7 @@ def run_single(
         "device": str(item_config.get("device") or "auto"),
         "input": str(source),
         "dynamics": dynamics_config,
+        "temperature_schedule": temperature_schedule,
         "thermostat": dict(task["thermostat"]),
         "barostat": dict(task["barostat"]) if dynamics_config["ensemble"] == "npt" else None,
         "output": output_config,
@@ -444,7 +510,7 @@ def run_single(
         )
         dynamics.attach(logger, interval=int(output_config["log_interval"]))
         dynamics.attach(record_step_timing, interval=1)
-        dynamics.run(int(dynamics_config["steps"]))
+        _run_dynamics(dynamics, dynamics_config)
 
         periodic = bool(any(bool(value) for value in atoms.pbc)) and float(atoms.cell.volume) > 1e-6
         output_name = "final.vasp" if periodic else "final.xyz"

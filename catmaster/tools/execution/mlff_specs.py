@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Mapping, Optional, Type
 
@@ -184,7 +185,19 @@ class RelaxTaskConfig(_StrictModel):
 
 class MdDynamicsConfig(_StrictModel):
     ensemble: Literal["nve", "nvt", "npt"] = Field("nvt", description="MD statistical ensemble.")
-    temperature_K: float = Field(300.0, gt=0, description="Target temperature in kelvin.")
+    temperature_K: float = Field(
+        300.0,
+        gt=0,
+        description="Constant target temperature, or the start of a linear target-temperature schedule, in kelvin.",
+    )
+    temperature_end_K: float = Field(
+        0.0,
+        ge=0,
+        description=(
+            "End of a linear target-temperature schedule in kelvin. Leave at 0 or set equal to temperature_K "
+            "for constant temperature."
+        ),
+    )
     initial_temperature_K: float = Field(
         0.0,
         ge=0,
@@ -245,6 +258,28 @@ class MolecularDynamicsTaskConfig(_StrictModel):
             raise ValueError("NPT requires a non-none barostat.type.")
         if self.barostat.type == "berendsen" and self.barostat.compressibility_bar_inv <= 0:
             raise ValueError("Berendsen NPT requires compressibility_bar_inv > 0.")
+
+        end_temperature = self.dynamics.temperature_end_K
+        variable_temperature = end_temperature > 0 and not math.isclose(
+            end_temperature,
+            self.dynamics.temperature_K,
+        )
+        if not variable_temperature:
+            return self
+        if self.dynamics.steps < 2:
+            raise ValueError("A variable-temperature schedule requires dynamics.steps >= 2.")
+        if ensemble == "nve":
+            raise ValueError("NVE does not support a target-temperature schedule.")
+        if ensemble == "nvt" and self.thermostat.type not in {"langevin", "berendsen"}:
+            raise ValueError(
+                "Variable-temperature NVT requires thermostat.type=langevin or berendsen; "
+                "ASE Bussi and NHC do not expose set_temperature()."
+            )
+        if ensemble == "npt" and self.barostat.type != "berendsen":
+            raise ValueError(
+                "Variable-temperature NPT requires barostat.type=berendsen; "
+                "ASE MTK integrators do not expose set_temperature()."
+            )
         return self
 
 
@@ -565,6 +600,14 @@ def _constraints(backend: str, operation: MlffOperation) -> list[str]:
         out.append("task_config.relax_cell=true requires a fully periodic structure with a valid cell.")
     if operation == "md":
         out.append("NPT requires a non-none barostat; non-NPT ensembles require barostat.type=none.")
+        out.append(
+            "task_config.dynamics.temperature_end_K=0 or temperature_K keeps a constant target; a different "
+            "positive value requests a per-step linear target-temperature schedule."
+        )
+        out.append(
+            "Variable-temperature NVT supports thermostat.type=langevin or berendsen; variable-temperature "
+            "NPT supports barostat.type=berendsen; NVE, Bussi, NHC, and MTK schedules are rejected."
+        )
     if operation == "neb":
         out.append("MLFF NEB accepts a complete locally prepared fixed-image path with at least one intermediate image.")
     return out

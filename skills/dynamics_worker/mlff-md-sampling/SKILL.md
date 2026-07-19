@@ -46,6 +46,8 @@ Run one trajectory lineage per stage with typed MD controls and preserve restart
 - `backend_config` selects provider-specific model, precision, acceleration, and device controls. MACE is the registered default, while every deployment-enabled backend returned by `get_remote_task_spec` can run the same MD task contract.
 - `task_config.dynamics` selects ensemble, temperatures, timestep, steps, seed, and velocity behavior.
 - `thermostat`, `barostat`, and `output` remain separate nested groups. NPT requires a non-none barostat; non-NPT requires `barostat.type=none`.
+- `dynamics.temperature_K` is the constant target or schedule start. Leave `temperature_end_K=0` (the default) or equal to `temperature_K` for constant temperature; set a different positive end value for a per-step linear schedule.
+- Before scheduling temperature, use the task-spec constraints: variable-temperature NVT accepts Langevin or Berendsen, and variable-temperature NPT accepts the Berendsen barostat. NVE, Bussi, NHC, and MTK schedules are invalid; change the method or return the validation error instead of patching integrator internals.
 
 ### 3. Preserve restart semantics
 
@@ -64,7 +66,7 @@ Run one trajectory lineage per stage with typed MD controls and preserve restart
 - MACE MD defaults to `float32`; `enable_cueq=false` and compilation disabled remain conservative until a comparable GPU/model/system benchmark justifies them.
 - For fixed-composition UMA trajectories, `inference_settings=turbo` is the speed preset. For the pinned MatterSim 1.2.5 stack, keep `direct_graph=false` and `compile=false`: both accelerated paths failed finite-output regression checks, while the standard graph path passed. ORB-v3 normally uses `precision=float32-high`, `compile_mode=auto`, `edge_method=knn_alchemi`, and `half_supercell=auto`.
 - Use NVE for energy-conservation studies and NPT only with a real three-dimensional periodic cell.
-- Set Berendsen compressibility explicitly. Keep timestep, ensemble, targets, thermostat/barostat, model/head, precision, and dispersion visible in the result.
+- Set Berendsen compressibility explicitly. Keep timestep, ensemble, constant target or schedule endpoints, thermostat/barostat, model/head, precision, and dispersion visible in the result.
 
 ## Output Contract
 

@@ -33,6 +33,7 @@ from catmaster.tools.registry import ToolRegistry
 
 remote_submission_module = importlib.import_module("catmaster.tools.execution.remote_submission")
 mlff_common = importlib.import_module("catmaster.remote.mlff.mlff_common")
+mlff_dynamics = importlib.import_module("catmaster.remote.mlff.mlff_dynamics")
 mlff_md = importlib.import_module("catmaster.remote.mlff.mlff_md")
 mlff_neb = importlib.import_module("catmaster.remote.mlff.mlff_neb")
 
@@ -179,6 +180,166 @@ def test_md_backend_performance_controls_are_schema_visible_and_validated() -> N
             },
             audience="dynamics_worker",
         )
+
+
+def test_md_temperature_schedule_schema_and_supported_combinations() -> None:
+    defaults = resolve_mlff_template("mlff_md", {"backend": "mace"}, audience="dynamics_worker")
+    dynamics_schema = defaults["template_schema"]["properties"]["task_config"]["properties"]["dynamics"]
+    end_temperature = dynamics_schema["properties"]["temperature_end_K"]
+    assert end_temperature["type"] == "number"
+    assert end_temperature["default"] == 0.0
+    assert "anyOf" not in json.dumps(end_temperature)
+    assert defaults["normalized_template_overrides"]["task_config"]["dynamics"]["temperature_end_K"] == 0.0
+    assert any("per-step linear" in item for item in defaults["constraints"])
+
+    langevin = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "mace",
+            "task_config": {
+                "dynamics": {"temperature_K": 300.0, "temperature_end_K": 900.0, "steps": 3},
+                "thermostat": {"type": "langevin"},
+            },
+        },
+        audience="dynamics_worker",
+    )
+    assert langevin["normalized_template_overrides"]["task_config"]["dynamics"]["temperature_end_K"] == 900.0
+
+    npt_berendsen = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "mace",
+            "task_config": {
+                "dynamics": {
+                    "ensemble": "npt",
+                    "temperature_K": 300.0,
+                    "temperature_end_K": 600.0,
+                    "steps": 3,
+                },
+                "barostat": {"type": "berendsen", "compressibility_bar_inv": 1.0e-5},
+            },
+        },
+        audience="dynamics_worker",
+    )
+    assert npt_berendsen["normalized_template_overrides"]["task_config"]["barostat"]["type"] == "berendsen"
+
+    # Equal endpoints are a constant-temperature request and retain the default
+    # Bussi path instead of unnecessarily requiring a schedule-capable method.
+    constant_bussi = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "mace",
+            "task_config": {"dynamics": {"temperature_K": 300.0, "temperature_end_K": 300.0}},
+        },
+        audience="dynamics_worker",
+    )
+    assert constant_bussi["normalized_template_overrides"]["task_config"]["thermostat"]["type"] == "bussi"
+
+
+@pytest.mark.parametrize(
+    ("task_config", "message"),
+    [
+        (
+            {"dynamics": {"temperature_K": 300.0, "temperature_end_K": 600.0}},
+            "Variable-temperature NVT requires",
+        ),
+        (
+            {
+                "dynamics": {"temperature_K": 300.0, "temperature_end_K": 600.0},
+                "thermostat": {"type": "nhc"},
+            },
+            "Variable-temperature NVT requires",
+        ),
+        (
+            {
+                "dynamics": {"ensemble": "nve", "temperature_K": 300.0, "temperature_end_K": 600.0},
+            },
+            "NVE does not support",
+        ),
+        (
+            {
+                "dynamics": {
+                    "ensemble": "npt",
+                    "temperature_K": 300.0,
+                    "temperature_end_K": 600.0,
+                },
+                "barostat": {"type": "isotropic_mtk"},
+            },
+            "Variable-temperature NPT requires",
+        ),
+        (
+            {
+                "dynamics": {"temperature_K": 300.0, "temperature_end_K": 600.0, "steps": 1},
+                "thermostat": {"type": "langevin"},
+            },
+            "steps >= 2",
+        ),
+    ],
+)
+def test_md_temperature_schedule_rejects_unsupported_integrators(
+    task_config: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        resolve_mlff_template(
+            "mlff_md",
+            {"backend": "mace", "task_config": task_config},
+            audience="dynamics_worker",
+        )
+
+
+def test_remote_task_spec_returns_temperature_schedule_validation_error() -> None:
+    with toolcall_context("spec", audience="dynamics_worker"):
+        content, artifact = get_remote_task_spec(
+            {
+                "task_name": "mlff_md",
+                "template_overrides": {
+                    "backend": "mace",
+                    "task_config": {
+                        "dynamics": {"temperature_K": 300.0, "temperature_end_K": 600.0},
+                    },
+                },
+                "detail": "full",
+            }
+        )
+    assert "validation=failed" in content
+    assert artifact["data"]["errors"]
+    assert any("Variable-temperature NVT requires" in item["message"] for item in artifact["data"]["errors"])
+
+
+def test_md_temperature_schedule_uses_public_setter_before_each_step() -> None:
+    class RecordingDynamics:
+        def __init__(self) -> None:
+            self.nsteps = 0
+            self.targets: list[float] = []
+
+        def set_temperature(self, *, temperature_K: float) -> None:
+            self.targets.append(temperature_K)
+
+        def irun(self, steps: int):
+            yield False
+            for _ in range(steps):
+                self.nsteps += 1
+                yield False
+
+        def run(self, steps: int) -> None:  # pragma: no cover - ramp must not use this path
+            raise AssertionError(f"Unexpected constant-temperature run({steps})")
+
+    dynamics = RecordingDynamics()
+    schedule = mlff_dynamics._run_dynamics(
+        dynamics,
+        {"temperature_K": 300.0, "temperature_end_K": 900.0, "steps": 4},
+    )
+    assert dynamics.targets == pytest.approx([300.0, 500.0, 700.0, 900.0])
+    assert dynamics.nsteps == 4
+    assert schedule == {
+        "mode": "linear",
+        "start_K": 300.0,
+        "end_K": 900.0,
+        "steps": 4,
+        "update_interval_steps": 1,
+        "temperature_api": "set_temperature",
+    }
 
 
 def test_provider_adapters_forward_supported_performance_controls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -733,6 +894,61 @@ def test_generic_md_runner_uses_adapter_calculator_and_resultant_force(
     assert summary["max_force_eVA"] > 0
     assert "max_force_abs_eVA" not in summary
     assert summary["provider_metadata"] == {"adapter": "fake"}
+
+
+def test_generic_md_runner_completes_langevin_temperature_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    atoms = Atoms("Ar2", positions=[[0.2, 0.1, 0.0], [3.5, 0.0, 0.0]], cell=[10, 10, 10], pbc=True)
+    write(stage / "input" / "start.vasp", atoms)
+    resolved = resolve_mlff_template(
+        "mlff_md",
+        {
+            "backend": "mace",
+            "task_config": {
+                "dynamics": {
+                    "temperature_K": 300.0,
+                    "temperature_end_K": 600.0,
+                    "steps": 3,
+                    "timestep_fs": 0.5,
+                },
+                "thermostat": {"type": "langevin", "friction_per_fs": 0.01},
+                "output": {"traj_interval": 1, "log_interval": 1, "overwrite": True},
+            },
+        },
+        audience="dynamics_worker",
+    )
+    materialize_mlff_run_config(stage_dir=stage, task_name="mlff_md", resolved=resolved)
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            return _HarmonicCalculator()
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    monkeypatch.setitem(mlff_md._ADAPTER_TYPES, "mace", FakeAdapter)
+    monkeypatch.chdir(stage)
+    batch = mlff_md.run(".catmaster/generated/run_config.json")
+    summary = batch["results"][0]["summary"]
+    assert summary["completed"] is True
+    assert summary["temperature_schedule"] == {
+        "mode": "linear",
+        "start_K": 300.0,
+        "end_K": 600.0,
+        "steps": 3,
+        "update_interval_steps": 1,
+        "temperature_api": "set_temperature",
+    }
+    assert summary["dynamics"]["temperature_end_K"] == 600.0
+    assert summary["step_timing_statistics_s"]["all_steps"]["count"] == 3
 
 
 def test_generic_md_runner_rejects_non_finite_calculator_state(
