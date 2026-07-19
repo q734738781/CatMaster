@@ -4,11 +4,12 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--skip-frontend-build] [--sync-start-webui] [--autorun|--no-autorun]
+  scripts/deploy_runtime.sh [--target DIR] [--project-space-root DIR] [--dry-run] [--no-delete] [--full-repo] [--sync-configs] [--skip-frontend-build] [--sync-start-webui] [--autorun|--no-autorun]
 
 The default runtime sync includes the complete DPDispatcher execution stack:
-Python runners, active local configs, public templates, MLFF backend profiles,
-remote environment scripts, and provider requirements.
+Python runners, MLFF backend code, remote boot scripts, and provider
+requirements. Existing target configs are preserved by default. A new target
+without configs is initialized from the source checkout.
 
 Options:
   --target DIR
@@ -27,6 +28,10 @@ Options:
 
   --full-repo
       Sync full repository instead of runtime-only paths.
+
+  --sync-configs
+      Overwrite the target configs directory from this checkout. By default,
+      an existing target configs directory is preserved.
 
   --skip-frontend-build
       Do not rebuild catmaster/webui/static from catmaster/webui/frontend before deploy.
@@ -85,6 +90,7 @@ PROJECT_SPACE_ROOT=""
 DRY_RUN=0
 NO_DELETE=0
 FULL_REPO=0
+SYNC_CONFIGS=0
 AUTORUN=1
 SKIP_FRONTEND_BUILD=0
 SYNC_START_WEBUI=0
@@ -109,6 +115,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full-repo)
       FULL_REPO=1
+      shift
+      ;;
+    --sync-configs)
+      SYNC_CONFIGS=1
       shift
       ;;
     --skip-frontend-build)
@@ -141,6 +151,16 @@ done
 
 TARGET_DIR="$(cd "$(dirname "$TARGET_DIR")" && pwd)/$(basename "$TARGET_DIR")"
 mkdir -p "$TARGET_DIR"
+
+COPY_CONFIGS=0
+CONFIG_ACTION="preserve existing target configs"
+if [[ $SYNC_CONFIGS -eq 1 ]]; then
+  COPY_CONFIGS=1
+  CONFIG_ACTION="sync configs from source (--sync-configs)"
+elif [[ ! -d "$TARGET_DIR/configs" ]]; then
+  COPY_CONFIGS=1
+  CONFIG_ACTION="initialize configs for new target"
+fi
 
 if [[ -z "$PROJECT_SPACE_ROOT" ]]; then
   PROJECT_SPACE_ROOT="$TARGET_DIR/project_space"
@@ -178,6 +198,7 @@ fi
 echo "Source: $REPO_ROOT"
 echo "Target: $TARGET_DIR"
 echo "Project space root for launcher: $PROJECT_SPACE_ROOT"
+echo "Configs: $CONFIG_ACTION"
 if [[ $SYNC_START_WEBUI -eq 1 ]]; then
   echo "Launcher: sync start_webui.sh from source"
 else
@@ -204,11 +225,14 @@ if [[ $DRY_RUN -eq 0 && $SKIP_FRONTEND_BUILD -eq 0 ]]; then
 fi
 
 if [[ $FULL_REPO -eq 1 ]]; then
-  rsync "${RSYNC_ARGS[@]}" "$REPO_ROOT/" "$TARGET_DIR/"
+  if [[ $COPY_CONFIGS -eq 1 ]]; then
+    rsync "${RSYNC_ARGS[@]}" "$REPO_ROOT/" "$TARGET_DIR/"
+  else
+    rsync "${RSYNC_ARGS[@]}" --exclude "/configs/" "$REPO_ROOT/" "$TARGET_DIR/"
+  fi
 else
   RUNTIME_PATHS=(
     "catmaster"
-    "configs"
     "requirements"
     "skills"
     "scripts"
@@ -219,6 +243,9 @@ else
     "AGENTS.md"
     ".env.example"
   )
+  if [[ $COPY_CONFIGS -eq 1 ]]; then
+    RUNTIME_PATHS+=("configs")
+  fi
   if [[ $SYNC_START_WEBUI -eq 1 ]]; then
     RUNTIME_PATHS+=("start_webui.sh")
   fi
@@ -248,7 +275,8 @@ source_repo=$REPO_ROOT
 source_commit=$COMMIT
 deployed_at_utc=$DEPLOY_TIME
 deployment_profile=$([[ $FULL_REPO -eq 1 ]] && echo full-repo || echo runtime)
-dpdispatcher_sync=runtime-code-active-configs-templates-envs-requirements
+dpdispatcher_sync=runtime-code-requirements
+configs_sync=$([[ $COPY_CONFIGS -eq 1 ]] && echo synced || echo preserved)
 EOF
   if [[ ! -f "$TARGET_DIR/start_webui.sh" ]]; then
     if [[ -f "$REPO_ROOT/start_webui.sh" ]]; then

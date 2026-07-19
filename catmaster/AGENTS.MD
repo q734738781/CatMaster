@@ -38,7 +38,7 @@ They are built in [runtime.py](specialists/runtime.py).
   - Can delegate to `experiment_specialist`, `writing_specialist`, and `litreview_agent`.
   - For reported physical/chemical properties, benchmark values, trends, mechanism-relevant quantities, spectra, adsorption/formation/reaction energies, barriers, band gaps, stability metrics, and thermodynamic quantities, default to literature or existing workspace evidence before proposing new DFT.
   - If literature/workspace evidence is not found but the property is calculable, state the evidence gap and tell the user they can explicitly request a calculation; do not launch DFT by default from a property lookup.
-  - Must default to research progress, not verdict-only closure: after a delegated result, check scientific reasonableness and evidence-claim fit, update the frontier, and dispatch a bounded experiment, re-analysis, or literature/metadata check when that can advance the objective within scope.
+  - Defaults to on-demand, stage-bounded research. After a delegated result, check scientific reasonableness and evidence-claim fit, then close out once the user's requested or explicitly approved stage is complete. Record weak evidence and unresolved questions as limitations or future frontier items rather than automatically dispatching another round.
   - Its research-lane closeout should include a `Scientific Reasonableness Check` section covering plausibility, evidence-claim fit, method/QC/literature context, and unresolved gaps.
 - `ExperimentSpecialist`
   - Bounded execution specialist.
@@ -56,6 +56,16 @@ delegates remote-capability probes to `experiment_specialist`; experiment may
 use the remote task catalog only to make worker briefs accurate; concrete
 resource checks, worker skill/SOP interpretation, and managed submissions belong
 to the worker agent that owns the domain.
+
+In the current shared-workspace runtime, all specialist and worker subagent
+episodes are sequential by default. A parent must issue at most one subagent
+delegation in a model response, wait for it to
+finish, inspect its result and workspace effects, and only then decide whether
+another delegation is required. Do not launch multiple subagents in the same
+turn: they share the workspace and can race on scripts, outputs, and cleanup.
+A future parallel-hypothesis runtime may opt into concurrency only when it
+provides explicit workspace/write-scope isolation and a deterministic merge
+contract.
 
 Execution guidance for the active experiment path:
 
@@ -209,6 +219,11 @@ The schema is intentionally small:
 - `artifacts`
 
 Keep `hypotheses` to the currently active 3-5 items only.
+
+`frontier` is a non-executing record of unresolved questions and recommended
+future work. It does not authorize another experiment or literature round. A
+requested stage may close with frontier items still present when the limitations
+are stated clearly.
 
 ## 5) Final output contract
 

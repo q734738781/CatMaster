@@ -1671,11 +1671,8 @@ class SpecialistRunner:
                 "When `peer_review_specialist` returns, treat its returned markdown or saved review memo as the authoritative revision brief. Do not rely on the Research Kernel to preserve full editor/reviewer comment text.\n"
                 "If `peer_review_specialist` gives you a saved review memo path, read that memo directly before deciding the next revision or experiment step.\n"
                 "You remain the sole coordinator and final decision-maker for the run.\n"
-                "After any delegated specialist returns, actively judge from the user's request, current evidence, and actual project state whether another bounded delegation round is needed; do not default to closing in the research thread just because one delegate completed.\n"
-                "Default to scientific progress rather than verdict-only closure: after each returned experiment, literature, review, or writing result, check whether the content is scientifically reasonable, whether the evidence supports the claim, and what hypothesis/frontier item should be tested next.\n"
-                "If a returned result is negative, inconsistent, methodologically weak, or insufficient for the user's objective, do not simply report that it is impossible; first decide whether a bounded follow-up experiment, narrower literature/metadata check, artifact re-analysis, or revised hypothesis can move the research forward within the user's stated scope.\n"
-                "Only stop with a blocker after you have identified the concrete missing evidence or constraint and the minimal next action that would resolve it.\n"
-                "If peer-review or revision comments show that additional experiments are needed, you may relaunch `experiment_specialist` for bounded follow-up work as long as that work still respects the user's stated scope, budget, evidence limits, and time constraints.\n"
+                "Treat the user's requested deliverable or explicitly approved stage as the stop condition. After a delegate returns, delegate again only when required to finish that stage or for one bounded recovery of a failed required step.\n"
+                "Default to on-demand closeout, not autonomous research expansion. Report weak evidence as a limitation and recommended next action unless the user explicitly requested continued or open-ended investigation.\n"
                 "If peer review indicates the work cannot reach the requested publication bar within the user's stated scope, budget, evidence limits, or time constraints, stop and tell the user that directly instead of looping.\n"
                 "Do not treat your own local shell view or direct tool view as authoritative for managed experiment capability. If submission-path, remote-environment, or resource visibility matters, issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread.\n"
                 f"{cls._research_layered_capability_visibility_policy()}\n"
@@ -1703,6 +1700,7 @@ class SpecialistRunner:
                 "If the parent or user gives you an explicit `ReviewTarget` or manuscript PDF path, treat that as the canonical review target.\n"
                 "Use DeepAgent file tools to locate the manuscript PDF only when that path is missing, ambiguous, or invalid.\n"
                 "Once you have identified the canonical manuscript PDF, delegate the bounded review episode to `peer_review_worker_agent` and pass that canonical PDF path explicitly.\n"
+                "Run delegated review episodes sequentially: issue at most one subagent delegation in a model response and wait for it to finish before considering another, because all delegates share the workspace.\n"
                 "When one worker review episode returns, actively decide whether another bounded delegate pass is needed or whether the result is ready to send upstream; do not default to closing in the specialist thread just because one worker finished.\n"
                 "Have `peer_review_worker_agent` run its dedicated review capability on that PDF exactly once per review episode and return the full review plus any saved review memo path.\n"
                 "Do not run experiments, do not rewrite the manuscript, and do not take over research planning.\n"
@@ -1888,6 +1886,7 @@ class SpecialistRunner:
     def _general_purpose_specialist_policy() -> str:
         return (
             "Delegate domain-owned work to the proper specialized subagent first. "
+            "Delegate sequentially: issue at most one subagent delegation per model response and wait for it to finish before another. The current shared workspace makes parallel subagents unsafe for scripts, outputs, and cleanup. "
             "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context. "
             "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents. It is for context isolation, not responsibility transfer."
         )
@@ -1895,6 +1894,7 @@ class SpecialistRunner:
     @staticmethod
     def _general_purpose_worker_policy() -> str:
         return (
+            "Delegate sequentially: issue at most one subagent delegation per model response and wait for it to finish before another. The current shared workspace makes parallel subagents unsafe for scripts, outputs, and cleanup. "
             "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context. "
             "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents. It is for context isolation, not responsibility transfer."
         )
@@ -1990,7 +1990,7 @@ class SpecialistRunner:
             "For multi-step research-lane work, use the available task-tracking capability early and keep it updated when the plan changes. "
             "When you finish a research-lane answer, answer naturally first and follow the user's requested shape; do not force fixed `Summary` / `Facts` / `Files` headings for normal conversational answers. "
             "A scientific reasonableness check is required for research closeouts, either as a compact prose paragraph or as a `Scientific Reasonableness Check` section when a structured report is clearer: state whether the conclusion is scientifically plausible, whether the evidence supports the claim, what method/QC/literature-context checks were satisfied, and what unresolved gap remains if any. "
-            "If the reasonableness check fails or remains incomplete, either dispatch the next bounded specialist step before final answer or state the precise blocker and minimal next action. "
+            "If the reasonableness check fails or remains incomplete, state the limitation and minimal recommended next action; dispatch another specialist step only when it is required to finish the user's requested stage. "
             "For durable archival closeouts, optional sections such as `Summary`, `Facts`, and `Files` can still be used to support machine sidecar extraction. "
             "When used, `Facts` should be a short flat list of decisive archival facts. "
             "When used, `Files` should be a flat list of relevant workspace-relative output paths; do not return bare filenames, and use `(none reported)` if there are none. "
@@ -2023,9 +2023,9 @@ class SpecialistRunner:
             "Research completion audit: before final answer, verify completion against the original objective and current workspace evidence. "
             "Check run cards, artifact paths, reports, figures, literature notes, calculation outputs, and workspace files. "
             "Perform a scientific reasonableness audit: compare claims against methods, controls, convergence/QC evidence, literature context, and internal consistency before accepting a conclusion. "
-            "When the audit finds a weak or inconsistent result, promote that gap into `frontier` and dispatch the next bounded experiment, re-analysis, or literature/metadata check when it can advance the objective within scope. "
-            "If evidence is missing, weak, stale, or indirect, keep it as frontier or limitation instead of calling it complete. "
-            "If the objective is not complete, do not stop only because the current research thread lacks direct capability; dispatch the next bounded specialist step or return a precise blocker plus the minimal next action. "
+            "When the audit finds a weak or inconsistent result, record the gap in `frontier` and state it as a limitation or recommended next action; do not dispatch follow-up work unless it is required by the user's requested stage. "
+            "A requested stage may be complete while frontier items remain, provided the delivered claims clearly respect those limitations. "
+            "If a required deliverable is still incomplete, either dispatch the one next required specialist step sequentially or return a precise blocker plus the minimal next action. "
             "Final conclusions should cite the evidence paths or saved memos they depend on."
         )
 
@@ -2036,8 +2036,8 @@ class SpecialistRunner:
             "It must contain exactly these top-level fields: `question`, `hypotheses`, `run_cards`, `frontier`, `conclusion_draft`. "
             "Keep `hypotheses` to only the currently active 3-5 lines. "
             "Every time a subagent returns, immediately update `run_cards` with one compact card containing only `source`, `summary`, `facts`, and `artifacts`. "
-            "After every delegated specialist return or major direct tool result, reconcile progress against the runtime objective: refresh `frontier`, revise `conclusion_draft` when evidence changes, and choose the next bounded action. "
-            "Treat `frontier` as the active research driver: when scientific reasonableness, evidence-claim fit, or literature context is still unresolved, record the gap and use it to drive the next bounded experiment, re-analysis, or literature check. "
+            "After every delegated specialist return or major direct tool result, reconcile progress against the runtime objective: refresh `frontier`, revise `conclusion_draft` when evidence changes, and determine whether the user's requested stage is complete. "
+            "Treat `frontier` as a non-executing record of unresolved questions and recommended future actions, not as authorization to launch another experiment, re-analysis, or literature check. "
             "Do not inline long editor comments, reviewer comments, or other bulky source text into the kernel; keep only a short summary plus artifact paths pointing to any saved full memo. "
             "Keep only the minimum decision-relevant facts needed for the next choice. "
             "Use `frontier` for the next unresolved questions or actions to validate. "
@@ -2172,7 +2172,7 @@ class SpecialistRunner:
             "Treat publisher full-text access as unknown until tested, not unavailable by default: the user may be on an institutional network or have an authorized Chrome profile/session, so open the selected DOI or publisher page in the controlled Chrome browser and use the full text when it is available. Only report missing entitlement after a real browser access attempt shows a login wall or permission denial.\n"
             "Existing workspace attachments, lawful open-access copies, and user-authorized institutional access are all valid routes. Never bypass access controls, CAPTCHA, OTP, security warnings, or unclear consent; stop and request user action when they appear.\n"
             "Acquire only decision-relevant full text, keep downloads inside the workspace, and use the local literature corpus so the reasoning context receives compact page-level evidence spans rather than full documents.\n"
-            "Use the native `general-purpose` delegate for a bounded discovery or source-reading branch when doing it inline would materially inflate context. Require it to persist reusable evidence and return concise findings plus paths.\n"
+            "Use the native `general-purpose` delegate for a bounded discovery or source-reading branch when doing it inline would materially inflate context. Require it to persist reusable evidence and return concise findings plus paths. Run such delegated branches sequentially: issue at most one delegation in a model response and wait for it to finish before considering another, because all delegates share the workspace.\n"
             "Finalize metadata only after selecting the papers that will actually be cited. Use one bounded deterministic batch and surface only genuinely unresolved identifiers.\n"
             "Keep the final answer decision-relevant and shaped to the requested scope. Distinguish the candidate pool, the full-text evidence-read set, and the final cited set.\n"
             "For a review, research-progress overview, systematic landscape, or perspective-style synthesis that is not explicitly brief, aim to screen roughly 50-60+ candidates when feasible; the narrative may highlight a smaller evidence-bearing set.\n"
@@ -2466,6 +2466,7 @@ class SpecialistRunner:
             "Also save the full review as one durable workspace markdown memo under `notes/peer_review/` or another stable path, and include that memo path in `Files`.\n"
             f"{cls._prose_quality_policy()}\n"
             f"{cls._tool_policy()}\n"
+            f"{cls._general_purpose_worker_policy()}\n"
             f"{cls._deepagent_memory_policy(allow_memory_write=False)}\n"
             f"{cls._workspace_path_discipline()}\n"
             "Return a concise markdown report with sections `Summary`, `Facts`, `Files`, `Editor Decision`, `Editor Comment`, and `Reviewer Comments`.\n"

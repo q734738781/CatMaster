@@ -324,7 +324,8 @@ def test_research_reporting_contract_requires_scientific_reasonableness_section(
     assert "scientifically plausible" in contract
     assert "evidence supports the claim" in contract
     assert "method/QC/literature-context checks" in contract
-    assert "dispatch the next bounded specialist step" in contract
+    assert "state the limitation and minimal recommended next action" in contract
+    assert "only when it is required to finish the user's requested stage" in contract
 
 
 def test_writing_reporting_contract_allows_summary_first_closeout() -> None:
@@ -421,6 +422,22 @@ def test_common_worker_prompts_require_relevant_skill_check() -> None:
     assert expected in runtime_mod.SpecialistRunner._peer_review_worker_prompt()
 
 
+def test_delegating_worker_prompts_require_serial_subagents() -> None:
+    prompts = (
+        runtime_mod.SpecialistRunner._materials_worker_prompt(),
+        runtime_mod.SpecialistRunner._ml_worker_prompt(),
+        runtime_mod.SpecialistRunner._dynamics_worker_prompt(),
+        runtime_mod.SpecialistRunner._orca_xtb_worker_prompt(),
+        runtime_mod.SpecialistRunner._writing_worker_prompt(),
+        runtime_mod.SpecialistRunner._writing_polisher_prompt(),
+        runtime_mod.SpecialistRunner._peer_review_worker_prompt(),
+    )
+
+    for prompt in prompts:
+        assert "Delegate sequentially" in prompt
+        assert "current shared workspace makes parallel subagents unsafe" in prompt
+
+
 def test_experiment_specialist_can_use_materials_project_tools_directly() -> None:
     experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
     materials_prompt = runtime_mod.SpecialistRunner._materials_worker_prompt()
@@ -432,28 +449,32 @@ def test_experiment_specialist_can_use_materials_project_tools_directly() -> Non
     assert "report precise API-key" in materials_prompt
 
 
-def test_specialist_prompts_require_explicit_follow_on_delegate_judgment() -> None:
+def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
     research_prompt = runtime_mod.SpecialistRunner._base_system_prompt("research", thread_id="thread-1")
     experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
     writing_prompt = runtime_mod.SpecialistRunner._base_system_prompt("writing")
     peer_review_prompt = runtime_mod.SpecialistRunner._base_system_prompt("peer_review")
+    litreview_prompt = runtime_mod.SpecialistRunner._litreview_wrapper_prompt()
 
-    assert "actively judge from the user's request, current evidence, and actual project state whether another bounded delegation round is needed" in research_prompt
-    assert "do not default to closing in the research thread just because one delegate completed" in research_prompt
+    assert "requested deliverable or explicitly approved stage as the stop condition" in research_prompt
+    assert "Default to on-demand closeout, not autonomous research expansion" in research_prompt
+    assert "Report weak evidence as a limitation" in research_prompt
     assert "issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread" in research_prompt
     assert "Research goal guard: the active objective is runtime-owned" in research_prompt
     assert "On resume, continue the original objective plus any human resume note" in research_prompt
     assert "Research completion audit: before final answer" in research_prompt
     assert "reconcile progress against the runtime objective" in research_prompt
-    assert "Default to scientific progress rather than verdict-only closure" in research_prompt
-    assert "check whether the content is scientifically reasonable" in research_prompt
-    assert "first decide whether a bounded follow-up experiment, narrower literature/metadata check, artifact re-analysis, or revised hypothesis can move the research forward" in research_prompt
     assert "Perform a scientific reasonableness audit" in research_prompt
-    assert "evidence-claim fit" in research_prompt
     assert "A scientific reasonableness check is required for research closeouts" in research_prompt
     assert "do not force fixed `Summary` / `Facts` / `Files` headings" in research_prompt
-    assert "dispatch the next bounded specialist step or return a precise blocker" in research_prompt
+    assert "frontier` as a non-executing record" in research_prompt
+    assert "A requested stage may be complete while frontier items remain" in research_prompt
     assert "Final conclusions should cite the evidence paths or saved memos they depend on" in research_prompt
+    for prompt in (research_prompt, experiment_prompt, writing_prompt):
+        assert "Delegate sequentially" in prompt
+        assert "current shared workspace makes parallel subagents unsafe" in prompt
+    assert "Run delegated review episodes sequentially" in peer_review_prompt
+    assert "Run such delegated branches sequentially" in litreview_prompt
     assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in experiment_prompt
     assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in experiment_prompt
     assert "Experiment closeout discipline: use worker/tool returns as the QC source of record" in experiment_prompt
@@ -1114,12 +1135,12 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Use the Research Kernel only as working memory" in agent_kwargs["system_prompt"]
         assert "Research completion audit: before final answer" in agent_kwargs["system_prompt"]
         assert "reconcile progress against the runtime objective" in agent_kwargs["system_prompt"]
-        assert "Default to scientific progress rather than verdict-only closure" in agent_kwargs["system_prompt"]
+        assert "Default to on-demand closeout, not autonomous research expansion" in agent_kwargs["system_prompt"]
         assert "Perform a scientific reasonableness audit" in agent_kwargs["system_prompt"]
-        assert "Treat `frontier` as the active research driver" in agent_kwargs["system_prompt"]
+        assert "frontier` as a non-executing record" in agent_kwargs["system_prompt"]
         assert "A scientific reasonableness check is required for research closeouts" in agent_kwargs["system_prompt"]
         assert "do not force fixed `Summary` / `Facts` / `Files` headings" in agent_kwargs["system_prompt"]
-        assert "dispatch the next bounded specialist step or return a precise blocker" in agent_kwargs["system_prompt"]
+        assert "A requested stage may be complete while frontier items remain" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "metadata_agent" not in agent_kwargs["system_prompt"]
         assert "paper, manuscript, journal-style LaTeX draft" in agent_kwargs["system_prompt"]
@@ -1133,8 +1154,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Do not rely on the Research Kernel to preserve full editor/reviewer comment text" in agent_kwargs["system_prompt"]
         assert "If `peer_review_specialist` gives you a saved review memo path, read that memo directly" in agent_kwargs["system_prompt"]
         assert "You remain the sole coordinator and final decision-maker" in agent_kwargs["system_prompt"]
-        assert "you may relaunch `experiment_specialist` for bounded follow-up work" in agent_kwargs["system_prompt"]
-        assert "do not default to closing in the research thread just because one delegate completed" in agent_kwargs["system_prompt"]
+        assert "Report weak evidence as a limitation" in agent_kwargs["system_prompt"]
+        assert "Delegate sequentially" in agent_kwargs["system_prompt"]
+        assert "current shared workspace makes parallel subagents unsafe" in agent_kwargs["system_prompt"]
         assert "runnable" in subagents_by_name["experiment_specialist"]
         assert "runnable" in subagents_by_name["writing_specialist"]
         assert "runnable" in subagents_by_name["peer_review_specialist"]
