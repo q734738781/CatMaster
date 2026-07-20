@@ -1,129 +1,106 @@
 # CatMaster
 
-CatMaster is a local agent workbench for computational catalysis and materials workflows. Its WebUI opens a thread-centric workspace with project-space files, agent messages, tool cards, artifact previews, interrupts, and result inspection in one view.
+CatMaster is a local, project-space-based agent workbench for computational
+catalysis and materials research. Its current user surface is WebUI v2, with
+persistent threads, files, artifacts, tool activity, approvals, observability,
+and managed remote execution in one workspace.
 
-CatMaster 是一个面向计算催化和材料工作流的本地 agent 工作台。日常入口是 WebUI v2 工作区：选择项目空间和线程、提交需求，并在同一界面查看文件树、agent 消息、工具卡片、artifact 预览、中断审批和结果。
+CatMaster 是一个面向计算催化与材料研究的本地 agent 工作台。当前用户入口为
+WebUI v2，围绕持久化 thread、项目文件、artifact、工具过程、人工审批、运行观测和
+受管远程计算组织工作。
 
-## Public Web Demo
+## Main capabilities / 主要能力
 
-A public CatMaster WebUI demo is available at:
+- `Research`: coordinates open goals across literature, computation, writing,
+  and review.
+- `Experiment`: delegates structures, VASP/CP2K/LAMMPS, dynamics, ML and MLFF,
+  ORCA, xTB, and CREST work to domain workers.
+- `Writing`: drafts and revises evidence-grounded manuscripts, figures, and
+  compiled documents.
+- `Peer Review`: produces independent reviewer reports and an editor synthesis
+  for one canonical PDF.
+- `Literature Review`: combines web search, controlled browsing, local corpora,
+  evidence tables, and citation finalization.
+- DPDispatcher connects registered tasks to site-managed SSH, Slurm, Shell, CPU,
+  GPU, and MLFF environments.
 
-```text
-https://cm.cccgg.cyou
-```
+- `Research`：协调跨文献、计算、写作与审稿的开放研究目标。
+- `Experiment`：将结构、VASP/CP2K/LAMMPS、动力学、ML/MLFF、ORCA、xTB 和
+  CREST 任务交给领域 worker。
+- `Writing`：基于已有证据起草和修改论文、图件与编译文档。
+- `Peer Review`：对一份 canonical PDF 生成独立 reviewer 报告和 editor 综合。
+- `Literature Review`：组合网页搜索、受控浏览器、本地语料、证据表和引用定稿。
+- DPDispatcher 将注册任务连接到站点管理的 SSH、Slurm、Shell、CPU、GPU 和
+  MLFF 环境。
 
-This server is configured with the full CatMaster feature set, but its compute resources may be limited. It is best for trying the interface, workflow, file handling, and agent behavior; run heavier calculations on your own configured machine or cluster.
-
-公共 WebUI demo：
-
-```text
-https://cm.cccgg.cyou
-```
-
-该服务器具备 CatMaster 的完整功能，但算力可能偏低。适合体验界面、工作流、文件管理和 agent 行为；较重的计算任务建议在自己配置的机器或集群上运行。
-
-## What It Can Do
-
-- Prepare and analyze atomistic structures, slabs, adsorbates, VASP/CP2K/LAMMPS/ORCA/xTB inputs, and MACE/UMA workflows.
-- Run bounded experiment tasks, broader research planning, literature review, writing, and PDF peer-review style checks.
-- Submit prepared calculation stages to remote machines through DPDispatcher when your cluster access is configured.
-- Keep user artifacts inside project spaces so threads, reports, intermediate files, remote receipts, and histories stay inspectable.
-
-## Acknowledgements
-
-CatMaster includes and adapts selected Apache-2.0 skills from Yuan Yizhe's
-`nature-skills` project for literature, researcher, and academic-writing
-workflows: <https://github.com/Yuan1z0825/nature-skills>. The redistributed
-license text is kept at [skills/NATURE_SKILLS_LICENSE](skills/NATURE_SKILLS_LICENSE).
-
-## 能力概览
-
-- 结构、表面、吸附物、VASP/CP2K/LAMMPS/ORCA/xTB 输入、MACE/UMA 相关任务的准备与分析。
-- 支持计算实验、研究规划、文献综述、写作和 PDF 审稿式检查。
-- 配好集群访问后，可通过 DPDispatcher 提交远程计算任务。
-- 使用项目空间保存输入、输出、中间文件、线程历史、远程回执和报告，方便继续任务和复查结果。
-
-## 致谢
-
-CatMaster 引入并适配了袁一哲 `nature-skills` 项目中的部分 Apache-2.0
-科研 skills，用于文献、researcher 和学术写作工作流：
-<https://github.com/Yuan1z0825/nature-skills>。随附 license 文本保存在
-[skills/NATURE_SKILLS_LICENSE](skills/NATURE_SKILLS_LICENSE)。
-
-## Start Here
-
-For a step-by-step setup, use the user guide series:
-
-- 中文总览：[docs/readme/README.zh.md](docs/readme/README.zh.md)
-- 本地配置：[docs/readme/01-local.zh.md](docs/readme/01-local.zh.md)
-- 远程配置：[docs/readme/02-remote.zh.md](docs/readme/02-remote.zh.md)
-- 功能使用：[docs/readme/03-features.zh.md](docs/readme/03-features.zh.md)
-- 外部材料软件：[docs/readme/04-external-tools.zh.md](docs/readme/04-external-tools.zh.md)
-
-English guide:
-
-- Overview: [docs/readme/README.en.md](docs/readme/README.en.md)
-- Local setup: [docs/readme/01-local.en.md](docs/readme/01-local.en.md)
-- Remote setup: [docs/readme/02-remote.en.md](docs/readme/02-remote.en.md)
-- Features and workflows: [docs/readme/03-features.en.md](docs/readme/03-features.en.md)
-- External materials programs: [docs/readme/04-external-tools.en.md](docs/readme/04-external-tools.en.md)
-
-## Minimal Local Launch
+## Quick start / 快速启动
 
 ```bash
 conda env create -f requirements/pc-conda.yml
 conda activate catmaster
 
-npm install -g agent-browser@0.31.1
-agent-browser install
-agent-browser doctor --offline --quick
-agent-browser mcp --help
-
 cp configs/llm.template.yaml configs/llm.yaml
-export OPENROUTER_API_KEY="..."
+export OPENROUTER_API_KEY="<YOUR_KEY>"
 
-mkdir -p ~/catmaster_projects
-CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects ./start_webui.sh
+mkdir -p "$HOME/catmaster_projects"
+CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
+CATMASTER_HOST=127.0.0.1 \
+CATMASTER_PORT=7991 \
+./start_webui.sh
 ```
 
-Then open:
+Open / 打开：
 
 ```text
-http://127.0.0.1:7990
+http://127.0.0.1:7991
 ```
 
-`agent-browser` is required for the Literature Review lane's controlled and
-institution-authenticated browser path. CatMaster starts its MCP subprocess;
-do not copy a global Codex MCP entry into CatMaster. It starts the configured
-controlled Chrome session or reuses a running Chrome connection. Institutional
-network, proxy, or existing profile access may expose publisher full text
-directly, so the agent tests the DOI/publisher page before declaring it
-unavailable. Log in yourself in the selected browser profile or Chrome session,
-and never put passwords, cookies, OTP codes, or exported browser state in
-project files or configuration.
+The explicit host and port are intentional. The launch script has server-oriented
+embedded defaults, while the direct Python CLI has another default port. Keep a
+local installation on loopback unless a protected deployment has been designed.
 
-If you need a different provider, remote execution, optional external programs, or troubleshooting notes, follow the full guide above.
+这里显式设置 host 和 port 是有意的。启动脚本与 Python CLI 的隐式默认值不同；除非
+已经配置受保护的服务器部署，本地使用时应只监听 loopback。
 
-如果你使用其他模型供应商、远程计算、可选外部程序，或需要排查启动问题，请按上面的中文分章指南操作。
+## User manual / 用户手册
 
-## Development WebUI v2 Check
+- [中文用户手册](docs/user-guide/README.zh.md)
+- [English user manual](docs/user-guide/README.en.md)
+- [快速安装与启动](docs/user-guide/01-quickstart.zh.md) / [Quick start](docs/user-guide/01-quickstart.en.md)
+- [WebUI 操作](docs/user-guide/04-webui.zh.md) / [WebUI guide](docs/user-guide/04-webui.en.md)
+- [模块功能](docs/user-guide/05-agents-and-modules.zh.md) / [Agents and modules](docs/user-guide/05-agents-and-modules.en.md)
+- [远程机器与任务执行](docs/user-guide/08-remote-execution.zh.md) / [Remote execution](docs/user-guide/08-remote-execution.en.md)
+- [部署与运维](docs/user-guide/10-deployment-operations.zh.md) / [Deployment and operations](docs/user-guide/10-deployment-operations.en.md)
+- [参考与排障](docs/user-guide/11-reference-troubleshooting.zh.md) / [Reference and troubleshooting](docs/user-guide/11-reference-troubleshooting.en.md)
 
-For migration and compatibility work, use the `catmaster-dev` environment with
-the same pinned control-plane requirements used by deployment:
+The manual is the source of truth for user operation. The short files under
+`docs/readme/` remain only as compatibility links for older URLs.
 
-```bash
-conda activate catmaster-dev
-conda env update -n catmaster-dev -f requirements/pc-conda.yml
+用户操作以新手册为准。`docs/readme/` 下的短文只保留旧链接兼容入口。
 
-cd catmaster/webui/frontend
-npm install
-npm run build
+## Demo
 
-cd ../../..
-/home/chenhh/miniconda3/envs/catmaster-dev/bin/python -m pytest \
-  tests/test_webui_thread_v2.py tests/test_specialist_runtime.py
+A hosted demo may be available at:
+
+```text
+https://cm.cccgg.cyou
 ```
 
-WebUI v2 is the default built frontend. Legacy run endpoints remain available
-for compatibility/debugging, but new UI work should use the thread endpoints
-and artifact registry.
+Availability and compute capacity depend on the current deployment. Use a local
+or institution-managed installation for private data and substantial
+calculations.
+
+公共 demo 可能部署在上述地址，在线状态和算力取决于当前服务器。私有数据和较重计算
+应使用本地或机构管理的部署。
+
+## Acknowledgements / 致谢
+
+CatMaster includes and adapts selected Apache-2.0 skills from Yuan Yizhe's
+[`nature-skills`](https://github.com/Yuan1z0825/nature-skills) project for
+literature and academic-writing workflows. The redistributed license is kept at
+[`skills/NATURE_SKILLS_LICENSE`](skills/NATURE_SKILLS_LICENSE).
+
+CatMaster 引入并适配了袁一哲
+[`nature-skills`](https://github.com/Yuan1z0825/nature-skills) 项目中的部分
+Apache-2.0 skill，用于文献和学术写作工作流。随附 license 位于
+[`skills/NATURE_SKILLS_LICENSE`](skills/NATURE_SKILLS_LICENSE)。

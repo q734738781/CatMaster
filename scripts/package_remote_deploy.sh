@@ -161,7 +161,7 @@ package_profile=runtime-webui-deploy
 package_root=$PACKAGE_ROOT_NAME
 archive_name=$ARCHIVE_NAME
 included_config_templates=configs/dpdispatcher/*_template.yaml,configs/llm*.template.yaml
-excluded_private_configs=configs/dpdispatcher/{machines,resources,tasks}.yaml
+excluded_private_configs=configs/dpdispatcher/{machines,resources,tasks,mlff_backends}.yaml
 excluded_private_files=.env,.sesskey
 EOF
 }
@@ -184,15 +184,9 @@ write_deploy_readme() {
     printf '%s\n' '```bash'
     printf '%s\n' 'conda env create -f requirements/pc-conda.yml'
     printf '%s\n' 'conda activate catmaster'
-    printf '%s\n' '# Optional isolated provider environments for remote MLFF execution:'
-    printf '%s\n' '# pip install -r requirements/mace.txt'
-    printf '%s\n' '# pip install -r requirements/uma.txt'
-    printf '%s\n' '# pip install -r requirements/mattersim.txt'
-    printf '%s\n' '# pip install -r requirements/orb.txt'
-    printf '%s\n' '# Then install exactly one cuEquivariance kernel add-on selected from torch.version.cuda:'
-    printf '%s\n' '# pip install -r requirements/mace-cueq-cu12.txt  # CUDA 12.x'
-    printf '%s\n' '# pip install -r requirements/mace-cueq-cu13.txt  # CUDA 13.x'
     printf '%s\n' '```'
+    printf '\n'
+    printf '%s\n' 'Do not install `requirements/mace.txt`, `requirements/uma.txt`, `requirements/mattersim.txt`, or `requirements/orb.txt` into the `catmaster` control-plane environment. Create a separate remote environment for each enabled MLFF provider and connect it through the corresponding resource `source_list`; use `configs/dpdispatcher/env_templates/` as the activation-script reference.'
     printf '\n'
     printf '%s\n' 'For a local or desktop deployment that uses the Literature Review browser path, install the pinned agent-browser CLI as well:'
     printf '\n'
@@ -215,7 +209,7 @@ write_deploy_readme() {
     printf '\n'
     printf '%s\n' '## 3. Add local secrets and remote resources'
     printf '\n'
-    printf '%s\n' 'The archive includes public DPDispatcher templates under `configs/dpdispatcher/*_template.yaml`, but excludes deployment-specific active configs such as `machines.yaml`, `resources.yaml`, and `tasks.yaml`.'
+    printf '%s\n' 'The archive includes public DPDispatcher templates under `configs/dpdispatcher/*_template.yaml`, but excludes deployment-specific active configs: `machines.yaml`, `resources.yaml`, `tasks.yaml`, and `mlff_backends.yaml`.'
     printf '\n'
     printf '%s\n' '```bash'
     printf '%s\n' 'cp configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml'
@@ -233,9 +227,9 @@ write_deploy_readme() {
     printf '%s\n' 'Keep real API keys and SSH credentials out of the archive. Use environment variables, local ignored files, or machine-level secret management.'
     printf '\n'
     cat <<'EOF'
-### Codex OAuth local profile
+### Optional Codex OAuth local profile
 
-The default CatMaster text-agent profile uses a signed-in ChatGPT/Codex account through Codex OAuth. OpenRouter remains available for explicitly configured capabilities such as image generation.
+The standard `configs/llm.template.yaml` profile uses OpenRouter. Codex OAuth is an optional alternative for a single system user and is not enabled unless you copy its template deliberately.
 
 The archive includes `configs/llm_codex_oauth.template.yaml` for this path. It uses the pinned `langchain-openai` Codex OAuth model (`langchain_openai.chat_models.codex._ChatOpenAICodex`) and defaults to:
 
@@ -376,20 +370,21 @@ EOF
     printf '\n'
     printf '%s\n' '```bash'
     printf '%s\n' 'mkdir -p ~/catmaster_projects'
-    printf '%s\n' 'CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects CATMASTER_HOST=0.0.0.0 CATMASTER_PORT=7990 ./start_webui.sh --start'
+    printf '%s\n' 'CATMASTER_PROJECT_SPACE_ROOT=~/catmaster_projects CATMASTER_HOST=127.0.0.1 CATMASTER_PORT=7991 ./start_webui.sh --start'
     printf '%s\n' './start_webui.sh --status'
     printf '%s\n' '```'
     printf '\n'
-    printf '%s\n' 'Open `http://<remote-host>:7990`. If the server uses a firewall, expose the chosen port explicitly.'
+    printf '%s\n' 'Keep the application on loopback. From your workstation, run `ssh -L 7991:127.0.0.1:7991 <user>@<remote-host>` and open `http://127.0.0.1:7991`. A shared deployment needs a TLS reverse proxy and an external network or identity boundary; never publish `--no-login` mode.'
     printf '\n'
     printf '%s\n' '## 5. Verify remote execution'
     printf '\n'
-    printf '%s\n' 'After `configs/dpdispatcher/{machines,resources,tasks}.yaml` are edited, submit real smoke jobs:'
+    printf '%s\n' 'After `configs/dpdispatcher/{machines,resources,tasks,mlff_backends}.yaml` are edited, inspect the catalog and then submit one real minimal smoke job:'
     printf '\n'
     printf '%s\n' '```bash'
     printf '%s\n' 'python scripts/remote_execution_smoke.py --list'
-    printf '%s\n' 'python scripts/remote_execution_smoke.py --suite core --check-interval 30'
+    printf '%s\n' 'python scripts/remote_execution_smoke.py --case mace_sp --check-interval 30 --stop-on-failure'
     printf '%s\n' '# broader coverage:'
+    printf '%s\n' '# python scripts/remote_execution_smoke.py --suite core --check-interval 30'
     printf '%s\n' '# python scripts/remote_execution_smoke.py --suite all --check-interval 60'
     printf '%s\n' '# UMA is isolated because it needs FairChem, Hugging Face access, and model cache; the suite covers SP and short relax jobs:'
     printf '%s\n' '# python scripts/remote_execution_smoke.py --suite uma --uma-model uma-s-1p2 --uma-task omat --uma-check-interval 60'

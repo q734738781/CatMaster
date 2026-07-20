@@ -1,5 +1,8 @@
 # DeepAgents Multimodal Migration Status
 
+> Maintainer migration record. This is not an end-user guide. For attachment
+> behavior, use the [WebUI guide](user-guide/04-webui.en.md).
+
 Last reviewed: 2026-07-07
 
 This document records the migration from CatMaster's old path-only multimodal

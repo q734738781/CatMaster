@@ -1,5 +1,8 @@
 # DeepAgents Interaction Notes
 
+> Maintainer compatibility note. This is not an end-user guide. Start with the
+> [CatMaster user manual](user-guide/README.en.md).
+
 This note documents CatMaster's non-standard interaction points with DeepAgents,
 LangChain, and OpenRouter. The design rule is to keep these interactions small:
 prefer DeepAgent-native behavior, modify only CatMaster-owned runtime
