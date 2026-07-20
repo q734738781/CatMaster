@@ -56,7 +56,7 @@ RESEARCH_GOAL_DIR = "research_goals"
 
 _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
     "research": "research_lead",
-    "experiment": "task_runner",
+    "experiment": "director",
     "writing": "write_director",
     "peer_review": "write_reviewer",
     "literature_review": "literature_deep_research",
@@ -1101,7 +1101,7 @@ class SpecialistRunner:
             self._compiled_worker_subagent(
                 name="peer_review_worker_agent",
                 description="Run one bounded peer-review episode over one canonical manuscript PDF and return the full review plus memo path.",
-                model_role="write_reviewer",
+                model_role="task_runner",
                 system_prompt=self._peer_review_worker_prompt(),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_PEER_REVIEW_WORKER_TOOL_ALLOWLIST),

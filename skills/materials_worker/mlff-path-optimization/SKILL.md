@@ -16,8 +16,8 @@ Execute one validated fixed-image MLFF path per stage without remote interpolati
 1. Finish endpoint validation, atom remapping, image-count selection, interpolation, and overlap QC locally.
 2. Copy one contiguous `00.vasp` through `NN.vasp` tree into `stage/input/path/`.
 3. Query the selected backend directly with `get_remote_task_spec(task_name="mlff_neb", template_overrides={"backend": "<enabled-backend>"}, detail="full")`, then use its resolved defaults and concrete convergence schema.
-4. Submit one path with `remote_submission`, or independent complete path stages with `remote_submission_batch`.
-5. Inspect the batch summary, per-path summary, energy CSV/profile, final images, and receipt context.
+4. Submit one path with `remote_submission`; submit two or more independent same-config paths with one `remote_submission_batch`.
+5. Inspect the batch summary, per-path summary, energy CSV/profile, and final images. Use receipt recovery only after a returned failure.
 
 ## Allowed tools
 

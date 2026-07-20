@@ -47,13 +47,15 @@ def test_package_root_preserves_legacy_execution_exports() -> None:
 def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     with toolcall_context("catalog", audience="materials_worker"):
         content, artifact = get_avail_remote_task({"return_resource": True})
-    assert "remote_submission: work_dir is one prepared stage" in content
-    assert "remote_submission_batch: work_dir is a parent root" in content
-    assert "boot script runs once inside each first-level child" in content
-    assert "template_overrides" in content
+    assert "One prepared stage: use remote_submission" in content
+    assert "use one remote_submission_batch call" in content
+    assert "block until every submitted task is terminal" in content
+    assert "prefer one remote_submission_batch" not in content
+    assert "get_remote_task_spec" in content
     assert "submission_guidance" in artifact["data"]
     assert "remote_submission_batch" in artifact["data"]["submission_guidance"]
     assert "template_overrides" in artifact["data"]["submission_guidance"]
+    assert "blocks until all are terminal" in artifact["data"]["submission_guidance"]["remote_submission_batch"]
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
     assert {"vasp_execute", "mlff_sp", "mlff_relax", "mlff_md", "mlff_neb"}.issubset(task_names)
     mlff_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mlff_sp")

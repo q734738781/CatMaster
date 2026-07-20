@@ -16,8 +16,8 @@ Prepare deterministic SP/relax stages, choose an enabled backend, and keep backe
 1. Read `remote-stage-layouts`, then put uniquely named structures directly under a clean `input/`.
 2. Call `get_avail_remote_task`, then query the intended backend directly with `detail="full"`, for example `get_remote_task_spec(task_name="mlff_sp", template_overrides={"backend": "mattersim"}, detail="full")`; do not query `{}` first when selecting a non-default backend.
 3. Pass only nested `backend`, `backend_config`, and `task_config` overrides returned by that query.
-4. Submit one stage with `remote_submission`, or a parent of complete first-level stages with `remote_submission_batch`. Leave `submission_config.resources` and `.machine` unset; the selected backend owns them.
-5. Inspect `output/batch_summary.json`, per-input summaries, and remote receipt/context fields.
+4. Submit one stage with `remote_submission`; submit two or more independent same-config stages with one `remote_submission_batch`. Leave `submission_config.resources` and `.machine` unset.
+5. Inspect `output/batch_summary.json` and per-input summaries. Use receipt recovery only after a returned failure.
 
 ## Allowed tools
 
@@ -49,7 +49,7 @@ Prepare deterministic SP/relax stages, choose an enabled backend, and keep backe
 
 - One stage initializes one selected model and processes its structures sequentially.
 - For similarly sized short relaxations, 30-50 structures per stage is an empirical starting point, not a probe requirement or hard limit. Use smaller groups for heterogeneous costs.
-- SP can use substantially larger groups. Use `remote_submission_batch` only when the parent contains several independent complete stages with the same overrides.
+- SP can use substantially larger groups. Split only into complete, independently runnable stages.
 
 ### 4. Interpret as MLFF evidence
 

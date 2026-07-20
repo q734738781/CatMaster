@@ -77,18 +77,13 @@ _FORBIDDEN_CONFIG_FIELDS = {
 
 _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
     "remote_submission": (
-        "Use for one prepared stage directory. `work_dir` is the stage itself, and the boot script "
-        "runs directly in that stage cwd. A stage may contain internal batch inputs when the layout says so, "
-        "for example an MLFF SP/relax `input/` with many structures. If you have two or more independent prepared "
-        "stages for the same task_name/template_overrides/submission_config, prefer one remote_submission_batch parent root instead "
-        "of multiple parallel remote_submission calls."
+        "Use for exactly one prepared stage directory. The boot script runs in that stage, and the call blocks "
+        "until its DPDispatcher task reaches a terminal state."
     ),
     "remote_submission_batch": (
-        "Preferred when there are multiple independent prepared stages for the same task_name/template_overrides/submission_config. "
-        "Use a parent batch root whose first-level children are independent stages. "
-        "The boot script runs once inside each first-level child directory. Each child is submitted "
-        "as one DPDispatcher task with the same task_name, template_overrides, and submission_config. No recursive nested "
-        "discovery is performed."
+        "Use for two or more independent prepared stages sharing task_name, template_overrides, and submission_config. "
+        "Each first-level child of work_dir is one task; one call submits them together and blocks until all are terminal. "
+        "Discovery is not recursive."
     ),
     "registered_task_config": (
         "For registered task_name templates, always omit submission_config.resources and submission_config.machine. "
@@ -135,10 +130,9 @@ def _catalog_task_hint(task_name: str) -> str:
 def _catalog_content(*, tasks: list[dict[str, Any]]) -> str:
     lines = [
         f"Available remote tasks: {len(tasks)}",
-        "Submission decision:",
-        "- remote_submission: work_dir is one prepared stage; the boot script runs directly in that directory.",
-        "- remote_submission_batch: work_dir is a parent root; the boot script runs once inside each first-level child directory.",
-        "- If two or more independent stages share the same task_name, template_overrides, and submission_config, prefer one remote_submission_batch call over multiple parallel remote_submission calls.",
+        "Submission contract:",
+        "- One prepared stage: use remote_submission. Two or more independent stages with the same task/config: use one remote_submission_batch call whose first-level children are the stages.",
+        "- Both tools block until every submitted task is terminal. Do not poll receipts while a call is pending.",
         "- Do not use remote_submission_batch just because a single MLFF SP/relax stage contains many inputs; that stage reuses one model initialization.",
         "- For registered task_name templates, never pass submission_config.resources or submission_config.machine; the selected task/backend resolves them.",
         "- Query get_remote_task_spec before method-critical overrides. MLFF uses nested backend/backend_config/task_config; retained tasks keep flat overrides.",
@@ -194,12 +188,9 @@ def _parse_positive_int(value: Any, *, field: str) -> int:
 class RemoteSubmissionInput(BaseModel):
     """[remote/execute] Submit exactly one prepared stage directory as one DPDispatcher task.
 
-    Use this when `work_dir` itself matches the selected task layout. The boot
-    script runs directly with `work_dir` as cwd. If that layout internally accepts
-    many inputs, such as an MLFF SP/relax stage containing `input/` with many structures,
-    it is still one stage and should use this tool. For two or more independent
-    prepared stages that share the same task_name/template_overrides/submission_config, prefer
-    remote_submission_batch instead of parallel remote_submission calls.
+    `work_dir` is the stage itself. This call blocks until the task is terminal.
+    For two or more independent stages sharing the same task/config, use one
+    remote_submission_batch call instead of multiple remote_submission calls.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -274,15 +265,12 @@ def _template_overrides(payload: RemoteSubmissionInput) -> dict[str, Any] | None
 
 
 class RemoteSubmissionBatchInput(RemoteSubmissionInput):
-    """[remote/execute] Submit a parent batch root as multiple DPDispatcher tasks.
+    """[remote/execute] Submit independent first-level stages together as DPDispatcher tasks.
 
-    Prefer this when there are two or more independent prepared stages for the
-    same task_name/template_overrides/submission_config. Use only when `work_dir` contains one
-    first-level child directory per task and every child independently matches
-    the same selected task layout. The boot script runs once inside each
-    first-level child directory, not once in the parent. No recursive nested
-    discovery is performed; the same `task_name`, template_overrides, and submission_config are applied
-    to every child.
+    Use for two or more independent stages sharing task_name, template_overrides,
+    and submission_config. Each first-level child of work_dir is one stage. One
+    call submits them together and blocks until all are terminal; discovery is
+    not recursive.
     """
 
     work_dir: str = Field(

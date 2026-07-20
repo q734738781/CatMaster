@@ -1079,6 +1079,14 @@ def test_specialist_lanes_start_with_staged_skills(
     agent_kwargs = created_agents[-1]
     expected_agent_name = "litreview_agent" if entrypoint == "literature_review" else f"{entrypoint}_specialist"
     assert agent_kwargs["name"] == expected_agent_name
+    expected_entry_model_role = {
+        "research": "research_lead",
+        "experiment": "director",
+        "literature_review": "literature_deep_research",
+        "writing": "write_director",
+        "peer_review": "write_reviewer",
+    }[entrypoint]
+    assert agent_kwargs["model"] == {"model": f"{expected_entry_model_role}-model"}
     expected_entry_groups = {
         "research": ("research_specialist",),
         "experiment": ("writing_quality",),
@@ -1164,6 +1172,7 @@ def test_specialist_lanes_start_with_staged_skills(
         experiment_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "experiment_specialist"]
         assert experiment_agents, "expected nested experiment specialist to be created"
         experiment_agent_kwargs = experiment_agents[0]
+        assert experiment_agent_kwargs["model"] == {"model": "director-model"}
         assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
         _assert_native_skill_groups(experiment_agent_kwargs, "writing_quality")
@@ -1180,6 +1189,7 @@ def test_specialist_lanes_start_with_staged_skills(
         writing_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "writing_specialist"]
         assert writing_agents, "expected nested writing specialist to be created"
         writing_agent_kwargs = writing_agents[0]
+        assert writing_agent_kwargs["model"] == {"model": "write_director-model"}
         assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(writing_agent_kwargs, "writing_specialist", "writing_quality")
         _assert_native_memory(writing_agent_kwargs)
@@ -1192,6 +1202,7 @@ def test_specialist_lanes_start_with_staged_skills(
         peer_review_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "peer_review_specialist"]
         assert peer_review_agents, "expected nested peer-review specialist to be created"
         peer_review_agent_kwargs = peer_review_agents[0]
+        assert peer_review_agent_kwargs["model"] == {"model": "write_reviewer-model"}
         assert {tool.name for tool in peer_review_agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(peer_review_agent_kwargs, "writing_specialist", "writing_quality")
         _assert_native_memory(peer_review_agent_kwargs)
@@ -1207,6 +1218,7 @@ def test_specialist_lanes_start_with_staged_skills(
         litreview_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "litreview_agent"]
         assert litreview_agents, "expected nested litreview agent to be created"
         litreview_agent_kwargs = litreview_agents[0]
+        assert litreview_agent_kwargs["model"] == {"model": "literature_deep_research-model"}
         assert {tool.name for tool in litreview_agent_kwargs["tools"]} == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
         _assert_native_skill_groups(litreview_agent_kwargs, "litreview_agent", "writing_quality")
         _assert_native_memory(litreview_agent_kwargs)
@@ -1236,6 +1248,8 @@ def test_specialist_lanes_start_with_staged_skills(
         ml_worker_kwargs = _find_created_agent("ml_worker")
         dynamics_worker_kwargs = _find_created_agent("dynamics_worker")
         orca_worker_kwargs = _find_created_agent("orca_xtb_worker")
+        for worker_kwargs in (materials_worker_kwargs, ml_worker_kwargs, dynamics_worker_kwargs, orca_worker_kwargs):
+            assert worker_kwargs["model"] == {"model": "task_runner-model"}
         assert "runnable" in subagents_by_name["materials_worker"]
         assert "runnable" in subagents_by_name["ml_worker"]
         assert "runnable" in subagents_by_name["dynamics_worker"]
@@ -1342,6 +1356,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         writing_worker_kwargs = _find_created_agent("writing_worker_agent")
         writing_polisher_kwargs = _find_created_agent("writing_polisher_agent")
+        assert writing_worker_kwargs["model"] == {"model": "section_writer-model"}
+        assert writing_polisher_kwargs["model"] == {"model": "academic_polisher-model"}
         assert "runnable" in subagents_by_name["writing_worker_agent"]
         assert "runnable" in subagents_by_name["writing_polisher_agent"]
         assert {tool.name for tool in writing_worker_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
@@ -1400,6 +1416,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "do not compress away the editor comment or reviewer comment sections" in agent_kwargs["system_prompt"]
         assert "peer_review_worker_agent" in subagents_by_name
         peer_review_worker_kwargs = _find_created_agent("peer_review_worker_agent")
+        assert peer_review_worker_kwargs["model"] == {"model": "task_runner-model"}
         assert "runnable" in subagents_by_name["peer_review_worker_agent"]
         assert {tool.name for tool in peer_review_worker_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(peer_review_worker_kwargs, "writing_specialist", "writing_quality")

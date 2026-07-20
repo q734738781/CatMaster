@@ -13,7 +13,7 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 2. For a single calculation, set `work_dir` to one folder containing `INCAR`, `POTCAR`, `POSCAR`, and `KPOINTS`.
 3. For a batch, set `work_dir` to a batch root whose first-level children are complete VASP calculation folders.
 4. For NEB or dimer-style VASP work, use `task_name="vasp_execute_neb"` when the larger default resource preset fits.
-5. After submission or failure, use the returned receipt/context fields and the stage-local `status.json`, `stdout.log`, and `stderr.log` files for triage.
+5. After success, inspect stage-local outputs and logs. Use receipt recovery only after a returned failure or ambiguous transport error.
 
 ## Allowed tools
 - `get_avail_remote_task`
@@ -39,7 +39,7 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 - The tool returns `remote_context_id`, `submission_hash`, `receipt_rel`, and `task_state_counts`; keep those fields in the handoff summary.
 
 ### 4. Triage failures minimally
-- If the tool reports receipt/context fields, inspect the receipt before resubmitting; the remote job may still be live.
+- Only after the tool returns a failure, inspect its receipt before resubmitting; the remote job may still be live.
 - Inspect only the focused `status.json`, `stdout.log`, `stderr.log`, VASP stdout, or scheduler evidence for failed stages.
 - Rerun only the failed subset from a clean stage directory or a batch root containing only those failed first-level children.
 

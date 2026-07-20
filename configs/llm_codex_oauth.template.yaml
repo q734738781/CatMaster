@@ -12,8 +12,9 @@
 #   python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 #
 # Copy this file to configs/llm.yaml on the deployment target. The default
-# matches the validated local OAuth lane: GPT-5.6 Sol with xhigh reasoning and
-# Responses API reasoning summaries for monitor observability.
+# matches the validated local OAuth lane: GPT-5.6 Sol with xhigh reasoning for
+# specialists and high reasoning for workers/helpers. Both expose Responses API
+# reasoning summaries for monitor observability.
 
 models:
   codex-oauth-main:
@@ -41,6 +42,31 @@ models:
             summary: auto
           verbosity: medium
 
+  codex-oauth-worker:
+    provider: codex_oauth
+    model: gpt-5.6-sol
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+    timeout_s: 120
+    max_retries: 3
+
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          reasoning:
+            effort: high
+            summary: auto
+          verbosity: medium
+
   google/nanobanana_2:
     provider: openrouter
     model: google/gemini-3.1-flash-image-preview
@@ -51,21 +77,21 @@ models:
 agents:
   proposal: codex-oauth-main
   director: codex-oauth-main
-  task_runner: codex-oauth-main
+  task_runner: codex-oauth-worker
   research_lead: codex-oauth-main
-  research_state_updater: codex-oauth-main
+  research_state_updater: codex-oauth-worker
   write_director: codex-oauth-main
-  section_writer: codex-oauth-main
+  section_writer: codex-oauth-worker
   write_reviewer: codex-oauth-main
-  academic_polisher: codex-oauth-main
-  tex_compile_fixer: codex-oauth-main
-  memory_patch: codex-oauth-main
-  summary: codex-oauth-main
-  tool_selector: codex-oauth-main
-  image_analyzer: codex-oauth-main
+  academic_polisher: codex-oauth-worker
+  tex_compile_fixer: codex-oauth-worker
+  memory_patch: codex-oauth-worker
+  summary: codex-oauth-worker
+  tool_selector: codex-oauth-worker
+  image_analyzer: codex-oauth-worker
   literature_deep_research: codex-oauth-main
-  self_evolution_proposer: codex-oauth-main
-  self_evolution_reviewer: codex-oauth-main
+  self_evolution_proposer: codex-oauth-worker
+  self_evolution_reviewer: codex-oauth-worker
 
 peer_review_models:
   - codex-oauth-main

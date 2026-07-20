@@ -541,7 +541,8 @@ def test_backend_switch_rejects_provider_field_leak_without_dispatch() -> None:
 
 def test_agent_visible_spec_and_submission_schemas_are_non_nullable() -> None:
     registry = ToolRegistry()
-    exported = {item["name"]: item["parameters"] for item in registry.as_openai_tools()}
+    tools = {item["name"]: item for item in registry.as_openai_tools()}
+    exported = {name: item["parameters"] for name, item in tools.items()}
     assert "get_remote_task_spec" in exported
     for name in ("get_remote_task_spec", "remote_submission", "remote_submission_batch"):
         properties = exported[name]["properties"]
@@ -550,6 +551,8 @@ def test_agent_visible_spec_and_submission_schemas_are_non_nullable() -> None:
     for name in ("remote_submission", "remote_submission_batch"):
         description = exported[name]["properties"]["submission_config"]["description"]
         assert "With task_name, do not pass resources or machine" in description
+        assert "blocks until" in tools[name]["description"]
+        assert "terminal" in tools[name]["description"]
     parsed = GetRemoteTaskSpecInput(task_name="mlff_sp", template_overrides=None)
     assert parsed.template_overrides == {}
     submitted = RemoteSubmissionInput(

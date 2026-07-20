@@ -16,8 +16,7 @@ Build a clean, task-specific stage copy before low-level remote submission. One 
 1. Call `get_avail_remote_task` to select a task. For a non-default MLFF backend, make the first schema query concrete, for example `get_remote_task_spec(task_name="mlff_sp", template_overrides={"backend": "mattersim"}, detail="full")`; use that response's `resolved_template_defaults`, accepted paths, and concrete schema.
 2. Copy the required inputs into a new workspace-relative stage that matches the layout below; do not rearrange the source tree in place.
 3. Verify the prepared tree with `ls` or a focused `find` command.
-4. Use `remote_submission` for one stage.
-5. For multiple independent stages with the same task and configuration, place them under one parent and call `remote_submission_batch` once.
+4. Dispatch one stage with `remote_submission`; dispatch two or more independent same-config stages with one `remote_submission_batch` call.
 
 ## Allowed tools
 
@@ -36,24 +35,11 @@ Build a clean, task-specific stage copy before low-level remote submission. One 
 
 ### 1. Keep submission boundaries literal
 
-- `remote_submission(work_dir=...)` treats `work_dir` itself as one stage and creates one DPDispatcher Task.
-- `remote_submission_batch(work_dir=...)` treats every first-level child directory as one complete stage and creates one Task per child.
-- Batch discovery is not recursive. Nested directories inside a stage are scientific inputs only when the selected layout explicitly requires them.
-- One batch call applies the same `task_name`, `template_overrides`, and `submission_config` to every child. Use separate calls when those values differ.
-- A stage may contain several input structures only when its task layout permits internal sequential processing. Multiple files do not by themselves require `remote_submission_batch`.
-
-```text
-single stage -> remote_submission
-stage/
-  task inputs
-
-multiple independent stages -> remote_submission_batch
-batch_root/
-  stage_000/
-    task inputs
-  stage_001/
-    task inputs
-```
+- A batch root contains one complete stage per first-level child; discovery is not recursive.
+- All children in one batch share `task_name`, `template_overrides`, and `submission_config`. Different configurations require separate calls.
+- Dependent stages never share a batch; submit the next stage only after its predecessor's required output exists.
+- Task-internal multiple inputs do not imply multiple stages.
+- Both submission tools block until their submitted tasks are terminal. Do not poll or inspect receipts while a call is pending.
 
 ### 2. Build a clean submission copy
 
@@ -159,7 +145,7 @@ stage/
     start.vasp or start.xyz or restart.traj
 ```
 
-One stage means one trajectory lineage. Set grouped dynamics, thermostat, barostat, and output controls through `template_overrides.task_config`, not a duplicate params file. Use one first-level batch child per independent replica. Submit continuation segments sequentially after the preceding `restart.traj` is available.
+One stage holds one segment of one trajectory lineage; a lineage may span multiple dependent stages. Set grouped dynamics, thermostat, barostat, and output controls through `template_overrides.task_config`, not a duplicate params file. Use one first-level batch child per independent lineage at the same segment, and submit later segments only after the preceding `restart.traj` is available.
 
 #### mlff_neb
 
@@ -198,8 +184,8 @@ evaluation_stage/
 ### 4. Verify before and after submission
 
 - Before submission, verify the exact first-level children and task-required files. Do not assume a copied root has the intended depth.
-- After submission, inspect the stage-local `status.json`, `stdout.log`, `stderr.log`, and declared task outputs before retrying.
-- On failure, use receipt/context fields to determine whether remote work may still be live. Retry only failed stages from fresh stage copies.
+- On success, inspect the returned stage-local `status.json`, `stdout.log`, `stderr.log`, and declared outputs.
+- Only after a returned failure or ambiguous transport error, use the receipt skill before retrying failed stages from fresh copies.
 
 ## Method-critical defaults
 

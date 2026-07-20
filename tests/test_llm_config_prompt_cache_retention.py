@@ -6,6 +6,32 @@ import pytest
 from catmaster.llm.config import LLMConfig, LLMProfile
 
 
+def test_codex_oauth_template_routes_specialists_and_workers_by_reasoning_effort() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "configs" / "llm_codex_oauth.template.yaml"
+    profile = LLMProfile.from_env_or_file(str(config_path))
+
+    def effort(role: str) -> str:
+        cfg = profile.config_for_role(role)
+        return str(cfg.provider_options["codex_oauth"]["chat_kwargs"]["reasoning"]["effort"])
+
+    for role in ("proposal", "director", "research_lead", "write_director", "write_reviewer", "literature_deep_research"):
+        assert effort(role) == "xhigh"
+    for role in (
+        "task_runner",
+        "research_state_updater",
+        "section_writer",
+        "academic_polisher",
+        "tex_compile_fixer",
+        "memory_patch",
+        "summary",
+        "tool_selector",
+        "image_analyzer",
+        "self_evolution_proposer",
+        "self_evolution_reviewer",
+    ):
+        assert effort(role) == "high"
+
+
 def test_llm_config_parses_reasoning_and_provider_options() -> None:
     cfg = LLMConfig.from_dict(
         {
