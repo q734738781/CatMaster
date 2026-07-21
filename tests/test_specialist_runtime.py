@@ -339,7 +339,7 @@ def test_writing_reporting_contract_allows_summary_first_closeout() -> None:
 
 def test_prose_quality_policy_requires_skill_without_changing_science() -> None:
     policy = runtime_mod.SpecialistRunner._prose_quality_policy()
-    assert "read and apply the `avoid-ai-writing` skill" in policy
+    assert "read and apply the `humanizer` skill" in policy
     assert "report, literature synthesis, review" in policy
     assert "preserve claim strength" in policy
     assert "numbers, units, equations, citations, uncertainty" in policy
@@ -1176,7 +1176,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
         _assert_native_skill_groups(experiment_agent_kwargs, "writing_quality")
-        assert "read and apply the `avoid-ai-writing` skill" in experiment_agent_kwargs["system_prompt"]
+        assert "read and apply the `humanizer` skill" in experiment_agent_kwargs["system_prompt"]
         _assert_native_memory(experiment_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
             "materials_worker",
@@ -1226,7 +1226,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert not litreview_agent_kwargs.get("subagents")
         assert "50-60+ candidates" in litreview_agent_kwargs["system_prompt"]
         assert "candidate pool" in litreview_agent_kwargs["system_prompt"]
-        assert "read and apply the `avoid-ai-writing` skill" in litreview_agent_kwargs["system_prompt"]
+        assert "read and apply the `humanizer` skill" in litreview_agent_kwargs["system_prompt"]
         assert "metadata_agent" not in litreview_agent_kwargs["system_prompt"]
         assert "literature_agent" not in litreview_agent_kwargs["system_prompt"]
     elif entrypoint == "literature_review":
@@ -1237,7 +1237,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "real browser access attempt" in agent_kwargs["system_prompt"]
         assert "local literature corpus" in agent_kwargs["system_prompt"]
         assert "deterministic batch" in agent_kwargs["system_prompt"]
-        assert "read and apply the `avoid-ai-writing` skill" in agent_kwargs["system_prompt"]
+        assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "Do not perform computational execution" in agent_kwargs["system_prompt"]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in agent_kwargs["middleware"])
         assert not agent_kwargs.get("subagents")
@@ -1270,7 +1270,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Instruction context files" not in materials_worker_kwargs["system_prompt"]
         assert "dataset/model lifecycle tasks" in ml_worker_kwargs["system_prompt"]
         assert "default role is coordination, dispatch, and decision-making across the experiment lane" in agent_kwargs["system_prompt"]
-        assert "read and apply the `avoid-ai-writing` skill" in agent_kwargs["system_prompt"]
+        assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "Keep direct work in the specialist thread minimal and coordination-oriented" in agent_kwargs["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself." in agent_kwargs["system_prompt"]
@@ -1367,7 +1367,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
-        assert "read and apply the `avoid-ai-writing` skill" in agent_kwargs["system_prompt"]
+        assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "narrow background supplementation" in agent_kwargs["system_prompt"]
         assert "Each writing-worker handoff should cover only one section or one bounded organization/integration task" in agent_kwargs["system_prompt"]
         assert "figures, tables, and concise explanatory schematics as part of the default deliverable" in agent_kwargs["system_prompt"]
@@ -1457,7 +1457,7 @@ def test_specialist_lanes_start_with_staged_skills(
     assert _skill_names(staged_researcher) == _skill_names(repo_root / "skills" / "research_specialist")
     assert _skill_names(staged_literature) == _skill_names(repo_root / "skills" / "litreview_agent")
     assert _skill_names(staged_writing) == _skill_names(repo_root / "skills" / "writing_specialist")
-    assert _skill_names(staged_writing_quality) == {"avoid-ai-writing"}
+    assert _skill_names(staged_writing_quality) == {"humanizer"}
     assert _skill_names(staged_writing)
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint

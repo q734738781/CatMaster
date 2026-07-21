@@ -8,12 +8,12 @@ license: MIT
 metadata:
   hermes:
     tags: [research, writing, proposal, revision, qa, multi-agent]
-    related_skills: [brainstorming, professor, avoid-ai-writing, docx]
+    related_skills: [brainstorming, professor, humanizer, docx]
 ---
 
 # researchwrite — proposal-first 科研写作 pipeline
 
-受 autonovel（状态机+打分）、professor（动态专家）、brainstorming（入口追问）、anti-AI-writing（语言清理）启发的科研写作状态机。**不是通用"帮我写论文"prompt。**
+受 autonovel（状态机+打分）、professor（动态专家）、brainstorming（入口追问）、humanizer（语言清理）启发的科研写作状态机。**不是通用"帮我写论文"prompt。**
 
 ## 核心原则
 
@@ -104,8 +104,8 @@ Gate 2: professor Convener（内容层）
   └── 文献reviews → 覆盖面专家 + 批判深度专家
   │
   ▼
-Gate 1: avoid-ai-writing 模式 detect-only
-  └── 只对英文有效，中文跳过或降级为手工扫读
+Gate 1: humanizer 语言审读
+  └── 按原版 humanizer 规则检查和修改文风
   │
   ▼
 Gate 3: auto-validation（格式/完整性层）

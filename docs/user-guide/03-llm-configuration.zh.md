@@ -119,7 +119,7 @@ Writing 不会替用户发明实验结果，也不应为了让段落更完整而
 
 入口 Agent 可以调用 `generate_nanobanana_figure` 和 `review_pdf_manuscript`，并委派 `writing_worker_agent` 与 `writing_polisher_agent`。Writing worker 还可以使用 `polish_academic_prose`、`compile_text` 和 `render_markdown_pdf`，同时保留通用文件与轻量脚本能力。
 
-可加载 skills 包括 `nature-writing`、`nature-polishing`、`nature-citation`、`citation-management`、`nature-data`、`nature-figure`、`nature-reader`、`nature-response`、`nature-reviewer`、`nature-paper2ppt`、`nature-paper-to-patent`、`nature-ref-verifier`、`nature-academic-search`、`researchwrite`、`scientific-writing`、`scientific-visualization`、`achemso-latex-manuscript`、`venue-templates`、`markdown-pdf-export` 和质量检查 skill `avoid-ai-writing`。
+可加载 skills 包括 `nature-writing`、`nature-polishing`、`nature-citation`、`citation-management`、`nature-data`、`nature-figure`、`nature-reader`、`nature-response`、`nature-reviewer`、`nature-paper2ppt`、`nature-paper-to-patent`、`nature-ref-verifier`、`nature-academic-search`、`researchwrite`、`scientific-writing`、`scientific-visualization`、`achemso-latex-manuscript`、`venue-templates`、`markdown-pdf-export` 和质量检查 skill `humanizer`。
 
 </details>
 

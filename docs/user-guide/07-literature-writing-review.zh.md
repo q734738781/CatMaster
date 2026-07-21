@@ -150,7 +150,7 @@ Writing 可以调用 citation skills 为现有段落寻找支持文献，也可�
 
 入口 tools 包括 `generate_nanobanana_figure` 和 `review_pdf_manuscript`。Writing worker 还使用 `polish_academic_prose`、`compile_text` 和 `render_markdown_pdf`，并可通过 workspace 的文件和脚本能力生成实际交付物。
 
-Skills 覆盖论文与项目书写作、润色、引用、数据声明、图件、全文阅读、参考文献核验、审稿回复、投稿前审稿、PPT、专利、ACS LaTeX、期刊模板和 Markdown PDF。`citation-management` 提供通用引用管理方法，`avoid-ai-writing` 负责最终文风审计。某个 skill 能否完成所有外部动作仍取决于本机安装的软件、可用 API 和用户提供的源材料。
+Skills 覆盖论文与项目书写作、润色、引用、数据声明、图件、全文阅读、参考文献核验、审稿回复、投稿前审稿、PPT、专利、ACS LaTeX、期刊模板和 Markdown PDF。`citation-management` 提供通用引用管理方法，`humanizer` 负责最终文风审计。某个 skill 能否完成所有外部动作仍取决于本机安装的软件、可用 API 和用户提供的源材料。
 
 </details>
 

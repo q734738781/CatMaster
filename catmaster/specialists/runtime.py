@@ -1978,7 +1978,7 @@ class SpecialistRunner:
     def _prose_quality_policy() -> str:
         return (
             "Prose-quality self-check: whenever you create or substantially revise a user-facing report, literature synthesis, review, "
-            "summary document, scientific note, memo, README, or other prose-heavy artifact, read and apply the `avoid-ai-writing` skill "
+            "summary document, scientific note, memo, README, or other prose-heavy artifact, read and apply the `humanizer` skill "
             "before finalizing it. Use the skill as an editorial audit, not as permission to change the science: preserve claim strength, "
             "numbers, units, equations, citations, uncertainty, paths, commands, and technical meaning. Do not force this pass onto raw logs, "
             "tool payloads, machine-readable files, terse status updates, or ordinary conversational replies unless the user asks."

@@ -156,7 +156,7 @@ and citations. End with conclusions supported by the paper and questions that re
 
 Entry tools are `generate_nanobanana_figure` and `review_pdf_manuscript`. The writing worker also uses `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`, plus common file and scripting capabilities.
 
-Skills cover manuscript and proposal writing, polishing, citations, data statements, figures, full-paper reading, reference verification, response letters, pre-submission review, PPT, patent drafts, ACS LaTeX, venue templates, and Markdown PDF. `citation-management` supplies a general reference workflow, while `avoid-ai-writing` performs the final style audit. External actions still depend on installed software, APIs, and supplied source material.
+Skills cover manuscript and proposal writing, polishing, citations, data statements, figures, full-paper reading, reference verification, response letters, pre-submission review, PPT, patent drafts, ACS LaTeX, venue templates, and Markdown PDF. `citation-management` supplies a general reference workflow, while `humanizer` performs the final style audit. External actions still depend on installed software, APIs, and supplied source material.
 
 </details>
 

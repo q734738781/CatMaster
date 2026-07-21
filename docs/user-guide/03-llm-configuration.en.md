@@ -116,7 +116,7 @@ Writing must not invent results or add plausible references to fill a gap. Missi
 
 The entry agent can use `generate_nanobanana_figure` and `review_pdf_manuscript`, and it delegates to `writing_worker_agent` and `writing_polisher_agent`. The writing worker can also use `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`, along with common file and lightweight scripting capabilities.
 
-Available skills include `nature-writing`, `nature-polishing`, `nature-citation`, `citation-management`, `nature-data`, `nature-figure`, `nature-reader`, `nature-response`, `nature-reviewer`, `nature-paper2ppt`, `nature-paper-to-patent`, `nature-ref-verifier`, `nature-academic-search`, `researchwrite`, `scientific-writing`, `scientific-visualization`, `achemso-latex-manuscript`, `venue-templates`, `markdown-pdf-export`, and the `avoid-ai-writing` quality skill.
+Available skills include `nature-writing`, `nature-polishing`, `nature-citation`, `citation-management`, `nature-data`, `nature-figure`, `nature-reader`, `nature-response`, `nature-reviewer`, `nature-paper2ppt`, `nature-paper-to-patent`, `nature-ref-verifier`, `nature-academic-search`, `researchwrite`, `scientific-writing`, `scientific-visualization`, `achemso-latex-manuscript`, `venue-templates`, `markdown-pdf-export`, and the `humanizer` quality skill.
 
 </details>
 

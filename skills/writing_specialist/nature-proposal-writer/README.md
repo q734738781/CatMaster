@@ -22,7 +22,7 @@ Gate 2: professor 专家审查（内容层）
   ├── proposal → 可行性专家 + 创新性专家
   └── 综述 → 覆盖面专家 + 批判深度专家
       ↓
-Gate 1: avoid-ai-writing（语言层，仅英文）
+Gate 1: humanizer（语言层）
       ↓
 Gate 3: 自动校验（citation？可复现？编号连续？）
       ↓
@@ -55,7 +55,7 @@ cp -r research-pipeline/researchwrite ~/.hermes/skills/
 ```bash
 hermes skills install brainstorm     # 入口追问
 hermes skills install professor      # 动态专家审查
-hermes skills install avoid-ai-writing  # 英文去 AI 味
+npx skills add blader/humanizer         # 通用文风清理
 hermes skills install docx           # Word 文档导出
 ```
 
