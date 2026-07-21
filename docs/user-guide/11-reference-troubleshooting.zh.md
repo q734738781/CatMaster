@@ -1,84 +1,161 @@
-# 11. 参考与故障排查
+# 11. Prompt 参考与故障排查
 
 [上一章](10-deployment-operations.zh.md) | [目录](README.zh.md)
 
-本章汇总常用变量、默认行为、限制和诊断顺序。先定位故障属于启动、模型、文件、浏览器、远程配置还是科学任务，再修改对应层。不要用“重装全部依赖”代替证据检查。
+本章前半部分收录可以直接修改的 prompts，后半部分按症状排查安装、模型、文件、文献和远程任务。参考 prompt 不是固定表单。保留其中对科学边界和交付物有用的部分，删掉与你的项目无关的限制，让 Agent 有空间选择 skills 与 tools。
 
-## 11.1 配置文件地图
+## 怎样改写参考 prompt
 
-| 文件 | 作用 | 是否含私密信息 |
-|---|---|---|
-| `requirements/pc-conda.yml` | 唯一 control-plane 环境定义 | 否 |
-| `.env.example` | 环境变量清单，不会自动加载 | 否 |
-| `configs/llm.yaml` | 活动 LLM profile | 不应含 key，可能含私有 endpoint |
-| `configs/llm*.template.yaml` | Provider 和角色模板 | 否 |
-| `configs/tool_output.yaml` | 长输出预览与落盘策略 | 否 |
-| `configs/tool_policy.yaml` | 兼容配置，不是当前 specialist runtime 的权限 source of truth | 否 |
-| `configs/dpdispatcher/*_template.yaml` | 公开 machine/resource/task/backend 模板 | 否 |
-| `configs/dpdispatcher/{machines,resources,tasks,mlff_backends}.yaml` | 活动远程配置 | 是 |
-| `configs/dpdispatcher/env_templates/` | 远程环境激活脚本参考 | 需要替换站点值 |
+Prompt 最重要的是让 Agent 理解你真正想解决的问题。输入路径、必须保持的约束、允许的计算范围和希望保留的结果能够减少误解；tool 名通常可以省略。若方法尚未确定，可以让 Agent 比较方案并在关键歧义处停下。若方法已经由项目标准确定，则直接写明，不必要求它重新论证。
 
-## 11.2 常用环境变量
+"自主选择"也不是让 Agent 无限延伸。你可以授权它完成目标所需的技术判断，同时明确本轮停止在结构候选、输入审查、远程审批或结果分析的哪一阶段。
 
-### LLM 和检索
+## Research 参考 prompt
 
-| 变量 | 用途 |
-|---|---|
-| `CATMASTER_LLM_CONFIG` | 选择 YAML profile，默认 `configs/llm.yaml` |
-| `CATMASTER_LLM_PROVIDER` | 无 YAML 模式 provider，或填补空 provider |
-| `CATMASTER_LLM_MODEL` | 无 YAML 模式 model，或填补空 model |
-| `CATMASTER_API_KEY_ENV` | 无 YAML模式的 key 变量名 |
-| `CATMASTER_BASE_URL` | 无 YAML或空字段时的 endpoint |
-| `CATMASTER_TEMPERATURE` | 无 YAML或空字段时的 temperature |
-| `CATMASTER_REASONING_EFFORT` | 无 YAML或空 reasoning 时的 effort |
-| `OPENAI_API_KEY`、`OPENROUTER_API_KEY` | 对应 provider key |
-| `DEEPSEEK_API_KEY`、`ANTHROPIC_API_KEY` | 对应 provider key |
-| `TAVILY_API_KEY`、`MP_API_KEY` | 网页搜索和 Materials Project |
-| `SEMANTIC_SCHOLAR_API_KEY`、`OPENALEX_API_KEY`、`NCBI_API_KEY` | 文献服务 |
-| `CROSSREF_MAILTO` | Crossref 礼貌联系地址 |
+```text
+使用 Research 研究 <研究问题>。先读取 <已有目录或文件>，区分已有事实、
+工作假设和真正缺少的证据。自主决定何时需要 Literature Review、Experiment、
+Writing 或 Peer Review，但一次只推进一个有边界的阶段，并在每次委派后检查结果。
 
-### 浏览器和本地工具
+本轮要交付 <证据地图/研究计划/阶段综合>。没有文献或项目证据时不要擅自运行计算；
+如果建议新增实验或计算，请说明它能区分什么假设、需要什么输入和成本，等我确认。
+```
 
-| 变量 | 用途 |
-|---|---|
-| `CATMASTER_AGENT_BROWSER_BIN` | `agent-browser` 可执行文件 |
-| `CATMASTER_AGENT_BROWSER_PROFILE` | 浏览器 profile，必须在 workspace 外 |
-| `CATMASTER_AGENT_BROWSER_AUTO_CONNECT` | 连接已运行 Chrome |
-| `CATMASTER_AGENT_BROWSER_HEADED` | 显示浏览器窗口 |
-| `CATMASTER_AGENT_BROWSER_MAX_OUTPUT` | 受控浏览器输出上限 |
-| `CATMASTER_VASPKIT_BIN`、`CATMASTER_VESTA_BIN` | 本地辅助程序路径 |
-| `CATMASTER_XVFB_RUN` | 无 DISPLAY 渲染 wrapper |
-| `CATMASTER_PANDOC_BIN`、`CATMASTER_CHROME_BIN` | Markdown PDF 工具路径 |
-| `CATMASTER_JSMOL_CACHE_DIR` | JSmol 持久缓存 |
+适合把 `<研究问题>` 改成开放目标，例如"解释某催化剂在氧化还原循环中的可逆结构变化"。如果你已经知道只需建一个 slab，则直接使用 Experiment。
 
-### Runtime 和 WebUI
+## Slab 与吸附参考 prompt
 
-| 变量 | 用途 |
-|---|---|
-| `CATMASTER_PROJECT_SPACE_ROOT` | 多用户 project 根目录 |
-| `CATMASTER_CONDA_ENV` | 启动脚本使用的 conda 环境名 |
-| `CATMASTER_HOST`、`CATMASTER_PORT` | WebUI 监听地址和端口 |
-| `CATMASTER_RUNTIME_DIR` | PID 和默认日志目录 |
-| `CATMASTER_WEBUI_LOG`、`CATMASTER_WEBUI_PID` | 日志和 PID 文件 |
-| `CATMASTER_TOOL_OUTPUT_CONFIG` | 工具输出策略 |
-| `CATMASTER_SELF_EVOLUTION_MODE` | `off`、`observe`、`auto` |
-| `CATMASTER_RECURSION_LIMIT`、`CATMASTER_MAX_TOOL_CALLS` | 主要用于无 YAML profile |
-| `CATMASTER_DEEPAGENT_CONTEXT_TRIGGER_TOKEN_CAP` | 无 YAML profile 的上下文压缩 cap |
-| `CATMASTER_PRINT_HTTP_RAW_POST` | 调试原始请求，可能暴露敏感信息，默认 false |
+```text
+使用 Experiment 从 <体相结构路径> 建立 <Miller 指数> 表面，目标是 <后续研究用途>。
+让 Materials worker 自主使用适合的 slab、termination 和 visual inspection skills。
 
-`CATMASTER_PRINT_HTTP_RAW_POST=true` 可能把 prompt 或请求数据写到日志，只在隔离诊断环境短时使用。
+表面至少满足 <厚度或层数> 和 <真空>，说明是否采用对称 slab、面内扩展与固定层策略。
+保留现有 Selective Dynamics；若需要改动约束，先给出理由和候选方案。
+检查上下表面、化学计量、配位、异常短键和孤立原子，保存全部合理终止面、结构图和审计。
+本轮不要提交计算；遇到极性或终止面取舍时停下来问我。
+```
 
-## 11.3 地址和优先级
+继续到吸附时补充：
 
-启动脚本解析顺序：CLI 参数优先于 `CATMASTER_*` 环境变量，环境变量优先于脚本 `LOCAL_*` 常量，再落到代码 fallback。
+```text
+在已确认的 slab 上为 <吸附物> 建立吸附候选。先定义吸附物构象和锚点，
+枚举并去重有化学意义的位点与朝向，记录位点来源、初始距离、覆盖度和约束继承。
+检查碰撞与跨周期距离，不要为了凑数量生成明显重复结构。
 
-| 启动方式 | 未显式设置时 |
-|---|---|
-| `./start_webui.sh` | 脚本内嵌 `0.0.0.0:7991` |
-| `python -m catmaster.webui` | `127.0.0.1:7860` |
-| 本手册推荐 | 显式 `127.0.0.1:7991` |
+候选过多时可以建议 MLFF 单点或优化预筛，但要先查询当前 backend 能力并等待我批准。
+最终给出候选清单、结构图、筛除理由和建议进入 DFT 的集合。
+```
 
-因此排查“页面打不开”时，先运行：
+## VASP 或其他远程计算参考 prompt
+
+```text
+使用 Experiment 复查 <stage 路径>，目标是运行 <计算类型>。
+让负责的 worker 先检查结构、约束、输入文件、科学参数和预期输出，
+再查询当前部署的 remote task、resource 和完整 schema。不要从旧 prompt 猜 overrides。
+
+如果准备或配置有问题，停下并写清缺什么。全部通过后，在 Review 审批卡展示 task、
+work_dir、任务数量、资源、关键参数和清理策略，等我批准后再提交。
+回传后检查 status、stdout/stderr、程序级收敛和科学结果，不要只看 scheduler completed。
+```
+
+Batch 时再说明一级 stage 目录与共同设置。MLFF 任务还应要求记录 backend、model、device 和 dtype，并把结果标为模型预测。
+
+## 动力学与 restart 参考 prompt
+
+```text
+使用 Experiment 继续 <已有 MD 目录>。让 Dynamics worker 先审计最后有效步、
+结构、速度、积分器或 thermostat 状态、随机状态、时间轴和可用 restart 文件。
+禁止覆盖原目录，也不要在证据不足时从最后一帧重新赋速后称为连续续跑。
+
+在新目录建立 continuation stage，说明新旧段怎样连接以及哪些设置必须保持一致。
+查询当前 remote task，等我批准后再提交。结果回传后先做温度、能量、体积、
+轨迹连续性、异常短距和 restart 可用性检查，再决定是否进行 MSD/RDF/扩散分析。
+```
+
+## 数据集与 MACE 参考 prompt
+
+```text
+使用 Experiment 让 ML worker 从 <VASP 结果目录> 建立 MACE 数据集。
+先区分收敛、未收敛和标签不完整的 runs，检查单位、参考能、元素覆盖、重复结构、
+异常值和不同计算设置混用。固定随机种子并保留 train/valid/test manifest。
+
+输出 extxyz、划分文件和数据审计报告。只有数据审计通过后才准备训练参数；
+在我确认数据范围、foundation model、replay/E0 设置和 GPU 成本前不要提交 mace_train。
+```
+
+## 分子、xTB 与 ORCA 参考 prompt
+
+```text
+使用 Experiment 处理 <SMILES 或结构路径>。总电荷为 <charge>，自旋多重度为 <multiplicity>，
+溶剂和目标性质为 <设置>。让 ORCA/xTB worker 自主选择构象生成、CREST/xTB 预筛、
+去重和 ORCA 方法，但保留每一步的结构、相对能和筛除理由。
+
+先交付可审阅的构象集合与 ORCA stage 计划。说明频率、热化学、TS/IRC、TDDFT 或 NMR
+中哪些步骤与当前目标有关；不要默认把所有计算都跑一遍。任何远程 task 等我批准。
+```
+
+## Literature Review 参考 prompt
+
+```text
+使用 Literature Review 调研 <主题>，范围为 <年份、体系、文献类型和排除条件>。
+先设计并保存检索策略，建立足够宽的候选集合并对 DOI、题名和版本去重。
+
+把发现记录、摘要、全文和 SI 证据分开。围绕 <具体问题> 精读核心论文，
+提取体系、条件、方法、结果、限制和相互矛盾之处，建立 claim-evidence 表。
+保存候选表、全文可用性、未获取清单和最终引用库，不要用标题或摘要补写精确参数。
+```
+
+精读单篇论文时，要求保留章节顺序、图表位置、页码或原文锚点，并明确"不接受只给摘要"。
+
+## Writing 与审稿参考 prompt
+
+```text
+使用 Writing 根据 <证据文件、数据、图和引用库> 起草或修改 <章节/文稿>，
+目标读者或期刊为 <目标>。先检查材料能支持怎样的论证，再自主选择 writing skills。
+
+所有数字、单位、图和引用必须可追溯；保持 <必须保留的术语或结论边界>，
+禁止添加 <新结果、未核实引用或因果表述>。正文写成连贯段落，输出到 <路径>，
+并列出证据不足和需要作者决定的地方。
+```
+
+```text
+使用 Peer Review 审查 <canonical PDF>，目标期刊和文章类型为 <说明>。
+让 reviewer 独立检查新颖性、方法、证据、图表、报告完整性和可重复性，
+主要意见必须指向页码或图表。保留每位 reviewer 的完整报告，再生成 editor synthesis，
+明确共识、分歧、必须解决的问题和可选改进。本轮不修改源稿，也不代写作者回复。
+```
+
+## 继续旧任务或恢复失败参考 prompt
+
+```text
+继续原 thread。先重新读取 <关键报告、目录、receipts 和日志>，以当前文件为准，
+不要直接沿用聊天中的完成状态。列出可信完成项、不完整项、仍在运行的远程任务和待决定事项。
+
+保留所有成功结果，禁止重复生成或重复计算。恢复事实后再从 <明确阶段> 继续，
+本轮停止在 <新的停止点>。
+```
+
+远程调用断开时：
+
+```text
+上次远程调用返回异常。不要重新提交或清理。
+先读取 receipt，确认 remote_context_id、submission_hash、task、原 stage 和 job 状态，
+再结合调度器或 DPDispatcher record 判断作业是否仍在运行、已完成待下载或真正终止。
+优先收集结果和失败日志，给出恢复方案；只有确认旧作业不会继续写入后才讨论重投。
+```
+
+---
+
+## WebUI 打不开
+
+先以前台模式启动，阅读第一条真实 traceback：
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
+./start_webui.sh --foreground --host 127.0.0.1 --port 7991
+```
+
+另一个终端检查：
 
 ```bash
 ./start_webui.sh --status
@@ -86,162 +163,125 @@ tail -n 100 .runtime/webui.log
 ss -ltnp | grep 7991
 ```
 
-## 11.4 WebUI 启动失败
+`conda is not available` 表示启动 shell 没有初始化 conda，或 `CATMASTER_CONDA_ENV` 指向错误环境。`Address already in use` 表示端口被占用。Project root permission denied 应修复目录 ownership，不要临时用 root 绕过。JSmol 下载失败通常只影响结构预览，可单独处理 cache。
 
-前台运行：
+启动脚本和 Python CLI 的隐式默认地址不同，所以诊断时总是显式写 host 与 port。
 
-```bash
-CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
-./start_webui.sh --foreground --host 127.0.0.1 --port 7991
-```
+## LLM 配置能解析，但对话失败
 
-按第一条真实 traceback 排查：
-
-- `conda is not available`：初始化 conda 或设置正确 `CATMASTER_CONDA_ENV`。
-- `Address already in use`：找到占用进程，或改用另一个显式端口。
-- JSmol 下载失败：预热 cache；如果其他页面正常，把它作为结构预览问题单独处理。
-- 静态前端缺失：确认部署包完整；维护者部署不要使用不完整的 `--include-path` 集合代替 runtime 包。
-- Project root permission denied：修复目录 ownership，不要以 root 临时绕过。
-
-## 11.5 LLM 配置或调用失败
-
-先做无网络解析：
+先做离线解析：
 
 ```bash
 python -c 'from catmaster.llm.config import LLMProfile; p=LLMProfile.from_env_or_file(); print(sorted(p.models)); print(p.agents)'
 ```
 
-常见问题：
+如果解析失败，检查 YAML 缩进、角色引用和 provider 字段。如果解析成功但调用失败，按顺序检查：
 
-- `Missing API key`：确认变量已 export 到启动 WebUI 的同一进程环境。
-- 复制了 `.env.local` 但无效：用 `set -a; source .env.local; set +a`。
-- 角色引用未知标签：修正 `agents` 或 `peer_review_models`。
-- 旧字段报错：移除 `tool_calling_profiles`、模型级 `tool_calling` 和错误位置的 `extra_body`。
-- Provider 400：核对模型 ID、base URL、reasoning 字段和 provider options。
-- 只文字回复、不调用工具：确认模型支持当前工具 schema，并检查 tool card 和 provider 日志。
-- 长任务过早停止：先看 `max_tool_calls`、recursion 和实际错误，不要直接把边界调到极大。
+1. Key 是否 export 到启动 WebUI 的同一进程环境。
+2. Model ID 和 base URL 是否属于当前 provider。
+3. Reasoning 与 provider options 是否使用了正确字段。
+4. 模型是否支持工具调用和当前 schema。
+5. Provider 返回的第一条 4xx/5xx 或 timeout 是什么。
 
-## 11.6 登录和 workspace
+只得到文字、不调用 tool 时，不要先增加 prompt 强度。查看 Chat tool 卡和 Monitor，确认当前 Entry 是否正确、模型是否支持 tool calling、worker 是否被委派，以及 tool schema 是否真正发送。
 
-- 注册失败：用户名需 3 到 40 个允许字符，密码至少 8 个字符，并完成新验证码。
-- 登录后看不到旧项目：核对 `CATMASTER_PROJECT_SPACE_ROOT` 和 username，不要手工把项目放在 root 的错误层级。
-- 旧 `.catmaster` 项目被拒绝：按 `files/`、`metadata/` 新布局迁移。
-- Thread 历史丢失：检查 `metadata/threads/` 和 DeepAgent SQLite 是否随备份恢复。
-- Skill Evolution 不显示：确认不是 `--no-login`，并检查 mode 是否为 `off`。
+长任务过早停止时，先看实际 tool error、`max_tool_calls`、recursion 与上下文，不要直接把所有边界调到极大。
 
-## 11.7 附件和文件预览
+## 附件保存了，但 Agent 没有读到
 
-- Composer 拒绝文件：先看 64 MiB 浏览器限制。
-- 文件已保存但模型没看：检查媒体 32 MiB inline、模型 multimodal 能力和 `multimodal.prepared` warning。
-- PDF/Office 内容不全：检查 50 MiB、20 页/slide、60,000 字符和 spreadsheet 限制。
-- 旧 Office 格式只保存：转换为 PDF、DOCX、XLSX 或 PPTX。
-- JSmol 空白：检查 cache、浏览器控制台和结构格式，不要重启远程 task。
-- 文件上传后内容变了：Files 使用同名覆盖；从外部备份恢复。
-- 误删 `metadata/`：立即停止写入，从一致性备份恢复，不能靠重新上传 `files/` 修复 thread。
+图片需要模型 profile 支持视觉输入。PDF、DOCX、XLSX 和 PPTX 走有界文档解析；旧 `.doc`、`.xls`、`.ppt` 和未知格式通常只保存。检查 Monitor 中的 `multimodal.prepared`，看 `sent_to_model`、`sent_as` 和 warning。
 
-## 11.8 Literature Review
+常见限制：Composer 单文件 64 MiB；后端保存上限 512 MiB；媒体当前 turn inline 默认 32 MiB；PDF 与 Office 解析单文件最多 50 MiB、最多 60,000 字符；PDF/PPTX 默认最多处理 20 页或 slides。大型文档应要求 Agent 按页或章节读取，或先拆分。
 
-- `agent-browser` 不可用：依次运行 `agent-browser doctor --offline --quick` 和 `agent-browser mcp --help`。
-- 登录页或 CAPTCHA：切到 headed，由用户完成；不要让 agent 反复自动尝试。
-- 找到 DOI 但无全文：记录证据级别，检查机构会话或由用户上传合法全文。
-- 引用元数据冲突：以 DOI/publisher 页面和文献自身为主，记录版本差异。
-- 本地 corpus 查询漏文：检查 ingest manifest、parse status 和文件是否超出解析限制。
+## Files 中结构、PDF 或表格不能预览
 
-## 11.9 远程 catalog 或连接失败
+JSmol 空白时检查资源 cache、浏览器控制台和结构格式。文本预览有大小上限，目录和文件树也有数量上限，所以"看不到"不一定代表文件不存在。PDF 字体或页面异常应打开原文件核对。
 
-按层排查：
+Files 上传同名文件会覆盖。若内容被覆盖，从外部备份恢复。误删 `metadata/` 后应立即停止写入并恢复一致性备份，重新上传 `files/` 不能恢复 thread checkpoint。
 
-1. 四个活动配置文件是否存在。
-2. 文件名是否错误地包含 `template`。
-3. YAML 是否能解析，key 是否被其他活动文件覆盖。
-4. Machine SSH 是否支持 BatchMode。
-5. `remote_root` 是否可写。
-6. Resource 的 machine、queue、audience 和 `source_list` 是否正确。
-7. Task 是否 enabled，backend 是否 enabled。
-8. Worker audience 是否匹配。
+## Literature Review 找到题目却没有全文
 
-`command not found` 或 127 常见于 `machine.env_setup`、`source_list` 或 task binary。先在相同非交互 SSH 环境中执行 `command -v`，不要通过修改科学 stage 掩盖环境错误。
-
-## 11.10 远程运行和结果失败
-
-- Tool 仍在 pending：等待它返回，不要轮询 receipt 或重投。
-- SSH 断开：保存 receipt 身份，在调度器检查作业仍否存在。
-- Scheduler completed 但无结果：下载 finished task 和 terminated log，检查 backward files 和远程权限。
-- `status.json` 成功但科学不收敛：按程序日志和领域 QC 判为科学失败。
-- Batch 部分失败：逐个一级 stage 分类，不要把成功子任务一起重算。
-- 想停止：WebUI Stop 不取消远程 job；由管理员按 receipt 对应 job ID 使用调度器。
-- 想清理远程目录：先确认结果、stdout、stderr 和 receipt 已本地保存。
-
-恢复命令和顺序见[远程机器与任务执行](08-remote-execution.zh.md)。
-
-## 11.11 当前 UI 限制
-
-- 没有历史 run 选择器。
-- 没有 thread 重命名、删除、branch 或 retry UI。
-- Interrupted 状态必须使用消息内审批卡，composer 的 `Respond` 不是审批恢复。
-- Monitor 总览可能对应 workspace/lane 的当前或最近 run，不一定严格对应选中 thread。
-- Files 上传同名覆盖，删除永久递归。
-- Files 树显示 `metadata/`，但没有专门的保护开关。
-- 后端支持安全 ZIP 解压，Files UI 暂无解压开关。
-- WebUI Stop 不取消已经提交的远程作业。
-- Skill Evolution 仅登录模式可见，从下一次 run 生效。
-
-文档明确列出这些限制，是为了让用户选择正确路径，不表示可以绕过安全边界。
-
-## 11.12 高级线程 API 示例
-
-下面示例只适合绑定本机的 `--no-login` 测试服务。现代主接口使用 workspace/thread/artifact API；旧 run API 只作为兼容和调试路径。
+这通常不是搜索失败。先确认论文是否开放获取，或用户是否有合法机构权限。需要登录时启用 headed browser，由用户完成验证。Agent 不会绕过 CAPTCHA 或付费墙。
 
 ```bash
-curl -s http://127.0.0.1:7991/api/bootstrap
-
-THREAD_ID="$(
-  curl -s -X POST \
-    -H 'Content-Type: application/json' \
-    -d '{"title":"CO adsorption","entrypoint":"experiment","permission_mode":"hitl"}' \
-    http://127.0.0.1:7991/api/workspaces/admin/threads |
-  jq -r '.thread.thread_id'
-)"
-
-curl -s -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Inspect structures/slab.vasp and prepare three adsorption structures.","entrypoint":"experiment","permission_mode":"hitl"}' \
-  "http://127.0.0.1:7991/api/threads/$THREAD_ID/submit"
-
-curl -N \
-  "http://127.0.0.1:7991/api/threads/$THREAD_ID/stream?last_seq=0"
+agent-browser doctor --offline --quick
+agent-browser mcp --help
 ```
 
-登录模式需要正确的 session cookie 和 CSRF/访问上下文，不应把无登录示例直接改成公网自动化。
+只有摘要时，把证据级别记录为 abstract。引用元数据冲突时，以 DOI、publisher 页面和论文自身为主要依据，并保存版本差异。本地 corpus 漏文时检查 ingest manifest、parse status 和文件是否超出解析限制。
 
-## 11.13 安装验收清单
+## Remote task 在 catalog 中不存在
 
-### 本地 control plane
+按以下顺序检查管理员配置：
 
-- [ ] `conda env create/update` 成功。
-- [ ] LLM YAML 离线解析成功。
-- [ ] API key 确实进入 WebUI 进程。
-- [ ] WebUI 显式监听预期地址和端口。
-- [ ] 注册、登录和用户隔离通过。
-- [ ] Workspace 同时有 `files/`、`metadata/`。
-- [ ] Thread 对话、SSE、artifact 和 Monitor 可用。
-- [ ] `agent-browser` doctor 通过或明确禁用该路径。
-- [ ] JSmol、PDF、结构和表格预览按部署需求通过。
+1. `machines.yaml`、`resources.yaml`、`tasks.yaml` 和 `mlff_backends.yaml` 是否存在。
+2. 活动文件名是否错误地包含 `template`。
+3. YAML 是否能解析，是否有多个活动文件覆盖同一 key。
+4. Task 与 backend 是否 enabled。
+5. Resource 的 audience 是否包含当前 worker。
+6. Machine SSH、remote root、queue 和 `source_list` 是否有效。
 
-### 远程执行
+缺少 task 时不要让 Agent 改用本地 scientific engine。先由管理员完成配置和最小 smoke case。
 
-- [ ] 四个活动 DPDispatcher 配置存在且不在 Git。
-- [ ] SSH、remote root、scheduler 和环境脚本通过。
-- [ ] Task/resource/audience/backend catalog 符合实际安装。
-- [ ] `python scripts/remote_execution_smoke.py --list` 可用。
-- [ ] 每类启用引擎至少一个最小真实 case 通过。
-- [ ] Stage 收到 status、stdout、stderr 和 receipt。
-- [ ] 已演练 receipt 驱动的下载和失败分类。
+## Remote task 连接或启动失败
 
-### 运维和安全
+使用与 CatMaster 相同的非交互 SSH 环境验证主机、Python、目录和 scheduler：
 
-- [ ] 默认不直接暴露公网，`--no-login` 仅 loopback。
-- [ ] TLS、VPN或外部访问控制已配置。
-- [ ] Project、账号数据库、私有配置和 secret 有备份。
-- [ ] 已验证升级、回滚和日志留存流程。
-- [ ] 用户知道 Stop 不会取消远程作业，计算完成仍需科学 QC。
+```bash
+ssh -o BatchMode=yes -i <SSH_KEY> <USER>@<HOST> 'hostname; python3 --version'
+ssh -o BatchMode=yes -i <SSH_KEY> <USER>@<HOST> 'test -w <REMOTE_ROOT>'
+ssh -o BatchMode=yes -i <SSH_KEY> <USER>@<HOST> 'command -v sbatch; command -v squeue; command -v scancel'
+```
+
+`command not found` 或退出码 127 通常来自 machine `env_setup`、resource `source_list` 或科学程序路径。不要通过修改结构 stage 掩盖远程环境问题。
+
+## 远程调用断开、作业状态不明
+
+不要重投。先找到 receipt 和 `submission_hash`。在确认 DPDispatcher record 后，可按实际需要选择命令：
+
+```bash
+dpdisp submission <submission_hash> --download-finished-task
+dpdisp submission <submission_hash> --download-terminated-log
+dpdisp submission <submission_hash> --reset-fail-count
+dpdisp submission <submission_hash> --clean
+```
+
+这些命令不是固定顺序。先下载已完成结果和失败日志；只有明确理解 fail count 与清理后果时才使用后两条。`submission_hash` 为空通常表示没有可恢复 record，需要回到 receipt、调度器和远程目录判断。
+
+Scheduler completed 只说明调度结束。若结果缺失，检查 backward files、远程权限和程序日志。`status.json` 成功但科学不收敛时，应判为科学失败。Batch 部分失败时逐个 stage 分类，只处理失败项。
+
+## Stop 后远程作业仍在运行
+
+这是预期行为。WebUI Stop 取消本地 Agent turn，不会调用 `scancel` 或终止远程 Shell。使用 receipt 中的 job 信息到对应调度器处理，并保留取消证据。不要删除本地 stage 或 receipt 后再尝试找作业。
+
+## 登录、workspace 或 thread 看起来丢失
+
+先确认 `CATMASTER_PROJECT_SPACE_ROOT` 是否与原部署一致，登录用户名是否相同。登录模式的数据位于 `users/<username>/`；无登录模式使用 `admin/`。旧 `.catmaster` 单根项目不能直接当作当前 workspace，需要迁移为 `files/` 与 `metadata/`。
+
+只恢复 `files/` 不会恢复 thread。检查 `metadata/`、DeepAgent SQLite 和认证数据库是否来自同一份一致性备份。
+
+## 当前 UI 限制速查
+
+- 没有历史 run 选择器，也没有 thread 重命名、删除、branch 或 retry UI。
+- Interrupted 状态必须用消息内审批卡恢复。
+- Monitor 总览可能对应 workspace 与 lane 的当前或最近 run。
+- Files 上传同名覆盖，删除永久递归；后端支持的 ZIP 解压尚未在 Files UI 提供开关。
+- Stop 不取消远程 job。
+- Skill Evolution 只在登录模式显示，并从下一次 run 生效。
+
+这些限制应通过版本化文件名、外部备份、明确 thread 划分和 receipt 驱动的远程管理来规避，不要假设 Agent 会自动提供 UI 尚未实现的恢复操作。
+
+## 部署验收
+
+一个可交给用户的 CatMaster 部署至少应通过以下真实检查：
+
+- 新账号可以登录并只能看到自己的 workspace。
+- 五类 Entry 可选择，基础模型能对话并调用工具。
+- 附件、artifact、Files 预览、Review 审批和 Monitor 可用。
+- 一个本地结构任务能由 Experiment 委派 worker 并写出结构。
+- Literature Review 的实际搜索与浏览器能力和文档宣称一致。
+- 每个启用的 remote task 至少有一个最小真实 case，能回传 status、stdout/stderr 和 receipt。
+- 模拟一次传输或本地中断后，可以依据 receipt 恢复，而不重复计算。
+- 项目、认证数据库、私有配置和 secrets 有备份与恢复方案。
+
+验收的目标不是让每个可选工具都安装，而是让界面展示的能力与实际部署一致，并让失败时有证据可查。

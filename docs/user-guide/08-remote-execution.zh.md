@@ -1,321 +1,174 @@
-# 8. 远程机器与任务执行
+# 8. 远程 Task：把准备好的计算真正跑起来
 
 [上一章](07-literature-writing-review.zh.md) | [目录](README.zh.md) | [下一章](09-tools-skills-evolution.zh.md)
 
-CatMaster 用 DPDispatcher 把已经准备好的计算 stage 提交到 SSH 可达的 Slurm 或 Shell 机器。远程配置分为四层：machine 定义怎么连接，resource 定义在哪台机器用多少资源，task 定义执行什么合同，MLFF backend 定义模型和 operation 映射。
+CatMaster 能在本地生成结构、检查文件和准备计算输入，但 VASP、CP2K、LAMMPS、ORCA、xTB、CREST、MACE 和其他受管 MLFF 的实际运行通常发生在集群或 GPU 服务器。Remote task 把本地 stage、远程程序、计算资源和结果回传连接成一个受控合同。
 
-## 8.1 角色分工
+用户不需要记住每条提交命令。Experiment 会把科学任务交给合适的 worker，worker 查询当前部署的 task catalog，核对输入目录和参数，再在获得允许后提交。运行状态、日志和结果会回到原 workspace，并留下 receipt 供恢复和审计。
 
-| 角色 | 负责内容 |
-|---|---|
-| 管理员 | SSH、远程根目录、队列、资源卡、环境脚本、程序和许可证 |
-| CatMaster worker | 按 task schema 准备 stage、做 QC、提交、收集和记录 receipt |
-| 用户 | 选择科学设置、批准提交、承担费用、检查结果和失败恢复决定 |
+## "会准备"不等于"已经配置为可运行"
 
-Agent 不能把注册 task 任意切换到另一台 machine 或 resource。CPU/GPU 覆盖也只应在用户明确要求且站点允许时使用。
+许多建模能力在任何 CatMaster 安装中都可以使用。例如 Materials worker 可以生成 slab、吸附候选和 VASP 输入，Dynamics worker 可以准备 LAMMPS stage。真正执行这些 stage 还需要管理员配置 SSH、远程目录、队列、环境脚本、许可证和对应 remote task。
 
-## 8.2 准备四个活动配置
+所以同一个 Agent 可能告诉你"VASP 输入已经准备并通过检查，但当前部署没有可用的 `vasp_execute`"。这是准确的能力边界，不是系统应该绕开的错误。CatMaster 不会因为 remote task 缺失就悄悄在 WebUI 所在机器运行科学引擎。
 
-模板文件名包含 `template`，不会被注册表加载。复制四个文件：
+在每次实际提交前，worker 会查询当前 catalog。Task 的启用状态、resource、MLFF backend、模型和允许的参数来自部署配置，旧文档或旧 prompt 都不能替代这次查询。
 
-```bash
-cp configs/dpdispatcher/machines_template.yaml \
-   configs/dpdispatcher/machines.yaml
-cp configs/dpdispatcher/resources_template.yaml \
-   configs/dpdispatcher/resources.yaml
-cp configs/dpdispatcher/tasks_template.yaml \
-   configs/dpdispatcher/tasks.yaml
-cp configs/dpdispatcher/mlff_backends_template.yaml \
-   configs/dpdispatcher/mlff_backends.yaml
-```
+## 当前模板包含哪些 remote tasks
 
-活动文件包含主机名、用户名、SSH key、路径和站点环境，已被 Git 和部署包排除。不要把真实配置复制到文档、issue、prompt 或共享 workspace。
+下面列出仓库模板支持的任务。实际 WebUI 能看到哪些，取决于管理员启用的配置和 worker 权限。
 
-目录中的非模板 YAML、YML 和 JSON 都可能被加载。多个活动文件出现重复 key 时，后读值可能覆盖前值，因此应保持一个清晰的 source of truth。
+### VASP：单 stage、路径和 dimer
 
-## 8.3 Machine card
+`vasp_execute` 运行一个已经准备好的 VASP 目录，适用于 relax、static、frequency、DOS、MD 等由 `vasp_prepare` 建立的 stage。`vasp_execute_neb` 使用较大的 VASP resource 运行 NEB 或 dimer 风格目录。模板还包含默认关闭的 `vasp_execute_k8s`，用于经过验证的 SSH 到 Kubernetes bridge。
 
-Slurm CPU 机器的基本形状：
-
-```yaml
-cpu_server:
-  batch_type: Slurm
-  context_type: SSHContext
-  local_root: <LOCAL_WORK_ROOT>
-  remote_root: <REMOTE_WORK_ROOT>
-  retry_count: 0
-  remote_profile:
-    hostname: <CPU_LOGIN_HOST>
-    port: 22
-    username: <USERNAME>
-    key_filename: <PATH_TO_SSH_KEY>
-  env_setup: |
-    ulimit -s unlimited
-    module load <SITE_MODULES>
-```
-
-模板还包含：
-
-| Machine | Batch | 典型用途 |
-|---|---|---|
-| `cpu_server` | Slurm over SSH | VASP、CP2K、LAMMPS、xTB、CREST、ORCA、通用 CPU |
-| `k8s_ssh_server` | Shell over SSH | 阻塞式 SSH 到 Kubernetes bridge，默认 VASP task 禁用 |
-| `gpu_server` | Shell over SSH | MACE、UMA、MatterSim、ORB 和通用 GPU |
-
-`local_root` 在实际提交时由 CatMaster 的 metadata staging root 接管。仍应保留合法占位值；真正需要重点核对的是 `remote_root`、SSH profile 和资源环境。
-
-## 8.4 SSH 和目录验收
-
-使用非交互 key，限制权限：
-
-```bash
-chmod 600 <PATH_TO_SSH_KEY>
-ssh -i <PATH_TO_SSH_KEY> -p 22 <USERNAME>@<CPU_LOGIN_HOST>
-```
-
-在 control plane 上做非交互测试：
-
-```bash
-ssh -o BatchMode=yes -i <PATH_TO_SSH_KEY> \
-  <USERNAME>@<CPU_LOGIN_HOST> 'hostname; python3 --version'
-```
-
-确认远程根目录存在且可写：
-
-```bash
-ssh -o BatchMode=yes -i <PATH_TO_SSH_KEY> \
-  <USERNAME>@<CPU_LOGIN_HOST> \
-  'mkdir -p <REMOTE_WORK_ROOT> && test -w <REMOTE_WORK_ROOT>'
-```
-
-Slurm 机器还应验证：
-
-```bash
-ssh -o BatchMode=yes -i <PATH_TO_SSH_KEY> \
-  <USERNAME>@<CPU_LOGIN_HOST> \
-  'command -v sbatch; command -v squeue; command -v scancel'
-```
-
-首次连接先由管理员交互确认 host key。不要在自动化中用 `StrictHostKeyChecking=no` 掩盖主机身份变化。
-
-## 8.5 环境加载顺序
-
-远程命令环境按以下顺序构造：
+Agent 会在提交前检查 INCAR、POSCAR、POTCAR 和 KPOINTS 是否齐全，元素与 POTCAR 顺序是否一致，以及目录是否符合 task 合同。NEB 还要检查根目录输入和编号连续的图像目录。Remote task 负责把这个已接受的 stage 送到远程执行，并不替代科学输入审查。
 
 ```text
-machine.env_setup
-  -> resource.source_list
-      -> submission prepend_script
-          -> task command
+使用 Experiment 复查 calculations/co_adsorption/site_03/ 的 VASP relax stage。
+让 Materials worker 先核对结构、Selective Dynamics、POTCAR 顺序、INCAR、KPOINTS、
+自旋和收敛设置，再查询当前 vasp_execute 的 task spec 与 resource。
+
+如果输入或远程配置有问题，请停下并写明；如果全部通过，在 Review 审批卡中展示
+task、work_dir、资源和关键设置，等我批准后再提交。完成后检查程序收敛和最终结构，
+不要只根据调度状态回答"成功"。
 ```
 
-`source_list` 中的脚本必须在远程机器存在。路径错误会在任务启动前以 127 失败。把程序 module、conda activate、许可证变量和库路径放在站点受控脚本里，不要把 secret 写进 task stage。
+### CP2K 与 LAMMPS
 
-## 8.6 Resource card
+`cp2k_execute` 可由 Materials worker 或 Dynamics worker 使用。它运行包含 `job.inp` 和 manifest 所引用文件的 CP2K stage，可用于常规 DFT、频率、路径准备后的计算或 AIMD。Worker 会根据主要目标选择自己的 skills：材料性质侧重输入方法和电子结构，动力学侧重 ensemble、restart 和轨迹连续性。
 
-Resource 把能力绑定到 machine、audience、队列和核数。模板默认值只是示例：
-
-| Resource | Machine | CPU | GPU | Queue | Audience/用途 |
-|---|---|---:|---:|---|---|
-| `vasp_cpu` | `cpu_server` | 52 | 0 | `batch` | Materials, VASP stage |
-| `vasp_k8s_cpu` | `k8s_ssh_server` | 4 | 0 | `k8s` | Materials, K8s VASP |
-| `vasp_cpu_neb` | `cpu_server` | 104 | 0 | `batch` | Materials, VASP path |
-| `cp2k_cpu` | `cpu_server` | 32 | 0 | `batch` | Materials/Dynamics |
-| `lammps_cpu` | `cpu_server` | 16 | 0 | `batch` | Dynamics |
-| `general_cpu` | `cpu_server` | 4 | 0 | `batch` | 允许的 custom CPU boot |
-| `general_gpu` | `gpu_server` | 16 | 1 | `main` | 允许的 custom GPU boot |
-| `mace_gpu` | `gpu_server` | 16 | 1 | `main` | MACE |
-| `uma_gpu` | `gpu_server` | 16 | 1 | `main` | FairChem UMA |
-| `mattersim_gpu` | `gpu_server` | 16 | 1 | `main` | MatterSim |
-| `orb_gpu` | `gpu_server` | 16 | 1 | `main` | ORB-v3 |
-| `xtb_cpu` | `cpu_server` | 32 | 0 | `batch` | xTB |
-| `crest_cpu` | `cpu_server` | 32 | 0 | `batch` | CREST |
-| `orca_cpu` | `cpu_server` | 32 | 0 | `batch` | ORCA |
-
-必须按站点修改 queue、核数、GPU、walltime 和 `source_list`。Resource 的 `audiences` 决定哪些 worker 可以看到它；不要为了方便删除所有 audience 限制。
-
-## 8.7 Task card
-
-当前模板的注册任务：
-
-| Task | 默认 resource | 主要输入 |
-|---|---|---|
-| `vasp_execute` | `vasp_cpu` | 单个 VASP stage |
-| `vasp_execute_k8s` | `vasp_k8s_cpu` | 同 VASP stage，默认 disabled |
-| `vasp_execute_neb` | `vasp_cpu_neb` | NEB/dimer 目录 |
-| `cp2k_execute` | `cp2k_cpu` | CP2K stage |
-| `lammps_execute` | `lammps_cpu` | LAMMPS stage |
-| `mlff_sp` | backend 决定 | 多结构 single point |
-| `mlff_relax` | backend 决定 | 多结构 relaxation |
-| `mlff_md` | backend 决定 | 单结构 trajectory |
-| `mlff_neb` | backend 决定 | 固定图像路径 |
-| `mace_train` | `mace_gpu` | 数据集和训练参数 |
-| `mace_eval` | `mace_gpu` | 数据集和评估参数 |
-| `xtb_run` | `xtb_cpu` | 分子输入和模式参数 |
-| `crest_run` | `crest_cpu` | 分子与构象搜索参数 |
-| `orca_execute` | `orca_cpu` | `job.inp` stage |
-
-未写 `enabled` 的 task 默认可用；模板中只有 `vasp_execute_k8s` 明确为 `false`。启用前必须先验证 bridge、共享目录和阻塞语义。
-
-## 8.8 MLFF backend 环境
-
-模板默认：
-
-| Backend | Enabled | Default model | Operations |
-|---|---|---|---|
-| `mace` | true，且为默认 | `mh-1` | SP、relax、MD、NEB |
-| `fairchem_uma` | false | `uma-s-1p2` | SP、relax、MD、NEB |
-| `mattersim` | false | `mattersim-v1-1m` | SP、relax、MD、NEB |
-| `orb_v3` | false | `orb-v3-conservative-inf-omat` | SP、relax、MD、NEB |
-
-每个 provider 使用隔离环境。不要把这些 requirements 安装进 control plane：
+`lammps_execute` 属于 Dynamics worker。它运行由 LAMMPS preparation skills 验证过的 stage，包括输入脚本、数据或 restart 文件以及势文件。Task 能启动 LAMMPS，不代表势函数适合当前材料；元素映射、units、边界、neighbor 和势模型适用范围仍然要在提交前确认。
 
 ```text
-requirements/mace.txt
-requirements/uma.txt
-requirements/mattersim.txt
-requirements/orb.txt
+继续 calculations/cp2k_aimd_600K_part1/ 的 AIMD。
+让 Dynamics worker 先验证最后有效 restart、坐标、速度、随机状态和时间轴，
+在新目录建立 part2，绝不覆盖 part1。查询 cp2k_execute 的当前 task spec，
+说明续跑参数与原计算是否一致，并在真正提交前等待我批准。
+
+结果回传后先检查 restart 连续性、温度、能量和轨迹完整性，再决定能否拼接分析。
 ```
 
-远程机器上创建单独环境，并让相应 resource 的 `source_list` 指向激活脚本。仓库提供的参考脚本位于：
+### 通用 MLFF：SP、Relax、MD 与 NEB
+
+`mlff_sp`、`mlff_relax`、`mlff_md` 和 `mlff_neb` 使用统一 task 名称，再由 backend 配置选择 MACE、FairChem UMA、MatterSim 或 ORB-v3。这样同一个结构筛选目标可以在已启用的模型之间选择，而不需要为每个 provider 复制整套工具。
+
+模板默认只启用 MACE `mh-1`。UMA、MatterSim 和 ORB-v3 只有在管理员安装隔离环境、模型权重、resource 和最小 smoke case 后才会出现。Worker 在调用 `get_remote_task_spec` 时会得到当前 backend 与 operation 的有效参数，例如 model、device、dtype、优化器或 MD ensemble。用户不应从旧项目复制一组 overrides 后直接提交。
+
+`mlff_sp` 与 `mlff_relax` 可以在一个 stage 的 `input/` 中直接处理多个结构，所以"有多个候选"不自动意味着要用 remote batch。`mlff_md` 要求 `input/` 中只有一个起始或 restart 结构；`mlff_neb` 接受已经在本地建立并检查的固定图像路径。
 
 ```text
-configs/dpdispatcher/env_templates/
+对 structures/adsorption_candidates/ 中的候选做 MLFF 预筛。
+让 Materials worker 查询当前启用的 backend 和 mlff_sp、mlff_relax schema，
+结合元素覆盖与任务目的建议模型。先做批量单点并检查异常能量或失败结构，
+再只对值得保留的候选做 relaxation。
+
+在提交前展示模型、device、dtype、输入数量、输出目录和排序方法。
+最终报告必须把 MLFF 排名写成预筛结果，并列出建议进入 DFT 的候选与风险。
 ```
 
-模型权重 token、缓存和许可证变量只放远程私有环境。不要进入 YAML、stage 或 prompt。Backend 只有在依赖、模型权重、device 和最小 smoke case 都通过后才改为 `enabled: true`。
+### MACE 训练与评估
 
-## 8.9 Canonical stage 布局
+`mace_train` 和 `mace_eval` 属于 ML worker。训练 task 从 `dataset/` 和 `params/train_params.json` 读取数据与配置，把 checkpoint、日志和其他输出收回 `output/`。评估 task 使用独立的 `params/eval_params.json`，应面向固定测试集或明确 benchmark。
 
-| Task | Stage 根目录要求 |
-|---|---|
-| `vasp_execute` | `INCAR`, `POTCAR`, `POSCAR`, `KPOINTS` |
-| `vasp_execute_neb` | 根目录含 `INCAR`, `POTCAR`, `KPOINTS`；`00/POSCAR ... NN/POSCAR` |
-| `cp2k_execute` | `job.inp`, `manifest.json`, 以及 manifest 引用文件 |
-| `lammps_execute` | `in.lammps`, `manifest.json`, `system.data` 或 restart，及势文件 |
-| `orca_execute` | `job.inp` 和它引用的本地文件 |
-| `xtb_run`, `crest_run` | 默认 `input.xyz`，或 task override 指定输入 |
-| `mlff_sp`, `mlff_relax` | `input/` 下直接放结构，可选 `models/` |
-| `mlff_md` | `input/` 下恰好一个 start 或 restart 结构 |
-| `mlff_neb` | `input/path/00.vasp ... NN.vasp` |
-| `mace_train` | `dataset/`, `params/train_params.json` |
-| `mace_eval` | `dataset/`, `params/eval_params.json` |
-
-所有输入引用必须留在 stage 内。不要用符号链接指向 project space 外部。`mlff_sp` 和 `mlff_relax` 自身支持 `input/` 下多个结构，不要因为多结构就改用 `remote_submission_batch`。
-
-## 8.10 先查询 task schema
-
-Task schema 是运行时 source of truth。给 agent 的请求可以写：
+Agent 会在远程训练前完成数据审计和 stage 准备。Dataset 中的单位、标签、划分、E0、head、replay 或 fine-tuning 设置不能靠 remote task 自动纠正。训练完成后，ML worker 应分析 held-out 误差、失败样本和适用范围，而不只报告最后一个 epoch。
 
 ```text
-先调用 get_avail_remote_task，确认 mlff_relax 可用；再用
-get_remote_task_spec 查询 backend=mace 的 full schema。
-只准备 calculations/si_relax/，列出默认值和需要我确认的 override，暂不提交。
+检查 ml/mace_finetune_v1/ 是否可以提交 mace_train。
+让 ML worker 重新读取 dataset manifest、train/valid/test 划分和 train_params.json，
+检查标签、单位、E0、随机种子、foundation checkpoint 与 replay 设置。
+
+查询当前 mace_train resource，估算输入规模并在 Review 卡中展示关键训练参数。
+只有我批准后才提交。训练完成后保存 checkpoint、完整日志和配置，
+再单独准备 mace_eval，不要用训练误差替代独立测试。
 ```
 
-`template_overrides` 控制 task 的科学或方法参数。`submission_config` 控制提交层，例如检查间隔、允许的 CPU/GPU override 和清理选项。两者不能混用。Machine 和 resource 由 task/backend 注册关系决定，不是 agent 的自由参数。
+### xTB、CREST 与 ORCA
 
-## 8.11 单 stage 与 batch
+`xtb_run` 可以执行分子优化、能量、Hessian 或短时 MD 等模板支持的模式；`crest_run` 用于构象搜索；`orca_execute` 运行包含 `job.inp` 及其本地引用文件的 ORCA stage。这些 tasks 都属于 ORCA/xTB worker。
 
-`remote_submission`：
-
-- `work_dir` 本身就是一个完整 stage。
-- 调用同步等待到 terminal 状态。
-- 默认 `check_interval=30` 秒，`clean_remote=false`。
-
-`remote_submission_batch`：
-
-- 父目录下至少有两个一级子目录。
-- 每个一级子目录是独立完整 stage。
-- 不递归发现更深目录。
-- 全部子任务共享 task 和 config。
-- 调用等待所有子任务到 terminal 状态。
-
-工具尚未返回时，不要另开轮询或重复提交。同一个 stage 的重复提交可能产生两个计费作业。
-
-## 8.12 Staging、回传和 receipt
-
-CatMaster 先把 stage 复制到 workspace 的 metadata staging，再由 DPDispatcher 上传。终态后，结果合并回原始 `files/` stage。每个 stage 都会强制回传：
+Worker 会在提交前确认总电荷、未配对电子数或多重度、溶剂、方法、基组和输入结构。CREST 与 xTB 常用于低成本预筛，ORCA 用于选定构象的高层级优化、频率、热化学、TDDFT、NMR 或反应路径。一个 remote task 只负责一次 stage；多构象的整个科学逻辑仍由 worker 的 skills 组织。
 
 ```text
-status.json
-stdout.log
-stderr.log
+对 molecules/conformers_selected/ 中的 6 个构象做 ORCA opt+freq。
+让 ORCA/xTB worker 先核对构象去重记录、总电荷、自旋多重度、溶剂、方法和基组，
+再为每个构象建立独立 stage。查询 orca_execute 的当前 task spec，确认 ORCA 与 MPI 环境可用。
+
+使用受管 batch 提交前，展示 6 个 stage 的路径和共同设置并等待批准。
+回传后逐个检查正常终止、梯度和虚频，不能因为 batch 大多数成功就忽略失败构象。
 ```
 
-Receipt 的实体路径：
+## Agent 怎样选择 task、resource 和参数
+
+Worker 先用 `get_avail_remote_task` 查看自己当前能用的 tasks，再用 `get_remote_task_spec` 获取某个 task 的完整 schema。需要了解资源时，可以查询 `get_avail_resources`。Agent 根据这些结果构造提交，而不是自由指定任意机器、队列或命令。
+
+Task 决定执行合同和默认 resource；resource 决定机器、CPU/GPU、队列、walltime、环境脚本和哪些 worker 可以看到它；machine 决定怎样通过 SSH 连接和在哪里放远程工作目录。用户通常只需要关心任务是否可用、资源是否合适、预计成本和科学参数。管理员配置详见[第 10 章](10-deployment-operations.zh.md)。
+
+科学或方法参数通过 `template_overrides` 提供，提交层控制通过 `submission_config` 提供。可接受的 key 由当前 task spec 返回。不要把 model、optimizer、温度或计算方法藏进提交配置，也不要把检查间隔和清理策略混进科学参数。
+
+## 单个 stage 和 batch 的区别
+
+`remote_submission` 接受一个完整 stage。`remote_submission_batch` 接受一个父目录，其中每个一级子目录都是独立完整的 stage，并共享同一 task 与提交配置。它不会递归猜测更深目录，也不适合把一个 MLFF stage 内的多结构拆成 batch。
+
+Batch 的价值是用一个受管调用提交一组同构任务，同时保留每个子任务的状态。Agent 仍应在提交前列出实际发现的一级目录并检查数量。部分失败时，只重试失败 stage，不应把已经成功的计算一起重算。
 
 ```text
-files/.deepagents/dpdispatcher/receipts/
-  dp_<timestamp>_<hash8>.json
+准备批量提交 calculations/vacancy_screen/ 下的 VASP stages。
+请列出所有一级子目录，并逐个验证 canonical VASP 输入；任何一个目录缺文件或设置不一致时，
+先报告而不是提交部分集合。确认候选数量、共同 task、resource 和设置后，
+在 Review 卡中等待批准。不要递归寻找更深目录，也不要自动重算已有成功结果。
 ```
 
-Agent 看到的相对路径从 `.deepagents/...` 开始。关键字段：
+## 一次远程运行在项目中留下什么
 
-| 字段 | 用途 |
-|---|---|
-| `remote_context_id` | CatMaster 的远程上下文身份 |
-| `submission_hash` | DPDispatcher 恢复和下载身份 |
-| `receipt_rel` | receipt 的 workspace 相对路径 |
-| `task_name`、`work_dir_rel` | 提交的 task 和原 stage |
-| `submitted_at`、`updated_at`、`duration_s` | 时间线 |
-| `jobs`、`job_status_counts` | 调度作业和状态计数 |
-| `resources` | 实际资源摘要 |
+提交前，CatMaster 会把 stage 复制到 workspace 的 metadata staging 区，再由 DPDispatcher 上传。终态后，远程结果会合并回原始 `files/` stage。每个 task 都应回传至少 `status.json`、`stdout.log` 和 `stderr.log`；具体科学程序还会回传自己的输出。
 
-成功返回还应包含 `task_count`、`task_state_counts` 和 `submission_dir`。保留这些字段，不要只复制一句“计算完成”。
+与此同时，系统在 `files/.deepagents/dpdispatcher/receipts/` 保存 receipt。它记录 task、原始 work directory、提交时间、远程 context、submission hash、作业状态、资源和更新信息。Receipt 的作用不是增加内部术语，而是让一次远程作业在 WebUI 断开、网络异常或本地进程退出后仍然可以被识别和恢复。
 
-## 8.13 失败和恢复
+Chat 会显示 remote receipt 卡，Files 中可以打开结果，Monitor 会记录工具调用和状态。判断计算是否可靠时，应同时查看 receipt、调度状态、stdout/stderr、程序级收敛和科学结果。
 
-网络中断或本地异常不代表远程作业已经取消。处理顺序：
+## Stop、断线与失败恢复
 
-1. 保存 `remote_context_id`、`submission_hash` 和 `receipt_rel`。
-2. 确认原工具调用是否已经 terminal；pending 时不检查、不重投。
-3. 在集群调度器和 receipt 中判断作业是未创建、排队、运行、终止还是已完成未下载。
-4. 优先收集已完成结果和终止日志。
-5. 只有确认旧任务不会继续消耗资源或覆盖结果后，才决定重投。
-6. `clean_remote=true` 或清理命令只在结果和日志已经下载后使用。
+WebUI 的 Stop 只停止当前 Agent turn，不会自动取消已经进入 Slurm 或远程 Shell 的作业。网络断开也不代表远程作业停止。最危险的处理方式是看不到回复就再次提交同一 stage，因为这可能产生两个计费作业并让结果互相覆盖。
 
-`submission_hash` 为空通常表示没有可恢复的 DPDispatcher record。非空时，可从相应 project 的 `files/` 目录运行：
+恢复时先保存或找到 receipt 中的 `remote_context_id`、`submission_hash` 和 `receipt_rel`，再到集群调度器和本地 receipt 判断作业是否未创建、排队、运行、终止或已经完成但尚未下载。已有结果应优先下载，失败日志应先收集。只有确认旧作业不会继续运行或写入后，才考虑重投。
 
-```bash
-dpdisp submission <submission_hash> --download-finished-task
-dpdisp submission <submission_hash> --download-terminated-log
-dpdisp submission <submission_hash> --reset-fail-count
-dpdisp submission <submission_hash> --clean
+```text
+上一次 remote_submission 因 SSH 断开返回错误。不要重新提交。
+先读取消息中的 receipt 和 .deepagents/dpdispatcher/receipts/ 下对应记录，
+确认 remote_context_id、submission_hash、task、原 stage 和已知 job 状态。
+
+结合调度器与 DPDispatcher record 判断作业是否仍在运行、已经完成待下载或真正终止。
+优先收集 finished results 和 terminated logs，给出恢复方案；在我确认旧作业状态前禁止重投和清理远程目录。
 ```
 
-不要按顺序盲目执行四条命令。先下载和分类；只有知道 fail count 或远程清理的后果时再执行后两条。
+如果 `submission_hash` 存在，管理员可使用 `dpdisp submission` 的下载和诊断命令恢复；具体命令与风险放在[故障排查](11-reference-troubleshooting.zh.md)中。`clean_remote` 只应在结果与日志已经安全回传后使用。
 
-## 8.14 远程 smoke test
+## Review 模式如何保护远程提交
 
-只读列出 suite 和 case：
+在 Review 模式下，`remote_submission` 和 `remote_submission_batch` 会在执行前中断。审批卡会展示 Agent 准备调用的 task、work directory 和参数。此时应核对：
 
-```bash
-python scripts/remote_execution_smoke.py --list
-```
+- 目录是不是你刚审查过的 stage，而不是旧版本或临时副本。
+- Task、backend、model 和 operation 是否符合目标。
+- CPU、GPU、walltime 和任务数量是否符合预算。
+- Overrides 是否来自当前 schema，单位和物理含义是否正确。
+- 是否会清理远程目录，是否存在同一 stage 的旧作业。
 
-实际运行示例：
+这些核对项适合审批时使用，但不需要写进每次 prompt。你可以在 prompt 中简单说明"远程提交必须等待 Review 批准"，Agent 会在准备完成后形成具体 action。
 
-```bash
-python scripts/remote_execution_smoke.py \
-  --case mace_sp \
-  --project-space /tmp/catmaster_remote_smoke \
-  --stop-on-failure
-```
+## Remote task 的能力来源
 
-除 `--list` 外，该脚本提交真实计算，可能排队、计费并占用许可证。不要一开始运行 `--suite all`。按已配置的单个 backend 或单个 CPU 引擎做最小 case，检查 stage、receipt、日志和回传，再扩大范围。
+<details>
+<summary>Worker 可见的远程 tools 与 execution skills</summary>
 
-## 8.15 管理员验收
+Materials、Dynamics、ML 和 ORCA/xTB worker 按各自 audience 使用 `get_avail_remote_task`、`get_remote_task_spec`、`get_avail_resources`、`remote_submission` 和 `remote_submission_batch`。
 
-投入用户使用前逐项确认：
+`remote-stage-layouts` skill 说明每种注册 task 的 canonical 输入布局和提交前检查。`dpdispatcher-remote-receipts` 只在远程工具返回失败、传输结果含糊或可能存在孤儿作业时使用，用于 receipt 驱动的恢复；它不应在正常 pending 调用期间触发轮询或重复提交。
 
-1. 三类 machine 中实际使用的连接都能非交互登录。
-2. `remote_root` 可写，Slurm 或 Shell 行为与 card 一致。
-3. 所有 `source_list` 文件存在并能加载正确程序。
-4. Resource 的 queue、CPU、GPU、walltime 和 audience 正确。
-5. 四个活动配置存在，模板未被误当活动文件。
-6. Task catalog 只展示已安装、已授权的能力。
-7. 每个启用的 MLFF backend 通过独立最小 case。
-8. 每个科学引擎产生 `status.json`、stdout、stderr 和 receipt。
-9. 模拟传输失败后能从 receipt 收集，而不是重复计算。
-10. 活动配置、SSH key、token 和许可证信息不在 Git 或项目文件中。
+</details>
+
+## 第一次接入远程机器时
+
+管理员应先配置 machine、resource、task 和可选 MLFF backend，再让 worker 查询 catalog。不要直接运行全部 smoke suite。先选择一个已经安装的最小 task，提交一个成本可控的真实 case，确认远程环境、回传文件、receipt 和失败恢复都正常，再逐项开放其他引擎。
+
+普通用户不需要编辑这些 YAML。只要在 prompt 中要求 Agent 查询当前能力并在提交前等待批准即可。如果 catalog 中没有目标 task，把缺失信息交给管理员，而不是让 Agent 猜测服务器配置。

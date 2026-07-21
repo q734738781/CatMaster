@@ -1,266 +1,166 @@
-# 3. LLM and runtime configuration
+# 3. The five agents: from objectives to deliverables
 
 [Previous](02-concepts.en.md) | [Contents](README.en.md) | [Next](04-webui.en.md)
 
-CatMaster routes models by role. One base model can cover every role, or a
-deployment can assign research coordination, writing, review, image
-understanding, and background evolution to different models. The goal is not to
-use the largest possible set. Each required role needs an explicit, available,
-and affordable binding.
+The WebUI exposes five entries: Research, Experiment, Writing, Peer Review, and Literature Review. They are not five prompt styles placed on top of the same chatbot. Each entry has a different role, delegation structure, tool surface, and set of skills.
 
-## 3.1 Configuration source and precedence
+The useful question is not which entry is strongest. Ask what the main deliverable of this session should be. A broad entry can add needless coordination to a small task. A narrow entry may lack the worker required for a cross-stage objective.
 
-The LLM profile is selected in this order:
+## Research agent: coordinating open objectives
 
-1. A path supplied explicitly by code.
-2. `CATMASTER_LLM_CONFIG`.
-3. The default path `configs/llm.yaml`.
-4. Single-model environment mode when the selected file does not exist.
+Research is for questions that have not yet been reduced to one bounded task. It keeps the original objective active, decides whether the current evidence gap belongs to literature, computation, writing, or review, and delegates one stage at a time to Literature Review, Experiment, Writing, or Peer Review. After a delegated stage returns, Research checks whether the evidence actually advances the objective before choosing the next step.
 
-Templates:
+For example, "Explain why isolated Pd resists sintering on CeO2" is not a single calculation. Research may first ask Literature Review to map reported mechanisms and characterization evidence. It can then ask Experiment which structural or energetic uncertainty is genuinely calculable, and later ask Writing to integrate literature and computed evidence. A missing literature value does not silently authorize DFT. New computation needs a scientific reason and user approval.
 
-| File | Purpose |
-|---|---|
-| `configs/llm.template.yaml` | Recommended starting point with common providers and the full role map |
-| `configs/llm.full.template.yaml` | Field and provider reference, not a production file to copy blindly |
-| `configs/llm_codex_oauth.template.yaml` | Codex OAuth profile for the current system user |
-| `configs/llm_gemini.yaml`, `llm_sonnet.yaml`, and others | Site profiles or examples that must be reviewed before use |
+Research is a good fit for building an evidence-aware plan, comparing literature with existing project data, maintaining hypotheses and evidence gaps across stages, and closing a requested stage with limitations instead of expanding forever. It is not the best entry for a one-step supercell conversion or a narrowly scoped literature search.
 
-When YAML exists, `CATMASTER_LLM_PROVIDER` and `CATMASTER_LLM_MODEL` only fill
-empty fields inside a model block. They do not replace the whole YAML profile.
-Set `CATMASTER_LLM_CONFIG` to switch profiles.
+<details>
+<summary>Current roles, tools, and skills available to Research</summary>
 
-## 3.2 Minimal YAML
+Research delegates to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`. It retains common workspace, task-planning, and project-memory capabilities but does not directly own VASP, slab, or remote-submission tools.
 
-This is the smallest shape in which one model covers all required roles:
+Its research skills are `nature-citation`, `nature-data`, `nature-experiment-log`, `nature-figure`, `nature-literature-pipeline`, `nature-paper-to-patent`, `researchwrite`, `nature-reader`, `nature-ref-verifier`, and `nature-writing`. Calculation execution moves into Experiment and its worker skills.
 
-```yaml
-models:
-  main:
-    provider: openrouter
-    model: <OPENROUTER_MODEL_ID>
-    temperature: 1.0
-    reasoning:
-      effort: high
-    api_key_env: OPENROUTER_API_KEY
-    base_url: https://openrouter.ai/api/v1
+</details>
 
-agents:
-  proposal: main
-  director: main
-  task_runner: main
-  memory_patch: main
-  summary: main
-```
-
-A `models` key is a CatMaster label, not the provider's model ID. Values under
-`agents` must reference existing labels.
-
-Five role bindings are required:
-
-| Role | Main responsibility |
-|---|---|
-| `proposal` | Task proposal and initial decomposition |
-| `director` | Experiment coordination and general decisions |
-| `task_runner` | Concrete workers and ordinary task execution |
-| `memory_patch` | Memory or improvement candidate handling |
-| `summary` | Summaries, compaction, and review fallback |
-
-## 3.3 Full role routing
-
-For a complex deployment, bind important entrypoints explicitly instead of
-depending entirely on fallbacks:
-
-| Role | Used for | Fallback |
-|---|---|---|
-| `research_lead` | Research coordinator | `director` |
-| `research_state_updater` | Research-state updates | `research_lead` |
-| `write_director` | Writing coordinator | `research_lead` |
-| `section_writer` | Writing worker | `task_runner` |
-| `write_reviewer` | Peer Review and writing checks | `summary` |
-| `academic_polisher` | Conservative language polishing | `summary` |
-| `tex_compile_fixer` | TeX compile repair | `academic_polisher` |
-| `tool_selector` | Tool selection | `task_runner` |
-| `image_analyzer` | Image understanding | `task_runner` |
-| `literature_deep_research` | Literature Review | `director` |
-| `self_evolution_proposer` | Evolution candidate proposal | `memory_patch` |
-| `self_evolution_reviewer` | Independent evolution review | `write_reviewer` |
-
-With a limited budget, a faster model can serve `task_runner`, while stronger
-models serve `research_lead`, `write_director`, and review. Do not infer tool
-calling, vision, or context support from a model name alone. Check current
-provider capability and run a real smoke test.
-
-## 3.4 Supported providers
-
-Current `provider` values are:
+Reference prompt:
 
 ```text
-openai
-openrouter
-deepseek
-gemini
-oai_compatible
-langchain
-anthropic
-codex_oauth
+Use Research to study possible mechanisms that stabilize isolated Pd on CeO2 surfaces.
+
+Inspect the existing literature/, structures/, and calculations/ material first. Separate claims that already
+have evidence from hypotheses that remain unsupported. Decide when Literature Review, Experiment, or Writing
+is needed, but advance one bounded stage at a time and inspect its artifacts before delegating again.
+
+The deliverable for this turn is an evidence map and a recommendation for the next stage. Do not launch DFT
+just because a value is missing from the literature. If a new calculation would distinguish specific hypotheses,
+describe its required inputs, cost, and evidential value, then wait for my approval.
 ```
 
-Common secret variables:
+## Experiment agent: organizing modeling, computation, and validation
 
-| Provider | Typical variable | Note |
-|---|---|---|
-| `openai` | `OPENAI_API_KEY` | Supports a base URL and request options |
-| `openrouter` | `OPENROUTER_API_KEY` | Defaults to the OpenRouter API endpoint |
-| `deepseek` | `DEEPSEEK_API_KEY` | Uses DeepSeek-specific provider options |
-| `anthropic` | `ANTHROPIC_API_KEY` | Native thinking options belong in Anthropic chat kwargs |
-| `oai_compatible` | Variable named by `api_key_env` | Verify the compatible service's endpoint and schema |
-| `gemini`, `langchain` | Determined by `langchain_class` and kwargs | Use a verified class path from a template |
-| `codex_oauth` | No API key | Uses the current system user's OAuth store |
+Experiment handles bounded computational research. It reads the scientific objective and current inputs, then delegates work to Materials, Dynamics, ML, or ORCA/xTB workers. The coordinator can search and download Materials Project structures and inspect the deployment's task catalog. Domain modeling, input preparation, analysis, and remote submission belong to the worker that owns the method.
 
-Keep real keys in environment variables or an external secret manager. The
-`api_key` field exists, but plaintext secrets do not belong in versioned YAML.
+Its autonomy appears in worker selection and in the way it adapts after intermediate results. An adsorption screen may begin with slab and site construction, use MLFF to remove clearly poor candidates, and prepare DFT only for the small set that survives. The user does not need to switch workers manually, but should state which approximations are allowed, whether remote computation is authorized, and which scientific choices require confirmation.
 
-## 3.5 Provider-specific reasoning fields
+The four workers cover complementary domains:
 
-Reasoning fields are not universal:
+- Materials handles discovery, bulk and surface structures, adsorption, defects, VASP and CP2K, managed MLFF inference, paths, electronic properties, phonons, elasticity, and thermochemistry.
+- Dynamics handles CP2K AIMD, LAMMPS, MLFF MD, restart continuity, trajectory health, and diffusion-related analyses.
+- ML handles training data, MACE training and evaluation, and active-learning candidate selection.
+- ORCA/xTB handles molecules, conformers, xTB, CREST, ORCA, TS, IRC, TDDFT, and NMR.
 
-- `openrouter` and `openai` use `reasoning.effort`.
-- `oai_compatible` and `deepseek` use top-level `reasoning_effort`.
-- Anthropic-native settings belong under
-  `provider_options.anthropic.chat_kwargs`. CatMaster does not translate
-  OpenAI-style `reasoning` into Anthropic `thinking`.
-- Provider request fields belong under `provider_options.<provider>`. Do not
-  restore the removed top-level `tool_calling_profiles`, model-level
-  `tool_calling`, or top-level `extra_body` forms.
+Chapter 5 expands each worker and its current tools and skills. Chapter 6 follows complete modeling workflows rather than worker boundaries.
 
-The `prompt_cache_retention` setting shown in the standard OpenRouter template
-is currently ignored by the adapter with a warning. Do not treat it as an active
-cache guarantee.
+<details>
+<summary>Tools owned directly by the Experiment coordinator</summary>
 
-## 3.6 Single-model environment mode
+Experiment can use `mp_search_materials` and `mp_download_structure` for Materials Project discovery. It can call `get_avail_remote_task` to understand what the deployment exposes to workers. It does not bypass the worker layer to call `remote_submission` directly.
 
-When the selected YAML file does not exist, a single model can be enabled with:
+</details>
 
-```bash
-export CATMASTER_LLM_PROVIDER=openrouter
-export CATMASTER_LLM_MODEL=<OPENROUTER_MODEL_ID>
-export OPENROUTER_API_KEY="<YOUR_KEY>"
+Reference prompt:
+
+```text
+Use Experiment to inspect structures/POSCAR and build a reviewable set of surface candidates for CO adsorption.
+
+Identify the material, cell, and existing Selective Dynamics first, then choose the appropriate workers, skills,
+and tools. Compare reasonable (111) terminations, create representative adsorption sites and CO starting
+geometries, and retain provenance and structure checks at every stage.
+
+Do not prepare every possible VASP job at the outset. Reduce candidates using geometry and coordination first,
+and explain any chemical choices that still need my decision. You may create structures and reports in this turn,
+but do not submit remote computation.
 ```
 
-Optional values:
+## Literature Review agent: building traceable evidence
 
-```bash
-export CATMASTER_API_KEY_ENV=OPENROUTER_API_KEY
-export CATMASTER_BASE_URL=https://openrouter.ai/api/v1
-export CATMASTER_TEMPERATURE=1.0
-export CATMASTER_REASONING_EFFORT=high
+Literature Review does more than rewrite search snippets. It discovers papers, obtains legitimately accessible text, distinguishes metadata from abstract and full-text evidence, deduplicates records, reads selected sources, builds evidence tables, and finalizes citation metadata after papers have been chosen.
+
+It can begin with public web search and, when configured, open a controlled browser. That browser may reuse the user's authorized institutional session, but it does not bypass CAPTCHA, paywalls, or security warnings. Existing PDFs, Markdown, and tables can be ingested into a local corpus for repeated question-focused retrieval. Citation finalization uses a deterministic batch tool rather than asking the model to guess every bibliographic field.
+
+This entry supports topic reviews, method comparisons, full-paper reading, bilingual readers, claim-evidence matrices, citation placement, reference verification, and full-text availability records. It does not run materials calculations, and it must not write detailed method claims from title or abstract evidence alone.
+
+<details>
+<summary>Current Literature Review tools and skills</summary>
+
+Direct tools are `web_search`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`. A working `agent-browser` installation adds a filtered browser surface for dynamic pages and user-authorized sessions.
+
+Core skills include `nature-academic-search`, `nature-downloader`, `nature-reader`, `nature-citation`, `nature-ref-verifier`, and `nature-literature-pipeline`. They cover search strategy, legitimate full-text acquisition, figure-aware reading, claim-level citation support, metadata verification, and larger literature workflows.
+
+</details>
+
+Reference prompt:
+
+```text
+Use Literature Review to study anti-sintering strategies for Pd catalysts published since 2021, with emphasis
+on isolated atoms on oxide supports and reversible redispersion. Design a broad search, save the strategy,
+and deduplicate titles, DOIs, and versions.
+
+Distinguish records that were only discovered from papers read at abstract, full-text, or supplementary level.
+Read the sources that directly discuss stabilization mechanisms, migration, or sintering experiments. Build a table
+of material, conditions, evidence type, conclusion, and limitation. Save the candidate table, unavailable list,
+evidence table, and final reference library. Do not invent parameters that cannot be verified.
 ```
 
-This binds one model to every role. It is useful for initial validation, but not
-ideal for maintaining a complex deployment.
+## Writing agent: turning evidence into manuscripts and figures
 
-## 3.7 Codex OAuth
+Writing is for work that already has source material. You can give it notes, result tables, figures, references, existing sections, or a venue template. It can draft, restructure, polish, lay out, and compile. The coordinator delegates substantive composition to a writing worker and conservative language revision to a polisher so that a prose pass does not casually change scientific structure or stance.
 
-Run device login in the `catmaster` environment:
+Its scope is much wider than English editing. Current skills cover manuscript sections, proposals, data-availability statements, citations and reference verification, publication figures, presentations, reviewer responses, pre-submission review, Chinese patent drafts, ACS LaTeX, Markdown PDF, and venue templates. It can read bounded PDF and Office content, work with existing LaTeX, produce editable figures, and compile deliverables.
 
-```bash
-python -c \
-'from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()'
+Writing must not invent results or add plausible references to fill a gap. Missing literature should go to Literature Review. Missing computation should be reported explicitly or coordinated through Research.
 
-cp configs/llm_codex_oauth.template.yaml configs/llm.yaml
+<details>
+<summary>Current Writing roles, tools, and skills</summary>
+
+The entry agent can use `generate_nanobanana_figure` and `review_pdf_manuscript`, and it delegates to `writing_worker_agent` and `writing_polisher_agent`. The writing worker can also use `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`, along with common file and lightweight scripting capabilities.
+
+Available skills include `nature-writing`, `nature-polishing`, `nature-citation`, `citation-management`, `nature-data`, `nature-figure`, `nature-reader`, `nature-response`, `nature-reviewer`, `nature-paper2ppt`, `nature-paper-to-patent`, `nature-ref-verifier`, `nature-academic-search`, `researchwrite`, `scientific-writing`, `scientific-visualization`, `achemso-latex-manuscript`, `venue-templates`, `markdown-pdf-export`, and the `avoid-ai-writing` quality skill.
+
+</details>
+
+Reference prompt:
+
+```text
+Use Writing to draft two Results subsections on surface stability from notes/result_contract.md,
+data/summary.csv, figures/, and writing/references.bib.
+
+Read the evidence first and propose the argumentative order, then select the relevant writing skills.
+Every number, uncertainty, material name, and citation must trace to the supplied files. Do not add missing data
+or new references. Write connected prose rather than an outline. Save the draft to writing/results_surface_v1.md
+and include a short evidence note that identifies decisions still requiring an author.
 ```
 
-OAuth credentials belong to the current system user. Do not copy the token
-store, package it, or use a personal OAuth profile as a shared identity for a
-multi-user service.
+## Peer Review agent: independently assessing a fixed manuscript
 
-## 3.8 Review, image, and writing settings
+Peer Review starts from one canonical manuscript PDF. It sends the same PDF to the models listed under `peer_review_models`, collects independent reports, and produces an editor-level synthesis of novelty, method, evidence, reporting quality, and submission risk.
 
-`peer_review_models` is a list of reviewer model labels. Each label produces an
-independent reviewer report, so list length directly affects calls, cost, and
-runtime:
+This differs from asking Writing to improve a paragraph. Peer Review keeps a referee perspective and does not directly rewrite the manuscript. Raw reports remain available because the editor synthesis may compress or select among them. The user decides which comments to accept, partly accept, clarify, or reject before handing a revision plan and source files to Writing.
 
-```yaml
-peer_review_models:
-  - reviewer-a
-  - reviewer-b
+<details>
+<summary>Current Peer Review tools and skills</summary>
+
+The main tool is `peer_review_request`, which sends one local PDF to every configured reviewer model and collects raw reports. The entry delegates a bounded episode to `peer_review_worker_agent`. That worker can read writing and writing-quality skills for review criteria and report quality, but it has no computation-worker tools.
+
+</details>
+
+Reference prompt:
+
+```text
+Use Peer Review on writing/submission/manuscript.pdf. This is the only canonical manuscript for this round.
+The Supplementary Information is writing/submission/si.pdf.
+
+Review it as a catalysis and computational-materials paper. Assess novelty, computational methods, structural
+models, controls, evidence-to-claim fit, figures, and reproducibility. Preserve every complete reviewer report,
+then produce an editor synthesis that distinguishes consensus, disagreement, required revisions, and optional
+improvements. Review only in this turn. Do not edit source files or write an author response.
 ```
 
-Image generation can use a separate label:
+## How the five agents hand work over
 
-```yaml
-image_generation:
-  model_label: image-model
-  image_config:
-    aspect_ratio: "4:3"
-```
+The entries share a workspace, but their responsibilities do not automatically merge. Research can delegate other specialists within an open objective. Direct Experiment, Writing, Peer Review, and Literature Review sessions remain focused on their own work.
 
-Writing attribution:
+When a task naturally moves to a new stage, ask the current agent to save complete handoff artifacts first. A Literature Review evidence table and reference library can feed a new Writing thread. Peer Review reports can feed a Writing revision thread. Experiment can leave a result contract, tables, and figures for Writing. This is easier to audit than repeatedly changing the role of one thread.
 
-```yaml
-writing:
-  author_name: "<AUTHOR_NAME>"
-```
-
-Whether a model receives images, audio, or video depends on `multimodal`
-capabilities and provider behavior. The runtime enables image blocks by default
-only for `openai`, `openrouter`, `anthropic`, `gemini`, and `langchain`.
-`codex_oauth`, `deepseek`, and `oai_compatible` default to disabled unless the
-profile declares support and a real call has verified it. A stored attachment is
-not necessarily sent to the model. Inspect `multimodal.prepared` events in
-Monitor.
-
-## 3.9 Runtime and Literature settings
-
-The standard YAML runtime defaults are:
-
-```yaml
-agent_runtime:
-  recursion_limit: 300
-  max_tool_calls: 120
-  deepagent_context_trigger_token_cap: 270000
-  print_state_messages: false
-  print_http_raw_post: false
-```
-
-These are safety and context-compaction controls, not quality sliders. Raising
-them blindly can increase loops, cost, and timeout exposure. In YAML mode, edit
-the YAML. Corresponding entries in `.env.example` mainly affect the no-YAML
-profile.
-
-The `literature` section controls search depth by role, public-web fallback,
-retries, and budgets. Start with the template, then tune it from a recorded
-Literature Review run. Deeper search usually means more web calls and context
-cost.
-
-## 3.10 Tool-output policy
-
-`CATMASTER_TOOL_OUTPUT_CONFIG` defaults to `configs/tool_output.yaml`. The
-current policy is:
-
-```yaml
-offload:
-  inline_data_enabled: true
-  preview_chars: 3000
-  offload_chars: 20000
-  offload_dir_rel: "_tool_outputs"
-```
-
-Complete output above the threshold is written under
-`files/_tool_outputs/`; Chat keeps a preview and path. Do not treat
-`configs/tool_policy.yaml` as the active specialist-runtime authorization
-surface. Actual access is defined by runtime allowlists, task audiences, and
-Review interrupts.
-
-## 3.11 Offline configuration check
-
-This command parses the profile without calling a model:
-
-```bash
-python -c 'from catmaster.llm.config import LLMProfile; p=LLMProfile.from_env_or_file(); print("models:", sorted(p.models)); print("roles:", p.agents)'
-```
-
-After parsing succeeds, start the WebUI and run a short conversation. Successful
-parsing does not prove that the key, model ID, endpoint, tool calling, or
-multimodal support works.
+The next chapter explains how to select entries, inspect delegation, review files, and steer a running agent in the WebUI. Model providers and role routing now live in Chapter 10 so that a first-time user does not need to learn configuration before understanding what CatMaster can do.

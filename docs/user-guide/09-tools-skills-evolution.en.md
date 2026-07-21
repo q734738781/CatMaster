@@ -1,217 +1,112 @@
-# 9. Tools, skills, and evolution
+# 9. Project files, continuity, and reusable methods
 
 [Previous](08-remote-execution.en.md) | [Contents](README.en.md) | [Next](10-deployment-operations.en.md)
 
-Tools determine which actions an agent can perform. Skills define how to perform
-work. Evolution determines whether a workspace can propose and activate a
-project-level improvement. They work together but do not replace one another.
+CatMaster is most useful when a project accumulates structures, data, scripts, literature, manuscripts, and reviewable decisions across many sessions. The workspace holds that continuity. Users and agents share `files/`, while the system uses `metadata/` for threads, checkpoints, observability, and remote state.
 
-## 9.1 Base tools
+## Organize around research, not code modules
 
-The DeepAgents runtime provides basic task and file tools such as:
+Do not create directories named after tools or agents unless that matches the scientific project. A surface-catalysis workspace might evolve into:
 
 ```text
-write_todos
-ls
-read_file
-write_file
-edit_file
-glob
-grep
-execute
-read_document
+files/
+  literature/
+  structures/
+    bulk/
+    slabs/
+    adsorption/
+  calculations/
+    bulk_reference/
+    slab_screen/
+    adsorption/
+  data/
+  scripts/
+  notes/
+  figures/
+  writing/
 ```
 
-`read_document` performs bounded parsing of PDF, DOCX, XLSX, and PPTX. `execute`
-is for project preparation, checking, lightweight scripts, dependency probes,
-and postprocessing. It is not a route around DPDispatcher for VASP, CP2K,
-LAMMPS, ORCA, xTB, CREST, or managed MLFF.
-
-## 9.2 Domain tools
-
-Registered CatMaster tools broadly cover:
-
-- Structure building, conversion, surfaces, adsorption, and geometry analysis.
-- VASP, CP2K, LAMMPS, ORCA, xTB/CREST input preparation and result analysis.
-- Trajectories, vibrations, thermodynamics, bands, DOS, elasticity, and data
-  analysis.
-- ML data, active learning, symbolic regression, MACE train/eval, and MLFF task
-  schemas.
-- Materials Project, literature search, local corpora, web access, and citation
-  management.
-- Figures, document reading, Markdown PDF, TeX compilation, and image generation.
-- DPDispatcher task catalogs, single-stage submission, batch submission, and
-  receipts.
-
-Not every agent sees every tool. Runtime allowlists and task `audiences` define
-the actual specialist or worker surface. A prompt normally does not need to
-force a tool name unless it is querying a task schema or reproducing a known
-call.
-
-## 9.3 Tool schema as an interface
-
-The agent constructs arguments from tool descriptions and JSON schemas. An
-optional field should usually be omitted or passed as an empty object or array,
-not guessed as `null`. Remote task parameters should be queried from the catalog
-because backend status, models, defaults, and override keys depend on deployment.
-
-If an agent repeatedly sends an empty critical parameter:
-
-1. Expand the tool card in Chat and inspect final arguments.
-2. Query the catalog's full spec.
-3. Correct the action in a Review card, or reject and request a rebuild.
-4. Put a reusable correct contract in a project skill instead of repeating it
-   in every prompt.
-
-## 9.4 What a skill is
-
-A skill is a task SOP with `SKILL.md` and optional references, scripts,
-templates, and acceptance rules. Main skill groups currently cover:
-
-| Group | Typical scope |
-|---|---|
-| Materials | Bulk, slab, termination, adsorption, defects, VASP, CP2K, NEB, phonons, and MLFF |
-| Dynamics | CP2K AIMD, LAMMPS, MLFF MD, restart, and trajectory analysis |
-| ML | Datasets, MACE training/evaluation, and active learning |
-| ORCA/xTB | Conformers, xTB, CREST, ORCA opt/freq/TS/IRC/TDDFT/NMR |
-| Research | Planning, state, evidence, and cross-specialist coordination |
-| Literature | Search, reading, corpora, citations, and reports |
-| Writing | Manuscripts, responses, figures, LaTeX, PDF, and language editing |
-| Execution | Remote stage layouts and DPDispatcher receipt recovery |
-| Writing quality | Natural prose while preserving technical facts |
-
-A placeholder directory without a valid `SKILL.md` is not an available
-capability.
-
-## 9.5 Skill load locations
-
-Each run stages applicable built-in skills under:
+Materials, Dynamics, and Writing can all use this layout. The same structure does not need to be copied into agent-specific folders. If an established project already has conventions, tell the agent to preserve them.
 
 ```text
-files/.deepagents/skills/<group>/
+This is an existing project. Read the files root, notes/project_conventions.md, and recent relevant results
+to understand its layout, names, units, and versioning. Do not reorganize the project to match a CatMaster example.
+
+In this turn, report your understanding of authoritative inputs, derived files, and ambiguities, and recommend
+where later artifacts should go. Do not move, delete, or overwrite anything.
 ```
 
-Workspace self-development overlays can replace a built-in skill of the same
-name. Staged content is a runtime snapshot. Editing it casually during a task
-does not update the repository skill.
+## Separate originals, derived results, and deliverables
 
-A skill supplies method, not authorization. A remote stage-layout skill can
-describe VASP directories, but an agent without `remote_submission` in its
-allowlist still cannot submit.
+Database downloads, instrument data, uploaded structures, and manuscript sources are originals. Preserve them with provenance. Standardized structures, filtered data, calculation stages, and generated figures are derivatives and should trace back to their inputs and methods. Final tables, figures, and reports should point to editable source and scripts.
 
-## 9.6 Project scripts
+An agent can maintain a manifest or local README with paths, dates, sources, parameters, and versions. It should not create a forest of empty directories and templates before the project contains work. Add documentation when there is something real to describe.
 
-When an agent writes a reusable lightweight operation, place it in `scripts/`
-and record at least:
+Keep an original structure and use names that express meaningful transformations, such as `ceo2_111_t0_raw.vasp`, `ceo2_111_t0_fixed.vasp`, and `ceo2_111_t0_pd_site03.vasp`. For large candidate sets, use a CSV or Markdown ledger rather than encoding every parameter in filenames.
+
+## Reproducible scripts for project-specific work
+
+Registered tools cover common operations, but research creates specialized analyses. A worker can use Python or shell for a bounded local step. Logic that will be reused, affects scientific conclusions, or handles a large batch should be saved under `scripts/` rather than hidden in one ephemeral command.
+
+A reusable script should state its creation date, related agent, purpose, method, inputs, outputs, units, important parameters, and failure behavior. Reports should preserve the actual command or config used.
 
 ```text
-creation date
-agent or source
-purpose and scientific principle
-inputs and outputs
-units and critical parameters
-dependencies
-failure modes
-minimal example
+Create a reusable script under scripts/ to analyze Pd-cluster connectivity in trajectories/run1.traj.
+Parameterize input path, Pd-Pd cutoff, periodic boundaries, and frame stride rather than hard-coding this file.
+Write per-frame components, largest-cluster size, and representative-frame indices.
+
+Run a minimal validation on the current trajectory and document the command, cutoff rationale, outputs,
+and limitations under notes/. Do not leave the implementation only inside one execute call.
 ```
 
-One-off shell snippets are useful for exploration. Logic that will be reused,
-affect scientific results, or be called by later threads should become an
-auditable script.
+## Artifacts connect conversation to project files
 
-## 9.7 Sequential work in a shared workspace
+Files written by an agent can be registered as artifacts and appear as clickable cards in Chat. The inspector chooses a text, table, image, PDF, structure, or trajectory renderer from the file type. An artifact points to the real workspace file rather than duplicating it, so later moves or deletion affect the link.
 
-Specialists and workers share one workspace. The runtime delegates one at a time
-and waits for the result, preventing several agents from writing the same
-directory concurrently. Provider support for `parallel_tool_calls` does not make
-project writes safe to parallelize.
+Very long tool output is previewed in Chat and stored under `files/_tool_outputs/`. A final result should point to the full file or a clearer derived report rather than relying on a truncated preview.
 
-Truly independent remote stages can use `remote_submission_batch` inside one
-managed call. Do not replace that contract with several agents submitting in
-parallel.
+Remote receipts are important artifacts as well. They connect a local stage, remote job, and transfer state. Do not treat all of `files/.deepagents/` as disposable cache when a project contains recoverable submissions.
 
-## 9.8 Review-mode boundary
+## Project memory stores stable conventions
 
-Review interrupts only before `write_file`, `edit_file`, `remote_submission`, and
-`remote_submission_batch`. It does not replace:
+Workspace memory is for information that should influence future tasks: fixed energy references, naming rules, units, Selective Dynamics policy, or durable writing preferences. A temporary SSH failure, a one-off path, current progress, or an unverified mechanism belongs in the thread, log, or stage report instead.
 
-- External project backup.
-- SSH and queue access control.
-- Remote task/resource audiences.
-- Human review of scientific settings and cost.
-- Scheduler management of an existing remote job.
+The more memory resembles a concise project convention document, the more reliably later agents can use it. A transcript dump makes future decisions worse.
 
-A stricter deployment needs controls at the network, account, file-permission,
-cluster-queue, and secret-manager layers.
+## Skill Evolution turns repeated methods into project capability
 
-## 9.9 Evolution modes
+A skill is appropriate when a full workflow repeats. If a stepped CeO2 project has repeatedly validated one termination audit, atom naming rule, fixed-layer policy, and report structure, the system can propose a workspace skill containing a complete `SKILL.md` and, where needed, references or scripts.
 
-Environment variable:
+In the default `observe` mode, static checks and an independent reviewer examine the candidate before it appears in Skill Evolution. The user can inspect the source run, rationale, target, old content, and proposed content, then choose Promote or Reject. A promotion affects the next run, not the current one.
 
-```bash
-export CATMASTER_SELF_EVOLUTION_MODE=observe
-```
-
-Values:
-
-| Mode | Behavior |
-|---|---|
-| `off` | Do not create candidates |
-| `observe` | Default; propose and review, then wait for human Promote or Reject |
-| `auto` | Promote automatically after gate and reviewer approval |
-
-WebUI evolution is fully disabled in `--no-login` mode. `auto` changes future
-run behavior and should be enabled only after an administrator validates
-candidate quality, rollback, and monitoring.
-
-## 9.10 Candidate lifecycle
+Good skill candidates include stable project-specific QC methods, directory and delivery contracts, a verified stage-and-result workflow for a remote task, or repeated writing and figure conventions. Temporary errors, one sample-specific threshold, fixed atom indices, and unverified scientific conclusions should not become skills. A skill changes method guidance, not tool permissions or remote availability.
 
 ```text
-terminal run trace
-  -> proposer: ignore / memory / skill
-  -> static gate
-  -> independent reviewer
-  -> observe: human decision
-  -> auto: automatic promotion
-  -> active from the next run
+Review the last three slab tasks and their audit reports in this workspace.
+Identify conventions that genuinely repeated and were independently validated. Separate stable rules
+from choices that belong only to one structure.
+
+If a reusable workflow exists, propose one project-skill candidate with applicability, inputs, checks,
+outputs, and non-generalizable boundaries. Do not turn one coordination cutoff or atom index into a universal rule.
+Keep the candidate in observe review and do not promote it automatically.
 ```
 
-A candidate can propose a complete memory file or one complete skill bundle. It
-cannot directly edit repository-built-in skills. The static gate checks path,
-size, symlinks, frontmatter, sections, references, and Python or Shell syntax.
-The reviewer is read-only.
+## Resume facts before resuming a plan
 
-Promotion uses content hashes, a target hash, and locking. If the target changed
-after proposal, promotion conflicts instead of overwriting it. Rollback likewise
-requires the target to remain at the promoted version.
+When returning to an old thread, checkpoints provide context, but current files are authoritative. Ask the agent to reread core artifacts and determine which work really completed, which files are incomplete, which remote tasks still exist, and which decisions remain open.
 
-## 9.11 Handle candidates in the UI
+```text
+Continue this project. Reread notes/progress.md, calculations/summary.csv, recent receipts,
+and relevant stages. Do not accept a chat statement of completion without checking the files.
 
-In Skill Evolution:
+Report confirmed completions, failed or incomplete items, remote jobs still active, and decisions I still own.
+Preserve every successful result and forbid duplicate computation. Recommend the next stage only after restoring facts.
+```
 
-1. Read the source run and reason for the candidate.
-2. Compare target, old content, and candidate content.
-3. Confirm it is project-specific and should not affect another workspace.
-4. Check that one accidental failure was not generalized into a permanent rule.
-5. After `Promote`, create a minimal validation run.
-6. `Reject` an unhelpful candidate and `Rollback` a regression.
+If the main objective changes, such as moving from surface computation to manuscript writing, create a Writing thread and pass a result contract, tables, figures, and bibliography. A clean evidence package is more reliable than a long transcript summary.
 
-Candidates are shared across threads in the same workspace and load on the next
-run. Promotion does not change a context that is already running.
+## What to back up
 
-## 9.12 Good and bad material for evolution
+A complete workspace recovery requires both `files/` and `metadata/`. Backing up `files/` preserves scientific artifacts but loses thread checkpoints, approval state, observability, and some artifact indices. Login deployments also need `<PROJECT_SPACE_ROOT>/.webui_auth/auth.sqlite`.
 
-Good candidates:
-
-- Stable project directory, naming, unit, and delivery contracts.
-- Repeatedly verified structure checks or analysis steps.
-- Stable stage preparation for a specific remote task.
-- Writing or reporting rules the user explicitly wants to retain.
-
-Bad candidates:
-
-- One network error, temporary filename, or single failed example.
-- SSH keys, tokens, accounts, or private host details.
-- Unvalidated scientific defaults.
-- Methods to bypass workers, Review, or remote-execution controls.
-- Instructions relevant only to the current turn.
+Back up while the WebUI is stopped or no run is writing. Large trajectories and calculation outputs can use site-specific incremental policies, but retain receipts, manifests, reports, and critical config alongside the data. Deployment, permissions, and upgrade procedures are in the next chapter.

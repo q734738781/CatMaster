@@ -1,57 +1,45 @@
-# 2. 系统概念与项目空间
+# 2. Agent、worker、skill 与 tool
 
 [上一章](01-quickstart.zh.md) | [目录](README.zh.md) | [下一章](03-llm-configuration.zh.md)
 
-CatMaster 不是一个把所有程序安装在同一台电脑上的聊天窗口。它由 control plane、项目空间、specialist agent、工具与 skill、远程执行后端共同组成。先理解这些边界，能避免路径、续跑和计算资源方面的大多数误操作。
+CatMaster 接受研究目标，并把工作落实为可以检查和继续使用的文件、计算阶段与证据。本章只说明各类能力怎样衔接。五个入口的详细角色、可用 tools、skills 和参考 prompt 见后续章节。
 
-## 2.1 系统边界
+## 四类执行单元
 
-```text
-浏览器
-  -> CatMaster WebUI 和 specialist runtime
-      -> 项目空间 files 与 metadata
-      -> LLM provider、网页与本地辅助工具
-      -> DPDispatcher
-          -> SSH/Slurm/Shell 机器
-              -> VASP、CP2K、LAMMPS、ORCA、xTB、CREST、MLFF
-```
+| 单元 | 作用 | 例子 |
+|---|---|---|
+| Agent | 接收一个研究阶段的目标，并决定由谁完成 | Research、Experiment、Literature Review、Writing、Peer Review |
+| Worker 或 specialist | 承担有边界的领域任务 | Materials、Dynamics、ML、ORCA/xTB，或文献、写作、审稿 specialist |
+| Skill | 提供领域方法、检查项和交付标准 | 表面构建、终止面筛选、轨迹分析、文献精读、论文写作 |
+| Tool | 读取或生成真实结果 | 解析结构、建立 slab、准备输入、提交远程 task、分析文件、编译文档 |
 
-Control plane 负责对话、规划、工具调用、文件编排、运行记录和远程提交。科学引擎在资源卡指定的执行环境中运行。二者可以在同一台主机，也可以完全分开。
+Research 也是可执行入口。它可以把开放问题拆成多个阶段，向 Literature Review、Experiment、Writing 或 Peer Review 下发任务，并在每个阶段返回后读取文件和证据，再决定继续、补查、返工或收束。具体领域动作由拥有相应 tools 与 skills 的 specialist 或 worker 完成。
 
-## 2.2 账号、项目根和 workspace
+Experiment 会继续把计算工作交给四类 worker：Materials 处理晶体、表面、吸附、缺陷、反应路径和性质；Dynamics 处理 AIMD、LAMMPS、MLFF MD、restart 和轨迹；ML 处理数据集、MACE 和主动学习；ORCA/xTB 处理分子、构象、xTB、CREST、ORCA、TS、IRC、TDDFT 和 NMR。
 
-`CATMASTER_PROJECT_SPACE_ROOT` 指向 WebUI 管理的总目录，不是某一个项目本身。
+## 一项研究任务可以推进到哪里
 
-默认登录模式：
+以"解释 Pd 单原子在 CeO2 上的稳定机制"为例，Research 可以先让 Literature Review 建立机制和表征证据表，再让 Experiment 判断哪些结构或能量问题能够计算。获得计算结果后，它可以要求 Writing 整合文献与计算证据，也可以把固定稿件交给 Peer Review 独立审查。
 
 ```text
-<PROJECT_SPACE_ROOT>/
-  .webui_auth/
-    auth.sqlite
-  users/
-    <username>/
-      default/
-        files/
-        metadata/
-      <another-workspace>/
-        files/
-        metadata/
+Research 目标
+  -> Literature Review：检索记录、证据表、引用库
+  -> Experiment：结构候选、计算 stage、远程结果、分析报告
+  -> Writing：Markdown、LaTeX、DOCX、图件或 PPTX
+  -> Peer Review：reviewer reports、editor synthesis、修订问题单
 ```
 
-无登录模式：
+实际工作可以停在任一明确边界，例如只完成文献证据、只建立候选结构、准备好计算但不提交、等待远程结果，或只整理现有结果。Prompt 中写清目标、输入路径、科学约束、是否允许远程计算和本轮停止点即可。
 
-```text
-<PROJECT_SPACE_ROOT>/
-  admin/
-    files/
-    metadata/
-```
+## 能力范围取决于入口和部署
 
-Workspace 是长期项目边界。不同催化体系、论文或数据集通常应使用不同 workspace。左侧栏允许切换、新建和删除 workspace。删除是实质性操作，先切换到其他 workspace，再按界面要求输入名称确认。
+每个 worker 只获得与职责相符的 tools 和 skills。Materials 可以建立 slab 和 VASP 输入；Writing 可以编译文稿和制作图件；Literature Review 可以检索、阅读、导入语料和整理引用。跨领域工作由 Research 或 Experiment 委派给合适的执行者。
 
-## 2.3 `files/` 和 `metadata/`
+远程执行还取决于部署端登记的 task、resource、machine 和 MLFF backend。Agent 可以查询当前 catalog，并只提交其中已启用且属于自身职责的 task。准备输入与远程执行是两项独立能力，详见[第 8 章](08-remote-execution.zh.md)。
 
-每个 workspace 必须同时有两个目录：
+## Workspace 与 thread
+
+每个 workspace 包含两个部分：
 
 ```text
 workspace/
@@ -59,87 +47,20 @@ workspace/
   metadata/
 ```
 
-`files/` 包含用户输入、agent 生成物、结构、脚本、计算 stage、报告和远程 receipt。它是用户与 agent 共同工作的区域。
+`files/` 是用户与 Agent 共同使用的项目区。上传的结构、论文和数据，以及生成的候选、脚本、报告、图件和远程结果都保存在这里。Prompt 中使用 `files/` 内的相对路径，例如 `structures/slab.vasp` 或 `writing/results.md`。
 
-`metadata/` 包含线程记录、checkpoint、运行观测、artifact 索引、远程临时 staging 和自进化状态。用户通常只备份和诊断它，不直接编辑、重命名或删除其中的文件。
+`metadata/` 保存 thread checkpoint、运行观测、artifact 索引和远程恢复信息。用户通常不直接编辑这里。完整备份应同时包含 `files/` 与 `metadata/`。
 
-旧式只有 `.catmaster` 的单根目录不会被自动迁移，并会被当前运行时拒绝。迁移旧项目时，应建立 `files/` 与 `metadata/`，再有选择地复制用户数据，不能把旧内部状态整包塞进新目录。
-
-## 2.4 Agent 看到的路径
-
-对 agent 而言，虚拟根目录映射到 workspace 的 `files/`。在提示词中推荐写：
+Thread 保存一条连续研究上下文。继续已有工作时，说明需要重新读取的文件、必须保留的条件和禁止重复的步骤，比只发送"继续"更可靠：
 
 ```text
-读取 structures/slab.vasp
-把报告写到 writing/surface_report.md
-分析 calculations/co_adsorption/opt/OUTCAR
+继续表面筛选。先读取 notes/termination_review.md 和
+structures/ceo2_111_candidates/，核对现有候选与上次审计。
+不要重新生成哈希一致的结构。从尚未决定的终止面继续，仍然不要提交远程计算。
 ```
 
-不要要求 agent 访问宿主机上的任意绝对路径，例如 `/home/user/private/...`。界面上传文件后，先确认它在 `files/` 下的相对路径，再把该路径告诉 agent。
+## 用户可以核对什么
 
-一个适合多数研究项目的目录：
+Chat 显示委派、Progress 和 tool 卡；Files 保存真实交付物；Monitor 记录执行过程；远程 receipt 提供可恢复的任务身份。Review 模式会保护通用文件写入和远程提交，但部分领域 tool 会在一次调用中直接生成声明的输出文件，因此仍应在 prompt 中写明输出路径和停止点，并在完成后检查文件内容。
 
-```text
-files/
-  literature/
-  structures/
-  calculations/
-  scripts/
-  notes/
-  writing/
-  attachments/
-  .deepagents/
-```
-
-不必预先创建全部目录。已有清晰布局时让 agent 延续现状。可复用脚本放进 `scripts/`，并记录日期、用途、输入输出和关键假设。
-
-## 2.5 Thread、turn 和 run
-
-这些概念不能互换：
-
-| 概念 | 含义 | 是否持久 |
-|---|---|---|
-| Workspace | 一个项目的数据和历史边界 | 是 |
-| Thread | 连续对话与 checkpoint | 是 |
-| Turn | 一次用户提交及其 agent 响应 | 是 |
-| Run | 一次 turn、steering 或审批恢复对应的执行与观测记录 | 是 |
-| Artifact | 注册到界面的文件或结果对象 | 是 |
-| Receipt | 远程提交的可恢复身份与状态记录 | 是 |
-
-左侧栏选择的是 thread，不是 run。同一 thread 内直接继续对话，checkpoint 会保持连续。当前 v2 没有历史 run 选择器、thread 分支、retry 或 `resume_selected_run` 控件。
-
-线程状态决定下一步：
-
-- `idle`、`stopped`、`error`：直接发送明确的继续指令。
-- `running`：发送文本会成为 `Steer`，排队到当前运行后的安全边界。
-- `interrupted`：使用消息内审批卡恢复，不要在 composer 里另发一条普通回复。
-
-## 2.6 Artifact、日志和证据
-
-Agent 写出的文件、附件和远程结果可以注册成 artifact，并在右侧 inspector 中打开。Chat 中的工具卡展示调用参数和返回摘要；Monitor 保存运行事件、模型文本、工具结果、token、费用和机器时间。
-
-长工具输出可能只在对话中显示预览，完整内容会按 `configs/tool_output.yaml` 落到 `files/_tool_outputs/`。因此，最终结论应指向文件、日志、receipt 或结构，而不只依赖一段聊天摘要。
-
-## 2.7 备份与恢复
-
-要完整恢复一个 workspace，必须一起备份 `files/` 和 `metadata/`。只备份 `files/` 会丢失 thread、checkpoint、审批状态和观测历史。
-
-登录部署还应单独备份：
-
-```text
-<PROJECT_SPACE_ROOT>/.webui_auth/auth.sqlite
-```
-
-建议在 WebUI 停止或确认没有写入中的 run 后做一致性备份。`files/.deepagents/` 内可能有 staged skills 和 DPDispatcher receipts，不要把整个隐藏目录当缓存清理。
-
-## 2.8 执行权限和科学责任
-
-CatMaster 按 entrypoint 把任务交给合适的 specialist 和 worker。协调层不会拥有所有科学工具，worker 也只能调用自己 allowlist 中的工具。受管远程任务还受 task、resource、machine 和 audience 约束。
-
-这些约束能减少误用，但不证明计算设置正确。用户仍需确认：
-
-- 体系、电荷、自旋、周期性和约束。
-- 赝势、泛函、基组、色散和收敛标准。
-- 温度、系综、时间步、采样长度和随机种子。
-- 单位、能量基准、原子映射和结果可比性。
-- 软件许可、集群策略和计算成本。
+这些记录便于复查过程，但不会代替科学判断。提交计算前仍需确认体系、电荷、自旋、约束、方法、收敛标准、采样条件、能量基准和成本。下一章按入口介绍五类 Agent 的能力与参考 prompt。

@@ -1,372 +1,169 @@
-# 8. Remote machines and execution
+# 8. Remote tasks: running prepared calculations
 
 [Previous](07-literature-writing-review.en.md) | [Contents](README.en.md) | [Next](09-tools-skills-evolution.en.md)
 
-CatMaster uses DPDispatcher to submit prepared calculation stages to SSH-reachable
-Slurm or Shell machines. Remote configuration has four layers: a machine defines
-connection, a resource defines where and with what allocation to run, a task
-defines the execution contract, and an MLFF backend maps a model and operation to
-a resource.
+CatMaster can generate structures, inspect files, and prepare calculation inputs locally, while VASP, CP2K, LAMMPS, ORCA, xTB, CREST, MACE, and other managed MLFF programs normally run on a cluster or GPU server. A remote task connects a local stage to a configured scientific program, compute resource, result transfer, and recovery record.
 
-## 8.1 Responsibilities
+Users do not need to memorize submission commands. Experiment assigns the scientific work to a domain worker. The worker queries the current task catalog, validates the stage and parameter schema, submits after approval, and brings status, logs, and results back into the original workspace. A receipt preserves the identity of the remote run.
 
-| Role | Responsibility |
-|---|---|
-| Administrator | SSH, remote root, queues, resource cards, environment scripts, executables, and licenses |
-| CatMaster worker | Prepare a stage from the task schema, run QC, submit, collect, and record a receipt |
-| User | Choose scientific settings, approve submission, accept cost, and verify results and recovery decisions |
+## Preparation support is not the same as configured execution
 
-An agent cannot arbitrarily move a registered task to another machine or
-resource. CPU/GPU overrides should be used only when the user explicitly asks
-and the site permits them.
+Many modeling tools work on every CatMaster installation. Materials can create slabs and VASP inputs, and Dynamics can prepare LAMMPS stages. Actual execution also requires administrator-provided SSH, remote directories, queues, environment scripts, licenses, and an enabled task.
 
-## 8.2 Create the four active configurations
+"The VASP stage is valid, but this deployment does not expose `vasp_execute`" is therefore a precise capability boundary. CatMaster does not silently run a scientific engine on the WebUI host when managed execution is unavailable.
 
-Files containing `template` are not loaded by the registries. Copy all four:
+Workers query the catalog before every real submission. Enabled state, resource binding, MLFF backend, model, and accepted override fields come from the current deployment, not an old prompt or manual snapshot.
 
-```bash
-cp configs/dpdispatcher/machines_template.yaml \
-   configs/dpdispatcher/machines.yaml
-cp configs/dpdispatcher/resources_template.yaml \
-   configs/dpdispatcher/resources.yaml
-cp configs/dpdispatcher/tasks_template.yaml \
-   configs/dpdispatcher/tasks.yaml
-cp configs/dpdispatcher/mlff_backends_template.yaml \
-   configs/dpdispatcher/mlff_backends.yaml
-```
+## Remote tasks in the repository template
 
-Active files contain hostnames, usernames, SSH keys, paths, and site setup. They
-are excluded from Git and deployment packages. Never copy real values into
-documentation, issues, prompts, or shared workspaces.
+The following tasks are defined by the public template. What users actually see depends on the private active configuration and worker audience.
 
-Other non-template YAML, YML, and JSON files in the directory may also load.
-Duplicate keys in several active files can be overwritten by later input, so
-maintain one clear source of truth.
+### VASP: single stages, paths, and dimer work
 
-## 8.3 Machine card
+`vasp_execute` runs one prepared VASP directory for relaxation, static, frequency, DOS, MD, or another stage created through the VASP preparation surface. `vasp_execute_neb` uses the larger VASP resource for NEB and dimer-style directories. The template also contains disabled `vasp_execute_k8s` support for a separately validated SSH-to-Kubernetes bridge.
 
-A basic Slurm CPU machine has this shape:
-
-```yaml
-cpu_server:
-  batch_type: Slurm
-  context_type: SSHContext
-  local_root: <LOCAL_WORK_ROOT>
-  remote_root: <REMOTE_WORK_ROOT>
-  retry_count: 0
-  remote_profile:
-    hostname: <CPU_LOGIN_HOST>
-    port: 22
-    username: <USERNAME>
-    key_filename: <PATH_TO_SSH_KEY>
-  env_setup: |
-    ulimit -s unlimited
-    module load <SITE_MODULES>
-```
-
-The template also defines:
-
-| Machine | Batch | Typical use |
-|---|---|---|
-| `cpu_server` | Slurm over SSH | VASP, CP2K, LAMMPS, xTB, CREST, ORCA, and general CPU |
-| `k8s_ssh_server` | Shell over SSH | Blocking SSH-to-Kubernetes bridge; its VASP task is disabled by default |
-| `gpu_server` | Shell over SSH | MACE, UMA, MatterSim, ORB, and general GPU |
-
-CatMaster replaces `local_root` with its metadata staging root for an actual
-submission. Keep a valid placeholder, but focus review on `remote_root`, the SSH
-profile, and the resource environment.
-
-## 8.4 SSH and directory acceptance
-
-Use a noninteractive key with restricted permissions:
-
-```bash
-chmod 600 <PATH_TO_SSH_KEY>
-ssh -i <PATH_TO_SSH_KEY> -p 22 <USERNAME>@<CPU_LOGIN_HOST>
-```
-
-Test noninteractive access from the control plane:
-
-```bash
-ssh -o BatchMode=yes -i <PATH_TO_SSH_KEY> \
-  <USERNAME>@<CPU_LOGIN_HOST> 'hostname; python3 --version'
-```
-
-Check that the remote root exists and is writable:
-
-```bash
-ssh -o BatchMode=yes -i <PATH_TO_SSH_KEY> \
-  <USERNAME>@<CPU_LOGIN_HOST> \
-  'mkdir -p <REMOTE_WORK_ROOT> && test -w <REMOTE_WORK_ROOT>'
-```
-
-For Slurm also check:
-
-```bash
-ssh -o BatchMode=yes -i <PATH_TO_SSH_KEY> \
-  <USERNAME>@<CPU_LOGIN_HOST> \
-  'command -v sbatch; command -v squeue; command -v scancel'
-```
-
-Confirm the host key interactively before automation. Do not hide a changed host
-identity with `StrictHostKeyChecking=no`.
-
-## 8.5 Environment order
-
-The remote command environment is assembled in this order:
+Before submission, Materials verifies INCAR, POSCAR, POTCAR, and KPOINTS, checks element and pseudopotential order, and confirms the directory contract. NEB also needs root inputs and consecutively numbered image directories. A remote task executes an accepted stage. It does not replace the scientific input audit.
 
 ```text
-machine.env_setup
-  -> resource.source_list
-      -> submission prepend_script
-          -> task command
+Use Experiment to recheck the VASP relaxation stage at calculations/co_adsorption/site_03/.
+Ask Materials to verify the structure, Selective Dynamics, POTCAR order, INCAR, KPOINTS, spin,
+and convergence settings, then query the current vasp_execute task spec and resource.
+
+Stop and explain any input or deployment problem. If all checks pass, show task, work_dir, resource,
+and important settings in the Review approval card. After execution, inspect program convergence and the
+final structure rather than reporting success from scheduler state alone.
 ```
 
-Every `source_list` script must exist remotely. A bad path fails before task
-startup with code 127. Put modules, conda activation, license variables, and
-library paths in site-controlled scripts, not in a task stage.
+### CP2K and LAMMPS
 
-## 8.6 Resource card
+`cp2k_execute` is available to Materials and Dynamics. It runs a CP2K stage containing `job.inp` plus every file referenced by its manifest. Materials uses it for conventional DFT and property-oriented work. Dynamics uses it for AIMD and restart-aware workflows.
 
-A resource binds capability to machine, audience, queue, and allocation. Template
-defaults are only examples:
-
-| Resource | Machine | CPU | GPU | Queue | Audience/use |
-|---|---|---:|---:|---|---|
-| `vasp_cpu` | `cpu_server` | 52 | 0 | `batch` | Materials, VASP stage |
-| `vasp_k8s_cpu` | `k8s_ssh_server` | 4 | 0 | `k8s` | Materials, K8s VASP |
-| `vasp_cpu_neb` | `cpu_server` | 104 | 0 | `batch` | Materials, VASP path |
-| `cp2k_cpu` | `cpu_server` | 32 | 0 | `batch` | Materials/Dynamics |
-| `lammps_cpu` | `cpu_server` | 16 | 0 | `batch` | Dynamics |
-| `general_cpu` | `cpu_server` | 4 | 0 | `batch` | Permitted custom CPU boot |
-| `general_gpu` | `gpu_server` | 16 | 1 | `main` | Permitted custom GPU boot |
-| `mace_gpu` | `gpu_server` | 16 | 1 | `main` | MACE |
-| `uma_gpu` | `gpu_server` | 16 | 1 | `main` | FairChem UMA |
-| `mattersim_gpu` | `gpu_server` | 16 | 1 | `main` | MatterSim |
-| `orb_gpu` | `gpu_server` | 16 | 1 | `main` | ORB-v3 |
-| `xtb_cpu` | `cpu_server` | 32 | 0 | `batch` | xTB |
-| `crest_cpu` | `cpu_server` | 32 | 0 | `batch` | CREST |
-| `orca_cpu` | `cpu_server` | 32 | 0 | `batch` | ORCA |
-
-Adapt queue, core count, GPU, walltime, and `source_list` to the site. Resource
-`audiences` determine which workers see it. Do not remove all audience controls
-for convenience.
-
-## 8.7 Task card
-
-The current template registers:
-
-| Task | Default resource | Main input |
-|---|---|---|
-| `vasp_execute` | `vasp_cpu` | One VASP stage |
-| `vasp_execute_k8s` | `vasp_k8s_cpu` | Same VASP stage, disabled by default |
-| `vasp_execute_neb` | `vasp_cpu_neb` | NEB/dimer directory |
-| `cp2k_execute` | `cp2k_cpu` | CP2K stage |
-| `lammps_execute` | `lammps_cpu` | LAMMPS stage |
-| `mlff_sp` | Chosen by backend | Multi-structure single point |
-| `mlff_relax` | Chosen by backend | Multi-structure relaxation |
-| `mlff_md` | Chosen by backend | Single-structure trajectory |
-| `mlff_neb` | Chosen by backend | Fixed-image path |
-| `mace_train` | `mace_gpu` | Dataset and training parameters |
-| `mace_eval` | `mace_gpu` | Dataset and evaluation parameters |
-| `xtb_run` | `xtb_cpu` | Molecular input and mode settings |
-| `crest_run` | `crest_cpu` | Molecule and conformer-search settings |
-| `orca_execute` | `orca_cpu` | `job.inp` stage |
-
-A task without `enabled` is enabled. Only `vasp_execute_k8s` is explicitly false
-in the template. Validate the bridge, shared directory, and blocking behavior
-before enabling it.
-
-## 8.8 MLFF backend environments
-
-Template defaults are:
-
-| Backend | Enabled | Default model | Operations |
-|---|---|---|---|
-| `mace` | true and default | `mh-1` | SP, relax, MD, NEB |
-| `fairchem_uma` | false | `uma-s-1p2` | SP, relax, MD, NEB |
-| `mattersim` | false | `mattersim-v1-1m` | SP, relax, MD, NEB |
-| `orb_v3` | false | `orb-v3-conservative-inf-omat` | SP, relax, MD, NEB |
-
-Each provider uses an isolated environment. Do not install these requirement
-sets into the control plane:
+`lammps_execute` belongs to Dynamics. It runs a validated LAMMPS stage with input script, data or restart, and potential files. Successful startup does not prove that the force field is suitable. Element mapping, units, boundaries, neighbor behavior, and potential domain still need preflight review.
 
 ```text
-requirements/mace.txt
-requirements/uma.txt
-requirements/mattersim.txt
-requirements/orb.txt
+Continue calculations/cp2k_aimd_600K_part1/.
+Ask Dynamics to verify the last valid restart, coordinates, velocities, random state, and time line.
+Build part2 in a separate directory and never overwrite part1. Query the current cp2k_execute spec,
+show whether continuation settings match, and wait for approval before submission.
+
+After transfer, inspect restart continuity, temperature, energy, and trajectory completeness before joining segments.
 ```
 
-Create separate remote environments and point each resource `source_list` to its
-activation script. Reference scripts are under:
+### Unified MLFF tasks: SP, relax, MD, and NEB
+
+`mlff_sp`, `mlff_relax`, `mlff_md`, and `mlff_neb` use common task names. The backend configuration selects MACE, FairChem UMA, MatterSim, or ORB-v3. This keeps one scientific workflow across enabled providers rather than duplicating tools for every model family.
+
+The public template enables only MACE `mh-1` by default. UMA, MatterSim, and ORB-v3 appear only after an administrator installs an isolated environment, weights, resource, and a passing smoke case. `get_remote_task_spec` returns valid model, device, dtype, optimizer, ensemble, and other operation fields for the current backend. Do not copy overrides from an older deployment.
+
+`mlff_sp` and `mlff_relax` can process several structures directly under one stage's `input/`, so a multi-structure screen is not automatically a remote batch. `mlff_md` accepts one start or restart structure. `mlff_neb` accepts a locally constructed, validated fixed-image path.
 
 ```text
-configs/dpdispatcher/env_templates/
+Pre-screen structures/adsorption_candidates/ with an enabled MLFF.
+Ask Materials to query current backends and the mlff_sp and mlff_relax schemas, then recommend a model
+based on element coverage and purpose. Run batch single points first, inspect abnormal energies and failures,
+and relax only the candidates worth retaining.
+
+Before approval, show model, device, dtype, input count, output location, and ranking method.
+Report this as MLFF screening and identify candidates recommended for DFT with their risks.
 ```
 
-Keep model tokens, caches, and license variables in the private remote
-environment, never in YAML, stages, or prompts. Set a backend to `enabled: true`
-only after dependencies, weights, device, and a minimal smoke case pass.
+### MACE training and evaluation
 
-## 8.9 Canonical stage layouts
+`mace_train` and `mace_eval` belong to ML. Training reads `dataset/` and `params/train_params.json` and returns checkpoints, logs, and other output under `output/`. Evaluation uses `params/eval_params.json` against a defined held-out or benchmark set.
 
-| Task | Stage-root requirement |
-|---|---|
-| `vasp_execute` | `INCAR`, `POTCAR`, `POSCAR`, `KPOINTS` |
-| `vasp_execute_neb` | Root `INCAR`, `POTCAR`, `KPOINTS`; `00/POSCAR ... NN/POSCAR` |
-| `cp2k_execute` | `job.inp`, `manifest.json`, and referenced files |
-| `lammps_execute` | `in.lammps`, `manifest.json`, `system.data` or restart, and potential files |
-| `orca_execute` | `job.inp` and local referenced files |
-| `xtb_run`, `crest_run` | Default `input.xyz`, or an overridden input name |
-| `mlff_sp`, `mlff_relax` | Structures directly under `input/`, optional `models/` |
-| `mlff_md` | Exactly one start or restart structure under `input/` |
-| `mlff_neb` | `input/path/00.vasp ... NN.vasp` |
-| `mace_train` | `dataset/`, `params/train_params.json` |
-| `mace_eval` | `dataset/`, `params/eval_params.json` |
-
-Every referenced input must remain inside the stage. Do not use symlinks to
-outside project space. `mlff_sp` and `mlff_relax` already accept several
-structures under `input/`; multiple structures alone are not a reason to use
-`remote_submission_batch`.
-
-## 8.10 Query the task schema first
-
-The runtime task schema is the source of truth. A request can say:
+The worker audits data and prepares the stage before training. Units, labels, split, E0, head, replay, and fine-tuning policy are scientific inputs that a remote task cannot repair automatically. After training, analyze held-out error and failure cases instead of reporting the final epoch alone.
 
 ```text
-Call get_avail_remote_task and confirm mlff_relax is available. Then query the
-full get_remote_task_spec schema for backend=mace. Prepare only
-calculations/si_relax/, list defaults and overrides requiring my decision, and do
-not submit yet.
+Check whether ml/mace_finetune_v1/ is ready for mace_train.
+Ask ML to reread the dataset manifest, train/validation/test split, and train_params.json.
+Verify labels, units, E0, seed, foundation checkpoint, and replay settings.
+
+Query the current mace_train resource and estimate input scale. Show critical training parameters in Review.
+After approval and execution, retain the checkpoint, complete logs, and config, then prepare mace_eval separately.
+Do not substitute training error for independent testing.
 ```
 
-`template_overrides` controls task scientific or method parameters.
-`submission_config` controls the submission layer, including check interval,
-permitted CPU/GPU overrides, and cleanup. Do not mix them. Machine and resource
-come from task/backend registration, not free-form agent choice.
+### xTB, CREST, and ORCA
 
-## 8.11 Single stage and batch
+`xtb_run` supports staged molecular optimization, energy, Hessian, or short MD modes defined by the task. `crest_run` performs conformer search. `orca_execute` runs an ORCA stage containing `job.inp` and its local dependencies. All belong to ORCA/xTB.
 
-`remote_submission`:
-
-- `work_dir` is one complete stage.
-- The call blocks until a terminal state.
-- Defaults are `check_interval=30` seconds and `clean_remote=false`.
-
-`remote_submission_batch`:
-
-- The parent contains at least two first-level child directories.
-- Every child is an independent complete stage.
-- Discovery is not recursive.
-- All children share the same task and configuration.
-- The call waits for all children to reach terminal state.
-
-Do not poll or resubmit while the tool call is still pending. Duplicate
-submission of one stage can create two billable jobs.
-
-## 8.12 Staging, return, and receipts
-
-CatMaster copies a stage into workspace metadata staging before DPDispatcher
-uploads it. At terminal state, results merge back into the original `files/`
-stage. Every stage forcibly returns:
+The worker verifies charge, unpaired-electron or multiplicity convention, solvent, method, basis, and structure before submission. CREST and xTB are often low-cost filters, while selected conformers enter ORCA optimization, frequency, thermochemistry, TDDFT, NMR, or path work. The task executes one stage. Skills organize the larger molecular workflow.
 
 ```text
-status.json
-stdout.log
-stderr.log
+Run ORCA opt+freq for the six structures under molecules/conformers_selected/.
+Ask ORCA/xTB to verify conformer deduplication, charge, multiplicity, solvent, method, and basis,
+then create an independent stage for each structure. Query orca_execute and verify the ORCA and MPI environment.
+
+Before managed batch submission, show all six stage paths and common settings. After transfer, check normal
+termination, gradient, and imaginary modes for every conformer. Do not hide a failed conformer behind batch totals.
 ```
 
-Receipt physical path:
+## How an agent chooses task, resource, and parameters
+
+A worker calls `get_avail_remote_task`, then `get_remote_task_spec` for the full schema and `get_avail_resources` when resource detail matters. It constructs the submission from these results rather than freely choosing a machine, queue, or command.
+
+The task defines the execution contract and default resource. The resource defines machine, CPU/GPU, queue, walltime, environment scripts, and audience. The machine defines SSH behavior and remote work root. Ordinary users mainly need to assess availability, scientific settings, resource suitability, and cost. Administrator configuration is in Chapter 10.
+
+Scientific and method controls use `template_overrides`. Submission-layer controls use `submission_config`. Accepted keys come from the current task spec. Do not place model, optimizer, temperature, or scientific method in submission controls, and do not mix polling or cleanup controls into scientific overrides.
+
+## One stage versus a remote batch
+
+`remote_submission` accepts one complete stage. `remote_submission_batch` accepts a parent directory whose first-level children are independent complete stages sharing one task and submission configuration. It does not recursively discover deeper directories and should not split a multi-structure MLFF stage.
+
+Batch submission preserves per-stage status within one managed call. The agent should still list every discovered child and verify the count. If part of a batch fails, preserve successful results and retry only confirmed failures.
 
 ```text
-files/.deepagents/dpdispatcher/receipts/
-  dp_<timestamp>_<hash8>.json
+Prepare a managed VASP batch from calculations/vacancy_screen/.
+List every first-level child and validate canonical VASP inputs in each. If any stage is incomplete or inconsistent,
+report it before submitting anything. After confirming count, task, resource, and common settings, wait in Review.
+Do not recurse into deeper folders and do not recompute existing successes.
 ```
 
-The agent sees a relative path beginning with `.deepagents/...`. Important
-fields are:
+## What a remote run leaves in the workspace
 
-| Field | Purpose |
-|---|---|
-| `remote_context_id` | CatMaster remote-context identity |
-| `submission_hash` | DPDispatcher recovery and download identity |
-| `receipt_rel` | Workspace-relative receipt path |
-| `task_name`, `work_dir_rel` | Task and original stage |
-| `submitted_at`, `updated_at`, `duration_s` | Timeline |
-| `jobs`, `job_status_counts` | Scheduler jobs and state counts |
-| `resources` | Effective resource summary |
+CatMaster copies the stage into metadata staging, DPDispatcher transfers it, and terminal results merge back into the original `files/` stage. Every task should return at least `status.json`, `stdout.log`, and `stderr.log`, plus program-specific output.
 
-A successful response should also include `task_count`, `task_state_counts`, and
-`submission_dir`. Preserve these values instead of copying only "calculation
-finished."
+A receipt is saved under `files/.deepagents/dpdispatcher/receipts/`. It records task, original work directory, submission time, remote context, submission hash, job state, resources, and updates. This is what allows a job to remain identifiable after WebUI disconnect, network error, or local process exit.
 
-## 8.13 Failure and recovery
+Chat shows receipt cards, Files opens results, and Monitor records tool state. Scientific acceptance should correlate receipt, scheduler state, stdout/stderr, program convergence, and domain results.
 
-A network interruption or local exception does not prove the remote job was
-cancelled. Use this order:
+## Stop, disconnects, and recovery
 
-1. Preserve `remote_context_id`, `submission_hash`, and `receipt_rel`.
-2. Determine whether the original tool call reached terminal state. Do not
-   inspect or resubmit while it is pending.
-3. Use the scheduler and receipt to classify the job as not created, queued,
-   running, terminated, or finished but not downloaded.
-4. Collect finished results and terminated logs first.
-5. Resubmit only after confirming the old job will not continue consuming
-   resources or overwrite results.
-6. Use `clean_remote=true` or cleanup commands only after results and logs are
-   downloaded.
+WebUI Stop ends the local agent turn. It does not cancel a Slurm or remote-shell job. A network disconnect also does not prove the job stopped. Blindly resubmitting the same stage can create duplicate billed jobs and conflicting outputs.
 
-An empty `submission_hash` normally means there is no recoverable DPDispatcher
-record. For a nonempty hash, run from the corresponding project's `files/`
-directory as appropriate:
+Recovery begins from `remote_context_id`, `submission_hash`, and `receipt_rel`. Check the scheduler and DPDispatcher record to decide whether the job was never created, queued, running, terminated, or completed without download. Retrieve completed outputs and termination logs first. Consider resubmission only after proving the old job will no longer consume resources or write results.
 
-```bash
-dpdisp submission <submission_hash> --download-finished-task
-dpdisp submission <submission_hash> --download-terminated-log
-dpdisp submission <submission_hash> --reset-fail-count
-dpdisp submission <submission_hash> --clean
+```text
+The previous remote_submission returned an SSH error. Do not resubmit.
+Read the message receipt and matching file under .deepagents/dpdispatcher/receipts/.
+Confirm remote_context_id, submission_hash, task, original stage, and known job state.
+
+Use scheduler and DPDispatcher evidence to determine whether it is running, complete but not downloaded,
+or truly terminated. Retrieve finished results and failure logs first, then propose recovery. Do not resubmit
+or clean the remote directory until I confirm the old job state.
 ```
 
-Do not execute all four blindly. Download and classify first. Use the last two
-only when their effect is understood.
+Administrator recovery commands are listed in Chapter 11. Remote cleanup is appropriate only after results and logs are safely local.
 
-## 8.14 Remote smoke tests
+## Protecting submission with Review mode
 
-List suites and cases without submitting:
+In Review mode, `remote_submission` and `remote_submission_batch` pause before execution. Check that the stage path is the version just reviewed, task and backend match the objective, resource and task count fit the budget, overrides come from the current schema, and cleanup will not remove needed evidence or collide with an old job.
 
-```bash
-python scripts/remote_execution_smoke.py --list
-```
+You do not need to repeat this checklist in every prompt. "Remote submission must wait for Review approval" is enough for the agent to prepare a concrete action card.
 
-One real example:
+## Sources of remote-task capability
 
-```bash
-python scripts/remote_execution_smoke.py \
-  --case mace_sp \
-  --project-space /tmp/catmaster_remote_smoke \
-  --stop-on-failure
-```
+<details>
+<summary>Remote tools and execution skills visible to workers</summary>
 
-Every mode except `--list` submits real calculations that may queue, consume
-credits, and use licenses. Do not begin with `--suite all`. Run one minimal case
-for a configured backend or CPU engine, inspect its stage, receipt, logs, and
-returned files, then expand coverage.
+Materials, Dynamics, ML, and ORCA/xTB receive `get_avail_remote_task`, `get_remote_task_spec`, `get_avail_resources`, `remote_submission`, and `remote_submission_batch` according to their audiences.
 
-## 8.15 Administrator acceptance
+`remote-stage-layouts` defines canonical input layouts and preflight checks. `dpdispatcher-remote-receipts` applies only after a failed or ambiguous call, or evidence of an orphan job. It is not a polling mechanism for a normal synchronous call that is still pending.
 
-Before opening the service to users, confirm:
+</details>
 
-1. Every machine in use supports noninteractive login.
-2. `remote_root` is writable and Slurm or Shell behavior matches the card.
-3. Every `source_list` exists and loads the correct program.
-4. Queue, CPU, GPU, walltime, and audience are correct.
-5. All four active configurations exist and templates are not mistaken for
-   active files.
-6. The task catalog exposes only installed and authorized capabilities.
-7. Every enabled MLFF backend passes an independent minimal case.
-8. Every engine produces `status.json`, stdout, stderr, and a receipt.
-9. A simulated transfer failure can be recovered from the receipt without
-   recomputation.
-10. Active configs, SSH keys, tokens, and license data stay out of Git and
-    project files.
+## Connecting a machine for the first time
+
+An administrator configures machine, resource, task, and optional MLFF backend before a worker queries the catalog. Do not begin with the full smoke suite. Submit one inexpensive real case for one installed engine, verify environment, result transfer, receipt, and failure recovery, then enable other capabilities gradually.
+
+Ordinary users do not edit these YAML files. Ask the agent to query current availability and wait for submission approval. If the task is missing, send the precise blocker to the administrator rather than asking the agent to guess cluster configuration.

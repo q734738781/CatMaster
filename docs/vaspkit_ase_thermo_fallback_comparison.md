@@ -1,7 +1,7 @@
 # VASPKIT vs ASE Thermochemistry Fallback
 
 > Validation note for maintainers and advanced auditors. User setup and feature
-> guidance is in [Deployment, operations, and security](user-guide/10-deployment-operations.en.md).
+> guidance is in [Installation, model configuration, and deployment](user-guide/10-deployment-operations.en.md).
 
 This note records how closely the current ASE fallback matches the reference `vaspkit` outputs staged under:
 

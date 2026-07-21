@@ -1,260 +1,128 @@
-# 4. WebUI guide
+# 4. Working with agents in the WebUI
 
 [Previous](03-llm-configuration.en.md) | [Contents](README.en.md) | [Next](05-agents-and-modules.en.md)
 
-The WebUI v2 path is: sign in, select a workspace, select a thread, set the
-entrypoint and permission mode, submit a turn, observe Chat and Monitor, then
-continue in the same thread. The left rail is not a historical run selector.
+The WebUI keeps conversation, project files, agent activity, human approval, and run observability on one page. You do not need to learn every backend state. Two habits matter most: ask the agent to save important results in the workspace, and inspect what it actually did when it changes a scientific structure or submits remote computation.
 
-## 4.1 Sign-in and registration
+## Dividing work into workspaces and threads
 
-Sign-in is enabled by default. A new user can register after completing the
-arithmetic challenge, then enters a private user root. A session normally lasts
-14 days. Each account is confined to its own `users/<username>/` tree.
+The workspace selector is at the top of the left rail. A workspace is a long-lived project containing files, conversations, run records, and project-specific experience. Separate catalyst systems, manuscripts, or ML datasets usually belong in separate workspaces so that file search and project memory do not mix unrelated research.
 
-Built-in authentication is suitable for local or protected networks, not as a
-complete public identity platform. Registration is open by default, the cookie
-does not use the Secure flag, and the service does not terminate TLS. See
-[Deployment, operations, and security](10-deployment-operations.en.md) for a
-shared deployment.
+A workspace can contain many threads. Use a thread for one continuing line of work, such as "CeO2 surface models," "ORR free energies," or "second manuscript revision." Returning to the same thread preserves checkpoint continuity. A new thread begins a separate conversational context, so include the necessary paths and assumptions again.
 
-`--no-login` opens the shared `admin` space and disables Skill Evolution. Use it
-only on a trusted machine bound to `127.0.0.1`.
+The left rail also contains a compact file tree. Use it to open a structure, report, or log quickly. The full upload, preview, and download controls are in the Files view.
 
-## 4.2 Page layout
+## Choose the entry that matches the main deliverable
 
-The current UI has a left rail, central work area, and right inspector, with four
-main views:
+The composer lets you select Research, Experiment, Writing, Peer Review, or Literature Review before a run begins. The entry cannot be changed while the agent is running because each one builds a different agent with different tools and workers.
 
-| View | Purpose |
-|---|---|
-| Chat | Conversation, Progress, tool cards, subagent activity, approval cards, artifacts, and remote receipts |
-| Monitor | Overview, Live, Events, Raw, and Details observability |
-| Skill Evolution | Candidate improvements, Promote, Reject, and Rollback; account mode only |
-| Files | Browse, Preview, and Uploads |
+Choose Experiment for a bounded structure, calculation, or trajectory task. Use Literature Review for evidence discovery and reading, Writing when source material already exists, and Peer Review for an independent assessment of one PDF. Use Research when the objective genuinely crosses several stages and requires decisions about their order.
 
-The right inspector can keep several file or artifact tabs open and shows a
-read-only Todo derived from the current turn's `write_todos` call.
+The wrong entry may still answer, but it often adds friction. Research is unnecessarily broad for a 3x3x1 supercell. Writing does not have the calculation workers needed to reconsider an adsorption energy. Chapters 3, 5, and 7 give fuller examples.
 
-## 4.3 Workspace operations
+## Give scientific boundaries, not a tool script
 
-Select a workspace at the top of the left rail. A new account receives a
-`default` workspace.
-
-- Create: use a meaningful short name such as `pt_co_oxidation` or
-  `paper_revision_r2`.
-- Switch: changing workspace changes the file, thread, and run-history boundary.
-- Delete: switch to another workspace first, then type the requested name to
-  confirm. This removes project data and internal state.
-
-Do not mix unrelated research projects in one workspace. Do not casually manage
-`metadata/` through Files.
-
-## 4.4 Thread operations
-
-Items in the left rail are threads. The current UI supports search and creation,
-but not thread rename, deletion, branching, or retry.
-
-Recommended practice:
-
-- Keep one sustained research question in one thread.
-- Create another thread for different assumptions, systems, or an independent
-  audit trail.
-- To continue, select the original workspace and thread, inspect recent messages
-  and artifacts, then send an explicit request.
-- Do not use a new thread as a continuation unless you restate all required
-  context.
-
-## 4.5 Select an entrypoint
-
-The composer offers five entrypoints:
+Natural-language requests are enough. State the objective, input files, constraints that must survive, the allowed scope, and the artifacts you want to keep. If the method is unsettled, ask the agent to compare choices and explain them. If a project standard already fixes the method, state it directly.
 
 ```text
-Research
-Experiment
-Writing
-Peer Review
-Literature Review
+Use Experiment to inspect structures/slab.vasp and build starting structures for CO adsorption.
+Preserve the existing Selective Dynamics. Inspect surface coordination, periodic boundaries, and usable
+adsorption regions before selecting relevant skills and tools to enumerate deduplicated sites and place CO.
+
+Write candidates, site provenance, and a geometry audit under structures/co_candidates/ and notes/co_sites.md.
+If the slab itself is unsuitable, stop and explain the problem instead of continuing. Do not prepare or submit
+VASP in this turn.
 ```
 
-The entrypoint cannot change while a run is active. See [Agents and
-modules](05-agents-and-modules.en.md) for selection and boundaries. Use
-Experiment for a bounded structure or calculation task. Reserve Research for an
-open goal spanning literature, computation, and writing.
+Include units for numerical settings, charge and multiplicity for molecular work, and a seed or reproducibility requirement for stochastic work. Address existing files by workspace-relative paths such as `structures/slab.vasp`, not by private host paths.
 
-## 4.6 Auto and Review
+## What happens to attachments
 
-The default permission mode is `Auto`. `Review` interrupts before these protected
-tools:
+Attach accepts images, PDFs, modern Office documents, structures, and other files with the current message. The backend first stores them under `files/attachments/<thread_id>/` and registers them as artifacts. The agent therefore receives a traceable project file rather than browser-only data.
+
+Images can be sent as visual content when the selected model profile supports them. PDF, DOCX, XLSX, and PPTX are parsed through bounded document readers. The agent can render selected PDF pages when visual inspection is required. Audio, video, legacy Office formats, and oversized media may be stored without being sent to the model. The `multimodal.prepared` event in Monitor records whether an attachment was sent, how it was represented, and any degradation warning.
+
+Attachments are convenient for the current message. Files that will be reused should live at stable project paths such as `literature/corpus/`, `structures/`, or `data/`.
+
+## What Chat reveals about agent work
+
+Chat contains more than final prose. Progress cards show the current reasoning or stage note. Activity groups tool calls, subagents, and remote receipts. Individual tool cards can be expanded to inspect input, status, and returned summaries. Files created by the agent appear as artifact cards and open in the right-side inspector.
+
+These parts answer different questions. Progress shows how the agent frames the task. Subagent activity shows which role owns the work. A tool card records the executed action. An artifact is a reusable result. A remote receipt identifies a submitted job and its recoverable state.
+
+You do not need to inspect every file read. Expand activity when an important structure or manuscript changes, when the number of candidates differs from expectations, when a tool reports warning or error, when a remote submission has meaningful cost, or when the final answer disagrees with the files on disk.
+
+## Auto and Review support different working styles
+
+Auto lets an agent proceed within its current permissions and works well for reading, analysis, and trusted project workflows. Review pauses before `write_file`, `edit_file`, `remote_submission`, and `remote_submission_batch`, then presents an approval card in the message.
+
+Review is a good default for a new project, important source files, or real remote computation. The card supports four actions:
+
+- Approve executes the proposed action.
+- Reject declines it and can include a reason.
+- Respond gives the agent feedback so it can rework the action.
+- Edit action changes the action JSON and is intended for users who understand the tool schema.
+
+Review is not a global approval gate. Reading, search, and some analyses still run automatically. Its purpose is to put protected file edits and remote compute at a clear human checkpoint. Resume an interruption through the card rather than sending an unrelated normal message.
+
+In that statement, file mutation means the currently protected `write_file` and `edit_file` calls. Domain tools such as `supercell` and `build_slab` generate their declared outputs inside the tool call and do not receive a card solely because a file is created. Give those operations an explicit destination, inspect input and output paths on the tool card, and review the artifact in Files. Review protects named calls; it is not a transaction lock around every workspace change.
+
+## Steer a running task without scripting every move
+
+The idle submit button is Send. While an agent is running, a text-only message becomes Steer. Steering does not forcibly interrupt an active tool. It becomes the next instruction at a safe boundary. Use it for constraints discovered during the run, such as preserving an original file, analyzing only the first 20 ps, or keeping both terminations.
+
+If the new request changes the objective entirely, waiting for a safe stop and opening another thread is often clearer. New attachments are disabled during a run, so wait or stop before adding another file.
+
+Stop asks the local agent turn to end at a stream boundary, with repeated requests escalating toward emergency cancellation. It does not cancel jobs already submitted to Slurm or a remote shell. Those jobs require receipt-aware scheduler handling.
+
+## Files holds the deliverables
+
+Files provides Browse, Preview, and Uploads. It can preview text, Markdown, JSON, images, PDF, CSV/TSV, common crystal and molecular formats, trajectories, and selected OUTCAR vibration content. JSmol handles many structure and trajectory previews, while VESTA renders can appear as image artifacts.
+
+After an agent reports completion, check that the main deliverables exist at the promised paths. For structures, inspect candidates and the audit. For calculations, inspect the stage, status, stdout/stderr, and analysis. For literature, inspect the candidate and evidence tables plus the reference library. For writing, retain editable source files rather than only a compiled PDF.
+
+Uploading a file with the same name overwrites it. Directory deletion is recursive and permanent. Keep important originals backed up outside the workspace. The file tree also exposes `metadata/`, which is system state rather than an ordinary project directory. Do not move, rename, or delete it casually.
+
+## Monitor helps determine whether the process is healthy
+
+Monitor summarizes models, agents, tools, tasks, tokens, cost, and machine time. Overview is useful for status and scale. Live shows the active stage, tools, todo list, subagents, and recent logs. Events can be filtered by thread, run, agent, tool, category, and channel. Raw and Details are for deeper diagnosis.
+
+If an agent appears stuck, check whether a remote tool or subagent is still active. If a result is incomplete, look for tool errors, document warnings, or multimodal degradation. If cost is unexpected, inspect model calls, tokens, and machine time. Monitor is a diagnostic surface, not a report that must be copied into every deliverable.
+
+The current UI has no historical run selector. Overview may summarize the current or most recent run for a workspace and lane. For precise remote tracking, correlate thread ID, run ID, artifact, and receipt.
+
+## The inspector supports side-by-side review
+
+Clicking an artifact or file opens it in tabs on the right while Chat remains visible. This is useful for comparing a structure, report, table, or log while asking a follow-up. The Todo tab is a read-only projection of the current turn's plan, not a project-management form the user must maintain.
 
 ```text
-write_file
-edit_file
-remote_submission
-remote_submission_batch
+I am reviewing notes/slab_audit.md. Reinspect the third termination with its structure,
+explain the cutoff used for CN=1, and compare its top and side views with termination 1.
+Analyze first. Do not delete or overwrite any candidate.
 ```
 
-Review is not a global approval switch for every tool. Reads, searches, some
-analysis, and tools absent from the interrupt table can still run automatically.
-Review is a sensible choice when first opening a project, before overwriting
-files, or before a billable submission.
+## Skill Evolution preserves repeated project methods
 
-Permission mode cannot change during a run. On interruption, use the approval
-card in the message:
+In login mode, a completed run can produce a workspace-scoped improvement candidate. Repeated directory conventions, units, structure audits, or report formats can become a memory or skill candidate. The default `observe` mode never activates one automatically. Users review candidates in Skill Evolution before choosing Promote or Reject.
 
-- `Approve`: execute the current action.
-- `Reject`: reject it.
-- `Respond`: provide more information for the agent.
-- `Edit action`: edit the JSON and continue. Keep the same action count and
-  retain `name` and `args` for every item.
+Good candidates are stable, project-specific, and supported by repeated evidence. A temporary file name, a one-off network failure, or an unverified scientific guess should remain in the task record instead. Promoted content takes effect on the next run. A changed target produces a conflict instead of being overwritten, and a harmful promotion can be rolled back while the target still matches.
 
-Resume approvals from the card. The composer may also display `Respond` while
-interrupted, but its current implementation performs an ordinary submission and
-must not be used as the approval-resume control.
+## Resuming interrupted or older work
 
-## 4.7 Write an executable request
-
-A useful request states the objective, input, constraints, output, and stop
-condition:
+Return to the same workspace and thread, then ask the agent to reread the authoritative artifacts. State what must be retained, where the previous work stopped, whether recomputation is forbidden, and the new stopping point.
 
 ```text
-Entry: Experiment
+Continue the CO adsorption screen. Reread notes/co_sites.md, structures/co_candidates/,
+and calculations/mlff_screen/output/. Verify existing candidates, failures, and ranking evidence.
 
-Read structures/POSCAR. First check elements, cell, periodicity, and Selective
-Dynamics. Generate candidate terminations for a (111) slab while preserving the
-constraints, and inspect dangling atoms by coordination number. Write candidates
-under structures/slabs/ and the audit to notes/slab_audit.md. Do not submit a
-remote calculation in this turn. Stop when I must choose a termination.
+Do not regenerate or resubmit completed structures. Decide which candidates deserve VASP,
+explain why, and list the shared settings that still require my confirmation. Stop before VASP stage approval.
 ```
 
-Give units for numerical values, a seed for stochastic work, workspace-relative
-paths for existing files, and explicit permission and resource expectations for
-remote submission.
+After a remote error, inspect the receipt and old job state before any retry. Chapter 8 provides recovery prompts and Chapter 11 contains diagnostic commands.
 
-## 4.8 Attachments
+## Important current limitations
 
-Attachments can be added while idle. The attachment button is disabled during a
-run.
+The WebUI does not yet rename, delete, branch, or retry threads, and it has no historical run selector. Files overwrites same-name uploads and has no recycle bin. Approval interruptions must resume through their message cards. Stop does not cancel remote jobs. Skill Evolution appears only in login mode and affects the next run.
 
-Files are first stored at the physical workspace path:
-
-```text
-files/attachments/<thread_id>/
-```
-
-The agent uses the relative path `attachments/<thread_id>/...`. Attachments are
-registered as artifacts, and raw base64 is not persisted in message history.
-
-Main limits:
-
-| Layer | Limit |
-|---|---|
-| Composer browser client | 64 MiB per file |
-| Backend storage | 512 MiB per file |
-| Current-turn media inline | 32 MiB by default; larger files are stored only |
-| Text attachment | First 20,000 characters in the current turn |
-| PDF, DOCX, XLSX, PPTX parser | 50 MiB file and 60,000 characters per read |
-| PDF and PPTX | 20 pages or slides |
-| XLSX | 20,000 rows and 256 columns |
-
-Images are sent according to the model's vision capability. Audio and video are
-disabled by default unless the profile enables them. Legacy `.doc`, `.xls`,
-`.ppt`, and unknown formats are normally stored without parsing. In Monitor
-Events, inspect `multimodal.prepared` for `sent_to_model`, `sent_as`, and
-warnings.
-
-## 4.9 Send, Steer, and Stop
-
-While idle, the button reads `Send`; `Ctrl+Enter` submits.
-
-During a run, plain text becomes `Steer`. Steering does not immediately interrupt
-the active tool or scientific task. It is queued as the next turn after a safe
-boundary. Attachments cannot be added while steering.
-
-The first two Stop requests ask for graceful termination at the next stream
-boundary. A third request escalates to emergency cancellation. Stop affects the
-local agent turn only. It does not cancel a Slurm or remote Shell job already
-submitted. Check the receipt and scheduler separately.
-
-## 4.10 Activity and results in Chat
-
-Chat shows:
-
-- Incremental text and Progress.
-- Tool names, arguments, summaries, and errors.
-- Specialist or worker delegation activity.
-- Written artifacts.
-- Remote receipts and status summaries.
-- Review approval cards.
-
-Several consecutive activity items may collapse into `Activity`. Do not read
-only the last sentence. Expand failed tools, inspect artifact paths, and verify
-`status.json`, `stdout.log`, and `stderr.log` for calculations.
-
-## 4.11 Monitor
-
-Monitor refreshes about every five seconds during a run and merges the current
-thread's SSE events.
-
-- `Overview`: status, duration, LLM calls, tokens, cost, machine time, and tool
-  success or failure counts.
-- `Live`: phase, active tool, Todo, subagent, recent model text, and task logs.
-- `Events`: filters for thread, run, agent, tool, category, and channel.
-- `Raw`: raw chat and log data.
-- `Details`: task state and memory.
-
-Monitor currently has no run selector. Its overview query is primarily scoped
-by workspace and lane, so it may represent the current or latest run in that
-scope rather than exactly the selected thread. For precise tracing, correlate
-thread ID, run ID, artifact, and receipt in the events.
-
-## 4.12 Files
-
-Files provides Browse, Preview, and Uploads. It previews text, Markdown, JSON,
-images, PDF, CSV/TSV, JSmol structures, trajectories, and OUTCAR vibrations.
-Common structure formats include CIF, PDB, XYZ, VASP, POSCAR, CONTCAR, OUTCAR,
-XDATCAR, and TRAJ.
-
-Limits and risks:
-
-- Text preview is about 160 KiB, directory preview 40 entries, and one file-tree
-  response 500 entries.
-- Trajectory preview is limited to 240 frames.
-- Files backend upload limit is 512 MiB per file.
-- Upload always uses overwrite mode. A same-named file is replaced without a
-  second confirmation.
-- Delete is permanent and recursive, with only a browser confirmation.
-- The tree exposes both `files/` and `metadata/`. Never delete or rewrite
-  `metadata/`.
-- A directory ZIP can contain at most 20,000 files and 2 GiB total.
-- The backend supports safe ZIP extraction, but the current Files UI has no
-  extraction switch.
-
-Rename important data uniquely before upload. Keep an external backup before a
-bulk move, overwrite, or deletion.
-
-## 4.13 Continue, correct, and audit
-
-A useful continuation in the same thread is:
-
-```text
-Continue the previous task. Re-read notes/slab_audit.md and the existing
-candidate structures first. List completed work, remaining work, and decisions
-I must make. Do not regenerate candidates that already exist.
-```
-
-After an error, do not say only `retry`. State which files to preserve, the
-failure evidence, what may change, and whether recomputation is forbidden. For a
-remote failure, use receipt-driven state auditing from [Remote machines and
-execution](08-remote-execution.en.md).
-
-## 4.14 Skill Evolution
-
-In account mode, a terminal run may trigger background candidate generation and
-review. The default `observe` mode displays candidates but does not activate them
-automatically. Candidates are shared by all threads in the workspace. A promoted
-candidate loads from the next run; it can be rejected or rolled back while the
-target remains unchanged.
-
-See [Tools, skills, and evolution](09-tools-skills-evolution.en.md) for the safety
-model.
+Use versioned file names or external backup, divide incompatible assumptions into separate threads, and manage remote jobs through receipts. These practices cover the current UI gaps without pretending the agent can provide controls that do not exist.

@@ -1,84 +1,48 @@
-# 1. 快速安装与启动
+# 1. 快速安装与第一次对话
 
 [English](01-quickstart.en.md) | [目录](README.zh.md) | [下一章](02-concepts.zh.md)
 
-本章给出一条可复现的本地启动路径。完成后，你应能注册或登录、创建工作区、选择任务入口并得到一次模型回复。远程科学软件不是这一步的前提。
+如果管理员已经给你 CatMaster 地址，直接从"第一次进入 WebUI"开始。自己在本机部署时，先完成下面的最小安装。更完整的模型路由、服务器部署和外部程序配置在[第 10 章](10-deployment-operations.zh.md)。
 
-## 1.1 前提
+## 最小本地安装
 
-- Linux 主机或 Linux 服务器。
-- 可用的 conda 安装。
-- 能访问所选 LLM provider 的网络和 API key，或当前系统用户已有 Codex OAuth 凭据。
-- 安装期间可访问 conda、pip、npm 和 JSmol 下载源。离线部署见[部署与运维](10-deployment-operations.zh.md)。
-- 建议至少预留 20 GB 磁盘空间给 control plane 环境，项目数据和远程回传结果另算。
-
-CatMaster 的 control plane 环境由一个文件管理：
-
-```text
-requirements/pc-conda.yml
-```
-
-不要用 `requirements/mace.txt`、`requirements/uma.txt`、`requirements/mattersim.txt` 或 `requirements/orb.txt` 替代它。这些是远程 MLFF provider 的隔离环境依赖。
-
-## 1.2 创建环境
-
-在仓库根目录执行：
+CatMaster 的 control plane 使用统一 conda 环境。在仓库根目录执行：
 
 ```bash
 conda env create -f requirements/pc-conda.yml
 conda activate catmaster
 ```
 
-更新已有环境：
+已有环境可以更新：
 
 ```bash
 conda env update -n catmaster -f requirements/pc-conda.yml
 ```
 
-确认解释器和 WebUI 命令可用：
+`requirements/mace.txt`、`requirements/uma.txt`、`requirements/mattersim.txt` 和 `requirements/orb.txt` 是远程 MLFF 环境依赖，不要用它们替代 control plane 环境。
+
+## 配置一个可用模型
+
+首次安装且 `configs/llm.yaml` 不存在时，复制标准模板。已有文件应保留并直接编辑，不要覆盖：
 
 ```bash
-python --version
-python -m catmaster.webui --help
+cp -n configs/llm.template.yaml configs/llm.yaml
 ```
 
-## 1.3 安装 Literature Review 浏览器
-
-只有使用 Literature Review 的受控浏览器路径时才需要 `agent-browser`，但建议在首次安装时一起完成：
-
-```bash
-npm install -g agent-browser@0.31.1
-agent-browser install
-agent-browser doctor --offline --quick
-agent-browser mcp --help
-```
-
-CatMaster 自己启动 MCP 子进程。不要把 Codex 的全局 MCP 配置复制进 CatMaster。机构登录、验证码、二维码和 OTP 必须由用户在浏览器中完成，不要把 cookie、密码或浏览器 profile 放进项目空间。
-
-## 1.4 配置第一个模型
-
-复制标准模板：
-
-```bash
-cp configs/llm.template.yaml configs/llm.yaml
-```
-
-标准模板使用 OpenRouter 模型标签。提供 key：
+模板默认使用 OpenRouter 模型标签。设置 key：
 
 ```bash
 export OPENROUTER_API_KEY="<YOUR_KEY>"
 ```
 
-如果使用其他 provider，请不要只替换 key。按[LLM 与运行时配置](03-llm-configuration.zh.md)修改 `provider`、`model`、角色绑定和 provider 专属字段。
-
-配置文件和 key 可以分开保存。一个实用做法是从清单创建本地文件：
+如果需要长期保存本机变量，可以从 `.env.example` 创建私有文件：
 
 ```bash
-cp .env.example .env.local
+cp -n .env.example .env.local
 chmod 600 .env.local
 ```
 
-`.env.local` 被 shell 读取时必须导出变量。由于模板使用 `KEY=value` 格式，请这样加载：
+程序不会自动读取 `.env.local`。启动前这样加载：
 
 ```bash
 set -a
@@ -86,69 +50,39 @@ source .env.local
 set +a
 ```
 
-程序不会自动读取 `.env.local`。不要提交包含真实 key 的文件。
+不要把真实 key 提交到 Git。使用 OpenAI、Anthropic、DeepSeek、Gemini、兼容 endpoint 或 Codex OAuth 时，按[模型配置](10-deployment-operations.zh.md#配置-llm)修改 provider、model 和对应字段，不要只替换环境变量名。
 
-## 1.5 创建项目根目录
+## 启动 WebUI
 
-项目根目录用于容纳用户的多个 workspace：
+创建项目根目录，并显式绑定本机地址：
 
 ```bash
 mkdir -p "$HOME/catmaster_projects"
-```
 
-默认启用账号登录时，每个用户的数据会放在这个根目录下的 `users/<username>/`。项目布局详见[系统概念与项目空间](02-concepts.zh.md)。
-
-## 1.6 安全启动 WebUI
-
-显式指定项目根、监听地址和端口：
-
-```bash
 CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
 CATMASTER_HOST=127.0.0.1 \
 CATMASTER_PORT=7991 \
 ./start_webui.sh
 ```
 
-打开：
+浏览器打开：
 
 ```text
 http://127.0.0.1:7991
 ```
 
-`start_webui.sh` 默认后台运行。它的内嵌默认值是 `0.0.0.0:7991`，而 `python -m catmaster.webui` 的默认值是 `127.0.0.1:7860`。手册始终显式传值，避免把服务意外暴露到网络，也避免端口混淆。
-
-首次启动可能下载并安装固定版本的 JSmol 资源，用于结构预览。首次启动比后续启动慢是正常现象。
-
-## 1.7 第一次登录和验收
-
-默认启用登录和注册。用户名会转换为小写，允许字母、数字、点、下划线和连字符，长度为 3 到 40；密码长度为 8 到 256。注册页会要求完成简单算术验证码。
-
-登录后执行以下检查：
-
-1. 保留默认 workspace，或新建一个测试 workspace。
-2. 新建 thread。
-3. 选择 `Experiment`，权限模式先选 `Review`。
-4. 发送：`请列出当前项目文件，并说明 files 和 metadata 的用途。不要创建文件。`
-5. 在 Chat 中确认收到增量回复，在 Monitor 中确认出现一次 run。
-
-这一步只验证 LLM、线程存储和流式界面。它不会验证集群或科学软件。
-
-## 1.8 日常运维命令
-
-查看状态和日志：
+首次启动可能安装固定版本的 JSmol 资源，用于结构和轨迹预览，因此会比后续启动慢。查看状态和日志：
 
 ```bash
 ./start_webui.sh --status
 tail -f .runtime/webui.log
 ```
 
-前台启动以便排错：
+需要直接看到错误时以前台模式启动：
 
 ```bash
 CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
-CATMASTER_HOST=127.0.0.1 \
-CATMASTER_PORT=7991 \
-./start_webui.sh --foreground
+./start_webui.sh --foreground --host 127.0.0.1 --port 7991
 ```
 
 停止后台服务：
@@ -157,29 +91,59 @@ CATMASTER_PORT=7991 \
 ./start_webui.sh --stop
 ```
 
-如果 conda 环境名不同：
+## 第一次进入 WebUI
 
-```bash
-CATMASTER_CONDA_ENV=<ENV_NAME> \
-CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
-CATMASTER_HOST=127.0.0.1 \
-CATMASTER_PORT=7991 \
-./start_webui.sh
+默认启动会显示登录页。注册一个账号后，系统为你创建个人项目区域和 `default` workspace。共享服务器上的不同用户只能进入各自目录。
+
+第一次体验建议新建一个名为 `quickstart` 的 workspace，再新建 thread。选择 `Experiment`，把权限模式设为 `Review`。这样可以看到 Agent 如何委派 Materials worker 和使用工具，也会让后续通用文件编辑或远程提交进入人工审批。
+
+上传任意一份 CIF 或 POSCAR。仓库源码安装的用户可以直接使用 `tests/assets/Fe.cif` 作为无科学意义的界面测试样例。发送：
+
+```text
+请使用 Experiment 检查我刚上传的晶体结构。先识别文件路径、元素、晶胞、
+周期性、原子数和是否存在异常短距，再让 Materials worker 生成 2x2x2 超胞，
+写到 quickstart/Fe_2x2x2.vasp。
+
+自主选择合适的结构 tool，并说明变换前后的晶胞和原子数。
+本轮只做结构操作，不查询远程 task，也不提交任何计算。
 ```
 
-## 1.9 仅本机的无登录模式
+这条请求会让你看到 CatMaster 的基本工作方式。Chat 中先出现 Progress，随后可能看到 `materials_worker` 委派和 `supercell` tool 卡。`supercell` 会在一次领域 tool 调用中直接写出声明的目标文件，所以当前 Review 模式不一定为这一步显示审批卡。发送前把输出路径写清楚，调用时核对 tool 参数，完成后再检查 artifact 和 Files 中的真实文件。生成的结构应能用 JSmol 预览。
 
-无登录模式使用开放的 `admin` 空间，并关闭 Skill Evolution。只在可信单机环境使用：
+这不是对 Fe 的正式建模，只是同时验证以下组件：
+
+- LLM profile 能正常调用并支持当前 tool schema。
+- Experiment 可以委派 Materials worker。
+- Worker 能读取附件、执行结构工具并写入 workspace。
+- Artifact、Files 预览和 Monitor 事件能够对应同一次结构操作。
+
+Review 的审批卡可以在后续 `write_file`、`edit_file` 或远程提交时看到。它并不拦截所有会产生文件的领域 tool；第 4 章给出准确边界。
+
+如果你更关心文献工作，也可以上传一篇 PDF，选择 Literature Review，并发送：
+
+```text
+精读这篇论文。先确认附件路径和可解析页数，再说明论文的研究问题、主要证据链和限制。
+把方法、作者直接观察到的结果和作者推测分开，保留页码或原文锚点。
+本轮先在 Chat 中给出阅读计划，不下载其他论文，也不写综述。
+```
+
+## 第一次运行时看哪里
+
+Chat 用于对话和查看 Agent、worker 与 tools 的活动。Files 用于确认结构、表格和报告是否真实写入项目。Monitor 可以查看模型调用、工具状态、错误和运行规模。第一次任务结束后，建议依次打开三处，建立"回复、过程、文件"之间的对应关系。
+
+如果 Agent 回复正常但没有产生你要求的文件，展开 tool 卡检查是否被 Review 拒绝、路径是否错误或工具是否返回 warning。如果模型完全不能调用工具，先看 Monitor 和 WebUI 日志，再按[故障排查](11-reference-troubleshooting.zh.md)核对模型能力与配置。
+
+## 暂时不需要配置的内容
+
+第一次本地对话不需要 VASP、CP2K、LAMMPS、ORCA、xTB、CREST、MACE 或集群账号。也不需要先配置全部文献 API、浏览器 profile、VESTA、VASPKIT、Pandoc 或 LaTeX。这些能力可以在基础 WebUI 验证通过后按需添加。
+
+如果只在可信单机上临时测试，可以关闭登录：
 
 ```bash
 CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
 ./start_webui.sh --foreground --host 127.0.0.1 --port 7991 --no-login
 ```
 
-不要让 `--no-login` 监听局域网或公网地址。
+无登录模式进入开放 `admin` workspace，并关闭 Skill Evolution。不要让它监听局域网或公网地址。
 
-## 1.10 接下来做什么
-
-- 先读[系统概念与项目空间](02-concepts.zh.md)，再向 workspace 上传真实数据。
-- 需要调整模型角色时读[LLM 与运行时配置](03-llm-configuration.zh.md)。
-- 需要集群计算时，从[远程机器与任务执行](08-remote-execution.zh.md)开始，不要直接编辑活动私有配置后就提交正式任务。
+下一章解释刚才看到的 Agent、worker、skill、tool 和 artifact 之间是什么关系。理解这套关系后，再阅读具体功能会更自然。

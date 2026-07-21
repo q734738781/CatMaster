@@ -1,67 +1,45 @@
-# 2. Concepts and project spaces
+# 2. Agents, workers, skills, and tools
 
 [Previous](01-quickstart.en.md) | [Contents](README.en.md) | [Next](03-llm-configuration.en.md)
 
-CatMaster is not a chat window with every program installed on one computer. It
-combines a control plane, project spaces, specialist agents, tools and skills,
-and managed remote execution. Understanding these boundaries prevents most path,
-continuation, and compute-resource mistakes.
+CatMaster accepts a research objective and turns it into files, calculation stages, and evidence that can be inspected and reused. This chapter only describes how its capability units connect. Later chapters list the detailed roles, tools, skills, and reference prompts for each entry.
 
-## 2.1 System boundary
+## Four execution units
 
-```text
-Browser
-  -> CatMaster WebUI and specialist runtime
-      -> project-space files and metadata
-      -> LLM providers, web access, and local helper tools
-      -> DPDispatcher
-          -> SSH/Slurm/Shell machines
-              -> VASP, CP2K, LAMMPS, ORCA, xTB, CREST, and MLFF
-```
+| Unit | Purpose | Examples |
+|---|---|---|
+| Agent | Accepts an objective for one research stage and decides who should execute it | Research, Experiment, Literature Review, Writing, Peer Review |
+| Worker or specialist | Owns a bounded domain task | Materials, Dynamics, ML, ORCA/xTB, or the literature, writing, and review specialists |
+| Skill | Supplies domain methods, checks, and delivery standards | Surface construction, termination screening, trajectory analysis, paper reading, manuscript writing |
+| Tool | Reads or creates real results | Parse structures, build slabs, prepare inputs, submit remote tasks, analyze files, compile documents |
 
-The control plane owns conversation, planning, tool calls, file orchestration,
-run records, and remote submission. Scientific engines run in environments
-selected by resource cards. The two layers may share a host or be completely
-separate.
+Research can dispatch execution across the other entries. It can split an open question into stages, send work to Literature Review, Experiment, Writing, or Peer Review, and read the returned files and evidence before continuing, requesting corrections, or closing the investigation. The specialist or worker that owns the relevant tools and skills performs each domain action.
 
-## 2.2 Accounts, project root, and workspace
+Experiment delegates computation to four workers. Materials handles crystals, surfaces, adsorption, defects, reaction paths, and properties. Dynamics handles AIMD, LAMMPS, MLFF MD, restart, and trajectories. ML handles datasets, MACE, and active learning. ORCA/xTB handles molecules, conformers, xTB, CREST, ORCA, TS, IRC, TDDFT, and NMR.
 
-`CATMASTER_PROJECT_SPACE_ROOT` is the top-level directory managed by the WebUI,
-not a single project.
+## How far a research task can progress
 
-Default account mode:
+For an objective such as "Explain why isolated Pd remains stable on CeO2," Research can ask Literature Review to build a mechanism and characterization evidence table, then ask Experiment which structural or energetic uncertainties can be calculated. After results return, it can ask Writing to combine the literature and computational evidence or send a fixed manuscript to Peer Review for an independent assessment.
 
 ```text
-<PROJECT_SPACE_ROOT>/
-  .webui_auth/
-    auth.sqlite
-  users/
-    <username>/
-      default/
-        files/
-        metadata/
-      <another-workspace>/
-        files/
-        metadata/
+Research objective
+  -> Literature Review: search record, evidence table, reference library
+  -> Experiment: structure candidates, calculation stages, remote results, analysis reports
+  -> Writing: Markdown, LaTeX, DOCX, figures, or PPTX
+  -> Peer Review: reviewer reports, editor synthesis, revision issue list
 ```
 
-No-login mode:
+The work can stop at any explicit boundary: literature evidence only, candidate structures only, prepared but unsubmitted calculations, a wait for remote results, or analysis of existing output. State the objective, input paths, scientific constraints, remote-compute authority, and stopping point in the prompt.
 
-```text
-<PROJECT_SPACE_ROOT>/
-  admin/
-    files/
-    metadata/
-```
+## Capability depends on the entry and deployment
 
-A workspace is a durable project boundary. Separate catalytic systems, papers,
-or datasets usually deserve separate workspaces. The left rail can switch,
-create, and delete workspaces. Deletion is material: switch away first, then
-type the requested name to confirm.
+Each worker receives tools and skills that match its responsibility. Materials can build slabs and VASP inputs. Writing can compile manuscripts and make figures. Literature Review can search, read, ingest a corpus, and finalize citations. Research or Experiment delegates cross-domain work to the appropriate executor.
 
-## 2.3 `files/` and `metadata/`
+Remote execution also depends on the tasks, resources, machines, and MLFF backends registered by the deployment. An agent can query the current catalog and submit only enabled tasks that belong to its role. Input preparation and remote execution are separate capabilities; see [Chapter 8](08-remote-execution.en.md).
 
-Every workspace must contain both directories:
+## Workspaces and threads
+
+Every workspace contains two parts:
 
 ```text
 workspace/
@@ -69,115 +47,21 @@ workspace/
   metadata/
 ```
 
-`files/` contains user inputs, agent outputs, structures, scripts, calculation
-stages, reports, and remote receipts. It is the shared working area.
+`files/` is the shared project area for users and agents. Uploaded structures, papers, and data live there with generated candidates, scripts, reports, figures, and remote results. Use paths relative to `files/` in prompts, such as `structures/slab.vasp` or `writing/results.md`.
 
-`metadata/` contains thread records, checkpoints, observability data, artifact
-indexes, temporary remote staging, and skill-evolution state. Users normally
-back it up or inspect it during diagnosis, but do not edit, rename, or delete its
-contents.
+`metadata/` stores thread checkpoints, observability records, artifact indices, and remote recovery data. Users normally do not edit it. A complete backup includes both `files/` and `metadata/`.
 
-The current runtime rejects the old single-root `.catmaster` layout and does not
-migrate it automatically. For an old project, create `files/` and `metadata/`,
-then copy user data selectively instead of dropping old internal state into the
-new layout.
-
-## 2.4 Paths visible to the agent
-
-The agent's virtual root maps to the workspace's `files/` directory. Prefer
-prompts such as:
+A thread retains one continuing research context. When resuming work, name the files to reread, the conditions to preserve, and any steps that must not be repeated:
 
 ```text
-Read structures/slab.vasp
-Write the report to writing/surface_report.md
-Analyze calculations/co_adsorption/opt/OUTCAR
+Continue the surface screening. Read notes/termination_review.md and
+structures/ceo2_111_candidates/ and compare the current candidates with the last audit.
+Do not regenerate structures whose hashes are unchanged. Resume from the unresolved
+termination choice, and do not submit remote calculations yet.
 ```
 
-Do not ask the agent to access arbitrary host paths such as
-`/home/user/private/...`. After uploading a file, identify its path relative to
-`files/` and use that path in the request.
+## What users can inspect
 
-A useful general layout is:
+Chat shows delegation, Progress, and tool cards. Files holds the actual deliverables. Monitor records execution, and remote receipts provide recoverable task identities. Review protects common file writes and remote submission, but some domain tools create their declared output files within one call. Prompts should still state output paths and stopping points, and users should inspect the resulting files.
 
-```text
-files/
-  literature/
-  structures/
-  calculations/
-  scripts/
-  notes/
-  writing/
-  attachments/
-  .deepagents/
-```
-
-You do not need to create every directory up front. Preserve a clear existing
-layout. Put reusable scripts in `scripts/` and record their date, purpose,
-inputs, outputs, and important assumptions.
-
-## 2.5 Thread, turn, and run
-
-These terms are not interchangeable:
-
-| Term | Meaning | Durable |
-|---|---|---|
-| Workspace | Project data and history boundary | Yes |
-| Thread | Continuous conversation and checkpoint | Yes |
-| Turn | One user submission and agent response | Yes |
-| Run | Execution and observation record for a turn, steering request, or approval resume | Yes |
-| Artifact | A file or result object registered in the UI | Yes |
-| Receipt | Recoverable identity and state for a remote submission | Yes |
-
-The left rail selects a thread, not a run. Continue in the same thread to retain
-its checkpoint. WebUI v2 currently has no historical run selector, thread
-branching, retry control, or `resume_selected_run` option.
-
-The thread state determines the next action:
-
-- `idle`, `stopped`, or `error`: send an explicit continuation request.
-- `running`: text is queued as `Steer` for the next safe boundary.
-- `interrupted`: resume from the approval card inside the message, not with an
-  ordinary composer reply.
-
-## 2.6 Artifacts, logs, and evidence
-
-Files, attachments, and remote results can be registered as artifacts and
-opened in the right inspector. Tool cards show arguments and result summaries.
-Monitor records events, model text, tool results, tokens, cost, and machine time.
-
-Long tool output may appear only as a preview in Chat, with the complete content
-written under `files/_tool_outputs/` according to `configs/tool_output.yaml`.
-Final conclusions should therefore point to files, logs, receipts, or structures,
-not only to a chat summary.
-
-## 2.7 Backup and restore
-
-Back up `files/` and `metadata/` together to restore a workspace completely.
-Backing up only `files/` loses threads, checkpoints, approval state, and run
-observability.
-
-An account-enabled deployment should also back up:
-
-```text
-<PROJECT_SPACE_ROOT>/.webui_auth/auth.sqlite
-```
-
-For a consistent snapshot, stop the WebUI or make sure no run is writing.
-`files/.deepagents/` may contain staged skills and DPDispatcher receipts. Do not
-treat the entire hidden directory as disposable cache.
-
-## 2.8 Execution authority and scientific responsibility
-
-CatMaster routes each entrypoint to a suitable specialist and worker. A
-coordinator does not own every scientific tool, and workers can call only tools
-in their allowlists. Managed remote jobs are also constrained by task, resource,
-machine, and audience declarations.
-
-Those controls reduce misuse but do not prove that a calculation is correct.
-The user must still verify:
-
-- System, charge, spin, periodicity, and constraints.
-- Potentials, functional, basis, dispersion, and convergence criteria.
-- Temperature, ensemble, timestep, sampling length, and random seed.
-- Units, energy references, atom mapping, and comparability.
-- Software licenses, cluster policy, and compute cost.
+These records support review but do not replace scientific judgment. Before submission, check the system, charge, spin, constraints, method, convergence settings, sampling conditions, energy references, and cost. The next chapter describes the five entry agents and gives reference prompts for each.

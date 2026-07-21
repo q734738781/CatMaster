@@ -1,89 +1,169 @@
-# 11. Reference and troubleshooting
+# 11. Prompt library and troubleshooting
 
 [Previous](10-deployment-operations.en.md) | [Contents](README.en.md)
 
-This chapter collects common variables, defaults, limits, and diagnosis order.
-First classify the problem as startup, model, file, browser, remote
-configuration, or scientific execution. Do not replace evidence-based diagnosis
-with a full dependency reinstall.
+The first half of this chapter contains prompts that can be adapted directly. The second half diagnoses installation, model, file, literature, and remote-task problems by symptom. These prompts are not rigid forms. Keep the scientific boundary and delivery requirements that matter, remove irrelevant clauses, and let the agent choose its skills and tools.
 
-## 11.1 Configuration map
+## Adapting a reference prompt
 
-| File | Purpose | Private information |
-|---|---|---|
-| `requirements/pc-conda.yml` | Single control-plane environment definition | No |
-| `.env.example` | Environment checklist, not auto-loaded | No |
-| `configs/llm.yaml` | Active LLM profile | Should not contain keys; may contain a private endpoint |
-| `configs/llm*.template.yaml` | Provider and role templates | No |
-| `configs/tool_output.yaml` | Long-output preview and offload policy | No |
-| `configs/tool_policy.yaml` | Compatibility config, not the active specialist authorization source | No |
-| `configs/dpdispatcher/*_template.yaml` | Public machine/resource/task/backend templates | No |
-| `configs/dpdispatcher/{machines,resources,tasks,mlff_backends}.yaml` | Active remote configuration | Yes |
-| `configs/dpdispatcher/env_templates/` | Reference activation scripts | Contains site placeholders |
+The agent needs the real research question more than a tool sequence. Paths, constraints that must survive, allowed computation, and intended artifacts reduce ambiguity. When the method is unsettled, ask for options and a pause at consequential decisions. When the project already fixes the method, state it instead of asking the agent to rediscover it.
 
-## 11.2 Common environment variables
+Autonomy should not turn one request into an endless project. Authorize the technical judgment needed for the objective and state whether this turn should stop at candidate structures, input review, remote approval, or result analysis.
 
-### LLM and discovery
+## Research prompt
 
-| Variable | Purpose |
-|---|---|
-| `CATMASTER_LLM_CONFIG` | Select YAML profile; default `configs/llm.yaml` |
-| `CATMASTER_LLM_PROVIDER` | No-YAML provider or empty-provider fallback |
-| `CATMASTER_LLM_MODEL` | No-YAML model or empty-model fallback |
-| `CATMASTER_API_KEY_ENV` | Key variable name in no-YAML mode |
-| `CATMASTER_BASE_URL` | Endpoint in no-YAML mode or for an empty field |
-| `CATMASTER_TEMPERATURE` | Temperature in no-YAML mode or for an empty field |
-| `CATMASTER_REASONING_EFFORT` | Effort in no-YAML mode or empty reasoning |
-| `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | Provider keys |
-| `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY` | Provider keys |
-| `TAVILY_API_KEY`, `MP_API_KEY` | Web search and Materials Project |
-| `SEMANTIC_SCHOLAR_API_KEY`, `OPENALEX_API_KEY`, `NCBI_API_KEY` | Literature services |
-| `CROSSREF_MAILTO` | Crossref contact address |
+```text
+Use Research to investigate <research question>. Read <existing directories or files> first and separate
+established facts, working hypotheses, and genuine evidence gaps. Decide whether Literature Review,
+Experiment, Writing, or Peer Review is needed, but advance one bounded stage at a time and inspect its artifacts.
 
-### Browser and local helpers
+The deliverable for this turn is <evidence map, plan, or stage synthesis>. Do not run a calculation just because
+literature evidence is missing. If new computation is warranted, explain which hypotheses it distinguishes,
+what inputs it requires, and its cost, then wait for approval.
+```
 
-| Variable | Purpose |
-|---|---|
-| `CATMASTER_AGENT_BROWSER_BIN` | `agent-browser` executable |
-| `CATMASTER_AGENT_BROWSER_PROFILE` | Browser profile outside workspaces |
-| `CATMASTER_AGENT_BROWSER_AUTO_CONNECT` | Connect to running Chrome |
-| `CATMASTER_AGENT_BROWSER_HEADED` | Show the browser window |
-| `CATMASTER_AGENT_BROWSER_MAX_OUTPUT` | Controlled browser output cap |
-| `CATMASTER_VASPKIT_BIN`, `CATMASTER_VESTA_BIN` | Local helper paths |
-| `CATMASTER_XVFB_RUN` | No-DISPLAY rendering wrapper |
-| `CATMASTER_PANDOC_BIN`, `CATMASTER_CHROME_BIN` | Markdown PDF tool paths |
-| `CATMASTER_JSMOL_CACHE_DIR` | Persistent JSmol cache |
+Use Research for an open question such as reversible structural change under redox cycling. Use Experiment directly when the task is simply to build one slab.
 
-### Runtime and WebUI
+## Slab and adsorption prompts
 
-| Variable | Purpose |
-|---|---|
-| `CATMASTER_PROJECT_SPACE_ROOT` | Multi-user project root |
-| `CATMASTER_CONDA_ENV` | Conda environment used by the launcher |
-| `CATMASTER_HOST`, `CATMASTER_PORT` | WebUI bind address and port |
-| `CATMASTER_RUNTIME_DIR` | PID and default-log directory |
-| `CATMASTER_WEBUI_LOG`, `CATMASTER_WEBUI_PID` | Log and PID files |
-| `CATMASTER_TOOL_OUTPUT_CONFIG` | Tool-output policy |
-| `CATMASTER_SELF_EVOLUTION_MODE` | `off`, `observe`, or `auto` |
-| `CATMASTER_RECURSION_LIMIT`, `CATMASTER_MAX_TOOL_CALLS` | Primarily no-YAML profile limits |
-| `CATMASTER_DEEPAGENT_CONTEXT_TRIGGER_TOKEN_CAP` | No-YAML context-compaction cap |
-| `CATMASTER_PRINT_HTTP_RAW_POST` | Raw request debugging, potentially sensitive; false by default |
+```text
+Use Experiment to build the <Miller index> surface from <bulk structure path> for <downstream purpose>.
+Ask Materials to choose suitable slab, termination, and visual-inspection skills.
 
-`CATMASTER_PRINT_HTTP_RAW_POST=true` can place prompts or request data in logs.
-Use it briefly in an isolated diagnostic environment.
+Require <thickness or layer count> and <vacuum>. Explain slab symmetry, lateral expansion, and fixed layers.
+Preserve Selective Dynamics. If constraints should change, present options before editing.
+Inspect top and bottom surfaces, stoichiometry, coordination, short contacts, and isolated atoms.
+Save every reasonable termination, views, and an audit. Do not submit computation. Pause on polarity,
+stoichiometry, or termination choices.
+```
 
-## 11.3 Addresses and precedence
+For adsorption, add:
 
-The launcher resolves CLI arguments before `CATMASTER_*` environment variables,
-then script `LOCAL_*` constants, then code fallbacks.
+```text
+Build adsorption candidates for <adsorbate> on the accepted slab. Define adsorbate conformation and anchor,
+then enumerate and deduplicate chemically meaningful sites and orientations. Record site provenance,
+starting distance, coverage, and inherited constraints. Reject collisions and obvious periodic interactions.
 
-| Launch route | Implicit value |
-|---|---|
-| `./start_webui.sh` | Embedded `0.0.0.0:7991` |
-| `python -m catmaster.webui` | `127.0.0.1:7860` |
-| Manual recommendation | Explicit `127.0.0.1:7991` |
+If the set is large, you may propose MLFF single-point or relaxation screening after querying the current backend.
+Wait for approval before execution. Deliver a candidate ledger, views, rejection rationale, and recommended DFT set.
+```
 
-For an unreachable page, start with:
+## VASP or other remote-compute prompt
+
+```text
+Use Experiment to review <stage path> for <calculation type>.
+Ask the owning worker to inspect the structure, constraints, input files, scientific settings, and expected outputs,
+then query the current remote task, resource, and full schema. Do not guess overrides from an old prompt.
+
+Stop with a precise blocker if preparation or deployment is incomplete. If all checks pass, show task, work_dir,
+task count, resource, critical parameters, and cleanup behavior in Review, then wait for approval.
+After transfer, inspect status, stdout/stderr, program convergence, and scientific output rather than relying on
+scheduler completion alone.
+```
+
+For a batch, name the first-level stage directory and common settings. For MLFF, require backend, model, device, and dtype and label the result as model prediction.
+
+## Dynamics and restart prompt
+
+```text
+Use Experiment to continue <existing MD directory>. Ask Dynamics to audit the last valid step, structure,
+velocities, integrator or thermostat state, random state, time axis, and restart files.
+Do not overwrite the original or call a last-frame run continuous when restart evidence is incomplete.
+
+Build a separate continuation stage and document how segments join and which settings remain identical.
+Query the current remote task and wait for approval. After transfer, check temperature, energy, volume,
+trajectory continuity, short contacts, and restart usability before MSD, RDF, or diffusion analysis.
+```
+
+## Dataset and MACE prompt
+
+```text
+Use Experiment and ML to build a MACE dataset from <VASP result tree>.
+Separate converged, unconverged, and incomplete runs. Check units, reference energies, element coverage,
+duplicates, outliers, and mixed calculation settings. Fix a seed and retain a split manifest.
+
+Deliver extxyz, split files, and a data audit. Prepare training only after the audit passes.
+Do not submit mace_train until I approve data scope, foundation model, replay or E0 settings, and GPU cost.
+```
+
+## Molecular, xTB, and ORCA prompt
+
+```text
+Use Experiment on <SMILES or structure path> with total charge <charge>, multiplicity <multiplicity>,
+and <solvent and target property>. Ask ORCA/xTB to choose a conformer, CREST/xTB screening,
+deduplication, and ORCA strategy while retaining structures, relative energies, and exclusion reasons.
+
+Deliver a reviewable ensemble and ORCA stage plan first. Explain which frequency, thermochemistry, TS/IRC,
+TDDFT, or NMR steps are relevant instead of running all of them by default. Wait for approval before remote work.
+```
+
+## Literature Review prompt
+
+```text
+Use Literature Review on <topic> within <years, systems, document types, and exclusions>.
+Design and save the search strategy, collect a sufficiently broad candidate set, and deduplicate DOI, title,
+preprint, and journal versions.
+
+Separate discovered records from abstract, full-text, and SI evidence. Read core papers around <specific question>
+and extract system, conditions, method, result, limitation, and disagreement into a claim-evidence table.
+Save candidates, full-text availability, unavailable records, and the final bibliography. Do not infer precise
+parameters from titles or abstracts.
+```
+
+For one-paper close reading, require paper order, figure placement, page or source anchors, and explicitly say that a summary-only result is not acceptable.
+
+## Writing and review prompts
+
+```text
+Use Writing to draft or revise <section or document> from <evidence files, data, figures, and bibliography>
+for <reader or venue>. Inspect what argument the evidence can support, then select relevant writing skills.
+
+Every value, unit, figure, and citation must trace to the supplied material. Preserve <terms or claim boundary>
+and do not add <new results, unverified citations, or causal claims>. Write connected prose to <output path>
+and list evidence gaps and author decisions separately.
+```
+
+```text
+Use Peer Review on <canonical PDF> for <venue and article type>.
+Ask reviewers to assess novelty, method, evidence, figures, reporting, and reproducibility independently.
+Major comments must cite pages or figures. Preserve complete reports, then create an editor synthesis separating
+consensus, disagreement, required revision, and optional improvement. Do not edit the manuscript or write an
+author response in this turn.
+```
+
+## Continuation and recovery prompts
+
+```text
+Continue the original thread. Reread <key reports, directories, receipts, and logs> and treat current files
+as authoritative rather than accepting old chat completion claims. Report confirmed work, incomplete items,
+active remote jobs, and decisions still waiting for me.
+
+Preserve successful results and forbid duplicate generation or computation. Resume from <specific stage>
+and stop at <new boundary>.
+```
+
+After an ambiguous remote error:
+
+```text
+The previous remote call failed or disconnected. Do not resubmit or clean anything.
+Read the receipt and confirm remote_context_id, submission_hash, task, original stage, and known job state.
+Use scheduler or DPDispatcher evidence to determine whether the job is running, complete but not downloaded,
+or terminated. Retrieve finished output and failure logs first. Discuss resubmission only after proving the old
+job can no longer write or consume resources.
+```
+
+---
+
+## The WebUI does not open
+
+Run in the foreground and read the first real traceback:
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
+./start_webui.sh --foreground --host 127.0.0.1 --port 7991
+```
+
+In another terminal:
 
 ```bash
 ./start_webui.sh --status
@@ -91,201 +171,116 @@ tail -n 100 .runtime/webui.log
 ss -ltnp | grep 7991
 ```
 
-## 11.4 WebUI startup failure
+`conda is not available` means the shell lacks conda initialization or `CATMASTER_CONDA_ENV` is wrong. `Address already in use` means another process owns the port. Repair project-root ownership instead of running as root. A JSmol download error usually affects structure preview alone.
 
-Run in the foreground:
+Always use an explicit host and port while diagnosing because the launcher and direct Python CLI have different embedded defaults.
 
-```bash
-CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
-./start_webui.sh --foreground --host 127.0.0.1 --port 7991
-```
+## The profile parses but conversation fails
 
-Diagnose the first real traceback:
-
-- `conda is not available`: initialize conda or set the right
-  `CATMASTER_CONDA_ENV`.
-- `Address already in use`: identify the listener or choose another explicit
-  port.
-- JSmol download failure: prewarm the cache; if other pages work, treat it as a
-  structure-preview problem.
-- Missing frontend assets: verify the deployment package; do not replace a full
-  runtime package with an incomplete `--include-path` selection.
-- Project-root permission denied: fix ownership instead of running as root.
-
-## 11.5 LLM configuration or call failure
-
-Parse without network access:
+First parse offline:
 
 ```bash
 python -c 'from catmaster.llm.config import LLMProfile; p=LLMProfile.from_env_or_file(); print(sorted(p.models)); print(p.agents)'
 ```
 
-Common problems:
+If parsing fails, check YAML indentation, role labels, and provider fields. If it succeeds, check in order:
 
-- `Missing API key`: make sure the variable is exported into the process that
-  starts the WebUI.
-- `.env.local` was sourced but has no effect: use
-  `set -a; source .env.local; set +a`.
-- A role references an unknown label: fix `agents` or `peer_review_models`.
-- Removed field error: delete `tool_calling_profiles`, model-level
-  `tool_calling`, or misplaced `extra_body`.
-- Provider 400: check model ID, base URL, reasoning shape, and provider options.
-- Text answers but no tools: confirm current model tool-schema support and
-  inspect the tool card and provider log.
-- A long task stops early: inspect `max_tool_calls`, recursion, and the actual
-  error before raising limits substantially.
+1. The key is exported into the process that starts the WebUI.
+2. Model ID and base URL belong to the selected provider.
+3. Reasoning and provider options use that provider's schema.
+4. The model supports tool calling and the current tool schema.
+5. The first provider 4xx, 5xx, or timeout message.
 
-## 11.6 Sign-in and workspace
+When the model writes prose but never calls a tool, inspect Chat and Monitor before making the prompt more forceful. Verify the Entry, worker delegation, model tool support, and whether the schema reached the provider.
 
-- Registration fails: use a 3 to 40 character allowed username, a password of at
-  least 8 characters, and a fresh challenge.
-- Old projects are absent after sign-in: verify `CATMASTER_PROJECT_SPACE_ROOT`
-  and username; do not place projects at the wrong root level.
-- An old `.catmaster` project is rejected: migrate to `files/` plus `metadata/`.
-- Thread history is missing: check `metadata/threads/` and DeepAgent SQLite in
-  the restored backup.
-- Skill Evolution is absent: make sure the service is not `--no-login` and mode
-  is not `off`.
+If a long task stops early, inspect the real tool error, `max_tool_calls`, recursion, context, and scope before raising every limit.
 
-## 11.7 Attachments and previews
+## The attachment was saved but not read
 
-- Composer rejects a file: check the 64 MiB browser limit first.
-- File is stored but model did not see it: check the 32 MiB inline limit, model
-  multimodal capability, and `multimodal.prepared` warnings.
-- PDF or Office content is incomplete: check the 50 MiB, 20 page/slide, 60,000
-  character, and spreadsheet limits.
-- Legacy Office file is stored only: convert to PDF, DOCX, XLSX, or PPTX.
-- JSmol is blank: check cache, browser console, and structure format instead of
-  restarting a remote task.
-- Uploaded file changed unexpectedly: Files overwrites names; restore from an
-  external backup.
-- `metadata/` was deleted: stop writes and restore a consistent backup. Uploading
-  `files/` again cannot reconstruct the thread.
+Images require visual capability in the profile. PDF, DOCX, XLSX, and PPTX use bounded parsing. Legacy `.doc`, `.xls`, `.ppt`, and unknown formats are generally stored without parsing. Inspect `multimodal.prepared` for `sent_to_model`, `sent_as`, and warnings.
 
-## 11.8 Literature Review
+Common limits are 64 MiB per Composer file, 512 MiB for backend storage, 32 MiB for current-turn media inline, 50 MiB and 60,000 parsed characters for PDF or Office input, and 20 PDF pages or slides by default. Ask the agent to read selected pages or split large documents.
 
-- `agent-browser` unavailable: run `agent-browser doctor --offline --quick`, then
-  `agent-browser mcp --help`.
-- Sign-in page or CAPTCHA: switch to headed mode for the user; do not repeatedly
-  automate it.
-- DOI found but no full text: record evidence level, check an authorized
-  institutional session, or have the user upload legitimate full text.
-- Citation metadata conflict: prioritize DOI/publisher records and the document,
-  while recording version differences.
-- Local corpus misses a document: inspect ingest manifest, parse status, and
-  parser limits.
+## A structure, PDF, or table does not preview
 
-## 11.9 Remote catalog or connection failure
+For a blank JSmol view, inspect cache, browser console, and structure format. Text, directory, and tree previews have size or count limits, so a missing preview does not always mean the file is absent. Open the original PDF when fonts or layout look suspicious.
 
-Diagnose by layer:
+Files overwrites same-name uploads. Restore from an external backup if necessary. After accidental `metadata/` deletion, stop writes and recover a consistent backup. Re-uploading `files/` cannot restore checkpoints.
 
-1. Do all four active config files exist?
-2. Does an active filename mistakenly contain `template`?
-3. Does YAML parse, and is a key overwritten by another active file?
-4. Does machine SSH work in BatchMode?
-5. Is `remote_root` writable?
-6. Are resource machine, queue, audience, and `source_list` correct?
-7. Are task and backend enabled?
-8. Does the worker audience match?
+## Literature Review finds a title but no full text
 
-`command not found` or code 127 commonly comes from `machine.env_setup`,
-`source_list`, or the task binary. Run `command -v` in the same noninteractive
-SSH environment instead of changing a scientific stage to hide the environment
-failure.
-
-## 11.10 Remote run or result failure
-
-- Tool call still pending: wait; do not poll the receipt or resubmit.
-- SSH disconnected: preserve receipt identities and check the scheduler.
-- Scheduler completed but no results: download finished tasks and terminated
-  logs; inspect backward files and permissions.
-- `status.json` says success but science did not converge: classify it as a
-  scientific failure from logs and domain QC.
-- Partial batch failure: classify each first-level stage and do not recompute
-  successful children.
-- Need to stop: WebUI Stop does not cancel the remote job; an administrator uses
-  scheduler controls for the receipt's job ID.
-- Need remote cleanup: first confirm results, stdout, stderr, and receipt are
-  stored locally.
-
-See [Remote machines and execution](08-remote-execution.en.md) for recovery
-commands and order.
-
-## 11.11 Current UI limitations
-
-- No historical run selector.
-- No thread rename, delete, branch, or retry UI.
-- Interrupted state must resume from the message approval card; composer
-  `Respond` is not approval resume.
-- Monitor overview may represent the current or latest workspace/lane run, not
-  exactly the selected thread.
-- Files overwrites same-named uploads and deletes recursively and permanently.
-- Files exposes `metadata/` without a dedicated protection switch.
-- The backend supports safe ZIP extraction, but Files has no extraction switch.
-- WebUI Stop does not cancel submitted remote jobs.
-- Skill Evolution is account-mode only and loads on the next run.
-
-These limits are listed so users choose the correct path, not as permission to
-bypass safety boundaries.
-
-## 11.12 Advanced thread API example
-
-This example is only for a loopback `--no-login` test service. Modern entrypoints
-use workspace/thread/artifact APIs; old run APIs are compatibility and diagnostic
-paths.
+Confirm open-access availability or legitimate institutional rights. Use a headed browser when login is required and let the user complete verification. Do not bypass CAPTCHA or paywalls.
 
 ```bash
-curl -s http://127.0.0.1:7991/api/bootstrap
-
-THREAD_ID="$(
-  curl -s -X POST \
-    -H 'Content-Type: application/json' \
-    -d '{"title":"CO adsorption","entrypoint":"experiment","permission_mode":"hitl"}' \
-    http://127.0.0.1:7991/api/workspaces/admin/threads |
-  jq -r '.thread.thread_id'
-)"
-
-curl -s -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Inspect structures/slab.vasp and prepare three adsorption structures.","entrypoint":"experiment","permission_mode":"hitl"}' \
-  "http://127.0.0.1:7991/api/threads/$THREAD_ID/submit"
-
-curl -N \
-  "http://127.0.0.1:7991/api/threads/$THREAD_ID/stream?last_seq=0"
+agent-browser doctor --offline --quick
+agent-browser mcp --help
 ```
 
-Account mode requires the correct session cookie and access context. Do not turn
-the no-login example into public automation.
+Record abstract-only evidence as abstract. Resolve metadata conflicts from DOI, publisher, and paper records while preserving version differences. For missing local-corpus hits, inspect the ingest manifest, parse status, and document limits.
 
-## 11.13 Acceptance checklist
+## A remote task is absent from the catalog
 
-### Local control plane
+Administrators should check:
 
-- [ ] `conda env create/update` succeeds.
-- [ ] LLM YAML parses offline.
-- [ ] The API key reaches the WebUI process.
-- [ ] The WebUI explicitly listens on the expected address and port.
-- [ ] Registration, sign-in, and user isolation pass.
-- [ ] A workspace has both `files/` and `metadata/`.
-- [ ] Thread conversation, SSE, artifacts, and Monitor work.
-- [ ] `agent-browser` doctor passes or that route is explicitly disabled.
-- [ ] JSmol, PDF, structure, and table previews pass as required.
+1. `machines.yaml`, `resources.yaml`, `tasks.yaml`, and `mlff_backends.yaml` exist.
+2. Active filenames do not contain `template`.
+3. YAML parses and duplicate active files do not override the same key.
+4. Task and backend are enabled.
+5. Resource audience includes the worker.
+6. Machine SSH, remote root, queue, and `source_list` are valid.
 
-### Remote execution
+Do not replace a missing managed task with local scientific-engine execution. Complete configuration and a smoke case first.
 
-- [ ] Four active DPDispatcher configs exist outside Git.
-- [ ] SSH, remote root, scheduler, and environment scripts pass.
-- [ ] Task/resource/audience/backend catalog matches installed software.
-- [ ] `python scripts/remote_execution_smoke.py --list` works.
-- [ ] One minimal real case passes for every enabled engine class.
-- [ ] Each stage returns status, stdout, stderr, and receipt.
-- [ ] Receipt-driven download and failure classification have been rehearsed.
+## A remote task cannot connect or start
 
-### Operations and security
+Test from the same noninteractive environment:
 
-- [ ] Service is not directly public by default; `--no-login` is loopback only.
-- [ ] TLS, VPN, or external access control is configured.
-- [ ] Projects, account database, private configs, and secrets are backed up.
-- [ ] Upgrade, rollback, and log-retention procedures are tested.
-- [ ] Users know Stop does not cancel remote work and completed jobs still need
-  scientific QC.
+```bash
+ssh -o BatchMode=yes -i <SSH_KEY> <USER>@<HOST> 'hostname; python3 --version'
+ssh -o BatchMode=yes -i <SSH_KEY> <USER>@<HOST> 'test -w <REMOTE_ROOT>'
+ssh -o BatchMode=yes -i <SSH_KEY> <USER>@<HOST> 'command -v sbatch; command -v squeue; command -v scancel'
+```
+
+`command not found` or exit 127 usually points to machine `env_setup`, resource `source_list`, or a scientific binary path. Do not modify the scientific stage to hide an environment failure.
+
+## A remote call disconnected and job state is unknown
+
+Do not resubmit. Find the receipt and `submission_hash`. After confirming a DPDispatcher record, choose only the command needed:
+
+```bash
+dpdisp submission <submission_hash> --download-finished-task
+dpdisp submission <submission_hash> --download-terminated-log
+dpdisp submission <submission_hash> --reset-fail-count
+dpdisp submission <submission_hash> --clean
+```
+
+These are not a fixed sequence. Download completed output and failure logs first. Use fail-count reset or cleanup only after understanding the consequence. An empty `submission_hash` normally means no recoverable DPDispatcher record exists.
+
+Scheduler completion proves only that scheduling ended. Missing outputs require backward-file, permission, and program-log checks. A successful `status.json` with failed scientific convergence is a scientific failure. Preserve successful children in a partially failed batch.
+
+## A remote job continues after Stop
+
+This is expected. Stop cancels the local agent turn, not Slurm or a remote shell. Use receipt job data with the appropriate scheduler and retain cancellation evidence. Do not delete the local stage or receipt first.
+
+## Login, workspace, or thread history appears missing
+
+Verify `CATMASTER_PROJECT_SPACE_ROOT` and the username. Login deployments use `users/<username>/`, while no-login mode uses `admin/`. A legacy `.catmaster` root needs migration to `files/` and `metadata/`.
+
+Restoring only `files/` does not restore threads. `metadata/`, DeepAgent SQLite, and the authentication database must belong to the same consistent backup.
+
+## Current UI limitations
+
+- There is no historical run selector or UI for thread rename, delete, branch, or retry.
+- Interrupted runs must resume through the message approval card.
+- Monitor overview may describe the current or most recent run for the workspace and lane.
+- Files overwrites same-name uploads and deletes recursively without a recycle bin.
+- Stop does not cancel remote jobs.
+- Skill Evolution appears only in login mode and affects the next run.
+
+Use versioned files, external backup, clear thread boundaries, and receipt-based remote management instead of assuming the agent can supply controls that the UI does not implement.
+
+## Deployment acceptance
+
+A deployment ready for users should prove that accounts are isolated; all five entries are selectable; the base model can converse and call tools; attachments, artifacts, Files, Review, and Monitor work; one local structure task can delegate to a worker and write a file; literature claims match the actual search and browser surface; every enabled remote engine passes one minimal real case with status, logs, and receipt; a simulated interruption can be recovered without duplicate compute; and projects, auth, private config, and secrets can be restored from backup.
+
+The purpose is not to install every optional tool. It is to make the capabilities shown to users match the deployment and to retain enough evidence to diagnose failure.

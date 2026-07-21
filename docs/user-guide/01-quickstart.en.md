@@ -1,98 +1,48 @@
-# 1. Quick start
+# 1. Quick installation and first conversation
 
-English | [Contents](README.en.md) | [Next](02-concepts.en.md)
+English | [中文](01-quickstart.zh.md) | [Contents](README.en.md) | [Next](02-concepts.en.md)
 
-This chapter gives a reproducible local startup path. At the end, you should be
-able to register or sign in, create a workspace, choose an entrypoint, and
-receive one model response. Remote scientific software is not required yet.
+If an administrator has already given you a CatMaster URL, skip to "Your first WebUI session." To run CatMaster locally, complete the minimal setup below. Full model routing, shared deployment, and external program configuration are in [Chapter 10](10-deployment-operations.en.md).
 
-## 1.1 Prerequisites
+## Minimal local installation
 
-- A Linux workstation or server.
-- A working conda installation.
-- Network access and a key for the selected LLM provider, or existing Codex
-  OAuth credentials for the current system user.
-- Installation-time access to conda, pip, npm, and the JSmol download source.
-  See [Deployment and operations](10-deployment-operations.en.md) for offline
-  preparation.
-- At least 20 GB of free space is a practical starting point for the control
-  plane. Project data and returned calculation results require additional room.
-
-The complete control-plane environment is owned by:
-
-```text
-requirements/pc-conda.yml
-```
-
-Do not replace it with `requirements/mace.txt`, `requirements/uma.txt`,
-`requirements/mattersim.txt`, or `requirements/orb.txt`. Those files describe
-isolated remote MLFF provider environments.
-
-## 1.2 Create the environment
-
-From the repository root:
+The CatMaster control plane uses one conda environment. From the repository root:
 
 ```bash
 conda env create -f requirements/pc-conda.yml
 conda activate catmaster
 ```
 
-To update an existing environment:
+Update an existing environment with:
 
 ```bash
 conda env update -n catmaster -f requirements/pc-conda.yml
 ```
 
-Check the interpreter and WebUI command:
+The MACE, UMA, MatterSim, and ORB requirements files describe isolated remote MLFF environments. They do not replace the control-plane environment.
+
+## Configure one working model
+
+For a first installation, copy the standard template only if `configs/llm.yaml` does not exist. Keep and edit an existing profile instead of overwriting it:
 
 ```bash
-python --version
-python -m catmaster.webui --help
+cp -n configs/llm.template.yaml configs/llm.yaml
 ```
 
-## 1.3 Install the Literature Review browser
-
-`agent-browser` is needed only for the controlled browser route used by
-Literature Review, but installing it during initial setup is convenient:
-
-```bash
-npm install -g agent-browser@0.31.1
-agent-browser install
-agent-browser doctor --offline --quick
-agent-browser mcp --help
-```
-
-CatMaster starts the MCP subprocess itself. Do not copy a global Codex MCP
-entry into CatMaster. Complete institutional sign-in, CAPTCHAs, QR codes, and
-one-time passwords yourself in the browser. Never put passwords, cookies, or a
-browser profile in a project space.
-
-## 1.4 Configure the first model
-
-Copy the standard template:
-
-```bash
-cp configs/llm.template.yaml configs/llm.yaml
-```
-
-The standard template uses OpenRouter model labels. Export its key:
+The template uses OpenRouter model labels. Export the key:
 
 ```bash
 export OPENROUTER_API_KEY="<YOUR_KEY>"
 ```
 
-For another provider, do more than swap the key. Follow [LLM and runtime
-configuration](03-llm-configuration.en.md) and update the provider, model, role
-bindings, and provider-specific fields.
-
-Configuration and secrets can be stored separately. One practical approach is:
+For persistent local variables, create a private file from the example:
 
 ```bash
-cp .env.example .env.local
+cp -n .env.example .env.local
 chmod 600 .env.local
 ```
 
-The template uses `KEY=value` lines, so export its entries when sourcing it:
+CatMaster does not load `.env.local` automatically. Load it before starting:
 
 ```bash
 set -a
@@ -100,26 +50,15 @@ source .env.local
 set +a
 ```
 
-CatMaster does not auto-load `.env.local`. Never commit a file containing real
-keys.
+Never commit real credentials. If you use OpenAI, Anthropic, DeepSeek, Gemini, an OpenAI-compatible endpoint, or Codex OAuth, change the provider, model, and matching fields as described under [LLM configuration](10-deployment-operations.en.md#configure-the-llm). Replacing only the key variable is not enough.
 
-## 1.5 Create the project root
+## Start the WebUI
 
-The project root contains one or more user workspaces:
+Create a project-space root and bind the service explicitly to the local host:
 
 ```bash
 mkdir -p "$HOME/catmaster_projects"
-```
 
-With the default account mode, each user's data is placed under
-`users/<username>/` inside this root. See [Concepts and project
-spaces](02-concepts.en.md) for the full layout.
-
-## 1.6 Start the WebUI safely
-
-Set the project root, bind address, and port explicitly:
-
-```bash
 CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
 CATMASTER_HOST=127.0.0.1 \
 CATMASTER_PORT=7991 \
@@ -132,84 +71,75 @@ Open:
 http://127.0.0.1:7991
 ```
 
-`start_webui.sh` runs in the background by default. Its embedded defaults are
-`0.0.0.0:7991`, while `python -m catmaster.webui` defaults to
-`127.0.0.1:7860`. The manual always supplies explicit values to avoid accidental
-network exposure and port ambiguity.
-
-The first startup may download and install a fixed JSmol asset bundle for
-structure previews. It can therefore take longer than later starts.
-
-## 1.7 First sign-in and smoke check
-
-Sign-in and self-registration are enabled by default. Usernames are normalized
-to lowercase, contain letters, numbers, dots, underscores, or hyphens, and must
-be 3 to 40 characters. Passwords must be 8 to 256 characters. Registration also
-uses a small arithmetic challenge.
-
-After signing in:
-
-1. Keep the default workspace or create a test workspace.
-2. Create a thread.
-3. Select `Experiment` and set permission mode to `Review`.
-4. Send: `List the current project files and explain files versus metadata. Do
-   not create anything.`
-5. Confirm that Chat receives incremental output and Monitor records a run.
-
-This checks the LLM, thread storage, and streaming UI. It does not test a cluster
-or scientific executable.
-
-## 1.8 Routine commands
-
-Inspect status and logs:
+The first start may install pinned JSmol assets for structure and trajectory previews, so it can take longer than later starts. Check status and logs with:
 
 ```bash
 ./start_webui.sh --status
 tail -f .runtime/webui.log
 ```
 
-Run in the foreground for diagnosis:
+For direct error output, start in the foreground:
 
 ```bash
 CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
-CATMASTER_HOST=127.0.0.1 \
-CATMASTER_PORT=7991 \
-./start_webui.sh --foreground
+./start_webui.sh --foreground --host 127.0.0.1 --port 7991
 ```
 
-Stop the background server:
+Stop the background service with:
 
 ```bash
 ./start_webui.sh --stop
 ```
 
-Use another conda environment name:
+## Your first WebUI session
 
-```bash
-CATMASTER_CONDA_ENV=<ENV_NAME> \
-CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
-CATMASTER_HOST=127.0.0.1 \
-CATMASTER_PORT=7991 \
-./start_webui.sh
+The default start shows a login page. Register an account and CatMaster creates a personal project area with a `default` workspace. On a shared server, each account is restricted to its own user directory.
+
+For the first exercise, create a workspace named `quickstart` and a new thread. Choose Experiment and set permission mode to Review. This exposes worker delegation and tool activity while keeping later generic file edits or remote submissions behind approval.
+
+Upload any CIF or POSCAR. A source checkout includes `tests/assets/Fe.cif` as a convenient interface test. Send:
+
+```text
+Use Experiment to inspect the crystal structure I just attached. Identify its workspace path, elements,
+cell, periodicity, atom count, and any suspicious short contacts. Then ask the Materials worker to create
+a 2x2x2 supercell at quickstart/Fe_2x2x2.vasp.
+
+Choose an appropriate structure tool and explain how the cell and atom count changed.
+This is a structure-only task. Do not query or submit any remote task.
 ```
 
-## 1.9 Local no-login mode
+This request reveals the normal CatMaster workflow. Chat should show Progress, a `materials_worker` delegation, and a `supercell` tool card. `supercell` writes its declared output within one domain-tool call, so the current Review mode may not display an approval card for this step. State the output path before sending, inspect the tool arguments, and verify the artifact and file afterward. The generated structure should open in Files with a JSmol preview.
 
-No-login mode exposes an open `admin` space and disables Skill Evolution. Use it
-only on a trusted local machine:
+The Fe transformation is only a test. It verifies that the LLM can use the current tool schema, Experiment can delegate Materials, the worker can read an attachment and write a project file, and artifacts, Files, and Monitor all describe the same operation.
+
+Approval cards appear later for `write_file`, `edit_file`, and remote submission calls. Review does not intercept every domain tool that produces a file. Chapter 4 gives the exact boundary.
+
+If literature is your main use case, upload a paper, select Literature Review, and send:
+
+```text
+Read this paper closely. Confirm the attachment path and readable page range, then identify the research
+question, main evidence chain, and limitations. Separate methods, direct observations, and author interpretation.
+Retain page or source anchors. In this turn, give me the reading plan first. Do not download other papers
+or write a broader review.
+```
+
+## What to inspect after the first run
+
+Chat shows agent, worker, and tool activity. Files confirms that requested artifacts exist in the project. Monitor records model calls, tool status, errors, and run scale. Open all three after the first exercise to connect the response, the process, and the files.
+
+If the agent replies but does not create the requested file, expand the tool card and check for a rejected Review action, a bad path, or a warning. If the model never calls a tool, inspect Monitor and the WebUI log, then use [Troubleshooting](11-reference-troubleshooting.en.md) to verify model capability and configuration.
+
+## What you do not need yet
+
+The first local conversation does not require VASP, CP2K, LAMMPS, ORCA, xTB, CREST, MACE, or a cluster account. It also does not require every literature API, browser profile, VESTA, VASPKIT, Pandoc, or LaTeX. Add those capabilities after the basic WebUI path works.
+
+For a temporary trusted single-machine test, login can be disabled:
 
 ```bash
 CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
 ./start_webui.sh --foreground --host 127.0.0.1 --port 7991 --no-login
 ```
 
-Never bind `--no-login` mode to a LAN or public address.
+No-login mode opens the shared `admin` workspace and disables Skill Evolution. Never bind it to a LAN or public address.
 
-## 1.10 Next steps
-
-- Read [Concepts and project spaces](02-concepts.en.md) before adding real data.
-- Read [LLM and runtime configuration](03-llm-configuration.en.md) to tune role
-  models.
-- For cluster calculations, start with [Remote machines and
-  execution](08-remote-execution.en.md). Do not edit private active config and
-  immediately submit a production job without a smoke test.
+The next chapter explains the agent, worker, skill, tool, and artifact relationships you just observed.

@@ -1,75 +1,89 @@
-# 10. Deployment, operations, and security
+# 10. Installation, model configuration, and deployment
 
 [Previous](09-tools-skills-evolution.en.md) | [Contents](README.en.md) | [Next](11-reference-troubleshooting.en.md)
 
-This chapter covers the control plane and local helper programs. VASP, CP2K,
-LAMMPS, ORCA, xTB, CREST, and MLFF providers belong in managed remote
-environments and should not be mixed into the CatMaster control plane.
+This chapter is for users who install CatMaster, configure models, or operate a server. Ordinary users do not need to learn every YAML field. They only need an accurate view of the agents, remote tasks, and external programs enabled by their deployment.
 
-## 10.1 Three common deployments
+## Control-plane environment
 
-### Local workstation
-
-The WebUI and browser are on one machine:
+The WebUI, agent runtime, materials tools, and most local analysis share `requirements/pc-conda.yml`:
 
 ```bash
-CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
-CATMASTER_HOST=127.0.0.1 \
-CATMASTER_PORT=7991 \
-./start_webui.sh
+conda env create -f requirements/pc-conda.yml
+conda activate catmaster
 ```
 
-### Server with SSH tunnel
-
-The server still listens only on loopback:
+Update an existing environment with:
 
 ```bash
-CATMASTER_PROJECT_SPACE_ROOT=/srv/catmaster/projects \
-CATMASTER_HOST=127.0.0.1 \
-CATMASTER_PORT=7991 \
-./start_webui.sh
+conda env update -n catmaster -f requirements/pc-conda.yml
 ```
 
-On the user's computer:
+The MACE, UMA, MatterSim, and ORB-v3 requirement files describe isolated remote environments. Installing them all into the control plane creates unnecessary torch, CUDA, and model conflicts and does not register remote tasks.
+
+## Configure the LLM
+
+CatMaster routes models by role. One model can serve every role, or a deployment can assign different models to coordination, workers, writing, review, vision, and background candidate evaluation. Start from the standard template:
 
 ```bash
-ssh -L 7991:127.0.0.1:7991 <USER>@<SERVER>
+cp -n configs/llm.template.yaml configs/llm.yaml
+export OPENROUTER_API_KEY="<YOUR_KEY>"
 ```
 
-Then open `http://127.0.0.1:7991`.
+A minimal single-model profile is:
 
-### Shared web service
+```yaml
+models:
+  main:
+    provider: openrouter
+    model: <OPENROUTER_MODEL_ID>
+    temperature: 1.0
+    reasoning:
+      effort: high
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
 
-Place a shared service behind a TLS reverse proxy, VPN, IP allowlist, or external
-identity layer. Built-in authentication allows self-registration by default,
-the session cookie lacks the Secure flag, and the application does not terminate
-TLS. Do not expose `0.0.0.0:7991` directly to the public internet, and never
-publish `--no-login` mode.
-
-## 10.2 Account and file permissions
-
-The system user running the WebUI can access every project-space file and active
-configuration. Therefore:
-
-- Use a dedicated non-root system user.
-- Restrict the project root, `.webui_auth`, active YAML, SSH keys, and browser
-  profile to that user.
-- Do not grant unnecessary write access to repository source or shared secret
-  directories.
-- Keep the project root outside any web-server static directory.
-- Add external access control for a multi-user deployment and review the open
-  registration risk.
-
-## 10.3 `.env.local` and secrets
-
-Create a private file from the checklist:
-
-```bash
-cp .env.example .env.local
-chmod 600 .env.local
+agents:
+  proposal: main
+  director: main
+  task_runner: main
+  memory_patch: main
+  summary: main
 ```
 
-Load it with exports:
+`main` is an internal CatMaster label. The `model` value is the provider model ID. Every value under `agents` must refer to a defined label.
+
+### Mapping roles to the five agents
+
+| Role | Main use | Typical fallback |
+|---|---|---|
+| `proposal` | Task proposal and initial decomposition | Required |
+| `director` | Experiment coordination and general decisions | Required |
+| `task_runner` | Materials, Dynamics, ML, and ORCA/xTB workers | Required |
+| `memory_patch` | Project memory and skill candidates | Required |
+| `summary` | Summary and general review fallback | Required |
+| `research_lead` | Research agent | `director` |
+| `research_state_updater` | Research state updates | `research_lead` |
+| `write_director` | Writing coordinator | `research_lead` |
+| `section_writer` | Writing worker | `task_runner` |
+| `write_reviewer` | Writing checks and review | `summary` |
+| `academic_polisher` | Conservative prose polishing | `summary` |
+| `tex_compile_fixer` | TeX compilation repair | `academic_polisher` |
+| `tool_selector` | General tool-selection support | `task_runner` |
+| `image_analyzer` | Image understanding | `task_runner` |
+| `literature_deep_research` | Literature Review | `director` |
+| `self_evolution_proposer` | Improvement candidate generation | `memory_patch` |
+| `self_evolution_reviewer` | Independent candidate review | `write_reviewer` |
+
+A cost-conscious profile can use a faster model for `task_runner` and stronger models for Research, Writing, and review. Tool calling, image support, and long context must be verified against provider documentation and a real smoke call rather than inferred from the model name.
+
+### Providers and credentials
+
+Supported profile providers are `openai`, `openrouter`, `deepseek`, `gemini`, `oai_compatible`, `langchain`, `anthropic`, and `codex_oauth`. Common key variables include `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, and `ANTHROPIC_API_KEY`. Compatible endpoints specify their key variable through `api_key_env` and their endpoint explicitly.
+
+Reasoning fields are provider-specific. OpenAI and OpenRouter use `reasoning.effort`; some compatible services use `reasoning_effort`; Anthropic thinking belongs in provider-specific kwargs. Copy the matching repository template instead of moving one provider's fields unchanged to another.
+
+Keep real keys in environment variables or an external secret manager. An LLM YAML may contain a private endpoint, but it should not contain plaintext secrets. `.env.local` is not loaded automatically:
 
 ```bash
 set -a
@@ -77,129 +91,71 @@ source .env.local
 set +a
 ```
 
-For production, a systemd EnvironmentFile or secret manager is more suitable.
-Do not put keys in `configs/llm.yaml`, and never put SSH keys, licenses, tokens,
-or cookies in a workspace. Confirm that `.env.local`, active
-`configs/dpdispatcher/*.yaml`, and the project root are outside version control
-and deployment packages.
-
-## 10.4 Runtime directory and logs
-
-Default background state:
-
-```text
-.runtime/webui.pid
-.runtime/webui.log
-```
-
-It can be overridden:
+Codex OAuth uses the current operating-system user's credentials:
 
 ```bash
-export CATMASTER_RUNTIME_DIR=/var/tmp/catmaster-runtime
-export CATMASTER_WEBUI_LOG=/var/log/catmaster/webui.log
-export CATMASTER_WEBUI_PID=/var/run/user/<UID>/catmaster-webui.pid
+python -c \
+'from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()'
+
+export CATMASTER_LLM_CONFIG=configs/llm_codex_oauth.template.yaml
 ```
 
-The runtime user must create and write those directories. Common commands:
+Do not copy the OAuth store or use one person's profile as the shared identity of a multi-user service.
+
+### Reviewers, images, and multimodal input
+
+`peer_review_models` lists model labels. Each label creates an independent report and therefore adds calls, cost, and latency:
+
+```yaml
+peer_review_models:
+  - reviewer-a
+  - reviewer-b
+```
+
+Image generation can bind a dedicated model:
+
+```yaml
+image_generation:
+  model_label: image-model
+  image_config:
+    aspect_ratio: "4:3"
+```
+
+Image input depends on both profile capability and provider behavior. The runtime defaults image blocks on only for OpenAI, OpenRouter, Anthropic, Gemini, and LangChain providers. Other providers need explicit declaration and a real call. A saved attachment is not proof that it reached the model. Check `multimodal.prepared` when diagnosing.
+
+### Profile selection and offline parsing
+
+The profile path is selected in this order: an explicit code argument, `CATMASTER_LLM_CONFIG`, `configs/llm.yaml`, and finally single-model environment mode if the selected YAML does not exist.
 
 ```bash
-./start_webui.sh --status
-tail -f .runtime/webui.log
-./start_webui.sh --stop
+export CATMASTER_LLM_PROVIDER=openrouter
+export CATMASTER_LLM_MODEL=<OPENROUTER_MODEL_ID>
+export OPENROUTER_API_KEY="<YOUR_KEY>"
 ```
 
-The launcher waits up to 30 seconds while stopping, then forcibly terminates the
-recorded process if needed. Stopping the local WebUI does not cancel remote
-scheduler jobs.
-
-## 10.5 Runtime sync deployment
-
-`scripts/deploy_runtime.sh` updates another runtime directory. Its default target
-is `../CatMaster_Run`. It performs a runtime-only sync, deletes target files
-removed from the source, builds the frontend, starts automatically, and preserves
-existing target configs and launcher.
-
-Begin with a non-destructive preview:
+Parse without calling a model:
 
 ```bash
-scripts/deploy_runtime.sh \
-  --target /path/to/CatMaster_Run \
-  --project-space-root /path/to/catmaster_projects \
-  --dry-run \
-  --no-delete \
-  --no-autorun
+python -c 'from catmaster.llm.config import LLMProfile; p=LLMProfile.from_env_or_file(); print("models:", sorted(p.models)); print("roles:", p.agents)'
 ```
 
-Remove `--dry-run` after inspection. Important options:
+Parsing proves only that the profile structure is valid. Verify key, endpoint, model ID, tool calling, and multimodal behavior in a minimal WebUI conversation.
 
-- `--sync-configs` overwrites target `configs/` and may destroy private LLM or
-  machine configuration.
-- `--sync-start-webui` overwrites the target launcher.
-- Without `--no-delete`, runtime files removed from source are deleted from the
-  target.
-- `--autorun` is the default. Use `--no-autorun` during a maintenance window.
-- `--full-repo` expands scope and is not the normal runtime-update default.
+## Literature search and controlled browsing
 
-## 10.6 Offline deployment package
-
-Build an archive:
+Provide only the services needed by the deployment:
 
 ```bash
-scripts/package_remote_deploy.sh --output-dir dist
+export TAVILY_API_KEY="<KEY>"
+export SEMANTIC_SCHOLAR_API_KEY="<KEY>"
+export OPENALEX_API_KEY="<KEY>"
+export NCBI_API_KEY="<KEY>"
+export CROSSREF_MAILTO="you@example.org"
 ```
 
-The default package contains public DPDispatcher templates, not active machine
-configs, `.env`, project space, logs, or large calculation intermediates. Inspect
-the archive listing and checksum before transfer.
+The active Literature Review tool surface is authoritative. API keys provide access but do not guarantee full text or correct metadata.
 
-`--include-path` adds another path. Check that it contains no key, token,
-POTCAR, WAVECAR, CHGCAR, personal browser state, or unauthorized data.
-`--no-verify` skips post-package checks and is not recommended for a formal
-delivery.
-
-## 10.7 Upgrade and rollback
-
-Upgrade in this order:
-
-1. Stop the WebUI and confirm no run is writing local state.
-2. Back up the project root, account database, and private configuration.
-3. Update the source or deployment package.
-4. Update the control-plane environment:
-
-   ```bash
-   conda env update -n catmaster -f requirements/pc-conda.yml
-   ```
-
-5. Parse the LLM YAML without a network call.
-6. Start in the foreground and smoke-test sign-in, threads, file reads, and one
-   short LLM turn.
-7. For remote execution, run only `--list` and one minimal case first.
-8. Return to background mode after acceptance.
-
-Do not roll project-space data back blindly to an older incompatible layout.
-Keep a pre-upgrade snapshot and record code version, configuration version, and
-data snapshot time separately.
-
-## 10.8 Backup
-
-A complete backup includes:
-
-```text
-<PROJECT_SPACE_ROOT>/users/.../<workspace>/files/
-<PROJECT_SPACE_ROOT>/users/.../<workspace>/metadata/
-<PROJECT_SPACE_ROOT>/.webui_auth/auth.sqlite
-configs/llm.yaml
-active private configs under configs/dpdispatcher/
-.env.local or external secret definitions
-```
-
-Secrets and project data may use different encrypted backup policies. Restore
-directory permissions before starting the WebUI. Restoring only `files/` loses
-threads and checkpoints; restoring only `metadata/` loses actual artifacts.
-
-## 10.9 agent-browser
-
-The required version is:
+Install the controlled browser with:
 
 ```bash
 npm install -g agent-browser@0.31.1
@@ -208,109 +164,132 @@ agent-browser doctor --offline --quick
 agent-browser mcp --help
 ```
 
-Keep its profile outside workspaces:
+CatMaster starts the MCP subprocess itself. Do not copy a global Codex MCP configuration into the project. Optional settings include:
 
 ```bash
 export CATMASTER_AGENT_BROWSER_PROFILE="$HOME/.config/catmaster/browser-profile"
+export CATMASTER_AGENT_BROWSER_HEADED=true
 ```
 
-A headless server can use local corpora and web search, but must not claim access
-to institutional full text requiring interactive sign-in. Use a secure graphical
-session or have the user legitimately upload the full text.
+Keep the profile outside the workspace with private permissions. Users complete institutional login, CAPTCHA, and OTP themselves. Credentials and cookies do not belong in project files.
 
-## 10.10 JSmol
+## Binding and access patterns
 
-The WebUI uses JSmol for structure and trajectory previews. The launcher invokes
-an installer and downloads fixed assets when the cache is missing. Prewarm a
-persistent cache for an offline server:
+Bind a local workstation explicitly to loopback:
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
+CATMASTER_HOST=127.0.0.1 \
+CATMASTER_PORT=7991 \
+./start_webui.sh
+```
+
+For a personal remote server, keep CatMaster on server-side `127.0.0.1:7991` and create an SSH tunnel from the client:
+
+```bash
+ssh -L 7991:127.0.0.1:7991 <USER>@<SERVER>
+```
+
+Then open local `http://127.0.0.1:7991`.
+
+A shared service needs a reverse proxy or VPN, TLS, external access control, least-privilege file permissions, logs, and backup. The built-in login provides account isolation and basic registration. It is not a complete internet-facing identity platform: registration is open by default, the application does not terminate TLS, and its cookie should not be the only public security boundary.
+
+Use `--no-login` only on a trusted machine bound to loopback. It opens the shared `admin` workspace and disables Skill Evolution.
+
+## Remote computation configuration
+
+Chapter 8 explains remote tasks from the user's perspective. Administrators create four private active files from public templates. The `-n` commands preserve existing active files. Merge template changes during an upgrade instead of replacing site configuration:
+
+```bash
+cp -n configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml
+cp -n configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml
+cp -n configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml
+cp -n configs/dpdispatcher/mlff_backends_template.yaml configs/dpdispatcher/mlff_backends.yaml
+```
+
+These files contain host names, usernames, SSH key paths, queues, remote roots, and environment scripts. Git and deployment packaging exclude them. Do not paste active contents into issues, prompts, or shared workspaces.
+
+### Machine, resource, task, and backend
+
+A machine card defines SSH, Slurm or Shell mode, `remote_root`, and base environment. Confirm the host key interactively once, then test BatchMode. The remote root must be writable, and a Slurm machine should expose `sbatch`, `squeue`, and `scancel`.
+
+A resource card binds machine, CPU/GPU, queue, walltime, environment `source_list`, and worker audience. Template core counts and queue names are examples. Preserve audience restrictions.
+
+A task card defines the scientific program, input layout, default resource, boot script, and returned files. The template covers VASP, CP2K, LAMMPS, generic MLFF, MACE training and evaluation, xTB, CREST, and ORCA. Enable only validated tasks.
+
+An MLFF backend card enables MACE, UMA, MatterSim, or ORB-v3 and binds resource, operations, and models. Every backend uses an isolated remote environment. Only MACE is enabled in the public template; other backends require installed dependencies, weights, device verification, and a passing real smoke case.
+
+### Remote environment construction
+
+The remote command environment combines machine `env_setup`, resource `source_list`, an optional submission prepend script, and the task command. Place site modules, conda activation, license variables, and library paths in controlled environment scripts rather than stages or prompts.
+
+Before releasing a task, run one inexpensive real case for every enabled engine and verify catalog visibility, environment, result transfer, `status.json`, stdout/stderr, and receipt. `python scripts/remote_execution_smoke.py --list` only lists cases. Other modes submit real work, so do not begin with the entire suite.
+
+## JSmol, VESTA, and VASPKIT
+
+The WebUI uses JSmol for structure and trajectory previews. The launcher installs pinned assets when the cache is missing. Prewarm a persistent cache for an offline server:
 
 ```bash
 CATMASTER_JSMOL_CACHE_DIR=/persistent/cache/jsmol \
 python scripts/install_jsmol_assets.py
 ```
 
-Use the same `CATMASTER_JSMOL_CACHE_DIR` in deployment and grant read access to
-the runtime user. Missing JSmol affects the corresponding preview, not the LLM
-or remote execution.
+A missing JSmol cache affects previews, not LLM or remote-task execution.
 
-## 10.11 VASPKIT and VESTA
-
-VASPKIT resolution order is:
-
-1. `CATMASTER_VASPKIT_BIN`.
-2. `vaspkit` on `PATH`.
-3. Common user paths such as `~/vaspkit/bin/vaspkit`.
+Set VASPKIT explicitly if needed:
 
 ```bash
 export CATMASTER_VASPKIT_BIN=/opt/vaspkit/bin/vaspkit
 ```
 
-VESTA uses a similar search and can be set explicitly:
+For VESTA rendering:
 
 ```bash
 export CATMASTER_VESTA_BIN=/opt/VESTA/VESTA
 export CATMASTER_XVFB_RUN=/usr/bin/xvfb-run
 ```
 
-Rendering on a server without DISPLAY normally needs Xvfb. VESTA and VASPKIT
-are optional local helpers, not the managed VASP engine, and CatMaster does not
-supply their licenses.
+Headless servers usually need Xvfb. CatMaster does not distribute VESTA or VASPKIT licenses.
 
-## 10.12 Pandoc, Chrome, fonts, and TeX
+## Pandoc, Chrome, fonts, TeX, and Julia
 
-The Markdown PDF route creates HTML5/MathML with Pandoc, then prints it with
-headless Chrome or Chromium. Paths can be explicit:
+Markdown PDF needs Pandoc and Chrome or Chromium, plus suitable fonts for CJK content:
 
 ```bash
 export CATMASTER_PANDOC_BIN=/usr/bin/pandoc
 export CATMASTER_CHROME_BIN=/usr/bin/chromium
-```
 
-Checks:
-
-```bash
 pandoc --version
 chromium --version
-fc-match sans
 fc-match "Noto Sans CJK SC"
-pdflatex --version
-bibtex --version
 ```
 
-Without a CJK font, compilation may still succeed while producing boxes or font
-substitution. Inspect the final PDF visually.
+LaTeX work needs at least `pdflatex`, and bibliography work commonly needs `bibtex`. Visually inspect the PDF after compilation.
 
-## 10.13 PySR and Julia
-
-The first PySR import may download Julia and precompile. During an online
-maintenance window run:
+PySR may download Julia and precompile on first import. During an online maintenance window:
 
 ```bash
 python scripts/pysr_julia_smoke.py --fit
 ```
 
-For an offline host, install Julia and set:
+Install Julia in advance on offline machines and point `PYTHON_JULIACALL_BINDIR` to its `bin` directory.
 
-```bash
-export PYTHON_JULIACALL_BINDIR=/opt/julia/bin
-python scripts/pysr_julia_smoke.py \
-  --julia-bindir "$PYTHON_JULIACALL_BINDIR" --fit
-```
+## Runtime bounds and long output
 
-Do not make the first user task pay the startup download and compilation cost.
+`recursion_limit`, `max_tool_calls`, and context-compaction thresholds are safety boundaries, not quality sliders. Diagnose actual tool errors, context, and task scope before increasing them.
 
-## 10.14 Remote scientific engines
+`configs/tool_output.yaml` keeps a Chat preview of long results and stores full content under `_tool_outputs/`. `configs/tool_policy.yaml` is not the active agent permission surface. Runtime allowlists, task audiences, and Review interruption define effective access.
 
-Configure these programs inside resource-controlled remote environments:
+## Packaging, upgrades, and rollback
 
-- VASP, normally `vasp_std`, with `vasp_gam` available for suitable Gamma cases.
-- CP2K, whose template command uses `cp2k.psmp`.
-- LAMMPS, whose boot script detects common CPU/GPU/KOKKOS binaries and also
-  accepts remote `CATMASTER_LAMMPS_BIN`.
-- ORCA, with a correct MPI launcher for multiple ranks.
-- xTB and CREST.
-- Isolated MACE, FairChem UMA, MatterSim, and ORB-v3 environments.
+`scripts/package_remote_deploy.sh` creates a package without `.git`, private config, keys, user projects, or runtime logs. `scripts/deploy_runtime.sh` synchronizes runtime files on the target. Consult each script's `--help` for current options.
 
-An executable on PATH does not prove that licenses, model weights, potential
-files, or queue policy authorize its use. The administrator must complete site
-acceptance before exposing a task.
+Before upgrading, record the Git commit, conda environment, active LLM profile, four DPDispatcher configurations, launch arguments, and external-program versions. Back up the project root and authentication database, then test conversation, files, structure preview, and one minimal case for every enabled remote engine in a disposable workspace.
+
+Code rollback must not overwrite user projects. Restore a compatible commit or package together with matching dependencies and config. Do not put project data, private YAML, or secrets into release archives as a rollback mechanism.
+
+## Backup and logs
+
+The default runtime directory is `.runtime/`, with `.runtime/webui.log` as the common log. Shared services need log rotation and should not leave raw-request debugging enabled because it may expose prompts or request content.
+
+A complete backup includes every workspace's `files/` and `metadata/`, `.webui_auth/auth.sqlite` for login deployments, private LLM and DPDispatcher configuration outside Git, and external secret or site-environment backups. Back up when no run is writing and rehearse restoration.

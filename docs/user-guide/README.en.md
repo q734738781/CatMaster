@@ -2,61 +2,63 @@
 
 English | [中文](README.zh.md)
 
-This manual is for people who use or operate CatMaster. It follows the current
-DeepAgent specialist runtime and WebUI v2. It covers local installation, model
-configuration, project spaces, the five task entrypoints, computational
-modules, remote machines, files and runs, skill evolution, deployment, and
-troubleshooting.
+CatMaster is an autonomous agent workbench for computational catalysis, materials modeling, literature research, and scientific writing. You do not need to learn a list of tool names before you can use it, nor do you need to turn a research project into dozens of commands. In a typical session, you give the appropriate agent a research objective, the material already available, and the scientific constraints that must hold. The agent selects relevant skills, calls tools that can inspect or create real project files, and leaves its work in the shared workspace.
 
-Last verified: 2026-07-20.
+Autonomy does not mean giving up scientific control. CatMaster can make many implementation decisions, such as choosing a structure check, organizing intermediate files, or deciding which result to read first. When a choice changes the scientific meaning, consumes remote compute, or may overwrite important work, you can require the agent to compare options, explain its reasoning, and wait for approval. This manual explains that working relationship and describes how far each capability can take a research task.
 
-To get the system running, start with [Quick start](01-quickstart.en.md). To
-connect a cluster, complete the local check first and then read [Remote machines
-and execution](08-remote-execution.en.md).
+## Where to begin
 
-## Manual map
+First-time users should read these four chapters in order:
 
-| Chapter | What it covers |
+1. [Quick installation and first conversation](01-quickstart.en.md) starts the WebUI and verifies it with a task that does not submit a calculation.
+2. [How CatMaster works](02-concepts.en.md) explains how agents, workers, skills, tools, remote tasks, and the workspace fit together.
+3. [The five agents](03-llm-configuration.en.md) introduces Research, Experiment, Literature Review, Writing, and Peer Review, including how they hand work to one another.
+4. [Working in the WebUI](04-webui.en.md) covers project organization, uploads, visible agent activity, file review, and steering a running task.
+
+After that, follow the path that matches your work:
+
+| What you are doing | Read next |
 |---|---|
-| [1. Quick start](01-quickstart.en.md) | Create the environment, configure one model, and start the WebUI safely |
-| [2. Concepts and project spaces](02-concepts.en.md) | Control plane, workspace, thread, run, artifact, and directory boundaries |
-| [3. LLM and runtime configuration](03-llm-configuration.en.md) | Providers, role models, API keys, reasoning options, and output policy |
-| [4. WebUI guide](04-webui.en.md) | Accounts, workspaces, threads, attachments, approvals, Monitor, and Files |
-| [5. Agents and modules](05-agents-and-modules.en.md) | Choosing Research, Experiment, Writing, Peer Review, or Literature Review |
-| [6. Computational workflows](06-computational-workflows.en.md) | Structures, DFT, MD, MLFF, molecular calculations, and result checks |
-| [7. Literature, writing, and review](07-literature-writing-review.en.md) | Search, local corpora, manuscript work, polishing, and multi-model review |
-| [8. Remote machines and execution](08-remote-execution.en.md) | SSH, Slurm, DPDispatcher, resource cards, stages, receipts, and recovery |
-| [9. Tools, skills, and evolution](09-tools-skills-evolution.en.md) | Tool permissions, skills, project improvements, approval, and rollback |
-| [10. Deployment, operations, and security](10-deployment-operations.en.md) | Server deployment, SSH tunnels, backup, upgrades, and external programs |
-| [11. Reference and troubleshooting](11-reference-troubleshooting.en.md) | Environment variables, task matrices, limits, diagnosis, and acceptance checks |
+| Building surfaces, adsorbates, defects, or VASP/CP2K workflows | [Experiment and its four workers](05-agents-and-modules.en.md), then [modeling and computation capabilities](06-computational-workflows.en.md) |
+| Running AIMD, LAMMPS, MLFF MD, or trajectory analysis | [Dynamics worker](05-agents-and-modules.en.md#dynamics-worker-atomistic-dynamics-and-trajectories) |
+| Curating training data, training MACE, or selecting active-learning candidates | [ML worker](05-agents-and-modules.en.md#ml-worker-datasets-training-and-active-learning) |
+| Running conformer, xTB, CREST, ORCA, TS, IRC, or NMR work | [ORCA/xTB worker](05-agents-and-modules.en.md#orcaxtb-worker-molecules-and-quantum-chemistry) |
+| Finding and reading papers, building evidence tables, or managing references | [Literature, Writing, and Peer Review](07-literature-writing-review.en.md) |
+| Drafting papers, polishing, making figures or slides, answering reviewers, or preparing patent drafts | [Writing agent](07-literature-writing-review.en.md#writing-agent-turning-evidence-into-deliverables) |
+| Submitting prepared calculations to a cluster or GPU server | [Remote tasks](08-remote-execution.en.md) |
+| Continuing a long project, managing outputs, or preserving project methods | [Project files and continuity](09-tools-skills-evolution.en.md) |
+| Installing, configuring models, connecting servers, or operating a shared deployment | [Installation, model configuration, and deployment](10-deployment-operations.en.md) |
+| Copying a reference prompt or diagnosing a problem | [Prompt library and troubleshooting](11-reference-troubleshooting.en.md) |
 
-## Three operating rules
+## Capability map
 
-1. Put user and agent work under the project space's `files/` directory.
-   `metadata/` holds threads, checkpoints, run records, and internal indexes. Do
-   not manage it as an ordinary file directory.
-2. VASP, CP2K, LAMMPS, ORCA, xTB, CREST, and managed MLFF tasks use registered
-   remote execution paths. CatMaster does not silently fall back to local
-   execution when remote configuration is missing.
-3. A finished process is not automatically a trustworthy result. Check the
-   structure, parameters, convergence, logs, physical plausibility, and returned
-   files.
+This table is only an entry point. The manual describes how agents combine tools and skills into coherent research work instead of presenting each item as an isolated button.
 
-## Conventions
+| Capability area | Work CatMaster can participate in | Typical deliverables |
+|---|---|---|
+| Materials discovery and structure modeling | Find bulk structures; build reference cells, supercells, surfaces, terminations, defects, dopants, adsorption sites, and reaction paths | POSCAR/CIF/XYZ files, candidate sets, site ledgers, structure audits, reproducible scripts |
+| First-principles calculations and properties | Prepare and inspect VASP or CP2K inputs for relaxation, static, frequency, band, DOS, phonon, elastic, NEB, and thermochemical work | Calculation stages, method records, convergence checks, barriers, property tables, analysis reports |
+| Dynamics | Prepare CP2K AIMD, LAMMPS, and MLFF MD; continue restarts; assess trajectory health; analyze MSD, RDF, diffusion, and structural evolution | Input and restart stages, trajectories, health reports, time series, diffusion and coordination analyses |
+| Machine-learning potentials | Build datasets from VASP results, create fixed splits, train or fine-tune MACE, evaluate held-out errors, and rank active-learning candidates | extxyz datasets, manifests, training configs, checkpoints, benchmark and candidate reports |
+| Molecular quantum chemistry | Build molecules from SMILES or structures, search conformers, run xTB/CREST/ORCA, and handle frequency, thermochemistry, TS, IRC, TDDFT, or NMR work | Conformer ensembles, xTB/ORCA stages, optimized structures, frequencies, thermochemistry, reaction paths |
+| Literature and evidence | Discover papers, use a controlled browser for authorized full text, ingest local corpora, read deeply, deduplicate, verify metadata, and map claims to evidence | Search records, corpora, evidence tables, bilingual readers, BibTeX/RIS/ENW, reviews |
+| Scientific writing and communication | Draft and restructure manuscripts, polish prose, add citations, create figures and slides, prepare data statements, answer reviewers, and draft patents | Markdown, LaTeX, DOCX, PPTX, figures, PDF, response letters, patent documents |
+| Independent peer review | Ask several reviewer models to inspect one canonical PDF, then synthesize agreements, disagreements, and submission risks | Reviewer reports, editor synthesis, revision issue lists |
+| Research coordination | Connect literature, computation, writing, and review within an open objective while retaining hypotheses, evidence gaps, artifacts, and unresolved questions | Research plans, staged deliverables, evidence synthesis, limitations, resumable project state |
 
-- Commands are run from the repository root unless stated otherwise.
-- Examples use port `7991` and explicitly bind to `127.0.0.1`. Do not rely on
-  the launcher's implicit address.
-- A `project path` is a real host path. A `workspace path` is relative to the
-  `files/` root visible to the agent.
-- Replace every `<LIKE_THIS>` placeholder. Example tokens, hosts, users, and
-  paths are not usable credentials.
-- Queue names, core counts, GPU counts, and executable paths in templates are
-  starting points that must be adapted to the site.
+## How to read tool and skill names
 
-## Scope
+The main text describes research capabilities first. Each agent or worker section includes an expandable list when the exact implementation surface matters.
 
-CatMaster organizes work, prepares and checks files, invokes registered tools,
-retains execution evidence, and submits to configured machines. It does not
-provide commercial software licenses, cluster accounts, network authorization,
-potential-file rights, institutional subscriptions, or scientific judgment.
+- A tool performs an action, such as generating slabs, enumerating adsorption sites, preparing VASP inputs, reading a PDF, analyzing a trajectory, or submitting a remote task.
+- A skill is a domain method. It tells the agent when to use those actions, what to check, how to organize outputs, and which interpretations would go beyond the evidence.
+- A worker is a domain executor with a defined set of tools and skills. Experiment delegates to Materials, Dynamics, ML, or ORCA/xTB workers.
+- A remote task is an administrator-registered execution contract. It moves a valid local stage to a configured machine, runs the managed scientific program, and returns results plus a recovery receipt.
+
+Users normally do not need to name a tool in the prompt. State the scientific objective, inputs, constraints that must survive, allowed computation, and intended artifacts. The agent chooses the implementation. Naming a tool or remote task is useful when reproducing a known workflow, checking a deployment contract, or requiring a specific method.
+
+## Boundaries
+
+CatMaster can organize work, process files, generate and inspect inputs, call registered tools, submit configured remote calculations, and retain evidence. It does not supply VASP or ORCA licenses, bypass institutional login or cluster permissions, or cross publisher paywalls. Agent judgments, generated structures, and numerical results still require domain review, especially for charge, spin, constraints, energy references, convergence, out-of-domain ML predictions, and reaction pathways.
+
+This manual describes the current DeepAgent specialist runtime and WebUI v2. Last checked: 2026-07-20.

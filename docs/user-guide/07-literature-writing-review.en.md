@@ -1,223 +1,199 @@
-# 7. Literature, writing, and review
+# 7. Literature, Writing, and Peer Review agents
 
 [Previous](06-computational-workflows.en.md) | [Contents](README.en.md) | [Next](08-remote-execution.en.md)
 
-Literature, writing, and review share project files but carry different evidence
-responsibilities. Literature Review discovers, reads, and finalizes references.
-Writing produces a manuscript from supplied material. Peer Review examines one
-fixed PDF from reviewer and editor perspectives. Keeping the three separate
-reduces fabricated references, version confusion, and prose invented during
-search.
+Literature Review, Writing, and Peer Review share a workspace but have different evidence responsibilities. Literature Review finds and verifies source material. Writing uses existing evidence to create manuscripts and other deliverables. Peer Review independently examines a fixed manuscript. Keeping those roles distinct prevents the writer from inventing evidence while composing and keeps reviewer comments traceable to real revisions.
 
-## 7.1 Search-service configuration
+## Literature Review agent: from discovery to an evidence corpus
 
-Common environment variables are:
+Literature Review can answer a focused verification question or conduct a larger topic review. The research question determines scale. A precise fact may need only a few strong sources. A perspective-style review requires a broad candidate set, explicit search boundaries, and saved screening records. State the date range, material or reaction system, document types, exclusions, and intended use when they matter.
 
-```bash
-export TAVILY_API_KEY="<KEY>"
-export SEMANTIC_SCHOLAR_API_KEY="<KEY>"
-export OPENALEX_API_KEY="<KEY>"
-export NCBI_API_KEY="<KEY>"
-export CROSSREF_MAILTO="you@example.org"
-```
+### Discovery is not close reading
 
-Not all are required. If a service is unavailable, the agent uses currently
-available search and local-corpus routes. An API key grants access but does not
-guarantee full text or correct metadata.
+Public web search discovers papers, project pages, and database records. Search results generally establish that a paper exists and may expose title, authors, an abstract fragment, or DOI. The agent distinguishes those records from content read at abstract, full-text, or supplementary level.
 
-## 7.2 Controlled browser
-
-See [Quick start](01-quickstart.en.md) for installation. Optional session
-settings are:
-
-```bash
-export CATMASTER_AGENT_BROWSER_PROFILE="$HOME/.config/catmaster/browser-profile"
-export CATMASTER_AGENT_BROWSER_HEADED=true
-```
-
-Or try to connect to a running Chrome instance:
-
-```bash
-export CATMASTER_AGENT_BROWSER_AUTO_CONNECT=true
-```
-
-Initial institutional sign-in usually needs headed mode. Keep the profile
-outside project spaces and private to the current user. Never put passwords,
-cookies, OTPs, session exports, or browser state in `.env.local`, YAML, prompts,
-or `files/`.
-
-When a CAPTCHA, QR code, text verification, license confirmation, or browser
-security warning appears, the agent stops for the user. CatMaster does not
-bypass paywalls or access controls.
-
-## 7.3 Literature Review workflow
-
-An auditable review process is:
-
-1. Define the question, date range, material or reaction system, document types,
-   and exclusions.
-2. Record databases, web entrypoints, and search strings.
-3. Deduplicate DOI, title, and publication versions.
-4. Distinguish discovery records, abstracts, full text, and supplementary data.
-5. Extract methods, systems, comparison conditions, results, and limitations
-   from key papers.
-6. Map claims to evidence instead of using one paper for many unrelated claims.
-7. Use citation finalization to check DOI, author, journal, year, and exportable
-   records.
-8. Save the search log, evidence table, unavailable list, and final review.
-
-Suggested layout:
+For open-access or user-authorized institutional content, a controlled browser can open dynamic pages and acquire legitimate full text. CAPTCHA, QR code, OTP, license prompts, and security warnings remain human actions. A paper without full text can stay in the candidate table but cannot support method details or precise values that are absent from its abstract.
 
 ```text
-literature/
-  query.md
-  corpus/
-  metadata/
-  evidence.csv
-  unavailable.md
-  references.bib
-  review.md
+Use Literature Review to find in situ evidence for aggregation and redispersion of single-atom catalysts
+since 2018. Begin with broad discovery and save the complete candidate set. Prioritize papers that use
+operando or in situ methods, directly discuss aggregation or redispersion, and provide accessible full text.
+
+Separate metadata, abstract, full-text, and SI evidence. For core papers, extract catalyst, atmosphere,
+temperature, method, observed dynamics, author interpretation, and limitations. Do not turn search snippets
+into close-reading conclusions.
 ```
 
-## 7.4 Evidence levels
+### Local corpora support repeated project questions
 
-A report should mark where information came from:
+Existing PDFs, Markdown, DOCX, and tables can be placed under `literature/` and ingested into a local corpus. The agent can then query the same material from several research angles while preserving source records. Parsed text may not capture every figure, formula, or supplementary detail, so important conclusions should return to the source page or publisher HTML.
 
-| Level | What it can support |
-|---|---|
-| Search result or metadata | Existence, title, authors, venue, year, and discovery facts |
-| Abstract | Main purpose and findings explicitly stated in the abstract |
-| Full text | Methods, numbers, conditions, figures, and discussion |
-| Supplementary Information | Detailed experiments, computational settings, extended data, and extra figures |
-| User-supplied data | Claims consistent with its provenance, version, and completeness |
-
-State when full text was not read. Do not infer a method from the title, fill
-exact parameters from an abstract, or double-count a preprint and journal
-version.
-
-## 7.5 Local corpora
-
-Upload existing PDF, Markdown, or tables under `literature/corpus/`, then ask
-Literature Review to ingest and query them. A large corpus should have a manifest
-with:
+The `nature-reader` skill can build a bilingual, figure-aware Markdown reader that preserves source anchors and paper order. It is designed for full reading rather than collapsing a paper into a one-page summary.
 
 ```text
-source path
-DOI or stable identifier
-title
-document version
-access date
-parse status
-notes
+Read literature/papers/pd_redispersion.pdf closely and build a Chinese-English reader.
+Preserve section order and place each important figure or table near the discussion it supports.
+Keep page or source anchors for every block. Separate methods, direct results, and author interpretation.
+Do not return only a summary. Explain in detail the evidence relevant to whether Pd is truly atomically dispersed
+and list alternative explanations the paper does not exclude.
 ```
 
-Successful parsing does not guarantee complete extraction of figures, formulas,
-or supplementary material. Verify central claims against PDF pages or publisher
-HTML.
+### Evidence tables connect claims to sources
 
-## 7.6 Writing input contract
+The most useful intermediate artifact in a review is often an evidence table rather than prose. Literature Review can record system, method, conditions, result, limitation, and evidence level for each paper, then map individual claims to supporting or contradicting sources. Writing can use that map without guessing which citation belongs to each sentence.
 
-A Writing request should state:
-
-- Language, target journal, or audience.
-- Document type and section for this turn.
-- Evidence files, tables, figures, and reference library.
-- Numbers, terminology, citations, and conclusion boundaries to preserve.
-- Prohibited additions, such as new results, unverified references, or causal
-  claims.
-- Output format, filename, and whether a revision record is required.
-
-Example:
+Deduplicate title, DOI, preprint, and journal versions early. After paper selection, `finalize_citations` resolves author, journal, year, DOI, and export records in one batch. `nature-ref-verifier` can audit an existing bibliography field by field and flag volume-year, author-order, pagination, and DOI conflicts.
 
 ```text
-Use notes/result_contract.md, calculations/summary.csv, and
-writing/references.bib to draft two Results subsections. Preserve every number
-and error value, add no references, and list the evidence file for each
-paragraph. Write writing/results_v1.md.
+Turn the papers under literature/corpus/ on Pd/CeO2 into a claim-evidence table.
+Cover Pd stabilization sites, oxygen-vacancy effects, migration under redox conditions, sintering temperature,
+and redispersion evidence. For each claim, list support, counterexamples, or insufficient evidence and label
+whether it comes from an abstract, full text, or SI.
+
+Finalize DOI and metadata only after selection. Write evidence.csv, references.bib, and unavailable.md.
+Do not count a preprint and its journal article as separate evidence.
 ```
 
-## 7.7 Drafting, polishing, and fact preservation
+### Specialized search and citation work
 
-The writing worker can restructure arguments, draft sections, create figures,
-and compile documents. The polisher performs conservative language edits. Final
-checks should ask:
+Literature skills also support claim-level citation searches restricted to Nature Portfolio, the Science family, and Cell Press; coordinated multi-source search and citation metrics; and scheduled literature pipelines. Access to Scopus, ScienceDirect, PubMed, or other services depends on configured MCPs and accounts. The agent must report the sources it actually used rather than treating a skill description as proof of access.
 
-- Do numbers, units, symbols, and uncertainties match their sources?
-- Does each citation support its nearby claim?
-- Was correlation turned into causation?
-- Is conclusion strength wider than the data?
-- Were methods and results mixed?
-- Were limitations, uncertainty, or failed cases removed?
-- Do figure, table, supplement, and cross-reference numbers agree?
+<details>
+<summary>Sources of Literature Review capability</summary>
 
-Automated polishing does not replace author review. Keep a prior version or diff
-for important text.
+Direct tools are `web_search`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`, plus controlled browser tools when `agent-browser` is available.
 
-## 7.8 Figures, Markdown PDF, and TeX
+Skills are `nature-academic-search`, `nature-downloader`, `nature-reader`, `nature-citation`, `nature-ref-verifier`, and `nature-literature-pipeline`. Tools perform search, ingestion, retrieval, and metadata finalization. Skills define scope, evidence levels, lawful acquisition boundaries, reading form, and delivery quality.
 
-Writing can invoke figure and compilation tools. Supply the data, intended
-conclusion, panel logic, units, color constraints, output format, and journal
-dimensions. Keep source data and the generation script for scientific figures.
+</details>
 
-The Markdown PDF route normally requires Pandoc, Chrome or Chromium, Fontconfig,
-and appropriate CJK fonts. LaTeX requires `pdflatex` and also `bibtex` when a
-bibliography is present. After compilation, inspect the PDF for blank pages,
-overflow, cropped figures, substituted fonts, formulas, and links.
+## Writing agent: turning evidence into deliverables
 
-See [Deployment, operations, and security](10-deployment-operations.en.md) for
-the environment.
+Writing can begin from Chinese notes, result tables, figures, code output, a bibliography, an existing LaTeX project, an older PDF, or reviewer comments. Its job is not simply to polish the material. It interprets the writing target and evidence boundary, then selects writing skills for argument design, drafting, revision, figures, layout, or compilation.
 
-## 7.9 Peer Review workflow
+### Manuscripts, reports, and proposals
 
-Prepare one canonical PDF, for example:
+`nature-writing` and `scientific-writing` build manuscript arguments from existing claims, results, and figures. `researchwrite` is proposal-oriented and establishes the evidence and argument contract before drafting. Writing can handle abstracts, introductions, methods, results, discussions, conclusions, and larger restructuring.
+
+A useful request identifies reader, document type, current section, available evidence, values that must remain exact, and content that must not be invented. Final prose should be connected paragraphs rather than a pile of outline fragments.
 
 ```text
-writing/submission/manuscript.pdf
+Use Writing to rebuild the Discussion in writing/discussion_old.md for a catalysis-computation paper.
+Trusted evidence is in notes/claims.md, data/final_results.csv, figures/, and references.bib.
+
+Identify where the draft merely repeats Results and where literature comparison or limitations are missing.
+Select appropriate writing skills and rebuild the argument as connected prose. Every number and citation must
+come from the supplied files. Do not invent a mechanism. Preserve limitations on model domain and unvalidated
+dynamics. Save the new draft and a concise revision note.
 ```
 
-State the journal or review standard, article type, whether Supplementary
-Information is included, and any methods or reporting concerns to emphasize. Do
-not leave several same-named PDFs in different directories without identifying
-the primary version.
+### Polishing, translation, and factual preservation
 
-Peer Review generates one report per `peer_review_models` label, followed by an
-editor synthesis. A useful output layout is:
+`nature-polishing` and the writing polisher improve language, paragraph logic, and academic style while preserving numerical values, units, references, conclusion strength, and scientific structure. Chinese drafts can be translated to publication English. A language-only request must not turn a cautious conclusion into promotion.
+
+Keep the original or a revision record for important manuscripts. State terms, symbols, or phrases that must not change, and ask the agent to flag edits that could alter scientific meaning.
 
 ```text
-writing/review/
-  reviewer_1.md
-  reviewer_2.md
-  reviewer_3.md
-  editor_synthesis.md
-  review_memo.md
+Polish writing/abstract_v3.md in English. Preserve every number, catalyst name, tense, citation,
+and level of certainty. Do not add background or turn correlation into causation. The target is
+Nature Communications, but avoid promotional abstract language.
+
+Check the scientific logic before editing. Save abstract_v4.md and list any terminology or overstrong
+claim that still requires author judgment. The abstract must remain connected prose.
 ```
 
-Review output is diagnostic material, not a factual verdict. Check each concern
-against manuscript pages, source data, and methods.
+### Citations, bibliography, and data statements
 
-## 7.10 Move from review to revision
+Writing can use citation skills to find support for a supplied passage and verify DOI, author, volume, issue, and pages. Citation work begins from a specific claim rather than appending several vaguely related papers to a paragraph. The agent maps sources to claims and marks evidence that is abstract-only or incomplete.
 
-Do not ask Peer Review to rewrite the paper directly. First classify comments as
-accepted, partly accepted, or rejected. Then provide Writing or Research with:
+`nature-data` prepares Data Availability, Code Availability, repository plans, dataset citations, and FAIR metadata checks. It can draft language from the actual data situation, but it cannot upload the data or invent an accession number.
 
-- The canonical manuscript source.
-- Reviewer and editor artifacts.
-- A decision and evidence for every comment.
-- Sections allowed to change.
-- Whether a response letter and marked manuscript are needed.
+```text
+Audit the [CITATION NEEDED] markers in writing/introduction.md.
+Extract the externally verifiable claim in each sentence, find sources that directly support it,
+and state whether evidence comes from full text or abstract. Do not force citations onto ordinary transitions.
 
-Compile a new PDF after revision and perform an independent check on that new
-canonical version.
+Save a claim, candidate source, support strength, and DOI table. Wait for confirmation before updating
+references.bib or the manuscript.
+```
 
-## 7.11 Delivery checklist
+### Scientific figures, schematics, and PDF
 
-A complete literature and writing delivery normally includes:
+`nature-figure` and `scientific-visualization` create publication figures in Python or R with multipanel layouts, uncertainty, significance, accessible color, and journal dimensions. The user should identify the conclusion, data, units, comparisons, and output formats. The agent retains source data and plotting code so the figure can be reproduced.
 
-- Search strings and dates.
-- Deduplicated records and stable identifiers.
-- Full-text availability and evidence level.
-- Claim-evidence table.
-- Reference library and unverified entries.
-- Editable source, figure sources, and compiled PDF.
-- Original reviewer reports, editor synthesis, and revision decisions.
-- Final data, citation, layout, and fact-preservation checks.
+When explicitly requested, an image-generation route can draft a graphical abstract or mechanism schematic. Generated imagery does not replace quantitative plots or validated atomic structures.
+
+`markdown-pdf-export` renders existing Markdown to PDF, while `compile_text` checks and compiles LaTeX. ACS projects can use the local achemso skill, and other venues can use venue templates. A successful compile still requires visual review of fonts, equations, images, references, and pagination.
+
+```text
+Use Writing to create the main manuscript figure from data/activity.csv and data/stability.csv.
+The figure should show the activity-stability tradeoff and identify three candidate catalysts.
+Inspect columns, units, replicates, and uncertainty definitions before proposing the panel logic.
+
+After plotting, audit dimensions, fonts, color, and labels. Save Python source, processed plotting data,
+SVG, PDF, and 600 dpi TIFF. Do not remove unfavorable points for visual clarity.
+```
+
+### Slides, reviewer responses, and patent drafts
+
+`nature-paper2ppt` turns a paper, PDF, or reading notes into a Chinese academic presentation with selected figures, slide content, speaker notes, and an overflow and image-quality review. It is intended for journal club, group meetings, defenses, and talks, not for copying manuscript paragraphs into a template.
+
+`nature-response` organizes editor and reviewer correspondence into point-by-point responses, revision cover letters, and marked-manuscript plans. Each response should correspond to a real edit or evidence record.
+
+`nature-paper-to-patent` extracts evidence-supported technical contributions from papers, reports, code, and figures and drafts Chinese claims, specification, abstract, and abstract figure. Formal patentability review and filing remain professional legal work.
+
+```text
+Create a 20-minute Chinese group-meeting presentation from writing/submission/manuscript.pdf.
+Understand the research question, evidence chain, and limitations before selecting figures.
+Do not follow paper page order mechanically and do not add a divider slide for every minor section.
+
+Deliver an editable PPTX with speaker notes, then check image sharpness, overflow, color, slide numbers,
+and citations. End with conclusions supported by the paper and questions that remain unresolved.
+```
+
+<details>
+<summary>Sources of Writing capability</summary>
+
+Entry tools are `generate_nanobanana_figure` and `review_pdf_manuscript`. The writing worker also uses `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`, plus common file and scripting capabilities.
+
+Skills cover manuscript and proposal writing, polishing, citations, data statements, figures, full-paper reading, reference verification, response letters, pre-submission review, PPT, patent drafts, ACS LaTeX, venue templates, and Markdown PDF. `citation-management` supplies a general reference workflow, while `avoid-ai-writing` performs the final style audit. External actions still depend on installed software, APIs, and supplied source material.
+
+</details>
+
+## Peer Review agent: several independent reports on one manuscript
+
+Peer Review needs one canonical PDF because the PDF contains text, figures, tables, equations, and final layout. Keep LaTeX or Word source in the workspace for later revision, but identify one PDF as authoritative.
+
+`peer_review_request` sends that PDF to every model in `peer_review_models`. Reviewers independently assess novelty, method reliability, evidence, reporting, and risk. An editor-level synthesis then separates consensus from disagreement. Agreement among models is not automatic proof. Verify each major criticism against the cited page, source data, and methods.
+
+```text
+Use Peer Review on writing/submission/manuscript_r2.pdf for Journal of Catalysis.
+This is the only canonical PDF. The SI is writing/submission/si_r2.pdf.
+
+Ask reviewers to assess model construction, DFT settings, adsorption and free-energy references,
+NEB evidence, experimental controls, figures, and reproducibility. Major comments must point to pages,
+figures, or paragraphs. Preserve all reports, then provide an editor synthesis. Do not edit the manuscript
+or write an author response in this turn.
+```
+
+### Moving from review to revision
+
+After review, create a decision table. Mark each comment accepted, partly accepted, requiring clarification, or rejected with evidence. Identify which data or analysis it needs and where the manuscript will change. Give that table, source manuscript, reviewer reports, and editor synthesis to Writing.
+
+Writing can draft a response and revise source files, but every claim of change must correspond to an actual diff. Compile a new PDF and check layout and scientific consistency. A second Peer Review round should explicitly identify the new canonical PDF.
+
+```text
+Use Writing to address the reviews under writing/review_round1/. The source is writing/manuscript.tex,
+and author decisions are in writing/review_round1/decisions.md.
+
+Verify each reviewer comment, author decision, and available evidence before drafting a response and edit plan.
+Only comments marked accepted or partly accepted may change the manuscript. Put requests for new computation
+on a pending list rather than inventing results. Point every response to the actual modified location and retain
+a before-and-after record.
+```
+
+## A practical handoff order
+
+For a full manuscript project, Literature Review often establishes sources and an evidence table, Writing creates or revises the manuscript, and Peer Review examines the compiled canonical PDF. Review outputs return to Writing for revision and response. Research can coordinate new literature or computation if a genuine evidence gap remains.
+
+This is not a mandatory pipeline. Existing evidence can go directly to Writing. Reading one paper does not require Research. A layout-only check does not need multiple reviewer models. Choose the narrowest entry that can complete the work so that autonomy is spent on the task rather than role switching.

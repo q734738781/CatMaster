@@ -1,218 +1,219 @@
-# 5. Agents and modules
+# 5. Experiment agent and its four computation workers
 
 [Previous](04-webui.en.md) | [Contents](README.en.md) | [Next](06-computational-workflows.en.md)
 
-The five entrypoints are user-visible work modes, not five prompt skins on one
-agent. Each has distinct model roles, tools, skills, and delegation topology.
-Choosing the wrong entrypoint may still produce an answer, but often adds
-unnecessary planning, omits domain tools, or crosses responsibility boundaries.
+Experiment is CatMaster's computation entry. It interprets the scientific objective, inspects available inputs and results, chooses the appropriate worker, and evaluates whether returned work is enough for the current question. Materials, Dynamics, ML, and ORCA/xTB workers perform the domain operations.
 
-## 5.1 Quick selection
+This separation lets a user begin with science rather than a tool chain. "Compare Pd adsorption near several oxygen vacancies" may involve defect structures, adsorption sites, candidate batches, geometry checks, and fast potential screening. Experiment can keep the main work with Materials, then hand accepted structures to Dynamics if the objective changes to high-temperature migration. The workers share a workspace but run sequentially, so each step can inspect the artifacts left by the previous one.
 
-| Goal | Entrypoint | Reason |
-|---|---|---|
-| One bounded structure, calculation, trajectory, or ML task | Experiment | Direct access to four computational workers |
-| An open research problem spanning literature, computation, and writing | Research | Can delegate the other four specialist types by stage |
-| Drafting or revising text from existing evidence | Writing | Writing workers, polishing, figures, and compilation |
-| Formal review of one fixed PDF | Peer Review | Multiple reviewer reports and editor synthesis |
-| Systematic search, full-text reading, evidence tables, and references | Literature Review | Search, controlled browser, local corpus, and citation finalization |
+## How Experiment chooses a worker
 
-Use the narrowest entrypoint for a bounded task. Research is not a generic
-"stronger mode"; it is for goals that truly need cross-module decisions.
+| Primary question or deliverable | Worker that normally owns it |
+|---|---|
+| Crystals, surfaces, defects, adsorption, VASP/CP2K, MLFF inference, NEB, or solid-state properties | Materials |
+| AIMD, LAMMPS, MLFF MD, restart continuity, trajectory health, or diffusion | Dynamics |
+| Training data, MACE training or evaluation, active-learning selection | ML |
+| Molecules, conformers, xTB, CREST, ORCA, TS, IRC, TDDFT, or NMR | ORCA/xTB |
 
-## 5.2 Research
+The boundary follows the research objective, not only the program name. Materials can retain an MLFF relaxation within an adsorption screen. Dynamics is the better owner when MLFF MD and trajectory interpretation are central. MACE model training and benchmarking remain with ML.
 
-Research is a research coordinator that can delegate:
+All four workers also receive common project tools. `write_todos` maintains the current plan; `ls`, `glob`, `grep`, and `read_file` inspect files; `write_file` and `edit_file` save artifacts; and `execute` runs bounded local scripts or commands. `export_builtin_tool_source` can place the implementation of a registered built-in tool in the workspace for inspection. These common actions support the domain tools below and do not replace them. In Review mode, `write_file` and `edit_file` pause for approval.
 
-```text
-Research
-  -> Experiment Specialist
-  -> Writing Specialist
-  -> Peer Review Specialist
-  -> LitReview Agent
-```
+## Materials worker: from crystals to surfaces, paths, and properties
 
-Good uses:
+Materials is the broadest computation worker. It can start from Materials Project or a workspace structure, establish a reliable bulk reference, and continue through surfaces, defects, adsorption, pathways, and properties. Deterministic modeling tools perform repeatable transformations, while domain skills guide candidate design, constraint preservation, quality checks, and calculation preparation.
 
-- Build a plan and identify evidence gaps from an open scientific question.
-- Review literature before deciding whether computation is needed.
-- Integrate existing calculations and literature into a report or manuscript
-  section.
-- Maintain decisions, assumptions, artifacts, and next steps across stages.
+### Materials discovery and bulk references
 
-Poor uses:
+When no trusted structure exists, Materials can search by composition, elements, stability, or other Materials Project criteria and download selected records as POSCAR, CIF, or pymatgen JSON. The database file remains an original. Standardized, expanded, or calculation-ready structures are saved separately with provenance.
 
-- One structure conversion with known input and output.
-- Only finding papers or polishing one paragraph.
-- Using a vague "research this" request to hide an undefined calculation.
-
-Research is a decision and integration layer, not the owner of every
-computational tool. Property lookups first use workspace evidence and
-literature. When evidence is missing, it should state the gap and ask whether to
-calculate, not launch DFT or ORCA without authorization.
-
-Delegation is sequential inside a shared workspace. CatMaster delegates one
-specialist or worker, waits for its result, and then decides the next step. This
-avoids parallel agents rewriting the same files.
-
-## 5.3 Experiment
-
-Experiment coordinates computational research and quality control. Its
-coordinator can inspect available remote tasks and search or download Materials
-Project structures. Domain work is normally delegated to four workers.
-
-### Materials worker
-
-Main capabilities:
-
-- Bulk cells, supercells, structure standardization.
-- Surface cuts, terminations, steps, defects, dopants, and adsorption sites.
-- VASP and CP2K input preparation, batch stages, NEB, and dimer paths.
-- Phonon, elastic, band, DOS, thermodynamic, and k-path helpers.
-- SP, relaxation, and path work with MACE, UMA, MatterSim, and ORB.
-- Structure, coordination, constraint, trajectory, and output audits.
-
-### Dynamics worker
-
-Main capabilities:
-
-- CP2K AIMD preparation, restart, and analysis.
-- LAMMPS minimization, MD, restart, and potential layouts.
-- MLFF MD preparation and execution.
-- Trajectory health, temperature, energy, drift, diffusion, and structural
-  evolution analysis.
-
-### ML worker
-
-Main capabilities:
-
-- Training and validation dataset curation.
-- Active-learning candidate management.
-- MACE training, fine-tuning, evaluation, and benchmarking.
-- Reusable lightweight project scripts when no dedicated tool covers the task.
-
-### ORCA/xTB worker
-
-Main capabilities:
-
-- Molecule and conformer generation from SMILES or structures.
-- xTB optimization, energy, solvation, and short MD.
-- CREST conformer search.
-- ORCA geometry optimization, frequency, thermochemistry, scans, TS, IRC,
-  TDDFT, and NMR.
-- Conformer ensembles and molecular MLFF prescreening.
-
-Workers prepare and inspect stages, but registered scientific engines use
-managed remote execution. If machine, resource, or task configuration is
-missing, the correct behavior is to report it instead of silently running the
-engine on the control plane.
-
-## 5.4 Writing
-
-Writing produces manuscripts from existing evidence:
+A consistent bulk reference supports surface energy, defect, band, and adsorption comparisons. The worker can prepare bulk relaxation and static stages, record symmetry-inequivalent sites, and use the accepted structure for later work.
 
 ```text
-Writing Specialist
-  -> writing_worker_agent
-  -> writing_polisher_agent
+Use Experiment to establish a bulk reference for rutile TiO2 before surface modeling.
+Ask Materials to inspect the workspace for a trustworthy structure and, if none exists, search Materials Project.
+Compare candidate phase, space group, stability, and source before selecting one. Preserve the downloaded original,
+the standardized structure, and a provenance note.
+
+Prepare consistent VASP bulk-relax and static inputs, but do not submit. Record every setting that will affect
+later surface-energy comparisons in notes/tio2_bulk_reference.md.
 ```
 
-`writing_worker_agent` handles one bounded section, integration task, figure,
-TeX compilation, or Markdown PDF. `writing_polisher_agent` performs conservative
-language edits and should not alter numbers, citations, evidence scope,
-conclusion strength, or technical structure.
+### Slabs, terminations, fixed layers, and surface inspection
 
-Good uses:
+Given a bulk structure and Miller index, `build_slab` generates all recognized terminations and can apply the same lateral expansion to each one. Surface skills help the worker choose thickness, vacuum, symmetry, top and bottom treatment, polarity checks, and a fixed-layer policy. Atoms can be fixed by bottom-layer count, height range, or explicit indices, while inherited Selective Dynamics remains attached to the structure.
 
-- Draft an abstract, methods, results, or discussion from notes, tables, and
-  figures.
-- Revise existing Markdown, LaTeX, or extracted Word text.
-- Normalize terminology and repair paragraph logic or language.
-- Build scientific figures, compile a PDF, and inspect the compiled layout.
-
-Writing does not invent experimental results or launch calculations. If source
-support is missing, route the problem to Literature Review or Research instead
-of generating plausible-looking references.
-
-## 5.5 Peer Review
-
-Peer Review accepts one canonical PDF, produces an independent report for every
-label in `peer_review_models`, and then synthesizes an editor decision. One model
-label corresponds to one reviewer report.
-
-Typical outputs:
-
-- Complete reports from each reviewer.
-- Major and minor concerns with verifiable locations.
-- Agreement and disagreement across reviewers.
-- An editor synthesis or decision memo.
-
-Use it for pre-submission review, revision quality control, or independent model
-cross-review. It is not the mode for directly rewriting the paper or answering
-every comment. Pass the review artifact to Writing or Research for revisions.
-
-Identify exactly which PDF is the canonical manuscript. Do not provide several
-near-identical versions without priority.
-
-## 5.6 Literature Review
-
-Literature Review uses one LitReview DeepAgent that combines:
-
-- Public web search.
-- Controlled `agent-browser`, including a session the user has legitimately
-  authorized.
-- Local literature ingestion and query.
-- DOI, metadata, evidence-table, and citation finalization tools.
-- Literature-reading and writing-quality skills.
-
-It is suitable for paper discovery, full-text reading, thematic reviews,
-evidence matrices, method comparison, and reference organization. It does not
-run calculations or produce a complete manuscript.
-
-The controlled browser does not bypass paywalls, CAPTCHAs, OTPs, or security
-warnings. The user completes sign-in. A discovered abstract is not equivalent to
-full-text access. Reports should distinguish metadata, abstract, full text, and
-user-supplied evidence.
-
-## 5.7 General-purpose subagent
-
-The DeepAgents runtime may show a `general-purpose` subagent. It isolates context
-inside the same responsibility lane, inherits the parent's tools, and receives
-no new authority. It cannot bypass worker, remote-task, or safety boundaries.
-Users normally do not need to request it by name.
-
-## 5.8 Tools and skills
-
-A tool performs one action, such as reading a file, inspecting a structure, or
-submitting a stage. A skill is a workflow and checklist. Having a skill in a
-worker's context does not grant every similarly named tool. The runtime allowlist
-and task audience remain authoritative.
-
-At run time, built-in skills are staged into the project and combined with
-workspace `self_develop_skills`. A project skill can override a built-in skill of
-the same name, but it loads only from the next run.
-
-## 5.9 Selection examples
+Generating POSCAR files is only the beginning. Materials can inspect periodic short contacts, fragments, surface coordination, dangling atoms, and stoichiometry, then produce standardized structure views for human review. A request such as "the highest oxygen with coordination one" is converted into an auditable geometric or neighbor criterion with reported thresholds and atom indices.
 
 ```text
-"Expand this POSCAR to 3x3x1 and preserve Selective Dynamics"
--> Experiment
+Read structures/relaxed_ceo2.vasp and build the CeO2(111) slab set needed for single-Pd adsorption.
+Ask Materials to combine slab construction, termination screening, and visual inspection skills.
 
-"Compare literature and computational evidence for Pt single atoms at CeO2
-sites, then propose the next calculations"
--> Research
-
-"Draft Results from results.csv and Figure 2 without adding data or citations"
--> Writing
-
-"Give three reviewer reports and an editor assessment for manuscript.pdf"
--> Peer Review
-
-"Find anti-sintering Pd catalyst papers since 2021 and build a DOI-deduplicated
-evidence table"
--> Literature Review
+Compare every reasonable termination. Use at least 15 angstrom of vacuum and a lateral cell large enough
+to avoid obvious Pd image interactions. Preserve Selective Dynamics. If a new fixed-layer policy is preferable,
+show the options first. Audit top and bottom surfaces, stoichiometry, coordination, CN=1 atoms, short contacts,
+and isolated fragments. Save views and a report. Do not prepare POTCAR or submit remote work in this turn.
 ```
 
-If a task changes character during execution, stop at a clear boundary, save the
-current artifacts, and continue in a new thread with the suitable entrypoint.
-The entrypoint cannot change during a run.
+### Adsorbates, adsorption sites, and candidate screening
+
+The worker can build an adsorbate from SMILES or an existing structure, standardize its geometry, enumerate deduplicated top, bridge, hollow, and other representative sites, and place the adsorbate while inheriting slab constraints. `generate_batch_adsorption_structures` creates a candidate set from the site ledger.
+
+Adsorption skills require site provenance, anchor atom, initial height, orientation, coverage, and consistent naming. Candidates are checked for collisions, periodic contacts, and implausible bonding. Large sets can pass through geometry filters and MLFF single-point or relaxation screening before a smaller collection enters DFT. An MLFF rank remains screening evidence, not a DFT adsorption energy.
+
+```text
+Build initial CO adsorption structures on structures/ceo2_111_selected.vasp.
+Ask Materials to find symmetry-distinct sites and generate chemically sensible C-down and, where justified,
+tilted orientations. Do not create redundant or colliding structures to increase the count.
+
+Preserve slab constraints and record site type, anchor, starting distance, orientation, and provenance for every
+candidate. Save structure views and a candidate ledger. You may recommend an MLFF screen, but wait for approval
+before any remote execution.
+```
+
+### Defects, dopants, and site enumeration
+
+Materials can enumerate symmetry-inequivalent sites and create vacancies, substitutions, or explicit-coordinate interstitials. `create_vacancy` and `substitute_species` accept either a selected site or representative sites from each symmetry group. `insert_interstitial_at_coords` handles defined interstitial positions.
+
+The defect skill separates first-pass structural screening from a complete defect-formation-energy study. The latter also requires chemical potentials, charge states, Fermi level, finite-size treatment, and consistent references. The agent can plan that work without mislabeling a few neutral supercell energies as full defect thermodynamics.
+
+### VASP, CP2K, and electronic-structure inputs
+
+`vasp_prepare` creates canonical relax, static, frequency, DOS, or MD inputs. `vasp_band_prepare` builds a dedicated band directory with an explicit k-path source. `cp2k_prepare` covers single point, fixed-cell optimization, cell optimization, frequency, DOS-style, and related stages. Domain skills guide pseudopotential order, k points, functional, dispersion, spin, DFT+U, convergence, and constraints.
+
+After execution, Materials can continue with band and DOS analysis, finite-displacement phonons, finite-strain elasticity, gas or adsorbate thermochemical corrections, and selected VASP MD diffusion analysis. The report records whether VASPKIT, ASE, a dedicated parser, or a project script produced the result.
+
+### NEB, dimer, and reaction paths
+
+Path work starts with reliable endpoints. Materials checks composition, atom order, constraints, and periodic mapping. It can remap mobile atoms while leaving frozen atoms untouched, estimate image count, and generate an interpolation. `vasp_neb_prepare` creates a VASP NEB tree. `vasp_dimer_prepare` and mode tools can derive a dimer direction from neighboring NEB images or MACE frequencies.
+
+Skills cover plain NEB, CI-NEB, frequency or dimer refinement, barrier extraction, and path quality control. The agent checks for periodic jumps, collisions, and discontinuous rearrangements, and it does not treat an optimized discrete path as a frequency-validated transition state.
+
+```text
+Use structures/initial.vasp and structures/final.vasp to build a VASP NEB path.
+Ask Materials to validate the endpoints, atom mapping, and Selective Dynamics first. Remap mobile atoms if needed,
+then recommend an image count from displacement and chemistry.
+
+Generate and visualize the interpolation and check for cell jumps, collisions, and discontinuities.
+Only after endpoint and path QC should a NEB stage be created. Do not submit. Explain the recommended sequence
+from plain NEB to CI-NEB and transition-state validation.
+```
+
+### MLFF screening and relaxation
+
+Materials can query enabled MACE, FairChem UMA, MatterSim, or ORB-v3 backends, then use `mlff_sp`, `mlff_relax`, or `mlff_neb` for single-point screening, batch relaxation, or fixed-image path optimization. The worker reads the current task schema and considers element coverage, structural regime, accuracy needs, and cost.
+
+MLFF is useful for identifying clearly unstable surface or adsorption candidates and reducing later DFT volume. Out-of-domain elements, unusual coordination, charged systems, strong magnetism, and bond-breaking pathways require caution and independent validation.
+
+<details>
+<summary>Current Materials tools and skills</summary>
+
+Materials and structure tools: `mp_search_materials`, `mp_download_structure`, `supercell`, `enumerate_unique_sites`, `build_slab`, `fix_atoms_by_layers`, `fix_atoms_by_height`, `fix_atoms_by_indices`, `create_vacancy`, `substitute_species`, `insert_interstitial_at_coords`, `identify_structure_fragments`, and `render_vesta_views`.
+
+Adsorption and path tools: `create_molecule_from_smiles`, `enumerate_adsorption_sites`, `place_adsorbate`, `generate_batch_adsorption_structures`, `estimate_neb_image_count`, `remap_neb_endpoint_atoms`, `make_neb_geometry`, `vasp_neb_prepare`, `vasp_dimer_prepare`, `make_dimer_mode_from_neb`, `make_dimer_mode_from_mace`, and `analyze_vasp_neb_results`.
+
+Preparation and property tools: `vasp_prepare`, `vasp_band_prepare`, `cp2k_prepare`, `generate_kpath`, `generate_phonon_displacements`, `generate_strained_structures`, `mace_analyze_frequencies`, `analyze_trajectory`, `vaspkit_adsorbate_thermo_correction`, and `vaspkit_gas_thermo_correction`.
+
+Visualization and implementation-inspection tools: `generate_nanobanana_figure` can draft a concept image that requires human scientific review, while `export_builtin_tool_source` exports registered tool source. Quantitative structures still use structure rendering or data plotting.
+
+Execution tools: `get_avail_remote_task`, `get_remote_task_spec`, `get_avail_resources`, `remote_submission`, and `remote_submission_batch`.
+
+Current domain skills are `materials-discovery-and-bulk-selection`, `bulk-relax-and-reference`, `slab-construction-and-surface-modeling`, `surface-and-termination-screening`, `adsorbate-and-intermediate-generation`, `adsorption-site-screening`, `adsorption-screening`, `defect-and-dopant-screening`, `vasp-input-preparation`, `vasp-batch-execution`, `cp2k-dft-preparation`, `cp2k-electronic-properties`, `cp2k-vibrational-analysis`, `cp2k-pathway-calculations`, `mlff-screening-and-relaxation`, `mlff-path-optimization`, `neb-prepare`, `neb-calculation`, `neb-analysis`, `band-and-dos-analysis`, `phonon-displacement-workflow`, `elastic-property-workup`, `md-diffusion-analysis`, `thermo-free-energy-and-reporting`, `structure-visual-inspection`, and `literature-grounding`.
+
+</details>
+
+## Dynamics worker: atomistic dynamics and trajectories
+
+Dynamics focuses on how a system evolves with time. It prepares CP2K AIMD, LAMMPS, and managed MLFF MD, continues restarts, and assesses whether a trajectory is fit for analysis. It does not fit a diffusion coefficient before checking temperature, energy, volume, timestep, sampling length, abnormal forces, short contacts, broken structures, and trajectory continuity.
+
+### CP2K AIMD
+
+`cp2k_aimd_prepare` creates a fresh or continuation stage. Skills retain ensemble, temperature, pressure, timestep, thermostat or barostat, velocity source, random state, and restart lineage. `cp2k_output_summary` extracts general run health, while goal-specific properties use trajectory tools or a saved project script.
+
+### LAMMPS
+
+The worker can validate force-field files and element mapping before preparing minimization, NVE, NVT, NPT, annealing, or restart stages. LAMMPS skills examine units, atom style, masses, boundaries, neighbor settings, potential applicability, and restart integrity before treating a launching script as a valid physical setup.
+
+### MLFF MD and trajectory analysis
+
+When a backend is enabled, Dynamics can run `mlff_md` with restart-safe staging and continuity records. Model and operation parameters come from the current catalog.
+
+`md_trajectory_summary` and `analyze_trajectory` can produce time series, MSD, diffusion fits, RDF, and related artifacts. The agent chooses mobile species, equilibration window, fit interval, and dimensionality according to the scientific target and records those choices.
+
+```text
+Ask Dynamics to determine whether calculations/mlff_md_1073K/ is suitable for Pd migration analysis.
+Read its inputs, logs, restart, and trajectory without rerunning anything.
+
+Check temperature, total energy, time continuity, frame count, Pd-cluster connectivity, short contacts,
+atom escape, and restart provenance. Only after the health audit passes should you select equilibration and
+mobile-atom windows for MSD, RDF, and diffusion fitting. Save methods, units, and uncertainty to
+analysis/md_quality_and_diffusion.md.
+```
+
+<details>
+<summary>Current Dynamics tools and skills</summary>
+
+Tools include `cp2k_aimd_prepare`, `cp2k_output_summary`, `lammps_forcefield_validate`, `lammps_prepare`, `lammps_log_summary`, `md_trajectory_summary`, `analyze_trajectory`, `export_builtin_tool_source`, and the remote catalog and submission tools.
+
+Current domain skills are `cp2k-aimd-preparation`, `cp2k-aimd-restart`, `cp2k-run-analysis`, `lammps-preparation`, `lammps-minimization`, `lammps-md-execution`, `lammps-restart`, `mlff-md-sampling`, and `trajectory-analysis`. Shared `remote-stage-layouts` and `dpdispatcher-remote-receipts` skills cover stage contracts and receipt-driven recovery.
+
+</details>
+
+## ML worker: datasets, training, and active learning
+
+ML owns the data and model lifecycle for machine-learning potentials. It can extract energy, force, and stress labels from VASP result trees, create fixed train/validation/test splits, prepare remote MACE training or evaluation stages, and analyze held-out error.
+
+Dataset work checks element coverage, units, reference energies, duplicate structures, outliers, missing labels, and leakage. Training retains configuration, seed, model origin, checkpoints, logs, and test results. `calculate_al_candidates` can rank a pool by diversity and optional committee disagreement, while the user retains control over expensive reference labeling.
+
+```text
+Ask ML to build a MACE fine-tuning dataset from calculations/reference_vasp/.
+Audit which runs actually converged and contain usable energy, force, and stress labels before including them.
+Normalize units and labels, check duplicates and mixed calculation settings, fix a random seed, and write a
+train/validation/test manifest. Do not start training before the audit passes.
+
+Save the dataset under ml/datasets/pd_ceo2_v1/ and document provenance, exclusions, element and configuration
+coverage, leakage risk, and intended domain.
+```
+
+<details>
+<summary>Current ML tools and skills</summary>
+
+Tools are `build_dataset_from_runs`, `calculate_al_candidates`, `export_builtin_tool_source`, and the remote catalog, resource, and submission tools. Skills are `mace-dataset-curation`, `mace-finetuning-and-benchmark`, and `active-learning-relabel-loop`.
+
+Managed remote tasks include `mace_train` and `mace_eval`. Training requires a configured GPU resource and MACE environment and is never silently run on the control plane.
+
+</details>
+
+## ORCA/xTB worker: molecules and quantum chemistry
+
+ORCA/xTB handles nonperiodic molecules, complexes, and finite clusters. It can build 3D structures from SMILES, enumerate and deduplicate conformers, run CREST or xTB searches and preoptimization, then prepare selected conformers for ORCA optimization, frequencies, thermochemistry, TDDFT, or NMR.
+
+For reaction paths, it can prepare a relaxed scan, take a TS-side guess near the scan maximum, and run OptTS. With explicit reactant and product structures it can prepare NEB-TS and then IRC. Flexible-molecule NMR can connect conformer generation, xTB cleanup, ORCA NMR, and evidence needed for later Boltzmann aggregation.
+
+The worker requires a clear total charge and spin multiplicity and keeps multiplicity distinct from the number of unpaired electrons. Conformer ranking records method, solvent, and energy window. Frequency analysis distinguishes minima from transition states instead of treating geometry optimization alone as proof.
+
+```text
+Ask ORCA/xTB to build a conformer set for ORCA thermochemistry from the supplied molecular SMILES.
+Use total charge 0, multiplicity 1, and acetonitrile solvent.
+
+Choose a sensible conformer-generation, CREST/xTB screening, and deduplication strategy. Retain provenance and
+relative energies. Before preparing ORCA opt+freq, report candidate count, energy window, duplicate checks,
+and expected cost. Create reviewable ORCA stages, but do not submit remote work.
+```
+
+<details>
+<summary>Current ORCA/xTB tools and skills</summary>
+
+Molecule and conformer tools: `create_molecule_from_smiles`, `enumerate_molecular_conformers`, `filter_conformer_ensemble`, `extract_optimized_molecules`, and `identify_structure_fragments`.
+
+ORCA preparation and analysis tools: `orca_prepare`, `orca_scan_prepare`, `orca_optts_prepare`, `orca_nebts_prepare`, `orca_irc_prepare`, `analyze_orca_results`, and `analyze_xtb_results`, plus remote catalog and submission tools. `export_builtin_tool_source` supports implementation inspection.
+
+Skills include `conformer-search-and-preopt`, `xtb-screen-and-prune`, `mlff-molecular-screening`, `orca-optfreq-thermochemistry`, `scan-to-ts`, `nebts-and-irc`, and `nmr-ensemble-workup`.
+
+</details>
+
+## Continuing across workers
+
+One objective may cross worker boundaries, but each handoff should leave clear artifacts. Materials may build adsorption candidates and reduce them with MLFF before Dynamics studies high-temperature stability. Dynamics may identify unusual configurations for ML active learning. ORCA/xTB gas-phase thermochemistry can join Materials surface-frequency corrections in a free-energy analysis.
+
+Experiment schedules those steps sequentially. Users do not need to specify every delegation, but should state the main objective, allowed approximations, and stopping point. The next chapter follows complete modeling stories and shows what evidence each stage should retain.
