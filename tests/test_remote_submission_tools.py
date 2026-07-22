@@ -17,6 +17,7 @@ from catmaster.tools.execution.remote_submission import (
     RemoteSubmissionInput,
     get_avail_remote_task,
     get_avail_resources,
+    get_remote_task_spec,
     remote_submission,
     remote_submission_batch,
 )
@@ -52,12 +53,20 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "block until every submitted task is terminal" in content
     assert "prefer one remote_submission_batch" not in content
     assert "get_remote_task_spec" in content
+    assert "execution_binding=configured as sufficient infrastructure provenance" in content
+    assert "registered domain task's resource card is intentionally absent" in content
+    assert "Block only on a concrete catalog/spec/submission error" in content
     assert "submission_guidance" in artifact["data"]
     assert "remote_submission_batch" in artifact["data"]["submission_guidance"]
     assert "template_overrides" in artifact["data"]["submission_guidance"]
     assert "blocks until all are terminal" in artifact["data"]["submission_guidance"]["remote_submission_batch"]
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
     assert {"vasp_execute", "mlff_sp", "mlff_relax", "mlff_md", "mlff_neb"}.issubset(task_names)
+    assert all(item["execution_binding"]["status"] == "configured" for item in artifact["data"]["tasks"])
+    assert all(item["execution_binding"]["platform_preflight"] == "passed" for item in artifact["data"]["tasks"])
+    vasp_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "vasp_execute")
+    assert vasp_item["resources"]["resources"] == "vasp_cpu"
+    assert vasp_item["execution_binding"]["runtime_health"] == "determined by submission result"
     mlff_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mlff_sp")
     assert "input/" in mlff_item["submission_hint"]
     assert mlff_item["template_override_keys"] == ["backend", "backend_config", "task_config"]
@@ -77,7 +86,11 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "key_filename" not in resource
 
     with toolcall_context("catalog", audience="materials_worker"):
-        _, artifact = get_avail_resources({})
+        resource_content, artifact = get_avail_resources({})
+    assert "Available general remote resources" in resource_content
+    assert "custom boot_script only" in resource_content
+    assert "their absence is not a missing binding or submission blocker" in resource_content
+    assert "vasp_cpu" not in resource_content
     material_resource_names = {item["resources"] for item in artifact["data"]["resources"]}
     assert material_resource_names == {"general_cpu", "general_gpu"}
     general_cpu = next(item for item in artifact["data"]["resources"] if item["resources"] == "general_cpu")
@@ -103,6 +116,25 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "mlff_md" in dynamics_task_names
     assert "mlff_sp" not in dynamics_task_names
     assert "mlff_relax" not in dynamics_task_names
+
+
+def test_registered_vasp_spec_reports_configured_platform_binding_without_admin_internals() -> None:
+    with toolcall_context("spec", audience="materials_worker"):
+        content, artifact = get_remote_task_spec({"task_name": "vasp_execute"})
+
+    assert "registered_execution_binding=configured" in content
+    assert "hidden administrator fields are not user prerequisites" in content
+    assert "runtime health is determined by the submission result" in content
+    binding = artifact["data"]["execution_binding"]
+    assert binding == {
+        "status": "configured",
+        "authority": "deployment",
+        "platform_preflight": "passed",
+        "scope": "registered task/backend binding only; stage inputs and user approval remain separate",
+        "runtime_health": "determined by submission result",
+    }
+    for hidden in ("machine", "queue_name", "account", "module", "license", "revision"):
+        assert hidden not in binding
 
 
 def test_remote_task_catalog_references_existing_boot_scripts_and_layout_sections() -> None:
@@ -933,6 +965,9 @@ def test_remote_submission_skills_use_stage_layout_schema() -> None:
     assert "work_dir" in vasp_text
     assert "first-level child" in vasp_text
     assert "status.json" in vasp_text
+    assert "execution_binding.status=configured" in vasp_text
+    assert "gamma-binary confirmation" in vasp_text
+    assert "absence of `vasp_cpu` there is expected" in vasp_text
 
     for forbidden in ("input_dir", "output_root", "_BATCH_STATE", "batch_state", "md_config"):
         assert forbidden not in mace_text

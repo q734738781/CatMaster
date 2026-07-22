@@ -27,9 +27,10 @@ Agent 会在提交前检查 INCAR、POSCAR、POTCAR 和 KPOINTS 是否齐全，�
 ```text
 使用 Experiment 复查 calculations/co_adsorption/site_03/ 的 VASP relax stage。
 让 Materials worker 先核对结构、Selective Dynamics、POTCAR 顺序、INCAR、KPOINTS、
-自旋和收敛设置，再查询当前 vasp_execute 的 task spec 与 resource。
+自旋和收敛设置，再查询当前 vasp_execute 的 task spec。若 execution binding 为 configured，
+直接接受已注册的部署绑定，不再索要调度器、module、license、revision 或历史 receipt 细节。
 
-如果输入或远程配置有问题，请停下并写明；如果全部通过，在 Review 审批卡中展示
+只有输入存在问题或 catalog/spec 返回具体错误时才停下；如果全部通过，在 Review 审批卡中展示
 task、work_dir、资源和关键设置，等我批准后再提交。完成后检查程序收敛和最终结构，
 不要只根据调度状态回答"成功"。
 ```
@@ -92,7 +93,8 @@ Worker 会在提交前确认总电荷、未配对电子数或多重度、溶剂�
 ```text
 对 molecules/conformers_selected/ 中的 6 个构象做 ORCA opt+freq。
 让 ORCA/xTB worker 先核对构象去重记录、总电荷、自旋多重度、溶剂、方法和基组，
-再为每个构象建立独立 stage。查询 orca_execute 的当前 task spec，确认 ORCA 与 MPI 环境可用。
+再为每个构象建立独立 stage。查询 orca_execute 的当前 task spec；binding 为 configured 时，
+不要再向用户索要管理员侧 ORCA、MPI、调度器、license 或历史 receipt 信息。
 
 使用受管 batch 提交前，展示 6 个 stage 的路径和共同设置并等待批准。
 回传后逐个检查正常终止、梯度和虚频，不能因为 batch 大多数成功就忽略失败构象。
@@ -100,9 +102,11 @@ Worker 会在提交前确认总电荷、未配对电子数或多重度、溶剂�
 
 ## Agent 怎样选择 task、resource 和参数
 
-Worker 先用 `get_avail_remote_task` 查看自己当前能用的 tasks，再用 `get_remote_task_spec` 获取某个 task 的完整 schema。需要了解资源时，可以查询 `get_avail_resources`。Agent 根据这些结果构造提交，而不是自由指定任意机器、队列或命令。
+Worker 先用 `get_avail_remote_task` 查看当前可用 tasks，再用 `get_remote_task_spec` 获取完整 schema。若 task 已列出且 spec 返回 `execution_binding.status=configured`，表示部署侧的 task/backend、resource 与 machine 绑定已通过平台预检，正常提交所需的基础设施依据已经充分。`get_avail_resources` 只列通用 custom-boot 资源，不负责再次审计注册 domain task。
 
 Task 决定执行合同和默认 resource；resource 决定机器、CPU/GPU、队列、walltime、环境脚本和哪些 worker 可以看到它；machine 决定怎样通过 SSH 连接和在哪里放远程工作目录。用户通常只需要关心任务是否可用、资源是否合适、预计成本和科学参数。管理员配置详见[第 10 章](10-deployment-operations.zh.md)。
+
+队列/account 细节、resource card revision、module 或 licensed executable 标识以及历史 smoke receipt 都属于管理员配置，worker 界面会有意隐藏。缺少这些字段不是停止理由；只有 catalog/spec 返回实际绑定错误，或受管提交返回具体运行故障时，Agent 才应把远程配置列为 blocker。
 
 科学或方法参数通过 `template_overrides` 提供，提交层控制通过 `submission_config` 提供。可接受的 key 由当前 task spec 返回。不要把 model、optimizer、温度或计算方法藏进提交配置，也不要把检查间隔和清理策略混进科学参数。
 

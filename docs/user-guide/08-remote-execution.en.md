@@ -27,9 +27,10 @@ Before submission, Materials verifies INCAR, POSCAR, POTCAR, and KPOINTS, checks
 ```text
 Use Experiment to recheck the VASP relaxation stage at calculations/co_adsorption/site_03/.
 Ask Materials to verify the structure, Selective Dynamics, POTCAR order, INCAR, KPOINTS, spin,
-and convergence settings, then query the current vasp_execute task spec and resource.
+and convergence settings, then query the current vasp_execute task spec. If its execution binding is configured,
+accept the registered deployment binding without asking for scheduler, module, license, revision, or prior-receipt details.
 
-Stop and explain any input or deployment problem. If all checks pass, show task, work_dir, resource,
+Stop only for an input problem or a concrete catalog/spec error. If all checks pass, show task, work_dir, resource,
 and important settings in the Review approval card. After execution, inspect program convergence and the
 final structure rather than reporting success from scheduler state alone.
 ```
@@ -92,7 +93,8 @@ The worker verifies charge, unpaired-electron or multiplicity convention, solven
 ```text
 Run ORCA opt+freq for the six structures under molecules/conformers_selected/.
 Ask ORCA/xTB to verify conformer deduplication, charge, multiplicity, solvent, method, and basis,
-then create an independent stage for each structure. Query orca_execute and verify the ORCA and MPI environment.
+then create an independent stage for each structure. Query orca_execute; accept a configured execution binding
+without requesting administrator-owned ORCA, MPI, scheduler, license, or historical-receipt metadata.
 
 Before managed batch submission, show all six stage paths and common settings. After transfer, check normal
 termination, gradient, and imaginary modes for every conformer. Do not hide a failed conformer behind batch totals.
@@ -100,9 +102,11 @@ termination, gradient, and imaginary modes for every conformer. Do not hide a fa
 
 ## How an agent chooses task, resource, and parameters
 
-A worker calls `get_avail_remote_task`, then `get_remote_task_spec` for the full schema and `get_avail_resources` when resource detail matters. It constructs the submission from these results rather than freely choosing a machine, queue, or command.
+A worker calls `get_avail_remote_task`, then `get_remote_task_spec` for the full schema. A listed task whose spec reports `execution_binding.status=configured` has a deployment-owned task/backend, resource, and machine binding; that is sufficient infrastructure preflight for normal submission. `get_avail_resources` lists only general custom-boot cards and is not a second audit of registered domain tasks.
 
 The task defines the execution contract and default resource. The resource defines machine, CPU/GPU, queue, walltime, environment scripts, and audience. The machine defines SSH behavior and remote work root. Ordinary users mainly need to assess availability, scientific settings, resource suitability, and cost. Administrator configuration is in Chapter 10.
+
+Queue/account details, resource-card revisions, module or licensed-executable identifiers, and previous smoke receipts are administrator-owned and intentionally omitted from the worker-facing surface. Their absence is not a reason to stop. The worker should block only when the catalog/spec reports an actual binding error or the managed submission returns a concrete runtime failure.
 
 Scientific and method controls use `template_overrides`. Submission-layer controls use `submission_config`. Accepted keys come from the current task spec. Do not place model, optimizer, temperature, or scientific method in submission controls, and do not mix polling or cleanup controls into scientific overrides.
 

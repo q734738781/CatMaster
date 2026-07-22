@@ -544,6 +544,9 @@ def test_agent_visible_spec_and_submission_schemas_are_non_nullable() -> None:
     tools = {item["name"]: item for item in registry.as_openai_tools()}
     exported = {name: item["parameters"] for name, item in tools.items()}
     assert "get_remote_task_spec" in exported
+    assert "sufficient infrastructure provenance" in tools["get_avail_remote_task"]["description"]
+    assert "execution_binding.status=configured is sufficient platform preflight" in tools["get_remote_task_spec"]["description"]
+    assert "their absence is not a blocker" in tools["get_avail_resources"]["description"]
     for name in ("get_remote_task_spec", "remote_submission", "remote_submission_batch"):
         properties = exported[name]["properties"]
         assert properties["template_overrides"]["type"] == "object"
@@ -553,6 +556,7 @@ def test_agent_visible_spec_and_submission_schemas_are_non_nullable() -> None:
         assert "With task_name, do not pass resources or machine" in description
         assert "blocks until" in tools[name]["description"]
         assert "terminal" in tools[name]["description"]
+        assert "licensed-executable metadata" in tools[name]["description"]
     parsed = GetRemoteTaskSpecInput(task_name="mlff_sp", template_overrides=None)
     assert parsed.template_overrides == {}
     submitted = RemoteSubmissionInput(

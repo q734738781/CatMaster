@@ -90,6 +90,18 @@ _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
         "The selected task/backend resolves its own resource card, machine, and environment. Only pass explicit "
         "cpu_per_node or gpu_per_node sizing overrides when the user requested them."
     ),
+    "registered_execution_binding": (
+        "A listed registered task whose spec reports execution_binding.status=configured has passed the platform's "
+        "task/backend-to-resource-to-machine binding preflight. Treat that as sufficient infrastructure provenance "
+        "for a normal submission. Do not ask the end user for preset/config IDs or revisions, queue/account/module/"
+        "executable/license identifiers, or a previous successful receipt. Only a concrete catalog/spec/submission "
+        "error makes the managed binding a blocker; runtime health is established by the submission result."
+    ),
+    "general_resource_catalog": (
+        "get_avail_resources lists general custom-boot resource cards only. Registered domain task cards such as "
+        "VASP are intentionally absent there because their resource binding is owned by task_name; that absence is "
+        "not missing configuration."
+    ),
     "template_overrides": (
         "For registered task_name templates, pass command-template overrides through template_overrides "
         "using only keys declared by get_remote_task_spec. MLFF tasks use nested backend/backend_config/task_config; "
@@ -135,6 +147,9 @@ def _catalog_content(*, tasks: list[dict[str, Any]]) -> str:
         "- Both tools block until every submitted task is terminal. Do not poll receipts while a call is pending.",
         "- Do not use remote_submission_batch just because a single MLFF SP/relax stage contains many inputs; that stage reuses one model initialization.",
         "- For registered task_name templates, never pass submission_config.resources or submission_config.machine; the selected task/backend resolves them.",
+        "- Every listed registered task has passed deployment binding preflight. Treat execution_binding=configured as sufficient infrastructure provenance; hidden administrator fields are not user-supplied prerequisites.",
+        "- Do not ask for preset/config revisions, queue/account/module/executable/license identifiers, or historical success receipts before normal submission. Block only on a concrete catalog/spec/submission error.",
+        "- get_avail_resources lists only general custom-boot cards. A registered domain task's resource card is intentionally absent there and that absence is not a blocker.",
         "- Query get_remote_task_spec before method-critical overrides. MLFF uses nested backend/backend_config/task_config; retained tasks keep flat overrides.",
         "Tasks:",
     ]
@@ -148,6 +163,9 @@ def _catalog_content(*, tasks: list[dict[str, Any]]) -> str:
             details.append(f"template_defaults={_compact_template_defaults(defaults)}")
         if item.get("layout_ref"):
             details.append(f"layout_ref={item['layout_ref']}")
+        binding = item.get("execution_binding")
+        if isinstance(binding, dict) and binding.get("status"):
+            details.append(f"execution_binding={binding['status']}")
         lines.append(f"- {item['task_name']}: " + "; ".join(details))
     return "\n".join(lines)
 
@@ -191,6 +209,9 @@ class RemoteSubmissionInput(BaseModel):
     `work_dir` is the stage itself. This call blocks until the task is terminal.
     For two or more independent stages sharing the same task/config, use one
     remote_submission_batch call instead of multiple remote_submission calls.
+    For a registered task, its configured execution binding is platform-owned;
+    do not require the user to supply internal resource revisions, scheduler or
+    licensed-executable metadata, or a historical success receipt first.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -271,6 +292,9 @@ class RemoteSubmissionBatchInput(RemoteSubmissionInput):
     and submission_config. Each first-level child of work_dir is one stage. One
     call submits them together and blocks until all are terminal; discovery is
     not recursive.
+    For a registered task, its configured execution binding is platform-owned;
+    do not require the user to supply internal resource revisions, scheduler or
+    licensed-executable metadata, or a historical success receipt first.
     """
 
     work_dir: str = Field(
@@ -283,15 +307,32 @@ class RemoteSubmissionBatchInput(RemoteSubmissionInput):
 
 
 class GetAvailRemoteTaskInput(BaseModel):
-    """[remote/catalog] List remote task templates and single-vs-batch submission rules visible to the current worker."""
+    """[remote/catalog] List registered tasks whose deployment execution bindings validate for this worker.
+
+    A listed task is sufficient infrastructure provenance for normal submission.
+    Do not ask the user to reproduce administrator-side preset revisions,
+    scheduler/module/license metadata, or historical success receipts.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    return_resource: bool = Field(False, description="When true, include each task's default resource summary.")
+    return_resource: bool = Field(
+        False,
+        description=(
+            "When true, include a sanitized cost-oriented summary of each task's bound resource card. "
+            "Omitted machine, queue, account, environment, executable, license, and revision internals are "
+            "administrator-owned and must not be treated as missing configuration."
+        ),
+    )
 
 
 class GetRemoteTaskSpecInput(BaseModel):
-    """[remote/catalog] Resolve and validate overrides for one registered remote task without submitting it."""
+    """[remote/catalog] Validate one registered task's execution binding and template overrides without submitting.
+
+    execution_binding.status=configured is sufficient platform preflight. Runtime
+    health is determined by the later submission result, not by asking the user
+    for hidden scheduler, module, license, revision, or receipt metadata.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -321,7 +362,11 @@ class GetRemoteTaskSpecInput(BaseModel):
 
 
 class GetAvailResourcesInput(BaseModel):
-    """[remote/catalog] List general custom-boot resource cards visible to the current worker."""
+    """[remote/catalog] List general custom-boot resource cards visible to the current worker.
+
+    Do not use this tool to re-audit a registered task_name binding. Registered
+    domain cards are intentionally omitted here, and their absence is not a blocker.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1164,6 +1209,41 @@ def _resource_summary(name: str, cfg: dict[str, Any], *, register: MachineRegist
     return out
 
 
+def _configured_execution_binding(
+    *,
+    resource_name: str,
+    register: MachineRegister,
+    task_config: TaskConfig | None = None,
+) -> dict[str, Any]:
+    """Validate deployment-owned wiring without exposing administrator internals."""
+
+    resources_key = str(resource_name or "").strip()
+    if not resources_key:
+        raise ValueError("Registered task/backend has no resource binding.")
+    resource_cfg = dict(register.get_resources(resources_key))
+    if resource_cfg.get("enabled") is False:
+        raise ValueError("Registered task/backend resource binding is disabled.")
+    machine_key = str(resource_cfg.get("machine") or "").strip()
+    if not machine_key:
+        raise ValueError("Registered task/backend resource binding has no machine.")
+    machine_cfg = dict(register.get_machine(machine_key))
+    if machine_cfg.get("enabled") is False:
+        raise ValueError("Registered task/backend machine binding is disabled.")
+    if task_config is not None:
+        _assert_resource_matches_task(
+            cfg=task_config,
+            resource_name=resources_key,
+            resource_cfg=resource_cfg,
+        )
+    return {
+        "status": "configured",
+        "authority": "deployment",
+        "platform_preflight": "passed",
+        "scope": "registered task/backend binding only; stage inputs and user approval remain separate",
+        "runtime_health": "determined by submission result",
+    }
+
+
 def _resource_visible_in_general_catalog(cfg: dict[str, Any]) -> bool:
     return _resource_allows_custom_boot(cfg)
 
@@ -1288,7 +1368,12 @@ def _mlff_task_spec(
         out.update(format_spec_error(exc))
     # Deployment wiring is intentionally private even though the submission
     # integration consumes it from the same resolver.
-    out.pop("resource", None)
+    resource_name = str(out.pop("resource", "") or "").strip()
+    if resource_name:
+        out["execution_binding"] = _configured_execution_binding(
+            resource_name=resource_name,
+            register=MachineRegister(),
+        )
     fields = list(out.pop("fields", []))
     out["backend_fields"] = [item for item in fields if str(item.get("path", "")).startswith("backend_config.")]
     out["task_fields"] = [item for item in fields if str(item.get("path", "")).startswith("task_config.")]
@@ -1297,6 +1382,13 @@ def _mlff_task_spec(
 
 def _task_spec_content(data: dict[str, Any], *, detail: str) -> str:
     lines = [f"Remote task spec: {data.get('task_name', '')}"]
+    binding = data.get("execution_binding")
+    if isinstance(binding, dict) and binding.get("status"):
+        lines.append(
+            f"registered_execution_binding={binding['status']} "
+            "platform_preflight=passed; hidden administrator fields are not user prerequisites; "
+            "runtime health is determined by the submission result"
+        )
     if data.get("resolved_backend"):
         lines.append(f"resolved_backend={data['resolved_backend']}")
     if data.get("default_backend"):
@@ -1377,6 +1469,10 @@ def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
                 "default_backend": default_backend,
                 "template_defaults": spec["template_defaults"],
                 "template_override_keys": spec["template_override_keys"],
+                "execution_binding": _configured_execution_binding(
+                    resource_name=str(spec["resource"]),
+                    register=register,
+                ),
             }
             tasks.append(item)
             continue
@@ -1387,6 +1483,11 @@ def get_avail_remote_task(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
             "submission_hint": _catalog_task_hint(name),
             "template_defaults": dict(cfg.defaults),
             "template_override_keys": list(cfg.defaults.keys()),
+            "execution_binding": _configured_execution_binding(
+                resource_name=str(cfg.resources or ""),
+                register=register,
+                task_config=cfg,
+            ),
         }
         if request.return_resource and cfg.resources:
             resources_cfg = register.get_resources(cfg.resources)
@@ -1416,6 +1517,11 @@ def get_remote_task_spec(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
     else:
         data = _flat_task_spec(cfg, task_name, dict(request.template_overrides))
+        data["execution_binding"] = _configured_execution_binding(
+            resource_name=str(cfg.resources or ""),
+            register=MachineRegister(),
+            task_config=cfg,
+        )
     if request.detail == "compact":
         data.pop("template_schema", None)
     content = _task_spec_content(data, detail=request.detail)
@@ -1439,6 +1545,10 @@ def get_avail_resources(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "Available general remote resources: "
             + ", ".join(str(item["resources"]) for item in resources)
         ]
+        content_lines.append(
+            "Scope: custom boot_script only. Registered domain task cards are intentionally not listed here; "
+            "their absence is not a missing binding or submission blocker."
+        )
         for item in resources:
             details: list[str] = []
             if item.get("description"):
@@ -1452,7 +1562,11 @@ def get_avail_resources(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             content_lines.append(f"- {item['resources']}: " + "; ".join(details))
         content = "\n".join(content_lines)
     else:
-        content = "Available general remote resources: none"
+        content = (
+            "Available general remote resources: none\n"
+            "Scope: custom boot_script only. Registered domain task cards are intentionally not listed here; "
+            "their absence is not a missing binding or submission blocker."
+        )
     return _success("get_avail_resources", content=content, data=data)
 
 

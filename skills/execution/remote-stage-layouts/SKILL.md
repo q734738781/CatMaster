@@ -190,6 +190,8 @@ evaluation_stage/
 ## Method-critical defaults
 
 - Registered tasks use their task-bound resource card. Do not select machine/resource internals through agent-authored task configuration.
+- A registered task whose spec reports `execution_binding.status=configured` has passed deployment binding preflight. Do not make hidden administrator fields or a historical success receipt into additional user-supplied gates; block only on a concrete catalog, spec, or submission error.
+- `get_avail_resources` lists general custom-boot cards, not registered domain cards. Absence of a task-owned domain resource from that list is expected.
 - Use only catalog-declared registered-task overrides. Keep scientific/backend settings identical across children of one batch call.
 - Treat SP/relax structures-per-stage as an approximate throughput choice, not a scientific parameter or a probe requirement.
 - Treat one MD trajectory and one NEB path per stage as hard canonical layout rules for new MLFF stages.
