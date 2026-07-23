@@ -54,7 +54,7 @@ After transfer, inspect restart continuity, temperature, energy, and trajectory 
 
 `mlff_sp`, `mlff_relax`, `mlff_md`, and `mlff_neb` use common task names. The backend configuration selects MACE, FairChem UMA, MatterSim, or ORB-v3. This keeps one scientific workflow across enabled providers rather than duplicating tools for every model family.
 
-The public template enables only MACE `mh-1` by default. UMA, MatterSim, and ORB-v3 appear only after an administrator installs an isolated environment, weights, resource, and a passing smoke case. `get_remote_task_spec` returns valid model, device, dtype, optimizer, ensemble, and other operation fields for the current backend. Do not copy overrides from an older deployment.
+The public template enables MACE `mh-1` and standalone `omol-0`. `mh-1` uses `mace_mp()` with a strict multi-head allowlist, while `omol-0` uses `mace_omol()` for explicit charge/spin-conditioned molecular inference. The `omol` head of `mh-1` is not the standalone `omol-0` model. UMA, MatterSim, and ORB-v3 appear only after an administrator installs an isolated environment, weights, resource, and a passing smoke case. `get_remote_task_spec` returns the operation, exact official model name, and model-specific head or task allowlist. UMA `auto` and unofficial model abbreviations are rejected. Do not copy overrides from an older deployment.
 
 `mlff_sp` and `mlff_relax` can process several structures directly under one stage's `input/`, so a multi-structure screen is not automatically a remote batch. `mlff_md` accepts one start or restart structure. `mlff_neb` accepts a locally constructed, validated fixed-image path.
 

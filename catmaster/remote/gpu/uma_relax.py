@@ -11,7 +11,6 @@ from ase.io.trajectory import Trajectory
 from uma_common import (
     UmaCalculatorFactory,
     apply_charge_spin,
-    auto_uma_task,
     collect_structure_files,
     fairchem_version,
     max_force_eva,
@@ -78,8 +77,7 @@ def _run_relax(
         default_charge=default_charge,
         default_spin=default_spin,
     )
-    task_name = auto_uma_task(atoms) if cfg.uma_task == "auto" else cfg.uma_task
-    cfg = cfg.__class__(uma_task=task_name, charge=cfg.charge, spin=cfg.spin)
+    task_name = cfg.uma_task
     apply_charge_spin(atoms, cfg)
 
     if relax_cell:
@@ -145,7 +143,7 @@ def run_uma_relax_batch(
     *,
     output_root: str,
     model: str = "uma-s-1p2",
-    uma_task: str = "auto",
+    uma_task: str = "omat",
     charge: int = 0,
     spin: int = 0,
     metadata_path: str = "__none__",
@@ -210,7 +208,7 @@ def _cli() -> None:
     parser.add_argument("--input", required=True, help="Input root directory")
     parser.add_argument("--output_root", required=True, help="Output root directory")
     parser.add_argument("--model", default="uma-s-1p2", help="FairChem UMA model name")
-    parser.add_argument("--uma_task", default="auto", help="auto|omat|omol|oc20|oc22|oc25|odac|omc")
+    parser.add_argument("--uma_task", default="omat", help="omat|omol|oc20|oc22|oc25|odac|omc")
     parser.add_argument("--charge", type=int, default=0, help="Charge for omol task inputs")
     parser.add_argument("--spin", type=int, default=0, help="Spin value for omol task inputs")
     parser.add_argument("--metadata", default="__none__", help="Optional params/uma_metadata.json path")

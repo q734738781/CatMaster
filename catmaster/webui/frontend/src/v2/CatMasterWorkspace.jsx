@@ -13,27 +13,38 @@ import { selectionFromHash, selectionToHash, tabFromHash } from "./inspectorSele
 import { artifactForSelection } from "./artifactSelection.js";
 import { todoGroupsFromMessages } from "./todoPanel.js";
 
-function AuthPanel({ onReady }) {
+function AuthPanel({ onReady, registrationEnabled = true }) {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [captcha, setCaptcha] = useState(null);
   const [captchaAnswer, setCaptchaAnswer] = useState("");
   const [error, setError] = useState("");
+  const isRegister = registrationEnabled && mode === "register";
 
   useEffect(() => {
-    if (mode !== "register") return;
+    if (!isRegister) return;
     apiFetch("/api/auth/captcha").then(setCaptcha).catch((err) => setError(err.message || String(err)));
-  }, [mode]);
+  }, [isRegister]);
+
+  useEffect(() => {
+    if (!registrationEnabled && mode !== "login") {
+      setMode("login");
+      setCaptcha(null);
+      setCaptchaAnswer("");
+      setError("");
+    }
+  }, [mode, registrationEnabled]);
 
   async function submit(event) {
     event.preventDefault();
     setError("");
     try {
-      const body = mode === "register"
+      const action = isRegister ? "register" : "login";
+      const body = isRegister
         ? { username, password, captcha_id: captcha?.captcha_id || "", captcha_answer: captchaAnswer }
         : { username, password };
-      await apiFetch(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify(body) });
+      await apiFetch(`/api/auth/${action}`, { method: "POST", body: JSON.stringify(body) });
       onReady();
     } catch (err) {
       setError(err.message || String(err));
@@ -45,8 +56,8 @@ function AuthPanel({ onReady }) {
       <form className="v2-auth-card" onSubmit={submit}>
         <h1>CatMaster</h1>
         <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" autoComplete="username" />
-        <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} />
-        {mode === "register" && captcha?.question ? (
+        <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete={isRegister ? "new-password" : "current-password"} />
+        {isRegister && captcha?.question ? (
           <label className="v2-captcha">
             <span>{captcha.question}</span>
             <input value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value)} placeholder="Answer" />
@@ -54,12 +65,14 @@ function AuthPanel({ onReady }) {
         ) : null}
         {error ? <div className="v2-error">{error}</div> : null}
         <button type="submit" className="v2-primary-btn">
-          {mode === "login" ? <LogIn size={15} /> : <UserPlus size={15} />}
-          {mode === "login" ? "Log in" : "Register"}
+          {isRegister ? <UserPlus size={15} /> : <LogIn size={15} />}
+          {isRegister ? "Register" : "Log in"}
         </button>
-        <button type="button" className="v2-link-btn" onClick={() => setMode(mode === "login" ? "register" : "login")}>
-          {mode === "login" ? "Create account" : "Use existing account"}
-        </button>
+        {registrationEnabled ? (
+          <button type="button" className="v2-link-btn" onClick={() => setMode(isRegister ? "login" : "register")}>
+            {isRegister ? "Use existing account" : "Create account"}
+          </button>
+        ) : null}
       </form>
     </main>
   );
@@ -476,7 +489,12 @@ export default function CatMasterWorkspace({ boot }) {
   }
 
   if (auth?.auth_enabled && !auth?.authenticated) {
-    return <AuthPanel onReady={() => checkAuthAndBootstrap(requestedProjectSpace)} />;
+    return (
+      <AuthPanel
+        onReady={() => checkAuthAndBootstrap(requestedProjectSpace)}
+        registrationEnabled={auth?.registration_enabled === true}
+      />
+    );
   }
 
   return (

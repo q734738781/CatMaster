@@ -20,19 +20,12 @@ def _load_uma_common():
     return module
 
 
-def test_uma_auto_task_uses_periodic_cell_only() -> None:
+def test_uma_task_names_are_official_and_auto_is_rejected() -> None:
     uma_common = _load_uma_common()
 
-    molecule = Atoms("H2O", positions=[[0, 0, 0], [0, 0, 1], [1, 0, 0]])
-    assert uma_common.auto_uma_task(molecule) == "omol"
-
-    periodic = Atoms(
-        "Si2",
-        positions=[[0, 0, 0], [1.35, 1.35, 1.35]],
-        cell=[5.43, 5.43, 5.43],
-        pbc=True,
-    )
-    assert uma_common.auto_uma_task(periodic) == "omat"
+    assert uma_common.VALID_UMA_TASKS == {"omat", "omol", "oc20", "oc22", "oc25", "odac", "omc"}
+    with pytest.raises(ValueError, match="uma_task must be one of"):
+        uma_common.normalize_uma_task("auto")
 
 
 def test_uma_metadata_merges_defaults_and_item_overrides(tmp_path: Path) -> None:
@@ -51,7 +44,7 @@ def test_uma_metadata_merges_defaults_and_item_overrides(tmp_path: Path) -> None
         structure_path=struct,
         input_root=input_root,
         metadata=metadata,
-        default_task="auto",
+        default_task="omat",
         default_charge=0,
         default_spin=0,
     )
@@ -87,6 +80,15 @@ def test_uma_rejects_nonzero_charge_spin_for_material_task() -> None:
         assert "expects charge=0 and spin=0" in str(exc)
     else:
         raise AssertionError("expected nonzero charge/spin rejection for omat")
+
+
+def test_uma_requires_positive_multiplicity_for_omol() -> None:
+    uma_common = _load_uma_common()
+    atoms = Atoms("O2", positions=[[0, 0, 0], [0, 0, 1.2]])
+    cfg = uma_common.UmaItemConfig(uma_task="omol", charge=0, spin=0)
+
+    with pytest.raises(ValueError, match="spin >= 1"):
+        uma_common.apply_charge_spin(atoms, cfg)
 
 
 def test_uma_model_load_hint_distinguishes_gated_hf_access() -> None:

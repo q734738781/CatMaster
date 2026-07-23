@@ -45,29 +45,42 @@ class MaceAdapter:
         self._calculators: dict[str, Any] = {}
 
     def calculator_for(self, atoms: Any, config: dict[str, Any]) -> Any:
-        key = _config_key(config)
+        supports_charge_spin = bool(config.get("supports_charge_spin", False))
+        if supports_charge_spin:
+            charge = int(config.get("charge", 0))
+            spin = int(config.get("spin", 0))
+            if spin < 1:
+                raise ValueError("MACE OMOL requires multiplicity-style spin >= 1.")
+            atoms.info.update({"charge": charge, "spin": spin})
+        calculator_config = {
+            key: value
+            for key, value in config.items()
+            if key not in {"charge", "spin"}
+        }
+        key = _config_key(calculator_config)
         if key in self._calculators:
             return self._calculators[key]
-        from mace.calculators import MACECalculator, mace_mp
+        from mace.calculators import MACECalculator, mace_mp, mace_omol
 
         device = _resolve_device(str(config.get("device") or "auto"))
         kwargs: dict[str, Any] = {
             "device": device,
             "default_dtype": str(config.get("default_dtype") or "float64"),
         }
+        loader = str(config.get("loader") or "mace_mp")
         head = str(config.get("head") or "").strip()
-        if head:
+        if head and loader != "mace_omol":
             kwargs["head"] = head
         checkpoint = str(config.get("checkpoint_artifact") or "").strip()
-        if checkpoint:
+        if loader == "checkpoint" or checkpoint:
             if config.get("dispersion"):
                 raise ValueError("MACE dispersion is not supported with checkpoint_artifact.")
             kwargs["model_paths"] = checkpoint
             calc = MACECalculator(**kwargs)
-        else:
+        elif loader == "mace_mp":
             kwargs.update(
                 {
-                    "model": str(config["model"]),
+                    "model": str(config.get("provider_model") or config["model"]),
                     "dispersion": bool(config.get("dispersion", False)),
                 }
             )
@@ -79,11 +92,29 @@ class MaceAdapter:
             if compile_mode:
                 kwargs["compile_mode"] = compile_mode
             calc = mace_mp(**kwargs)
+        elif loader == "mace_omol":
+            if config.get("dispersion"):
+                raise ValueError("MACE omol-0 does not support the mace_mp dispersion wrapper.")
+            if config.get("enable_cueq"):
+                if not device.startswith("cuda"):
+                    raise ValueError("MACE enable_cueq requires CUDA.")
+                kwargs["enable_cueq"] = True
+            compile_mode = str(config.get("compile_mode") or "")
+            if compile_mode:
+                kwargs["compile_mode"] = compile_mode
+            calc = mace_omol(
+                model=str(config.get("provider_model") or "extra_large"),
+                **kwargs,
+            )
+        else:
+            raise ValueError(f"Unsupported registered MACE loader: {loader!r}.")
         self._calculators[key] = calc
         return calc
 
     def provider_metadata(self, atoms: Any, config: dict[str, Any], calculator: Any) -> dict[str, Any]:
-        return {
+        metadata = {
+            "loader": str(config.get("loader") or "mace_mp"),
+            "provider_model": str(config.get("provider_model") or config.get("model") or ""),
             "head": str(config.get("head") or ""),
             "dispersion": bool(config.get("dispersion", False)),
             "default_dtype": str(config.get("default_dtype") or "float64"),
@@ -93,6 +124,14 @@ class MaceAdapter:
             "checkpoint_sha256": str(config.get("checkpoint_sha256") or ""),
             "checkpoint_size_bytes": int(config.get("checkpoint_size_bytes") or 0),
         }
+        if config.get("supports_charge_spin"):
+            metadata.update(
+                {
+                    "charge": int(config.get("charge", 0)),
+                    "spin": int(config.get("spin", 0)),
+                }
+            )
+        return metadata
 
     @property
     def provider_version(self) -> str:
@@ -107,7 +146,7 @@ class FairChemUmaAdapter:
     def calculator_for(self, atoms: Any, config: dict[str, Any]) -> Any:
         from fairchem.core import FAIRChemCalculator, pretrained_mlip
 
-        model = str(config["model"])
+        model = str(config["provider_model"])
         device = _resolve_device(str(config.get("device") or "auto"))
         task = str(config["uma_task"])
         inference_settings = str(config.get("inference_settings") or "default")
@@ -126,6 +165,7 @@ class FairChemUmaAdapter:
 
     def provider_metadata(self, atoms: Any, config: dict[str, Any], calculator: Any) -> dict[str, Any]:
         return {
+            "provider_model": str(config["provider_model"]),
             "uma_task": str(config["uma_task"]),
             "charge": int(config.get("charge", 0)),
             "spin": int(config.get("spin", 0)),
@@ -150,7 +190,7 @@ class MatterSimAdapter:
         except ImportError:
             from mattersim.forcefield.potential import MatterSimCalculator
 
-        model = str(config["model"])
+        model = str(config["provider_model"])
         kwargs: dict[str, Any] = {
             "device": _resolve_device(str(config.get("device") or "auto")),
             "dtype": str(config.get("dtype") or "float32"),
@@ -158,15 +198,14 @@ class MatterSimAdapter:
             "direct_graph": bool(config.get("direct_graph", False)),
             "compile": bool(config.get("compile", False)),
         }
-        if model not in {"mattersim-v1-1m", "mattersim-v1.0.0-1m", "MatterSim-v1.0.0-1M"}:
-            kwargs["load_path"] = model
+        kwargs["load_path"] = model
         calc = MatterSimCalculator(**kwargs)
         self._calculators[key] = calc
         return calc
 
     def provider_metadata(self, atoms: Any, config: dict[str, Any], calculator: Any) -> dict[str, Any]:
         return {
-            "checkpoint_identity": str(config["model"]),
+            "checkpoint_identity": str(config["provider_model"]),
             "dtype": str(config.get("dtype") or "float32"),
             "compute_stress": bool(config.get("compute_stress", True)),
             "direct_graph": bool(config.get("direct_graph", False)),
@@ -189,11 +228,11 @@ class OrbV3Adapter:
         from orb_models.forcefield import pretrained
         from orb_models.forcefield.inference.calculator import ORBCalculator
 
-        model = str(config["model"])
+        model = str(config["provider_model"])
         loader_name = model.replace("-", "_")
         loader = getattr(pretrained, loader_name, None)
         if loader is None:
-            raise ValueError(f"ORB pretrained loader is unavailable for configured model alias {model!r}.")
+            raise ValueError(f"ORB pretrained loader is unavailable for configured official model {model!r}.")
         device = _resolve_device(str(config.get("device") or "auto"))
         compile_mode = str(config.get("compile_mode") or "auto")
         compile_value = {"auto": None, "on": True, "off": False}[compile_mode]
@@ -218,6 +257,7 @@ class OrbV3Adapter:
         results = getattr(calculator, "results", {}) or {}
         confidence = results.get("confidence")
         metadata: dict[str, Any] = {
+            "provider_model": str(config["provider_model"]),
             "precision": str(config["precision"]),
             "compile_mode": str(config.get("compile_mode") or "auto"),
             "edge_method": str(config.get("edge_method") or "knn_alchemi"),

@@ -1346,8 +1346,25 @@ def _mlff_task_spec(
         # Preserve a usable concrete schema when the candidate values are bad.
         backend = str(overrides.get("backend") or "").strip()
         selector = {"backend": backend} if backend else {}
+        backend_config = overrides.get("backend_config")
+        if backend and isinstance(backend_config, dict):
+            model = str(backend_config.get("model") or "").strip()
+            if model:
+                model_selector = {
+                    "backend": backend,
+                    "backend_config": {"model": model},
+                }
+                try:
+                    out = resolve_mlff_template(task_name, model_selector, audience=audience)
+                except Exception:
+                    out = None
+            else:
+                out = None
+        else:
+            out = None
         try:
-            out = resolve_mlff_template(task_name, selector, audience=audience)
+            if out is None:
+                out = resolve_mlff_template(task_name, selector, audience=audience)
         except Exception:
             out = {
                 "task_name": task_name,
@@ -1397,6 +1414,13 @@ def _task_spec_content(data: dict[str, Any], *, detail: str) -> str:
         lines.append("available_backends=" + ", ".join(data.get("available_backends") or []) or "available_backends=none")
     if data.get("enabled_models") is not None:
         lines.append("enabled_models=" + ", ".join(data.get("enabled_models") or []) or "enabled_models=none")
+    if data.get("selected_model"):
+        lines.append(f"selected_model={data['selected_model']}")
+    if data.get("model_capabilities"):
+        lines.append(
+            "model_capabilities="
+            + json.dumps(data["model_capabilities"], ensure_ascii=False, sort_keys=True)
+        )
     errors = data.get("errors") or []
     if errors:
         lines.append(f"validation=failed errors={len(errors)}")

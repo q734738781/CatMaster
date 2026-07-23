@@ -28,8 +28,15 @@ class AuthIdentity:
 
 
 class AuthManager:
-    def __init__(self, *, auth_root: str | Path, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        auth_root: str | Path,
+        enabled: bool = True,
+        registration_enabled: bool = True,
+    ) -> None:
         self.enabled = bool(enabled)
+        self.registration_enabled = bool(self.enabled and registration_enabled)
         self.auth_root = Path(auth_root).expanduser().resolve()
         self.auth_root.mkdir(parents=True, exist_ok=True)
         self.db_path = self.auth_root / "auth.sqlite"
@@ -167,6 +174,8 @@ class AuthManager:
             self._captchas.pop(key, None)
 
     def register_user(self, *, username: str, password: str, captcha_id: str, captcha_answer: str) -> str:
+        if not self.registration_enabled:
+            raise ValueError("Registration is disabled.")
         normalized = self.normalize_username(username)
         secret = self.validate_password(password)
         if not self.verify_captcha(captcha_id, captcha_answer):
@@ -238,6 +247,6 @@ class AuthManager:
             "auth_enabled": auth_enabled,
             "authenticated": authenticated,
             "username": identity.username if identity and authenticated else "",
-            "registration_enabled": auth_enabled,
+            "registration_enabled": self.registration_enabled,
             "has_users": self.has_users() if auth_enabled else True,
         }

@@ -1668,10 +1668,19 @@ def _discover_project_spaces(project_space_root: Path | str) -> list[Path]:
     return unique
 
 
-def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
+def create_app(
+    *,
+    project_space_root: str,
+    no_login: bool = False,
+    disable_registration: bool = False,
+) -> FastAPI:
     default_project_space_root = str(Path(project_space_root).expanduser().resolve())
     registry = SessionRegistry(default_project_space_root=default_project_space_root)
-    auth = AuthManager(auth_root=Path(default_project_space_root) / ".webui_auth", enabled=not no_login)
+    auth = AuthManager(
+        auth_root=Path(default_project_space_root) / ".webui_auth",
+        enabled=not no_login,
+        registration_enabled=not disable_registration,
+    )
     self_evolution_wakeup: asyncio.Event | None = None
     self_evolution_worker_task: asyncio.Task[Any] | None = None
 
@@ -1949,12 +1958,16 @@ def create_app(*, project_space_root: str, no_login: bool = False) -> FastAPI:
     def _auth_captcha():
         if not auth.enabled:
             return JSONResponse({"captcha_id": "", "question": ""})
+        if not auth.registration_enabled:
+            raise HTTPException(status_code=403, detail="Registration is disabled.")
         return JSONResponse(auth.create_captcha())
 
     @app.post("/api/auth/register")
     async def _auth_register(request: Request):
         if not auth.enabled:
             return JSONResponse(auth.public_status(auth.default_identity()))
+        if not auth.registration_enabled:
+            raise HTTPException(status_code=403, detail="Registration is disabled.")
         payload = await _json_body(request)
         try:
             username = auth.register_user(
@@ -2796,12 +2809,17 @@ def launch(
     port: int = 7860,
     project_space_root: Optional[str] = None,
     no_login: bool = False,
+    disable_registration: bool = False,
     timeout_keep_alive: int = 0,
     timeout_graceful_shutdown: int = 0,
 ) -> None:
     if project_space_root is None:
         project_space_root = str(Path.cwd() / "project_space")
-    app = create_app(project_space_root=project_space_root, no_login=no_login)
+    app = create_app(
+        project_space_root=project_space_root,
+        no_login=no_login,
+        disable_registration=disable_registration,
+    )
     run_kwargs = {
         "host": host,
         "port": port,

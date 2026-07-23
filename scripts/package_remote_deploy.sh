@@ -186,7 +186,7 @@ write_deploy_readme() {
     printf '%s\n' 'conda activate catmaster'
     printf '%s\n' '```'
     printf '\n'
-    printf '%s\n' 'Do not install `requirements/mace.txt`, `requirements/uma.txt`, `requirements/mattersim.txt`, or `requirements/orb.txt` into the `catmaster` control-plane environment. Create a separate remote environment for each enabled MLFF provider and connect it through the corresponding resource `source_list`; use `configs/dpdispatcher/env_templates/` as the activation-script reference.'
+    printf '%s\n' 'Do not install `requirements/mace.txt`, `requirements/uma.txt`, `requirements/mattersim.txt`, or `requirements/orb.txt` into the `catmaster` control-plane environment. Create a separate remote environment for each enabled MLFF provider and connect it through the corresponding resource `source_list`; use `configs/dpdispatcher/env_templates/` as the activation-script reference. If the GPU host requires a proxy, copy and edit `catmaster_env_proxy.sh`, then keep it before the provider activation script in `source_list`; remove that entry on hosts that need no proxy.'
     printf '\n'
     printf '%s\n' 'For a local or desktop deployment that uses the Literature Review browser path, install the pinned agent-browser CLI as well:'
     printf '\n'
@@ -374,7 +374,7 @@ EOF
     printf '%s\n' './start_webui.sh --status'
     printf '%s\n' '```'
     printf '\n'
-    printf '%s\n' 'Keep the application on loopback. From your workstation, run `ssh -L 7991:127.0.0.1:7991 <user>@<remote-host>` and open `http://127.0.0.1:7991`. A shared deployment needs a TLS reverse proxy and an external network or identity boundary; never publish `--no-login` mode.'
+    printf '%s\n' 'Keep the application on loopback. From your workstation, run `ssh -L 7991:127.0.0.1:7991 <user>@<remote-host>` and open `http://127.0.0.1:7991`. A shared deployment needs a TLS reverse proxy and an external network or identity boundary; never publish `--no-login` mode. After at least one account exists, use `--disable-registration` or `CATMASTER_DISABLE_REGISTRATION=1` to keep login required while closing public signup.'
     printf '\n'
     printf '%s\n' '## 5. Verify remote execution'
     printf '\n'
@@ -437,6 +437,7 @@ verify_archive() {
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/resources_template.yaml"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/tasks_template.yaml"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/mlff_backends_template.yaml"
+    "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_proxy.sh"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_mace.sh"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_uma.sh"
     "$PACKAGE_ROOT_NAME/configs/dpdispatcher/env_templates/catmaster_env_mattersim.sh"

@@ -45,16 +45,48 @@ class MlffSpecValidationError(ValueError):
         return list(self._errors)
 
 
+class MaceMolecularMetadata(_StrictModel):
+    charge: int = Field(0, description="Total molecular charge for charge/spin-aware MACE models.")
+    spin: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Spin multiplicity for charge/spin-aware MACE models: 1 singlet, 2 doublet, 3 triplet. "
+            "Zero means not applicable to the selected model."
+        ),
+    )
+
+
 class MaceBackendConfig(_StrictModel):
     model: str = Field(
         "mh-1",
-        description="Enabled MACE model alias. Leave empty only when checkpoint_artifact is supplied.",
+        description="Enabled registered MACE model name. Leave empty only when checkpoint_artifact is supplied.",
     )
     checkpoint_artifact: str = Field(
         "",
-        description="Stage-relative checkpoint under models/. Leave empty when using an enabled model alias.",
+        description="Stage-relative checkpoint under models/. Leave empty when using a registered model.",
     )
-    head: str = Field("omat_pbe", description="MACE model head; use an empty string when the model has no head.")
+    head: str = Field(
+        "omat_pbe",
+        description=(
+            "MACE model head. Query the concrete model spec and use one of its enabled heads; "
+            "leave empty only for a staged checkpoint whose head is selected internally."
+        ),
+    )
+    defaults: MaceMolecularMetadata = Field(
+        default_factory=MaceMolecularMetadata,
+        description=(
+            "Stage-wide charge and multiplicity-style spin defaults. These are active only for a registered "
+            "MACE model that declares charge/spin support, such as omol-0."
+        ),
+    )
+    items: dict[str, MaceMolecularMetadata] = Field(
+        default_factory=dict,
+        description=(
+            "Per-input charge/spin overrides keyed by exact paths relative to input/. "
+            "Each item should state both charge and spin when it differs from defaults."
+        ),
+    )
     dispersion: bool = Field(False, description="Enable the MACE dispersion wrapper.")
     default_dtype: Literal["float32", "float64"] = Field("float64", description="Calculator precision.")
     enable_cueq: bool = Field(False, description="Enable cuEquivariance when the remote environment supports it.")
@@ -74,22 +106,20 @@ class MaceBackendConfig(_StrictModel):
 
 
 class UmaItemConfig(_StrictModel):
-    uma_task: Literal["auto", "omat", "omol", "oc20", "oc22", "oc25", "odac", "omc"] = Field(
-        "auto",
-        description="FairChem UMA prediction task.",
+    uma_task: Literal["omat", "omol", "oc20", "oc22", "oc25", "odac", "omc"] = Field(
+        "omat",
+        description="Official FairChem UMA task name supported by the selected UMA model.",
     )
     charge: int = Field(0, description="Molecular charge for omol; keep zero for non-omol tasks.")
     spin: int = Field(0, ge=0, description="FairChem OMOL multiplicity-style spin value.")
 
-    @model_validator(mode="after")
-    def _non_omol_is_neutral(self) -> "UmaItemConfig":
-        if self.uma_task not in {"auto", "omol"} and (self.charge != 0 or self.spin != 0):
-            raise ValueError("Non-omol UMA tasks require charge=0 and spin=0.")
-        return self
-
 
 class UmaBackendConfig(_StrictModel):
-    model: str = Field("uma-s-1p2", min_length=1, description="Enabled FairChem UMA model alias.")
+    model: str = Field(
+        "uma-s-1p2",
+        min_length=1,
+        description="Exact official FairChem pretrained model name enabled by this deployment.",
+    )
     device: str = Field("auto", min_length=1, description="Device request such as auto, cpu, cuda, or cuda:0.")
     inference_settings: Literal["default", "turbo"] = Field(
         "default",
@@ -106,7 +136,11 @@ class UmaBackendConfig(_StrictModel):
 
 
 class MatterSimBackendConfig(_StrictModel):
-    model: str = Field("mattersim-v1-1m", min_length=1, description="Enabled MatterSim model alias.")
+    model: str = Field(
+        "MatterSim-v1.0.0-1M",
+        min_length=1,
+        description="Exact official MatterSim checkpoint identity enabled by this deployment.",
+    )
     device: str = Field("auto", min_length=1, description="Device request such as auto, cpu, cuda, or cuda:0.")
     dtype: Literal["float32", "float64"] = Field(
         "float32",
@@ -145,7 +179,7 @@ class OrbV3BackendConfig(_StrictModel):
     model: str = Field(
         "orb-v3-conservative-inf-omat",
         min_length=1,
-        description="Enabled ORB-v3 model alias.",
+        description="Exact official ORB-v3 pretrained model name enabled by this deployment.",
     )
     device: str = Field("auto", min_length=1, description="Device request such as auto, cpu, cuda, or cuda:0.")
     precision: Literal["float32-high", "float32-highest", "float64"] = Field(
@@ -307,7 +341,13 @@ _TASK_MODELS: dict[MlffOperation, Type[_StrictModel]] = {
 
 class MlffModelProfile(_StrictModel):
     enabled: bool = True
-    checkpoint_alias: str = ""
+    loader: Literal["", "mace_mp", "mace_omol"] = ""
+    provider_model: str = ""
+    heads: list[str] = Field(default_factory=list)
+    default_head: str = ""
+    tasks: list[str] = Field(default_factory=list)
+    default_task: str = ""
+    supports_charge_spin: bool = False
 
 
 class MlffBackendProfile(_StrictModel):
@@ -318,6 +358,82 @@ class MlffBackendProfile(_StrictModel):
     default_model: str
     models: dict[str, MlffModelProfile]
     audiences: list[str] = Field(default_factory=list)
+
+
+_OFFICIAL_MODEL_CONTRACTS: dict[str, dict[str, dict[str, Any]]] = {
+    "mace": {
+        "mh-1": {
+            "loader": "mace_mp",
+            "provider_model": "mh-1",
+            "heads": [
+                "matpes_r2scan",
+                "mp_pbe_refit_add",
+                "spice_wB97M",
+                "oc20_usemppbe",
+                "omol",
+                "omat_pbe",
+            ],
+            "default_head": "omat_pbe",
+            "tasks": [],
+            "default_task": "",
+            "supports_charge_spin": False,
+        },
+        "omol-0": {
+            "loader": "mace_omol",
+            "provider_model": "extra_large",
+            "heads": ["omol"],
+            "default_head": "omol",
+            "tasks": ["omol"],
+            "default_task": "omol",
+            "supports_charge_spin": True,
+        },
+    },
+    "fairchem_uma": {
+        "uma-s-1p2": {
+            "provider_model": "uma-s-1p2",
+            "tasks": ["oc20", "oc22", "oc25", "omat", "omol", "odac", "omc"],
+            "default_task": "omat",
+            "supports_charge_spin": True,
+        },
+        "uma-s-1p1": {
+            "provider_model": "uma-s-1p1",
+            "tasks": ["oc20", "omat", "omol", "odac", "omc"],
+            "default_task": "omat",
+            "supports_charge_spin": True,
+        },
+        "uma-m-1p1": {
+            "provider_model": "uma-m-1p1",
+            "tasks": ["oc20", "omat", "omol", "odac", "omc"],
+            "default_task": "omat",
+            "supports_charge_spin": True,
+        },
+    },
+    "mattersim": {
+        "MatterSim-v1.0.0-1M": {
+            "provider_model": "MatterSim-v1.0.0-1M",
+            "tasks": ["omat"],
+            "default_task": "omat",
+        },
+        "MatterSim-v1.0.0-5M": {
+            "provider_model": "MatterSim-v1.0.0-5M",
+            "tasks": ["omat"],
+            "default_task": "omat",
+        },
+    },
+    "orb_v3": {
+        name: {
+            "provider_model": name,
+            "tasks": ["omat"],
+            "default_task": "omat",
+        }
+        for name in (
+            "orb-v3-conservative-inf-omat",
+            "orb-v3-conservative-20-omat",
+            "orb-v3-direct-inf-omat",
+            "orb-v3-direct-20-omat",
+        )
+    },
+}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -367,6 +483,24 @@ class MlffBackendRegistry:
                         raise ValueError(
                             f"Backend {backend_name!r} default_model {profile.default_model!r} must be enabled in models."
                         )
+                    contracts = _OFFICIAL_MODEL_CONTRACTS[backend_name]
+                    for model_name, model in profile.models.items():
+                        if not model.enabled:
+                            continue
+                        contract = contracts.get(model_name)
+                        if contract is None:
+                            allowed = ", ".join(sorted(contracts))
+                            raise ValueError(
+                                f"Backend {backend_name!r} model {model_name!r} is not an exact supported "
+                                f"official model name. Allowed: {allowed}"
+                            )
+                        for field_name, expected in contract.items():
+                            actual = getattr(model, field_name)
+                            if actual != expected:
+                                raise ValueError(
+                                    f"Backend {backend_name!r} model {model_name!r} must declare "
+                                    f"{field_name}={expected!r}; got {actual!r}."
+                                )
                     self.profiles[backend_name] = profile
         defaults = [name for name, profile in self.profiles.items() if profile.enabled and profile.default]
         if len(defaults) > 1:
@@ -446,8 +580,21 @@ def _backend_defaults(name: str, operation: MlffOperation, profile: MlffBackendP
     model_type = _BACKEND_MODELS[name]
     defaults = model_type().model_dump(mode="json")
     defaults["model"] = profile.default_model
-    if name == "mace" and operation == "md":
-        defaults["default_dtype"] = "float32"
+    model = profile.models[profile.default_model]
+    if name == "mace":
+        defaults["head"] = model.default_head
+        defaults["defaults"] = {
+            "charge": 0,
+            "spin": 1 if model.supports_charge_spin else 0,
+        }
+        if operation == "md":
+            defaults["default_dtype"] = "float32"
+    elif name == "fairchem_uma":
+        defaults["defaults"] = {
+            "uma_task": model.default_task,
+            "charge": 0,
+            "spin": 1 if model.default_task == "omol" else 0,
+        }
     return defaults
 
 
@@ -539,6 +686,55 @@ def _validate_profile_model(
     if configured is None or not configured.enabled:
         allowed = sorted(name for name, item in profile.models.items() if item.enabled)
         raise ValueError(f"Model {model!r} is not enabled for backend {backend!r}. Allowed: {', '.join(allowed)}")
+    if backend == "mace" and isinstance(config, MaceBackendConfig):
+        if config.head not in configured.heads:
+            raise ValueError(
+                f"Head {config.head!r} is not enabled for MACE model {model!r}. "
+                f"Allowed: {', '.join(configured.heads)}"
+            )
+        if configured.loader == "mace_omol" and config.dispersion:
+            raise ValueError("MACE omol-0 does not support the mace_mp dispersion wrapper.")
+        defaults = config.defaults
+        if configured.supports_charge_spin:
+            if defaults.spin < 1:
+                raise ValueError(
+                    f"MACE model {model!r} requires a positive multiplicity-style defaults.spin."
+                )
+            for rel, metadata in config.items.items():
+                if "spin" in metadata.model_fields_set and metadata.spin < 1:
+                    raise ValueError(
+                        f"MACE model {model!r} item {rel!r} requires a positive multiplicity-style spin."
+                    )
+        elif config.items or defaults.charge != 0 or defaults.spin != 0:
+            raise ValueError(
+                f"MACE model {model!r} does not accept charge/spin metadata. "
+                "Use omol-0 for charge/spin-conditioned molecular inference."
+            )
+    if backend == "fairchem_uma" and isinstance(config, UmaBackendConfig):
+        metadata_items: list[tuple[str, dict[str, Any]]] = [
+            ("defaults", config.defaults.model_dump(mode="json"))
+        ]
+        for item_name, metadata in sorted(config.items.items()):
+            merged = config.defaults.model_dump(mode="json")
+            merged.update(metadata.model_dump(mode="json", exclude_unset=True))
+            metadata_items.append((item_name, merged))
+        for item_name, metadata in metadata_items:
+            task = str(metadata["uma_task"])
+            charge = int(metadata["charge"])
+            spin = int(metadata["spin"])
+            if task not in configured.tasks:
+                raise ValueError(
+                    f"UMA task {task!r} is not supported by model {model!r} "
+                    f"for {item_name!r}. Allowed: {', '.join(configured.tasks)}"
+                )
+            if task == "omol" and spin < 1:
+                raise ValueError(
+                    f"UMA task 'omol' for {item_name!r} requires multiplicity-style spin >= 1."
+                )
+            if task != "omol" and (charge != 0 or spin != 0):
+                raise ValueError(
+                    f"UMA task {task!r} for {item_name!r} requires charge=0 and spin=0."
+                )
 
 
 def _validate_cross_constraints(
@@ -585,10 +781,13 @@ def _constraints(backend: str, operation: MlffOperation) -> list[str]:
     out: list[str] = []
     if backend == "mace":
         out.append("backend_config.model and backend_config.checkpoint_artifact are mutually exclusive.")
+        out.append("Registered MACE models accept only their model-specific enabled head allowlist.")
+        out.append("MACE omol-0 requires multiplicity-style spin metadata and does not use the mace_mp dispersion wrapper.")
         if operation != "md":
             out.append("backend_config.compile_mode must be empty outside MLFF MD.")
     if backend == "fairchem_uma":
-        out.append("UMA items resolved to a non-omol task require charge=0 and spin=0.")
+        out.append("UMA accepts only the selected official model's task allowlist; auto is not a provider task.")
+        out.append("UMA omol requires multiplicity-style spin >= 1; non-omol tasks require charge=0 and spin=0.")
         out.append("UMA turbo inference requires fixed atomic composition throughout the task.")
     if backend == "mattersim":
         out.append("Pinned MatterSim 1.2.5 requires backend_config.direct_graph=false and compile=false.")
@@ -611,6 +810,76 @@ def _constraints(backend: str, operation: MlffOperation) -> list[str]:
     if operation == "neb":
         out.append("MLFF NEB accepts a complete locally prepared fixed-image path with at least one intermediate image.")
     return out
+
+
+def _enabled_model_capabilities(
+    backend: str,
+    profile: MlffBackendProfile,
+) -> dict[str, dict[str, Any]]:
+    capabilities: dict[str, dict[str, Any]] = {}
+    for model_name, model in sorted(profile.models.items()):
+        if not model.enabled:
+            continue
+        item: dict[str, Any] = {
+            "provider_model": model.provider_model,
+            "tasks": list(model.tasks),
+            "default_task": model.default_task,
+            "supports_charge_spin": model.supports_charge_spin,
+        }
+        if model.loader:
+            item["loader"] = model.loader
+        if model.heads:
+            item["heads"] = list(model.heads)
+            item["default_head"] = model.default_head
+        capabilities[model_name] = item
+    return capabilities
+
+
+def _normalized_backend_config(
+    backend: str,
+    config: _StrictModel,
+    *,
+    backend_overrides: Mapping[str, Any],
+    profile: MlffBackendProfile,
+) -> dict[str, Any]:
+    normalized = config.model_dump(mode="json")
+    raw_items = backend_overrides.get("items") or {}
+    if backend == "mace" and isinstance(config, MaceBackendConfig) and isinstance(raw_items, Mapping):
+        normalized["items"] = {
+            str(rel): MaceMolecularMetadata.model_validate(metadata).model_dump(
+                mode="json",
+                exclude_unset=True,
+            )
+            for rel, metadata in raw_items.items()
+        }
+    if backend == "fairchem_uma" and isinstance(config, UmaBackendConfig) and isinstance(raw_items, Mapping):
+        normalized["items"] = {
+            str(rel): UmaItemConfig.model_validate(metadata).model_dump(
+                mode="json",
+                exclude_unset=True,
+            )
+            for rel, metadata in raw_items.items()
+        }
+    if backend == "mace" and isinstance(config, MaceBackendConfig) and config.checkpoint_artifact:
+        normalized.update(
+            {
+                "loader": "checkpoint",
+                "provider_model": "",
+                "supports_charge_spin": False,
+            }
+        )
+        return normalized
+    model_name = str(getattr(config, "model"))
+    model = profile.models[model_name]
+    normalized["provider_model"] = model.provider_model
+    if backend == "mace":
+        normalized.update(
+            {
+                "loader": model.loader,
+                "supports_charge_spin": model.supports_charge_spin,
+            }
+        )
+    return normalized
 
 
 def resolve_mlff_template(
@@ -659,10 +928,47 @@ def resolve_mlff_template(
     backend_defaults = _backend_defaults(requested, operation, profile)
     task_defaults = _task_defaults(operation)
     # A staged checkpoint is an explicit replacement for the deployment's
-    # default MACE alias. Callers should not need to know or clear that inherited
+    # default MACE model. Callers should not need to know or clear that inherited
     # default themselves.
-    if requested == "mace" and backend_overrides.get("checkpoint_artifact"):
-        backend_defaults["model"] = ""
+    if requested == "mace":
+        if backend_overrides.get("checkpoint_artifact"):
+            backend_defaults["model"] = ""
+            if "head" not in backend_overrides:
+                backend_defaults["head"] = ""
+            if "defaults" not in backend_overrides:
+                backend_defaults["defaults"] = {"charge": 0, "spin": 0}
+        else:
+            selected_model = (
+                str(backend_overrides.get("model") or "")
+                if "model" in backend_overrides
+                else profile.default_model
+            )
+            backend_defaults["model"] = selected_model
+            selected_profile = profile.models.get(selected_model)
+            if selected_profile is not None:
+                if "head" not in backend_overrides:
+                    backend_defaults["head"] = selected_profile.default_head
+                if "defaults" not in backend_overrides:
+                    backend_defaults["defaults"] = {
+                        "charge": 0,
+                        "spin": 1 if selected_profile.supports_charge_spin else 0,
+                    }
+    elif requested == "fairchem_uma":
+        selected_model = (
+            str(backend_overrides.get("model") or "")
+            if "model" in backend_overrides
+            else profile.default_model
+        )
+        backend_defaults["model"] = selected_model
+        selected_profile = profile.models.get(selected_model)
+        if selected_profile is not None and "defaults" not in backend_overrides:
+            backend_defaults["defaults"] = {
+                "uma_task": selected_profile.default_task,
+                "charge": 0,
+                "spin": 1 if selected_profile.default_task == "omol" else 0,
+            }
+    elif "model" in backend_overrides:
+        backend_defaults["model"] = str(backend_overrides.get("model") or "")
     try:
         backend_config = backend_model_type.model_validate(_deep_merge(backend_defaults, backend_overrides))
     except Exception as exc:
@@ -687,16 +993,47 @@ def resolve_mlff_template(
 
     backend_schema = _inline_schema(backend_model_type.model_json_schema())
     task_schema = _inline_schema(task_model_type.model_json_schema())
-    _apply_defaults(backend_schema, backend_defaults)
-    _apply_defaults(task_schema, task_defaults)
     enabled_models = sorted(name for name, item in profile.models.items() if item.enabled)
+    model_capabilities = _enabled_model_capabilities(requested, profile)
+    public_backend_defaults = copy.deepcopy(backend_defaults)
+    selected_model = str(getattr(backend_config, "model", "") or "")
+    selected_model_profile = profile.models.get(selected_model)
+    backend_properties = backend_schema.get("properties") or {}
+    if requested == "mace" and isinstance(backend_properties, dict):
+        if selected_model_profile is None or not selected_model_profile.supports_charge_spin:
+            public_backend_defaults.pop("defaults", None)
+            public_backend_defaults.pop("items", None)
+            backend_properties.pop("defaults", None)
+            backend_properties.pop("items", None)
+        head_field = backend_properties.get("head")
+        if isinstance(head_field, dict) and selected_model_profile is not None:
+            head_field["enum"] = list(selected_model_profile.heads)
+            head_field["default"] = selected_model_profile.default_head
+            head_field["description"] = (
+                f"Enabled head for MACE model {selected_model!r}. "
+                "Choose exactly one value from this model-specific allowlist."
+            )
+    if requested == "fairchem_uma" and isinstance(backend_properties, dict) and selected_model_profile is not None:
+        task_schemas = [
+            ((backend_properties.get("defaults") or {}).get("properties") or {}).get("uma_task"),
+            (
+                (((backend_properties.get("items") or {}).get("additionalProperties") or {}).get("properties") or {})
+            ).get("uma_task"),
+        ]
+        for task_field in task_schemas:
+            if not isinstance(task_field, dict):
+                continue
+            task_field["enum"] = list(selected_model_profile.tasks)
+            task_field["default"] = selected_model_profile.default_task
+            task_field["description"] = (
+                f"Official FairChem task supported by UMA model {selected_model!r}. "
+                "Choose exactly one value from this model-specific allowlist."
+            )
+    _apply_defaults(backend_schema, public_backend_defaults)
+    _apply_defaults(task_schema, task_defaults)
     model_field = (backend_schema.get("properties") or {}).get("model")
-    # MACE may replace the deployment model alias with checkpoint_artifact, so
-    # a plain enum would incorrectly reject that non-union path. Other
-    # providers always select one enabled deployment alias and can expose the
-    # concrete allowlist directly to the agent-visible schema.
-    if requested != "mace" and enabled_models and isinstance(model_field, dict):
-        model_field["enum"] = enabled_models
+    if enabled_models and isinstance(model_field, dict):
+        model_field["enum"] = ([""] + enabled_models) if requested == "mace" else enabled_models
     template_schema: dict[str, Any] = {
         "type": "object",
         "additionalProperties": False,
@@ -713,23 +1050,30 @@ def resolve_mlff_template(
     }
     resolved_template_defaults = {
         "backend": requested,
-        "backend_config": backend_defaults,
+        "backend_config": public_backend_defaults,
         "task_config": task_defaults,
     }
     registered_backend = default_backend or requested
     registered_profile = profile_registry.get(registered_backend)
     template_defaults = {
         "backend": registered_backend,
-        "backend_config": _backend_defaults(
-            registered_backend,
-            operation,
-            registered_profile,
-        ),
+        "backend_config": _backend_defaults(registered_backend, operation, registered_profile),
         "task_config": task_defaults,
     }
+    if registered_backend == "mace":
+        registered_model = registered_profile.models[registered_profile.default_model]
+        if not registered_model.supports_charge_spin:
+            template_defaults["backend_config"].pop("defaults", None)
+            template_defaults["backend_config"].pop("items", None)
+    normalized_backend_config = _normalized_backend_config(
+        requested,
+        backend_config,
+        backend_overrides=backend_overrides,
+        profile=profile,
+    )
     normalized = {
         "backend": requested,
-        "backend_config": backend_config.model_dump(mode="json"),
+        "backend_config": normalized_backend_config,
         "task_config": task_config.model_dump(mode="json"),
     }
     return {
@@ -738,6 +1082,8 @@ def resolve_mlff_template(
         "resolved_backend": requested,
         "available_backends": available,
         "enabled_models": enabled_models,
+        "model_capabilities": model_capabilities,
+        "selected_model": selected_model,
         "default_backend": default_backend,
         "resource": profile.resource,
         "template_override_keys": ["backend", "backend_config", "task_config"],
@@ -751,6 +1097,30 @@ def resolve_mlff_template(
         "normalized_template_overrides": normalized,
         "example": {
             "backend": requested,
+            **(
+                {
+                    "backend_config": {
+                        "model": selected_model,
+                        "head": str(getattr(backend_config, "head", "") or ""),
+                    }
+                }
+                if requested == "mace" and selected_model
+                else {}
+            ),
+            **(
+                {
+                    "backend_config": {
+                        "model": selected_model,
+                        "defaults": {
+                            "uma_task": str(getattr(backend_config, "defaults").uma_task),
+                            "charge": int(getattr(backend_config, "defaults").charge),
+                            "spin": int(getattr(backend_config, "defaults").spin),
+                        },
+                    }
+                }
+                if requested == "fairchem_uma" and selected_model
+                else {}
+            ),
         },
     }
 

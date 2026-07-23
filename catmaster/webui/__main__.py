@@ -22,6 +22,11 @@ def main() -> None:
         help="Disable login and open the built-in admin workspace; WebUI self-evolution is disabled in this mode.",
     )
     parser.add_argument(
+        "--disable-registration",
+        action="store_true",
+        help="Require login but reject new account registration. Provision at least one user before enabling.",
+    )
+    parser.add_argument(
         "--timeout-keep-alive",
         type=int,
         default=0,
@@ -39,6 +44,7 @@ def main() -> None:
         port=args.port,
         project_space_root=args.project_space_root,
         no_login=args.no_login,
+        disable_registration=args.disable_registration,
         timeout_keep_alive=args.timeout_keep_alive,
         timeout_graceful_shutdown=args.timeout_graceful_shutdown,
     )

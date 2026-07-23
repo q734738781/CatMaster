@@ -140,13 +140,6 @@ def _validate_stage(stage_dir: Path, operation: str) -> list[tuple[str, Any]]:
     return [(path.name, _read_one(path)) for path in files]
 
 
-def _has_periodic_cell(atoms: Any) -> bool:
-    try:
-        return bool(any(bool(value) for value in atoms.pbc)) and float(atoms.cell.volume) > 1e-6
-    except Exception:
-        return False
-
-
 def _resolve_uma_items(
     structures: list[tuple[str, Any]],
     backend_config: dict[str, Any],
@@ -159,17 +152,57 @@ def _resolve_uma_items(
             "fairchem_uma backend_config.items contains paths absent from input/: " + ", ".join(unknown)
         )
     resolved: dict[str, dict[str, Any]] = {}
-    for rel, atoms in structures:
+    for rel, _atoms in structures:
         item = dict(defaults)
         item.update(dict(configured_items.get(rel) or {}))
-        task = str(item.get("uma_task") or "auto")
-        if task == "auto":
-            task = "omat" if _has_periodic_cell(atoms) else "omol"
+        task = str(item["uma_task"])
         charge = int(item.get("charge", 0))
         spin = int(item.get("spin", 0))
+        if task == "omol" and spin < 1:
+            raise ValueError(f"UMA item {rel!r} uses omol and therefore requires multiplicity-style spin >= 1.")
         if task != "omol" and (charge != 0 or spin != 0):
             raise ValueError(f"UMA item {rel!r} resolves to {task!r} and therefore requires charge=0 and spin=0.")
         resolved[rel] = {"uma_task": task, "charge": charge, "spin": spin}
+    return resolved
+
+
+def _resolve_mace_items(
+    structures: list[tuple[str, Any]],
+    backend_config: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    supports_charge_spin = bool(backend_config.get("supports_charge_spin", False))
+    defaults = dict(backend_config.get("defaults") or {})
+    configured_items = dict(backend_config.get("items") or {})
+    unknown = sorted(set(configured_items) - {rel for rel, _ in structures})
+    if unknown:
+        raise ValueError("MACE backend_config.items contains paths absent from input/: " + ", ".join(unknown))
+    shared = {
+        key: value
+        for key, value in backend_config.items()
+        if key not in {"defaults", "items"}
+    }
+    if not supports_charge_spin:
+        if configured_items or int(defaults.get("charge", 0)) != 0 or int(defaults.get("spin", 0)) != 0:
+            raise ValueError(
+                "The selected MACE model does not accept charge/spin metadata; use omol-0."
+            )
+        return {rel: dict(shared) for rel, _ in structures}
+
+    resolved: dict[str, dict[str, Any]] = {}
+    for rel, _atoms in structures:
+        metadata = dict(defaults)
+        metadata.update(dict(configured_items.get(rel) or {}))
+        charge = int(metadata.get("charge", 0))
+        spin = int(metadata.get("spin", 0))
+        if spin < 1:
+            raise ValueError(
+                f"MACE OMOL item {rel!r} requires multiplicity-style spin >= 1."
+            )
+        resolved[rel] = {
+            **shared,
+            "charge": charge,
+            "spin": spin,
+        }
     return resolved
 
 
@@ -225,7 +258,9 @@ def materialize_mlff_run_config(
         backend_config["checkpoint_size_bytes"] = int(staged_checkpoint.stat().st_size)
 
     item_backend_config: dict[str, Any]
-    if backend == "fairchem_uma":
+    if backend == "mace":
+        item_backend_config = _resolve_mace_items(structures, backend_config)
+    elif backend == "fairchem_uma":
         item_metadata = _resolve_uma_items(structures, backend_config)
         shared = {key: value for key, value in backend_config.items() if key not in {"defaults", "items"}}
         item_backend_config = {

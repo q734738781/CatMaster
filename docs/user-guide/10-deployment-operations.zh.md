@@ -194,7 +194,7 @@ ssh -L 7991:127.0.0.1:7991 <USER>@<SERVER>
 
 浏览器打开本机 `http://127.0.0.1:7991`。这种方式不会直接暴露 WebUI。
 
-多人共享服务需要反向代理或 VPN、TLS、外部身份控制、最小文件权限、日志与备份。内置登录包含账号隔离和基础注册，但不是完整公网身份平台；默认开放注册，应用本身不终止 TLS，cookie 也不应被当作公网安全边界。
+多人共享服务需要反向代理或 VPN、TLS、外部身份控制、最小文件权限、日志与备份。内置登录包含账号隔离和基础注册，但不是完整公网身份平台；默认开放注册，应用本身不终止 TLS，cookie 也不应被当作公网安全边界。至少预置一个用户后，可用 `--disable-registration` 启动，或设置 `CATMASTER_DISABLE_REGISTRATION=1`，在继续要求登录的同时拒绝新账号。此时状态 API 返回 `registration_enabled: false`，前端隐藏创建账号入口，注册端点返回 HTTP 403。
 
 `--no-login` 只适用于可信单机并绑定 loopback。它进入开放 `admin` workspace，同时关闭 Skill Evolution。
 
@@ -219,11 +219,13 @@ Resource card 把 machine 与 CPU/GPU、queue、walltime、环境 `source_list` 
 
 Task card 定义科学程序、输入布局、默认 resource、boot script 和回传文件。模板默认支持 VASP、CP2K、LAMMPS、通用 MLFF、MACE train/eval、xTB、CREST 和 ORCA。只有经过验证的 tasks 应保持 enabled。
 
-MLFF backend card 决定 MACE、UMA、MatterSim 或 ORB-v3 的启用状态、resource、operation 和模型。每个 backend 使用独立远程环境。模板只默认启用 MACE；其他 backend 在依赖、权重、device 和最小真实 case 通过后再开放。
+MLFF backend card 决定 MACE、UMA、MatterSim 或 ORB-v3 的启用状态、resource、operation 和模型。每个 model profile 都必须声明精确的 provider model、官方 task/domain 能力和 charge/spin 能力；MACE 还声明实际 loader、允许的 heads 与默认 head。UMA、MatterSim 和 ORB-v3 的模型键必须与官方命名完全一致，不能另造缩写或大小写别名。每个 backend 使用独立远程环境。模板默认启用 MACE `mh-1` 与独立 `omol-0`；其他 backend 只有在依赖、权重、device 和最小真实 case 通过后才整体开放。
 
 ### 远程环境加载
 
 远程命令环境依次由 machine `env_setup`、resource `source_list`、提交 prepend script 和 task command 构造。Program modules、conda activate、许可证变量和库路径应放在站点受控脚本中，不应写进 stage 或 prompt。
+
+DPDispatcher 通常启动非交互 shell，不能假设它会读取用户的 `.bashrc`。若 GPU 节点访问模型仓库需要代理，复制并编辑 `configs/dpdispatcher/env_templates/catmaster_env_proxy.sh`，在相关 GPU resource 的 `source_list` 中把它放在 provider conda 环境脚本之前；不需要代理的节点应删除该项。代理脚本只应绑定使用该代理的 machine，不要把指向 GPU 节点 `localhost` 的代理脚本复用到其他 CPU/SSH 节点。
 
 投入使用前，每个已启用引擎至少跑一个成本可控的 smoke case，确认 task catalog、环境、结果回传、`status.json`、stdout/stderr 和 receipt。`python scripts/remote_execution_smoke.py --list` 只列 case；其他参数会提交真实作业，不要一开始运行全部 suite。
 

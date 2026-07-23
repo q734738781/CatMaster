@@ -974,7 +974,8 @@ def test_remote_submission_skills_use_stage_layout_schema() -> None:
     assert "work_dir" in mace_text
     assert "input/" in mace_text
     assert "mlff_relax" in mace_text
-    assert 'template_overrides={"backend": "mattersim"}' in mace_text
+    assert '"backend": "mattersim"' in mace_text
+    assert "MatterSim-v1.0.0-1M" in mace_text
     assert 'detail="full"' in mace_text
 
     mace_md_text = (repo_root / "skills" / "dynamics_worker" / "mlff-md-sampling" / "SKILL.md").read_text(encoding="utf-8")

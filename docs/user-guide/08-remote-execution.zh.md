@@ -54,7 +54,7 @@ task、work_dir、资源和关键设置，等我批准后再提交。完成后�
 
 `mlff_sp`、`mlff_relax`、`mlff_md` 和 `mlff_neb` 使用统一 task 名称，再由 backend 配置选择 MACE、FairChem UMA、MatterSim 或 ORB-v3。这样同一个结构筛选目标可以在已启用的模型之间选择，而不需要为每个 provider 复制整套工具。
 
-模板默认只启用 MACE `mh-1`。UMA、MatterSim 和 ORB-v3 只有在管理员安装隔离环境、模型权重、resource 和最小 smoke case 后才会出现。Worker 在调用 `get_remote_task_spec` 时会得到当前 backend 与 operation 的有效参数，例如 model、device、dtype、优化器或 MD ensemble。用户不应从旧项目复制一组 overrides 后直接提交。
+模板默认启用 MACE `mh-1` 和独立的 `omol-0`：`mh-1` 通过 `mace_mp()` 提供严格枚举的多 heads，`omol-0` 通过 `mace_omol()` 提供显式 charge/spin 条件化分子推理。`mh-1` 的 `omol` head 与独立 `omol-0` 不是同一个模型入口。UMA、MatterSim 和 ORB-v3 只有在管理员安装隔离环境、模型权重、resource 和最小 smoke case 后才会出现。Worker 调用 `get_remote_task_spec` 后会得到当前 backend、官方 model 名、operation、model-specific head 或 task allowlist；UMA 的 `auto` 和非官方模型缩写会被拒绝。用户不应从旧项目复制一组 overrides 后直接提交。
 
 `mlff_sp` 与 `mlff_relax` 可以在一个 stage 的 `input/` 中直接处理多个结构，所以"有多个候选"不自动意味着要用 remote batch。`mlff_md` 要求 `input/` 中只有一个起始或 restart 结构；`mlff_neb` 接受已经在本地建立并检查的固定图像路径。
 

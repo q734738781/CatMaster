@@ -9,6 +9,7 @@ LOCAL_PROJECT_SPACE_ROOT=""
 LOCAL_CONDA_ENV_NAME="catmaster"
 LOCAL_HOST="0.0.0.0"
 LOCAL_PORT="7991"
+LOCAL_DISABLE_REGISTRATION="0"
 
 PROJECT_SPACE_ROOT="${CATMASTER_PROJECT_SPACE_ROOT:-${LOCAL_PROJECT_SPACE_ROOT:-$ROOT/project_space}}"
 CONDA_ENV_NAME="${CATMASTER_CONDA_ENV:-${LOCAL_CONDA_ENV_NAME:-catmaster}}"
@@ -17,6 +18,7 @@ PORT="${CATMASTER_PORT:-${LOCAL_PORT:-7860}}"
 RUNTIME_DIR="${CATMASTER_RUNTIME_DIR:-$ROOT/.runtime}"
 LOG_FILE="${CATMASTER_WEBUI_LOG:-$RUNTIME_DIR/webui.log}"
 PID_FILE="${CATMASTER_WEBUI_PID:-$RUNTIME_DIR/webui.pid}"
+DISABLE_REGISTRATION="${CATMASTER_DISABLE_REGISTRATION:-$LOCAL_DISABLE_REGISTRATION}"
 
 RUN_MODE="background"
 declare -a FORWARD_ARGS=()
@@ -219,6 +221,13 @@ has_flag() {
   return 1
 }
 
+is_truthy() {
+  case "${1,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --start)
@@ -280,6 +289,10 @@ fi
 
 if ! has_flag "--port" "${FORWARD_ARGS[@]}"; then
   CMD+=(--port "$PORT")
+fi
+
+if is_truthy "$DISABLE_REGISTRATION" && ! has_flag "--disable-registration" "${FORWARD_ARGS[@]}"; then
+  CMD+=(--disable-registration)
 fi
 
 CMD+=("${FORWARD_ARGS[@]}")

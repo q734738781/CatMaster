@@ -114,6 +114,7 @@ general_gpu:
   custom_flags:
     - "#SBATCH --export=ALL"
   source_list:
+    - "<REMOTE_GPU_NETWORK_ENV_SCRIPT>"
     - "<REMOTE_GPU_ENV_SCRIPT>"
 
 mace_gpu:
@@ -130,6 +131,7 @@ mace_gpu:
   custom_flags:
     - "#SBATCH --export=ALL"
   source_list:
+    - "<REMOTE_GPU_NETWORK_ENV_SCRIPT>"
     - "<REMOTE_MACE_ENV_SCRIPT>"
 
 uma_gpu:
@@ -146,6 +148,7 @@ uma_gpu:
   custom_flags:
     - "#SBATCH --export=ALL"
   source_list:
+    - "<REMOTE_GPU_NETWORK_ENV_SCRIPT>"
     - "<REMOTE_UMA_ENV_SCRIPT>"
 
 mattersim_gpu:
@@ -162,6 +165,7 @@ mattersim_gpu:
   custom_flags:
     - "#SBATCH --export=ALL"
   source_list:
+    - "<REMOTE_GPU_NETWORK_ENV_SCRIPT>"
     - "<REMOTE_MATTERSIM_ENV_SCRIPT>"
 
 orb_gpu:
@@ -178,6 +182,7 @@ orb_gpu:
   custom_flags:
     - "#SBATCH --export=ALL"
   source_list:
+    - "<REMOTE_GPU_NETWORK_ENV_SCRIPT>"
     - "<REMOTE_ORB_ENV_SCRIPT>"
 
 xtb_cpu:

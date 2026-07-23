@@ -60,6 +60,7 @@ verify_runtime_target() {
     "configs/dpdispatcher/resources_template.yaml"
     "configs/dpdispatcher/tasks_template.yaml"
     "configs/dpdispatcher/mlff_backends_template.yaml"
+    "configs/dpdispatcher/env_templates/catmaster_env_proxy.sh"
     "configs/dpdispatcher/env_templates/catmaster_env_mace.sh"
     "configs/dpdispatcher/env_templates/catmaster_env_uma.sh"
     "configs/dpdispatcher/env_templates/catmaster_env_mattersim.sh"

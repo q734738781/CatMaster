@@ -192,7 +192,7 @@ ssh -L 7991:127.0.0.1:7991 <USER>@<SERVER>
 
 Then open local `http://127.0.0.1:7991`.
 
-A shared service needs a reverse proxy or VPN, TLS, external access control, least-privilege file permissions, logs, and backup. The built-in login provides account isolation and basic registration. It is not a complete internet-facing identity platform: registration is open by default, the application does not terminate TLS, and its cookie should not be the only public security boundary.
+A shared service needs a reverse proxy or VPN, TLS, external access control, least-privilege file permissions, logs, and backup. The built-in login provides account isolation and basic registration. It is not a complete internet-facing identity platform: registration is open by default, the application does not terminate TLS, and its cookie should not be the only public security boundary. After provisioning at least one user, start with `--disable-registration` or set `CATMASTER_DISABLE_REGISTRATION=1` to keep login required while rejecting new accounts. The status API then reports `registration_enabled: false`, the frontend hides account creation, and registration endpoints return HTTP 403.
 
 Use `--no-login` only on a trusted machine bound to loopback. It opens the shared `admin` workspace and disables Skill Evolution.
 
@@ -217,11 +217,13 @@ A resource card binds machine, CPU/GPU, queue, walltime, environment `source_lis
 
 A task card defines the scientific program, input layout, default resource, boot script, and returned files. The template covers VASP, CP2K, LAMMPS, generic MLFF, MACE training and evaluation, xTB, CREST, and ORCA. Enable only validated tasks.
 
-An MLFF backend card enables MACE, UMA, MatterSim, or ORB-v3 and binds resource, operations, and models. Every backend uses an isolated remote environment. Only MACE is enabled in the public template; other backends require installed dependencies, weights, device verification, and a passing real smoke case.
+An MLFF backend card enables MACE, UMA, MatterSim, or ORB-v3 and binds resource, operations, and models. Every model profile declares the exact provider model, official task/domain capabilities, and charge/spin capability; MACE additionally declares its loader, allowed heads, and default head. UMA, MatterSim, and ORB-v3 model keys must exactly match official names rather than CatMaster abbreviations or case aliases. Every backend uses an isolated remote environment. The public template enables MACE `mh-1` and standalone `omol-0`; another backend is exposed only after its dependencies, weights, device, and minimum real case pass.
 
 ### Remote environment construction
 
 The remote command environment combines machine `env_setup`, resource `source_list`, an optional submission prepend script, and the task command. Place site modules, conda activation, license variables, and library paths in controlled environment scripts rather than stages or prompts.
+
+DPDispatcher commonly starts a non-interactive shell, so do not assume that it reads the user's `.bashrc`. If GPU nodes require a proxy to reach model repositories, copy and edit `configs/dpdispatcher/env_templates/catmaster_env_proxy.sh` and place it before the provider conda environment script in each applicable GPU resource `source_list`; remove the entry on hosts that need no proxy. Bind the proxy script only to machines that use it. In particular, do not reuse a GPU node's `localhost` proxy script on a different CPU or SSH host.
 
 Before releasing a task, run one inexpensive real case for every enabled engine and verify catalog visibility, environment, result transfer, `status.json`, stdout/stderr, and receipt. `python scripts/remote_execution_smoke.py --list` only lists cases. Other modes submit real work, so do not begin with the entire suite.
 

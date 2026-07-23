@@ -81,6 +81,7 @@ def test_removed_provider_named_task_specs_are_rejected(task_name: str) -> None:
 def test_public_mlff_environment_templates_are_shell_syntax_valid() -> None:
     root = Path(__file__).resolve().parents[1] / "configs" / "dpdispatcher" / "env_templates"
     expected = {
+        "catmaster_env_proxy.sh",
         "catmaster_env_mace.sh",
         "catmaster_env_uma.sh",
         "catmaster_env_mattersim.sh",
@@ -92,6 +93,16 @@ def test_public_mlff_environment_templates_are_shell_syntax_valid() -> None:
         subprocess.run(["bash", "-n", str(path)], check=True, capture_output=True, text=True)
 
 
+def test_public_gpu_resources_source_network_environment_before_provider() -> None:
+    import yaml
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "dpdispatcher" / "resources_template.yaml"
+    resources = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for resource_name in ("general_gpu", "mace_gpu", "uma_gpu", "mattersim_gpu", "orb_gpu"):
+        source_list = resources[resource_name]["source_list"]
+        assert source_list[0] == "<REMOTE_GPU_NETWORK_ENV_SCRIPT>"
+
+
 @pytest.mark.parametrize("task_name", ["mlff_sp", "mlff_relax", "mlff_md", "mlff_neb"])
 @pytest.mark.parametrize("backend", ["mace", "fairchem_uma", "mattersim", "orb_v3"])
 def test_every_enabled_backend_supports_every_managed_mlff_operation(task_name: str, backend: str) -> None:
@@ -99,6 +110,146 @@ def test_every_enabled_backend_supports_every_managed_mlff_operation(task_name: 
     resolved = resolve_mlff_template(task_name, {"backend": backend}, audience=audience)
     assert resolved["resolved_backend"] == backend
     assert set(resolved["available_backends"]) == {"mace", "fairchem_uma", "mattersim", "orb_v3"}
+
+
+def test_mace_registered_models_expose_strict_model_specific_heads() -> None:
+    mh1 = resolve_mlff_template(
+        "mlff_relax",
+        {"backend": "mace", "backend_config": {"model": "mh-1", "head": "omol"}},
+        audience="materials_worker",
+    )
+    assert mh1["enabled_models"] == ["mh-1", "omol-0"]
+    assert mh1["model_capabilities"]["mh-1"] == {
+        "provider_model": "mh-1",
+        "tasks": [],
+        "default_task": "",
+        "supports_charge_spin": False,
+        "loader": "mace_mp",
+        "heads": [
+            "matpes_r2scan",
+            "mp_pbe_refit_add",
+            "spice_wB97M",
+            "oc20_usemppbe",
+            "omol",
+            "omat_pbe",
+        ],
+        "default_head": "omat_pbe",
+    }
+    mh1_schema = mh1["template_schema"]["properties"]["backend_config"]["properties"]
+    assert mh1_schema["model"]["enum"] == ["", "mh-1", "omol-0"]
+    assert mh1_schema["head"]["enum"] == mh1["model_capabilities"]["mh-1"]["heads"]
+    assert "defaults" not in mh1_schema
+    assert "items" not in mh1_schema
+
+    omol = resolve_mlff_template(
+        "mlff_relax",
+        {"backend": "mace", "backend_config": {"model": "omol-0"}},
+        audience="materials_worker",
+    )
+    omol_config = omol["normalized_template_overrides"]["backend_config"]
+    assert omol_config["loader"] == "mace_omol"
+    assert omol_config["provider_model"] == "extra_large"
+    assert omol_config["head"] == "omol"
+    assert omol_config["defaults"] == {"charge": 0, "spin": 1}
+    omol_schema = omol["template_schema"]["properties"]["backend_config"]["properties"]
+    assert omol_schema["head"]["enum"] == ["omol"]
+    assert {"defaults", "items"}.issubset(omol_schema)
+
+    with pytest.raises(ValueError, match="Head 'not-a-head'.*Allowed"):
+        resolve_mlff_template(
+            "mlff_relax",
+            {"backend": "mace", "backend_config": {"model": "mh-1", "head": "not-a-head"}},
+            audience="materials_worker",
+        )
+    with pytest.raises(ValueError, match="does not support.*dispersion"):
+        resolve_mlff_template(
+            "mlff_relax",
+            {"backend": "mace", "backend_config": {"model": "omol-0", "dispersion": True}},
+            audience="materials_worker",
+        )
+
+
+def test_non_mace_profiles_use_exact_official_names_and_model_specific_tasks() -> None:
+    uma = resolve_mlff_template(
+        "mlff_relax",
+        {"backend": "fairchem_uma", "backend_config": {"model": "uma-s-1p1"}},
+        audience="materials_worker",
+    )
+    assert uma["enabled_models"] == ["uma-m-1p1", "uma-s-1p1", "uma-s-1p2"]
+    assert uma["model_capabilities"]["uma-s-1p2"]["tasks"] == [
+        "oc20",
+        "oc22",
+        "oc25",
+        "omat",
+        "omol",
+        "odac",
+        "omc",
+    ]
+    assert uma["model_capabilities"]["uma-s-1p1"]["tasks"] == ["oc20", "omat", "omol", "odac", "omc"]
+    assert uma["model_capabilities"]["uma-m-1p1"]["provider_model"] == "uma-m-1p1"
+    uma_schema = uma["template_schema"]["properties"]["backend_config"]["properties"]
+    assert uma_schema["model"]["enum"] == uma["enabled_models"]
+    assert uma_schema["defaults"]["properties"]["uma_task"]["enum"] == ["oc20", "omat", "omol", "odac", "omc"]
+    assert uma_schema["items"]["additionalProperties"]["properties"]["uma_task"]["enum"] == [
+        "oc20",
+        "omat",
+        "omol",
+        "odac",
+        "omc",
+    ]
+    with pytest.raises(ValueError, match="UMA task 'oc22'.*uma-s-1p1.*Allowed"):
+        resolve_mlff_template(
+            "mlff_relax",
+            {
+                "backend": "fairchem_uma",
+                "backend_config": {
+                    "model": "uma-s-1p1",
+                    "defaults": {"uma_task": "oc22", "charge": 0, "spin": 0},
+                },
+            },
+            audience="materials_worker",
+        )
+    with pytest.raises(ValueError, match="Input should be"):
+        resolve_mlff_template(
+            "mlff_relax",
+            {
+                "backend": "fairchem_uma",
+                "backend_config": {
+                    "model": "uma-s-1p2",
+                    "defaults": {"uma_task": "auto", "charge": 0, "spin": 0},
+                },
+            },
+            audience="materials_worker",
+        )
+
+    mattersim = resolve_mlff_template(
+        "mlff_relax",
+        {"backend": "mattersim"},
+        audience="materials_worker",
+    )
+    assert mattersim["enabled_models"] == ["MatterSim-v1.0.0-1M", "MatterSim-v1.0.0-5M"]
+    assert mattersim["normalized_template_overrides"]["backend_config"]["provider_model"] == (
+        "MatterSim-v1.0.0-1M"
+    )
+    with pytest.raises(ValueError, match="not enabled"):
+        resolve_mlff_template(
+            "mlff_relax",
+            {"backend": "mattersim", "backend_config": {"model": "mattersim-v1-1m"}},
+            audience="materials_worker",
+        )
+
+    orb = resolve_mlff_template(
+        "mlff_relax",
+        {"backend": "orb_v3"},
+        audience="materials_worker",
+    )
+    assert orb["enabled_models"] == [
+        "orb-v3-conservative-20-omat",
+        "orb-v3-conservative-inf-omat",
+        "orb-v3-direct-20-omat",
+        "orb-v3-direct-inf-omat",
+    ]
+    assert all(capability["tasks"] == ["omat"] for capability in orb["model_capabilities"].values())
 
 
 def test_md_and_neb_tasks_stage_shared_operation_dependencies() -> None:
@@ -134,12 +285,13 @@ def test_md_backend_performance_controls_are_schema_visible_and_validated() -> N
         audience="dynamics_worker",
     )
     assert mattersim["normalized_template_overrides"]["backend_config"] == {
-        "model": "mattersim-v1-1m",
+        "model": "MatterSim-v1.0.0-1M",
         "device": "auto",
         "dtype": "float32",
         "compute_stress": False,
         "direct_graph": False,
         "compile": False,
+        "provider_model": "MatterSim-v1.0.0-1M",
     }
 
     with pytest.raises(ValueError, match="direct_graph/compile are disabled"):
@@ -383,6 +535,7 @@ def test_provider_adapters_forward_supported_performance_controls(monkeypatch: p
         uma_atoms,
         {
             "model": "uma-s-1p2",
+            "provider_model": "uma-s-1p2",
             "device": "cpu",
             "uma_task": "omat",
             "charge": 0,
@@ -406,7 +559,8 @@ def test_provider_adapters_forward_supported_performance_controls(monkeypatch: p
     mlff_common.MatterSimAdapter().calculator_for(
         None,
         {
-            "model": "mattersim-v1-1m",
+            "model": "MatterSim-v1.0.0-1M",
+            "provider_model": "MatterSim-v1.0.0-1M",
             "device": "cpu",
             "dtype": "float32",
             "compute_stress": False,
@@ -420,6 +574,7 @@ def test_provider_adapters_forward_supported_performance_controls(monkeypatch: p
         "compute_stress": False,
         "direct_graph": True,
         "compile": True,
+        "load_path": "MatterSim-v1.0.0-1M",
     }
 
     orb_loader_capture: dict[str, object] = {}
@@ -453,6 +608,7 @@ def test_provider_adapters_forward_supported_performance_controls(monkeypatch: p
         None,
         {
             "model": "orb-v3-conservative-inf-omat",
+            "provider_model": "orb-v3-conservative-inf-omat",
             "device": "cpu",
             "precision": "float32-high",
             "compile_mode": "on",
@@ -463,6 +619,96 @@ def test_provider_adapters_forward_supported_performance_controls(monkeypatch: p
     assert orb_loader_capture["compile"] is True
     assert orb_calculator_capture["edge_method"] == "knn_alchemi"
     assert orb_calculator_capture["half_supercell"] is False
+
+
+def test_mace_adapter_dispatches_registered_loaders_and_reuses_omol_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    mace_module = ModuleType("mace")
+    calculators_module = ModuleType("mace.calculators")
+
+    class FakeMaceCalculator:
+        def __init__(self, **kwargs):
+            calls.append(("checkpoint", dict(kwargs)))
+
+    def fake_mace_mp(**kwargs):
+        calls.append(("mace_mp", dict(kwargs)))
+        return object()
+
+    omol_calculator = object()
+
+    def fake_mace_omol(**kwargs):
+        calls.append(("mace_omol", dict(kwargs)))
+        return omol_calculator
+
+    calculators_module.MACECalculator = FakeMaceCalculator
+    calculators_module.mace_mp = fake_mace_mp
+    calculators_module.mace_omol = fake_mace_omol
+    mace_module.calculators = calculators_module
+    monkeypatch.setitem(sys.modules, "mace", mace_module)
+    monkeypatch.setitem(sys.modules, "mace.calculators", calculators_module)
+
+    adapter = mlff_common.MaceAdapter()
+    singlet = Atoms("H2")
+    triplet = Atoms("O2")
+    common = {
+        "model": "omol-0",
+        "loader": "mace_omol",
+        "provider_model": "extra_large",
+        "head": "omol",
+        "supports_charge_spin": True,
+        "device": "cpu",
+        "default_dtype": "float64",
+        "dispersion": False,
+        "enable_cueq": False,
+        "compile_mode": "",
+        "checkpoint_artifact": "",
+    }
+    first = adapter.calculator_for(singlet, {**common, "charge": 0, "spin": 1})
+    second = adapter.calculator_for(triplet, {**common, "charge": 0, "spin": 3})
+    assert first is omol_calculator
+    assert second is omol_calculator
+    assert singlet.info == {"charge": 0, "spin": 1}
+    assert triplet.info == {"charge": 0, "spin": 3}
+    assert calls == [
+        (
+            "mace_omol",
+            {
+                "model": "extra_large",
+                "device": "cpu",
+                "default_dtype": "float64",
+            },
+        )
+    ]
+
+    mh1_adapter = mlff_common.MaceAdapter()
+    mh1_adapter.calculator_for(
+        Atoms("H2"),
+        {
+            "model": "mh-1",
+            "loader": "mace_mp",
+            "provider_model": "mh-1",
+            "head": "omol",
+            "supports_charge_spin": False,
+            "device": "cpu",
+            "default_dtype": "float64",
+            "dispersion": False,
+            "enable_cueq": False,
+            "compile_mode": "",
+            "checkpoint_artifact": "",
+        },
+    )
+    assert calls[-1] == (
+        "mace_mp",
+        {
+            "device": "cpu",
+            "default_dtype": "float64",
+            "head": "omol",
+            "model": "mh-1",
+            "dispersion": False,
+        },
+    )
 
 
 def test_remote_task_spec_returns_one_concrete_non_union_mlff_schema() -> None:
@@ -507,6 +753,54 @@ def test_remote_task_spec_returns_one_concrete_non_union_mlff_schema() -> None:
     assert "resource" not in content
 
 
+def test_remote_task_spec_surfaces_mace_model_capabilities_and_selected_head_enum() -> None:
+    with toolcall_context("spec", audience="materials_worker"):
+        content, artifact = get_remote_task_spec(
+            {
+                "task_name": "mlff_relax",
+                "template_overrides": {
+                    "backend": "mace",
+                    "backend_config": {"model": "omol-0"},
+                },
+                "detail": "full",
+            }
+        )
+    data = artifact["data"]
+    assert data["selected_model"] == "omol-0"
+    assert data["model_capabilities"]["omol-0"]["loader"] == "mace_omol"
+    assert "selected_model=omol-0" in content
+    assert '"supports_charge_spin": true' in content
+    head = data["template_schema"]["properties"]["backend_config"]["properties"]["head"]
+    assert head["enum"] == ["omol"]
+    assert head["default"] == "omol"
+
+
+def test_remote_task_spec_preserves_selected_uma_model_schema_after_invalid_task() -> None:
+    with toolcall_context("spec", audience="materials_worker"):
+        content, artifact = get_remote_task_spec(
+            {
+                "task_name": "mlff_relax",
+                "template_overrides": {
+                    "backend": "fairchem_uma",
+                    "backend_config": {
+                        "model": "uma-s-1p1",
+                        "defaults": {"uma_task": "oc22", "charge": 0, "spin": 0},
+                    },
+                },
+                "detail": "full",
+            }
+        )
+    data = artifact["data"]
+    assert data["errors"]
+    assert data["selected_model"] == "uma-s-1p1"
+    assert "validation=failed" in content
+    task_field = data["template_schema"]["properties"]["backend_config"]["properties"]["defaults"]["properties"][
+        "uma_task"
+    ]
+    assert task_field["enum"] == ["oc20", "omat", "omol", "odac", "omc"]
+    assert "oc22" not in task_field["enum"]
+
+
 def test_remote_task_spec_compact_content_keeps_field_table_without_full_schema() -> None:
     with toolcall_context("spec", audience="materials_worker"):
         content, _ = get_remote_task_spec(
@@ -518,8 +812,8 @@ def test_remote_task_spec_compact_content_keeps_field_table_without_full_schema(
         )
     assert "Accepted fields:" in content
     assert "backend_config.model" in content
-    assert "enabled_models=mattersim-v1-1m" in content
-    assert 'allowed=["mattersim-v1-1m"]' in content
+    assert "enabled_models=MatterSim-v1.0.0-1M, MatterSim-v1.0.0-5M" in content
+    assert 'allowed=["MatterSim-v1.0.0-1M", "MatterSim-v1.0.0-5M"]' in content
     assert "Concrete template JSON Schema:" not in content
 
 
@@ -579,8 +873,8 @@ def test_materialized_uma_item_metadata_is_resolved_per_structure(tmp_path: Path
         {
             "backend": "fairchem_uma",
             "backend_config": {
-                "defaults": {"uma_task": "auto", "charge": 0, "spin": 0},
-                "items": {"water.xyz": {"spin": 1}},
+                "defaults": {"uma_task": "omat", "charge": 0, "spin": 0},
+                "items": {"water.xyz": {"uma_task": "omol", "spin": 1}},
             },
         },
     )
@@ -596,6 +890,37 @@ def test_materialized_uma_item_metadata_is_resolved_per_structure(tmp_path: Path
     assert data["items"]["silicon.vasp"]["uma_task"] == "omat"
     assert "resource" not in data
     assert len(data["config_digest"]) == 64
+
+
+def test_materialized_mace_omol_metadata_is_resolved_per_structure(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    write(stage / "input" / "hydrogen.xyz", molecule("H2"))
+    write(stage / "input" / "oxygen.xyz", molecule("O2"))
+    resolved = resolve_mlff_template(
+        "mlff_relax",
+        {
+            "backend": "mace",
+            "backend_config": {
+                "model": "omol-0",
+                "defaults": {"charge": 0, "spin": 1},
+                "items": {"oxygen.xyz": {"charge": 0, "spin": 3}},
+            },
+        },
+    )
+    config_path = materialize_mlff_run_config(
+        stage_dir=stage,
+        task_name="mlff_relax",
+        resolved=resolved,
+        explicit_overrides={"backend_config": {"model": "omol-0"}},
+    )
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert data["backend_config"]["loader"] == "mace_omol"
+    assert data["backend_config"]["provider_model"] == "extra_large"
+    assert data["items"]["hydrogen.xyz"]["charge"] == 0
+    assert data["items"]["hydrogen.xyz"]["spin"] == 1
+    assert data["items"]["oxygen.xyz"]["charge"] == 0
+    assert data["items"]["oxygen.xyz"]["spin"] == 3
 
 
 def test_mace_checkpoint_is_staged_under_models_and_content_hashed(tmp_path: Path) -> None:

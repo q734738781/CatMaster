@@ -8,8 +8,8 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-VALID_UMA_TASKS = {"auto", "omat", "omol", "oc20", "oc22", "oc25", "odac", "omc"}
-_NON_OMOL_TASKS = VALID_UMA_TASKS - {"auto", "omol"}
+VALID_UMA_TASKS = {"omat", "omol", "oc20", "oc22", "oc25", "odac", "omc"}
+_NON_OMOL_TASKS = VALID_UMA_TASKS - {"omol"}
 _STRUCTURE_SUFFIXES = {".xyz", ".extxyz", ".vasp", ".poscar", ".cif"}
 _SKIP_PREFIXES = (
     "mace_batch_",
@@ -42,7 +42,7 @@ def parse_bool(value: str | bool) -> bool:
 
 
 def normalize_uma_task(value: Any) -> str:
-    task = str(value or "auto").strip().lower() or "auto"
+    task = str(value or "omat").strip().lower() or "omat"
     if task not in VALID_UMA_TASKS:
         raise ValueError(
             "uma_task must be one of: " + ", ".join(sorted(VALID_UMA_TASKS))
@@ -109,10 +109,6 @@ def has_periodic_cell(atoms: Any) -> bool:
     except Exception:
         pbc_any = bool(getattr(atoms, "pbc", False))
     return pbc_any and volume > 1e-6
-
-
-def auto_uma_task(atoms: Any) -> str:
-    return "omat" if has_periodic_cell(atoms) else "omol"
 
 
 def fairchem_version() -> str:
@@ -201,6 +197,8 @@ def resolve_item_config(
 
 
 def apply_charge_spin(atoms: Any, cfg: UmaItemConfig) -> None:
+    if cfg.uma_task == "omol" and cfg.spin < 1:
+        raise ValueError("UMA task 'omol' requires multiplicity-style spin >= 1.")
     if cfg.uma_task in _NON_OMOL_TASKS and (cfg.charge != 0 or cfg.spin != 0):
         raise ValueError(
             f"UMA task {cfg.uma_task!r} expects charge=0 and spin=0 in CatMaster; "

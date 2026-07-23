@@ -622,6 +622,61 @@ def run_mace_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any
     )
 
 
+def run_mace_omol_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
+    stage_rel, stage_dir = _case_stage(ctx, "mace_omol_o2_relax")
+    _write_o2_poscar(stage_dir / "input" / "O2.vasp")
+    data = _submit_remote(
+        ctx,
+        work_dir=stage_rel,
+        task_name="mlff_relax",
+        audience="materials_worker",
+        check_interval=args.mace_check_interval,
+        template_overrides={
+            "backend": "mace",
+            "backend_config": {
+                "model": "omol-0",
+                "head": "omol",
+                "defaults": {"charge": 0, "spin": 3},
+                "default_dtype": args.mace_dtype,
+                "device": args.mace_device,
+            },
+            "task_config": {
+                "fmax": 0.05,
+                "steps": args.mlff_relax_steps,
+                "optimizer": "FIRE",
+                "relax_cell": False,
+            },
+        },
+    )
+    _status_ok(stage_dir)
+    batch = _read_json(stage_dir / "output" / "batch_summary.json")
+    if batch.get("errors"):
+        raise AssertionError(f"MACE-OMOL-0 relaxation returned errors: {batch.get('errors')!r}")
+    results = batch.get("results") or []
+    if len(results) != 1:
+        raise AssertionError(f"MACE-OMOL-0 relaxation expected one result: {results!r}")
+    summary = results[0].get("summary") or {}
+    energy = _finite_number(summary.get("final_energy_eV"), "MACE-OMOL-0 final_energy_eV")
+    _finite_number(summary.get("max_force_eVA"), "MACE-OMOL-0 max_force_eVA")
+    if not isinstance(summary.get("converged"), bool):
+        raise AssertionError("MACE-OMOL-0 relaxation lacks boolean converged")
+    if not summary.get("provider_version") or data.get("provider_version") != summary.get("provider_version"):
+        raise AssertionError("MACE-OMOL-0 output and receipt provider versions do not match")
+    if not (stage_dir / "output" / "O2" / "opt.vasp").is_file():
+        raise AssertionError("MACE-OMOL-0 opt.vasp was not downloaded")
+    return {
+        "stage_rel": stage_rel,
+        "stage_dir": str(stage_dir),
+        "checks": [
+            "status.json returncode=0",
+            "triplet O2 relaxation produced finite energy and force",
+            "output/O2/opt.vasp and provider version exist",
+        ],
+        "details": {"final_energy_eV": energy, "summary": summary, "task_data": data},
+        **_remote_context(data),
+    }
+
+
 def run_mattersim_relax(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
     return _run_periodic_mlff_relax(
         ctx,
@@ -1456,6 +1511,11 @@ CASES: dict[str, CaseSpec] = {
         run_mace_sp_batch,
     ),
     "mace_relax": CaseSpec("mace_relax", "MACE GPU fixed-cell Si relaxation through mlff_relax.", run_mace_relax),
+    "mace_omol_relax": CaseSpec(
+        "mace_omol_relax",
+        "Standalone MACE-OMOL-0 GPU triplet-O2 relaxation with explicit charge and spin.",
+        run_mace_omol_relax,
+    ),
     "mace_md": CaseSpec("mace_md", "MACE GPU two-step NVT trajectory through mlff_md.", run_mace_md),
     "mace_neb": CaseSpec("mace_neb", "MACE GPU three-image fixed-path calculation through mlff_neb.", run_mace_neb),
     "uma_neb": CaseSpec("uma_neb", "FairChem UMA three-image fixed-path calculation through mlff_neb.", run_uma_neb),
@@ -1513,7 +1573,7 @@ SUITES: dict[str, list[str]] = {
     "core": ["mace_sp", "xtb_sp", "orca_sp"],
     "materials": ["mace_sp", "vasp_sp"],
     "uma": ["uma_mol_sp", "uma_mol_relax", "uma_mat_sp", "uma_mat_relax"],
-    "mlff_backends": ["mace_sp", "uma_mat_sp", "mattersim_sp", "orb_sp"],
+    "mlff_backends": ["mace_sp", "mace_omol_relax", "uma_mat_sp", "mattersim_sp", "orb_sp"],
     "mlff_operations": [
         "mace_relax",
         "uma_mat_relax",
@@ -1680,14 +1740,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--uma-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_UMA_CHECK_INTERVAL"))
     parser.add_argument("--uma-model", default=os.environ.get("CATMASTER_REMOTE_UMA_MODEL", "uma-s-1p2"))
-    parser.add_argument("--uma-task", choices=("auto", "omat", "oc20", "oc22", "oc25", "odac", "omc"), default=os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat"))
+    parser.add_argument(
+        "--uma-task",
+        choices=("omat", "omol", "oc20", "oc22", "oc25", "odac", "omc"),
+        default=os.environ.get("CATMASTER_REMOTE_UMA_TASK", "omat"),
+    )
     parser.add_argument("--uma-device", default=os.environ.get("CATMASTER_REMOTE_UMA_DEVICE", "auto"))
     parser.add_argument("--uma-mol-spin", type=int, default=int(os.environ.get("CATMASTER_REMOTE_UMA_MOL_SPIN", "1")))
     parser.add_argument("--uma-relax-fmax", type=float, default=float(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_FMAX", "0.05")))
     parser.add_argument("--uma-relax-steps", type=int, default=int(os.environ.get("CATMASTER_REMOTE_UMA_RELAX_STEPS", "5")))
 
     parser.add_argument("--mattersim-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_MATTERSIM_CHECK_INTERVAL"))
-    parser.add_argument("--mattersim-model", default=os.environ.get("CATMASTER_REMOTE_MATTERSIM_MODEL", "mattersim-v1-1m"))
+    parser.add_argument(
+        "--mattersim-model",
+        default=os.environ.get("CATMASTER_REMOTE_MATTERSIM_MODEL", "MatterSim-v1.0.0-1M"),
+    )
     parser.add_argument("--mattersim-device", default=os.environ.get("CATMASTER_REMOTE_MATTERSIM_DEVICE", "auto"))
 
     parser.add_argument("--orb-check-interval", type=int, default=_env_int("CATMASTER_REMOTE_ORB_CHECK_INTERVAL"))

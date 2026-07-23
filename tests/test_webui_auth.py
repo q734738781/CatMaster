@@ -40,6 +40,7 @@ def test_login_mode_requires_authentication_for_webui_api(tmp_path: Path) -> Non
     assert status.status_code == 200
     assert status.json()["auth_enabled"] is True
     assert status.json()["authenticated"] is False
+    assert status.json()["registration_enabled"] is True
 
     bootstrap = client.get("/api/bootstrap")
     assert bootstrap.status_code == 401
@@ -109,6 +110,44 @@ def test_same_ctx_is_isolated_between_authenticated_users(tmp_path: Path) -> Non
     assert "private" not in {item["value"] for item in bob_payload["workspaces"]}
 
 
+def test_disable_registration_rejects_signup_but_preserves_existing_login(tmp_path: Path) -> None:
+    bootstrap_client = TestClient(create_app(project_space_root=str(tmp_path)))
+    _register(bootstrap_client, "existing_user")
+
+    client = TestClient(create_app(project_space_root=str(tmp_path), disable_registration=True))
+    status = client.get("/api/auth/status")
+    assert status.status_code == 200
+    assert status.json()["auth_enabled"] is True
+    assert status.json()["authenticated"] is False
+    assert status.json()["registration_enabled"] is False
+    assert status.json()["has_users"] is True
+
+    captcha = client.get("/api/auth/captcha")
+    assert captcha.status_code == 403
+    assert captcha.json()["detail"] == "Registration is disabled."
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "username": "blocked_user",
+            "password": "correct-password-123",
+            "captcha_id": "",
+            "captcha_answer": "",
+        },
+    )
+    assert register.status_code == 403
+    assert register.json()["detail"] == "Registration is disabled."
+
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "existing_user", "password": "correct-password-123"},
+    )
+    assert login.status_code == 200
+    assert login.json()["authenticated"] is True
+    assert login.json()["registration_enabled"] is False
+    assert client.get("/api/bootstrap").status_code == 200
+
+
 def test_no_login_uses_admin_workspace_without_auth_cookie(tmp_path: Path) -> None:
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
@@ -118,6 +157,7 @@ def test_no_login_uses_admin_workspace_without_auth_cookie(tmp_path: Path) -> No
     assert status.json()["auth_enabled"] is False
     assert status.json()["authenticated"] is True
     assert status.json()["username"] == "admin"
+    assert status.json()["registration_enabled"] is False
 
     bootstrap = client.get("/api/bootstrap")
     assert bootstrap.status_code == 200
