@@ -112,9 +112,20 @@ stage/
   optional referenced files
 ```
 
-#### xtb_run
+#### xtb_execute
 
-Place the molecular input named by `template_overrides.input` directly in the stage; the default is `input.xyz`.
+Prepare xTB stages with `xtb_prepare`:
+
+```text
+stage/
+  manifest.json
+  coord.xyz or another manifest-referenced coordinate file
+  optional xtb.inp
+```
+
+`manifest.json` is the execution source of truth for mode, Hamiltonian, charge, unpaired electrons, solvation,
+optimization level, coordinate filename, and optional detailed-input filename. Constraints, exact fixes, MD controls,
+and other xcontrol instructions belong in `xtb.inp`. Do not pass scientific `template_overrides` to `xtb_execute`.
 
 #### crest_run
 
@@ -128,10 +139,10 @@ Use flat, uniquely named structure files directly under `input/`:
 stage/
   input/
     case_a.vasp
-    case_b.vasp
+    case_b.extxyz
 ```
 
-One stage may contain one or many compatible structures. The selected backend is initialized once and files are processed sequentially. Do not use subdirectories or recursive project-tree discovery. Put MACE model artifacts under optional `models/` and refer to them through `backend_config.checkpoint_artifact`. Registered MACE `omol-0` charge and multiplicity-style spin belong in `backend_config.defaults` with per-input exceptions in `backend_config.items`; the same nested item pattern applies to UMA task/charge/spin. Key every item by the exact filename relative to `input/`; do not create a second metadata file.
+One stage may contain one or many compatible structures. The selected backend is initialized once and files are processed sequentially. Do not use subdirectories or recursive project-tree discovery. POSCAR/VASP Selective Dynamics constraints are inherited. An extxyz file must use ASE's standard `move_mask` (`L:1` for whole atoms or `L:3` for Cartesian components); false entries are fixed, and SP/relax returns the structure as `sp.extxyz` or `opt.extxyz` with that mask verified. Use POSCAR/VASP for scaled-coordinate `FixScaled` constraints. Put MACE model artifacts under optional `models/` and refer to them through `backend_config.checkpoint_artifact`. Registered MACE `omol-0` charge and multiplicity-style spin belong in `backend_config.defaults` with per-input exceptions in `backend_config.items`; the same nested item pattern applies to UMA task/charge/spin. Key every item by the exact filename relative to `input/`; do not create a second metadata file.
 
 For short, similarly sized relaxations, roughly 30-50 structures per stage is an empirical starting point. Use smaller groups for large or heterogeneous structures and substantially larger groups for cheap SP screening. The agent may create these stage copies directly; no generic automatic partitioner is required.
 

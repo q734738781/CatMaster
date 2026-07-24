@@ -58,6 +58,8 @@ task、work_dir、资源和关键设置，等我批准后再提交。完成后�
 
 `mlff_sp` 与 `mlff_relax` 可以在一个 stage 的 `input/` 中直接处理多个结构，所以"有多个候选"不自动意味着要用 remote batch。`mlff_md` 要求 `input/` 中只有一个起始或 restart 结构；`mlff_neb` 接受已经在本地建立并检查的固定图像路径。
 
+受限 MLFF 优化直接继承结构文件中的原子约束，而不是另传一套 `fixed_atoms` 参数。POSCAR/VASP 使用 Selective Dynamics；extxyz 使用标准 `move_mask`（`L:1` 表示整原子，`L:3` 表示笛卡尔分量，false 表示固定）。`mlff_sp` 和 `mlff_relax` 会把 extxyz 输入分别保存为 `sp.extxyz` 和 `opt.extxyz`，并在写出后核对约束掩码。extxyz 不能表达 ASE 的缩放坐标 `FixScaled` 约束，这种情况应继续使用 POSCAR/VASP。固定表面原子时通常保持 `relax_cell=false`，否则原子可能随晶胞形变发生仿射移动。
+
 ```text
 对 structures/adsorption_candidates/ 中的候选做 MLFF 预筛。
 让 Materials worker 查询当前启用的 backend 和 mlff_sp、mlff_relax schema，
@@ -86,9 +88,9 @@ Agent 会在远程训练前完成数据审计和 stage 准备。Dataset 中的�
 
 ### xTB、CREST 与 ORCA
 
-`xtb_run` 可以执行分子优化、能量、Hessian 或短时 MD 等模板支持的模式；`crest_run` 用于构象搜索；`orca_execute` 运行包含 `job.inp` 及其本地引用文件的 ORCA stage。这些 tasks 都属于 ORCA/xTB worker。
+`xtb_prepare` 先把坐标、运行模式、GFN、溶剂、电荷、未配对电子数和优化级别固化为完整 stage；常用约束可由 prepare 参数生成，也可以通过 `xcontrol_path` 原样带入完整 `xtb.inp`。随后 `xtb_execute` 只执行 `manifest.json` 描述的 stage，不再接收科学参数的 `template_overrides`。`crest_run` 用于构象搜索；`orca_execute` 运行包含 `job.inp` 及其本地引用文件的 ORCA stage。这些能力都属于 ORCA/xTB worker。
 
-Worker 会在提交前确认总电荷、未配对电子数或多重度、溶剂、方法、基组和输入结构。CREST 与 xTB 常用于低成本预筛，ORCA 用于选定构象的高层级优化、频率、热化学、TDDFT、NMR 或反应路径。一个 remote task 只负责一次 stage；多构象的整个科学逻辑仍由 worker 的 skills 组织。
+Worker 会在提交前确认总电荷、未配对电子数或多重度、溶剂、方法、基组和输入结构。CREST 与 xTB 常用于低成本预筛，ORCA 用于选定构象的高层级优化、频率、热化学、TDDFT、NMR 或反应路径。一个 xTB stage 包含 `manifest.json`、清单引用的坐标文件和可选 `xtb.inp`；多个结构必须先准备为一级子目录，再用一个 batch 提交。
 
 ```text
 对 molecules/conformers_selected/ 中的 6 个构象做 ORCA opt+freq。

@@ -64,6 +64,8 @@ agents:
 | `summary` | Summary and general review fallback | Required |
 | `research_lead` | Research agent | `director` |
 | `research_state_updater` | Research state updates | `research_lead` |
+| `hypothesis_proposer` | Falsifiable hypothesis and verification-plan formation | `research_lead` |
+| `evidence_judge` | Independent evidence interpretation | `research_state_updater` |
 | `write_director` | Writing coordinator | `research_lead` |
 | `section_writer` | Writing worker | `task_runner` |
 | `write_reviewer` | Writing checks and review | `summary` |

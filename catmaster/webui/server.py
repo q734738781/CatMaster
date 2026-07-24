@@ -26,6 +26,7 @@ import uvicorn
 from catmaster.specialists import build_specialist_runner, default_thread_interrupt_on
 from catmaster.specialists.streaming_runner import StreamingSpecialistRunner
 from catmaster.runtime.observability_store import ObservabilityStore
+from catmaster.research.hypothesis_engine.storage import engine_relpath, load_engine
 from catmaster.runtime.self_evolution import SelfEvolutionCoordinator, SelfEvolutionStore
 from catmaster.runtime.self_evolution.models import SKILL_GROUPS
 from catmaster.runtime.self_evolution.promotion import PromotionConflict, PromotionManager
@@ -35,9 +36,11 @@ from catmaster.tools.base import ensure_project_space_layout, system_root
 from .agent_loop import ThreadAgentLoopService
 from .artifact_registry import ArtifactRegistry
 from .auth import AuthIdentity, AuthManager, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
+from .research_map_service import ResearchMapService
 from .session_registry import SessionRegistry
 from .thread_events import ThreadEventBroker, format_sse
 from .thread_models import (
+    ResearchMapLaunchRequest,
     ThreadCreateRequest,
     ThreadPatchRequest,
     ThreadResumeRequest,
@@ -1683,15 +1686,19 @@ def create_app(
     )
     self_evolution_wakeup: asyncio.Event | None = None
     self_evolution_worker_task: asyncio.Task[Any] | None = None
+    research_map_wakeup: asyncio.Event | None = None
+    research_map_worker_task: asyncio.Task[Any] | None = None
+    research_map_service: ResearchMapService | None = None
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         nonlocal self_evolution_wakeup, self_evolution_worker_task
-        if not auth.enabled:
-            yield
-            return
-        self_evolution_wakeup = asyncio.Event()
-        self_evolution_worker_task = asyncio.create_task(_self_evolution_worker_loop())
+        nonlocal research_map_wakeup, research_map_worker_task
+        research_map_wakeup = asyncio.Event()
+        research_map_worker_task = asyncio.create_task(_research_map_worker_loop())
+        if auth.enabled:
+            self_evolution_wakeup = asyncio.Event()
+            self_evolution_worker_task = asyncio.create_task(_self_evolution_worker_loop())
         try:
             yield
         finally:
@@ -1701,6 +1708,12 @@ def create_app(
                     await self_evolution_worker_task
             self_evolution_worker_task = None
             self_evolution_wakeup = None
+            if research_map_worker_task is not None:
+                research_map_worker_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await research_map_worker_task
+            research_map_worker_task = None
+            research_map_wakeup = None
 
     app = FastAPI(title="CatMaster WebUI", lifespan=_lifespan)
     static_dir = Path(__file__).resolve().parent / "static"
@@ -1875,6 +1888,63 @@ def create_app(
             except TimeoutError:
                 pass
 
+    async def _research_map_worker_loop() -> None:
+        poll_interval = max(
+            1,
+            int(os.getenv("CATMASTER_RESEARCH_MAP_WORKER_POLL_SEC", "2") or "2"),
+        )
+        while True:
+            try:
+                service = research_map_service
+                if service is not None:
+                    for workspace in _known_project_spaces():
+                        workspace_id = (
+                            registry._project_space_name_from_path(
+                                str(workspace),
+                                root=registry.default_project_space_root,
+                            )
+                            or workspace.name
+                        )
+                        await service.tick_workspace(
+                            workspace=workspace,
+                            workspace_id=workspace_id,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Research Map worker pass failed")
+            if research_map_wakeup is None:
+                await asyncio.sleep(poll_interval)
+                continue
+            research_map_wakeup.clear()
+            try:
+                await asyncio.wait_for(
+                    research_map_wakeup.wait(),
+                    timeout=poll_interval,
+                )
+            except TimeoutError:
+                pass
+
+    def _on_thread_turn_finished(**kwargs: Any) -> None:
+        service = research_map_service
+        if service is not None:
+            try:
+                service.reconcile_finished_child(
+                    workspace=Path(kwargs.get("workspace") or ""),
+                    workspace_id=str(kwargs.get("workspace_id") or ""),
+                    child_thread_id=str(kwargs.get("thread_id") or ""),
+                    terminal_status=str(kwargs.get("terminal_status") or ""),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to reconcile Research Map child thread %s",
+                    kwargs.get("thread_id"),
+                )
+            if research_map_wakeup is not None:
+                research_map_wakeup.set()
+        if str(kwargs.get("run_id") or "").strip():
+            _enqueue_self_evolution_post_run(**kwargs)
+
     def _agent_loop(workspace: Path, workspace_id: str) -> ThreadAgentLoopService:
         return ThreadAgentLoopService(
             workspace=workspace,
@@ -1890,8 +1960,10 @@ def create_app(
             interrupt_on_for_permission_mode=_interrupt_on_for_permission_mode,
             normalize_entrypoint=_entrypoint,
             should_stop=_thread_should_stop,
-            on_turn_finished=_enqueue_self_evolution_post_run,
+            on_turn_finished=_on_thread_turn_finished,
         )
+
+    research_map_service = ResearchMapService(agent_loop_factory=_agent_loop)
 
     def _entrypoint(value: str) -> str:
         raw = str(value or "research").strip().lower().replace("-", "_").replace(" ", "_") or "research"
@@ -2164,6 +2236,149 @@ def create_app(
         workspace, workspace_name = _workspace_for_thread(thread_id, identity)
         records = _artifact_registry(workspace, workspace_name).list_artifacts(thread_id=thread_id)
         return JSONResponse({"artifacts": [record.model_dump(mode="json") for record in records]})
+
+    @app.get("/api/threads/{thread_id}/hypothesis-engine")
+    def _thread_hypothesis_engine(thread_id: str):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        store = _thread_store(workspace, workspace_name)
+        requested_thread = store.get_thread(thread_id)
+        source_thread_id = str(
+            dict(requested_thread.meta or {}).get("research_map_source_thread_id")
+            or requested_thread.thread_id
+        )
+        try:
+            source_thread = store.get_thread(source_thread_id)
+        except KeyError:
+            source_thread = requested_thread
+            source_thread_id = requested_thread.thread_id
+        campaign_thread_id = str(
+            dict(requested_thread.meta or {}).get("research_campaign_id")
+            or source_thread.deepagent_thread_id
+            or source_thread.thread_id
+        )
+        try:
+            engine = load_engine(workspace / "files", campaign_thread_id)
+        except FileNotFoundError:
+            return JSONResponse(
+                {
+                    "available": False,
+                    "thread_id": requested_thread.thread_id,
+                    "source_thread_id": source_thread_id,
+                    "campaign_thread_id": campaign_thread_id,
+                    "engine_path": engine_relpath(campaign_thread_id),
+                }
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Hypothesis campaign state is invalid: {exc}",
+            ) from exc
+        return JSONResponse(
+            {
+                "available": True,
+                "thread_id": requested_thread.thread_id,
+                "source_thread_id": source_thread_id,
+                "campaign_thread_id": campaign_thread_id,
+                "engine_path": engine_relpath(campaign_thread_id),
+                "controller": engine.controller_snapshot(),
+                "state": engine.state.model_dump(mode="json"),
+                "ranking": [
+                    assessment.model_dump(mode="json")
+                    for assessment in engine.rank_actions()
+                ],
+                "graph": engine.graph_projection(),
+                "automation": research_map_service.automation_snapshot(
+                    store=store,
+                    source_thread=source_thread,
+                    engine=engine,
+                ),
+            }
+        )
+
+    @app.post("/api/threads/{thread_id}/hypothesis-engine/launch")
+    async def _thread_hypothesis_engine_launch(thread_id: str, request: Request):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        store = _thread_store(workspace, workspace_name)
+        requested_thread = store.get_thread(thread_id)
+        source_thread_id = str(
+            dict(requested_thread.meta or {}).get("research_map_source_thread_id")
+            or requested_thread.thread_id
+        )
+        payload = await _validated_body(ResearchMapLaunchRequest, request)
+        try:
+            result = await research_map_service.launch_action(
+                workspace=workspace,
+                workspace_id=workspace_name,
+                source_thread_id=source_thread_id,
+                action_id=payload.action_id,
+                expected_revision=payload.expected_revision,
+                launch_mode="manual",
+            )
+        except (FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if research_map_wakeup is not None:
+            research_map_wakeup.set()
+        return JSONResponse(result)
+
+    def _set_research_map_autopilot(
+        *,
+        thread_id: str,
+        enabled: bool,
+    ) -> JSONResponse:
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        store = _thread_store(workspace, workspace_name)
+        requested_thread = store.get_thread(thread_id)
+        source_thread_id = str(
+            dict(requested_thread.meta or {}).get("research_map_source_thread_id")
+            or requested_thread.thread_id
+        )
+        try:
+            current_source = store.get_thread(source_thread_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        campaign_id = research_map_service.campaign_id(current_source)
+        try:
+            engine = load_engine(workspace / "files", campaign_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        source = research_map_service.set_autopilot(
+            workspace=workspace,
+            workspace_id=workspace_name,
+            source_thread_id=source_thread_id,
+            enabled=enabled,
+        )
+        _broker_for_workspace(workspace).emit(
+            source.thread_id,
+            "thread.updated",
+            status=str(source.status.value),
+            data={"thread": source.model_dump(mode="json")},
+        )
+        if research_map_wakeup is not None:
+            research_map_wakeup.set()
+        return JSONResponse(
+            {
+                "accepted": True,
+                "source_thread": source.model_dump(mode="json"),
+                "automation": research_map_service.automation_snapshot(
+                    store=store,
+                    source_thread=source,
+                    engine=engine,
+                ),
+            }
+        )
+
+    @app.post("/api/threads/{thread_id}/hypothesis-engine/autopilot/start")
+    def _thread_hypothesis_engine_autopilot_start(thread_id: str):
+        return _set_research_map_autopilot(thread_id=thread_id, enabled=True)
+
+    @app.post("/api/threads/{thread_id}/hypothesis-engine/autopilot/stop")
+    def _thread_hypothesis_engine_autopilot_stop(thread_id: str):
+        return _set_research_map_autopilot(thread_id=thread_id, enabled=False)
 
     @app.post("/api/threads/{thread_id}/submit")
     async def _thread_submit(thread_id: str, request: Request):

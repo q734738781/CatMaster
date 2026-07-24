@@ -14,11 +14,20 @@ def test_codex_oauth_template_routes_specialists_and_workers_by_reasoning_effort
         cfg = profile.config_for_role(role)
         return str(cfg.provider_options["codex_oauth"]["chat_kwargs"]["reasoning"]["effort"])
 
-    for role in ("proposal", "director", "research_lead", "write_director", "write_reviewer", "literature_deep_research"):
+    for role in (
+        "proposal",
+        "director",
+        "research_lead",
+        "hypothesis_proposer",
+        "write_director",
+        "write_reviewer",
+        "literature_deep_research",
+    ):
         assert effort(role) == "xhigh"
     for role in (
         "task_runner",
         "research_state_updater",
+        "evidence_judge",
         "section_writer",
         "academic_polisher",
         "tex_compile_fixer",
@@ -262,6 +271,39 @@ def test_llm_profile_tool_selector_fallbacks_to_task_runner(tmp_path: Path) -> N
 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.tool_selector.model == "openai/gpt-5-nano"
+
+
+def test_llm_profile_scientific_campaign_roles_follow_research_fallbacks(
+    tmp_path: Path,
+) -> None:
+    cfg = tmp_path / "llm.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "models:",
+                "  coordinator:",
+                "    provider: openrouter",
+                "    model: openai/gpt-5.2",
+                "  judge:",
+                "    provider: openrouter",
+                "    model: openai/gpt-5-nano",
+                "agents:",
+                "  proposal: coordinator",
+                "  director: coordinator",
+                "  task_runner: coordinator",
+                "  research_lead: coordinator",
+                "  research_state_updater: judge",
+                "  memory_patch: coordinator",
+                "  summary: coordinator",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = LLMProfile.from_env_or_file(str(cfg))
+
+    assert profile.config_for_role("hypothesis_proposer").model == "openai/gpt-5.2"
+    assert profile.config_for_role("evidence_judge").model == "openai/gpt-5-nano"
 
 
 def test_llm_profile_tool_selector_can_use_dedicated_model(tmp_path: Path) -> None:

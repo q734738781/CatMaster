@@ -1294,15 +1294,32 @@ def run_vasp_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_xtb_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
-    stage_rel, stage_dir = _case_stage(ctx, "xtb_o2_sp")
-    _write_o2_xyz(stage_dir / "input.xyz")
+    input_rel, input_dir = _case_stage(ctx, "xtb_o2_input")
+    _write_o2_xyz(input_dir / "O2.xyz")
+    stage_rel = f"{ctx.case_root_rel}/xtb_o2_sp"
+    _content, prep_artifact = _invoke_tool(
+        ctx,
+        "xtb_prepare",
+        {
+            "input_path": f"{input_rel}/O2.xyz",
+            "output_root": stage_rel,
+            "mode": "sp",
+            "gfn": args.xtb_gfn,
+            "charge": 0,
+            "uhf": 2,
+        },
+        audience="orca_xtb_worker",
+    )
+    stage_dir = ctx.files_root / stage_rel
+    for name in ("manifest.json", "coord.xyz"):
+        if not (stage_dir / name).is_file():
+            raise AssertionError(f"xtb_prepare did not write {name}")
     data = _submit_remote(
         ctx,
         work_dir=stage_rel,
-        task_name="xtb_run",
+        task_name="xtb_execute",
         audience="orca_xtb_worker",
         check_interval=args.xtb_check_interval,
-        template_overrides={"input": "input.xyz", "mode": "sp", "gfn": args.xtb_gfn, "charge": 0, "uhf": 2},
     )
     _status_ok(stage_dir)
     summary = _read_json(stage_dir / "xtb_summary.json")
@@ -1312,8 +1329,17 @@ def run_xtb_sp(ctx: SmokeContext, args: argparse.Namespace) -> dict[str, Any]:
     return {
         "stage_rel": stage_rel,
         "stage_dir": str(stage_dir),
-        "checks": ["status.json returncode=0", "xtb_summary.completed=true"],
-        "details": {"energy_hartree": energy_hartree, "summary": summary, "task_data": data},
+        "checks": [
+            "xtb_prepare wrote manifest.json/coord.xyz",
+            "status.json returncode=0",
+            "xtb_summary.completed=true",
+        ],
+        "details": {
+            "energy_hartree": energy_hartree,
+            "prepare_data": prep_artifact.get("data") or {},
+            "summary": summary,
+            "task_data": data,
+        },
         **_remote_context(data),
     }
 
@@ -1562,7 +1588,11 @@ CASES: dict[str, CaseSpec] = {
         run_si512_orb_md,
     ),
     "vasp_sp": CaseSpec("vasp_sp", "VASP CPU O2 static single-point through vasp_prepare + vasp_execute.", run_vasp_sp),
-    "xtb_sp": CaseSpec("xtb_sp", "xTB CPU O2 single-point through xtb_run.", run_xtb_sp),
+    "xtb_sp": CaseSpec(
+        "xtb_sp",
+        "xTB CPU O2 single-point through xtb_prepare + xtb_execute.",
+        run_xtb_sp,
+    ),
     "orca_sp": CaseSpec("orca_sp", "ORCA CPU O2 triplet single-point through orca_prepare + orca_execute.", run_orca_sp),
     "cp2k_sp": CaseSpec("cp2k_sp", "CP2K CPU O2 single-point through cp2k_prepare + cp2k_execute.", run_cp2k_sp),
     "lammps_min": CaseSpec("lammps_min", "LAMMPS CPU/GPU-detect LJ minimization through lammps_prepare + lammps_execute.", run_lammps_min),

@@ -60,6 +60,26 @@ Agent 回复时，Chat 不只显示最终文字。Progress 卡会保留当前推
 - 远程提交涉及较多任务、GPU、许可证或长 walltime。
 - 最终回复与 Files 中的实际产物不一致。
 
+## Research Map 显示持续更新的验证网络
+
+Research Map 是当前 thread 中分支研究的操作界面，在页面上方有独立标签。只有当问题包含竞争解释、共享证据、前后依赖的检查，或明显的成本与等待权衡时，Research 才会建立这套状态。线性任务看到空白 Research Map 是正常现象。
+
+图中包含三类节点：
+
+- Hypothesis 显示 claim、科学依据、预测、派生关系，以及当前 `open`、`supported`、`rejected` 或 `contested` 状态。
+- Verification action 显示执行者、科学问题、有边界的任务、判定规则、依赖、信息价值、粗粒度成本和 controller 状态。
+- Evidence judgment 显示结果摘要、科学来源，以及它对每个目标假设的 `supports`、`opposes` 或 `inconclusive` 判断。
+
+点击节点可以查看其中的科学内容。Active packet 区域会显示当前执行者、任务、目标假设和判定规则。执行尝试、资源核算和远程 receipt 仍在原有 Activity 与 artifact 视图中查看。
+
+选中 eligible action 后点击 "Start Research thread"。服务端会检查页面显示的 revision、预留该 action、建立新的 Research thread，并提交一个普通 Research turn；它不会 steering 或复用来源聊天 thread。子 thread 完整保留 Research 的 specialist 委派、streaming 和 Auto/Review 权限模式。它的 DeepAgent checkpoint 与轻量 Research Kernel 都按子 thread id 隔离，只有 controller 调用使用父 campaign id。如果 Map 已经过期，或来源 Research thread 仍在运行、停止中或等待审批，预留操作会被拒绝，避免两个 Research turn 竞争同一个 campaign。
+
+"Start automatic Research" 会为来源 campaign 启用一个持久异步 worker。Worker 每次只选择一个排序后的非人工 action，并建立同样的普通 Research 子 thread；它会等待当前子 thread 完成或解除审批中断，再读取更新后的 campaign 并决定下一项。"Stop after current check" 只阻止下一次启动，不取消正在执行的子 thread。人工 action 不会由 worker 代答，需要手动建立 thread 并在其中提供证据。原有单 thread Research submit 路径保持不变，不使用 Research Map 也能照常执行。
+
+Map 选择和自动调度都不等于批准受保护执行。实验分支仍要进入 Experiment worker 的受管执行路径，并在需要时使用原有审批卡。成本只影响排序，不代替这套审批机制。
+
+同一条 evidence judgment 可以影响多条假设，竞争假设也可以共用一个验证动作。如果证据暴露出遗漏解释，Research 会先让 hypothesis proposer 单独修订，再添加派生假设或后续动作。因此这里显示的是网络，而不是强行复制共享证据的纯树。`supported`、`rejected` 和 `contested` 是已记录 verdict 的摘要，不是后验概率。把某个分支当作科学结论前，仍应检查它指向的论文、run 或 artifact。
+
 ## Auto 与 Review 代表不同的协作方式
 
 Auto 允许 Agent 在当前权限范围内连续工作，适合读取、分析和已建立信任的项目流程。Review 会在 `write_file`、`edit_file`、`remote_submission` 和 `remote_submission_batch` 前暂停，消息中出现审批卡。
@@ -133,6 +153,6 @@ calculations/mlff_screen/output/，核对已有候选、失败项和排序依据
 
 ## 当前界面的重要限制
 
-WebUI 目前不能重命名、删除、分支或 retry thread，也不能从历史 run 选择器恢复某个任意节点。Files 上传同名文件会覆盖，删除不会进入回收站。审批中断必须用消息内卡片恢复。Stop 不取消远程 job。Skill Evolution 只在登录模式显示，并从下一次 run 生效。
+WebUI 目前不能重命名、删除、分支或 retry thread，也不能从历史 run 选择器恢复某个任意节点。Research Map 可以在一个 thread 内管理科学假设分支，但它不是 thread 历史分支或 rollback 控件。Files 上传同名文件会覆盖，删除不会进入回收站。审批中断必须用消息内卡片恢复。Stop 不取消远程 job。Skill Evolution 只在登录模式显示，并从下一次 run 生效。
 
-这些限制不会阻止正常研究流程，但会影响如何备份、续跑和停止任务。重要文件使用版本化名称或 Git/外部备份；远程任务依靠 receipt；需要不同假设时新建 thread。这样可以避免把 UI 中缺少的操作误认为 Agent 会自动补齐。
+这些限制不会阻止正常研究流程，但会影响如何备份、续跑和停止任务。重要文件使用版本化名称或 Git/外部备份；远程任务依靠 receipt；相互独立的目标或不兼容的项目范围使用不同 thread。这样可以避免把 UI 中缺少的操作误认为 Agent 会自动补齐。

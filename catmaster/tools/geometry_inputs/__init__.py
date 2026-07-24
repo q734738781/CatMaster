@@ -26,6 +26,13 @@ from catmaster.tools.geometry_inputs.cp2k_prepare import (
     Cp2kPrepareInput,
     cp2k_prepare,
 )
+from catmaster.tools.geometry_inputs.xtb_prepare import (
+    XtbAngleConstraint,
+    XtbDihedralConstraint,
+    XtbDistanceConstraint,
+    XtbPrepareInput,
+    xtb_prepare,
+)
 from catmaster.tools.geometry_inputs.vasp_prepare import (
     VaspPrepareInput,
     vasp_prepare,
@@ -112,6 +119,11 @@ __all__ = [
     "orca_irc_prepare",
     "Cp2kPrepareInput",
     "cp2k_prepare",
+    "XtbDistanceConstraint",
+    "XtbAngleConstraint",
+    "XtbDihedralConstraint",
+    "XtbPrepareInput",
+    "xtb_prepare",
     "VaspPrepareInput",
     "VaspBandPrepareInput",
     "SlabBuildInput",

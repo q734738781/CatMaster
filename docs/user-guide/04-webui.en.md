@@ -52,6 +52,26 @@ These parts answer different questions. Progress shows how the agent frames the 
 
 You do not need to inspect every file read. Expand activity when an important structure or manuscript changes, when the number of candidates differs from expectations, when a tool reports warning or error, when a remote submission has meaningful cost, or when the final answer disagrees with the files on disk.
 
+## Research Map shows a live verification network
+
+Research Map is the operational view of a branch-aware campaign in the current thread. It appears as its own top-level tab. Research creates a campaign only when competing explanations, shared evidence, dependent checks, or meaningful cost and wait tradeoffs justify the extra structure. An empty view is normal for a linear task.
+
+The graph has three node types:
+
+- Hypotheses show each claim, rationale, predictions, derivation, and current `open`, `supported`, `rejected`, or `contested` status.
+- Verification actions show the executor, scientific question, bounded task, decision rule, dependencies, information value, coarse cost, and controller status.
+- Evidence judgments show the result summary, scientific source, and one `supports`, `opposes`, or `inconclusive` effect for every target hypothesis.
+
+Click a node to inspect its scientific content. The active packet panel shows the current executor, task, target hypotheses, and decision rule. Execution attempts, resource accounting, and remote receipts remain in the ordinary Activity and artifact views.
+
+Select an eligible action and use "Start Research thread." The server checks the displayed revision, reserves that action, creates a new Research thread, and submits one ordinary Research turn. It does not steer or reuse the source chat thread. The child keeps the complete Research behavior, specialist delegation, streaming, and Auto/Review permission mode. Its DeepAgent checkpoint and lightweight Research Kernel are isolated under the child thread id; only controller calls use the source campaign id. The reservation is rejected if the Map is stale or the source Research thread is still running, stopping, or waiting for review, so two Research turns cannot compete for the same campaign.
+
+"Start automatic Research" enables a persistent asynchronous worker for the source campaign. The worker selects ranked non-human actions one at a time and creates the same kind of ordinary Research child thread. It waits while a child is running or interrupted, then reads the updated campaign before launching another. "Stop after current check" prevents the next launch without cancelling the current child. A human-owned action is never answered by the worker; start its thread manually and provide the requested evidence there. The original single-thread Research submit path is unchanged and can still run without Research Map.
+
+Map selection and automatic scheduling are not protected-tool approval. A selected experiment still follows the Experiment worker's managed execution path and uses the ordinary approval card when required. Cost affects ranking only and does not replace that approval system.
+
+The same evidence judgment can affect several hypotheses, and competing hypotheses can share one verification action. When evidence reveals a missing explanation, Research asks the hypothesis proposer for a separate revision before adding a derived hypothesis or follow-up action. This is why the view is a network rather than a literal tree. `Supported`, `rejected`, and `contested` summarize the recorded verdicts; they are not posterior probabilities. Check the cited paper, run, or artifact before treating a branch as a scientific conclusion.
+
 ## Auto and Review support different working styles
 
 Auto lets an agent proceed within its current permissions and works well for reading, analysis, and trusted project workflows. Review pauses before `write_file`, `edit_file`, `remote_submission`, and `remote_submission_batch`, then presents an approval card in the message.
@@ -123,6 +143,6 @@ After a remote error, inspect the receipt and old job state before any retry. Ch
 
 ## Important current limitations
 
-The WebUI does not yet rename, delete, branch, or retry threads, and it has no historical run selector. Files overwrites same-name uploads and has no recycle bin. Approval interruptions must resume through their message cards. Stop does not cancel remote jobs. Skill Evolution appears only in login mode and affects the next run.
+The WebUI does not yet rename, delete, branch, or retry threads, and it has no historical run selector. A Research Map can branch scientific hypotheses inside one thread, but it is not a thread-history branch or rollback control. Files overwrites same-name uploads and has no recycle bin. Approval interruptions must resume through their message cards. Stop does not cancel remote jobs. Skill Evolution appears only in login mode and affects the next run.
 
-Use versioned file names or external backup, divide incompatible assumptions into separate threads, and manage remote jobs through receipts. These practices cover the current UI gaps without pretending the agent can provide controls that do not exist.
+Use versioned file names or external backup, divide independent objectives or incompatible project scopes into separate threads, and manage remote jobs through receipts. These practices cover the current UI gaps without pretending the agent can provide controls that do not exist.

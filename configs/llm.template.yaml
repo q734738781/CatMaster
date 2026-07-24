@@ -186,6 +186,11 @@ agents:
   task_runner: "openrouter-main"
   research_lead: "openrouter-main-xhigh"
   research_state_updater: "openrouter-main-xhigh"
+  # Optional scientific campaign roles. They are separate agents even when they
+  # use the same model profile. Defaults: proposer -> research_lead,
+  # judge -> research_state_updater.
+  hypothesis_proposer: "openrouter-main-xhigh"
+  evidence_judge: "openrouter-main-xhigh"
   write_director: "openrouter-main-xhigh"
   section_writer: "openrouter-main"
   write_reviewer: "openrouter-main"

@@ -58,6 +58,8 @@ The public template enables MACE `mh-1` and standalone `omol-0`. `mh-1` uses `ma
 
 `mlff_sp` and `mlff_relax` can process several structures directly under one stage's `input/`, so a multi-structure screen is not automatically a remote batch. `mlff_md` accepts one start or restart structure. `mlff_neb` accepts a locally constructed, validated fixed-image path.
 
+Constrained MLFF optimization inherits atom constraints from the structure file rather than a separate `fixed_atoms` override. POSCAR/VASP uses Selective Dynamics. Extxyz uses the standard `move_mask` property (`L:1` for whole atoms or `L:3` for Cartesian components, with false meaning fixed). `mlff_sp` and `mlff_relax` retain extxyz input as `sp.extxyz` and `opt.extxyz` and verify the constraint mask after writing. Extxyz cannot represent ASE scaled-coordinate `FixScaled` constraints; use POSCAR/VASP for that case. Keep `relax_cell=false` for the usual fixed-atom surface relaxation because constrained atoms may otherwise move affinely with a changing cell.
+
 ```text
 Pre-screen structures/adsorption_candidates/ with an enabled MLFF.
 Ask Materials to query current backends and the mlff_sp and mlff_relax schemas, then recommend a model
@@ -86,9 +88,9 @@ Do not substitute training error for independent testing.
 
 ### xTB, CREST, and ORCA
 
-`xtb_run` supports staged molecular optimization, energy, Hessian, or short MD modes defined by the task. `crest_run` performs conformer search. `orca_execute` runs an ORCA stage containing `job.inp` and its local dependencies. All belong to ORCA/xTB.
+`xtb_prepare` first materializes coordinates, run mode, GFN family, solvent, charge, unpaired-electron count, and optimization level as a complete stage. It can generate common constraints or copy a complete `xtb.inp` through `xcontrol_path`. `xtb_execute` then executes the stage described by `manifest.json` and accepts no scientific `template_overrides`. `crest_run` performs conformer search. `orca_execute` runs an ORCA stage containing `job.inp` and its local dependencies. All belong to ORCA/xTB.
 
-The worker verifies charge, unpaired-electron or multiplicity convention, solvent, method, basis, and structure before submission. CREST and xTB are often low-cost filters, while selected conformers enter ORCA optimization, frequency, thermochemistry, TDDFT, NMR, or path work. The task executes one stage. Skills organize the larger molecular workflow.
+The worker verifies charge, unpaired-electron or multiplicity convention, solvent, method, basis, and structure before submission. CREST and xTB are often low-cost filters, while selected conformers enter ORCA optimization, frequency, thermochemistry, TDDFT, NMR, or path work. One xTB stage contains `manifest.json`, its referenced coordinate file, and an optional `xtb.inp`; prepare multiple structures as first-level child stages before one batch submission.
 
 ```text
 Run ORCA opt+freq for the six structures under molecules/conformers_selected/.

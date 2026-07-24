@@ -320,9 +320,10 @@ test("artifact selection falls back when message meta is empty", () => {
   );
 });
 
-test("workspace tab hash state preserves full-page monitor, evolution, and files routes", () => {
+test("workspace tab hash state preserves monitor, research map, evolution, and files routes", () => {
   assert.equal(tabFromHash("#tab=files"), "files");
   assert.equal(tabFromHash("#tab=monitor&inspect=file&path=o2.xyz"), "monitor");
+  assert.equal(tabFromHash("#tab=hypotheses"), "hypotheses");
   assert.equal(tabFromHash("#tab=evolution"), "evolution");
   assert.equal(tabFromHash("#tab=artifacts&inspect=artifact&artifact_id=art_1"), "chat");
   assert.equal(tabFromHash("#tab=unknown"), "chat");
@@ -332,6 +333,7 @@ test("workspace tab hash state preserves full-page monitor, evolution, and files
   assert.deepEqual(selectionFromHash(fileHash), { type: "file", path: "files/o2.xyz" });
 
   assert.equal(selectionToHash(null, "monitor"), "#tab=monitor");
+  assert.equal(selectionToHash(null, "hypotheses"), "#tab=hypotheses");
   assert.equal(selectionToHash(null, "evolution"), "#tab=evolution");
 });
 

@@ -4,11 +4,14 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.analysis import analyze_orca_results, analyze_xtb_results
 from catmaster.tools.base import ensure_project_space_layout, workspace_scope
 from catmaster.tools.execution.orca_dispatch import orca_execute_batch
-from catmaster.tools.execution.xtb_dispatch import xtb_run_batch
-from catmaster.tools.geometry_inputs import orca_prepare
+from catmaster.tools.geometry_inputs import orca_prepare, xtb_prepare
+from catmaster.tools.registry import ToolRegistry
 
 
 def _project_space(tmp_path: Path) -> Path:
@@ -24,6 +27,29 @@ def _write_water_xyz(files_root: Path) -> None:
         "3\nwater\nO 0.000000 0.000000 0.000000\nH 0.758602 0.000000 0.504284\nH -0.758602 0.000000 0.504284\n",
         encoding="utf-8",
     )
+
+
+def test_xtb_prepare_agent_schemas_keep_optional_controls_non_nullable() -> None:
+    registry = ToolRegistry()
+    openai_tool = next(item for item in registry.as_openai_tools() if item["name"] == "xtb_prepare")
+    langchain_tool = registry.as_langchain_tools(allowlist=["xtb_prepare"])[0]
+    schemas = [openai_tool["parameters"], langchain_tool.args_schema]
+
+    for schema in schemas:
+        properties = schema["properties"]
+        assert properties["xcontrol_path"]["type"] == "string"
+        assert "anyOf" not in properties["xcontrol_path"]
+        for name in (
+            "fixed_atom_indices",
+            "constrained_atom_indices",
+            "distance_constraints",
+            "angle_constraints",
+            "dihedral_constraints",
+        ):
+            assert properties[name]["type"] == "array"
+            assert "anyOf" not in properties[name]
+        assert properties["fixed_atom_indices"]["items"]["minimum"] == 0
+        assert properties["constrained_atom_indices"]["items"]["minimum"] == 0
 
 
 def test_orca_prepare_single_structure_creates_input(tmp_path: Path) -> None:
@@ -226,48 +252,139 @@ def test_analyze_orca_results_parses_output(tmp_path: Path) -> None:
         assert artifact["data"]["summary_csv_rel"] in content
 
 
-def test_xtb_run_batch_collects_outputs_with_mock_dispatch(tmp_path: Path, monkeypatch) -> None:
+def test_xtb_prepare_writes_manifest_and_constraint_input(tmp_path: Path) -> None:
     project = _project_space(tmp_path)
     with workspace_scope(project):
         files_root = project / "files"
-        input_dir = files_root / "molecules"
-        input_dir.mkdir(parents=True, exist_ok=True)
-        (input_dir / "h2o.xyz").write_text(
+        input_path = files_root / "molecules" / "h2o.xyz"
+        input_path.parent.mkdir(parents=True, exist_ok=True)
+        input_path.write_text(
             "3\nwater\nO 0.0 0.0 0.0\nH 0.7 0.0 0.5\nH -0.7 0.0 0.5\n",
             encoding="utf-8",
         )
 
-        def _fake_dispatch(batch):
-            stage_root = Path(batch.local_root) / batch.work_base
-            for task in batch.tasks:
-                task_dir = stage_root / task.task_work_path
-                (task_dir / "xtb_summary.json").write_text(
-                    json.dumps({"completed": True, "returncode": 0, "log_file": "xtb_stdout.out"}),
-                    encoding="utf-8",
-                )
-                (task_dir / "xtb_stdout.out").write_text("TOTAL ENERGY -5.0\n", encoding="utf-8")
-                (task_dir / "xtbopt.xyz").write_text(
-                    "3\nopt\nO 0.0 0.0 0.0\nH 0.7 0.0 0.5\nH -0.7 0.0 0.5\n",
-                    encoding="utf-8",
-                )
-            return SimpleNamespace(
-                task_states=["finished" for _ in batch.tasks],
-                submission_dir=str(stage_root),
-                work_base=batch.work_base,
-                duration_s=0.1,
-            )
-
-        monkeypatch.setattr("catmaster.tools.execution.xtb_dispatch.dispatch_submission", _fake_dispatch)
-        _, artifact = xtb_run_batch(
+        content, artifact = xtb_prepare(
             {
-                "input_path": "molecules",
-                "output_root": "results/xtb_batch",
+                "input_path": "molecules/h2o.xyz",
+                "output_root": "prepared/xtb_h2o",
                 "mode": "opt",
+                "gfn": "gfn1",
+                "solvent_model": "alpb",
+                "solvent": "water",
+                "charge": -1,
+                "uhf": 1,
+                "opt_level": "tight",
+                "fixed_atom_indices": [0],
+                "constrained_atom_indices": [1],
+                "distance_constraints": [{"atom1": 1, "atom2": 2, "value_angstrom": 0.96}],
+                "constraint_force_constant": 0.5,
             }
         )
-        output_dir = files_root / artifact["data"]["outputs"][0]["output_dir_rel"]
-        assert (output_dir / "xtb_summary.json").is_file()
-        assert (output_dir / "xtbopt.xyz").is_file()
+
+        assert "xtb_prepare completed" in content
+        stage_dir = files_root / "prepared" / "xtb_h2o"
+        manifest = json.loads((stage_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest == {
+            "schema_version": 1,
+            "program": "xtb",
+            "coordinate_file": "coord.xyz",
+            "xcontrol_file": "xtb.inp",
+            "mode": "opt",
+            "gfn": "gfn1",
+            "solvent_model": "alpb",
+            "solvent": "water",
+            "charge": -1,
+            "uhf": 1,
+            "opt_level": "tight",
+            "source_rel": "molecules/h2o.xyz",
+            "xcontrol_source_rel": "",
+            "atom_count": 3,
+        }
+        xcontrol = (stage_dir / "xtb.inp").read_text(encoding="utf-8")
+        assert "$fix\n  atoms: 1\n$end" in xcontrol
+        assert "$constrain" in xcontrol
+        assert "force constant=0.5" in xcontrol
+        assert "atoms: 2" in xcontrol
+        assert "distance: 2, 3, 0.96" in xcontrol
+        assert artifact["data"]["prepared_count"] == 1
+
+
+def test_xtb_prepare_copies_complete_xcontrol_verbatim(tmp_path: Path) -> None:
+    project = _project_space(tmp_path)
+    with workspace_scope(project):
+        files_root = project / "files"
+        input_path = files_root / "molecules" / "h2o.xyz"
+        input_path.parent.mkdir(parents=True, exist_ok=True)
+        input_path.write_text(
+            "3\nwater\nO 0.0 0.0 0.0\nH 0.7 0.0 0.5\nH -0.7 0.0 0.5\n",
+            encoding="utf-8",
+        )
+        custom_text = "$constrain\n  distance: 1, 2, 1.25\n$end\n"
+        custom_path = files_root / "controls" / "custom.inp"
+        custom_path.parent.mkdir(parents=True, exist_ok=True)
+        custom_path.write_text(custom_text, encoding="utf-8")
+
+        xtb_prepare(
+            {
+                "input_path": "molecules/h2o.xyz",
+                "output_root": "prepared/xtb_custom",
+                "mode": "opt",
+                "xcontrol_path": "controls/custom.inp",
+            }
+        )
+
+        stage_dir = files_root / "prepared" / "xtb_custom"
+        assert (stage_dir / "xtb.inp").read_text(encoding="utf-8") == custom_text
+        manifest = json.loads((stage_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["xcontrol_file"] == "xtb.inp"
+        assert manifest["xcontrol_source_rel"] == "controls/custom.inp"
+
+
+def test_xtb_prepare_flattens_nested_batch_inputs_to_first_level_stages(tmp_path: Path) -> None:
+    project = _project_space(tmp_path)
+    with workspace_scope(project):
+        files_root = project / "files"
+        for subdir in ("set_a", "set_b"):
+            input_path = files_root / "molecules" / subdir / "h2o.xyz"
+            input_path.parent.mkdir(parents=True, exist_ok=True)
+            input_path.write_text(
+                "3\nwater\nO 0.0 0.0 0.0\nH 0.7 0.0 0.5\nH -0.7 0.0 0.5\n",
+                encoding="utf-8",
+            )
+
+        _, artifact = xtb_prepare(
+            {
+                "input_path": "molecules",
+                "output_root": "prepared/xtb_batch",
+                "mode": "sp",
+            }
+        )
+
+        stage_root = files_root / "prepared" / "xtb_batch"
+        stage_names = {path.name for path in stage_root.iterdir() if path.is_dir()}
+        assert stage_names == {"set_a_h2o", "set_b_h2o"}
+        assert all((stage_root / name / "manifest.json").is_file() for name in stage_names)
+        assert artifact["data"]["prepared_count"] == 2
+
+
+def test_xtb_prepare_rejects_out_of_range_constraint_index(tmp_path: Path) -> None:
+    project = _project_space(tmp_path)
+    with workspace_scope(project):
+        files_root = project / "files"
+        input_path = files_root / "molecules" / "h2.xyz"
+        input_path.parent.mkdir(parents=True, exist_ok=True)
+        input_path.write_text("2\nH2\nH 0 0 0\nH 0 0 0.7\n", encoding="utf-8")
+
+        with pytest.raises(CatMasterToolExecutionError) as exc_info:
+            xtb_prepare(
+                {
+                    "input_path": "molecules/h2.xyz",
+                    "output_root": "prepared/xtb_h2",
+                    "distance_constraints": [{"atom1": 0, "atom2": 2, "value_angstrom": 0.7}],
+                }
+            )
+
+        assert exc_info.value.error_code == "constraint_index_out_of_range"
 
 
 def test_orca_execute_batch_collects_outputs_with_mock_dispatch(tmp_path: Path, monkeypatch) -> None:

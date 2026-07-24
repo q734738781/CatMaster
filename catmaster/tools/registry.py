@@ -39,6 +39,7 @@ class ToolRegistry:
             orca_nebts_prepare,
             orca_irc_prepare,
             cp2k_prepare,
+            xtb_prepare,
             vasp_prepare,
             vasp_band_prepare,
             build_slab,
@@ -76,6 +77,7 @@ class ToolRegistry:
             OrcaNebTSPrepareInput,
             OrcaIRCPrepareInput,
             Cp2kPrepareInput,
+            XtbPrepareInput,
             VaspPrepareInput,
             VaspBandPrepareInput,
             SlabBuildInput,
@@ -212,6 +214,18 @@ class ToolRegistry:
             export_builtin_tool_source,
             ExportBuiltinToolSourceInput,
         )
+        from catmaster.tools.misc.hypothesis_engine import (
+            AdvanceHypothesisCampaignInput,
+            ExtendHypothesisCampaignInput,
+            InitializeHypothesisCampaignInput,
+            InspectHypothesisCampaignInput,
+            RecordHypothesisResultInput,
+            advance_hypothesis_campaign,
+            extend_hypothesis_campaign,
+            initialize_hypothesis_campaign,
+            inspect_hypothesis_campaign,
+            record_hypothesis_result,
+        )
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
         self.register_tool("enumerate_molecular_conformers", enumerate_molecular_conformers, EnumerateMolecularConformersInput)
@@ -223,6 +237,7 @@ class ToolRegistry:
         self.register_tool("orca_nebts_prepare", orca_nebts_prepare, OrcaNebTSPrepareInput)
         self.register_tool("orca_irc_prepare", orca_irc_prepare, OrcaIRCPrepareInput)
         self.register_tool("cp2k_prepare", cp2k_prepare, Cp2kPrepareInput)
+        self.register_tool("xtb_prepare", xtb_prepare, XtbPrepareInput)
         self.register_tool("cp2k_aimd_prepare", cp2k_aimd_prepare, Cp2kAimdPrepareInput)
         self.register_tool("cp2k_output_summary", cp2k_output_summary, Cp2kOutputSummaryInput)
         self.register_tool("lammps_forcefield_validate", lammps_forcefield_validate, LammpsForcefieldValidateInput)
@@ -299,6 +314,31 @@ class ToolRegistry:
         self.register_tool("find_in_page", find_in_page, FindInPageInput)
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
         self.register_tool("export_builtin_tool_source", export_builtin_tool_source, ExportBuiltinToolSourceInput)
+        self.register_tool(
+            "initialize_hypothesis_campaign",
+            initialize_hypothesis_campaign,
+            InitializeHypothesisCampaignInput,
+        )
+        self.register_tool(
+            "extend_hypothesis_campaign",
+            extend_hypothesis_campaign,
+            ExtendHypothesisCampaignInput,
+        )
+        self.register_tool(
+            "inspect_hypothesis_campaign",
+            inspect_hypothesis_campaign,
+            InspectHypothesisCampaignInput,
+        )
+        self.register_tool(
+            "advance_hypothesis_campaign",
+            advance_hypothesis_campaign,
+            AdvanceHypothesisCampaignInput,
+        )
+        self.register_tool(
+            "record_hypothesis_result",
+            record_hypothesis_result,
+            RecordHypothesisResultInput,
+        )
         self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
         self.register_tool("calculate_al_candidates", calculate_al_candidates, CalculateALCandidatesInput)
     

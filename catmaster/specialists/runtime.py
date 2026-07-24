@@ -20,6 +20,8 @@ from pydantic import BaseModel
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
+from catmaster.research.hypothesis_engine import EvidenceJudgment, HypothesisPlan
+from catmaster.research.hypothesis_engine.storage import engine_relpath, load_engine
 from catmaster.runtime.artifact_callback import LangChainStepLogger, ObservabilityCallbackHandler, UIEventHandler
 from catmaster.runtime.deepagent_context_refresh import ReloadDeepAgentContextMiddleware
 from catmaster.runtime.document_access import DocumentAccessMiddleware
@@ -134,6 +136,7 @@ _ML_WORKER_TOOL_ALLOWLIST: set[str] = {
 _ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
     *_REMOTE_EXECUTION_TOOL_ALLOWLIST,
     "create_molecule_from_smiles",
+    "xtb_prepare",
     "enumerate_molecular_conformers",
     "filter_conformer_ensemble",
     "extract_optimized_molecules",
@@ -151,7 +154,13 @@ _WRITING_TOOL_ALLOWLIST = {
     "generate_nanobanana_figure",
     "review_pdf_manuscript",
 }
-_RESEARCH_TOOL_ALLOWLIST: set[str] = set()
+_RESEARCH_TOOL_ALLOWLIST: set[str] = {
+    "advance_hypothesis_campaign",
+    "extend_hypothesis_campaign",
+    "initialize_hypothesis_campaign",
+    "inspect_hypothesis_campaign",
+    "record_hypothesis_result",
+}
 _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {
     "get_avail_remote_task",
     "mp_search_materials",
@@ -351,6 +360,7 @@ def build_specialist_runner(
     run_dir: Path | None = None,
     preferred_entrypoint: SpecialistEntrypoint = "research",
     interrupt_on: dict[str, Any] | None = None,
+    research_campaign_id: str = "",
 ) -> BuiltSpecialistRunner:
     if run_dir is not None and Path(run_dir).exists():
         run_ctx = RunContext.load(Path(run_dir))
@@ -373,6 +383,7 @@ def build_specialist_runner(
         reporter=reporter or NullReporter(),
         run_control=run_control,
         interrupt_on=interrupt_on,
+        research_campaign_id=research_campaign_id,
     )
     return BuiltSpecialistRunner(runner=runner, run_context=run_ctx)
 
@@ -393,6 +404,7 @@ class SpecialistRunner:
         reporter: Reporter | None = None,
         run_control: RunControl | None = None,
         interrupt_on: dict[str, Any] | None = None,
+        research_campaign_id: str = "",
     ) -> None:
         self.llm_profile = llm_profile
         self.run_context = run_context
@@ -400,6 +412,7 @@ class SpecialistRunner:
         self.run_control = run_control
         self.registry = get_tool_registry()
         self.interrupt_on = dict(interrupt_on or {})
+        self.research_campaign_id = str(research_campaign_id or "").strip()
 
     def _raise_if_interrupt_requested(self, *, phase: str, details: dict[str, Any] | None = None) -> None:
         control = self.run_control
@@ -981,6 +994,7 @@ class SpecialistRunner:
 
     def _research_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
         return [
+            *self._scientific_reasoning_subagents(),
             self._compiled_specialist_subagent(
                 name="experiment_specialist",
                 description="Run bounded computational experiment work and return compact evidence summaries.",
@@ -1000,6 +1014,33 @@ class SpecialistRunner:
                 runtime=runtime,
             ),
             self._compiled_litreview_subagent(runtime=runtime),
+        ]
+
+    def _scientific_reasoning_subagents(self) -> list[Any]:
+        SubAgent = self._load_subagent()
+        return [
+            SubAgent(
+                name="hypothesis_proposer",
+                description=(
+                    "Form or revise a small set of falsifiable competing hypotheses and "
+                    "their discriminating scientific checks. It does not execute or judge evidence."
+                ),
+                system_prompt=self._hypothesis_proposer_prompt(),
+                tools=[],
+                model=self._build_deepagent_chat_model("hypothesis_proposer"),
+                response_format=HypothesisPlan,
+            ),
+            SubAgent(
+                name="evidence_judge",
+                description=(
+                    "Independently judge one completed verification against its target "
+                    "hypotheses and decision rule. It does not propose branches or schedule work."
+                ),
+                system_prompt=self._evidence_judge_prompt(),
+                tools=[],
+                model=self._build_deepagent_chat_model("evidence_judge"),
+                response_format=EvidenceJudgment,
+            ),
         ]
 
     def _experiment_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
@@ -1578,6 +1619,7 @@ class SpecialistRunner:
         return self._base_system_prompt(
             entrypoint,
             thread_id=thread_id,
+            campaign_thread_id=self.research_campaign_id or thread_id,
             allow_memory_write=allow_memory_write,
             execution_contract=execution_contract,
         )
@@ -1650,17 +1692,21 @@ class SpecialistRunner:
         entrypoint: SpecialistEntrypoint,
         *,
         thread_id: str = "",
+        campaign_thread_id: str = "",
         allow_memory_write: bool = True,
         execution_contract: str = "",
     ) -> str:
         memory_policy = cls._deepagent_memory_policy(allow_memory_write=allow_memory_write)
         if entrypoint == "research":
             kernel_path = cls._research_kernel_virtual_path(thread_id)
+            campaign_id = str(campaign_thread_id or thread_id).strip()
             return (
                 "You are ResearchSpecialist, the only orchestration-capable specialist.\n"
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
-                "You may delegate only to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
+                "You may delegate only to `hypothesis_proposer`, `evidence_judge`, `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
+                "For a persistent hypothesis campaign, delegate initial hypothesis formation and every evidence-driven hypothesis revision to `hypothesis_proposer`; do not invent campaign hypotheses or verification rules in the coordinator.\n"
+                "After a campaign verification succeeds, delegate the returned scientific result to `evidence_judge` with the complete target hypotheses and decision rule; record its structured judgment without grading the evidence yourself.\n"
                 "Delegate literature-review work that needs source discovery, full-text evidence, or citation finalization to `litreview_agent`.\n"
                 f"{cls._physical_chemical_property_lookup_policy()}\n"
                 "If the user requests a paper, manuscript, journal-style LaTeX draft, cover letter, rebuttal-style response, or other author-facing publication artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
@@ -1687,6 +1733,7 @@ class SpecialistRunner:
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_goal_guard_contract()}\n"
                 f"{cls._research_kernel_contract(kernel_path)}\n"
+                f"{cls._hypothesis_engine_contract(campaign_id, execution_thread_id=thread_id)}\n"
                 f"{cls._research_completion_audit_contract()}\n"
                 f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
@@ -2046,6 +2093,75 @@ class SpecialistRunner:
         )
 
     @classmethod
+    def _hypothesis_engine_contract(
+        cls,
+        campaign_thread_id: str,
+        *,
+        execution_thread_id: str = "",
+    ) -> str:
+        safe_campaign = cls._sanitize_kernel_component(campaign_thread_id)
+        safe_execution = cls._sanitize_kernel_component(execution_thread_id)
+        identity_note = (
+            f"This execution uses its own Research Kernel and checkpoint under `{safe_execution}`, "
+            f"but it is attached to source campaign `{safe_campaign}`. "
+            if safe_execution and safe_execution != safe_campaign
+            else ""
+        )
+        return (
+            "A persistent scientific campaign controller is available for research questions "
+            "with competing explanations, shared evidence, dependent verification steps, or "
+            "meaningful differences in verification cost. Use it only when that structure improves "
+            "the next scientific decision; ordinary linear tasks should keep using the "
+            "lightweight Research Kernel. "
+            f"{identity_note}"
+            f"The campaign identity is `{safe_campaign}` and its sidecar, when present, is "
+            f"`/{engine_relpath(safe_campaign)}`. Use this campaign identity for every campaign "
+            "read or mutation; do not substitute the execution thread id. "
+            "Treat the sidecar as the source of truth for hypotheses, dependencies, execution "
+            "packets, evidence judgments, and ranking while keeping the Research "
+            "Kernel as compact conversational memory. An active execution packet is a bounded "
+            "handoff: perform exactly that one delegation or direct bounded action, check its "
+            "scientific decision rule, and obtain an independent evidence judgment before "
+            "recording the result or requesting another packet. Keep scientific authorship "
+            "separated: the hypothesis role forms or revises hypotheses and checks, execution "
+            "roles produce results, and the evidence role judges those results. The coordinator "
+            "moves their structured scientific content between stages without silently replacing it. "
+            "Cost and information labels rank scientific checks; they are not execution "
+            "permissions or probabilities. Automatic Map continuation is an external scheduling "
+            "concern and never broadens user authority: delegation ownership, managed execution "
+            "rules, and protected-tool approval still apply."
+        )
+
+    @staticmethod
+    def _hypothesis_proposer_prompt() -> str:
+        return (
+            "You are hypothesis_proposer. Your sole role is to form or revise scientific "
+            "hypotheses and the smallest set of checks that can distinguish them. Work only from "
+            "the research question and scientific evidence supplied in the task. Return a "
+            "HypothesisPlan. Keep the set small, cover plausible alternatives, and avoid cosmetic "
+            "paraphrases. Every hypothesis must be falsifiable and include a rationale plus "
+            "observable predictions. Every verification must state the scientific question, a "
+            "bounded task, all hypotheses it judges, and a decision rule for support, opposition, "
+            "or an inconclusive result. Use dependencies only when scientifically necessary. "
+            "Use high cost only for genuinely burdensome work. Do not search, execute, judge "
+            "completed evidence, write files, set hypothesis status, or discuss controller metadata."
+        )
+
+    @staticmethod
+    def _evidence_judge_prompt() -> str:
+        return (
+            "You are evidence_judge. Independently judge one completed verification from the "
+            "scientific result, source, target hypotheses, predictions, and decision rule supplied "
+            "in the task. Return one EvidenceJudgment with exactly one effect for every target "
+            "hypothesis. Use supports only when the result matches a discriminating prediction, "
+            "opposes only when it conflicts with one, and inconclusive when the source, result, "
+            "controls, or decision rule cannot decide. Give a short scientific reason for each "
+            "effect and copy the resolvable source exactly. Do not propose hypotheses, design the "
+            "next verification, schedule work, infer missing results, write files, or discuss "
+            "controller metadata."
+        )
+
+    @classmethod
     def _materials_worker_prompt(cls, *, execution_contract: str = "") -> str:
         return (
             "You are materials_worker for ExperimentSpecialist.\n"
@@ -2227,7 +2343,14 @@ class SpecialistRunner:
             return {}
         return kernel.model_dump()
 
-    def _research_kernel_state_fields(self, *, files_root: Path, thread_id: str, relpath: str = "") -> dict[str, Any]:
+    def _research_kernel_state_fields(
+        self,
+        *,
+        files_root: Path,
+        thread_id: str,
+        relpath: str = "",
+        campaign_thread_id: str = "",
+    ) -> dict[str, Any]:
         if not thread_id:
             return {}
         kernel = self._load_research_kernel(files_root=files_root, thread_id=thread_id)
@@ -2238,6 +2361,18 @@ class SpecialistRunner:
             result["research_kernel_path"] = relpath
         if kernel:
             result["research_kernel"] = kernel
+        campaign_id = str(
+            campaign_thread_id or self.research_campaign_id or thread_id
+        ).strip()
+        try:
+            engine = load_engine(files_root, campaign_id)
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            engine = None
+        if engine is not None:
+            result["hypothesis_engine_path"] = engine_relpath(campaign_id)
+            result["hypothesis_campaign_id"] = campaign_id
+            result["hypothesis_engine"] = engine.state.model_dump(mode="json")
+            result["hypothesis_engine_graph"] = engine.graph_projection()
         return result
 
     @staticmethod

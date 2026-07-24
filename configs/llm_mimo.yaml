@@ -126,6 +126,8 @@ agents:
   task_runner: "xiaomi/mimo-v2-pro:high"
   research_lead: "openai/gpt-5.5:high"
   research_state_updater: "openai/gpt-5.5:high"
+  hypothesis_proposer: "openai/gpt-5.5:high"
+  evidence_judge: "openai/gpt-5.5:high"
   write_director: "openai/gpt-5.5:high"
   section_writer: "xiaomi/mimo-v2-pro:high"
   write_reviewer: "openai/gpt-5.5:medium"
@@ -167,6 +169,8 @@ literature:
     task_runner: none
     research_lead: deep_report
     research_state_updater: deep_report
+    hypothesis_proposer: deep_report
+    evidence_judge: deep_report
     write_director: none
     section_writer: standard
     write_reviewer: none

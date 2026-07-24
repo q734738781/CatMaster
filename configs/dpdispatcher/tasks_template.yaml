@@ -182,27 +182,14 @@ mace_eval:
     - "output"
   task_work_path: "."
 
-xtb_run:
+xtb_execute:
   audiences: [orca_xtb_worker]
-  description: "Run xTB for a staged molecular input file."
+  description: "Run one prepared xTB stage containing manifest.json and its referenced coordinate/xcontrol files."
   boot_script: "catmaster/remote/cpu/xtb_boot.py"
-  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#xtb_run"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#xtb_execute"
   resources: xtb_cpu
   requires: [xtb]
-  command: "python task_script/xtb_boot.py --input {input} --mode {mode} --gfn {gfn} --solvent_model {solvent_model} --solvent {solvent} --charge {charge} --uhf {uhf} --opt_level {opt_level} --temperature {temperature} --md_time_ps {md_time_ps} --timestep_fs {timestep_fs} --md_dump_fs {md_dump_fs}"
-  defaults:
-    input: input.xyz
-    mode: opt
-    gfn: gfn2
-    solvent_model: none
-    solvent: __none__
-    charge: 0
-    uhf: 0
-    opt_level: normal
-    temperature: 298.15
-    md_time_ps: 5.0
-    timestep_fs: 1.0
-    md_dump_fs: 50.0
+  command: "python task_script/xtb_boot.py --manifest manifest.json"
   forward_files:
     - "*"
     - "task_script/xtb_boot.py"

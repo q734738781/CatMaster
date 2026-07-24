@@ -795,6 +795,12 @@ def _constraints(backend: str, operation: MlffOperation) -> list[str]:
             out.append("MatterSim NPT requires backend_config.compute_stress=true.")
     if backend == "orb_v3":
         out.append("ORB knn_alchemi is recommended; legacy edge methods are compatibility controls.")
+    if operation in {"sp", "relax"}:
+        out.append(
+            "An .extxyz input is returned as the same output format; ASE FixAtoms and FixCartesian "
+            "constraints are preserved through the standard move_mask property. Use POSCAR/VASP "
+            "Selective Dynamics when a FixScaled constraint is required."
+        )
     if operation == "relax":
         out.append("task_config.relax_cell=true requires a fully periodic structure with a valid cell.")
     if operation == "md":

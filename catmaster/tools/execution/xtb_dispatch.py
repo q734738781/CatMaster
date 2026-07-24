@@ -129,30 +129,6 @@ def _copy_stage_tree(stage_dir: Path, output_dir: Path) -> None:
     )
 
 
-class XtbRunBatchInput(BaseModel):
-    """[xtb/execute] Submit one molecular structure or a molecular batch to xTB via DPDispatcher."""
-
-    input_path: str = Field(..., description="Single structure file or directory containing molecular structures.")
-    output_root: str = Field(..., description="Output root where collected xTB result folders will be written.")
-    mode: str = Field("opt", pattern="^(sp|opt|hess|md)$", description="xTB run mode.")
-    gfn: str = Field("gfn2", pattern="^(gfn2|gfn1|gfnff)$", description="xTB Hamiltonian family.")
-    solvent_model: str = Field("none", pattern="^(none|alpb|gbsa)$", description="Implicit-solvation model.")
-    solvent: str | None = Field(None, description="Solvent name for ALPB/GBSA.")
-    charge: int = Field(0, description="Molecular charge.")
-    uhf: int = Field(0, ge=0, description="Number of unpaired electrons.")
-    opt_level: str = Field(
-        "normal",
-        pattern="^(crude|sloppy|loose|normal|tight|vtight|extreme)$",
-        description="Optimization tightness for mode=opt.",
-    )
-    temperature: float = Field(298.15, gt=0.0, description="Target temperature for mode=md in Kelvin.")
-    md_time_ps: float = Field(5.0, gt=0.0, description="MD simulation time in ps when mode=md.")
-    timestep_fs: float = Field(1.0, gt=0.0, description="MD timestep in fs when mode=md.")
-    md_dump_fs: float = Field(50.0, gt=0.0, description="Trajectory dump interval in fs when mode=md.")
-    task_name: str = Field("xtb_run", description="DPDispatcher task template name.")
-    check_interval: int = Field(30, ge=1, description="Polling interval seconds.")
-
-
 class CrestDistanceConstraint(BaseModel):
     atom1: int = Field(..., ge=0)
     atom2: int = Field(..., ge=0)
@@ -414,35 +390,6 @@ def _submit_molecule_batch(
     )
 
 
-def xtb_run_batch(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    params = XtbRunBatchInput(**payload)
-    input_path = resolve_workspace_path(params.input_path, must_exist=True)
-    output_root = resolve_workspace_path(params.output_root)
-    return _submit_molecule_batch(
-        tool_name="xtb_run_batch",
-        input_path=input_path,
-        output_root=output_root,
-        task_name=params.task_name,
-        work_prefix="xtb_batch",
-        script_name="xtb_boot.py",
-        context_builder=lambda *, stage_dir, input_name: {
-            "input": input_name,
-            "mode": params.mode,
-            "gfn": params.gfn,
-            "solvent_model": params.solvent_model,
-            "solvent": params.solvent or "__none__",
-            "charge": params.charge,
-            "uhf": params.uhf,
-            "opt_level": params.opt_level,
-            "temperature": params.temperature,
-            "md_time_ps": params.md_time_ps,
-            "timestep_fs": params.timestep_fs,
-            "md_dump_fs": params.md_dump_fs,
-        },
-        check_interval=params.check_interval,
-    )
-
-
 def _serialize_constraints(params: CrestConformerSearchInput, stage_dir: Path) -> str:
     if params.mode != "constrained" and not any(
         (params.frozen_atom_indices, params.distance_constraints, params.angle_constraints, params.dihedral_constraints)
@@ -500,8 +447,6 @@ def crest_conformer_search(payload: dict[str, Any]) -> tuple[str, dict[str, Any]
 
 
 __all__ = [
-    "XtbRunBatchInput",
     "CrestConformerSearchInput",
     "crest_conformer_search",
-    "xtb_run_batch",
 ]

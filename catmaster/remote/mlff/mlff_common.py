@@ -301,8 +301,57 @@ def _stress(atoms: Any) -> list[float] | None:
         return None
 
 
-def _output_structure(output_dir: Path, atoms: Any, *, stem: str) -> str:
+def _extxyz_move_mask(atoms: Any) -> np.ndarray:
+    """Return ASE's Cartesian move mask and reject constraints extxyz cannot encode."""
+
+    from ase.constraints import FixAtoms, FixCartesian
+
+    move_mask = np.ones((len(atoms), 3), dtype=bool)
+    unsupported: list[str] = []
+    for constraint in atoms.constraints or []:
+        if isinstance(constraint, FixAtoms):
+            move_mask[np.asarray(constraint.index, dtype=int)] = False
+        elif isinstance(constraint, FixCartesian):
+            move_mask[np.asarray(constraint.index, dtype=int)] &= ~np.asarray(
+                constraint.mask,
+                dtype=bool,
+            )
+        else:
+            unsupported.append(type(constraint).__name__)
+    if unsupported:
+        raise ValueError(
+            "extxyz output can preserve only ASE FixAtoms and FixCartesian constraints; "
+            f"unsupported: {', '.join(sorted(set(unsupported)))}"
+        )
+    return move_mask
+
+
+def _write_extxyz_preserving_constraints(path: Path, atoms: Any) -> None:
+    from ase.io import read, write
+
+    expected_move_mask = _extxyz_move_mask(atoms)
+    write(str(path), atoms, format="extxyz")
+    restored = read(str(path), index=-1)
+    restored_move_mask = _extxyz_move_mask(restored)
+    if not np.array_equal(restored_move_mask, expected_move_mask):
+        raise RuntimeError(
+            "extxyz constraint round-trip changed the ASE FixAtoms/FixCartesian move mask"
+        )
+
+
+def _output_structure(
+    output_dir: Path,
+    atoms: Any,
+    *,
+    stem: str,
+    source_name: str = "",
+) -> str:
     from ase.io import write
+
+    if Path(str(source_name or "")).suffix.lower() == ".extxyz":
+        name = f"{stem}.extxyz"
+        _write_extxyz_preserving_constraints(output_dir / name, atoms)
+        return name
 
     periodic = bool(any(bool(value) for value in atoms.pbc)) and float(atoms.cell.volume) > 1e-6
     name = f"{stem}.vasp" if periodic else f"{stem}.xyz"
@@ -343,6 +392,7 @@ def _run_sp(
     config: dict[str, Any],
     item_config: dict[str, Any],
     adapter: Any,
+    source_name: str = "",
 ) -> dict[str, Any]:
     calculator = adapter.calculator_for(atoms, item_config)
     atoms.calc = calculator
@@ -357,7 +407,12 @@ def _run_sp(
     summary.update(
         {
             "energy_eV": energy,
-            "output_structure": _output_structure(output_dir, atoms, stem="sp"),
+            "output_structure": _output_structure(
+                output_dir,
+                atoms,
+                stem="sp",
+                source_name=source_name,
+            ),
         }
     )
     return summary
@@ -370,6 +425,7 @@ def _run_relax(
     config: dict[str, Any],
     item_config: dict[str, Any],
     adapter: Any,
+    source_name: str = "",
 ) -> dict[str, Any]:
     from ase.filters import FrechetCellFilter
     from ase.io.trajectory import Trajectory
@@ -404,7 +460,12 @@ def _run_relax(
             "final_energy_eV": final_energy,
             "converged": converged,
             "nsteps": int(optimizer.nsteps),
-            "output_structure": _output_structure(output_dir, atoms, stem="opt"),
+            "output_structure": _output_structure(
+                output_dir,
+                atoms,
+                stem="opt",
+                source_name=source_name,
+            ),
         }
     )
     return summary
@@ -439,6 +500,7 @@ def run(operation: str, run_config: str) -> dict[str, Any]:
                     config=config,
                     item_config=dict(item_config),
                     adapter=adapter,
+                    source_name=rel,
                 )
             elif operation == "relax":
                 summary = _run_relax(
@@ -447,6 +509,7 @@ def run(operation: str, run_config: str) -> dict[str, Any]:
                     config=config,
                     item_config=dict(item_config),
                     adapter=adapter,
+                    source_name=rel,
                 )
             else:
                 raise ValueError(f"Unsupported common MLFF operation: {operation}")

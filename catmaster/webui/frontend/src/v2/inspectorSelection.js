@@ -17,7 +17,7 @@ export function selectionFromHash(hashValue) {
 export function tabFromHash(hashValue) {
   const hash = String(hashValue || "").replace(/^#/, "");
   const tab = new URLSearchParams(hash).get("tab") || "chat";
-  return ["chat", "monitor", "evolution", "files"].includes(tab) ? tab : "chat";
+  return ["chat", "monitor", "hypotheses", "evolution", "files"].includes(tab) ? tab : "chat";
 }
 
 export function selectionToHash(selection, activeTab = "chat") {

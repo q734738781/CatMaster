@@ -282,6 +282,8 @@ agents:
   task_runner: openrouter-main
   research_lead: openrouter-deep
   research_state_updater: openrouter-deep
+  hypothesis_proposer: openrouter-deep
+  evidence_judge: openrouter-deep
   write_director: openrouter-deep
   section_writer: openrouter-main
   write_reviewer: openrouter-main

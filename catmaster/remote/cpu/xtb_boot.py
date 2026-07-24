@@ -8,6 +8,13 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Any
+
+
+_MODES = {"sp", "opt", "hess", "md"}
+_GFN_METHODS = {"gfn2", "gfn1", "gfnff"}
+_SOLVENT_MODELS = {"none", "alpb", "gbsa"}
+_OPT_LEVELS = {"crude", "sloppy", "loose", "normal", "tight", "vtight", "extreme"}
 
 
 def _parse_cpu_count(raw: str) -> int | None:
@@ -36,7 +43,13 @@ def _resolve_threads() -> int:
     explicit = _parse_cpu_count(os.environ.get("CATMASTER_XTB_THREADS", ""))
     if explicit:
         return explicit
-    for key in ("SLURM_CPUS_PER_TASK", "SLURM_NTASKS", "SLURM_CPUS_ON_NODE", "SLURM_JOB_CPUS_PER_NODE", "OMP_NUM_THREADS"):
+    for key in (
+        "SLURM_CPUS_PER_TASK",
+        "SLURM_NTASKS",
+        "SLURM_CPUS_ON_NODE",
+        "SLURM_JOB_CPUS_PER_NODE",
+        "OMP_NUM_THREADS",
+    ):
         parsed = _parse_cpu_count(os.environ.get(key, ""))
         if parsed:
             return parsed
@@ -54,22 +67,6 @@ def _xtb_env(nthreads: int) -> dict[str, str]:
     return env
 
 
-def _parse_bool(value: str) -> bool:
-    text = str(value).strip().lower()
-    if text in {"1", "true", "t", "yes", "y", "on"}:
-        return True
-    if text in {"0", "false", "f", "no", "n", "off"}:
-        return False
-    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
-
-
-def _normalize_optional_text(value: str) -> str:
-    text = str(value or "").strip()
-    if text.lower() in {"", "__none__", "none", "null"}:
-        return ""
-    return text
-
-
 def _xtb_method_flags(gfn: str) -> list[str]:
     name = str(gfn or "gfn2").strip().lower()
     if name == "gfn2":
@@ -81,23 +78,95 @@ def _xtb_method_flags(gfn: str) -> list[str]:
     raise ValueError(f"Unsupported gfn setting: {gfn}")
 
 
-def _build_md_input(*, temperature: float, md_time_ps: float, timestep_fs: float, md_dump_fs: float) -> Path:
-    xcontrol = Path("xtb_md.inp")
-    xcontrol.write_text(
-        "\n".join(
-            [
-                "$md",
-                f"  temp={float(temperature):.6f}",
-                f"  time={float(md_time_ps):.6f}",
-                f"  step={float(timestep_fs):.6f}",
-                f"  dump={float(md_dump_fs):.6f}",
-                "$end",
-                "",
-            ]
+def _stage_filename(value: Any, *, field: str, required: bool) -> str:
+    text = str(value or "").strip()
+    if not text:
+        if required:
+            raise ValueError(f"manifest.{field} is required")
+        return ""
+    path = Path(text)
+    if path.is_absolute() or path.name != text or any(part == ".." for part in path.parts):
+        raise ValueError(f"manifest.{field} must be a direct stage filename: {text!r}")
+    if not path.is_file():
+        raise ValueError(f"manifest.{field} file is missing: {text}")
+    return text
+
+
+def _integer(value: Any, *, field: str, minimum: int | None = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"manifest.{field} must be an integer")
+    parsed = int(value)
+    if minimum is not None and parsed < minimum:
+        raise ValueError(f"manifest.{field} must be >= {minimum}")
+    return parsed
+
+
+def _choice(value: Any, *, field: str, choices: set[str]) -> str:
+    text = str(value or "").strip().lower()
+    if text not in choices:
+        raise ValueError(f"manifest.{field} must be one of {sorted(choices)}")
+    return text
+
+
+def _load_manifest(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise ValueError(f"manifest file is missing: {path}")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"could not parse manifest JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("manifest must contain a JSON object")
+    if raw.get("schema_version") != 1:
+        raise ValueError("manifest.schema_version must be 1")
+    if str(raw.get("program") or "").strip().lower() != "xtb":
+        raise ValueError("manifest.program must be 'xtb'")
+
+    config = {
+        "schema_version": 1,
+        "program": "xtb",
+        "coordinate_file": _stage_filename(raw.get("coordinate_file"), field="coordinate_file", required=True),
+        "xcontrol_file": _stage_filename(raw.get("xcontrol_file"), field="xcontrol_file", required=False),
+        "mode": _choice(raw.get("mode"), field="mode", choices=_MODES),
+        "gfn": _choice(raw.get("gfn"), field="gfn", choices=_GFN_METHODS),
+        "solvent_model": _choice(
+            raw.get("solvent_model", "none"),
+            field="solvent_model",
+            choices=_SOLVENT_MODELS,
         ),
-        encoding="utf-8",
-    )
-    return xcontrol
+        "solvent": str(raw.get("solvent") or "").strip(),
+        "charge": _integer(raw.get("charge", 0), field="charge"),
+        "uhf": _integer(raw.get("uhf", 0), field="uhf", minimum=0),
+        "opt_level": _choice(raw.get("opt_level", "normal"), field="opt_level", choices=_OPT_LEVELS),
+    }
+    if config["solvent_model"] == "none" and config["solvent"]:
+        raise ValueError("manifest.solvent must be empty when solvent_model=none")
+    if config["solvent_model"] != "none" and not config["solvent"]:
+        raise ValueError(f"manifest.solvent is required when solvent_model={config['solvent_model']}")
+    return config
+
+
+def _build_xtb_command(config: dict[str, Any], *, xtb_bin: str) -> list[str]:
+    command = [xtb_bin, str(config["coordinate_file"])]
+    command.extend(_xtb_method_flags(str(config["gfn"])))
+    command.extend(["--chrg", str(int(config["charge"])), "--uhf", str(int(config["uhf"]))])
+    solvent_model = str(config["solvent_model"])
+    solvent = str(config["solvent"])
+    if solvent_model == "alpb":
+        command.extend(["--alpb", solvent])
+    elif solvent_model == "gbsa":
+        command.extend(["--gbsa", solvent])
+
+    mode = str(config["mode"])
+    if mode == "opt":
+        command.extend(["--opt", str(config["opt_level"])])
+    elif mode == "hess":
+        command.append("--hess")
+    elif mode == "md":
+        command.append("--md")
+    if config.get("xcontrol_file"):
+        command.extend(["--input", str(config["xcontrol_file"])])
+    return command
 
 
 def _collect_outputs() -> dict[str, str]:
@@ -123,66 +192,31 @@ def _collect_outputs() -> dict[str, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="xTB boot wrapper for DPDispatcher tasks")
-    parser.add_argument("--input", required=True, help="Input structure filename")
-    parser.add_argument("--mode", default="opt", choices=("sp", "opt", "hess", "md"))
-    parser.add_argument("--gfn", default="gfn2", choices=("gfn2", "gfn1", "gfnff"))
-    parser.add_argument("--solvent_model", default="none", choices=("none", "alpb", "gbsa"))
-    parser.add_argument("--solvent", default="", help="Solvent name for ALPB/GBSA")
-    parser.add_argument("--charge", type=int, default=0)
-    parser.add_argument("--uhf", type=int, default=0)
-    parser.add_argument("--opt_level", default="normal")
-    parser.add_argument("--temperature", type=float, default=298.15)
-    parser.add_argument("--md_time_ps", type=float, default=5.0)
-    parser.add_argument("--timestep_fs", type=float, default=1.0)
-    parser.add_argument("--md_dump_fs", type=float, default=50.0)
+    parser = argparse.ArgumentParser(description="Manifest-driven xTB execution wrapper for DPDispatcher tasks")
+    parser.add_argument("--manifest", default="manifest.json", help="Prepared xTB stage manifest")
     parser.add_argument("--xtb_bin", default="xtb", help="xTB executable name")
     parser.add_argument("--log", default="xtb_stdout.out", help="Combined stdout/stderr log")
     args = parser.parse_args()
 
-    input_path = Path(args.input)
-    if not input_path.is_file():
-        sys.stderr.write(f"[xtb_boot] input file missing: {input_path}\n")
+    manifest_path = Path(args.manifest)
+    try:
+        config = _load_manifest(manifest_path)
+    except Exception as exc:
+        sys.stderr.write(f"[xtb_boot] invalid prepared stage: {exc}\n")
         return 2
 
     xtb_bin = shutil.which(args.xtb_bin) or args.xtb_bin
-    base_cmd = [xtb_bin, input_path.name]
-    base_cmd.extend(_xtb_method_flags(args.gfn))
-    base_cmd.extend(["--chrg", str(int(args.charge)), "--uhf", str(int(args.uhf))])
-    solvent = _normalize_optional_text(args.solvent)
-    if args.solvent_model == "alpb" and solvent:
-        base_cmd.extend(["--alpb", solvent])
-    elif args.solvent_model == "gbsa" and solvent:
-        base_cmd.extend(["--gbsa", solvent])
-
-    extra_files: list[str] = []
-    if args.mode == "sp":
-        pass
-    elif args.mode == "opt":
-        base_cmd.extend(["--opt", str(args.opt_level)])
-    elif args.mode == "hess":
-        base_cmd.append("--hess")
-    elif args.mode == "md":
-        xcontrol = _build_md_input(
-            temperature=args.temperature,
-            md_time_ps=args.md_time_ps,
-            timestep_fs=args.timestep_fs,
-            md_dump_fs=args.md_dump_fs,
-        )
-        extra_files.append(xcontrol.name)
-        base_cmd.extend(["--md", "--input", xcontrol.name])
-    else:
-        sys.stderr.write(f"[xtb_boot] unsupported mode: {args.mode}\n")
-        return 2
-
+    command = _build_xtb_command(config, xtb_bin=xtb_bin)
     summary_path = Path("xtb_summary.json")
     started = time.time()
-    completed = False
     nthreads = _resolve_threads()
     env = _xtb_env(nthreads)
+    returncode = 127
+    execution_error = ""
     with open(args.log, "w", encoding="utf-8") as log_handle:
         log_handle.write(f"[xtb_boot] cwd={Path.cwd()}\n")
-        log_handle.write(f"[xtb_boot] command={' '.join(base_cmd)}\n")
+        log_handle.write(f"[xtb_boot] manifest={manifest_path.name}\n")
+        log_handle.write(f"[xtb_boot] command={' '.join(command)}\n")
         log_handle.write(f"[xtb_boot] xtb_bin={xtb_bin}\n")
         log_handle.write(f"[xtb_boot] threads={nthreads}\n")
         for key in (
@@ -199,20 +233,26 @@ def main() -> int:
         ):
             log_handle.write(f"[xtb_boot] env {key}={env.get(key, '')}\n")
         log_handle.flush()
-        proc = subprocess.run(base_cmd, stdout=log_handle, stderr=subprocess.STDOUT, env=env, check=False)
-        completed = proc.returncode == 0
+        try:
+            proc = subprocess.run(command, stdout=log_handle, stderr=subprocess.STDOUT, env=env, check=False)
+            returncode = int(proc.returncode)
+        except OSError as exc:
+            execution_error = f"{type(exc).__name__}: {exc}"
+            log_handle.write(f"[xtb_boot] execution_error={execution_error}\n")
 
     payload = {
-        "completed": completed,
-        "returncode": int(proc.returncode),
-        "command": base_cmd,
-        "input": input_path.name,
-        "mode": args.mode,
-        "gfn": args.gfn,
-        "solvent_model": args.solvent_model,
-        "solvent": solvent or None,
-        "charge": int(args.charge),
-        "uhf": int(args.uhf),
+        "completed": returncode == 0,
+        "returncode": returncode,
+        "command": command,
+        "manifest": manifest_path.name,
+        "coordinate_file": config["coordinate_file"],
+        "xcontrol_file": config["xcontrol_file"] or None,
+        "mode": config["mode"],
+        "gfn": config["gfn"],
+        "solvent_model": config["solvent_model"],
+        "solvent": config["solvent"] or None,
+        "charge": config["charge"],
+        "uhf": config["uhf"],
         "started_at": started,
         "finished_at": time.time(),
         "threads": nthreads,
@@ -223,12 +263,12 @@ def main() -> int:
             "OMP_MAX_ACTIVE_LEVELS": env.get("OMP_MAX_ACTIVE_LEVELS", ""),
             "OMP_STACKSIZE": env.get("OMP_STACKSIZE", ""),
         },
-        "extra_files": extra_files,
         "outputs": _collect_outputs(),
         "log_file": args.log,
+        "execution_error": execution_error or None,
     }
     summary_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    return int(proc.returncode)
+    return returncode
 
 
 if __name__ == "__main__":

@@ -80,6 +80,8 @@ agents:
   task_runner: codex-oauth-worker
   research_lead: codex-oauth-main
   research_state_updater: codex-oauth-worker
+  hypothesis_proposer: codex-oauth-main
+  evidence_judge: codex-oauth-worker
   write_director: codex-oauth-main
   section_writer: codex-oauth-worker
   write_reviewer: codex-oauth-main

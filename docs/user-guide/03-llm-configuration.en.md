@@ -14,12 +14,24 @@ For example, "Explain why isolated Pd resists sintering on CeO2" is not a single
 
 Research is a good fit for building an evidence-aware plan, comparing literature with existing project data, maintaining hypotheses and evidence gaps across stages, and closing a requested stage with limitations instead of expanding forever. It is not the best entry for a one-step supercell conversion or a narrowly scoped literature search.
 
+When several explanations remain live or one result may bear on more than one explanation, Research can open a persistent hypothesis campaign. A dedicated `hypothesis_proposer` first returns falsifiable claims with rationales, predictions, and discriminating checks. Research validates and saves that scientific plan through the controller. Research does not invent campaign hypotheses itself.
+
+Each verification action names its executor, scientific question, bounded task, target hypotheses, decision rule, prerequisites, information value, and coarse cost. The deterministic controller checks dependencies, duplicate scientific tasks, and unresolved targets. It ranks eligible work by information value first and coarse cost second. Cost is a ranking label, not permission: a high-cost action follows the same managed-execution and approval rules as any other action. The controller does not generate hypotheses, interpret evidence, schedule background jobs, or maintain a compute budget.
+
+Research sends one selected packet to its named executor. Literature checks still belong to Literature Review, and computational checks still belong to Experiment and its workers. After execution, a separate `evidence_judge` compares the complete result with the hypotheses, predictions, and decision rule. It must return one `supports`, `opposes`, or `inconclusive` effect for every target hypothesis. Research records that judgment without rewriting it. A failed action stores only its failure reason and does not count as scientific evidence.
+
+If the evidence exposes a missing explanation or a needed follow-up, the controller reports `needs_hypothesis_revision`. Research then asks the hypothesis proposer for a separate revision before extending the campaign. Result recording cannot create branches in the same call. The scientific state has no interactive/full-auto mode. A normal Research request may advance sequential actions in its original thread. WebUI Automatic Research is a separate asynchronous scheduler that starts one ordinary Research thread per ranked non-human action. Human-owned actions wait for a manual thread and user input.
+
+The campaign does not bypass normal ownership. A literature packet still belongs to Literature Review, and a DFT or experiment packet still goes through Experiment, its worker, the managed execution path, and any required approval. Simple linear tasks do not create a campaign.
+
 <details>
 <summary>Current roles, tools, and skills available to Research</summary>
 
-Research delegates to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`. It retains common workspace, task-planning, and project-memory capabilities but does not directly own VASP, slab, or remote-submission tools.
+Research delegates scientific plan formation to `hypothesis_proposer`, evidence interpretation to `evidence_judge`, and execution to `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, or `litreview_agent`. It retains common workspace, task-planning, and project-memory capabilities but does not directly own VASP, slab, or remote-submission tools. The proposer and judge have no execution tools.
 
-Its research skills are `nature-citation`, `nature-data`, `nature-experiment-log`, `nature-figure`, `nature-literature-pipeline`, `nature-paper-to-patent`, `researchwrite`, `nature-reader`, `nature-ref-verifier`, and `nature-writing`. Calculation execution moves into Experiment and its worker skills.
+For branch-aware campaigns, Research has five controller tools to initialize, inspect, extend, advance, and record a result. The persistent state lives at `files/research_hypothesis_engines/<campaign_id>/state.json` and contains the question, hypotheses, verification actions, evidence judgments, current reservation, and revision. It does not store WebUI automation jobs or thread audit data. State mutations are serialized and saved atomically. A Map click reserves the displayed revision and creates a new ordinary Research thread. That child has its own DeepAgent checkpoint and lightweight Research Kernel, while its runtime context points controller calls to the source campaign id. Evidence may cite one DOI, URL, run, or artifact as its scientific source. Detailed execution records and resource use remain in the existing thread, receipt, and artifact stores.
+
+Its research skills include `hypothesis-campaign-control`, `nature-citation`, `nature-data`, `nature-experiment-log`, `nature-figure`, `nature-literature-pipeline`, `nature-paper-to-patent`, `researchwrite`, `nature-reader`, `nature-ref-verifier`, and `nature-writing`. Calculation execution moves into Experiment and its worker skills.
 
 </details>
 

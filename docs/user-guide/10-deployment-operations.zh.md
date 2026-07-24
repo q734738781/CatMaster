@@ -66,6 +66,8 @@ agents:
 | `summary` | 总结与通用审查 fallback | 必需 |
 | `research_lead` | Research Agent | `director` |
 | `research_state_updater` | Research 状态更新 | `research_lead` |
+| `hypothesis_proposer` | 形成可证伪假设与验证计划 | `research_lead` |
+| `evidence_judge` | 独立解释验证证据 | `research_state_updater` |
 | `write_director` | Writing coordinator | `research_lead` |
 | `section_writer` | Writing worker | `task_runner` |
 | `write_reviewer` | 写作检查与审稿 | `summary` |

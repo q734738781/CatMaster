@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# Code writing date: 2026-07-24
+# Responsible/related agent: Codex and the CatMaster ORCA/xTB worker maintainers.
+# Implementation principle: prepare complete chemistry stages before managed execution.
+# Purpose: exercise molecular preparation, xTB/CREST/ORCA execution, and result analysis end to end.
 from __future__ import annotations
 
 import argparse
@@ -7,9 +12,10 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from catmaster.runtime.tool_runtime import toolcall_context
 from catmaster.tools.analysis import analyze_orca_results, analyze_xtb_results
 from catmaster.tools.base import ensure_project_space_layout, resolve_workspace_path, workspace_scope
-from catmaster.tools.execution import crest_conformer_search, orca_execute_batch, xtb_run_batch
+from catmaster.tools.execution import crest_conformer_search, orca_execute_batch, remote_submission
 from catmaster.tools.geometry_inputs import (
     create_molecule_from_smiles,
     enumerate_molecular_conformers,
@@ -20,6 +26,7 @@ from catmaster.tools.geometry_inputs import (
     orca_optts_prepare,
     orca_prepare,
     orca_scan_prepare,
+    xtb_prepare,
 )
 
 
@@ -76,6 +83,13 @@ def _step(records: list[dict[str, Any]], name: str, fn, payload: dict[str, Any])
         _record_fail(records, name, exc)
         print(f"[smoke] FAIL  {name}: {type(exc).__name__}: {exc}")
         return None
+
+
+def _execute_prepared_xtb(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    work_dir = str(payload.get("work_dir") or "xtb_stage")
+    call_id = f"full_qchem_smoke_{Path(work_dir).name}"
+    with toolcall_context(call_id, audience="orca_xtb_worker"):
+        return remote_submission(payload)
 
 
 def _prepare_inputs() -> None:
@@ -182,50 +196,77 @@ def run_smoke(workspace: Path, *, check_interval: int) -> dict[str, Any]:
 
         _step(
             records,
-            "xtb_run_batch_h2o_sp",
-            xtb_run_batch,
+            "xtb_prepare_h2o_sp",
+            xtb_prepare,
             {
                 "input_path": "structures/h2o.xyz",
                 "output_root": "runs/xtb_h2o_sp",
                 "mode": "sp",
                 "gfn": "gfn2",
-                "check_interval": check_interval,
+            },
+        )
+        _step(
+            records,
+            "xtb_execute_h2o_sp",
+            _execute_prepared_xtb,
+            {
+                "work_dir": "runs/xtb_h2o_sp",
+                "task_name": "xtb_execute",
+                "submission_config": {"check_interval": check_interval},
             },
         )
         _step(records, "analyze_xtb_results_h2o_sp", analyze_xtb_results, {"result_root": "runs/xtb_h2o_sp"})
 
         _step(
             records,
-            "xtb_run_batch_h2o_opt",
-            xtb_run_batch,
+            "xtb_prepare_h2o_opt",
+            xtb_prepare,
             {
                 "input_path": "structures/h2o.xyz",
                 "output_root": "runs/xtb_h2o_opt",
                 "mode": "opt",
                 "gfn": "gfn2",
-                "check_interval": check_interval,
+            },
+        )
+        _step(
+            records,
+            "xtb_execute_h2o_opt",
+            _execute_prepared_xtb,
+            {
+                "work_dir": "runs/xtb_h2o_opt",
+                "task_name": "xtb_execute",
+                "submission_config": {"check_interval": check_interval},
             },
         )
         _step(records, "analyze_xtb_results_h2o_opt", analyze_xtb_results, {"result_root": "runs/xtb_h2o_opt"})
 
         _step(
             records,
-            "xtb_run_batch_nh3_hess",
-            xtb_run_batch,
+            "xtb_prepare_nh3_hess",
+            xtb_prepare,
             {
                 "input_path": "structures/nh3.xyz",
                 "output_root": "runs/xtb_nh3_hess",
                 "mode": "hess",
                 "gfn": "gfn2",
-                "check_interval": check_interval,
+            },
+        )
+        _step(
+            records,
+            "xtb_execute_nh3_hess",
+            _execute_prepared_xtb,
+            {
+                "work_dir": "runs/xtb_nh3_hess",
+                "task_name": "xtb_execute",
+                "submission_config": {"check_interval": check_interval},
             },
         )
         _step(records, "analyze_xtb_results_nh3_hess", analyze_xtb_results, {"result_root": "runs/xtb_nh3_hess"})
 
         _step(
             records,
-            "xtb_run_batch_h2o_md",
-            xtb_run_batch,
+            "xtb_prepare_h2o_md",
+            xtb_prepare,
             {
                 "input_path": "structures/h2o.xyz",
                 "output_root": "runs/xtb_h2o_md",
@@ -235,7 +276,16 @@ def run_smoke(workspace: Path, *, check_interval: int) -> dict[str, Any]:
                 "md_time_ps": 0.1,
                 "timestep_fs": 0.5,
                 "md_dump_fs": 5.0,
-                "check_interval": check_interval,
+            },
+        )
+        _step(
+            records,
+            "xtb_execute_h2o_md",
+            _execute_prepared_xtb,
+            {
+                "work_dir": "runs/xtb_h2o_md",
+                "task_name": "xtb_execute",
+                "submission_config": {"check_interval": check_interval},
             },
         )
         _step(records, "analyze_xtb_results_h2o_md", analyze_xtb_results, {"result_root": "runs/xtb_h2o_md"})

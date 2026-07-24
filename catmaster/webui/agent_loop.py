@@ -644,6 +644,9 @@ class ThreadAgentLoopService:
                     project_id=self.workspace_id or self.workspace.name,
                     preferred_entrypoint=normalized_entrypoint,
                     interrupt_on=self.interrupt_on_for_permission_mode(turn_permission_mode),
+                    research_campaign_id=str(
+                        dict(thread.meta or {}).get("research_campaign_id") or ""
+                    ),
                 )
                 active_run_context = built.run_context
                 self.store.update_message(
@@ -673,7 +676,7 @@ class ThreadAgentLoopService:
                     should_stop=self.should_stop,
                 )
                 if resume_decisions is not None:
-                    await streaming_runner.aresume(
+                    run_result = await streaming_runner.aresume(
                         decisions=resume_decisions,
                         entrypoint=normalized_entrypoint,
                         thread_id=thread_id,
@@ -683,7 +686,7 @@ class ThreadAgentLoopService:
                         resume_tool_inputs=resume_tool_inputs or [],
                     )
                 else:
-                    await streaming_runner.arun_turn(
+                    run_result = await streaming_runner.arun_turn(
                         prompt=prompt,
                         content=turn_content,
                         entrypoint=normalized_entrypoint,
@@ -692,7 +695,9 @@ class ThreadAgentLoopService:
                         text_part_id=text_part_id,
                         deepagent_thread_id=thread.deepagent_thread_id,
                     )
-                terminal_status = "done"
+                terminal_status = str(
+                    run_result.get("status") if isinstance(run_result, dict) else ""
+                ).strip() or "done"
             except asyncio.CancelledError:
                 terminal_status = "stopped"
                 self.store.update_thread(thread_id, status=ThreadStatus.STOPPED, active_message_id="", active_run_id="")
@@ -702,7 +707,7 @@ class ThreadAgentLoopService:
                 self.store.update_thread(thread_id, status=ThreadStatus.ERROR, active_message_id="", active_run_id="")
                 self.broker.emit(thread_id, "error", message_id=assistant_message.id, status="error", data={"error": str(exc)})
             finally:
-                if self.on_turn_finished is not None and active_run_context is not None:
+                if self.on_turn_finished is not None:
                     try:
                         self.on_turn_finished(
                             workspace=self.workspace,
@@ -711,8 +716,16 @@ class ThreadAgentLoopService:
                             message_id=str(existing_user_message_id or ""),
                             prior_assistant_message_id=prior_assistant_message_id,
                             assistant_message_id=assistant_message.id,
-                            run_id=active_run_context.run_id,
-                            run_dir=active_run_context.run_dir,
+                            run_id=(
+                                active_run_context.run_id
+                                if active_run_context is not None
+                                else ""
+                            ),
+                            run_dir=(
+                                active_run_context.run_dir
+                                if active_run_context is not None
+                                else ""
+                            ),
                             entrypoint=normalized_entrypoint,
                             terminal_status=terminal_status or "unknown",
                             model_config=model_config,

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { Files, GitBranch, LogIn, LogOut, MonitorDot, RefreshCw, ShieldAlert, ShieldCheck, UserPlus, Workflow } from "lucide-react";
+import { Files, GitBranch, LogIn, LogOut, MonitorDot, Network, RefreshCw, ShieldAlert, ShieldCheck, UserPlus, Workflow } from "lucide-react";
 
 import WorkspaceRail from "./components/WorkspaceRail";
 import ThreadMessages from "./components/ThreadMessages";
 import ThreadComposer from "./components/ThreadComposer";
 import FilePreviewTabs from "./components/FilePreviewTabs";
+import ResearchTechTreePanel from "./components/ResearchTechTreePanel";
 import { FilesPanel, MonitorPanel, SelfEvolutionPanel } from "./components/WorkspacePanels";
 import { apiFetch, useCatMasterThreadRuntime } from "./useCatMasterThreadRuntime";
 import { DEFAULT_ENTRYPOINT, entrypointMeta, normalizedEntrypoints, normalizeEntrypoint } from "./entrypoints";
@@ -331,6 +332,50 @@ export default function CatMasterWorkspace({ boot }) {
     }
   }
 
+  async function launchResearchMapAction({ sourceThreadId, actionId, revision }) {
+    setError("");
+    const payload = await apiFetch(
+      `/api/threads/${encodeURIComponent(sourceThreadId)}/hypothesis-engine/launch`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          action_id: actionId,
+          expected_revision: revision,
+        }),
+      },
+    );
+    if (payload.thread) {
+      updateThread(payload.thread);
+      setActiveThreadId(payload.thread.thread_id);
+      setActiveTab("chat");
+    }
+    return payload;
+  }
+
+  async function setResearchMapAutopilot({ sourceThreadId, enabled }) {
+    setError("");
+    const command = enabled ? "start" : "stop";
+    const payload = await apiFetch(
+      `/api/threads/${encodeURIComponent(sourceThreadId)}/hypothesis-engine/autopilot/${command}`,
+      { method: "POST", body: "{}" },
+    );
+    if (payload.source_thread) updateThread(payload.source_thread);
+    if (payload.automation?.child_thread) updateThread(payload.automation.child_thread);
+    return payload;
+  }
+
+  async function openThread(threadId) {
+    if (!threadId) return;
+    try {
+      const payload = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}`);
+      if (payload.thread) updateThread(payload.thread);
+      setActiveThreadId(threadId);
+      setActiveTab("chat");
+    } catch (err) {
+      setError(err.message || String(err));
+    }
+  }
+
   async function createWorkspace() {
     if (!bootstrap?.ctx) return;
     const name = window.prompt("New workspace name");
@@ -532,6 +577,7 @@ export default function CatMasterWorkspace({ boot }) {
               <nav className="v2-workspace-tabs" aria-label="Workspace tabs">
                 <button type="button" className={activeTab === "chat" ? "active" : ""} onClick={() => setActiveTab("chat")}>Chat</button>
                 <button type="button" className={activeTab === "monitor" ? "active" : ""} onClick={() => setActiveTab("monitor")}><MonitorDot size={14} />Monitor</button>
+                <button type="button" className={activeTab === "hypotheses" ? "active" : ""} onClick={() => setActiveTab("hypotheses")}><Network size={14} />Research Map</button>
                 {selfEvolutionEnabled ? (
                   <button type="button" className={activeTab === "evolution" ? "active" : ""} onClick={() => { setActiveTab("evolution"); refreshSelfEvolution(); }}>
                     <GitBranch size={14} />Skill Evolution
@@ -586,6 +632,16 @@ export default function CatMasterWorkspace({ boot }) {
             </>
           ) : null}
           {activeTab === "monitor" ? <MonitorPanel ctx={bootstrap?.ctx || ""} workspaceName={workspaceName} thread={activeThread} entrypoint={selectedEntrypoint} events={runtimeState.events} /> : null}
+          {activeTab === "hypotheses" ? (
+            <ResearchTechTreePanel
+              thread={activeThread}
+              isRunning={runtimeState.isRunning}
+              onLaunchAction={launchResearchMapAction}
+              onSetAutopilot={setResearchMapAutopilot}
+              onOpenThread={openThread}
+              onThreadUpdate={updateThread}
+            />
+          ) : null}
           {activeTab === "evolution" && selfEvolutionEnabled ? (
             <SelfEvolutionPanel
               ctx={bootstrap?.ctx || ""}

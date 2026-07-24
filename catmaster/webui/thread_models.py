@@ -133,6 +133,11 @@ class ThreadSubmitRequest(BaseModel):
     attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ResearchMapLaunchRequest(BaseModel):
+    action_id: str = Field(..., min_length=1)
+    expected_revision: int = Field(-1, ge=-1)
+
+
 class ThreadResumeRequest(BaseModel):
     decisions: list[dict[str, Any]] = Field(default_factory=list)
     text: str = ""
@@ -156,6 +161,7 @@ __all__ = [
     "ArtifactRecord",
     "InterruptRecord",
     "MessagePart",
+    "ResearchMapLaunchRequest",
     "ThreadCreateRequest",
     "ThreadEventEnvelope",
     "ThreadMessage",

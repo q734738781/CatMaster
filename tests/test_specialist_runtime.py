@@ -14,6 +14,14 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
 import catmaster.specialists.runtime as runtime_mod
+from catmaster.research.hypothesis_engine import (
+    ExecutionLane,
+    Hypothesis,
+    HypothesisEngine,
+    HypothesisEngineState,
+    VerificationAction,
+)
+from catmaster.research.hypothesis_engine.storage import save_engine
 from catmaster.specialists.runtime import (
     RUN_STATE_FILE,
     _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
@@ -483,6 +491,70 @@ def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
     assert "When one worker review episode returns, actively decide whether another bounded delegate pass is needed" in peer_review_prompt
 
 
+def test_map_research_thread_separates_kernel_identity_from_campaign_identity(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project_space"
+    files_root = workspace / "files"
+    files_root.mkdir(parents=True)
+    campaign_id = "thread-parent-campaign"
+    execution_id = "thread-map-child"
+    engine = HypothesisEngine(
+        HypothesisEngineState(
+            question="Which mechanism survives?",
+            hypotheses=[
+                Hypothesis(
+                    id="h1",
+                    claim="Mechanism one is active.",
+                    rationale="It matches the observed trend.",
+                    predictions=["Observable one increases."],
+                )
+            ],
+            actions=[
+                VerificationAction(
+                    id="a1",
+                    executor=ExecutionLane.LITERATURE,
+                    question="Does the source report observable one?",
+                    task="Check the primary source.",
+                    target_hypotheses=["h1"],
+                    decision_rule="A reported increase supports h1.",
+                )
+            ],
+        )
+    )
+    save_engine(files_root, campaign_id, engine)
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="project",
+        preferred_entrypoint="research",
+        research_campaign_id=campaign_id,
+    )
+    kernel_relpath = built.runner._ensure_research_kernel_seed(
+        files_root=files_root,
+        thread_id=execution_id,
+        prompt="Execute map action a1.",
+    )
+
+    prompt = built.runner._system_prompt("research", thread_id=execution_id)
+    state = built.runner._research_kernel_state_fields(
+        files_root=files_root,
+        thread_id=execution_id,
+        relpath=kernel_relpath,
+    )
+
+    assert f"`{execution_id}`" in prompt
+    assert f"`{campaign_id}`" in prompt
+    assert f"research_kernels/{execution_id}/kernel.json" in kernel_relpath
+    assert state["research_kernel"]["question"] == "Execute map action a1."
+    assert state["hypothesis_campaign_id"] == campaign_id
+    assert state["hypothesis_engine"]["question"] == "Which mechanism survives?"
+    assert campaign_id in state["hypothesis_engine_path"]
+    assert execution_id not in state["hypothesis_engine_path"]
+
+
 def test_specialist_prompts_integrate_property_lookup_and_delegated_compute_rules() -> None:
     research_prompt = runtime_mod.SpecialistRunner._base_system_prompt("research", thread_id="thread-1")
     experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
@@ -518,6 +590,7 @@ def test_execution_capability_contract_is_worker_scoped_and_tool_surface_bound(t
     assert "remote_submission" in _DYNAMICS_WORKER_TOOL_ALLOWLIST
     assert "remote_submission" in _ML_WORKER_TOOL_ALLOWLIST
     assert "remote_submission" in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
+    assert "xtb_prepare" in _ORCA_XTB_WORKER_TOOL_ALLOWLIST
     assert {name for name in _MATERIALS_WORKER_TOOL_ALLOWLIST if name.startswith("cp2k_")} == {"cp2k_prepare"}
     assert {"cp2k_aimd_prepare", "cp2k_output_summary", "lammps_prepare", "lammps_log_summary"} <= _DYNAMICS_WORKER_TOOL_ALLOWLIST
     assert "mace_neb_batch" not in _MATERIALS_WORKER_TOOL_ALLOWLIST
@@ -1005,7 +1078,17 @@ def test_run_impl_retries_invalid_final_report_and_recovers(
 @pytest.mark.parametrize(
     ("entrypoint", "expected_subagent_names"),
     [
-        ("research", ["experiment_specialist", "writing_specialist", "peer_review_specialist", "litreview_agent"]),
+        (
+            "research",
+            [
+                "hypothesis_proposer",
+                "evidence_judge",
+                "experiment_specialist",
+                "writing_specialist",
+                "peer_review_specialist",
+                "litreview_agent",
+            ],
+        ),
         ("experiment", ["materials_worker", "ml_worker", "dynamics_worker", "orca_xtb_worker"]),
         ("literature_review", []),
         ("writing", ["writing_worker_agent", "writing_polisher_agent"]),
@@ -1137,6 +1220,9 @@ def test_specialist_lanes_start_with_staged_skills(
         return matches[0]
 
     if entrypoint == "research":
+        assert {tool.name for tool in agent_kwargs["tools"]} == (
+            _RESEARCH_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
         assert "Maintain a lightweight Research Kernel" in agent_kwargs["system_prompt"]
         assert "/research_kernels/" in agent_kwargs["system_prompt"]
         assert "Research goal guard: the active objective is runtime-owned" in agent_kwargs["system_prompt"]
@@ -1150,6 +1236,10 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "do not force fixed `Summary` / `Facts` / `Files` headings" in agent_kwargs["system_prompt"]
         assert "A requested stage may be complete while frontier items remain" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
+        assert "hypothesis_proposer" in agent_kwargs["system_prompt"]
+        assert "evidence_judge" in agent_kwargs["system_prompt"]
+        assert "do not invent campaign hypotheses" in agent_kwargs["system_prompt"]
+        assert "without grading the evidence yourself" in agent_kwargs["system_prompt"]
         assert "metadata_agent" not in agent_kwargs["system_prompt"]
         assert "paper, manuscript, journal-style LaTeX draft" in agent_kwargs["system_prompt"]
         assert "experiment report, validation summary, QC note" in agent_kwargs["system_prompt"]
@@ -1168,12 +1258,26 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["experiment_specialist"]
         assert "runnable" in subagents_by_name["writing_specialist"]
         assert "runnable" in subagents_by_name["peer_review_specialist"]
+        proposer = subagents_by_name["hypothesis_proposer"]
+        judge = subagents_by_name["evidence_judge"]
+        assert proposer["tools"] == []
+        assert judge["tools"] == []
+        assert proposer["model"] == {"model": "hypothesis_proposer-model"}
+        assert judge["model"] == {"model": "evidence_judge-model"}
+        assert proposer["response_format"].__name__ == "HypothesisPlan"
+        assert judge["response_format"].__name__ == "EvidenceJudgment"
+        assert "does not execute or judge evidence" in proposer["description"]
+        assert "does not propose branches or schedule work" in judge["description"]
 
         experiment_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "experiment_specialist"]
         assert experiment_agents, "expected nested experiment specialist to be created"
         experiment_agent_kwargs = experiment_agents[0]
         assert experiment_agent_kwargs["model"] == {"model": "director-model"}
         assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        assert not (
+            _RESEARCH_TOOL_ALLOWLIST
+            & {tool.name for tool in experiment_agent_kwargs["tools"]}
+        )
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
         _assert_native_skill_groups(experiment_agent_kwargs, "writing_quality")
         assert "read and apply the `humanizer` skill" in experiment_agent_kwargs["system_prompt"]
@@ -1220,6 +1324,10 @@ def test_specialist_lanes_start_with_staged_skills(
         litreview_agent_kwargs = litreview_agents[0]
         assert litreview_agent_kwargs["model"] == {"model": "literature_deep_research-model"}
         assert {tool.name for tool in litreview_agent_kwargs["tools"]} == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+        assert not (
+            _RESEARCH_TOOL_ALLOWLIST
+            & {tool.name for tool in litreview_agent_kwargs["tools"]}
+        )
         _assert_native_skill_groups(litreview_agent_kwargs, "litreview_agent", "writing_quality")
         _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])

@@ -14,7 +14,9 @@ import pytest
 from ase import Atoms
 from ase.build import bulk, molecule
 from ase.calculators.calculator import Calculator, all_changes
-from ase.io import write
+from ase.calculators.singlepoint import SinglePointCalculator
+from ase.constraints import FixAtoms, FixCartesian, FixScaled
+from ase.io import read, write
 
 from catmaster.runtime.tool_runtime import toolcall_context
 from catmaster.tools.base import workspace_scope
@@ -746,6 +748,7 @@ def test_remote_task_spec_returns_one_concrete_non_union_mlff_schema() -> None:
     assert "backend_config.defaults.uma_task" in content
     assert "task_config.fmax" in content
     assert "Constraints:" in content
+    assert any("move_mask" in item for item in data["constraints"])
     assert "Minimal template_overrides example:" in content
     assert "Concrete template JSON Schema:" in content
     assert '"additionalProperties": false' in content
@@ -1175,6 +1178,154 @@ def test_common_relax_runner_uses_ase_force_norm_convergence(tmp_path: Path) -> 
     assert "max_force_abs_eVA" not in summary
     assert "max_force_norm_eVA" not in summary
     assert summary["converged"] is False
+
+
+def test_common_relax_runner_preserves_extxyz_fixatoms_and_output_format(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    input_dir = stage / "input"
+    input_dir.mkdir(parents=True)
+    atoms = Atoms(
+        "Cu2",
+        positions=[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        cell=[10.0, 10.0, 10.0],
+        pbc=True,
+    )
+    atoms.set_constraint(FixAtoms(indices=[0]))
+    atoms.calc = SinglePointCalculator(
+        atoms,
+        energy=123.0,
+        forces=np.ones((len(atoms), 3)),
+        stress=np.zeros(6),
+    )
+    write(input_dir / "constrained.extxyz", atoms, format="extxyz")
+    resolved = resolve_mlff_template(
+        "mlff_relax",
+        {
+            "backend": "mace",
+            "task_config": {"fmax": 1.0e-3, "steps": 500},
+        },
+        audience="materials_worker",
+    )
+    materialize_mlff_run_config(
+        stage_dir=stage,
+        task_name="mlff_relax",
+        resolved=resolved,
+    )
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            return _HarmonicCalculator()
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    monkeypatch.setitem(mlff_common._ADAPTER_TYPES, "mace", FakeAdapter)
+    monkeypatch.chdir(stage)
+    batch = mlff_common.run("relax", ".catmaster/generated/run_config.json")
+
+    assert batch["errors"] == []
+    summary = batch["results"][0]["summary"]
+    assert summary["output_structure"] == "opt.extxyz"
+    output_path = stage / "output" / "constrained" / "opt.extxyz"
+    assert output_path.is_file()
+    assert not (output_path.parent / "opt.vasp").exists()
+    restored = read(output_path, index=-1)
+    assert restored.positions[0] == pytest.approx([1.0, 0.0, 0.0])
+    assert restored.positions[1] == pytest.approx([0.0, 0.0, 0.0], abs=1.0e-3)
+    assert restored.get_potential_energy() == pytest.approx(summary["final_energy_eV"])
+    assert restored.get_potential_energy() != pytest.approx(123.0)
+    assert len(restored.constraints) == 1
+    assert isinstance(restored.constraints[0], FixAtoms)
+    assert restored.constraints[0].get_indices().tolist() == [0]
+    assert "move_mask:L:1" in output_path.read_text(encoding="utf-8").splitlines()[1]
+
+
+def test_common_sp_runner_preserves_extxyz_fixatoms_and_output_format(
+    tmp_path: Path,
+) -> None:
+    atoms = Atoms(
+        "Cu2",
+        positions=[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        cell=[10.0, 10.0, 10.0],
+        pbc=True,
+    )
+    atoms.set_constraint(FixAtoms(indices=[0]))
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            return _HarmonicCalculator()
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    summary = mlff_common._run_sp(
+        atoms=atoms,
+        output_dir=tmp_path,
+        config={
+            "backend": "mace",
+            "operation": "sp",
+            "config_digest": "test",
+            "task_config": {},
+        },
+        item_config={"model": "test", "device": "cpu"},
+        adapter=FakeAdapter(),
+        source_name="input.extxyz",
+    )
+
+    assert summary["output_structure"] == "sp.extxyz"
+    restored = read(tmp_path / "sp.extxyz", index=-1)
+    assert len(restored.constraints) == 1
+    assert isinstance(restored.constraints[0], FixAtoms)
+    assert restored.constraints[0].get_indices().tolist() == [0]
+
+
+def test_extxyz_output_preserves_cartesian_mask_and_rejects_scaled_constraints(
+    tmp_path: Path,
+) -> None:
+    atoms = Atoms(
+        "Cu2",
+        positions=[[1.0, 0.0, 0.0], [2.0, 1.0, 0.0]],
+        cell=[10.0, 10.0, 10.0],
+        pbc=True,
+    )
+    atoms.set_constraint(FixCartesian(1, mask=[True, False, True]))
+    output_name = mlff_common._output_structure(
+        tmp_path,
+        atoms,
+        stem="opt",
+        source_name="input.extxyz",
+    )
+    assert output_name == "opt.extxyz"
+    output_path = tmp_path / output_name
+    assert "move_mask:L:3" in output_path.read_text(encoding="utf-8").splitlines()[1]
+    restored = read(output_path, index=-1)
+    constrained = next(
+        constraint
+        for constraint in restored.constraints
+        if 1 in constraint.get_indices()
+    )
+    assert isinstance(constrained, FixCartesian)
+    assert constrained.mask.tolist() == [True, False, True]
+
+    atoms.set_constraint(FixScaled(1, mask=[True, False, True]))
+    with pytest.raises(ValueError, match="FixAtoms and FixCartesian.*FixScaled"):
+        mlff_common._output_structure(
+            tmp_path,
+            atoms,
+            stem="scaled",
+            source_name="input.extxyz",
+        )
 
 
 def test_generic_md_runner_uses_adapter_calculator_and_resultant_force(

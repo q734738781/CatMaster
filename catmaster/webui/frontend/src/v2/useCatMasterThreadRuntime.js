@@ -163,7 +163,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
     };
   }, [thread?.thread_id, onThreadUpdate]);
 
-  const submitText = useCallback(async (text, attachments = []) => {
+  const submitText = useCallback(async (text, attachments = [], submitOptions = {}) => {
     const body = String(text || "").trim();
     const attachmentRows = Array.isArray(attachments) ? attachments : [];
     if (!thread?.thread_id || (!body && !attachmentRows.length)) return;
@@ -173,16 +173,18 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
         method: "POST",
         body: JSON.stringify({
           text: body,
-          entrypoint: thread.entrypoint || "research",
-          permission_mode: thread?.meta?.permission_mode || "auto",
+          entrypoint: submitOptions.entrypoint || thread.entrypoint || "research",
+          permission_mode: submitOptions.permission_mode || thread?.meta?.permission_mode || "auto",
           attachments: attachmentRows,
         }),
       });
       if (payload.message) setMessages((prev) => upsertById(prev, payload.message));
       if (payload.assistant_message) setMessages((prev) => upsertById(prev, payload.assistant_message));
       if (payload.thread) onThreadUpdate?.(payload.thread);
+      return payload;
     } catch (err) {
       setError(err.message || String(err));
+      throw err;
     }
   }, [thread, onThreadUpdate]);
 

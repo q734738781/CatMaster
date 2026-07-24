@@ -29,20 +29,20 @@ from catmaster.tools.registry import ToolRegistry
 remote_submission_mod = importlib.import_module("catmaster.tools.execution.remote_submission")
 
 
-def test_package_root_preserves_legacy_execution_exports() -> None:
+def test_package_roots_expose_retained_execution_and_xtb_prepare_tools() -> None:
     from catmaster.tools.execution import (
         MaceRelaxInput,
         VaspExecuteInput,
         crest_conformer_search,
         orca_execute_batch,
-        xtb_run_batch,
     )
+    from catmaster.tools.geometry_inputs import xtb_prepare
 
     assert MaceRelaxInput.__name__ == "MaceRelaxInput"
     assert VaspExecuteInput.__name__ == "VaspExecuteInput"
     assert callable(crest_conformer_search)
     assert callable(orca_execute_batch)
-    assert callable(xtb_run_batch)
+    assert callable(xtb_prepare)
 
 
 def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
@@ -106,7 +106,9 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     with toolcall_context("catalog", audience="orca_xtb_worker"):
         _, artifact = get_avail_remote_task({"return_resource": True})
     qchem_task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
-    assert {"xtb_run", "orca_execute", "mlff_sp", "mlff_relax"}.issubset(qchem_task_names)
+    assert {"xtb_execute", "orca_execute", "mlff_sp", "mlff_relax"}.issubset(qchem_task_names)
+    xtb_qchem = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "xtb_execute")
+    assert xtb_qchem["template_override_keys"] == []
     mlff_qchem = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mlff_sp")
     assert "fairchem_uma" in mlff_qchem["available_backends"]
 
@@ -135,6 +137,25 @@ def test_registered_vasp_spec_reports_configured_platform_binding_without_admin_
     }
     for hidden in ("machine", "queue_name", "account", "module", "license", "revision"):
         assert hidden not in binding
+
+
+def test_xtb_execute_spec_is_manifest_driven_and_has_no_scientific_overrides() -> None:
+    with toolcall_context("spec", audience="orca_xtb_worker"):
+        content, artifact = get_remote_task_spec({"task_name": "xtb_execute"})
+
+    data = artifact["data"]
+    assert data["template_override_keys"] == []
+    assert data["template_defaults"] == {}
+    assert data["fields"] == []
+    assert "validation=ok" in content
+
+    with toolcall_context("spec", audience="orca_xtb_worker"):
+        _, invalid_artifact = get_remote_task_spec(
+            {"task_name": "xtb_execute", "template_overrides": {"mode": "sp"}}
+        )
+    errors = invalid_artifact["data"]["errors"]
+    assert errors
+    assert "Accepted keys: none" in errors[0]["message"]
 
 
 def test_remote_task_catalog_references_existing_boot_scripts_and_layout_sections() -> None:
@@ -375,13 +396,73 @@ def test_remote_submission_quotes_template_params(
             remote_submission(
                 {
                     "work_dir": "stage",
-                    "task_name": "xtb_run",
-                    "template_overrides": {"solvent_model": "alpb", "solvent": "water model"},
+                    "task_name": "crest_run",
+                    "template_overrides": {"solvent": "water model"},
                 }
             )
 
-    assert "--solvent_model alpb" in captured["command"]
     assert "--solvent 'water model'" in captured["command"]
+
+
+def test_remote_submission_runs_xtb_execute_without_runtime_science_params(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def _fake_dispatch(req, *, register=None, config_path=None):
+        _ = (register, config_path)
+        captured["command"] = req.tasks[0].command
+        return SimpleNamespace(
+            task_states=["finished"],
+            submission_dir=str(Path(req.local_root) / req.work_base),
+            work_base=req.work_base,
+            duration_s=0.1,
+            remote_context={
+                "remote_context_id": "dp_xtb_execute",
+                "submission_hash": "hash_xtb_execute",
+                "receipt_rel": "receipt.json",
+            },
+        )
+
+    monkeypatch.setattr(remote_submission_mod, "dispatch_submission", _fake_dispatch)
+
+    with workspace_scope(tmp_path):
+        stage = tmp_path / "files" / "stage"
+        stage.mkdir(parents=True)
+        (stage / "coord.xyz").write_text("2\nH2\nH 0 0 0\nH 0 0 0.7\n", encoding="utf-8")
+        (stage / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "program": "xtb",
+                    "coordinate_file": "coord.xyz",
+                    "xcontrol_file": "",
+                    "mode": "sp",
+                    "gfn": "gfn2",
+                    "solvent_model": "none",
+                    "solvent": "",
+                    "charge": 0,
+                    "uhf": 0,
+                    "opt_level": "normal",
+                }
+            ),
+            encoding="utf-8",
+        )
+        with toolcall_context("submit", audience="orca_xtb_worker"):
+            remote_submission({"work_dir": "stage", "task_name": "xtb_execute"})
+
+        with toolcall_context("submit", audience="orca_xtb_worker"):
+            with pytest.raises(CatMasterToolExecutionError, match="Accepted keys: none"):
+                remote_submission(
+                    {
+                        "work_dir": "stage",
+                        "task_name": "xtb_execute",
+                        "template_overrides": {"mode": "opt"},
+                    }
+                )
+
+    assert captured["command"] == "python task_script/xtb_boot.py --manifest manifest.json"
 
 
 def test_remote_submission_template_overrides_render_command(
@@ -425,12 +506,12 @@ def test_remote_submission_template_overrides_render_command(
             remote_submission(
                 {
                     "work_dir": "stage",
-                    "task_name": "xtb_run",
-                    "template_overrides": {"mode": "sp", "charge": -1, "uhf": 1},
+                    "task_name": "crest_run",
+                    "template_overrides": {"mode": "nci", "charge": -1, "uhf": 1},
                 }
             )
 
-    assert "--mode sp" in captured["command"]
+    assert "--mode nci" in captured["command"]
     assert "--charge -1" in captured["command"]
     assert "--uhf 1" in captured["command"]
 

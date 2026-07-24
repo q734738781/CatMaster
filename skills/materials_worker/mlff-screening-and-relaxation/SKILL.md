@@ -43,7 +43,8 @@ Prepare deterministic SP/relax stages, choose an enabled backend, and keep backe
 ### 2. Build one deterministic stage
 
 - Put files directly under `input/`; do not submit recursive project trees.
-- Preserve atom constraints and source provenance. Reject filename-stem collisions such as `case.xyz` plus `case.vasp` in one stage.
+- Preserve atom constraints and source provenance. POSCAR/VASP uses Selective Dynamics; extxyz uses the standard `move_mask` property (`L:1` for whole atoms or `L:3` for Cartesian components, with false meaning fixed). Reject filename-stem collisions such as `case.xyz` plus `case.vasp` in one stage.
+- SP/relax keeps an `.extxyz` input in extxyz output and verifies that ASE `FixAtoms`/`FixCartesian` constraints survive the write-read round trip. Use POSCAR/VASP when scaled-coordinate `FixScaled` constraints are required.
 - For registered MACE `omol-0`, set shared charge and multiplicity-style spin in `backend_config.defaults` and exceptions in `backend_config.items`, keyed by exact filenames relative to `input/`. UMA uses the same item pattern plus `uma_task`.
 
 ### 3. Group for model reuse
@@ -62,7 +63,7 @@ Prepare deterministic SP/relax stages, choose an enabled backend, and keep backe
 
 - MACE is the initial deployment default: `model=mh-1`, `head=omat_pbe`, `dispersion=false`, and `float64` for SP/relax. MACE-MH-1 heads are model-specific choices, not model aliases. Use registered `model=omol-0`, `head=omol`, and explicit charge/spin when the standalone charge/spin-aware MACE-OMOL model is required.
 - Choose dispersion explicitly for adsorption-energy comparisons and apply the same choice to clean slab, adsorbate, and references.
-- Keep `relax_cell=false` unless periodic-cell optimization is intended; cell relaxation requires a valid fully periodic cell.
+- Keep `relax_cell=false` for fixed-atom slab relaxations unless periodic-cell optimization is intentionally required; cell relaxation requires a valid fully periodic cell and can move constrained atoms affinely with the changing cell.
 - UMA model and task support is model-specific: `uma-s-1p2` exposes seven official tasks, while `uma-s-1p1` and `uma-m-1p1` do not expose `oc22` or `oc25`. `auto` is not an official UMA task. For `omol`, set charge and multiplicity-style spin explicitly; non-`omol` tasks require both values to be zero.
 - MatterSim-v1 is a bulk-material model; do not present surface, interface, or long-range-interaction results as quantitative without validation.
 - ORB-v3 defaults to `precision=float32-high`; change precision only as a declared numerical choice.
@@ -74,7 +75,7 @@ Return:
 - operation, backend, model/checkpoint, and method-critical overrides;
 - stage path or batch root with first-level stage count;
 - `work_dir_rel`, `remote_context_id`, `submission_hash`, and `receipt_rel` when present;
-- `output/batch_summary.json`, per-input error count, and shortlist/keep-drop rule;
+- `output/batch_summary.json`, each reported output structure, preserved constraint format (`opt.extxyz` for extxyz relax input), per-input error count, and shortlist/keep-drop rule;
 - the boundary between MLFF screening and any downstream reference calculation.
 
 ## References
