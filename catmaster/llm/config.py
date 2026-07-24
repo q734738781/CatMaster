@@ -194,7 +194,7 @@ def _env_runtime_token_cap(name: str, *, default: int | None) -> int | None:
 class AgentRuntimeConfig:
     recursion_limit: int = 300
     max_tool_calls: int = 120
-    deepagent_context_trigger_token_cap: int | None = 270_000
+    deepagent_context_trigger_token_cap: int | None = 258_000
     print_state_messages: bool = False
     print_http_raw_post: bool = False
 

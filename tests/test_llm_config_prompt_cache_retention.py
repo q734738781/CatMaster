@@ -534,7 +534,7 @@ def test_llm_profile_agent_runtime_recursion_limit_zero_expands(tmp_path: Path) 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.agent_runtime.recursion_limit == 1_000_000
     assert profile.agent_runtime.max_tool_calls == 120
-    assert profile.agent_runtime.deepagent_context_trigger_token_cap == 270_000
+    assert profile.agent_runtime.deepagent_context_trigger_token_cap == 258_000
     assert profile.agent_runtime.print_state_messages is False
     assert profile.agent_runtime.print_http_raw_post is False
 

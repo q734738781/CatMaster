@@ -315,7 +315,7 @@ agent_runtime:
   # Cap only the effective trigger window so very-long-context profiles do not delay
   # compaction into the 800k-900k range. Set to 0/null to disable this cap.
   # The retained context remains DeepAgents' default 10% of the capped profile.
-  deepagent_context_trigger_token_cap: 270000
+  deepagent_context_trigger_token_cap: 258000
   print_state_messages: false
   print_http_raw_post: false
 

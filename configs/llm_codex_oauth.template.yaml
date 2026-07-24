@@ -112,7 +112,7 @@ agent_runtime:
   # _ChatOpenAICodex(gpt-5.6-sol) exposes a 1.05M token profile. Without this cap,
   # DeepAgents' default 85% trigger would wait until roughly 892k tokens.
   # Retained context remains DeepAgents' default 10% of the capped profile.
-  # Trigger below 272k to leave a small margin before long-context pricing applies.
-  deepagent_context_trigger_token_cap: 270000
+  # Trigger around 258k to leave a conservative margin before the 272k boundary.
+  deepagent_context_trigger_token_cap: 258000
   print_state_messages: false
   print_http_raw_post: false
