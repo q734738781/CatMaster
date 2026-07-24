@@ -4,7 +4,7 @@ This reference embeds the current ASE thermochemistry implementation pattern use
 
 ## Principle
 
-- `mace_analyze_frequencies` gives vibrational frequencies and modes, not thermodynamic state functions.
+- `mlff_vib` gives vibrational frequencies and modes, not thermodynamic state functions.
 - For adsorbate or fixed-slab vibrational thermochemistry, use ASE `HarmonicThermo`.
 - For gas-phase molecules, use ASE `IdealGasThermo`.
 - Keep the same convention across all compared entries.
@@ -94,7 +94,7 @@ def infer_symmetry_number(atoms):
     return 1, None
 ```
 
-## Using MACE frequencies
+## Using MLFF frequencies
 
 If MACE exported frequencies in `cm^-1`, convert them to `eV` before building ASE thermochemistry:
 

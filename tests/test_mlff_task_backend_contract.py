@@ -38,6 +38,9 @@ mlff_common = importlib.import_module("catmaster.remote.mlff.mlff_common")
 mlff_dynamics = importlib.import_module("catmaster.remote.mlff.mlff_dynamics")
 mlff_md = importlib.import_module("catmaster.remote.mlff.mlff_md")
 mlff_neb = importlib.import_module("catmaster.remote.mlff.mlff_neb")
+mlff_ts = importlib.import_module("catmaster.remote.mlff.mlff_ts")
+mlff_vib = importlib.import_module("catmaster.remote.mlff.mlff_vib")
+mlff_vibrations = importlib.import_module("catmaster.remote.mlff.mlff_vibrations")
 
 
 def test_registry_cutover_exposes_only_operation_named_mlff_tasks() -> None:
@@ -47,6 +50,8 @@ def test_registry_cutover_exposes_only_operation_named_mlff_tasks() -> None:
         "mlff_relax",
         "mlff_md",
         "mlff_neb",
+        "mlff_vib",
+        "mlff_ts",
     }
     assert not {
         "mace_sp_dir",
@@ -105,7 +110,10 @@ def test_public_gpu_resources_source_network_environment_before_provider() -> No
         assert source_list[0] == "<REMOTE_GPU_NETWORK_ENV_SCRIPT>"
 
 
-@pytest.mark.parametrize("task_name", ["mlff_sp", "mlff_relax", "mlff_md", "mlff_neb"])
+@pytest.mark.parametrize(
+    "task_name",
+    ["mlff_sp", "mlff_relax", "mlff_md", "mlff_neb", "mlff_vib", "mlff_ts"],
+)
 @pytest.mark.parametrize("backend", ["mace", "fairchem_uma", "mattersim", "orb_v3"])
 def test_every_enabled_backend_supports_every_managed_mlff_operation(task_name: str, backend: str) -> None:
     audience = "dynamics_worker" if task_name == "mlff_md" else "materials_worker"
@@ -254,15 +262,23 @@ def test_non_mace_profiles_use_exact_official_names_and_model_specific_tasks() -
     assert all(capability["tasks"] == ["omat"] for capability in orb["model_capabilities"].values())
 
 
-def test_md_and_neb_tasks_stage_shared_operation_dependencies() -> None:
+def test_md_neb_vib_and_ts_tasks_stage_shared_operation_dependencies() -> None:
     registry = TaskRegistry()
     md_files = registry.get("mlff_md").forward_files
     neb_files = registry.get("mlff_neb").forward_files
+    vib_files = registry.get("mlff_vib").forward_files
+    ts_files = registry.get("mlff_ts").forward_files
     assert "task_script/mlff_common.py" in md_files
     assert "task_script/mlff_dynamics.py" in md_files
     assert "task_script/mace_md.py" not in md_files
     assert "task_script/mlff_common.py" in neb_files
     assert "task_script/mace_neb.py" not in neb_files
+    assert "task_script/mlff_common.py" in ts_files
+    assert "task_script/mlff_ts.py" in ts_files
+    assert "task_script/mlff_vibrations.py" in ts_files
+    assert "task_script/mlff_common.py" in vib_files
+    assert "task_script/mlff_vib.py" in vib_files
+    assert "task_script/mlff_vibrations.py" in vib_files
 
 
 def test_md_backend_performance_controls_are_schema_visible_and_validated() -> None:
@@ -1532,3 +1548,313 @@ def test_neb_stage_requires_local_intermediate_images(tmp_path: Path) -> None:
     resolved = resolve_mlff_template("mlff_neb", {})
     with pytest.raises(ValueError, match="intermediate"):
         materialize_mlff_run_config(stage_dir=stage, task_name="mlff_neb", resolved=resolved)
+
+
+class _QuadraticSaddleCalculator(Calculator):
+    implemented_properties = ["energy", "forces"]
+
+    def __init__(self, hessian: np.ndarray):
+        super().__init__()
+        self.hessian = np.asarray(hessian, dtype=float)
+
+    def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        positions = np.asarray(atoms.positions, dtype=float).reshape(-1)
+        self.results = {
+            "energy": float(0.5 * positions @ self.hessian @ positions),
+            "forces": -(self.hessian @ positions).reshape(len(atoms), 3),
+        }
+
+
+def test_vib_schema_is_general_and_has_no_ts_optimizer_controls() -> None:
+    resolved = resolve_mlff_template(
+        "mlff_vib",
+        {"backend": "fairchem_uma"},
+        audience="materials_worker",
+    )
+    task = resolved["normalized_template_overrides"]["task_config"]
+    assert set(task) == {
+        "hessian_method",
+        "hessian_delta",
+        "nfree",
+        "imaginary_threshold_cm1",
+        "stationary_force_threshold",
+    }
+    assert task["hessian_method"] == "auto"
+    assert task["nfree"] == 2
+    assert "fmax" not in task
+    assert "steps" not in task
+    assert "iterative" not in (
+        resolved["template_schema"]["properties"]["task_config"]["properties"][
+            "hessian_method"
+        ]["enum"]
+    )
+    assert resolved["operation"] == "vib"
+
+
+def test_vib_stage_accepts_multiple_general_structures_and_component_constraints(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    first = Atoms("H", positions=[[0.0, 0.0, 0.0]])
+    first.set_constraint(FixCartesian(0, mask=[True, False, True]))
+    second = Atoms(
+        "He",
+        positions=[[0.0, 0.0, 0.0]],
+        cell=[[4.0, 0.0, 0.0], [1.0, 5.0, 0.0], [0.0, 0.5, 6.0]],
+        pbc=True,
+    )
+    second.set_constraint(FixScaled(0, mask=[True, False, True]))
+    write(stage / "input" / "component.extxyz", first, format="extxyz")
+    write(stage / "input" / "scaled.vasp", second, format="vasp")
+
+    resolved = resolve_mlff_template("mlff_vib", {"backend": "mace"})
+    config_path = materialize_mlff_run_config(
+        stage_dir=stage,
+        task_name="mlff_vib",
+        resolved=resolved,
+    )
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["operation"] == "vib"
+    assert sorted(config["items"]) == ["component.extxyz", "scaled.vasp"]
+
+
+def test_vib_four_point_hessian_respects_exact_free_subspace() -> None:
+    atoms = Atoms("H", positions=[[0.0, 0.0, 0.0]])
+    exact = np.diag([1.0, 2.0, 3.0])
+    atoms.calc = _QuadraticSaddleCalculator(exact)
+    basis, records = mlff_vibrations._constraint_projection(
+        atoms,
+        [FixCartesian(0, mask=[True, False, True])],
+    )
+    reduced, calls, asymmetry = (
+        mlff_vibrations._finite_difference_hessian_reduced(
+            atoms,
+            basis,
+            delta=1.0e-3,
+            nfree=4,
+        )
+    )
+    assert len(records) == 2
+    assert basis.shape == (3, 1)
+    assert calls == 4
+    assert reduced == pytest.approx(basis.T @ exact @ basis, abs=1.0e-10)
+    assert asymmetry == pytest.approx(0.0)
+
+
+def test_vib_runner_writes_compact_modes_without_displacement_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    atoms = Atoms("H", positions=[[0.0, 0.0, 0.0]])
+    atoms.set_constraint(FixCartesian(0, mask=[True, False, True]))
+    write(stage / "input" / "minimum.extxyz", atoms, format="extxyz")
+    resolved = resolve_mlff_template(
+        "mlff_vib",
+        {
+            "backend": "mace",
+            "task_config": {
+                "hessian_method": "finite_difference",
+                "hessian_delta": 0.01,
+                "nfree": 2,
+                "imaginary_threshold_cm1": 20.0,
+                "stationary_force_threshold": 0.05,
+            },
+        },
+    )
+    materialize_mlff_run_config(
+        stage_dir=stage,
+        task_name="mlff_vib",
+        resolved=resolved,
+    )
+
+    class FakeAdapter:
+        provider_version = "test"
+
+        def __init__(self) -> None:
+            self.calculator = _QuadraticSaddleCalculator(
+                np.diag([1.0, 2.0, 3.0])
+            )
+
+        def calculator_for(self, atoms, config):
+            del atoms, config
+            return self.calculator
+
+        def provider_metadata(self, atoms, config, calculator):
+            del atoms, config, calculator
+            return {}
+
+    monkeypatch.setitem(mlff_vib._ADAPTER_TYPES, "mace", FakeAdapter)
+    monkeypatch.chdir(stage)
+    batch = mlff_vib.run(".catmaster/generated/run_config.json")
+    assert batch["errors"] == []
+    summary = batch["results"][0]["summary"]
+    assert summary["stationary_point"] is True
+    assert summary["stationary_point_class"] == "minimum"
+    assert summary["free_dof"] == 1
+    assert summary["constrained_dof_count"] == 2
+    assert summary["hessian_force_evaluations"] == 2
+    assert summary["mode_count"] == 1
+
+    output = stage / "output" / "minimum"
+    expected = {
+        "frequencies.csv",
+        "modes.extxyz",
+        "summary.json",
+        "vibrations.npz",
+    }
+    assert {path.name for path in output.iterdir()} == expected
+    assert not (output / "ase_vibrations").exists()
+    assert not [
+        path
+        for path in output.rglob("*.json")
+        if path.name != "summary.json"
+    ]
+
+    with np.load(output / "vibrations.npz", allow_pickle=False) as archive:
+        assert archive["constraint_basis"].shape == (3, 1)
+        assert archive["hessian_reduced_eVA2"].shape == (1, 1)
+        assert archive["modes_mass_normalized"].shape == (1, 1, 3)
+        mode = archive["modes_mass_normalized"][0]
+        mass_norm = float(
+            np.sum(atoms.get_masses()[:, None] * np.square(mode))
+        )
+        assert mass_norm == pytest.approx(1.0)
+    mode_frames = read(output / "modes.extxyz", index=":")
+    assert len(mode_frames) == 1
+    assert mode_frames[0].arrays["mode"].shape == (1, 3)
+
+
+def test_ts_schema_is_one_minimal_constrained_prfo_operation() -> None:
+    resolved = resolve_mlff_template(
+        "mlff_ts",
+        {"backend": "fairchem_uma"},
+        audience="materials_worker",
+    )
+    task = resolved["normalized_template_overrides"]["task_config"]
+    assert set(task) == {
+        "fmax",
+        "steps",
+        "hessian_method",
+        "hessian_delta",
+        "imaginary_threshold_cm1",
+    }
+    assert task["hessian_method"] == "auto"
+    schema = resolved["template_schema"]["properties"]["task_config"]
+    assert "anyOf" not in json.dumps(schema)
+    assert resolved["operation"] == "ts"
+
+
+def test_ts_stage_requires_one_structure_and_preserves_extxyz_constraint_metadata(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    (stage / "input").mkdir(parents=True)
+    atoms = Atoms("NH", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    atoms.set_constraint(FixCartesian(0, mask=[True, False, True]))
+    write(stage / "input" / "guess.extxyz", atoms, format="extxyz")
+    resolved = resolve_mlff_template("mlff_ts", {"backend": "mace"})
+    config_path = materialize_mlff_run_config(
+        stage_dir=stage,
+        task_name="mlff_ts",
+        resolved=resolved,
+    )
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["operation"] == "ts"
+    assert list(config["items"]) == ["guess.extxyz"]
+
+    write(stage / "input" / "second.xyz", atoms)
+    with pytest.raises(ValueError, match="exactly one"):
+        materialize_mlff_run_config(
+            stage_dir=stage,
+            task_name="mlff_ts",
+            resolved=resolved,
+        )
+
+
+def test_ts_constraint_projection_respects_cartesian_and_scaled_components() -> None:
+    atoms = Atoms(
+        "H2",
+        positions=[[0.1, 0.2, 0.3], [1.0, 1.1, 1.2]],
+        cell=[[4.0, 0.0, 0.0], [1.0, 5.0, 0.0], [0.0, 0.5, 6.0]],
+        pbc=True,
+    )
+    constraints = [
+        FixCartesian(0, mask=[True, False, True]),
+        FixScaled(1, mask=[False, True, False]),
+    ]
+    basis, records = mlff_ts._constraint_projection(atoms, constraints)
+    assert basis.shape == (6, 3)
+    assert len(records) == 3
+
+    cartesian_x = np.zeros(6)
+    cartesian_x[0] = 1.0
+    cartesian_z = np.zeros(6)
+    cartesian_z[2] = 1.0
+    scaled_y = np.zeros(6)
+    scaled_y[3:6] = np.linalg.inv(np.asarray(atoms.cell))[:, 1]
+    assert np.linalg.norm(cartesian_x @ basis) < 1.0e-12
+    assert np.linalg.norm(cartesian_z @ basis) < 1.0e-12
+    assert np.linalg.norm(scaled_y @ basis) < 1.0e-12
+
+
+def test_ts_finite_difference_hessian_and_frequency_validation_use_free_dof() -> None:
+    atoms = Atoms("H2", positions=[[0.2, -0.1, 0.1], [0.3, 0.2, -0.2]])
+    exact = np.diag([-1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    atoms.calc = _QuadraticSaddleCalculator(exact)
+    constraints = [FixCartesian(1, mask=[False, False, True])]
+    basis, _ = mlff_ts._constraint_projection(atoms, constraints)
+    numerical, calls = mlff_ts._finite_difference_hessian(atoms, basis, delta=1.0e-3)
+    assert calls == 2 * basis.shape[1]
+    assert basis.T @ numerical @ basis == pytest.approx(
+        basis.T @ exact @ basis,
+        abs=1.0e-9,
+    )
+
+    rows, modes, imaginary_count = mlff_ts._frequency_analysis(
+        atoms=atoms,
+        hessian=numerical,
+        basis=basis,
+        threshold_cm1=20.0,
+    )
+    assert len(rows) == basis.shape[1]
+    assert modes.shape == (basis.shape[1], len(atoms), 3)
+    assert imaginary_count == 1
+    assert rows[0]["frequency_cm1"] < -20.0
+
+
+def test_ts_auto_hessian_strategy_uses_analytic_then_size_aware_fallback() -> None:
+    atoms = Atoms("H", positions=[[0.1, 0.0, 0.0]])
+
+    class AnalyticCalculator:
+        def get_hessian(self, atoms=None):
+            del atoms
+            return np.diag([-1.0, 1.0, 1.0])
+
+    method, initial, warnings = mlff_ts._resolve_hessian_strategy(
+        requested="auto",
+        atoms=atoms,
+        calculator=AnalyticCalculator(),
+        free_dof=3,
+    )
+    assert method == "analytic"
+    assert initial == pytest.approx(np.diag([-1.0, 1.0, 1.0]))
+    assert warnings == []
+
+    method, initial, warnings = mlff_ts._resolve_hessian_strategy(
+        requested="auto",
+        atoms=atoms,
+        calculator=object(),
+        free_dof=12,
+    )
+    assert (method, initial, warnings) == ("finite_difference", None, [])
+    method, _, _ = mlff_ts._resolve_hessian_strategy(
+        requested="auto",
+        atoms=atoms,
+        calculator=object(),
+        free_dof=61,
+    )
+    assert method == "iterative"

@@ -58,6 +58,8 @@ CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest t
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_periodic_sp_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_omol_relax_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_periodic_relax_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_omol_ts_nh3_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_omol_general_vib_remote -s -vv
 ```
 
 Prerequisites:
@@ -125,6 +127,15 @@ Expected coverage:
   `audience=materials_worker` with `uma_task=omat` by default. They check
   `status.json`, `batch_summary.json`, finite energy or final energy, max
   force for relaxations, per-item `summary.json`, and output structures.
+- The UMA TS test stages planar NH3 as extxyz with component constraints, runs
+  `mlff_ts` through the real `uma_gpu` DPDispatcher binding, and requires
+  constrained finite-difference RS-pRFO convergence, exactly one significant
+  imaginary mode, zero fixed-component drift, retained `ts.extxyz`, and the
+  compact Hessian/frequency/mode artifacts.
+- The UMA VIB test stages non-TS H2O as extxyz with component constraints, runs
+  the general `mlff_vib` task through `uma_gpu`, and requires an exact seven-DOF
+  constrained spectrum in `vibrations.npz`, `frequencies.csv`, and one
+  `modes.extxyz`, with no ASE displacement-cache JSON files.
 
 Failure triage:
 

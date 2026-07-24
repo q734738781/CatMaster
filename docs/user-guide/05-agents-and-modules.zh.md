@@ -110,9 +110,13 @@ plain NEB、CI-NEB 和后续 TS 验证的建议顺序。
 
 ### MLFF 快速筛选与几何优化
 
-Materials worker 可以查询当前部署启用的 MACE、FairChem UMA、MatterSim 或 ORB-v3 backend，并通过 `mlff_sp`、`mlff_relax` 或 `mlff_neb` 完成单点、批量优化和固定图像路径优化。Agent 会先读取 task schema，再根据结构类型、模型覆盖、精度要求和成本选择是否适合 MLFF。
+Materials worker 可以查询当前部署启用的 MACE、FairChem UMA、MatterSim 或 ORB-v3 backend，并通过 `mlff_sp`、`mlff_relax`、`mlff_neb`、`mlff_vib` 或 `mlff_ts` 完成单点、批量优化、固定图像路径优化、通用简正模分析和局部过渡态精修。Agent 会先读取 task schema，再根据结构类型、模型覆盖、精度要求和成本选择是否适合 MLFF。
 
 对于候选表面、吸附构型和反应路径，MLFF 常用于发现明显不稳定或几何错误的候选，减少后续 DFT 数量。训练域外元素、异常配位、强磁性、带电体系和断键过程需要额外谨慎；worker 应报告模型与设置，并建议独立验证。
+
+`mlff_ts` 从一个 TS-like 几何出发，使用受约束 RS-pRFO；它不是开放式鞍点搜索。优化器收敛与一阶鞍点验证分开报告，后者要求恰好一个显著虚频。
+
+`mlff_vib` 在不改变几何的前提下分析已经接受的最低点、过渡态、吸附物、分子或受约束材料结构。结构文件约束定义精确模式子空间；紧凑输出只有一个权威 `vibrations.npz`、一个频率表和一个多帧 mode 文件，不保留 ASE 逐位移 JSON cache。
 
 <details>
 <summary>Materials worker 当前 tools 与 skills</summary>
@@ -121,13 +125,13 @@ Materials worker 可以查询当前部署启用的 MACE、FairChem UMA、MatterS
 
 吸附与路径 tools：`create_molecule_from_smiles`、`enumerate_adsorption_sites`、`place_adsorbate`、`generate_batch_adsorption_structures`、`estimate_neb_image_count`、`remap_neb_endpoint_atoms`、`make_neb_geometry`、`vasp_neb_prepare`、`vasp_dimer_prepare`、`make_dimer_mode_from_neb`、`make_dimer_mode_from_mace` 和 `analyze_vasp_neb_results`。
 
-计算准备与性质 tools：`vasp_prepare`、`vasp_band_prepare`、`cp2k_prepare`、`generate_kpath`、`generate_phonon_displacements`、`generate_strained_structures`、`mace_analyze_frequencies`、`analyze_trajectory`、`vaspkit_adsorbate_thermo_correction` 和 `vaspkit_gas_thermo_correction`。
+计算准备与性质 tools：`vasp_prepare`、`vasp_band_prepare`、`cp2k_prepare`、`generate_kpath`、`generate_phonon_displacements`、`generate_strained_structures`、`analyze_trajectory`、`vaspkit_adsorbate_thermo_correction` 和 `vaspkit_gas_thermo_correction`。
 
 可视化与实现核对 tools：`generate_nanobanana_figure` 可生成需要人工核对的概念图草稿，`export_builtin_tool_source` 可导出注册 tool 的源码。定量结构图仍应使用结构渲染或数据绘图，不用生成图像代替。
 
 执行 tools：`get_avail_remote_task`、`get_remote_task_spec`、`get_avail_resources`、`remote_submission` 和 `remote_submission_batch`。
 
-当前领域 skills 是 `materials-discovery-and-bulk-selection`、`bulk-relax-and-reference`、`slab-construction-and-surface-modeling`、`surface-and-termination-screening`、`adsorbate-and-intermediate-generation`、`adsorption-site-screening`、`adsorption-screening`、`defect-and-dopant-screening`、`vasp-input-preparation`、`vasp-batch-execution`、`cp2k-dft-preparation`、`cp2k-electronic-properties`、`cp2k-vibrational-analysis`、`cp2k-pathway-calculations`、`mlff-screening-and-relaxation`、`mlff-path-optimization`、`neb-prepare`、`neb-calculation`、`neb-analysis`、`band-and-dos-analysis`、`phonon-displacement-workflow`、`elastic-property-workup`、`md-diffusion-analysis`、`thermo-free-energy-and-reporting`、`structure-visual-inspection` 和 `literature-grounding`。
+当前领域 skills 包括 `materials-discovery-and-bulk-selection`、`bulk-relax-and-reference`、`slab-construction-and-surface-modeling`、`surface-and-termination-screening`、`adsorbate-and-intermediate-generation`、`adsorption-site-screening`、`adsorption-screening`、`defect-and-dopant-screening`、`vasp-input-preparation`、`vasp-batch-execution`、`cp2k-dft-preparation`、`cp2k-electronic-properties`、`cp2k-vibrational-analysis`、`cp2k-pathway-calculations`、`mlff-screening-and-relaxation`、`mlff-path-optimization`、`mlff-vibrational-analysis`、`mlff-transition-state-refinement`、`neb-prepare`、`neb-calculation`、`neb-analysis`、`band-and-dos-analysis`、`phonon-displacement-workflow`、`elastic-property-workup`、`md-diffusion-analysis`、`thermo-free-energy-and-reporting`、`structure-visual-inspection` 和 `literature-grounding`。
 
 </details>
 

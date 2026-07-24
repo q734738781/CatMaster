@@ -50,15 +50,19 @@ task、work_dir、资源和关键设置，等我批准后再提交。完成后�
 结果回传后先检查 restart 连续性、温度、能量和轨迹完整性，再决定能否拼接分析。
 ```
 
-### 通用 MLFF：SP、Relax、MD 与 NEB
+### 通用 MLFF：SP、Relax、MD、NEB 与 TS
 
-`mlff_sp`、`mlff_relax`、`mlff_md` 和 `mlff_neb` 使用统一 task 名称，再由 backend 配置选择 MACE、FairChem UMA、MatterSim 或 ORB-v3。这样同一个结构筛选目标可以在已启用的模型之间选择，而不需要为每个 provider 复制整套工具。
+`mlff_sp`、`mlff_relax`、`mlff_md`、`mlff_neb`、`mlff_vib` 和 `mlff_ts` 使用统一 task 名称，再由 backend 配置选择 MACE、FairChem UMA、MatterSim 或 ORB-v3。这样同一个科学工作流可以在已启用的模型之间选择，而不需要为每个 provider 复制整套工具。
 
 模板默认启用 MACE `mh-1` 和独立的 `omol-0`：`mh-1` 通过 `mace_mp()` 提供严格枚举的多 heads，`omol-0` 通过 `mace_omol()` 提供显式 charge/spin 条件化分子推理。`mh-1` 的 `omol` head 与独立 `omol-0` 不是同一个模型入口。UMA、MatterSim 和 ORB-v3 只有在管理员安装隔离环境、模型权重、resource 和最小 smoke case 后才会出现。Worker 调用 `get_remote_task_spec` 后会得到当前 backend、官方 model 名、operation、model-specific head 或 task allowlist；UMA 的 `auto` 和非官方模型缩写会被拒绝。用户不应从旧项目复制一组 overrides 后直接提交。
 
-`mlff_sp` 与 `mlff_relax` 可以在一个 stage 的 `input/` 中直接处理多个结构，所以"有多个候选"不自动意味着要用 remote batch。`mlff_md` 要求 `input/` 中只有一个起始或 restart 结构；`mlff_neb` 接受已经在本地建立并检查的固定图像路径。
+`mlff_sp`、`mlff_relax` 与 `mlff_vib` 可以在一个 stage 的 `input/` 中直接处理多个结构，所以“有多个候选”不自动意味着要用 remote batch。`mlff_md` 要求 `input/` 中只有一个起始或 restart 结构；`mlff_neb` 接受已经在本地建立并检查的固定图像路径；`mlff_ts` 要求 `input/` 中恰好一个 TS-like 结构。
 
-受限 MLFF 优化直接继承结构文件中的原子约束，而不是另传一套 `fixed_atoms` 参数。POSCAR/VASP 使用 Selective Dynamics；extxyz 使用标准 `move_mask`（`L:1` 表示整原子，`L:3` 表示笛卡尔分量，false 表示固定）。`mlff_sp` 和 `mlff_relax` 会把 extxyz 输入分别保存为 `sp.extxyz` 和 `opt.extxyz`，并在写出后核对约束掩码。extxyz 不能表达 ASE 的缩放坐标 `FixScaled` 约束，这种情况应继续使用 POSCAR/VASP。固定表面原子时通常保持 `relax_cell=false`，否则原子可能随晶胞形变发生仿射移动。
+受限 MLFF 优化直接继承结构文件中的原子约束，而不是另传一套 `fixed_atoms` 参数。POSCAR/VASP 使用 Selective Dynamics；extxyz 使用标准 `move_mask`（`L:1` 表示整原子，`L:3` 表示笛卡尔分量，false 表示固定）。`mlff_sp`、`mlff_relax` 和 `mlff_ts` 会把 extxyz 输入分别保存为 `sp.extxyz`、`opt.extxyz` 和 `ts.extxyz`，并在写出后核对约束掩码。extxyz 不能表达 ASE 的缩放坐标 `FixScaled` 约束，这种情况应继续使用 POSCAR/VASP。固定表面原子时通常保持 `relax_cell=false`，否则原子可能随晶胞形变发生仿射移动。
+
+`mlff_ts` 固定晶胞并做一阶受约束 RS-pRFO。`auto` Hessian 策略在 calculator 有公开解析 Hessian 时优先使用；小体系在约束子空间做完整有限差分，大体系使用迭代对角化。终态频率验证与优化收敛相互独立：只有优化收敛且低于所设虚频阈值的模式恰好为一个时，`validated_first_order_saddle` 才为 true。
+
+`mlff_vib` 是通用简正模分析，不带 TS 专属语义，可用于最低点、过渡态、分子、吸附物和受约束材料结构。它与 `mlff_ts` 共用精确约束投影和最终质量加权本征求解，但不会优化几何。完整频谱优先使用 calculator 的解析 Hessian，否则只在自由坐标子空间做有限差分。输出保持紧凑：`vibrations.npz` 保存结构、质量、约束基底、reduced Hessian、频率和质量归一化模式；`frequencies.csv` 是频率表；`modes.extxyz` 是单个多帧可视化文件。不会保留 ASE 的逐位移 JSON cache。对周期超胞而言这是有限超胞 Γ 点分析，不是声子色散。
 
 ```text
 对 structures/adsorption_candidates/ 中的候选做 MLFF 预筛。

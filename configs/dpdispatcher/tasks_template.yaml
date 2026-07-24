@@ -142,6 +142,38 @@ mlff_neb:
   backward_files: ["output"]
   task_work_path: "."
 
+mlff_vib:
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Compute general constrained MLFF normal modes without ASE displacement-cache files."
+  operation: vib
+  boot_script: "catmaster/remote/mlff/mlff_vib.py"
+  command: "python task_script/mlff_vib.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_vib.py"
+    - "task_script/mlff_vibrations.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
+mlff_ts:
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Refine and validate one TS-like structure with constrained MLFF RS-pRFO."
+  operation: ts
+  boot_script: "catmaster/remote/mlff/mlff_ts.py"
+  command: "python task_script/mlff_ts.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_ts.py"
+    - "task_script/mlff_vibrations.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
 mace_train:
   audiences: [ml_worker]
   description: "Run MACE training or fine-tuning from staged dataset/ and params/train_params.json."

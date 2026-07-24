@@ -61,7 +61,15 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "template_overrides" in artifact["data"]["submission_guidance"]
     assert "blocks until all are terminal" in artifact["data"]["submission_guidance"]["remote_submission_batch"]
     task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
-    assert {"vasp_execute", "mlff_sp", "mlff_relax", "mlff_md", "mlff_neb"}.issubset(task_names)
+    assert {
+        "vasp_execute",
+        "mlff_sp",
+        "mlff_relax",
+        "mlff_md",
+        "mlff_neb",
+        "mlff_vib",
+        "mlff_ts",
+    }.issubset(task_names)
     assert all(item["execution_binding"]["status"] == "configured" for item in artifact["data"]["tasks"])
     assert all(item["execution_binding"]["platform_preflight"] == "passed" for item in artifact["data"]["tasks"])
     vasp_item = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "vasp_execute")
@@ -106,7 +114,14 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     with toolcall_context("catalog", audience="orca_xtb_worker"):
         _, artifact = get_avail_remote_task({"return_resource": True})
     qchem_task_names = {item["task_name"] for item in artifact["data"]["tasks"]}
-    assert {"xtb_execute", "orca_execute", "mlff_sp", "mlff_relax"}.issubset(qchem_task_names)
+    assert {
+        "xtb_execute",
+        "orca_execute",
+        "mlff_sp",
+        "mlff_relax",
+        "mlff_vib",
+        "mlff_ts",
+    }.issubset(qchem_task_names)
     xtb_qchem = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "xtb_execute")
     assert xtb_qchem["template_override_keys"] == []
     mlff_qchem = next(item for item in artifact["data"]["tasks"] if item["task_name"] == "mlff_sp")
@@ -118,6 +133,7 @@ def test_remote_task_catalog_is_filtered_by_worker_audience() -> None:
     assert "mlff_md" in dynamics_task_names
     assert "mlff_sp" not in dynamics_task_names
     assert "mlff_relax" not in dynamics_task_names
+    assert "mlff_ts" not in dynamics_task_names
 
 
 def test_registered_vasp_spec_reports_configured_platform_binding_without_admin_internals() -> None:

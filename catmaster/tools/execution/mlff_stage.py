@@ -49,7 +49,7 @@ def _direct_structure_files(input_dir: Path) -> list[Path]:
     nested = [path.name for path in children if path.is_dir()]
     if nested:
         raise ValueError(
-            "MLFF SP/relax input/ accepts structure files directly and does not recurse; "
+            "MLFF SP/relax/MD/VIB/TS input/ accepts structure files directly and does not recurse; "
             f"found directories: {', '.join(nested)}"
         )
     files = [
@@ -137,7 +137,63 @@ def _validate_stage(stage_dir: Path, operation: str) -> list[tuple[str, Any]]:
     files = _direct_structure_files(input_dir)
     if operation == "md" and len(files) != 1:
         raise ValueError("MLFF MD stage requires exactly one trajectory source directly under input/.")
-    return [(path.name, _read_one(path)) for path in files]
+    structures = [(path.name, _read_one(path)) for path in files]
+    if operation == "ts":
+        if len(structures) != 1:
+            raise ValueError("MLFF TS stage requires exactly one TS-like structure directly under input/.")
+    if operation in {"vib", "ts"}:
+        for _rel, atoms in structures:
+            _validate_vibrational_constraints(atoms, operation=operation)
+    return structures
+
+
+def _validate_vibrational_constraints(atoms: Any, *, operation: str) -> None:
+    import numpy as np
+    from ase.constraints import FixAtoms, FixCartesian, FixScaled
+
+    ndof = 3 * len(atoms)
+    rows: list[np.ndarray] = []
+    unsupported: list[str] = []
+
+    def add_row(atom_index: int, direction: Any) -> None:
+        row = np.zeros(ndof, dtype=float)
+        row[3 * atom_index : 3 * atom_index + 3] = np.asarray(direction, dtype=float)
+        rows.append(row)
+
+    inverse_cell = None
+    for constraint in atoms.constraints or []:
+        if isinstance(constraint, FixAtoms):
+            for atom_index in np.asarray(constraint.index, dtype=int):
+                for axis in range(3):
+                    add_row(int(atom_index), np.eye(3)[axis])
+        elif isinstance(constraint, FixCartesian):
+            for atom_index in np.asarray(constraint.index, dtype=int):
+                for axis, fixed in enumerate(np.asarray(constraint.mask, dtype=bool)):
+                    if fixed:
+                        add_row(int(atom_index), np.eye(3)[axis])
+        elif isinstance(constraint, FixScaled):
+            if float(atoms.cell.volume) <= 1e-12:
+                raise ValueError(
+                    f"FixScaled constraints in MLFF {operation.upper()} require a valid nonzero cell."
+                )
+            if inverse_cell is None:
+                inverse_cell = np.linalg.inv(np.asarray(atoms.cell.complete(), dtype=float))
+            for atom_index in np.asarray(constraint.index, dtype=int):
+                for axis, fixed in enumerate(np.asarray(constraint.mask, dtype=bool)):
+                    if fixed:
+                        add_row(int(atom_index), inverse_cell[:, axis])
+        else:
+            unsupported.append(type(constraint).__name__)
+    if unsupported:
+        raise ValueError(
+            f"MLFF {operation.upper()} supports structure-file constraints "
+            "FixAtoms, FixCartesian, and FixScaled; "
+            f"unsupported: {', '.join(sorted(set(unsupported)))}"
+        )
+    if rows and np.linalg.matrix_rank(np.vstack(rows), tol=1e-12) >= ndof:
+        raise ValueError(
+            f"MLFF {operation.upper()} structure has no unconstrained Cartesian degrees of freedom."
+        )
 
 
 def _resolve_uma_items(

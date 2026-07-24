@@ -111,7 +111,7 @@ _REMOTE_SUBMISSION_GUIDANCE: dict[str, Any] = {
 
 
 def _catalog_task_hint(task_name: str) -> str:
-    if task_name in {"mlff_sp", "mlff_relax"}:
+    if task_name in {"mlff_sp", "mlff_relax", "mlff_vib"}:
         return (
             "One MLFF stage contains one or more structure files directly under input/ and initializes its selected "
             "model once. Use remote_submission_batch only for a parent root containing multiple independent stages."
@@ -125,6 +125,11 @@ def _catalog_task_hint(task_name: str) -> str:
         return (
             "One MLFF NEB stage contains exactly one complete locally prepared path under input/path/. "
             "Use remote_submission_batch for multiple independent paths."
+        )
+    if task_name == "mlff_ts":
+        return (
+            "One MLFF TS stage contains exactly one TS-like structure directly under input/. It preserves "
+            "structure-file constraints and separately reports optimizer convergence and first-order-saddle validation."
         )
     if task_name.startswith("vasp_"):
         return (

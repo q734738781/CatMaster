@@ -137,6 +137,46 @@ def _write_water_xyz(project_space: Path, rel_dir: str) -> Path:
     return structure_path
 
 
+def _write_water_vib_extxyz(project_space: Path, rel_dir: str) -> Path:
+    from ase import Atoms
+    from ase.constraints import FixCartesian
+    from ase.io import write
+
+    input_dir = _files_root(project_space) / rel_dir
+    input_dir.mkdir(parents=True, exist_ok=True)
+    atoms = Atoms(
+        "OH2",
+        positions=[
+            [0.000000, 0.000000, 0.000000],
+            [0.758602, 0.000000, 0.504284],
+            [-0.758602, 0.000000, 0.504284],
+        ],
+    )
+    atoms.set_constraint(FixCartesian(0, mask=[True, True, False]))
+    structure_path = input_dir / "H2O_constrained.extxyz"
+    write(structure_path, atoms, format="extxyz")
+    return structure_path
+
+
+def _write_planar_nh3_extxyz(project_space: Path, rel_dir: str) -> Path:
+    import numpy as np
+    from ase import Atoms
+    from ase.constraints import FixCartesian
+    from ase.io import write
+
+    input_dir = _files_root(project_space) / rel_dir
+    input_dir.mkdir(parents=True, exist_ok=True)
+    radius = 1.02
+    angles = np.deg2rad([0.0, 120.0, 240.0])
+    positions = [[0.0, 0.0, 0.0]]
+    positions.extend([[radius * np.cos(angle), radius * np.sin(angle), 0.0] for angle in angles])
+    atoms = Atoms("NH3", positions=positions)
+    atoms.set_constraint(FixCartesian(0, mask=[True, True, False]))
+    structure_path = input_dir / "NH3_planar.extxyz"
+    write(structure_path, atoms, format="extxyz")
+    return structure_path
+
+
 def _uma_check_interval() -> int:
     return _int_env("CATMASTER_REMOTE_UMA_CHECK_INTERVAL", _remote_check_interval(60))
 
@@ -377,6 +417,163 @@ def test_agent_tool_uma_omol_relax_remote(tmp_path: Path) -> None:
     output_root = stage_dir / "output"
     assert (output_root / "H2O" / "summary.json").is_file()
     assert (output_root / "H2O" / "opt.xyz").is_file()
+
+
+@pytest.mark.skipif(
+    not RUN_UMA,
+    reason="UMA remote smoke tests need gated model access; set CATMASTER_RUN_REMOTE_UMA_TESTS=1",
+)
+def test_agent_tool_uma_omol_ts_nh3_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    stage_dir = _files_root(project_space) / "remote_execution" / "uma_nh3_ts_stage"
+    _write_planar_nh3_extxyz(
+        project_space,
+        "remote_execution/uma_nh3_ts_stage/input",
+    )
+    payload = {
+        "work_dir": "remote_execution/uma_nh3_ts_stage",
+        "task_name": "mlff_ts",
+        "template_overrides": {
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": _uma_model(),
+                "device": _uma_device(),
+                "defaults": {
+                    "uma_task": "omol",
+                    "charge": 0,
+                    "spin": 1,
+                },
+            },
+            "task_config": {
+                "fmax": 0.03,
+                "steps": 80,
+                "hessian_method": "auto",
+                "hessian_delta": 0.01,
+                "imaginary_threshold_cm1": 20.0,
+            },
+        },
+        "submission_config": {"check_interval": _uma_check_interval()},
+    }
+
+    _content, artifact = _invoke_agent_tool(
+        project_space,
+        "remote_submission",
+        payload,
+        audience="materials_worker",
+    )
+    data = artifact.get("data") or {}
+    assert artifact.get("tool_name") == "remote_submission"
+    assert data.get("resources") == "uma_gpu"
+    assert data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+
+    batch_summary = _read_json(stage_dir / "output" / "batch_summary.json")
+    assert batch_summary.get("errors") == []
+    summary = (batch_summary.get("results") or [])[0]["summary"]
+    assert summary["hessian_method_resolved"] == "finite_difference"
+    assert summary["validation_hessian_method"] == "finite_difference"
+    assert summary["converged"] is True
+    assert summary["significant_imaginary_mode_count"] == 1
+    assert summary["validated_first_order_saddle"] is True
+    assert summary["constrained_dof_count"] == 2
+    assert summary["max_cartesian_constraint_drift_A"] < 1.0e-5
+
+    output_dir = stage_dir / "output" / "NH3_planar"
+    for name in (
+        "ts.extxyz",
+        "frequencies.csv",
+        "vibrations.npz",
+        "modes.extxyz",
+        "reaction_mode.txt",
+        "summary.json",
+    ):
+        assert (output_dir / name).is_file()
+
+
+@pytest.mark.skipif(
+    not RUN_UMA,
+    reason="UMA remote smoke tests need gated model access; set CATMASTER_RUN_REMOTE_UMA_TESTS=1",
+)
+def test_agent_tool_uma_omol_general_vib_remote(tmp_path: Path) -> None:
+    import numpy as np
+
+    project_space = _project_space(tmp_path)
+    stage_dir = _files_root(project_space) / "remote_execution" / "uma_h2o_vib_stage"
+    _write_water_vib_extxyz(
+        project_space,
+        "remote_execution/uma_h2o_vib_stage/input",
+    )
+    payload = {
+        "work_dir": "remote_execution/uma_h2o_vib_stage",
+        "task_name": "mlff_vib",
+        "template_overrides": {
+            "backend": "fairchem_uma",
+            "backend_config": {
+                "model": _uma_model(),
+                "device": _uma_device(),
+                "defaults": {
+                    "uma_task": "omol",
+                    "charge": 0,
+                    "spin": 1,
+                },
+            },
+            "task_config": {
+                "hessian_method": "auto",
+                "hessian_delta": 0.01,
+                "nfree": 2,
+                "imaginary_threshold_cm1": 20.0,
+                "stationary_force_threshold": 0.05,
+            },
+        },
+        "submission_config": {"check_interval": _uma_check_interval()},
+    }
+
+    _content, artifact = _invoke_agent_tool(
+        project_space,
+        "remote_submission",
+        payload,
+        audience="materials_worker",
+    )
+    data = artifact.get("data") or {}
+    assert artifact.get("tool_name") == "remote_submission"
+    assert data.get("resources") == "uma_gpu"
+    assert data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+
+    batch_summary = _read_json(stage_dir / "output" / "batch_summary.json")
+    assert batch_summary.get("errors") == []
+    summary = (batch_summary.get("results") or [])[0]["summary"]
+    assert summary["operation"] == "vib"
+    assert summary["hessian_method_resolved"] == "finite_difference"
+    assert summary["free_dof"] == 7
+    assert summary["constrained_dof_count"] == 2
+    assert summary["mode_count"] == 7
+    assert summary["hessian_force_evaluations"] == 14
+    assert summary["stationary_point_class"] in {
+        "nonstationary",
+        "minimum",
+        "first_order_saddle",
+        "higher_order_saddle",
+    }
+
+    output_dir = stage_dir / "output" / "H2O_constrained"
+    for name in (
+        "frequencies.csv",
+        "modes.extxyz",
+        "summary.json",
+        "vibrations.npz",
+    ):
+        assert (output_dir / name).is_file()
+    assert not (output_dir / "ase_vibrations").exists()
+    assert not [
+        path
+        for path in output_dir.rglob("*.json")
+        if path.name != "summary.json"
+    ]
+    with np.load(output_dir / "vibrations.npz", allow_pickle=False) as archive:
+        assert archive["constraint_basis"].shape == (9, 7)
+        assert archive["hessian_reduced_eVA2"].shape == (7, 7)
+        assert archive["modes_mass_normalized"].shape == (7, 3, 3)
 
 
 @pytest.mark.skipif(

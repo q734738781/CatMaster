@@ -14,18 +14,20 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from catmaster.tools.execution.machine_registry import MachineRegister
 
 
-MlffOperation = Literal["sp", "relax", "md", "neb"]
+MlffOperation = Literal["sp", "relax", "md", "neb", "vib", "ts"]
 _MLFF_TASK_OPERATIONS: dict[str, MlffOperation] = {
     "mlff_sp": "sp",
     "mlff_relax": "relax",
     "mlff_md": "md",
     "mlff_neb": "neb",
+    "mlff_vib": "vib",
+    "mlff_ts": "ts",
 }
 _BACKEND_CAPABILITIES: dict[str, frozenset[str]] = {
-    "mace": frozenset({"sp", "relax", "md", "neb"}),
-    "fairchem_uma": frozenset({"sp", "relax", "md", "neb"}),
-    "mattersim": frozenset({"sp", "relax", "md", "neb"}),
-    "orb_v3": frozenset({"sp", "relax", "md", "neb"}),
+    "mace": frozenset({"sp", "relax", "md", "neb", "vib", "ts"}),
+    "fairchem_uma": frozenset({"sp", "relax", "md", "neb", "vib", "ts"}),
+    "mattersim": frozenset({"sp", "relax", "md", "neb", "vib", "ts"}),
+    "orb_v3": frozenset({"sp", "relax", "md", "neb", "vib", "ts"}),
 }
 _DEFAULT_PROFILE_PATHS = [
     Path(__file__).resolve().parents[3] / "configs" / "dpdispatcher",
@@ -325,6 +327,69 @@ class NebTaskConfig(_StrictModel):
     climb: bool = Field(False, description="Enable climbing-image refinement.")
 
 
+class TransitionStateTaskConfig(_StrictModel):
+    fmax: float = Field(
+        0.03,
+        gt=0,
+        description="Projected force convergence threshold in eV/Angstrom.",
+    )
+    steps: int = Field(200, ge=1, description="Maximum constrained RS-pRFO optimizer steps.")
+    hessian_method: Literal["auto", "analytic", "finite_difference", "iterative"] = Field(
+        "auto",
+        description=(
+            "Hessian strategy. auto uses a calculator Hessian when available, finite differences for small "
+            "constrained systems, and Sella iterative diagonalization for larger systems."
+        ),
+    )
+    hessian_delta: float = Field(
+        0.01,
+        gt=0,
+        description="Central finite-displacement step in Angstrom when a numerical Hessian is used.",
+    )
+    imaginary_threshold_cm1: float = Field(
+        20.0,
+        gt=0,
+        description=(
+            "Magnitude threshold used to distinguish a significant imaginary mode from numerical near-zero modes."
+        ),
+    )
+
+
+class VibrationalTaskConfig(_StrictModel):
+    hessian_method: Literal["auto", "analytic", "finite_difference"] = Field(
+        "auto",
+        description=(
+            "Complete-spectrum Hessian strategy. auto uses a calculator Hessian "
+            "when available and otherwise performs constraint-subspace finite differences."
+        ),
+    )
+    hessian_delta: float = Field(
+        0.01,
+        gt=0,
+        description="Finite-displacement step in Angstrom.",
+    )
+    nfree: Literal[2, 4] = Field(
+        2,
+        description=(
+            "Central finite-difference stencil: 2 uses +/-delta; 4 also uses "
+            "+/-2delta and doubles the force-evaluation cost."
+        ),
+    )
+    imaginary_threshold_cm1: float = Field(
+        20.0,
+        gt=0,
+        description="Magnitude threshold for a scientifically significant imaginary mode.",
+    )
+    stationary_force_threshold: float = Field(
+        0.05,
+        gt=0,
+        description=(
+            "Maximum projected atomic force in eV/Angstrom used only to classify "
+            "whether the analyzed geometry is a stationary point."
+        ),
+    )
+
+
 _BACKEND_MODELS: dict[str, Type[_StrictModel]] = {
     "mace": MaceBackendConfig,
     "fairchem_uma": UmaBackendConfig,
@@ -336,6 +401,8 @@ _TASK_MODELS: dict[MlffOperation, Type[_StrictModel]] = {
     "relax": RelaxTaskConfig,
     "md": MolecularDynamicsTaskConfig,
     "neb": NebTaskConfig,
+    "vib": VibrationalTaskConfig,
+    "ts": TransitionStateTaskConfig,
 }
 
 
@@ -750,8 +817,8 @@ def _validate_cross_constraints(
         if task_config.relax_cell and backend in {"mattersim", "orb_v3"}:
             raise ValueError(f"Backend {backend!r} is initially enabled only for fixed-cell relaxation.")
     if isinstance(backend_config, MaceBackendConfig):
-        if operation not in {"relax", "md"} and backend_config.enable_cueq:
-            raise ValueError("enable_cueq is currently supported only for MACE relax and MD.")
+        if operation not in {"relax", "md", "vib", "ts"} and backend_config.enable_cueq:
+            raise ValueError("enable_cueq is currently supported only for MACE relax, MD, VIB, and TS.")
         if operation != "md" and backend_config.compile_mode:
             raise ValueError("compile_mode is currently supported only for MACE MD.")
     if (
@@ -795,7 +862,7 @@ def _constraints(backend: str, operation: MlffOperation) -> list[str]:
             out.append("MatterSim NPT requires backend_config.compute_stress=true.")
     if backend == "orb_v3":
         out.append("ORB knn_alchemi is recommended; legacy edge methods are compatibility controls.")
-    if operation in {"sp", "relax"}:
+    if operation in {"sp", "relax", "ts"}:
         out.append(
             "An .extxyz input is returned as the same output format; ASE FixAtoms and FixCartesian "
             "constraints are preserved through the standard move_mask property. Use POSCAR/VASP "
@@ -815,6 +882,31 @@ def _constraints(backend: str, operation: MlffOperation) -> list[str]:
         )
     if operation == "neb":
         out.append("MLFF NEB accepts a complete locally prepared fixed-image path with at least one intermediate image.")
+    if operation == "vib":
+        out.append(
+            "MLFF VIB analyzes general minima, transition states, adsorbates, or "
+            "constrained material structures; it does not optimize the geometry."
+        )
+        out.append(
+            "All normal modes are computed in the exact FixAtoms, FixCartesian, "
+            "or FixScaled free-coordinate subspace without ASE displacement JSON caches."
+        )
+        out.append(
+            "Stationary-point classification is reported from projected force and "
+            "significant imaginary-mode count but does not determine task success."
+        )
+    if operation == "ts":
+        out.append(
+            "MLFF TS accepts exactly one TS-like structure and performs fixed-cell, order-one constrained RS-pRFO refinement."
+        )
+        out.append(
+            "Selective Dynamics or extxyz move_mask constraints are projected component by component into both "
+            "optimization and finite-difference Hessian calculations."
+        )
+        out.append(
+            "Completion is reported separately from first-order-saddle validation; a converged structure must have "
+            "exactly one significant imaginary mode to set validated_first_order_saddle=true."
+        )
     return out
 
 
@@ -1169,7 +1261,9 @@ __all__ = [
     "OrbV3BackendConfig",
     "RelaxTaskConfig",
     "SinglePointTaskConfig",
+    "TransitionStateTaskConfig",
     "UmaBackendConfig",
+    "VibrationalTaskConfig",
     "format_spec_error",
     "is_mlff_task",
     "mlff_operation_for_task",

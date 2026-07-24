@@ -6,7 +6,7 @@ mlff_backends:
     enabled: true
     default: true
     resource: mace_gpu
-    operations: [sp, relax, md, neb]
+    operations: [sp, relax, md, neb, vib, ts]
     default_model: mh-1
     models:
       mh-1:
@@ -30,7 +30,7 @@ mlff_backends:
     enabled: false
     default: false
     resource: uma_gpu
-    operations: [sp, relax, md, neb]
+    operations: [sp, relax, md, neb, vib, ts]
     default_model: uma-s-1p2
     models:
       uma-s-1p2:
@@ -56,7 +56,7 @@ mlff_backends:
     enabled: false
     default: false
     resource: mattersim_gpu
-    operations: [sp, relax, md, neb]
+    operations: [sp, relax, md, neb, vib, ts]
     default_model: MatterSim-v1.0.0-1M
     models:
       MatterSim-v1.0.0-1M:
@@ -74,7 +74,7 @@ mlff_backends:
     enabled: false
     default: false
     resource: orb_gpu
-    operations: [sp, relax, md, neb]
+    operations: [sp, relax, md, neb, vib, ts]
     default_model: orb-v3-conservative-inf-omat
     models:
       orb-v3-conservative-inf-omat:

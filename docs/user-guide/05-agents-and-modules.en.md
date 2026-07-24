@@ -101,9 +101,13 @@ from plain NEB to CI-NEB and transition-state validation.
 
 ### MLFF screening and relaxation
 
-Materials can query enabled MACE, FairChem UMA, MatterSim, or ORB-v3 backends, then use `mlff_sp`, `mlff_relax`, or `mlff_neb` for single-point screening, batch relaxation, or fixed-image path optimization. The worker reads the current task schema and considers element coverage, structural regime, accuracy needs, and cost.
+Materials can query enabled MACE, FairChem UMA, MatterSim, or ORB-v3 backends, then use `mlff_sp`, `mlff_relax`, `mlff_neb`, `mlff_vib`, or `mlff_ts` for single-point screening, batch relaxation, fixed-image path optimization, general normal-mode analysis, or local transition-state refinement. The worker reads the current task schema and considers element coverage, structural regime, accuracy needs, and cost.
 
 MLFF is useful for identifying clearly unstable surface or adsorption candidates and reducing later DFT volume. Out-of-domain elements, unusual coordination, charged systems, strong magnetism, and bond-breaking pathways require caution and independent validation.
+
+`mlff_ts` starts from one TS-like geometry and uses constrained RS-pRFO. It is not an open-ended saddle search. Optimizer convergence and first-order-saddle validation are reported separately; validation requires exactly one significant imaginary mode.
+
+`mlff_vib` analyzes accepted minima, transition states, adsorbates, molecules, or constrained material structures without changing the geometry. Structure constraints define the exact mode subspace. The compact output contains one canonical `vibrations.npz`, one frequency table, and one multi-frame mode file rather than ASE displacement-cache JSON files.
 
 <details>
 <summary>Current Materials tools and skills</summary>
@@ -112,13 +116,13 @@ Materials and structure tools: `mp_search_materials`, `mp_download_structure`, `
 
 Adsorption and path tools: `create_molecule_from_smiles`, `enumerate_adsorption_sites`, `place_adsorbate`, `generate_batch_adsorption_structures`, `estimate_neb_image_count`, `remap_neb_endpoint_atoms`, `make_neb_geometry`, `vasp_neb_prepare`, `vasp_dimer_prepare`, `make_dimer_mode_from_neb`, `make_dimer_mode_from_mace`, and `analyze_vasp_neb_results`.
 
-Preparation and property tools: `vasp_prepare`, `vasp_band_prepare`, `cp2k_prepare`, `generate_kpath`, `generate_phonon_displacements`, `generate_strained_structures`, `mace_analyze_frequencies`, `analyze_trajectory`, `vaspkit_adsorbate_thermo_correction`, and `vaspkit_gas_thermo_correction`.
+Preparation and property tools: `vasp_prepare`, `vasp_band_prepare`, `cp2k_prepare`, `generate_kpath`, `generate_phonon_displacements`, `generate_strained_structures`, `analyze_trajectory`, `vaspkit_adsorbate_thermo_correction`, and `vaspkit_gas_thermo_correction`.
 
 Visualization and implementation-inspection tools: `generate_nanobanana_figure` can draft a concept image that requires human scientific review, while `export_builtin_tool_source` exports registered tool source. Quantitative structures still use structure rendering or data plotting.
 
 Execution tools: `get_avail_remote_task`, `get_remote_task_spec`, `get_avail_resources`, `remote_submission`, and `remote_submission_batch`.
 
-Current domain skills are `materials-discovery-and-bulk-selection`, `bulk-relax-and-reference`, `slab-construction-and-surface-modeling`, `surface-and-termination-screening`, `adsorbate-and-intermediate-generation`, `adsorption-site-screening`, `adsorption-screening`, `defect-and-dopant-screening`, `vasp-input-preparation`, `vasp-batch-execution`, `cp2k-dft-preparation`, `cp2k-electronic-properties`, `cp2k-vibrational-analysis`, `cp2k-pathway-calculations`, `mlff-screening-and-relaxation`, `mlff-path-optimization`, `neb-prepare`, `neb-calculation`, `neb-analysis`, `band-and-dos-analysis`, `phonon-displacement-workflow`, `elastic-property-workup`, `md-diffusion-analysis`, `thermo-free-energy-and-reporting`, `structure-visual-inspection`, and `literature-grounding`.
+Current domain skills include `materials-discovery-and-bulk-selection`, `bulk-relax-and-reference`, `slab-construction-and-surface-modeling`, `surface-and-termination-screening`, `adsorbate-and-intermediate-generation`, `adsorption-site-screening`, `adsorption-screening`, `defect-and-dopant-screening`, `vasp-input-preparation`, `vasp-batch-execution`, `cp2k-dft-preparation`, `cp2k-electronic-properties`, `cp2k-vibrational-analysis`, `cp2k-pathway-calculations`, `mlff-screening-and-relaxation`, `mlff-path-optimization`, `mlff-vibrational-analysis`, `mlff-transition-state-refinement`, `neb-prepare`, `neb-calculation`, `neb-analysis`, `band-and-dos-analysis`, `phonon-displacement-workflow`, `elastic-property-workup`, `md-diffusion-analysis`, `thermo-free-energy-and-reporting`, `structure-visual-inspection`, and `literature-grounding`.
 
 </details>
 

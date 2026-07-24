@@ -1,6 +1,6 @@
 ---
 name: remote-stage-layouts
-description: Use this skill before remote_submission or remote_submission_batch to build and verify canonical stage directories for registered DPDispatcher tasks, including deterministic MLFF SP/relax, MD, and NEB input layouts.
+description: Use this skill before remote_submission or remote_submission_batch to build and verify canonical stage directories for registered DPDispatcher tasks, including deterministic MLFF SP/relax, MD, NEB, vibration, and TS input layouts.
 license: project-local
 allowed-tools: "ls read_file write_file edit_file execute get_avail_remote_task get_remote_task_spec get_avail_resources remote_submission remote_submission_batch"
 ---
@@ -176,6 +176,35 @@ The numbered files must be contiguous from `00`, contain both endpoints and at l
 
 Do not place several path directories under one stage. Use one stage per path and `remote_submission_batch` for independent paths. Only fixed-image `plain` mode is accepted. Remote AutoNEB insertion is not part of this contract.
 
+#### mlff_ts
+
+Prepare exactly one TS-like structure directly under `input/`:
+
+```text
+stage/
+  input/
+    ts_guess.vasp or ts_guess.extxyz
+```
+
+The runner performs fixed-cell, order-one constrained RS-pRFO refinement. Put constraints in the structure itself: POSCAR/VASP Selective Dynamics may fix scaled-coordinate components, while extxyz uses ASE `move_mask` and preserves Cartesian component constraints in `ts.extxyz`. Do not add a second constraint file or a duplicate atom-index override.
+
+One stage contains one TS candidate. Use separate first-level batch children for independent candidates. Inspect both `converged` and `validated_first_order_saddle`: validation additionally requires exactly one frequency below the configured negative-frequency threshold. Retain `vibrations.npz`, `frequencies.csv`, `modes.extxyz`, `reaction_mode.txt`, and the final `ts.*` structure.
+
+#### mlff_vib
+
+Place one or more accepted structures directly under `input/`:
+
+```text
+stage/
+  input/
+    minimum.vasp
+    adsorbate.extxyz
+```
+
+Each structure is analyzed independently with the same backend/task configuration. Constraints in the structure define the exact normal-mode subspace: POSCAR/VASP may carry scaled-coordinate Selective Dynamics, while extxyz carries whole-atom or Cartesian-component `move_mask`. The runner does not optimize structures and does not assume they are transition states.
+
+The output for each input is one `vibrations.npz` canonical bundle, one `frequencies.csv`, one multi-frame `modes.extxyz`, and `summary.json`. It does not expose ASE per-displacement JSON caches or one file per mode. Use separate batch children when structures require different backend metadata or should run concurrently rather than sequentially.
+
 #### mace_train
 
 ```text
@@ -226,4 +255,6 @@ After dispatch, retain the returned `work_dir_rel`, receipt/context identifiers,
 - Use `mlff-screening-and-relaxation` for SP/relax operation choices and its backend references only when needed.
 - Use `mlff-md-sampling` for MD method and restart semantics.
 - Use `neb-prepare` before packaging a path and `mlff-path-optimization` for MLFF NEB execution choices.
+- Use `mlff-transition-state-refinement` for constrained RS-pRFO refinement and first-order-saddle validation.
+- Use `mlff-vibrational-analysis` for general constrained normal modes and stationary-point classification.
 - Use `dpdispatcher-remote-receipts` for receipt-driven failure triage.

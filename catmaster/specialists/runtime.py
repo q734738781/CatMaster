@@ -99,7 +99,6 @@ _MATERIALS_WORKER_TOOL_ALLOWLIST = {
     "make_neb_geometry",
     "make_dimer_mode_from_neb",
     "make_dimer_mode_from_mace",
-    "mace_analyze_frequencies",
     "generate_strained_structures",
     "generate_kpath",
     "generate_phonon_displacements",
