@@ -212,6 +212,27 @@ function DataPart({ name, data, status, onSelect, onResume }) {
       </details>
     );
   }
+  if (type === "citations") {
+    const citations = Array.isArray(data.citations) ? data.citations : [];
+    return (
+      <details className="v2-subagent-card v2-citation-card">
+        <summary>
+          <Network size={16} />
+          <span>Web sources</span>
+          <small>{citations.length}</small>
+        </summary>
+        <ol className="v2-citation-list">
+          {citations.map((citation, index) => (
+            <li key={`${citation.url || "source"}-${index}`}>
+              <a href={citation.url} target="_blank" rel="noreferrer">
+                {citation.title || citation.url}
+              </a>
+            </li>
+          ))}
+        </ol>
+      </details>
+    );
+  }
   if (type === "subagent" || type === "trace") {
     const source = data.meta?.source || data.source || "internal";
     const preview = String(data.text || "").trim();

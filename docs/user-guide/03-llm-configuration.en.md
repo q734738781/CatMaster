@@ -96,7 +96,7 @@ This entry supports topic reviews, method comparisons, full-paper reading, bilin
 <details>
 <summary>Current Literature Review tools and skills</summary>
 
-Direct tools are `web_search`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`. A working `agent-browser` installation adds a filtered browser surface for dynamic pages and user-authorized sessions.
+Direct tools are `web_search`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`. Search follows the model bound to the role: `codex_oauth` and OpenAI Responses models use hosted `web_search`, while other providers use CatMaster's Tavily-backed function. CatMaster binds only one of those implementations to an agent. A working `agent-browser` installation adds a separate filtered browser surface for dynamic pages and user-authorized sessions.
 
 Core skills include `nature-academic-search`, `nature-downloader`, `nature-reader`, `nature-citation`, `nature-ref-verifier`, and `nature-literature-pipeline`. They cover search strategy, legitimate full-text acquisition, figure-aware reading, claim-level citation support, metadata verification, and larger literature workflows.
 

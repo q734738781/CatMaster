@@ -30,6 +30,14 @@ test("catMessageToAssistant converts text, tool, artifact, and interrupt parts",
       { id: "part_artifact", type: "artifact", artifact_id: "art_1", title: "table", renderer: "csv", path: "files/table.csv" },
       { id: "part_interrupt", type: "interrupt", status: "pending", text: "Review", meta: { title: "Review required" } },
     ],
+    structured_sidecar: {
+      citations: [
+        {
+          title: "Web search | OpenAI API",
+          url: "https://developers.openai.com/api/docs/guides/tools-web-search",
+        },
+      ],
+    },
   });
 
   assert.equal(converted.status.type, "requires-action");
@@ -42,6 +50,9 @@ test("catMessageToAssistant converts text, tool, artifact, and interrupt parts",
   assert.equal(converted.content[2].data.type, "artifact");
   assert.equal(converted.content[3].type, "data");
   assert.equal(converted.content[3].data.type, "interrupt");
+  assert.equal(converted.content[4].type, "data");
+  assert.equal(converted.content[4].data.type, "citations");
+  assert.equal(converted.content[4].data.citations[0].title, "Web search | OpenAI API");
 });
 
 test("normalizeMathMarkdown converts common LLM math delimiters", () => {

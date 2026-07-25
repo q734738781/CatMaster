@@ -101,7 +101,7 @@ Literature Review 可以完成主题综述、方法比较、关键论文精读�
 <details>
 <summary>Literature Review 当前 tools 与 skills</summary>
 
-直接 tools 包括 `web_search`、`ingest_literature_files`、`query_literature_corpus` 和 `finalize_citations`。部署了 `agent-browser` 时，还会得到经过筛选的浏览器工具，用于动态页面和用户授权会话。
+直接 tools 包括 `web_search`、`ingest_literature_files`、`query_literature_corpus` 和 `finalize_citations`。搜索实现跟随该角色实际绑定的模型：`codex_oauth` 和 OpenAI Responses 模型使用托管的原生 `web_search`，其他 provider 使用 CatMaster 的 Tavily 函数；同一个 agent 只绑定其中一种。部署了 `agent-browser` 时，还会得到一套独立的受控浏览器工具，用于动态页面和用户授权会话。
 
 主要 skills 包括 `nature-academic-search`、`nature-downloader`、`nature-reader`、`nature-citation`、`nature-ref-verifier` 和 `nature-literature-pipeline`。它们分别处理检索范围、合法全文获取、图表感知的全文阅读、claim 级引用、元数据核验和较完整的文献流水线。
 

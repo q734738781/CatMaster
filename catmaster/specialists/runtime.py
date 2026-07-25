@@ -168,12 +168,13 @@ _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {
 _PEER_REVIEW_TOOL_ALLOWLIST = {"peer_review_request"}
 _PEER_REVIEW_WORKER_TOOL_ALLOWLIST = set(_PEER_REVIEW_TOOL_ALLOWLIST)
 _LITREVIEW_LOCAL_TOOL_ALLOWLIST = {
-    "web_search",
     "ingest_literature_files",
     "query_literature_corpus",
     "finalize_citations",
 }
 _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES = {"web_search"}
+_NATIVE_WEB_SEARCH_PROVIDERS = {"codex_oauth", "openai"}
+_NATIVE_WEB_SEARCH_TOOL = {"type": "web_search"}
 _DEEPAGENT_BUILTIN_TOOL_NAMES = {
     "write_todos",
     "ls",
@@ -1031,6 +1032,7 @@ class SpecialistRunner:
                 ),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_MATERIALS_WORKER_TOOL_ALLOWLIST, audience="materials_worker"),
+                    model_role="task_runner",
                     audience="materials_worker",
                 ),
                 skills=[
@@ -1047,6 +1049,7 @@ class SpecialistRunner:
                 ),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_ML_WORKER_TOOL_ALLOWLIST, audience="ml_worker"),
+                    model_role="task_runner",
                     audience="ml_worker",
                 ),
                 skills=[
@@ -1063,6 +1066,7 @@ class SpecialistRunner:
                 ),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_DYNAMICS_WORKER_TOOL_ALLOWLIST, audience="dynamics_worker"),
+                    model_role="task_runner",
                     audience="dynamics_worker",
                 ),
                 skills=[
@@ -1079,6 +1083,7 @@ class SpecialistRunner:
                 ),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_ORCA_XTB_WORKER_TOOL_ALLOWLIST, audience="orca_xtb_worker"),
+                    model_role="task_runner",
                     audience="orca_xtb_worker",
                 ),
                 skills=[
@@ -1097,6 +1102,7 @@ class SpecialistRunner:
                 system_prompt=self._writing_worker_prompt(),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
+                    model_role="section_writer",
                 ),
                 skills=self._skill_roots_for_groups("writing_specialist", "writing_quality"),
                 runtime=runtime,
@@ -1108,6 +1114,7 @@ class SpecialistRunner:
                 system_prompt=self._writing_polisher_prompt(),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_WRITING_WORKER_TOOL_ALLOWLIST),
+                    model_role="academic_polisher",
                 ),
                 skills=self._skill_roots_for_groups("writing_specialist", "writing_quality"),
                 runtime=runtime,
@@ -1123,6 +1130,7 @@ class SpecialistRunner:
                 system_prompt=self._peer_review_worker_prompt(),
                 tools=self._augment_with_default_autonomous_tools(
                     self._named_tools(_PEER_REVIEW_WORKER_TOOL_ALLOWLIST),
+                    model_role="task_runner",
                 ),
                 skills=self._skill_roots_for_groups("writing_specialist", "writing_quality"),
                 runtime=runtime,
@@ -1248,6 +1256,7 @@ class SpecialistRunner:
         litreview_skills = self._skill_roots_for_groups("litreview_agent", "writing_quality")
         tools = [
             *self._named_tools(_LITREVIEW_LOCAL_TOOL_ALLOWLIST, audience="litreview_agent"),
+            *self._search_tools_for_role("literature_deep_research", audience="litreview_agent"),
             *list(runtime.get("literature_browser_tools") or []),
         ]
         kwargs: dict[str, Any] = {
@@ -1364,7 +1373,10 @@ class SpecialistRunner:
             requested = _RESEARCH_TOOL_ALLOWLIST
         else:
             requested = _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
-        return self._augment_with_default_autonomous_tools(self._named_tools(requested))
+        return self._augment_with_default_autonomous_tools(
+            self._named_tools(requested),
+            model_role=_ENTRYPOINT_TO_MODEL_ROLE[entrypoint],
+        )
 
     def _specialist_subagent_tools(self, entrypoint: SpecialistEntrypoint) -> list[Any]:
         if entrypoint == "writing":
@@ -1377,6 +1389,7 @@ class SpecialistRunner:
             requested = _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
         return self._augment_with_default_autonomous_tools(
             self._named_tools(requested),
+            model_role=_ENTRYPOINT_TO_MODEL_ROLE[entrypoint],
         )
 
     def _named_tools(self, requested: set[str] | list[str] | tuple[str, ...], *, audience: str = "") -> list[Any]:
@@ -1407,16 +1420,33 @@ class SpecialistRunner:
         self,
         tools: list[Any],
         *,
+        model_role: str,
         audience: str = "",
     ) -> list[Any]:
-        existing = {str(getattr(tool, "name", "") or "").strip() for tool in tools}
+        existing = {
+            str(tool.get("type") if isinstance(tool, dict) else getattr(tool, "name", "") or "").strip()
+            for tool in tools
+        }
         augmented = list(tools)
-        for tool in self._named_tools(_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES, audience=audience):
-            name = str(getattr(tool, "name", "") or "").strip()
+        for tool in self._search_tools_for_role(model_role, audience=audience):
+            name = str(tool.get("type") if isinstance(tool, dict) else getattr(tool, "name", "") or "").strip()
             if name and name not in existing:
                 augmented.append(tool)
                 existing.add(name)
         return augmented
+
+    def _search_tools_for_role(self, model_role: str, *, audience: str = "") -> list[Any]:
+        """Expose one usable search surface for the role's actual provider.
+
+        OpenAI Responses and Codex OAuth run hosted web search server-side.
+        Other providers keep CatMaster's existing Tavily function and its
+        explicit ``unavailable`` result when deployment credentials are absent.
+        """
+        cfg = self.llm_profile.config_for_role(model_role)
+        provider = str(cfg.provider or "").strip().lower()
+        if provider in _NATIVE_WEB_SEARCH_PROVIDERS:
+            return [dict(_NATIVE_WEB_SEARCH_TOOL)]
+        return self._named_tools(_DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES, audience=audience)
 
     @staticmethod
     def _nonfatal_tool_error_result(tool_name: str, exc: Exception) -> tuple[str, dict[str, Any]]:

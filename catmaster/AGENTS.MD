@@ -99,7 +99,8 @@ tool or compatibility route.
 
 `litreview_agent` receives:
 
-- one direct Tavily `web_search` capability for efficient discovery;
+- one provider-routed `web_search` capability: hosted OpenAI web search for
+  `codex_oauth`/OpenAI Responses models, otherwise the CatMaster Tavily tool;
 - a filtered, stateful `agent-browser` MCP surface for dynamic pages and
   user-authorized browser sessions;
 - local full-text corpus ingest/query tools;
@@ -112,7 +113,8 @@ browser session for bounded context-isolated work.
 `open_public_page`, `find_in_page`, OpenAlex, and Semantic Scholar tools are not
 part of the LitReview model-visible surface. OpenAlex may remain an internal
 deterministic fallback during final citation resolution. Other specialists and
-workers may still receive `web_search` for narrow checks.
+workers receive the same provider-routed search surface for narrow checks. Do
+not bind hosted and Tavily tools under the same `web_search` name in one agent.
 
 Physical/chemical property lookups are a literature-first case: answer from public literature, citation-grade metadata, or existing workspace evidence before proposing new calculations. Missing property evidence is not implicit approval to run DFT; ask for or invite an explicit calculation instruction when the property is computable.
 

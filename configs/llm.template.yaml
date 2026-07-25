@@ -199,7 +199,8 @@ agents:
   # Optional: if omitted, it falls back to `task_runner`.
   image_analyzer: "openrouter-main"
   # Optional: if omitted, it falls back to `director`.
-  # Tavily discovery and agent-browser reading are tools on this one DeepAgent role.
+  # Search follows this role's provider: OpenAI/Codex uses hosted web_search;
+  # other providers use CatMaster's Tavily tool. agent-browser remains separate.
   literature_deep_research: "openrouter-main-xhigh"
   # Optional: if omitted, it falls back to `task_runner`.
   tool_selector: "openrouter-main"

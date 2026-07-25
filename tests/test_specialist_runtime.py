@@ -218,6 +218,53 @@ def test_real_registry_covers_specialist_allowlists() -> None:
     assert "run_literature_research" not in registered
 
 
+@pytest.mark.parametrize(
+    ("provider", "expects_native"),
+    [
+        ("codex_oauth", True),
+        ("openai", True),
+        ("langchain", False),
+    ],
+)
+def test_search_surface_follows_each_role_provider(
+    tmp_path: Path,
+    provider: str,
+    expects_native: bool,
+) -> None:
+    class _ProviderProfile(_FakeProfile):
+        def config_for_role(self, role: str) -> SimpleNamespace:
+            return SimpleNamespace(model=f"{role}-model", provider=provider, base_url=None)
+
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_ProviderProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="experiment",
+    )
+
+    tools = built.runner._search_tools_for_role("task_runner", audience="materials_worker")
+    specialist_tools = built.runner._specialist_tools("experiment")
+    search_tools = [
+        tool
+        for tool in specialist_tools
+        if (tool.get("type") if isinstance(tool, dict) else getattr(tool, "name", "")) == "web_search"
+    ]
+
+    assert len(tools) == 1
+    assert len(search_tools) == 1
+    if expects_native:
+        assert tools == [{"type": "web_search"}]
+        assert search_tools == [{"type": "web_search"}]
+    else:
+        assert isinstance(tools[0], StructuredTool)
+        assert tools[0].name == "web_search"
+        assert isinstance(search_tools[0], StructuredTool)
+
+
 def test_specialist_callbacks_include_ui_event_handler(tmp_path: Path) -> None:
     workspace = tmp_path / "project_space"
     workspace.mkdir(parents=True)
@@ -1567,7 +1614,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert litreview_agents, "expected nested litreview agent to be created"
         litreview_agent_kwargs = litreview_agents[0]
         assert litreview_agent_kwargs["model"] == {"model": "literature_deep_research-model"}
-        assert {tool.name for tool in litreview_agent_kwargs["tools"]} == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+        assert {tool.name for tool in litreview_agent_kwargs["tools"]} == (
+            _LITREVIEW_LOCAL_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
         assert not (
             _RESEARCH_TOOL_ALLOWLIST
             & {tool.name for tool in litreview_agent_kwargs["tools"]}
@@ -1582,7 +1631,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "metadata_agent" not in litreview_agent_kwargs["system_prompt"]
         assert "literature_agent" not in litreview_agent_kwargs["system_prompt"]
     elif entrypoint == "literature_review":
-        assert {tool.name for tool in agent_kwargs["tools"]} == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+        assert {tool.name for tool in agent_kwargs["tools"]} == (
+            _LITREVIEW_LOCAL_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
         _assert_native_skill_groups(agent_kwargs, "litreview_agent", "writing_quality")
         assert "Own the review question" in agent_kwargs["system_prompt"]
         assert "full-text access as unknown until tested" in agent_kwargs["system_prompt"]

@@ -155,6 +155,11 @@ export NCBI_API_KEY="<KEY>"
 export CROSSREF_MAILTO="you@example.org"
 ```
 
+`TAVILY_API_KEY` is optional for roles using `codex_oauth` or OpenAI Responses:
+those roles receive hosted `web_search`. Keep Tavily configured when other
+providers need public discovery. The two implementations are not exposed
+together under the same tool name.
+
 The active Literature Review tool surface is authoritative. API keys provide access but do not guarantee full text or correct metadata.
 
 Install the controlled browser with:

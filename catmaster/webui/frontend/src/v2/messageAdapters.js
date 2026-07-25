@@ -54,6 +54,16 @@ export function catMessageToAssistant(message) {
   const content = Array.isArray(message?.parts)
     ? message.parts.map(catPartToAssistant)
     : [{ type: "text", text: String(message?.content || "") }];
+  const citations = Array.isArray(message?.structured_sidecar?.citations)
+    ? message.structured_sidecar.citations.filter((citation) => citation && citation.url)
+    : [];
+  if (role === "assistant" && citations.length) {
+    content.push({
+      type: "data",
+      name: "catmaster-citations",
+      data: { type: "citations", citations },
+    });
+  }
   const base = {
     id: String(message?.id || ""),
     role,

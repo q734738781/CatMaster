@@ -1618,6 +1618,24 @@ button:disabled {
   font-size: 13px;
 }
 
+.v2-citation-list {
+  margin: 0;
+  padding: 8px 12px 10px 34px;
+  border-top: 1px solid #d4d4d4;
+  color: #4a4a4a;
+  font-size: 13px;
+}
+
+.v2-citation-list li + li {
+  margin-top: 5px;
+}
+
+.v2-citation-list a {
+  color: #0067a8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .v2-tab-panel {
   min-height: 0;
   overflow: hidden;

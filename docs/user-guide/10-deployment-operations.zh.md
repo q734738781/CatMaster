@@ -157,6 +157,10 @@ export NCBI_API_KEY="<KEY>"
 export CROSSREF_MAILTO="you@example.org"
 ```
 
+对使用 `codex_oauth` 或 OpenAI Responses 的角色，`TAVILY_API_KEY` 不是必需项，
+这些角色会得到托管的原生 `web_search`。如果其他 provider 需要公共检索，则仍需配置
+Tavily；两种实现不会以同名工具同时暴露给同一个 agent。
+
 实际可见 tools 以当前 Literature Review runtime 为准。API key 提供访问能力，不保证全文权限或元数据完全正确。
 
 受控浏览器安装：

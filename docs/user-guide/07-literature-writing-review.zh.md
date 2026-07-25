@@ -58,7 +58,7 @@ unavailable.md。不要让同一篇论文的预印本与期刊版本重复计数
 <details>
 <summary>Literature Review 的能力来源</summary>
 
-直接 tools：`web_search`、`ingest_literature_files`、`query_literature_corpus`、`finalize_citations`，以及部署成功后由 `agent-browser` 提供的受控浏览器 tools。
+直接 tools：`web_search`、`ingest_literature_files`、`query_literature_corpus`、`finalize_citations`，以及部署成功后由 `agent-browser` 提供的受控浏览器 tools。`web_search` 会按 provider 路由：OpenAI/Codex 角色使用托管搜索，其他 provider 使用 Tavily 实现。
 
 主要 skills：`nature-academic-search`、`nature-downloader`、`nature-reader`、`nature-citation`、`nature-ref-verifier` 和 `nature-literature-pipeline`。Tool 负责搜索、导入、查询和引用定稿；skill 负责检索策略、证据分级、全文获取边界、精读格式和交付质量。
 

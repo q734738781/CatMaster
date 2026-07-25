@@ -2008,6 +2008,82 @@ def test_stream_translator_handles_v3_content_block_delta_messages(tmp_path: Pat
     assert event_names == ["message.delta", "subagent.started", "subagent.delta"]
 
 
+def test_stream_translator_projects_native_web_search_and_citations(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_native_search",
+    )
+    response = AIMessage(
+        content=[
+            {
+                "type": "server_tool_call",
+                "name": "web_search",
+                "args": {"type": "search", "query": "OpenAI web search docs"},
+                "id": "ws_1",
+            },
+            {
+                "type": "server_tool_result",
+                "tool_call_id": "ws_1",
+                "status": "success",
+                "output": {"sources": [{"url": "https://developers.openai.com/api/docs/guides/tools-web-search"}]},
+            },
+            {
+                "type": "text",
+                "text": "OpenAI documents hosted web search.",
+                "annotations": [
+                    {
+                        "type": "citation",
+                        "url": "https://developers.openai.com/api/docs/guides/tools-web-search",
+                        "title": "Web search | OpenAI API",
+                        "start_index": 0,
+                        "end_index": 39,
+                    }
+                ],
+            },
+        ]
+    )
+
+    translator._handle_message_event((response, {"lc_agent_name": "experiment_specialist"}))
+    translator._handle_message_event((response, {"lc_agent_name": "experiment_specialist"}))
+
+    saved = store.get_message(thread.thread_id, message.id)
+    tool_parts = [part for part in saved.parts if part.type == "tool-call"]
+    assert len(tool_parts) == 1
+    assert tool_parts[0].status == "completed"
+    assert tool_parts[0].meta["tool"] == "web_search"
+    assert tool_parts[0].meta["server_side"] is True
+    assert tool_parts[0].meta["input"]["query"] == "OpenAI web search docs"
+    assert translator.citations == [
+        {
+            "url": "https://developers.openai.com/api/docs/guides/tools-web-search",
+            "title": "Web search | OpenAI API",
+            "start_index": 0,
+            "end_index": 39,
+        }
+    ]
+    event_names = [event.event for event in broker.replay(thread.thread_id)]
+    assert event_names.count("tool_call.started") == 1
+    assert event_names.count("tool_call.completed") == 1
+    assert "tool_call.delta" not in event_names
+
+
 def test_stream_translator_persists_remote_receipt_parts(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     store = ThreadStore(workspace=workspace, workspace_id="default")

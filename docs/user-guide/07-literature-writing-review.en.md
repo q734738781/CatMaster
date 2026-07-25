@@ -61,7 +61,7 @@ Literature skills also support claim-level citation searches restricted to Natur
 <details>
 <summary>Sources of Literature Review capability</summary>
 
-Direct tools are `web_search`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`, plus controlled browser tools when `agent-browser` is available.
+Direct tools are `web_search`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`, plus controlled browser tools when `agent-browser` is available. `web_search` is provider-routed: OpenAI/Codex roles use hosted search and other providers use the Tavily implementation.
 
 Skills are `nature-academic-search`, `nature-downloader`, `nature-reader`, `nature-citation`, `nature-ref-verifier`, and `nature-literature-pipeline`. Tools perform search, ingestion, retrieval, and metadata finalization. Skills define scope, evidence levels, lawful acquisition boundaries, reading form, and delivery quality.
 

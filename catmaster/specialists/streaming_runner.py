@@ -101,6 +101,23 @@ def _message_text(message: Any) -> str:
     return str(content or "")
 
 
+def _message_content_blocks(message: Any) -> list[dict[str, Any]]:
+    """Return LangChain-standard content blocks without guessing provider payloads."""
+    blocks = getattr(message, "content_blocks", None)
+    if isinstance(blocks, list):
+        return [block for block in blocks if isinstance(block, dict)]
+    if isinstance(message, dict):
+        blocks = message.get("content_blocks")
+        if isinstance(blocks, list):
+            return [block for block in blocks if isinstance(block, dict)]
+        content = message.get("content")
+    else:
+        content = getattr(message, "content", None)
+    if isinstance(content, list):
+        return [block for block in content if isinstance(block, dict)]
+    return []
+
+
 def _event_method(event: Any) -> str:
     if isinstance(event, dict):
         return str(event.get("method") or event.get("event") or event.get("name") or "").strip()
@@ -431,6 +448,8 @@ class CatMasterStreamTranslator:
                 self.resume_tool_inputs_by_name.setdefault(name, []).append(_agent_tool_input(args))
         self.completed_tool_messages: set[str] = set()
         self.historical_completed_tool_call_ids = self._historical_completed_tool_call_ids()
+        self.citations: list[dict[str, Any]] = []
+        self._citation_keys: set[tuple[str, str, int | None, int | None]] = set()
         self.interrupt_id = ""
         self.reasoning_part_id = ""
         self.reasoning_text_emitted = ""
@@ -719,6 +738,7 @@ class CatMasterStreamTranslator:
             if len(data) > 1 and isinstance(data[1], dict):
                 metadata = data[1]
         if isinstance(message, (AIMessageChunk, AIMessage)):
+            self._handle_provider_content_blocks(_message_content_blocks(message), metadata=metadata)
             self._handle_tool_calls(message, metadata=metadata)
             reasoning_delta = _message_reasoning_text(message)
             if reasoning_delta:
@@ -739,6 +759,7 @@ class CatMasterStreamTranslator:
             or "content_blocks" in message
             or str(message.get("type") or "").lower() in {"reasoning", "reasoning-delta", "thinking-delta"}
         ):
+            self._handle_provider_content_blocks(_message_content_blocks(message), metadata=metadata)
             reasoning_delta = _message_reasoning_text(message)
             if reasoning_delta:
                 self._append_reasoning_if_new(reasoning_delta, metadata=metadata)
@@ -770,6 +791,15 @@ class CatMasterStreamTranslator:
                 if text:
                     self._append_reasoning_if_new(text, metadata=metadata)
                     handled = True
+                continue
+            elif delta_type in {
+                "server_tool_call",
+                "server_tool_call_chunk",
+                "server_tool_result",
+                "web_search_call",
+            }:
+                self._handle_provider_content_blocks([delta], metadata=metadata)
+                handled = True
                 continue
             if not text:
                 continue
@@ -953,6 +983,7 @@ class CatMasterStreamTranslator:
 
     def _handle_model_end_text(self, payload: Any, *, metadata: dict[str, Any]) -> None:
         for message in self._extract_messages_from_payload(payload):
+            self._handle_provider_content_blocks(_message_content_blocks(message), metadata=metadata)
             reasoning = _message_reasoning_text(message)
             if reasoning:
                 self._append_reasoning_if_new(reasoning, metadata=metadata)
@@ -964,6 +995,111 @@ class CatMasterStreamTranslator:
                 self._append_progress_if_new(text, metadata=metadata)
             else:
                 self._append_text_if_new(text)
+
+    def _handle_provider_content_blocks(
+        self,
+        blocks: list[dict[str, Any]],
+        *,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Project hosted provider tools and citations onto the WebUI message."""
+        for block in blocks:
+            block_type = str(block.get("type") or "").strip().lower()
+            if block_type in {"server_tool_call", "server_tool_call_chunk"}:
+                call_id = str(block.get("id") or block.get("tool_call_id") or block.get("index") or "").strip()
+                if not call_id or call_id in self.completed_tool_call_ids:
+                    continue
+                name = str(block.get("name") or self.tool_names_by_call_id.get(call_id) or "provider_tool").strip()
+                self._handle_tool_call_payload(
+                    {
+                        "id": call_id,
+                        "name": name,
+                        "args": block.get("args") if block.get("args") is not None else {},
+                        "server_side": True,
+                    },
+                    metadata=metadata,
+                )
+                continue
+            if block_type == "web_search_call":
+                call_id = str(block.get("id") or block.get("index") or "").strip()
+                if not call_id or call_id in self.completed_tool_call_ids:
+                    continue
+                self._handle_tool_call_payload(
+                    {
+                        "id": call_id,
+                        "name": "web_search",
+                        "args": block.get("action") if isinstance(block.get("action"), dict) else {},
+                        "server_side": True,
+                    },
+                    metadata=metadata,
+                )
+                status = str(block.get("status") or "").strip().lower()
+                if status:
+                    self._finish_v3_tool_call(
+                        call_id=call_id,
+                        tool_name="web_search",
+                        output=block.get("sources") or {"status": status},
+                        metadata=metadata,
+                        failed=status in {"failed", "error"},
+                    )
+                continue
+            if block_type == "server_tool_result":
+                call_id = str(block.get("tool_call_id") or block.get("id") or "").strip()
+                if not call_id:
+                    continue
+                name = str(self.tool_names_by_call_id.get(call_id) or block.get("name") or "provider_tool").strip()
+                extras = block.get("extras")
+                extra_status = extras.get("status") if isinstance(extras, dict) else ""
+                status = str(block.get("status") or extra_status or "").strip().lower()
+                output = block.get("output")
+                if output is None:
+                    output = {"status": status or "completed"}
+                self._finish_v3_tool_call(
+                    call_id=call_id,
+                    tool_name=name,
+                    output=output,
+                    metadata=metadata,
+                    failed=status in {"failed", "error"},
+                )
+                continue
+            if block_type in {"text", "output_text"}:
+                self._record_citations(block.get("annotations"))
+
+    def _record_citations(self, annotations: Any) -> None:
+        if not isinstance(annotations, list):
+            return
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                continue
+            row = annotation
+            if str(row.get("type") or "").strip().lower() == "non_standard_annotation":
+                value = row.get("value")
+                if isinstance(value, dict):
+                    row = value
+            annotation_type = str(row.get("type") or "").strip().lower()
+            if annotation_type not in {"citation", "url_citation"}:
+                continue
+            url = str(row.get("url") or "").strip()
+            if not url:
+                continue
+            title = str(row.get("title") or "").strip()
+            start_index = row.get("start_index")
+            end_index = row.get("end_index")
+            start = int(start_index) if isinstance(start_index, int) and not isinstance(start_index, bool) else None
+            end = int(end_index) if isinstance(end_index, int) and not isinstance(end_index, bool) else None
+            key = (url, title, start, end)
+            if key in self._citation_keys:
+                continue
+            self._citation_keys.add(key)
+            citation: dict[str, Any] = {"url": url, "title": title or url}
+            if start is not None:
+                citation["start_index"] = start
+            if end is not None:
+                citation["end_index"] = end
+            cited_text = str(row.get("cited_text") or "").strip()
+            if cited_text:
+                citation["cited_text"] = cited_text
+            self.citations.append(citation)
 
     def _extract_messages_from_payload(self, payload: Any) -> list[Any]:
         out: list[Any] = []
@@ -1077,6 +1213,11 @@ class CatMasterStreamTranslator:
                 self.tool_names_by_call_id[call_id] = name
             if stream_fields:
                 self.tool_stream_meta_by_call_id[call_id] = {**self.tool_stream_meta_by_call_id.get(call_id, {}), **stream_fields}
+            if bool(row.get("server_side")):
+                self.tool_stream_meta_by_call_id[call_id] = {
+                    **self.tool_stream_meta_by_call_id.get(call_id, {}),
+                    "server_side": True,
+                }
             input_payload = self._record_tool_input(call_id, row)
             observed_fields = self._observed_tool_stream_fields(tool_name=name, input_payload=input_payload)
             if observed_fields:
@@ -1873,7 +2014,7 @@ class StreamingSpecialistRunner:
                 "summary": parsed["summary"],
                 "facts": list(parsed["facts"]),
                 "artifact_ids": [record.artifact_id for record in artifact_records],
-                "citations": [],
+                "citations": list(translator.citations),
                 "review_target": str(parsed.get("review_target") or "").strip(),
             }
             translator.complete(parsed["text"], sidecar=sidecar)
