@@ -6,7 +6,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
+from langchain.agents.middleware import ModelRetryMiddleware
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
@@ -689,9 +692,42 @@ def test_tool_result_middleware_preserves_multimodal_tool_messages() -> None:
     assert result.tool_call_id == "call-1"
 
 
-def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.MonkeyPatch) -> None:
+def _model_call_middlewares() -> tuple[ModelRetryMiddleware, object]:
     middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    model_mw = middleware[0]
+    retry_mw = middleware[0]
+    validator_mw = middleware[1]
+    assert isinstance(retry_mw, ModelRetryMiddleware)
+    assert getattr(validator_mw, "name", "") == "catmaster_validate_model_responses"
+    return retry_mw, validator_mw
+
+
+async def _call_model_middleware_stack(
+    request: object,
+    handler: object,
+    *,
+    retry_mw: ModelRetryMiddleware,
+    validator_mw: object,
+) -> ModelResponse:
+    async def _validated(inner_request):
+        return await validator_mw.awrap_model_call(inner_request, handler)
+
+    return await retry_mw.awrap_model_call(request, _validated)
+
+
+def test_model_retry_middleware_uses_langchain_retry_contract() -> None:
+    retry_mw, _ = _model_call_middlewares()
+
+    assert retry_mw.max_retries == 3
+    assert retry_mw.initial_delay == 5.0
+    assert retry_mw.backoff_factor == 2.0
+    assert retry_mw.max_delay == 30.0
+    assert retry_mw.jitter is True
+    assert retry_mw.on_failure == "error"
+
+
+def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    retry_mw, validator_mw = _model_call_middlewares()
+    retry_mw.jitter = False
     sleeps: list[float] = []
     attempts = {"count": 0}
 
@@ -707,18 +743,22 @@ def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.Mo
     monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
 
     async def _run():
-        return await model_mw.awrap_model_call(object(), _handler)
+        return await _call_model_middleware_stack(
+            object(),
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
 
     result = asyncio.run(_run())
 
     assert isinstance(result, ModelResponse)
     assert attempts["count"] == 3
-    assert sleeps == [60.0, 180.0]
+    assert sleeps == [5.0, 10.0]
 
 
 def test_model_retry_middleware_preserves_multimodal_tool_history() -> None:
-    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    model_mw = middleware[0]
+    retry_mw, validator_mw = _model_call_middlewares()
     seen_messages = []
 
     class _Request:
@@ -751,7 +791,12 @@ def test_model_retry_middleware_preserves_multimodal_tool_history() -> None:
         return ModelResponse(result=[AIMessage(content="## Summary\nok")])
 
     async def _run():
-        return await model_mw.awrap_model_call(request, _handler)
+        return await _call_model_middleware_stack(
+            request,
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
 
     result = asyncio.run(_run())
 
@@ -764,8 +809,7 @@ def test_model_retry_middleware_preserves_multimodal_tool_history() -> None:
 
 
 def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
-    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    model_mw = middleware[0]
+    retry_mw, validator_mw = _model_call_middlewares()
 
     async def _handler(_request):
         return ModelResponse(
@@ -779,7 +823,12 @@ def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
         )
 
     async def _run():
-        return await model_mw.awrap_model_call(object(), _handler)
+        return await _call_model_middleware_stack(
+            object(),
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
 
     result = asyncio.run(_run())
     assert isinstance(result, ModelResponse)
@@ -787,8 +836,8 @@ def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
 
 
 def test_model_retry_middleware_retries_openrouter_unmarshaller_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    model_mw = middleware[0]
+    retry_mw, validator_mw = _model_call_middlewares()
+    retry_mw.jitter = False
     sleeps: list[float] = []
     attempts = {"count": 0}
 
@@ -807,18 +856,23 @@ def test_model_retry_middleware_retries_openrouter_unmarshaller_error(monkeypatc
     monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
 
     async def _run():
-        return await model_mw.awrap_model_call(object(), _handler)
+        return await _call_model_middleware_stack(
+            object(),
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
 
     result = asyncio.run(_run())
 
     assert isinstance(result, ModelResponse)
     assert attempts["count"] == 2
-    assert sleeps == [60.0]
+    assert sleeps == [5.0]
 
 
 def test_model_retry_middleware_retries_wellau_upstream_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    model_mw = middleware[0]
+    retry_mw, validator_mw = _model_call_middlewares()
+    retry_mw.jitter = False
     sleeps: list[float] = []
     attempts = {"count": 0}
 
@@ -838,13 +892,143 @@ def test_model_retry_middleware_retries_wellau_upstream_error(monkeypatch: pytes
     monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
 
     async def _run():
-        return await model_mw.awrap_model_call(object(), _handler)
+        return await _call_model_middleware_stack(
+            object(),
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
 
     result = asyncio.run(_run())
 
     assert isinstance(result, ModelResponse)
     assert attempts["count"] == 2
-    assert sleeps == [60.0]
+    assert sleeps == [5.0]
+
+
+def test_model_retry_middleware_retries_codex_stream_api_error_without_parent_visibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry_mw, validator_mw = _model_call_middlewares()
+    retry_mw.jitter = False
+    request = object()
+    seen_requests: list[object] = []
+    sleeps: list[float] = []
+    provider_error = openai.APIError(
+        "An error occurred while processing your request. You can retry your request.",
+        request=httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses"),
+        body=None,
+    )
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _handler(inner_request):
+        seen_requests.append(inner_request)
+        if len(seen_requests) == 1:
+            raise provider_error
+        return ModelResponse(result=[AIMessage(content="## Summary\nrecovered")])
+
+    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+
+    async def _run():
+        return await _call_model_middleware_stack(
+            request,
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
+
+    result = asyncio.run(_run())
+
+    assert result.result[0].content == "## Summary\nrecovered"
+    assert seen_requests == [request, request]
+    assert sleeps == [5.0]
+
+
+@pytest.mark.parametrize(
+    ("error_type", "status_code"),
+    [
+        (openai.AuthenticationError, 401),
+        (openai.BadRequestError, 400),
+    ],
+)
+def test_model_retry_middleware_does_not_retry_deterministic_client_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[openai.APIStatusError],
+    status_code: int,
+) -> None:
+    retry_mw, validator_mw = _model_call_middlewares()
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+    request = httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses")
+    provider_error = error_type(
+        "deterministic client failure",
+        response=httpx.Response(status_code, request=request),
+        body=None,
+    )
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _handler(_request):
+        attempts["count"] += 1
+        raise provider_error
+
+    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+
+    async def _run():
+        return await _call_model_middleware_stack(
+            object(),
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
+
+    with pytest.raises(error_type) as caught:
+        asyncio.run(_run())
+
+    assert caught.value is provider_error
+    assert attempts["count"] == 1
+    assert sleeps == []
+
+
+def test_model_retry_middleware_reraises_original_error_after_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry_mw, validator_mw = _model_call_middlewares()
+    retry_mw.jitter = False
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+    provider_error = openai.APIError(
+        "An error occurred while processing your request. You can retry your request.",
+        request=httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses"),
+        body=None,
+    )
+
+    async def _fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _handler(_request):
+        attempts["count"] += 1
+        raise provider_error
+
+    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+
+    async def _run():
+        return await _call_model_middleware_stack(
+            object(),
+            _handler,
+            retry_mw=retry_mw,
+            validator_mw=validator_mw,
+        )
+
+    with pytest.raises(openai.APIError) as caught:
+        asyncio.run(_run())
+
+    assert caught.value is provider_error
+    assert attempts["count"] == 4
+    assert sleeps == [5.0, 10.0, 20.0]
 
 
 def test_extract_final_text_ignores_user_message_fallback() -> None:
@@ -1073,6 +1257,66 @@ def test_run_impl_retries_invalid_final_report_and_recovers(
     assert result["summary"] == "recovered"
     assert retry_agent.calls == 2
     assert sleeps == [30.0]
+
+
+def test_run_impl_does_not_restart_episode_after_model_retry_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    provider_error = openai.APIError(
+        "An error occurred while processing your request. You can retry your request.",
+        request=httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses"),
+        body=None,
+    )
+
+    class _FailedAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, payload, config=None):
+            _ = (payload, config)
+            self.calls += 1
+            raise provider_error
+
+    failed_agent = _FailedAgent()
+
+    @asynccontextmanager
+    async def _fake_open_agent_runtime(self, *, files_root: Path):
+        _ = files_root
+        yield {"checkpointer": object(), "store": object(), "backend": object()}
+
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_create_deep_agent",
+        staticmethod(lambda: lambda **kwargs: failed_agent),
+    )
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
+    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_entry_subagents", lambda self, entrypoint, runtime: [])
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="experiment",
+    )
+
+    with pytest.raises(openai.APIError) as caught:
+        asyncio.run(
+            built.runner.arun(
+                "Run one bounded experiment.",
+                entrypoint="experiment",
+                proposal_review=False,
+            )
+        )
+
+    assert caught.value is provider_error
+    assert failed_agent.calls == 1
 
 
 @pytest.mark.parametrize(

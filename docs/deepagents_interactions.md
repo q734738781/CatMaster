@@ -29,16 +29,48 @@ Do not use DeepAgent checkpoints as the user-visible run status source.
 
 ## Middleware Added By CatMaster
 
-`SpecialistRunner._build_default_middleware()` currently injects two custom
-middleware objects.
+`SpecialistRunner._build_default_middleware()` currently injects LangChain's
+built-in model retry middleware plus two CatMaster middleware objects.
 
-### `catmaster_retry_semantic_model_failures`
+### LangChain `ModelRetryMiddleware`
 
 Purpose:
 
-- Retry model responses that are syntactically accepted but unusable.
-- Retry provider/schema exceptions that commonly come from OpenRouter transport
-  or SDK validation instability.
+- Retry transient model API, streaming, rate-limit, gateway, connection, and
+  provider/schema failures inside the same LangChain model-call boundary.
+- Reuse the same `ModelRequest` and agent node so a retry does not create a new
+  worker/subagent episode and remains invisible to the current agent and its
+  parent unless the retry budget is exhausted.
+
+CatMaster configures three retries after the initial call, with nominal
+exponential delays of 5, 10, and 20 seconds plus jitter. `on_failure="error"` is
+required: LangChain's default `"continue"` behavior would turn an exhausted
+provider failure into an `AIMessage`, incorrectly making infrastructure failure
+look like an assistant response.
+
+The `retry_on` predicate is `_is_retryable_model_exception`. It retries OpenAI
+stream-level base `APIError`, connection/timeouts, HTTP 408/409/425/429 and 5xx,
+plus the existing cross-provider transient/schema signatures. It explicitly
+does not retry authentication, permission, malformed-request, missing-resource,
+unprocessable-request, or other deterministic 4xx failures.
+
+Individual failed attempts remain available to callbacks and
+`observability.sqlite`, but they are not committed as agent messages or returned
+through the DeepAgents `task` tool. If the model-call budget is exhausted, the
+original provider exception leaves the node immediately; the outer specialist
+runner does not restart the complete episode or duplicate completed tool work.
+Its separate retry loop is reserved for an otherwise completed episode whose
+final report cannot be parsed.
+
+### `catmaster_validate_model_responses`
+
+Purpose:
+
+- Reject model responses that are syntactically accepted but unusable, such as
+  empty assistant output without tool calls.
+- Raise `SpecialistRetryableModelResponseError` inside
+  `ModelRetryMiddleware`, allowing the same transparent retry path to handle
+  semantic response failures.
 
 Related functions:
 
@@ -46,15 +78,16 @@ Related functions:
 - `_validate_ai_message_for_retry`
 - `_is_retryable_model_exception`
 
-Keep this layer while using OpenRouter and long-lived DeepAgent threads. It is
-the final defense for transient provider/schema failures and unusable assistant
-outputs. It must not rewrite multimodal `ToolMessage` content; provider-specific
-compatibility handling belongs at the model adapter boundary.
+Keep these layers while using Codex OAuth/OpenRouter and long-lived DeepAgent
+threads. They are the model-call defense for transient provider/schema failures
+and unusable assistant outputs. They must not rewrite multimodal `ToolMessage`
+content; provider-specific compatibility handling belongs at the model adapter
+boundary.
 
 Possible future removal:
 
-- The retry logic can be narrowed if provider errors become rare and covered by
-  the model client's own retry policy.
+- The retry predicate can be narrowed if provider streaming failures become
+  rare and are reliably covered by the model client's own retry policy.
 
 ### Removed: `catmaster_textualize_multimodal_tool_results`
 
@@ -178,8 +211,8 @@ testing these cases:
 Interactions that are currently justified:
 
 - Non-fatal tool error conversion.
-- Model retry for empty/invalid assistant output.
-- Provider/schema retry for OpenRouter validation/EOF failures.
+- LangChain model-call retry for transient Codex OAuth/OpenRouter/API failures.
+- Model-response validation for empty/invalid assistant output.
 - WebUI upload artifact storage plus current-turn content block injection.
 - OpenRouter request-boundary conversion for standard image/file blocks and
   legacy checkpoint compatibility.

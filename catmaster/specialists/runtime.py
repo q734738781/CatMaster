@@ -392,7 +392,10 @@ def default_thread_interrupt_on() -> dict[str, bool]:
 
 
 class SpecialistRunner:
-    _MODEL_RESPONSE_RETRY_DELAYS_S: tuple[float, ...] = (60.0, 180.0, 300.0)
+    _MODEL_CALL_MAX_RETRIES = 3
+    _MODEL_CALL_RETRY_INITIAL_DELAY_S = 5.0
+    _MODEL_CALL_RETRY_BACKOFF_FACTOR = 2.0
+    _MODEL_CALL_RETRY_MAX_DELAY_S = 30.0
     _FINAL_REPORT_RETRY_DELAYS_S: tuple[float, ...] = (30.0, 120.0)
 
     def __init__(
@@ -533,10 +536,12 @@ class SpecialistRunner:
                     }
                 )
 
-            retryable_exceptions = (
-                SpecialistRetryableModelResponseError,
-                SpecialistInvalidFinalReportError,
-            )
+            # Model/API failures are exhausted inside ModelRetryMiddleware and
+            # must then surface as-is. Retrying them here would restart the
+            # complete agent episode, duplicate tool work, and break the
+            # same-node transparency contract. This outer loop is only for a
+            # completed episode whose final report cannot be parsed.
+            retryable_exceptions = (SpecialistInvalidFinalReportError,)
             max_attempts = len(self._FINAL_REPORT_RETRY_DELAYS_S) + 1
             for attempt_index in range(max_attempts):
                 self._raise_if_interrupt_requested(phase="before_agent_invoke", details={"entrypoint": entrypoint})
@@ -635,38 +640,11 @@ class SpecialistRunner:
                 except retryable_exceptions as exc:
                     if attempt_index >= max_attempts - 1:
                         raise RuntimeError(
-                            f"{entrypoint}_specialist failed after {max_attempts} attempts due to transient model/output instability."
+                            f"{entrypoint}_specialist failed after {max_attempts} attempts due to invalid final reports."
                         ) from exc
                     delay_s = self._FINAL_REPORT_RETRY_DELAYS_S[attempt_index]
                     logger.warning(
-                        "%s retrying after retryable model/output failure on attempt %d/%d in %.1fs: %s",
-                        entrypoint,
-                        attempt_index + 1,
-                        max_attempts,
-                        delay_s,
-                        exc,
-                    )
-                    self._emit(
-                        "RUN_RETRY",
-                        payload={
-                            "entrypoint": entrypoint,
-                            "attempt": attempt_index + 1,
-                            "max_attempts": max_attempts,
-                            "delay_s": delay_s,
-                            "reason": str(exc),
-                        },
-                    )
-                    await asyncio.sleep(delay_s)
-                except Exception as exc:
-                    if not self._is_retryable_model_exception(exc):
-                        raise
-                    if attempt_index >= max_attempts - 1:
-                        raise RuntimeError(
-                            f"{entrypoint}_specialist failed after {max_attempts} attempts due to transient provider/schema instability."
-                        ) from exc
-                    delay_s = self._FINAL_REPORT_RETRY_DELAYS_S[attempt_index]
-                    logger.warning(
-                        "%s retrying after transient provider/schema failure on attempt %d/%d in %.1fs: %s",
+                        "%s retrying after invalid final report on attempt %d/%d in %.1fs: %s",
                         entrypoint,
                         attempt_index + 1,
                         max_attempts,
@@ -2642,28 +2620,36 @@ class SpecialistRunner:
     def _build_default_middleware(cls) -> list[Any]:
         middleware: list[Any] = []
         try:
-            from langchain.agents.middleware import wrap_model_call, wrap_tool_call
+            from langchain.agents.middleware import ModelRetryMiddleware, wrap_model_call, wrap_tool_call
         except Exception:
             return middleware
 
-        @wrap_model_call(name="catmaster_retry_semantic_model_failures")
-        async def _retry_invalid_model_responses(request: Any, handler: Any) -> Any:
-            max_attempts = len(cls._MODEL_RESPONSE_RETRY_DELAYS_S) + 1
-            for attempt_index in range(max_attempts):
-                try:
-                    response = await handler(request)
-                    cls._validate_model_response_for_retry(response)
-                    return response
-                except Exception as exc:
-                    if not isinstance(exc, SpecialistRetryableModelResponseError) and not cls._is_retryable_model_exception(exc):
-                        raise
-                    if attempt_index >= max_attempts - 1:
-                        raise SpecialistRetryableModelResponseError(str(exc)) from exc
-                    delay_s = cls._MODEL_RESPONSE_RETRY_DELAYS_S[attempt_index]
-                    await asyncio.sleep(delay_s)
-            raise SpecialistRetryableModelResponseError("Unexpected model retry loop exit.")
+        # LangChain's retry middleware is deliberately the outermost model-call
+        # wrapper. It re-invokes the same ModelRequest inside the same agent node,
+        # so transient provider/stream failures do not create a new worker
+        # episode or become a ToolMessage visible to the parent agent.
+        middleware.append(
+            ModelRetryMiddleware(
+                max_retries=cls._MODEL_CALL_MAX_RETRIES,
+                retry_on=cls._is_retryable_model_exception,
+                on_failure="error",
+                backoff_factor=cls._MODEL_CALL_RETRY_BACKOFF_FACTOR,
+                initial_delay=cls._MODEL_CALL_RETRY_INITIAL_DELAY_S,
+                max_delay=cls._MODEL_CALL_RETRY_MAX_DELAY_S,
+                jitter=True,
+            )
+        )
 
-        middleware.append(_retry_invalid_model_responses)
+        @wrap_model_call(name="catmaster_validate_model_responses")
+        async def _validate_model_responses(request: Any, handler: Any) -> Any:
+            response = await handler(request)
+            cls._validate_model_response_for_retry(response)
+            return response
+
+        # This validator stays inside ModelRetryMiddleware. A syntactically
+        # successful but unusable response is raised back to the outer wrapper
+        # and retried exactly like a transient transport failure.
+        middleware.append(_validate_model_responses)
 
         @wrap_tool_call(name="catmaster_nonfatal_tool_errors")
         async def _handle_tool_errors(request: Any, handler: Any) -> Any:
@@ -2846,7 +2832,74 @@ class SpecialistRunner:
 
     @classmethod
     def _is_retryable_model_exception(cls, exc: Exception) -> bool:
-        text = str(exc or "").lower()
+        chain: list[BaseException] = []
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            chain.append(current)
+            current = current.__cause__ or current.__context__
+
+        retryable_openai_transport: tuple[type[BaseException], ...] = ()
+        non_retryable_openai_errors: tuple[type[BaseException], ...] = ()
+        openai_api_error_type: type[BaseException] | None = None
+        openai_status_error_type: type[BaseException] | None = None
+        try:
+            from openai import (
+                APIConnectionError,
+                APIError,
+                APIStatusError,
+                APITimeoutError,
+                AuthenticationError,
+                BadRequestError,
+                NotFoundError,
+                PermissionDeniedError,
+                UnprocessableEntityError,
+            )
+            retryable_openai_transport = (APIConnectionError, APITimeoutError)
+            non_retryable_openai_errors = (
+                AuthenticationError,
+                PermissionDeniedError,
+                BadRequestError,
+                NotFoundError,
+                UnprocessableEntityError,
+            )
+            openai_api_error_type = APIError
+            openai_status_error_type = APIStatusError
+        except Exception:  # pragma: no cover - pinned control-plane dependency
+            pass
+
+        transient_status_codes = {408, 409, 425, 429}
+
+        # Authentication, permission, malformed-request, and other deterministic
+        # 4xx failures must not be hidden behind repeated calls.
+        for item in chain:
+            if non_retryable_openai_errors and isinstance(item, non_retryable_openai_errors):
+                return False
+            status_code = getattr(item, "status_code", None)
+            if isinstance(status_code, int) and 400 <= status_code < 500 and status_code not in transient_status_codes:
+                return False
+
+        for item in chain:
+            if isinstance(item, SpecialistRetryableModelResponseError):
+                return True
+            if retryable_openai_transport and isinstance(item, retryable_openai_transport):
+                return True
+            status_code = getattr(item, "status_code", None)
+            if isinstance(status_code, int) and (
+                status_code in transient_status_codes or 500 <= status_code < 600
+            ):
+                return True
+            # The OpenAI Responses streaming client can raise the base APIError
+            # after a stream has opened. It has no HTTP status but is explicitly
+            # documented by the provider as retryable ("You can retry your
+            # request"), so it must be handled at the LangChain model boundary.
+            if openai_api_error_type is not None and isinstance(item, openai_api_error_type) and not (
+                openai_status_error_type is not None and isinstance(item, openai_status_error_type)
+            ):
+                return True
+
+        text = "\n".join(str(item or "").lower() for item in chain if str(item or "").strip())
         if not text:
             return False
         retryable_fragments = (
@@ -2866,8 +2919,7 @@ class SpecialistRunner:
             "read timeout",
             "timed out",
             "union_tag_invalid",
-            "body.",
-            ".tool.content",
+            "an error occurred while processing your request",
         )
         if "validationerror" in text and "unmarshaller" in text:
             return True
@@ -2877,7 +2929,7 @@ class SpecialistRunner:
             return True
         if "body." in text and ".tool.content" in text:
             return True
-        return any(fragment in text for fragment in retryable_fragments[:15])
+        return any(fragment in text for fragment in retryable_fragments)
 
     @classmethod
     def _validate_model_response_for_retry(cls, response: Any) -> None:
