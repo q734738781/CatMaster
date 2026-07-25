@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, Tool
 from langgraph.types import Command
 
 from catmaster.runtime.observability_store import ObservabilityStore
-from catmaster.runtime.usage_stats import summarize_usage_from_observability
+from catmaster.runtime.usage_stats import load_usage_summary, summarize_usage_from_observability
 from catmaster.tools.base import workspace_root
 from catmaster.webui.artifact_registry import ArtifactRegistry
 from catmaster.webui.thread_events import ThreadEventBroker
@@ -1767,6 +1767,7 @@ class StreamingSpecialistRunner:
         self.event_broker = event_broker
         self.artifact_registry = artifact_registry
         self.should_stop = should_stop or (lambda _thread_id: False)
+        self._usage_event_fingerprints: dict[str, str] = {}
 
     def _emit_thread_event(
         self,
@@ -1869,6 +1870,15 @@ class StreamingSpecialistRunner:
             research_goal_relpath = runner._research_goal_relpath(deepagent_thread_id)
 
         usage_handler = runner._new_usage_callback()
+        set_usage_update_callback = getattr(usage_handler, "set_usage_update_callback", None)
+        if callable(set_usage_update_callback):
+            set_usage_update_callback(
+                lambda: self._publish_usage_update(
+                    usage_handler=usage_handler,
+                    thread_id=thread_id,
+                    message_id=message_id,
+                )
+            )
         translator = CatMasterStreamTranslator(
             store=self.thread_store,
             events=self.event_broker,
@@ -1921,7 +1931,13 @@ class StreamingSpecialistRunner:
                     ),
                     "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
                 }
-                await self._consume_agent_stream(agent, input_payload=input_payload, config=config, translator=translator)
+                await self._consume_agent_stream(
+                    agent,
+                    input_payload=input_payload,
+                    config=config,
+                    translator=translator,
+                    usage_handler=usage_handler,
+                )
             if translator.interrupt_id:
                 if entrypoint == "research" and research_goal is not None:
                     research_goal = runner._update_research_goal_status(research_goal, status="paused")
@@ -2115,10 +2131,51 @@ class StreamingSpecialistRunner:
             self._emit_thread_event(thread_id, "thread.status", message_id=message_id, status="error", data={"status": "error", "error": error})
             raise
 
-    def _emit_usage_updated(self, *, thread_id: str, message_id: str) -> None:
-        summary = summarize_usage_from_observability(self.runner.run_context.run_dir)
+    def _publish_usage_update(
+        self,
+        *,
+        usage_handler: Any,
+        thread_id: str,
+        message_id: str,
+    ) -> None:
+        summary = self.runner._write_usage_summary(usage_handler)
+        self._emit_usage_updated(
+            thread_id=thread_id,
+            message_id=message_id,
+            usage_summary=summary if isinstance(summary, dict) else None,
+        )
+
+    def _emit_usage_updated(
+        self,
+        *,
+        thread_id: str,
+        message_id: str,
+        usage_summary: dict[str, Any] | None = None,
+    ) -> None:
+        summary = dict(usage_summary or {})
+        if not summary:
+            summary = summarize_usage_from_observability(self.runner.run_context.run_dir)
+        if not summary:
+            summary = load_usage_summary(self.runner.run_context.run_dir)
         if not summary:
             return
+        fingerprint_payload = {
+            key: summary.get(key)
+            for key in (
+                "calls",
+                "input_tokens",
+                "input_uncached_tokens",
+                "input_cached_tokens",
+                "input_cache_write_tokens",
+                "output_tokens",
+                "reasoning_tokens",
+                "total_tokens",
+            )
+        }
+        fingerprint = json.dumps(fingerprint_payload, ensure_ascii=False, sort_keys=True, default=str)
+        if self._usage_event_fingerprints.get(thread_id) == fingerprint:
+            return
+        self._usage_event_fingerprints[thread_id] = fingerprint
         self._emit_thread_event(
             thread_id,
             "usage.updated",
@@ -2130,13 +2187,59 @@ class StreamingSpecialistRunner:
             },
         )
 
-    async def _consume_agent_stream(self, agent: Any, *, input_payload: Any, config: dict[str, Any], translator: CatMasterStreamTranslator) -> None:
+    @staticmethod
+    def _stream_event_call_id(event: Any) -> str:
+        if isinstance(event, dict):
+            return str(event.get("run_id") or event.get("id") or "").strip()
+        return str(getattr(event, "run_id", "") or getattr(event, "id", "") or "").strip()
+
+    @staticmethod
+    def _usage_agent_name(metadata: dict[str, Any], usage_handler: Any) -> str:
+        for key in ("lc_agent_name", "agent_name", "agent", "subagent"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+        return str(getattr(usage_handler, "default_agent_name", "") or "").strip()
+
+    def _ingest_stream_usage(
+        self,
+        payload: Any,
+        *,
+        translator: CatMasterStreamTranslator,
+        usage_handler: Any,
+        call_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        ingest = getattr(usage_handler, "ingest_ai_message", None)
+        if not callable(ingest):
+            return
+        agent_name = self._usage_agent_name(metadata or {}, usage_handler)
+        for message in translator._extract_messages_from_payload(payload):
+            ingest(message, call_id=call_id, agent_name=agent_name)
+
+    async def _consume_agent_stream(
+        self,
+        agent: Any,
+        *,
+        input_payload: Any,
+        config: dict[str, Any],
+        translator: CatMasterStreamTranslator,
+        usage_handler: Any | None = None,
+    ) -> None:
         started = False
         try:
             stream_or_awaitable = agent.astream_events(input_payload, config=config, version="v3")
             stream = await stream_or_awaitable if inspect.isawaitable(stream_or_awaitable) else stream_or_awaitable
             async for event in stream:
                 started = True
+                if usage_handler is not None:
+                    self._ingest_stream_usage(
+                        _event_data(event),
+                        translator=translator,
+                        usage_handler=usage_handler,
+                        call_id=self._stream_event_call_id(event),
+                        metadata=_event_metadata(event),
+                    )
                 translator.apply_v3_event(event)
                 translator.flush_observed_reasoning()
                 if self.should_stop(translator.thread_id):
@@ -2151,6 +2254,12 @@ class StreamingSpecialistRunner:
             if isinstance(input_payload, Command):
                 raise
         async for chunk in agent.astream(input_payload, config=config, stream_mode=["messages", "updates"]):
+            if usage_handler is not None:
+                self._ingest_stream_usage(
+                    chunk,
+                    translator=translator,
+                    usage_handler=usage_handler,
+                )
             translator.apply_astream_chunk(chunk)
             translator.flush_observed_reasoning()
             if self.should_stop(translator.thread_id):

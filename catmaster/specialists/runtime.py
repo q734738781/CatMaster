@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import re
 import shutil
+import threading
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import AIMessage, ToolMessage
@@ -238,6 +240,23 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
         self.call_counts_by_role: dict[str, int] = {}
         self.usage_metadata_by_role: dict[str, dict[str, Any]] = {}
         self._pending_agents_by_run: dict[str, str] = {}
+        self._seen_usage_keys: set[str] = set()
+        self._usage_update_callback: Callable[[], None] | None = None
+        self._usage_update_lock = threading.Lock()
+
+    def set_usage_update_callback(self, callback: Callable[[], None] | None) -> None:
+        """Run a bounded persistence/UI hook after each newly counted LLM call."""
+        self._usage_update_callback = callback
+
+    def usage_snapshot(self) -> dict[str, Any]:
+        """Return one internally consistent copy for persistence and UI projection."""
+        with self._lock:
+            return {
+                "usage_metadata": copy.deepcopy(self.usage_metadata),
+                "call_counts_by_model": dict(self.call_counts_by_model),
+                "usage_metadata_by_role": copy.deepcopy(self.usage_metadata_by_role),
+                "call_counts_by_role": dict(self.call_counts_by_role),
+            }
 
     def on_llm_start(self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any) -> None:
         _ = (serialized, prompts)
@@ -253,38 +272,88 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
         self._remember_agent_for_run(**kwargs)
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
-        model_name = self._extract_model_name(response)
         run_id = str(kwargs.get("run_id") or "").strip()
         agent_name = self._pending_agents_by_run.pop(run_id, "") if run_id else ""
-        usage_metadata = self._extract_usage_metadata(response)
-        super().on_llm_end(response, **kwargs)
-        if model_name:
-            self.call_counts_by_model[model_name] = int(self.call_counts_by_model.get(model_name, 0)) + 1
-        if agent_name:
-            self.call_counts_by_role[agent_name] = int(self.call_counts_by_role.get(agent_name, 0)) + 1
-            if model_name and usage_metadata:
-                current = self.usage_metadata_by_role.setdefault(agent_name, {})
-                previous = current.get(model_name)
-                if isinstance(previous, dict):
-                    current[model_name] = self._merge_usage_dict(previous, usage_metadata)
-                else:
-                    current[model_name] = usage_metadata
+        message = self._extract_ai_message(response)
+        if message is None:
+            return
+        self.ingest_ai_message(
+            message,
+            call_id=run_id,
+            agent_name=agent_name or self.default_agent_name,
+        )
 
     @staticmethod
-    def _extract_model_name(response: LLMResult) -> str:
+    def _extract_ai_message(response: LLMResult) -> AIMessage | None:
         try:
             generation = response.generations[0][0]
         except Exception:
-            return ""
+            return None
         if not isinstance(generation, ChatGeneration):
-            return ""
+            return None
         message = getattr(generation, "message", None)
-        if not isinstance(message, AIMessage):
-            return ""
+        return message if isinstance(message, AIMessage) else None
+
+    def ingest_ai_message(
+        self,
+        message: Any,
+        *,
+        call_id: str = "",
+        agent_name: str = "",
+    ) -> bool:
+        """Count one finalized LangChain AI message, deduplicating stream/callback aliases."""
+        usage = getattr(message, "usage_metadata", None)
+        if not isinstance(usage, dict) or not usage:
+            return False
         response_metadata = getattr(message, "response_metadata", None)
-        if not isinstance(response_metadata, dict):
-            return ""
-        return str(response_metadata.get("model_name") or "").strip()
+        metadata = response_metadata if isinstance(response_metadata, dict) else {}
+        model_name = str(
+            metadata.get("model_name")
+            or metadata.get("model")
+            or getattr(message, "name", "")
+            or "unknown"
+        ).strip() or "unknown"
+        message_id = str(getattr(message, "id", "") or "").strip()
+        usage_metadata = dict(usage)
+        usage_keys = {
+            value
+            for value in (
+                f"call:{str(call_id).strip()}" if str(call_id).strip() else "",
+                f"message:{message_id}" if message_id else "",
+            )
+            if value
+        }
+        resolved_agent_name = str(agent_name or self.default_agent_name or "").strip()
+
+        with self._lock:
+            if usage_keys and any(key in self._seen_usage_keys for key in usage_keys):
+                return False
+            self._seen_usage_keys.update(usage_keys)
+            previous = self.usage_metadata.get(model_name)
+            if isinstance(previous, dict):
+                self.usage_metadata[model_name] = self._merge_usage_dict(previous, usage_metadata)
+            else:
+                self.usage_metadata[model_name] = usage_metadata
+            self.call_counts_by_model[model_name] = int(self.call_counts_by_model.get(model_name, 0)) + 1
+            if resolved_agent_name:
+                self.call_counts_by_role[resolved_agent_name] = int(
+                    self.call_counts_by_role.get(resolved_agent_name, 0)
+                ) + 1
+                current = self.usage_metadata_by_role.setdefault(resolved_agent_name, {})
+                previous_role_usage = current.get(model_name)
+                if isinstance(previous_role_usage, dict):
+                    current[model_name] = self._merge_usage_dict(previous_role_usage, usage_metadata)
+                else:
+                    current[model_name] = usage_metadata
+
+        callback = self._usage_update_callback
+        if callback is not None:
+            try:
+                with self._usage_update_lock:
+                    callback()
+            except Exception:
+                logger.warning("Failed to persist or publish updated LLM usage.", exc_info=True)
+        return True
 
     @staticmethod
     def _agent_name_from_kwargs(default_agent_name: str = "", **kwargs: Any) -> str:
@@ -304,20 +373,6 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
         agent_name = self._agent_name_from_kwargs(self.default_agent_name, **kwargs)
         if agent_name:
             self._pending_agents_by_run[run_id] = agent_name
-
-    @staticmethod
-    def _extract_usage_metadata(response: LLMResult) -> dict[str, Any]:
-        try:
-            generation = response.generations[0][0]
-        except Exception:
-            return {}
-        if not isinstance(generation, ChatGeneration):
-            return {}
-        message = getattr(generation, "message", None)
-        if not isinstance(message, AIMessage):
-            return {}
-        usage = getattr(message, "usage_metadata", None)
-        return dict(usage) if isinstance(usage, dict) else {}
 
     @classmethod
     def _merge_usage_dict(cls, base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
@@ -511,6 +566,9 @@ class SpecialistRunner:
             research_goal_relpath = self._research_goal_relpath(thread_id)
         self._emit("RUN_START", payload={"entrypoint": entrypoint, "status": "running"})
         usage_handler = self._new_usage_callback()
+        set_usage_update_callback = getattr(usage_handler, "set_usage_update_callback", None)
+        if callable(set_usage_update_callback):
+            set_usage_update_callback(lambda: self._write_usage_summary(usage_handler))
         usage_flushed = False
 
         def _flush_usage() -> None:
@@ -2747,14 +2805,40 @@ class SpecialistRunner:
     def _new_usage_callback() -> SpecialistUsageCallbackHandler:
         return SpecialistUsageCallbackHandler()
 
-    def _write_usage_summary(self, usage_handler: SpecialistUsageCallbackHandler) -> None:
-        usage_metadata = getattr(usage_handler, "usage_metadata", None)
+    def _write_usage_summary(self, usage_handler: SpecialistUsageCallbackHandler) -> dict[str, Any]:
+        snapshot_method = getattr(usage_handler, "usage_snapshot", None)
+        snapshot = snapshot_method() if callable(snapshot_method) else {}
+        usage_metadata = (
+            snapshot.get("usage_metadata")
+            if isinstance(snapshot, dict)
+            else None
+        )
+        if not isinstance(usage_metadata, dict):
+            usage_metadata = getattr(usage_handler, "usage_metadata", None)
         if not isinstance(usage_metadata, dict) or not usage_metadata:
-            return
-        call_counts_by_model = getattr(usage_handler, "call_counts_by_model", None)
-        usage_metadata_by_role = getattr(usage_handler, "usage_metadata_by_role", None)
-        call_counts_by_role = getattr(usage_handler, "call_counts_by_role", None)
-        write_usage_summary_from_metadata(
+            return {}
+        call_counts_by_model = (
+            snapshot.get("call_counts_by_model")
+            if isinstance(snapshot, dict)
+            else None
+        )
+        if not isinstance(call_counts_by_model, dict):
+            call_counts_by_model = getattr(usage_handler, "call_counts_by_model", None)
+        usage_metadata_by_role = (
+            snapshot.get("usage_metadata_by_role")
+            if isinstance(snapshot, dict)
+            else None
+        )
+        if not isinstance(usage_metadata_by_role, dict):
+            usage_metadata_by_role = getattr(usage_handler, "usage_metadata_by_role", None)
+        call_counts_by_role = (
+            snapshot.get("call_counts_by_role")
+            if isinstance(snapshot, dict)
+            else None
+        )
+        if not isinstance(call_counts_by_role, dict):
+            call_counts_by_role = getattr(usage_handler, "call_counts_by_role", None)
+        return write_usage_summary_from_metadata(
             self.run_context.run_dir,
             usage_metadata=usage_metadata,
             call_counts_by_model=call_counts_by_model if isinstance(call_counts_by_model, dict) else {},

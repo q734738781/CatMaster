@@ -113,7 +113,7 @@ Files 上传同名文件会覆盖，删除目录是永久递归操作。重要�
 
 ## Monitor 用来判断过程是否正常
 
-Monitor 将一次运行的模型、Agent、tools、tasks、token、费用和机器时间汇总起来。Overview 适合快速看状态和规模；Live 显示当前阶段、活动工具、Todo、subagent 与近期日志；Events 可以按 thread、run、agent、tool、category 和 channel 过滤；Raw 和 Details 用于排查更具体的问题。
+Monitor 将一次运行的模型、Agent、tools、tasks、token、费用和机器时间汇总起来。每次 LLM 调用完成后都会更新 token 统计；provider 提供时会分别记录 input、output、cache 和 reasoning token，仍在运行的单次调用则暂时没有最终用量。Overview 适合快速看状态和规模；Live 显示当前阶段、活动工具、Todo、subagent 与近期日志；Events 可以按 thread、run、agent、tool、category 和 channel 过滤；Raw 和 Details 用于排查更具体的问题。
 
 当 Agent 看似停住时，先看 Live 中是否仍有远程 tool 或 subagent 在运行。当结果不完整时，查 Events 中的 tool error、document warning 或 multimodal 状态。当成本异常时，查看模型调用、token 和远程机器时间。Monitor 是诊断界面，不需要作为日常报告手工抄写。
 

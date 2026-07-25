@@ -11,6 +11,7 @@ import openai
 import pytest
 from langchain.agents.middleware import ModelRetryMiddleware
 from langchain.agents.middleware.types import ModelResponse
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.tools import StructuredTool
@@ -1157,6 +1158,88 @@ def test_specialist_usage_callback_falls_back_to_default_agent_name() -> None:
 
     assert handler.call_counts_by_role["experiment_specialist"] == 1
     assert handler.usage_metadata_by_role["experiment_specialist"]["openai/gpt-5.4-20260305"]["total_tokens"] == 13
+
+
+def test_specialist_usage_callback_deduplicates_callback_and_stream_message() -> None:
+    handler = runtime_mod.SpecialistUsageCallbackHandler(default_agent_name="research_specialist")
+    updates: list[dict[str, dict[str, object]]] = []
+    handler.set_usage_update_callback(lambda: updates.append(dict(handler.usage_metadata)))
+    message = AIMessage(
+        id="resp_usage_1",
+        content="done",
+        response_metadata={"model_name": "gpt-5.6-sol"},
+        usage_metadata={
+            "input_tokens": 2580,
+            "output_tokens": 120,
+            "total_tokens": 2700,
+            "input_token_details": {"cache_read": 1024},
+            "output_token_details": {"reasoning": 80},
+        },
+    )
+    result = LLMResult(generations=[[ChatGeneration(message=message)]])
+
+    handler.on_chat_model_start({}, [[]], run_id="llm-run-1")
+    handler.on_llm_end(result, run_id="llm-run-1")
+    ingested_again = handler.ingest_ai_message(
+        message,
+        call_id="llm-run-1",
+        agent_name="research_specialist",
+    )
+
+    assert ingested_again is False
+    assert handler.usage_metadata["gpt-5.6-sol"]["total_tokens"] == 2700
+    assert handler.call_counts_by_model == {"gpt-5.6-sol": 1}
+    assert handler.call_counts_by_role == {"research_specialist": 1}
+    assert len(updates) == 1
+
+
+def test_specialist_usage_callback_persists_after_each_completed_call(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_usage_live"
+    run_dir.mkdir()
+    runner = runtime_mod.SpecialistRunner(
+        llm_profile=_FakeProfile(),
+        run_context=SimpleNamespace(
+            workspace=tmp_path,
+            run_dir=run_dir,
+            run_id="run_usage_live",
+            project_id="proj",
+        ),
+        reporter=None,
+        run_control=None,
+    )
+    handler = runner._new_usage_callback()
+    handler.set_usage_update_callback(lambda: runner._write_usage_summary(handler))
+
+    for index, input_tokens in enumerate((20, 30), start=1):
+        message = AIMessage(
+            id=f"resp_usage_{index}",
+            content="done",
+            response_metadata={"model_name": "gpt-5.6-sol"},
+            usage_metadata={
+                "input_tokens": input_tokens,
+                "output_tokens": 5,
+                "total_tokens": input_tokens + 5,
+                "input_token_details": {"cache_read": index},
+                "output_token_details": {"reasoning": 2},
+            },
+        )
+        model = FakeMessagesListChatModel(responses=[message])
+        model.invoke(
+            "count this call",
+            config={
+                "callbacks": [handler],
+                "metadata": {"lc_agent_name": "research_specialist"},
+            },
+        )
+
+        persisted = load_usage_summary(run_dir)
+        assert persisted["calls"] == index
+        assert persisted["input_tokens"] == sum((20, 30)[:index])
+        assert persisted["output_tokens"] == 5 * index
+
+    assert persisted["total_tokens"] == 60
+    assert persisted["input_cached_tokens"] == 3
+    assert persisted["reasoning_tokens"] == 4
 
 
 def test_finalize_report_runs_compile_guard_for_tex_outputs(

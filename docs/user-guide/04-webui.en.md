@@ -105,7 +105,7 @@ Uploading a file with the same name overwrites it. Directory deletion is recursi
 
 ## Monitor helps determine whether the process is healthy
 
-Monitor summarizes models, agents, tools, tasks, tokens, cost, and machine time. Overview is useful for status and scale. Live shows the active stage, tools, todo list, subagents, and recent logs. Events can be filtered by thread, run, agent, tool, category, and channel. Raw and Details are for deeper diagnosis.
+Monitor summarizes models, agents, tools, tasks, tokens, cost, and machine time. Token totals are updated after each completed LLM call, including input, output, cache, and reasoning tokens when the provider supplies them; a call still in progress has no final usage yet. Overview is useful for status and scale. Live shows the active stage, tools, todo list, subagents, and recent logs. Events can be filtered by thread, run, agent, tool, category, and channel. Raw and Details are for deeper diagnosis.
 
 If an agent appears stuck, check whether a remote tool or subagent is still active. If a result is incomplete, look for tool errors, document warnings, or multimodal degradation. If cost is unexpected, inspect model calls, tokens, and machine time. Monitor is a diagnostic surface, not a report that must be copied into every deliverable.
 

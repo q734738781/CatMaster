@@ -18,6 +18,7 @@ from catmaster.webui.server import create_app
 from catmaster.webui.thread_events import ThreadEventBroker
 from catmaster.webui.thread_models import MessagePart, ThreadMessage
 from catmaster.webui.thread_store import ThreadStore, new_id
+from catmaster.specialists.runtime import SpecialistUsageCallbackHandler
 from catmaster.specialists.streaming_runner import CatMasterStreamTranslator, StreamingSpecialistRunner, _extract_sidecar_artifact_paths, _extract_workspace_paths_from_text
 
 
@@ -888,15 +889,32 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
     )
     store.append_message(message)
     broker = ThreadEventBroker(workspace=workspace)
+    model_message = AIMessage(
+        id="resp_usage_stream",
+        content="streamed answer",
+        response_metadata={"model_name": "test-model"},
+        usage_metadata={
+            "input_tokens": 3,
+            "output_tokens": 5,
+            "total_tokens": 8,
+            "input_token_details": {"cache_read": 1},
+            "output_token_details": {"reasoning": 2},
+        },
+    )
 
     class FakeAgent:
         async def astream_events(self, _payload, config=None, version="v3"):
-            yield {"method": "messages", "params": {"data": AIMessage(content="streamed answer")}}
+            yield {
+                "event": "on_chat_model_end",
+                "run_id": "llm_usage_stream",
+                "metadata": {"lc_agent_name": "experiment_specialist"},
+                "data": {"output": model_message},
+            }
             yield {
                 "method": "values",
                 "params": {
                     "data": {
-                        "messages": [AIMessage(content="streamed answer")],
+                        "messages": [model_message],
                         "structured_sidecar": {"artifact_refs": [{"path": "reports/sidecar.md"}]},
                     }
                 },
@@ -914,7 +932,7 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
             return None
 
         def _new_usage_callback(self):
-            return SimpleNamespace(usage_metadata={"test-model": {"input_tokens": 3, "output_tokens": 5}})
+            return SpecialistUsageCallbackHandler()
 
         def _emit(self, *_args, **_kwargs):
             return None
@@ -975,12 +993,32 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
                     {
                         "source": "langchain_usage_metadata",
                         "input_tokens": usage_handler.usage_metadata["test-model"]["input_tokens"],
+                        "input_uncached_tokens": 2,
+                        "input_cached_tokens": 1,
+                        "input_cache_write_tokens": 0,
                         "output_tokens": usage_handler.usage_metadata["test-model"]["output_tokens"],
+                        "reasoning_tokens": 2,
+                        "total_tokens": usage_handler.usage_metadata["test-model"]["total_tokens"],
                         "calls": 1,
                     }
                 ),
                 encoding="utf-8",
             )
+            return {
+                "source": "langchain_usage_metadata",
+                "input_tokens": usage_handler.usage_metadata["test-model"]["input_tokens"],
+                "input_uncached_tokens": 2,
+                "input_cached_tokens": 1,
+                "input_cache_write_tokens": 0,
+                "output_tokens": usage_handler.usage_metadata["test-model"]["output_tokens"],
+                "reasoning_tokens": 2,
+                "total_tokens": usage_handler.usage_metadata["test-model"]["total_tokens"],
+                "calls": 1,
+                "raw_usage_metadata": dict(usage_handler.usage_metadata),
+                "call_counts_by_model": dict(usage_handler.call_counts_by_model),
+                "raw_usage_metadata_by_role": dict(usage_handler.usage_metadata_by_role),
+                "call_counts_by_role": dict(usage_handler.call_counts_by_role),
+            }
 
     runner = StreamingSpecialistRunner(
         runner=FakeRunner(),  # type: ignore[arg-type]
@@ -1008,9 +1046,12 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
     assert artifact_parts[0].path == "files/reports/sidecar.md"
     usage_events = [event for event in broker.replay(thread.thread_id) if event.event == "usage.updated"]
     assert len(usage_events) == 1
+    completed_event = next(event for event in broker.replay(thread.thread_id) if event.event == "message.completed")
+    assert usage_events[0].seq < completed_event.seq
     assert usage_events[0].data["run_id"] == "run_usage"
     assert usage_events[0].data["usage_summary"]["input_tokens"] == 3
     assert usage_events[0].data["usage_summary"]["output_tokens"] == 5
+    assert usage_events[0].data["usage_summary"]["total_tokens"] == 8
 
 
 def awaitable_result(awaitable):

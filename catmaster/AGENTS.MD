@@ -381,7 +381,16 @@ Do not assume there is still a separate active `compile_agent` in the writing la
 
 Usage accounting is based on LangChain `UsageMetadataCallbackHandler`, not the old `LLM_USAGE` trace event.
 
-Run usage is written to `usage_summary.json`, including per-role breakdowns when available.
+Each completed LLM call must update `usage_summary.json` immediately and emit
+the thread-native `usage.updated` event. The final turn flush is a fallback,
+not the primary accounting point. LangGraph v3 model-end messages provide a
+deduplicated fallback when callback propagation does not expose the finalized
+`AIMessage.usage_metadata`.
+
+Run usage includes per-model and per-role call counts, input/output/total
+tokens, cache reads/writes, and reasoning tokens when the provider returns
+them. Do not count the same call twice when both a LangChain callback and a
+stream event expose its usage.
 
 ### Logging
 
