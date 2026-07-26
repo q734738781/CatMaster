@@ -1595,7 +1595,7 @@ CASES: dict[str, CaseSpec] = {
     ),
     "orca_sp": CaseSpec("orca_sp", "ORCA CPU O2 triplet single-point through orca_prepare + orca_execute.", run_orca_sp),
     "cp2k_sp": CaseSpec("cp2k_sp", "CP2K CPU O2 single-point through cp2k_prepare + cp2k_execute.", run_cp2k_sp),
-    "lammps_min": CaseSpec("lammps_min", "LAMMPS CPU/GPU-detect LJ minimization through lammps_prepare + lammps_execute.", run_lammps_min),
+    "lammps_min": CaseSpec("lammps_min", "LAMMPS CPU LJ minimization through lammps_prepare + lammps_execute.", run_lammps_min),
     "crest_quick": CaseSpec("crest_quick", "CREST CPU quick H2O conformer-search executable check through crest_run.", run_crest_quick),
 }
 
