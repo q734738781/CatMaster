@@ -94,7 +94,7 @@ stage/
 
 Scientific recipe selection belongs in `job.inp`. Use one prepared CP2K stage per first-level batch child.
 
-#### lammps_execute
+#### lammps_execute and lammps_execute_kokkos
 
 ```text
 stage/
@@ -103,6 +103,9 @@ stage/
   system.data or referenced restart file
   optional potential files
 ```
+
+Both tasks use this identical prepared-stage contract. `lammps_execute` is the CPU path; `lammps_execute_kokkos` is a strict GPU/KOKKOS path with no CPU fallback.
+For multi-rank CPU resources, the boot wrapper must report `mpi_ranks=SLURM_NTASKS` and a passed launcher probe in `lammps_summary.json`; it must not silently run one rank inside a larger allocation.
 
 #### orca_execute
 

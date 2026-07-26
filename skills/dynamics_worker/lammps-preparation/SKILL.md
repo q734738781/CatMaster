@@ -13,7 +13,7 @@ Use this skill for LAMMPS stages in `dynamics_worker`. LAMMPS requires an explic
 1. Validate the force-field card with `lammps_forcefield_validate`.
 2. Prepare a stage with `lammps_prepare(recipe="minimize" | "nve" | "nvt" | "npt" | "anneal" | "restart")`.
 3. Verify `in.lammps`, `system.data` or restart file, `manifest.json`, and potential files.
-4. Submit with `remote_submission(task_name="lammps_execute")`.
+4. Query the enabled LAMMPS tasks, then submit with CPU `lammps_execute` or strict GPU `lammps_execute_kokkos`.
 5. Summarize with `lammps_log_summary` and `md_trajectory_summary` when outputs are collected.
 
 ## Allowed tools
@@ -39,9 +39,12 @@ Use this skill for LAMMPS stages in `dynamics_worker`. LAMMPS requires an explic
 - Use `nve`, `nvt`, `npt`, or `anneal` for MD stages.
 - Use `restart` only when the intended restart file is present and verified.
 
-### 3. Submit through the generic execute task
-- Use only `task_name="lammps_execute"`.
-- The boot script runs `lmp` and may use GPU/KOKKOS/GPU-package acceleration when available, with CPU fallback if acceleration fails.
+### 3. Select one explicit execution task
+- Use `task_name="lammps_execute"` for the CPU resource, including inputs whose pair, fix, compute, or other styles do not have complete KOKKOS support.
+- Use `task_name="lammps_execute_kokkos"` only when it is listed and every method-critical input style is compatible with the deployment's KOKKOS build.
+- The KOKKOS task requests a GPU and does not fall back to CPU. The CPU task never enables GPU acceleration.
+- The CPU boot path maps `SLURM_NTASKS` to MPI ranks and probes the launcher before LAMMPS starts. On single-node Slurm allocations where Intel MPI is installed but `srun` is absent, it uses Hydra `fork` locally and still verifies the exact rank count. Treat a serial/stub build, missing launcher, or rank mismatch as a resource failure rather than running with fewer ranks.
+- Do not pass `submission_config.resources` or `submission_config.machine`; each registered task owns its deployment binding.
 
 ## Method-critical defaults
 - Report `units`, `atom_style`, `pair_style`, thermostat/barostat recipe, timestep, steps, thermo stride, dump stride, and restart stride.
@@ -54,6 +57,7 @@ Return:
 - LAMMPS stage path
 - submitted receipt/context
 - `lammps_log_summary` and trajectory summary paths when generated
+- `lammps_summary.json` MPI rank, launcher, and probe evidence
 - any force-field or parser limitation
 
 ## References

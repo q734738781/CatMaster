@@ -32,5 +32,5 @@ This file is a local, source-grounded note for `lammps-preparation`. It is not a
 ## SOP implications for the skill body
 
 - Validate `units`, `atom_style`, `pair_style`, `pair_coeff`, masses/type mapping, and potential-file paths before preparation.
-- Use one prepared stage directory per simulation and submit through `lammps_execute`.
+- Use one prepared stage directory per simulation. Submit through CPU `lammps_execute`, or through `lammps_execute_kokkos` only when every active style supports the enabled KOKKOS build.
 - Report output strides and ensemble/force-field choices with results.

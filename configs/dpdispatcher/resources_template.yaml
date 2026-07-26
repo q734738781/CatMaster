@@ -68,7 +68,7 @@ cp2k_cpu:
 lammps_cpu:
   kind: domain
   capabilities: [lammps]
-  description: "Prepared LAMMPS CPU execution with boot-time GPU detection when available."
+  description: "Prepared LAMMPS CPU execution with cpu_per_node mapped to verified MPI ranks."
   audiences: [dynamics_worker]
   machine: cpu_server
   number_node: 1
@@ -80,6 +80,24 @@ lammps_cpu:
     - "#SBATCH --export=ALL"
   source_list:
     - "<REMOTE_LAMMPS_ENV_SCRIPT>"
+
+lammps_gpu:
+  enabled: false
+  kind: domain
+  capabilities: [lammps, gpu, kokkos]
+  description: "Prepared LAMMPS execution with strict KOKKOS GPU acceleration and no CPU fallback."
+  audiences: [dynamics_worker]
+  machine: gpu_server
+  number_node: 1
+  cpu_per_node: 1
+  gpu_per_node: 1
+  queue_name: main
+  group_size: 1
+  custom_flags:
+    - "#SBATCH -t 2-00:00:00"
+    - "#SBATCH --export=ALL"
+  source_list:
+    - "<REMOTE_LAMMPS_KOKKOS_ENV_SCRIPT>"
 
 general_cpu:
   kind: general_cpu

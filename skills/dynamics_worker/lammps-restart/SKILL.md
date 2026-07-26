@@ -13,7 +13,7 @@ Use this skill when a LAMMPS stage must continue from an existing restart file.
 1. Inspect the prior result directory and identify the intended restart file.
 2. Run `lammps_log_summary` and `md_trajectory_summary` on the prior stage.
 3. Prepare with `lammps_prepare(recipe="restart")`.
-4. Submit with `remote_submission(task_name="lammps_execute")`.
+4. Query enabled tasks and submit with CPU `lammps_execute` or compatible strict GPU `lammps_execute_kokkos`.
 5. Keep old and new receipt/context IDs in the report.
 
 ## Allowed tools
@@ -37,7 +37,11 @@ Use this skill when a LAMMPS stage must continue from an existing restart file.
 - `lammps_prepare(recipe="restart")` copies the restart file and writes `read_restart`.
 - Preserve or intentionally change ensemble, timestep, temperature, pressure, thermo/dump/restart strides.
 
-### 3. Analyze continuation
+### 3. Preserve execution compatibility
+- Prefer the same CPU/KOKKOS execution mode as the source stage unless the restart and every active style are verified against the other deployment build.
+- Use `lammps_execute` when KOKKOS compatibility is incomplete; use `lammps_execute_kokkos` only for a fully compatible stage.
+
+### 4. Analyze continuation
 - Use `lammps_log_summary` to confirm completion and thermo behavior.
 - Use `md_trajectory_summary` to confirm frame output and new restart files.
 

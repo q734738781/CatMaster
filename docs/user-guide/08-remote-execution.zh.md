@@ -39,7 +39,9 @@ task、work_dir、资源和关键设置，等我批准后再提交。完成后�
 
 `cp2k_execute` 可由 Materials worker 或 Dynamics worker 使用。它运行包含 `job.inp` 和 manifest 所引用文件的 CP2K stage，可用于常规 DFT、频率、路径准备后的计算或 AIMD。Worker 会根据主要目标选择自己的 skills：材料性质侧重输入方法和电子结构，动力学侧重 ensemble、restart 和轨迹连续性。
 
-`lammps_execute` 属于 Dynamics worker。它运行由 LAMMPS preparation skills 验证过的 stage，包括输入脚本、数据或 restart 文件以及势文件。Task 能启动 LAMMPS，不代表势函数适合当前材料；元素映射、units、边界、neighbor 和势模型适用范围仍然要在提交前确认。
+LAMMPS 属于 Dynamics worker，并提供两条显式执行路径：`lammps_execute` 使用部署绑定的 CPU 资源，适合不完整支持 KOKKOS 的 style；`lammps_execute_kokkos` 使用 GPU/KOKKOS，且加速不可用或启动失败时不会静默回退 CPU。CPU 路径把 `SLURM_NTASKS` 映射为实际 MPI rank，并在运行 LAMMPS 前探测 MPI build、launcher 和进程数；serial/stub build、launcher 缺失或 rank 数不一致都会明确失败。对于没有安装 `srun` 的单节点 Slurm 计算节点，Intel MPI 会把缺省或失效的 Slurm bootstrap 改为本地 Hydra `fork`，同时仍严格验证进程数；`ssh` 等其他显式设置不会被覆盖。两者使用完全相同的 prepared-stage 布局，Agent 应先查询当前部署启用的 task，再根据输入中的 pair、fix、compute 等 style 是否支持 KOKKOS 选择任务。资源和机器由 task 绑定，不通过 submission 参数临时分流。
+
+Task 能启动 LAMMPS，不代表势函数适合当前材料；元素映射、units、边界、neighbor 和势模型适用范围仍然要在提交前确认。
 
 ```text
 继续 calculations/cp2k_aimd_600K_part1/ 的 AIMD。

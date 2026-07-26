@@ -136,7 +136,14 @@ def _catalog_task_hint(task_name: str) -> str:
             "One VASP stage is one complete calculation folder. For multiple scheduler jobs, make a "
             "parent root with one complete VASP folder per first-level child and use remote_submission_batch."
         )
-    if task_name in {"xtb_execute", "crest_run", "orca_execute", "cp2k_execute", "lammps_execute"}:
+    if task_name in {
+        "xtb_execute",
+        "crest_run",
+        "orca_execute",
+        "cp2k_execute",
+        "lammps_execute",
+        "lammps_execute_kokkos",
+    }:
         return (
             "One stage is one prepared job directory for this executable. Use remote_submission_batch "
             "only when the parent root contains one prepared job directory per first-level child."

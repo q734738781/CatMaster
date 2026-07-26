@@ -351,6 +351,7 @@ def test_cp2k_lammps_remote_task_visibility_by_worker() -> None:
     assert {"cp2k_execute", "lammps_execute"}.issubset(dynamics_tasks)
     assert "vasp_execute" not in dynamics_tasks
     assert not any(name.startswith("cp2k_") and name != "cp2k_execute" for name in dynamics_tasks)
-    assert not any(name.startswith("lammps_") and name != "lammps_execute" for name in dynamics_tasks)
     assert dynamics_items["cp2k_execute"]["resources"]["resources"] == "cp2k_cpu"
     assert dynamics_items["lammps_execute"]["resources"]["resources"] == "lammps_cpu"
+    if "lammps_execute_kokkos" in dynamics_items:
+        assert dynamics_items["lammps_execute_kokkos"]["resources"]["resources"] == "lammps_gpu"

@@ -8,7 +8,8 @@ Usage:
 
 The default runtime sync includes the complete DPDispatcher execution stack:
 Python runners, MLFF backend code, remote boot scripts, and provider
-requirements. Existing target configs are preserved by default. A new target
+requirements. Existing active target configs are preserved by default while
+public DPDispatcher templates and env templates are refreshed. A new target
 without configs is initialized from the source checkout.
 
 Options:
@@ -31,7 +32,8 @@ Options:
 
   --sync-configs
       Overwrite the target configs directory from this checkout. By default,
-      an existing target configs directory is preserved.
+      existing active config files are preserved while public DPDispatcher
+      templates are synchronized.
 
   --skip-frontend-build
       Do not rebuild catmaster/webui/static from catmaster/webui/frontend before deploy.
@@ -258,6 +260,27 @@ else
       rsync "${RSYNC_ARGS[@]}" "$src/" "$dst/"
     elif [[ -f "$src" ]]; then
       mkdir -p "$(dirname "$dst")"
+      rsync "${RSYNC_ARGS[@]}" "$src" "$dst"
+    fi
+  done
+fi
+
+if [[ $COPY_CONFIGS -eq 0 ]]; then
+  PUBLIC_DP_CONFIG_PATHS=(
+    "machines_template.yaml"
+    "resources_template.yaml"
+    "tasks_template.yaml"
+    "mlff_backends_template.yaml"
+    "env_templates"
+  )
+  mkdir -p "$TARGET_DIR/configs/dpdispatcher"
+  for rel in "${PUBLIC_DP_CONFIG_PATHS[@]}"; do
+    src="$REPO_ROOT/configs/dpdispatcher/$rel"
+    dst="$TARGET_DIR/configs/dpdispatcher/$rel"
+    if [[ -d "$src" ]]; then
+      mkdir -p "$dst"
+      rsync "${RSYNC_ARGS[@]}" "$src/" "$dst/"
+    elif [[ -f "$src" ]]; then
       rsync "${RSYNC_ARGS[@]}" "$src" "$dst"
     fi
   done

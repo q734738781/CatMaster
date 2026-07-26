@@ -38,6 +38,8 @@ CATMASTER_REMOTE_MACE_HEAD=omat_pbe \
 CATMASTER_REMOTE_MACE_DTYPE=float32 \
 CATMASTER_REMOTE_VASP_TASK=vasp_execute \
 CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL=30 \
+CATMASTER_REMOTE_LAMMPS_TASK=lammps_execute \
+CATMASTER_EXPECT_LAMMPS_MPI_RANKS=16 \
 CATMASTER_REMOTE_UMA_MODEL=uma-s-1p2 \
 CATMASTER_REMOTE_UMA_TASK=omat \
 CATMASTER_REMOTE_UMA_RELAX_STEPS=5 \
@@ -54,6 +56,7 @@ CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdisp
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_cp2k_aimd_prepare_then_remote_submission_o2_short_nvt_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_lammps_lj_prepare_then_remote_submission_o2_minimize_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_lammps_lj_prepare_then_remote_submission_o2_short_nvt_remote -s -vv
+CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_REMOTE_LAMMPS_TASK=lammps_execute CATMASTER_EXPECT_LAMMPS_MPI_RANKS=16 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_lammps_official_bench_lj_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_omol_sp_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_periodic_sp_remote -s -vv
 CATMASTER_RUN_REMOTE_EXECUTION_TESTS=1 CATMASTER_RUN_REMOTE_UMA_TESTS=1 pytest tests/remote_execution/test_dpdispatcher_remote_smoke.py::test_agent_tool_uma_omol_relax_remote -s -vv
@@ -76,11 +79,12 @@ Prerequisites:
 - The CPU remote environment can run VASP through `catmaster/remote/cpu/vasp_boot.py`.
 - The CPU remote environment can run CP2K through `cp2k.psmp` for full-suite
   deployment checks.
-- The CPU remote environment can expose a LAMMPS executable in `PATH`; the
-  LAMMPS boot script auto-detects common names such as `lmp_mpi`, `lmp`,
-  KOKKOS/GPU variants, and can be overridden with `CATMASTER_LAMMPS_BIN`.
-  It may enable KOKKOS/GPU-package acceleration when visible and falls back to
-  CPU execution if acceleration fails.
+- The CPU `lammps_execute` resource can expose a LAMMPS executable in `PATH`;
+  the boot script auto-detects common names such as `lmp_mpi` and `lmp`, and can
+  be overridden with `CATMASTER_LAMMPS_BIN`.
+- The optional `lammps_execute_kokkos` resource requests a GPU and exposes a
+  KOKKOS-enabled executable. It is strict: a missing GPU/package or failed
+  accelerated launch is reported as a failure rather than retried on CPU.
 
 Useful overrides:
 
@@ -92,6 +96,8 @@ CATMASTER_REMOTE_MACE_DTYPE=float32
 CATMASTER_REMOTE_VASP_TASK=vasp_execute
 CATMASTER_REMOTE_CP2K_CHECK_INTERVAL=60
 CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL=30
+CATMASTER_REMOTE_LAMMPS_TASK=lammps_execute
+CATMASTER_EXPECT_LAMMPS_MPI_RANKS=16
 CATMASTER_REMOTE_UMA_CHECK_INTERVAL=60
 CATMASTER_REMOTE_UMA_MODEL=uma-s-1p2
 CATMASTER_REMOTE_UMA_TASK=omat
@@ -118,9 +124,14 @@ Expected coverage:
   `task_name=cp2k_execute`, and check `status.json`, `cp2k_summary.json`, and
   native CP2K output presence.
 - The LAMMPS tests validate an explicit LJ force-field card, prepare
-  minimization and short NVT stages, dispatch them with
-  `task_name=lammps_execute`, and check `status.json`, `lammps_summary.json`,
+  minimization and short NVT stages, dispatch them with the task selected by
+  `CATMASTER_REMOTE_LAMMPS_TASK` (CPU `lammps_execute` by default, or strict
+  `lammps_execute_kokkos`), and check `status.json`, `lammps_summary.json`,
   LAMMPS log output, and trajectory output where applicable.
+- The official LAMMPS acceptance case stages the upstream `bench/in.lj` from
+  commit `50ce71e2e002126ded6d6ed5f7e18b5effe244af`, submits it through the same
+  agent-visible path, and can require the launcher probe and summary to match
+  `CATMASTER_EXPECT_LAMMPS_MPI_RANKS`.
 - The UMA tests are opt-in on top of the global remote gate. They stage H2O
   for `mlff_sp`/`mlff_relax` with backend `fairchem_uma`, `audience=orca_xtb_worker`, and
   `uma_task=omol`, and an O2 periodic VASP structure for
@@ -156,8 +167,15 @@ Failure triage:
   populated.
 - CP2K `status.json.returncode=2` before launch usually means `SLURM_NTASKS`
   was unavailable or `job.inp` was missing in the submitted stage.
-- LAMMPS acceleration failures should be visible in `lammps_stdout.out`; by
-  default the boot script retries the same input on CPU.
+- LAMMPS acceleration failures should be visible in `lammps_stdout.out`.
+  `lammps_execute_kokkos` is configured without CPU fallback; retry with
+  `lammps_execute` only after confirming the original GPU job is terminal.
+- A CPU task fails before launching LAMMPS when `SLURM_NTASKS` requests multiple
+  ranks but the executable reports MPI stubs, no launcher is available, or the
+  launcher probe creates a different process count. Single-node Intel MPI jobs
+  replace a missing or unusable Slurm bootstrap with Hydra `fork` when the
+  compute node does not provide `srun`; other explicit bootstrap values are
+  preserved.
 
 All smoke tests invoke managed preparation and/or generic `remote_submission`
 through the LangChain tool wrapper, matching the current agent-visible call path

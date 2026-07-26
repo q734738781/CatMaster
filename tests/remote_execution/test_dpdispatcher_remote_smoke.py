@@ -13,6 +13,11 @@ from catmaster.tools.base import workspace_scope
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "tests" / "assets"
+LAMMPS_OFFICIAL_BENCH_COMMIT = "50ce71e2e002126ded6d6ed5f7e18b5effe244af"
+LAMMPS_OFFICIAL_BENCH_URL = (
+    "https://github.com/lammps/lammps/blob/"
+    f"{LAMMPS_OFFICIAL_BENCH_COMMIT}/bench/in.lj"
+)
 RUN_REMOTE = os.environ.get("CATMASTER_RUN_REMOTE_EXECUTION_TESTS", "").strip().lower() in {
     "1",
     "true",
@@ -44,6 +49,10 @@ def _int_env(name: str, default: int) -> int:
 
 def _remote_check_interval(default: int) -> int:
     return _int_env("CATMASTER_REMOTE_CHECK_INTERVAL", default)
+
+
+def _lammps_task_name() -> str:
+    return os.environ.get("CATMASTER_REMOTE_LAMMPS_TASK", "lammps_execute").strip() or "lammps_execute"
 
 
 def _project_space(tmp_path: Path) -> Path:
@@ -115,6 +124,26 @@ def _write_o2_xyz(project_space: Path, rel_dir: str) -> Path:
         encoding="utf-8",
     )
     return structure_path
+
+
+def _stage_lammps_official_bench_lj(project_space: Path) -> Path:
+    stage_dir = _files_root(project_space) / "remote_execution" / "lammps_official_bench_lj"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ASSETS / "lammps" / "official_bench_in.lj", stage_dir / "in.lammps")
+    (stage_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "program": "lammps",
+                "case": "official_bench_in.lj",
+                "source_url": LAMMPS_OFFICIAL_BENCH_URL,
+                "source_commit": LAMMPS_OFFICIAL_BENCH_COMMIT,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return stage_dir
 
 
 def _write_water_xyz(project_space: Path, rel_dir: str) -> Path:
@@ -859,7 +888,7 @@ def test_lammps_lj_prepare_then_remote_submission_o2_minimize_remote(tmp_path: P
             "remote_submission",
             {
                 "work_dir": stage_rel,
-                "task_name": "lammps_execute",
+                "task_name": _lammps_task_name(),
                 "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
             },
             audience="dynamics_worker",
@@ -918,7 +947,7 @@ def test_lammps_lj_prepare_then_remote_submission_o2_short_nvt_remote(tmp_path: 
             "remote_submission",
             {
                 "work_dir": stage_rel,
-                "task_name": "lammps_execute",
+                "task_name": _lammps_task_name(),
                 "submission_config": {"check_interval": _int_env("CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL", _remote_check_interval(30))},
             },
             audience="dynamics_worker",
@@ -929,3 +958,43 @@ def test_lammps_lj_prepare_then_remote_submission_o2_short_nvt_remote(tmp_path: 
     _assert_status_success(stage_dir / "status.json")
     assert _read_json(stage_dir / "lammps_summary.json").get("completed") is True
     assert (stage_dir / "trajectory.lammpstrj").is_file()
+
+
+def test_lammps_official_bench_lj_remote(tmp_path: Path) -> None:
+    project_space = _project_space(tmp_path)
+    with workspace_scope(project_space):
+        stage_dir = _stage_lammps_official_bench_lj(project_space)
+        stage_rel = str(stage_dir.relative_to(_files_root(project_space)))
+        _submit_content, submit_artifact = _invoke_agent_tool(
+            project_space,
+            "remote_submission",
+            {
+                "work_dir": stage_rel,
+                "task_name": _lammps_task_name(),
+                "submission_config": {
+                    "check_interval": _int_env(
+                        "CATMASTER_REMOTE_LAMMPS_CHECK_INTERVAL",
+                        _remote_check_interval(30),
+                    )
+                },
+            },
+            audience="dynamics_worker",
+        )
+        submit_data = submit_artifact.get("data") or {}
+
+    assert submit_data.get("task_state_counts"), "DPDispatcher returned no task states"
+    _assert_status_success(stage_dir / "status.json")
+    summary = _read_json(stage_dir / "lammps_summary.json")
+    assert summary.get("completed") is True
+    expected_ranks = _int_env("CATMASTER_EXPECT_LAMMPS_MPI_RANKS", 0)
+    if expected_ranks:
+        assert summary.get("mpi_ranks") == expected_ranks
+        assert (summary.get("mpi_probe") or {}).get("status") == "passed"
+        assert (summary.get("mpi_probe") or {}).get("observed_processes") == expected_ranks
+        assert summary.get("mpi_build") is True
+        command = [str(item) for item in summary.get("command") or []]
+        assert "-n" in command
+        assert str(expected_ranks) in command
+    stdout = (stage_dir / "lammps_stdout.out").read_text(encoding="utf-8", errors="replace")
+    assert "Created 32000 atoms" in stdout
+    assert "Loop time of" in stdout

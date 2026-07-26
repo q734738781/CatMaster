@@ -12,7 +12,7 @@ Use this skill for LAMMPS minimization from an explicit force-field card or preb
 ## Quick Start
 1. Validate the force-field card with `lammps_forcefield_validate`.
 2. Prepare `lammps_prepare(recipe="minimize")`.
-3. Submit with `remote_submission(task_name="lammps_execute")`.
+3. Query enabled tasks and submit with CPU `lammps_execute` or compatible strict GPU `lammps_execute_kokkos`.
 4. Run `lammps_log_summary` and inspect minimization stopping criterion.
 
 ## Allowed tools
@@ -35,7 +35,11 @@ Use this skill for LAMMPS minimization from an explicit force-field card or preb
 - Use `settings.etol`, `settings.ftol`, `settings.maxiter`, `settings.maxeval`, and `settings.min_style` only as intentional overrides.
 - Use frozen atoms only through reviewed LAMMPS fixes in a custom script or curated recipe.
 
-### 3. Analyze generic evidence
+### 3. Select CPU or KOKKOS explicitly
+- Use `lammps_execute_kokkos` only when the minimization input's pair, fix, and related styles support the enabled KOKKOS build.
+- Otherwise use `lammps_execute`; the strict KOKKOS task must not silently retry on CPU.
+
+### 4. Analyze generic evidence
 - Use `lammps_log_summary` for thermo rows, warnings/errors, minimization stopping criterion, final energy, and force evidence.
 - Use task-specific scripts for adsorption distances, reconstruction labels, or chemical interpretation.
 

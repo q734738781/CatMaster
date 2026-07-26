@@ -39,7 +39,9 @@ final structure rather than reporting success from scheduler state alone.
 
 `cp2k_execute` is available to Materials and Dynamics. It runs a CP2K stage containing `job.inp` plus every file referenced by its manifest. Materials uses it for conventional DFT and property-oriented work. Dynamics uses it for AIMD and restart-aware workflows.
 
-`lammps_execute` belongs to Dynamics. It runs a validated LAMMPS stage with input script, data or restart, and potential files. Successful startup does not prove that the force field is suitable. Element mapping, units, boundaries, neighbor behavior, and potential domain still need preflight review.
+LAMMPS belongs to Dynamics and has two explicit execution paths. `lammps_execute` uses the deployment-bound CPU resource for inputs without complete KOKKOS style coverage. It maps `SLURM_NTASKS` to actual MPI ranks and probes the MPI build, launcher, and process count before starting LAMMPS; serial/stub builds, missing launchers, and rank mismatches fail explicitly. On a single-node Slurm compute node without `srun`, Intel MPI replaces a missing or unusable Slurm bootstrap with local Hydra `fork` while the exact process count remains verified; other explicit values such as `ssh` are preserved. `lammps_execute_kokkos` uses GPU/KOKKOS and never silently falls back to CPU when acceleration is unavailable or fails. Both tasks use the same prepared-stage layout. The worker queries the enabled deployment tasks and selects one by checking KOKKOS support for the input's pair, fix, compute, and related styles; resource and machine selection remain owned by the registered task.
+
+Successful startup does not prove that the force field is suitable. Element mapping, units, boundaries, neighbor behavior, and potential domain still need preflight review.
 
 ```text
 Continue calculations/cp2k_aimd_600K_part1/.

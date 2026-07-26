@@ -92,3 +92,23 @@ def test_disabled_tasks_are_hidden_from_agent_visible_catalogs() -> None:
     assert registry.task_visible_to("enabled_task", audience="materials_worker") is True
     assert registry.task_visible_to("disabled_task", audience="materials_worker") is False
     assert "disabled_task" not in registry.describe_for_llm()
+
+
+def test_lammps_template_has_explicit_cpu_and_strict_kokkos_tasks() -> None:
+    config_root = _REPO_ROOT / "configs" / "dpdispatcher"
+    tasks = yaml.safe_load((config_root / "tasks_template.yaml").read_text(encoding="utf-8"))
+    resources = yaml.safe_load((config_root / "resources_template.yaml").read_text(encoding="utf-8"))
+
+    cpu_task = tasks["lammps_execute"]
+    kokkos_task = tasks["lammps_execute_kokkos"]
+    assert cpu_task["resources"] == "lammps_cpu"
+    assert "--gpu off" in cpu_task["command"]
+    assert "--mpi_launcher auto" in cpu_task["command"]
+    assert kokkos_task["resources"] == "lammps_gpu"
+    assert "--gpu kokkos" in kokkos_task["command"]
+    assert "--no-allow_cpu_fallback" in kokkos_task["command"]
+    assert "--mpi_launcher auto" in kokkos_task["command"]
+    assert set(kokkos_task["requires"]) == {"lammps", "gpu", "kokkos"}
+    assert resources["lammps_cpu"]["capabilities"] == ["lammps"]
+    assert set(resources["lammps_gpu"]["capabilities"]) == {"lammps", "gpu", "kokkos"}
+    assert resources["lammps_gpu"]["gpu_per_node"] == 1

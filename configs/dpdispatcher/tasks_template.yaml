@@ -67,13 +67,30 @@ cp2k_execute:
   task_work_path: "."
 
 lammps_execute:
+  enabled: true
   audiences: [dynamics_worker]
-  description: "Run one prepared LAMMPS stage directory."
+  description: "Run one prepared LAMMPS stage on the deployment CPU resource, matching allocated task slots to probed MPI ranks. Use this for styles without complete KOKKOS support."
   boot_script: "catmaster/remote/cpu/lammps_boot.py"
   layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#lammps_execute"
   resources: lammps_cpu
   requires: [lammps]
-  command: "python task_script/lammps_boot.py --gpu auto"
+  command: "python task_script/lammps_boot.py --gpu off --mpi_launcher auto"
+  forward_files:
+    - "*"
+    - "task_script/lammps_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+lammps_execute_kokkos:
+  enabled: false
+  audiences: [dynamics_worker]
+  description: "Run one prepared LAMMPS stage on a GPU with strict KOKKOS acceleration. Use only when the input styles support KOKKOS; this task does not fall back to CPU."
+  boot_script: "catmaster/remote/cpu/lammps_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/SKILL.md#lammps_execute"
+  resources: lammps_gpu
+  requires: [lammps, gpu, kokkos]
+  command: "python task_script/lammps_boot.py --gpu kokkos --no-allow_cpu_fallback --mpi_launcher auto"
   forward_files:
     - "*"
     - "task_script/lammps_boot.py"

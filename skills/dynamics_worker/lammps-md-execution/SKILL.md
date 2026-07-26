@@ -12,7 +12,7 @@ Use this skill for LAMMPS equilibration, annealing, and production MD stages in 
 ## Quick Start
 1. Validate or reuse an explicit force-field card.
 2. Prepare with `lammps_prepare(recipe="nve" | "nvt" | "npt" | "anneal")`.
-3. Submit with `remote_submission(task_name="lammps_execute")`.
+3. Query enabled tasks and submit with CPU `lammps_execute` or compatible strict GPU `lammps_execute_kokkos`.
 4. Summarize with `lammps_log_summary` and `md_trajectory_summary`.
 
 ## Allowed tools
@@ -37,7 +37,11 @@ Use this skill for LAMMPS equilibration, annealing, and production MD stages in 
 - Set `timestep`, `steps`, `thermo`, `dump_stride`, and `restart_stride` explicitly for production runs.
 - Enable in-run `rdf` or `msd` only when the requested observable is generic enough for all atoms/groups represented by the stage.
 
-### 3. Analyze health before interpretation
+### 3. Select CPU or KOKKOS explicitly
+- Prefer `lammps_execute_kokkos` only after checking that the stage's pair, fix, compute, and related styles support the enabled KOKKOS build.
+- Use `lammps_execute` for unsupported styles. Do not rely on GPU failure followed by an implicit CPU retry.
+
+### 4. Analyze health before interpretation
 - Use `lammps_log_summary` for thermo segments, drift, warnings/errors, and run completion.
 - Use `md_trajectory_summary` for frame count, final frame export, restart files, and RDF/MSD table presence.
 - Write focused scripts for residence time, adsorption/desorption, reactions, or region-specific observables.
