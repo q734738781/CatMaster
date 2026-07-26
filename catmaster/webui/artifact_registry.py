@@ -56,7 +56,11 @@ class ArtifactRegistry:
 
     def list_artifacts(self, *, thread_id: str = "") -> list[ArtifactRecord]:
         self.migrate_legacy_run_artifacts()
-        records = self._read_all()
+        # Older streaming adapters could register schema field names such as
+        # ``task_config.fmax`` as paths. Keep the append-only index intact for
+        # auditability, but never expose records whose target is not an actual
+        # workspace file.
+        records = [record for record in self._read_all() if self._record_file_exists(record)]
         if thread_id:
             records = [record for record in records if record.thread_id == thread_id]
         records.sort(key=lambda item: float(item.created_at or 0.0))
@@ -64,7 +68,7 @@ class ArtifactRegistry:
 
     def get(self, artifact_id: str) -> ArtifactRecord | None:
         for record in self._read_all():
-            if record.artifact_id == artifact_id:
+            if record.artifact_id == artifact_id and self._record_file_exists(record):
                 return record
         return None
 
@@ -84,6 +88,9 @@ class ArtifactRegistry:
         artifact_id: str = "",
     ) -> ArtifactRecord:
         normalized = self.normalize_workspace_path(path)
+        candidate = self.workspace.joinpath(*Path(normalized).parts)
+        if not candidate.is_file():
+            raise ValueError("Artifact path must reference an existing workspace file.")
         guessed_mime = mime_type or mimetypes.guess_type(Path(normalized).name)[0] or ""
         renderer_value = renderer or infer_renderer(normalized, guessed_mime)
         aid = artifact_id or self._artifact_id(
@@ -219,6 +226,12 @@ class ArtifactRegistry:
         except ValueError as exc:
             raise ValueError("Artifact path escapes workspace.") from exc
         return candidate
+
+    def _record_file_exists(self, record: ArtifactRecord) -> bool:
+        try:
+            return self.resolve_path(record).is_file()
+        except (OSError, ValueError):
+            return False
 
     @staticmethod
     def find_in_project_root(project_root: Path | str, artifact_id: str) -> tuple[Path, ArtifactRecord] | None:

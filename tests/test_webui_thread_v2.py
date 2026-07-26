@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
@@ -16,7 +17,7 @@ from catmaster.webui import server
 from catmaster.webui.artifact_registry import ArtifactRegistry, infer_renderer
 from catmaster.webui.server import create_app
 from catmaster.webui.thread_events import ThreadEventBroker
-from catmaster.webui.thread_models import MessagePart, ThreadMessage
+from catmaster.webui.thread_models import ArtifactPart, MessagePart, ThreadMessage
 from catmaster.webui.thread_store import ThreadStore, new_id
 from catmaster.specialists.runtime import SpecialistUsageCallbackHandler
 from catmaster.specialists.streaming_runner import CatMasterStreamTranslator, StreamingSpecialistRunner, _extract_sidecar_artifact_paths, _extract_workspace_paths_from_text
@@ -180,6 +181,34 @@ def test_artifact_registry_skips_missing_run_state_artifacts(tmp_path: Path) -> 
     assert [record.path for record in records] == ["files/notes/summary.json"]
 
 
+def test_artifact_registry_rejects_missing_tool_artifact_paths(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+
+    with pytest.raises(ValueError, match="existing workspace file"):
+        registry.register_path(
+            "task_config.fmax",
+            thread_id="thread_x",
+            tool_call_id="call_task_spec",
+            meta={"source": "tool_artifact"},
+        )
+
+    assert registry.list_artifacts(thread_id="thread_x") == []
+
+
+def test_artifact_registry_hides_index_records_after_file_disappears(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    output = workspace / "files" / "temporary.csv"
+    output.write_text("x\n1\n", encoding="utf-8")
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    record = registry.register_path("temporary.csv", thread_id="thread_x")
+
+    output.unlink()
+
+    assert registry.get(record.artifact_id) is None
+    assert registry.list_artifacts(thread_id="thread_x") == []
+
+
 def test_artifact_registry_migrates_legacy_run_artifacts(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     (workspace / "files" / "legacy.csv").write_text("x\n1\n", encoding="utf-8")
@@ -235,6 +264,47 @@ def test_server_thread_routes_and_artifact_preview(tmp_path: Path) -> None:
 
     malformed = client.post(f"/api/threads/{thread_id}/resume", json={"decisions": [{"type": "deny"}]})
     assert malformed.status_code == 400
+
+
+def test_server_hides_historical_artifact_parts_without_files(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "files" / "real.csv").write_text("x\n1\n", encoding="utf-8")
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    thread_id = client.post("/api/workspaces/default/threads", json={"title": "T"}).json()["thread"]["thread_id"]
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    real = registry.register_path("real.csv", thread_id=thread_id, message_id="msg_artifacts")
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    store.append_message(
+        ThreadMessage(
+            id="msg_artifacts",
+            thread_id=thread_id,
+            role="assistant",
+            status="completed",
+            parts=[
+                ArtifactPart(
+                    id="part_real",
+                    artifact_id=real.artifact_id,
+                    path=real.path,
+                ),
+                ArtifactPart(
+                    id="part_missing",
+                    artifact_id="art_task_config_fmax",
+                    path="files/task_config.fmax",
+                ),
+            ],
+        )
+    )
+
+    response = client.get(f"/api/threads/{thread_id}/messages")
+
+    assert response.status_code == 200
+    artifact_parts = [
+        part
+        for part in response.json()["messages"][0]["parts"]
+        if part["type"] == "artifact"
+    ]
+    assert [part["artifact_id"] for part in artifact_parts] == [real.artifact_id]
 
 
 def test_thread_permission_mode_create_patch_and_interrupt_mapping(tmp_path: Path) -> None:
@@ -1304,6 +1374,56 @@ def test_stream_translator_merges_token_tool_and_artifact_parts(tmp_path: Path) 
     assert message_completed.data["text"] == "hello"
     assert message_completed.data["message"]["status"] == "completed"
     assert message_completed.data["message"]["parts"][0]["text"] == "hello"
+
+
+def test_stream_translator_registers_only_existing_files_from_tool_artifacts(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "files" / "result.csv").write_text("x\n1\n", encoding="utf-8")
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=ThreadEventBroker(workspace=workspace),
+        artifact_registry=registry,
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_artifact_filter",
+    )
+
+    translator._handle_tool_message(
+        ToolMessage(
+            content="task spec",
+            tool_call_id="call_task_spec",
+            artifact={
+                "data": {
+                    "task_fields": [
+                        {"path": "task_config.fmax"},
+                        {"path": "task_config.steps"},
+                    ],
+                    "output_path": "result.csv",
+                }
+            },
+        )
+    )
+
+    records = registry.list_artifacts(thread_id=thread.thread_id)
+    assert [record.path for record in records] == ["files/result.csv"]
+    artifact_parts = [
+        part
+        for part in store.get_message(thread.thread_id, message.id).parts
+        if part.type == "artifact"
+    ]
+    assert [part.path for part in artifact_parts] == ["files/result.csv"]
 
 
 def test_stream_translator_surfaces_tool_call_model_text_as_progress(tmp_path: Path) -> None:

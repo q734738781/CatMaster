@@ -2955,9 +2955,20 @@ class SpecialistRunner:
             current = current.__cause__ or current.__context__
 
         retryable_openai_transport: tuple[type[BaseException], ...] = ()
+        retryable_httpx_transport: tuple[type[BaseException], ...] = ()
         non_retryable_openai_errors: tuple[type[BaseException], ...] = ()
         openai_api_error_type: type[BaseException] | None = None
         openai_status_error_type: type[BaseException] | None = None
+        try:
+            from httpx import RemoteProtocolError
+
+            # A remote peer may terminate a streaming response before the
+            # chunked body is complete. Treat only the remote protocol subtype
+            # as transient; local request/protocol construction errors remain
+            # deterministic failures.
+            retryable_httpx_transport = (RemoteProtocolError,)
+        except Exception:  # pragma: no cover - transitive LangChain dependency
+            pass
         try:
             from openai import (
                 APIConnectionError,
@@ -2999,6 +3010,8 @@ class SpecialistRunner:
                 return True
             if retryable_openai_transport and isinstance(item, retryable_openai_transport):
                 return True
+            if retryable_httpx_transport and isinstance(item, retryable_httpx_transport):
+                return True
             status_code = getattr(item, "status_code", None)
             if isinstance(status_code, int) and (
                 status_code in transient_status_codes or 500 <= status_code < 600
@@ -3030,6 +3043,7 @@ class SpecialistRunner:
             "gateway timeout",
             "connection reset",
             "connection aborted",
+            "incomplete chunked read",
             "read timeout",
             "timed out",
             "union_tag_invalid",

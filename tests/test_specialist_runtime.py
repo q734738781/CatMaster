@@ -954,6 +954,32 @@ def test_model_retry_middleware_retries_wellau_upstream_error(monkeypatch: pytes
     assert sleeps == [5.0]
 
 
+def test_model_retry_classifier_retries_remote_protocol_errors_only() -> None:
+    remote_error = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body "
+        "(incomplete chunked read)"
+    )
+
+    assert runtime_mod.SpecialistRunner._is_retryable_model_exception(remote_error) is True
+    assert (
+        runtime_mod.SpecialistRunner._is_retryable_model_exception(
+            httpx.LocalProtocolError("invalid local request state")
+        )
+        is False
+    )
+
+
+def test_model_retry_classifier_follows_remote_protocol_error_cause() -> None:
+    remote_error = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body "
+        "(incomplete chunked read)"
+    )
+    wrapped_error = RuntimeError("provider stream failed")
+    wrapped_error.__cause__ = remote_error
+
+    assert runtime_mod.SpecialistRunner._is_retryable_model_exception(wrapped_error) is True
+
+
 def test_model_retry_middleware_retries_codex_stream_api_error_without_parent_visibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

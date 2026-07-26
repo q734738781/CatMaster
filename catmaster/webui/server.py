@@ -178,6 +178,30 @@ def _enrich_thread_message_tool_sources(messages: list[dict[str, Any]], *, works
             enriched_meta = {**part_meta, "agent_name": selected["agent_name"], "subagent_source": selected["subagent_source"]}
             part["meta"] = enriched_meta
     return messages
+
+
+def _filter_unavailable_artifact_parts(
+    messages: list[dict[str, Any]],
+    *,
+    available_artifact_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Hide historical artifact cards whose workspace files do not exist."""
+    for message in messages:
+        parts = message.get("parts")
+        if not isinstance(parts, list):
+            continue
+        message["parts"] = [
+            part
+            for part in parts
+            if not (
+                isinstance(part, dict)
+                and part.get("type") == "artifact"
+                and str(part.get("artifact_id") or "") not in available_artifact_ids
+            )
+        ]
+    return messages
+
+
 _THREAD_ENTRYPOINTS = [
     {
         "id": "research",
@@ -2228,6 +2252,14 @@ def create_app(
         workspace, workspace_name = _workspace_for_thread(thread_id, identity)
         messages = _thread_store(workspace, workspace_name).list_messages(thread_id)
         rows = [message.model_dump(mode="json") for message in messages]
+        available_artifact_ids = {
+            record.artifact_id
+            for record in _artifact_registry(workspace, workspace_name).list_artifacts(thread_id=thread_id)
+        }
+        rows = _filter_unavailable_artifact_parts(
+            rows,
+            available_artifact_ids=available_artifact_ids,
+        )
         return JSONResponse({"messages": _enrich_thread_message_tool_sources(rows, workspace=workspace)})
 
     @app.get("/api/threads/{thread_id}/artifacts")
