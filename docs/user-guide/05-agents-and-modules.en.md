@@ -107,6 +107,8 @@ MLFF is useful for identifying clearly unstable surface or adsorption candidates
 
 `mlff_ts` starts from one TS-like geometry and uses constrained RS-pRFO. It is not an open-ended saddle search. Optimizer convergence and first-order-saddle validation are reported separately; validation requires exactly one significant imaginary mode.
 
+Scientific QC should bear directly on the scientific decision, for example by checking structure and input consistency, convergence, units, sample coverage, statistics, model applicability, and evidence-claim fit. A checksum or content hash establishes file identity; it is not scientific evidence. Agents should not generate or compare checksums in bulk for ordinary analysis, artifact review, completion audits, or edit-scope control. Checksums remain appropriate when the user asks for them, file identity is disputed, transfer integrity must be checked, or a restart, retry, checkpoint, or remote-tool protocol explicitly depends on a hash.
+
 `mlff_vib` analyzes accepted minima, transition states, adsorbates, molecules, or constrained material structures without changing the geometry. Structure constraints define the exact mode subspace. The compact output contains one canonical `vibrations.npz`, one frequency table, and one multi-frame mode file rather than ASE displacement-cache JSON files.
 
 <details>

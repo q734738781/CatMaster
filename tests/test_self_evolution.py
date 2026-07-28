@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from deepagents.backends import FilesystemBackend
 from deepagents.middleware.skills import SkillsMiddleware
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage
 
 from catmaster.runtime.self_evolution import (
@@ -136,7 +137,7 @@ def test_default_human_approval_keeps_reviewed_candidate_unpromoted(
     job = coordinator.process_pending_jobs()[0]
     candidate = coordinator.store.read_candidate(job.candidate_id)
 
-    assert candidate is not None and candidate.status == "approved"
+    assert candidate is not None and candidate.status == "reviewed"
     assert not (coordinator.store.self_develop_skills_dir / "materials_worker" / "demo-workflow").exists()
     assert (
         coordinator.store.candidate_dir(candidate.candidate_id)
@@ -285,7 +286,25 @@ class _Reviewer:
         if kwargs["action"] == "memory":
             assert (candidate_root / "memories" / "AGENTS.md").is_file()
             assert (candidate_root / "current" / "AGENTS.md").is_file()
-        return ReviewerResult(decision=self.decision, rationale=f"Independent {self.decision}."), {"model_label": "fake-reviewer"}
+        return ReviewerResult(
+            decision=self.decision,
+            summary="Correct the reusable workflow without broadening its activation.",
+            change_points=[
+                {
+                    "title": "Correct helper behavior",
+                    "before": "The workspace used the built-in helper behavior.",
+                    "after": "The workspace uses the corrected helper behavior.",
+                    "evidence": "The user explicitly corrected the reusable workflow.",
+                    "evidence_source": "user",
+                    "impact": "Future matching runs use the corrected helper.",
+                }
+            ],
+            scope_assessment="The change stays within the existing materials workflow.",
+            proportionality_assessment={"status": "pass", "explanation": "No extra audit work is added."},
+            concerns=[],
+            human_checks=["Confirm the corrected helper matches the intended workflow."],
+            rationale=f"Independent {self.decision}.",
+        ), {"model_label": "fake-reviewer"}
 
 
 class _FailingReviewer:
@@ -520,8 +539,40 @@ def test_reviewer_control_fallback_requires_one_exact_decision_line() -> None:
         {"messages": [AIMessage(content="I might approve this after another change.")]}
     )
 
-    assert approved.decision == "approve"
-    assert ambiguous.decision == "reject"
+    assert approved.recommendation == "approve"
+    assert approved.change_points == []
+    assert approved.concerns
+    assert ambiguous.recommendation == "reject"
+
+
+def test_reviewer_result_schema_is_non_nullable_and_accepts_legacy_nulls() -> None:
+    strategy = ToolStrategy(ReviewerResult)
+    schema_text = json.dumps(strategy.schema_specs[0].json_schema, sort_keys=True)
+
+    assert '"type": "null"' not in schema_text
+    assert '"recommendation"' in schema_text
+    assert '"change_points"' in schema_text
+    assert '"proportionality_assessment"' in schema_text
+
+    result = ReviewerResult.model_validate(
+        {
+            "decision": "approve",
+            "summary": None,
+            "change_points": None,
+            "scope_assessment": None,
+            "proportionality_assessment": None,
+            "concerns": None,
+            "human_checks": None,
+            "rationale": None,
+        }
+    )
+
+    assert result.recommendation == "approve"
+    assert result.summary == ""
+    assert result.change_points == []
+    assert result.concerns == []
+    assert result.proportionality_assessment.status == "warning"
+    assert "decision" not in result.model_dump()
 
 
 def test_pipeline_ignore_creates_no_candidate_or_workspace_write(tmp_path: Path) -> None:
@@ -602,7 +653,7 @@ def test_pipeline_promotes_complete_memory_file_edit(tmp_path: Path) -> None:
     assert "Preserve this unrelated fact" in store.read_memory_text()
 
 
-def test_pipeline_promotes_complete_skill_bundle_and_reviewer_reject_is_noop(tmp_path: Path) -> None:
+def test_pipeline_never_auto_promotes_skill_bundle_and_reviewer_reject_is_noop(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     ensure_project_space_layout(workspace, create=True)
     repo = _repo(tmp_path)
@@ -626,11 +677,24 @@ def test_pipeline_promotes_complete_skill_bundle_and_reviewer_reject_is_noop(tmp
     processed = coordinator.process_pending_jobs()
 
     candidate = coordinator.store.read_candidate(processed[0].candidate_id)
-    assert candidate is not None and candidate.status == "promoted"
+    assert candidate is not None and candidate.status == "reviewed"
     target = coordinator.store.self_develop_skills_dir / "materials_worker" / "demo-workflow"
-    assert "workspace version" in (target / "SKILL.md").read_text(encoding="utf-8")
-    assert (target / "scripts" / "helper.py").is_file()
-    assert hash_tree(target) == candidate.bundle_hash
+    assert not target.exists()
+    reviewed = coordinator.store.candidate_dir(candidate.candidate_id) / "proposed" / "materials_worker" / "demo-workflow"
+    assert "workspace version" in (reviewed / "SKILL.md").read_text(encoding="utf-8")
+    assert (reviewed / "scripts" / "helper.py").is_file()
+    assert hash_tree(reviewed) == candidate.bundle_hash
+    persisted_review = json.loads(
+        (coordinator.store.candidate_dir(candidate.candidate_id) / "review.json").read_text(encoding="utf-8")
+    )
+    assert persisted_review["recommendation"] == "approve"
+    assert persisted_review["summary"]
+    assert persisted_review["change_points"][0]["evidence_source"] == "user"
+    audit_events = [
+        json.loads(line) for line in coordinator.store.audit_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(event["event"] == "reviewer_recommendation" for event in audit_events)
+    assert not any(event["event"] == "human_decision" for event in audit_events)
 
     rejected_workspace = tmp_path / "rejected"
     ensure_project_space_layout(rejected_workspace, create=True)
@@ -653,6 +717,32 @@ def test_pipeline_promotes_complete_skill_bundle_and_reviewer_reject_is_noop(tmp
     rejected_candidate = rejected.store.read_candidate(rejected_job.candidate_id)
     assert rejected_candidate is not None and rejected_candidate.status == "rejected"
     assert not (rejected.store.self_develop_skills_dir / "materials_worker" / "demo-workflow").exists()
+
+
+def test_needs_revision_remains_visible_for_human_decision(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    ensure_project_space_layout(workspace, create=True)
+    coordinator = SelfEvolutionCoordinator(
+        workspace=workspace,
+        project_id="demo",
+        repo_root=_repo(tmp_path),
+        proposer=_BundleProposer(),
+        reviewer=_Reviewer("needs_revision"),
+        mode="auto",
+    )
+    coordinator.enqueue_post_run(
+        run_id="run-one",
+        thread_id="thread-one",
+        terminal_status="done",
+        run_dir=_run_dir(workspace, prompt="Narrow this reusable workflow correction."),
+    )
+
+    job = coordinator.process_pending_jobs()[0]
+    candidate = coordinator.store.read_candidate(job.candidate_id)
+
+    assert candidate is not None and candidate.status == "reviewed"
+    assert candidate.review["recommendation"] == "needs_revision"
+    assert not any(coordinator.store.self_develop_skills_dir.rglob("SKILL.md"))
 
 
 def test_reviewer_failure_keeps_candidate_linked_without_promoting(tmp_path: Path) -> None:
@@ -680,7 +770,7 @@ def test_reviewer_failure_keeps_candidate_linked_without_promoting(tmp_path: Pat
 
     assert job.status == "error"
     assert candidate is not None and candidate.status == "proposed"
-    assert candidate.review["decision"] == "unavailable"
+    assert candidate.review["recommendation"] == "unavailable"
     assert not any(coordinator.store.self_develop_skills_dir.rglob("SKILL.md"))
 
 
@@ -712,7 +802,7 @@ def test_memory_file_promotion_replaces_and_rollback_restores(tmp_path: Path) ->
     assert report.valid
 
     manager = PromotionManager(store, repo_root=_repo(tmp_path))
-    promoted = manager.promote(candidate, report)
+    promoted = manager.promote(candidate, report, decision_source="human", actor="alice", rationale="Reviewed exact diff.")
     assert store.read_memory_text() == after
     assert "Prefer English" not in store.read_memory_text()
 
@@ -753,6 +843,10 @@ def test_memory_file_promotion_rejects_concurrent_parent_edit(tmp_path: Path) ->
         PromotionManager(store, repo_root=_repo(tmp_path)).promote(candidate, report)
 
     assert store.read_memory_text() == parent_edit
+    stored = store.read_candidate(candidate.candidate_id)
+    assert stored is not None and stored.status == "conflict"
+    events = [json.loads(line) for line in store.audit_log_path.read_text(encoding="utf-8").splitlines()]
+    assert any(event["event"] == "promotion_conflict" for event in events)
 
 
 def test_promotion_readiness_explains_stale_skill_candidate(tmp_path: Path) -> None:
@@ -813,10 +907,64 @@ def test_skill_rollback_removes_new_override_and_reveals_builtin(tmp_path: Path)
     store.write_candidate(candidate)
     report = CandidateGate(store).run(candidate)
     manager = PromotionManager(store, repo_root=repo)
-    promoted = manager.promote(candidate, report)
+    with pytest.raises(ValueError, match="explicit human decision"):
+        manager.promote(candidate, report)
+    promoted = manager.promote(
+        candidate,
+        report,
+        decision_source="human",
+        actor="alice",
+        rationale="The exact skill diff was reviewed.",
+    )
 
     rolled_back = manager.rollback(promoted)
 
     assert rolled_back.status == "rolled_back"
     assert not (store.self_develop_skills_dir / "materials_worker" / "demo-workflow").exists()
     assert "built-in" in (built_in / "SKILL.md").read_text(encoding="utf-8")
+    events = [json.loads(line) for line in store.audit_log_path.read_text(encoding="utf-8").splitlines()]
+    human_decision = next(event for event in events if event["event"] == "human_decision")
+    assert human_decision["action"] == "promote"
+    assert human_decision["actor"] == "alice"
+    assert human_decision["candidate_hash"] == candidate.bundle_hash
+    assert human_decision["rationale"] == "The exact skill diff was reviewed."
+    assert any(event["event"] == "candidate_promoted" for event in events)
+    assert any(event["event"] == "candidate_rolled_back" for event in events)
+
+
+def test_manual_rejection_records_human_actor_rationale_and_candidate_hash(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    ensure_project_space_layout(workspace, create=True)
+    store = SelfEvolutionStore(workspace, project_id="demo")
+    candidate = LearningCandidate(
+        candidate_id="sec_reject",
+        project_id="demo",
+        run_id="run-one",
+        thread_id="thread-one",
+        action="skill",
+        status="reviewed",
+        group="materials_worker",
+        name="demo-workflow",
+        bundle_hash="sha256:reviewed",
+        created_at=utc_now(),
+    )
+    store.reset_candidate_dir(candidate.candidate_id)
+    store.write_candidate(candidate)
+
+    manager = PromotionManager(store, repo_root=_repo(tmp_path))
+    rejected = manager.reject(
+        candidate,
+        actor="alice",
+        rationale="The scope is broader than the demonstrated failure.",
+    )
+
+    assert rejected.status == "rejected"
+    assert rejected.review["human_decision"]["actor"] == "alice"
+    events = [json.loads(line) for line in store.audit_log_path.read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["event"] == "human_decision"
+    assert events[-1]["action"] == "reject"
+    assert events[-1]["actor"] == "alice"
+    assert events[-1]["candidate_hash"] == "sha256:reviewed"
+    assert events[-1]["rationale"] == "The scope is broader than the demonstrated failure."
+    with pytest.raises(ValueError, match="already final"):
+        manager.reject(candidate, actor="bob", rationale="Conflicting second decision.")

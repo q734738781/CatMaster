@@ -2033,7 +2033,10 @@ class SpecialistRunner:
             "Prefer registered builtin tools when they fit the task. "
             "Before writing custom code, first try to satisfy the task by adjusting the parameters and supported variants of a relevant builtin tool. "
             "Builtin tools often already encode validated parameter choices, implementation optimizations, and known pitfall handling, so avoid reimplementing that logic unless the builtin boundary truly does not fit. "
-            "For any code that overlaps internal tool functionality, first inspect the builtin tool source through the available source-inspection capability and code against that reference instead of starting from scratch; if custom code is still necessary, preserve validated behavior rather than writing an approximate look-alike from memory."
+            "For any code that overlaps internal tool functionality, first inspect the builtin tool source through the available source-inspection capability and code against that reference instead of starting from scratch; if custom code is still necessary, preserve validated behavior rather than writing an approximate look-alike from memory. "
+            "Keep validation proportional to the scientific decision. A checksum or content hash is an operational file-identity signal, not scientific QC: do not generate or compare checksums for ordinary research analysis, artifact review, completion audits, reproducibility notes, or merely to prove that unrelated files were unchanged. "
+            "Use scientific checks that bear on the result instead, such as structure and input consistency, convergence, units, sample coverage, statistics, method applicability, and evidence-claim fit; use targeted inspection or a version-control diff when the question is edit scope. "
+            "Use a checksum only when the user explicitly requests one, file identity is genuinely disputed, immutable provenance is contractual, transfer/download integrity must be checked, or a restart, retry, checkpoint, or tool protocol requires it. Preserve an operational hash returned by a managed tool when needed by that protocol, but do not present it as scientific evidence."
         )
 
     @staticmethod

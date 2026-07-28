@@ -406,6 +406,22 @@ def test_prose_quality_policy_requires_skill_without_changing_science() -> None:
     assert "machine-readable files" in policy
 
 
+def test_tool_policy_keeps_checksum_out_of_ordinary_scientific_qc() -> None:
+    policy = runtime_mod.SpecialistRunner._tool_policy()
+    assert "A checksum or content hash is an operational file-identity signal, not scientific QC" in policy
+    assert "do not generate or compare checksums for ordinary research analysis" in policy
+    assert "use targeted inspection or a version-control diff when the question is edit scope" in policy
+    assert "restart, retry, checkpoint, or tool protocol requires it" in policy
+    assert "do not present it as scientific evidence" in policy
+
+    research_prompt = runtime_mod.SpecialistRunner._base_system_prompt("research", thread_id="thread-1")
+    experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
+    materials_prompt = runtime_mod.SpecialistRunner._materials_worker_prompt()
+    writing_prompt = runtime_mod.SpecialistRunner._writing_worker_prompt()
+    for prompt in (research_prompt, experiment_prompt, materials_prompt, writing_prompt):
+        assert "not scientific QC" in prompt
+
+
 def test_litreview_downloader_batch_limit_is_not_review_coverage_target() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "skills/litreview_agent/nature-downloader/SKILL.md").read_text(encoding="utf-8")

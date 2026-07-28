@@ -2,7 +2,9 @@ from .agents import ProposerAgent, ReviewerAgent, build_self_evolution_agents
 from .gate import CandidateGate
 from .models import (
     LearningCandidate,
+    ProportionalityAssessment,
     ProposerResult,
+    ReviewChangePoint,
     ReviewerResult,
     SelfEvolutionJob,
     ValidationReport,
@@ -16,8 +18,10 @@ __all__ = [
     "LearningCandidate",
     "PromotionConflict",
     "PromotionManager",
+    "ProportionalityAssessment",
     "ProposerAgent",
     "ProposerResult",
+    "ReviewChangePoint",
     "ReviewerAgent",
     "ReviewerResult",
     "SelfEvolutionCoordinator",

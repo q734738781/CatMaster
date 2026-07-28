@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from catmaster.runtime.self_evolution import LearningCandidate, SelfEvolutionStore
+from catmaster.runtime.self_evolution.storage import hash_tree, utc_now
 from catmaster.webui.auth import SESSION_COOKIE_NAME
 from catmaster.webui.server import create_app
 
@@ -80,6 +83,95 @@ def test_register_hashes_password_and_bootstraps_locked_user_root(tmp_path: Path
     )
     assert refresh.status_code == 200
     assert refresh.json()["workspace_root"] == str(user_root)
+
+
+def test_authenticated_skill_promotion_records_webui_actor_and_note(tmp_path: Path) -> None:
+    app = create_app(project_space_root=str(tmp_path))
+    client = TestClient(app)
+    _register(client, "alice")
+    bootstrap = client.get("/api/bootstrap").json()
+    workspace = tmp_path / "users" / "alice" / "default"
+    store = SelfEvolutionStore(workspace, project_id="default")
+    candidate = LearningCandidate(
+        candidate_id="sec_human_review",
+        project_id="default",
+        run_id="run-one",
+        thread_id="thread-one",
+        action="skill",
+        status="reviewed",
+        group="materials_worker",
+        name="human-review-test",
+        review={
+            "recommendation": "approve",
+            "summary": "Add one bounded workspace workflow.",
+            "change_points": [],
+            "scope_assessment": "Workspace only.",
+            "proportionality_assessment": {"status": "pass", "explanation": "Bounded."},
+            "concerns": [],
+            "human_checks": [],
+            "rationale": "Independent review completed.",
+        },
+        created_at=utc_now(),
+    )
+    root = store.reset_candidate_dir(candidate.candidate_id)
+    proposed = root / "proposed" / candidate.group / candidate.name
+    proposed.mkdir(parents=True)
+    (proposed / "SKILL.md").write_text(
+        """---
+name: human-review-test
+description: Use this skill to test an authenticated bounded promotion.
+license: project-local
+compatibility: local
+---
+# Human review test
+
+## Overview
+
+Bounded authenticated promotion test.
+
+## Quick Start
+
+Read this workflow before use.
+
+## Workflow
+
+1. Follow the bounded workflow.
+
+## Method-critical defaults
+
+Keep the workflow workspace-scoped.
+
+## Output Contract
+
+Return a concise result.
+
+## References
+
+No external references.
+""",
+        encoding="utf-8",
+    )
+    candidate.bundle_hash = hash_tree(proposed)
+    store.write_candidate(candidate)
+
+    response = client.post(
+        f"/api/session/{bootstrap['ctx']}/self-evolution/candidates/{candidate.candidate_id}/decision",
+        json={
+            "project_space": "default",
+            "action": "promote",
+            "rationale": "I inspected the exact diff.",
+        },
+    )
+
+    assert response.status_code == 200
+    decision = response.json()["candidate"]["promotion"]["decision"]
+    assert decision["decision_source"] == "human"
+    assert decision["actor"] == "alice"
+    assert decision["candidate_hash"] == candidate.bundle_hash
+    assert decision["rationale"] == "I inspected the exact diff."
+    audit_events = [json.loads(line) for line in store.audit_log_path.read_text(encoding="utf-8").splitlines()]
+    assert audit_events[0]["event"] == "human_decision"
+    assert audit_events[0]["actor"] == "alice"
 
 
 def test_same_ctx_is_isolated_between_authenticated_users(tmp_path: Path) -> None:

@@ -2078,6 +2078,7 @@ body.v2-resizing-columns * {
   font-size: 12px;
 }
 
+.v2-raw-row summary small.status-reviewed,
 .v2-raw-row summary small.status-approved,
 .v2-raw-row summary small.status-promoted {
   color: #107c10;
@@ -2087,6 +2088,121 @@ body.v2-resizing-columns * {
 .v2-raw-row summary small.status-invalid,
 .v2-raw-row summary small.status-rejected {
   color: #b42318;
+}
+
+.v2-evolution-card-summary {
+  align-items: flex-start !important;
+  padding: 10px 11px !important;
+}
+
+.v2-evolution-card-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.v2-evolution-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.v2-evolution-card-title small {
+  flex: 0 0 auto;
+}
+
+.v2-evolution-card-main > p {
+  margin: 0;
+  color: #424242;
+  line-height: 1.45;
+}
+
+.v2-evolution-card-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  color: #676767;
+  font-size: 11px;
+}
+
+.v2-evolution-review {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 9px;
+  border-top: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.v2-evolution-review > section {
+  padding: 9px 10px;
+  border: 1px solid #e1e1e1;
+  border-radius: 4px;
+}
+
+.v2-evolution-review h4 {
+  margin: 0 0 7px;
+  color: #242424;
+  font-size: 13px;
+}
+
+.v2-evolution-review p,
+.v2-evolution-review ul {
+  margin: 5px 0;
+  color: #424242;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.v2-evolution-change-point + .v2-evolution-change-point {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid #e5e5e5;
+}
+
+.v2-evolution-change-point dl {
+  display: grid;
+  gap: 5px;
+  margin: 7px 0 0;
+}
+
+.v2-evolution-change-point dl > div {
+  display: grid;
+  grid-template-columns: 65px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.v2-evolution-change-point dt {
+  color: #676767;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.v2-evolution-change-point dd {
+  margin: 0;
+  color: #333333;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.v2-evolution-secondary {
+  border: 1px solid #e1e1e1;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.v2-evolution-secondary > summary {
+  justify-content: flex-start;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
+.v2-evolution-secondary > pre {
+  max-height: 420px;
+  font-size: 11px;
 }
 
 .v2-monitor-list {

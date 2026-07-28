@@ -77,7 +77,9 @@ The more memory resembles a concise project convention document, the more reliab
 
 A skill is appropriate when a full workflow repeats. If a stepped CeO2 project has repeatedly validated one termination audit, atom naming rule, fixed-layer policy, and report structure, the system can propose a workspace skill containing a complete `SKILL.md` and, where needed, references or scripts.
 
-In the default `observe` mode, static checks and an independent reviewer examine the candidate before it appears in Skill Evolution. The user can inspect the source run, rationale, target, old content, and proposed content, then choose Promote or Reject. A promotion affects the next run, not the current one.
+Static checks and an independent reviewer examine a candidate before it appears in Skill Evolution. The reviewer's `approve`, `reject`, or `needs_revision` value is an AI recommendation, not human approval. Candidate cards expose a one-sentence summary, separate behavioral changes, evidence sources, scope, proportionality, concerns, and human checks. The exact diff and raw diagnostics remain available in secondary expandable sections.
+
+Every workspace skill requires an explicit Promote or Reject action from a logged-in user. A legacy `auto` deployment mode never auto-promotes skills. Promotion confirmation repeats the target, summary, and concerns, and the audit records the account, time, exact candidate bundle hash, and optional note. A changed bundle, changed target, or structural validation failure blocks promotion. Ordinary reviewer concerns or a proportionality warning/failure are shown prominently but do not silently replace an authorized human decision. Promotion affects the next run, not the current one.
 
 Good skill candidates include stable project-specific QC methods, directory and delivery contracts, a verified stage-and-result workflow for a remote task, or repeated writing and figure conventions. Temporary errors, one sample-specific threshold, fixed atom indices, and unverified scientific conclusions should not become skills. A skill changes method guidance, not tool permissions or remote availability.
 
@@ -88,7 +90,7 @@ from choices that belong only to one structure.
 
 If a reusable workflow exists, propose one project-skill candidate with applicability, inputs, checks,
 outputs, and non-generalizable boundaries. Do not turn one coordination cutoff or atom index into a universal rule.
-Keep the candidate in observe review and do not promote it automatically.
+Keep the candidate in human review and do not promote it automatically.
 ```
 
 ## Resume facts before resuming a plan

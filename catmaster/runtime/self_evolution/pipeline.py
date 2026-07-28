@@ -186,7 +186,7 @@ class SelfEvolutionCoordinator:
             )
         except Exception as exc:
             candidate.review = {
-                "decision": "unavailable",
+                "recommendation": "unavailable",
                 "error": f"{type(exc).__name__}: {exc}",
                 "proposer": proposer_meta,
             }
@@ -199,8 +199,7 @@ class SelfEvolutionCoordinator:
                 error=candidate.review["error"],
             )
         candidate.review = {
-            "decision": review.decision,
-            "rationale": review.rationale,
+            **review.model_dump(mode="json"),
             "proposer": proposer_meta,
             "reviewer": reviewer_meta,
         }
@@ -208,28 +207,62 @@ class SelfEvolutionCoordinator:
             json.dumps(candidate.review, ensure_ascii=False, indent=2, default=str) + "\n",
             encoding="utf-8",
         )
-        if review.decision == "reject":
+        self.store.append_audit_event(
+            {
+                "event": "reviewer_recommendation",
+                "candidate_id": candidate_id,
+                "decision_source": "ai_reviewer",
+                "actor": str(reviewer_meta.get("model_label") or "self_evolution_reviewer"),
+                "recommendation": review.recommendation,
+                "candidate_hash": candidate.bundle_hash,
+                "rationale": review.rationale,
+            }
+        )
+        if review.recommendation == "reject":
             candidate.status = "rejected"
             self.store.write_candidate(candidate)
-            self._cleanup_review_context(candidate_root)
             self.store.append_audit_event(
                 {
-                    "event": "candidate_rejected",
+                    "event": "automatic_state_transition",
                     "candidate_id": candidate_id,
+                    "decision_source": "ai_reviewer",
+                    "from_status": "proposed",
+                    "to_status": "rejected",
                     "rationale": review.rationale,
                 }
             )
             return self.store.finish_job(job, status="done", candidate_id=candidate_id)
 
-        candidate.status = "approved"
+        candidate.status = "reviewed"
         self.store.write_candidate(candidate)
+        self.store.append_audit_event(
+            {
+                "event": "automatic_state_transition",
+                "candidate_id": candidate_id,
+                "decision_source": "system",
+                "from_status": "proposed",
+                "to_status": "reviewed",
+                "recommendation": review.recommendation,
+            }
+        )
         try:
-            if self_evolution_promotion_enabled(self.mode):
-                candidate = self.promotion.promote(candidate, report)
-        except PromotionConflict as exc:
-            candidate.status = "conflict"
-            candidate.promotion = {**dict(candidate.promotion), "error": str(exc)}
-            self.store.write_candidate(candidate)
+            # The legacy auto mode remains available for memory candidates only.
+            # A reviewer recommendation never bypasses the human gate for skills.
+            if (
+                candidate.action == "memory"
+                and review.recommendation == "approve"
+                and self_evolution_promotion_enabled(self.mode)
+            ):
+                candidate = self.promotion.promote(
+                    candidate,
+                    report,
+                    decision_source="automatic_system",
+                    actor="self_evolution_worker",
+                    rationale="Automatic memory promotion after reviewer recommendation.",
+                )
+        except PromotionConflict:
+            # PromotionManager persists the conflict and its audit event.
+            candidate = self.store.read_candidate(candidate.candidate_id) or candidate
         except Exception as exc:
             candidate.promotion = {**dict(candidate.promotion), "error": f"{type(exc).__name__}: {exc}"}
             self.store.write_candidate(candidate)
@@ -239,11 +272,6 @@ class SelfEvolutionCoordinator:
                 candidate_id=candidate_id,
                 error=str(candidate.promotion["error"]),
             )
-        finally:
-            # Observe mode keeps the frozen base so a human can inspect an exact
-            # bundle diff before choosing Promote or Reject.
-            if candidate.status != "approved":
-                self._cleanup_review_context(candidate_root)
         return self.store.finish_job(job, status="done", candidate_id=candidate_id)
 
     def _base_target_hash(self, *, action: str, group: str, name: str, candidate_root: Path) -> str:

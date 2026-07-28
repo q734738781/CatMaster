@@ -1429,6 +1429,79 @@ def _candidate_change_preview(store: SelfEvolutionStore, candidate: Any) -> tupl
     return preview, truncated
 
 
+def _candidate_human_review(candidate: Any) -> dict[str, Any]:
+    raw = dict(getattr(candidate, "review", None) or {})
+    legacy_decision = str(raw.get("decision") or "").strip().lower()
+    recommendation = str(raw.get("recommendation") or legacy_decision or "unavailable").strip().lower()
+    if recommendation not in {"approve", "reject", "needs_revision"}:
+        recommendation = "unavailable"
+    structured_keys = {
+        "summary",
+        "change_points",
+        "scope_assessment",
+        "proportionality_assessment",
+        "concerns",
+        "human_checks",
+    }
+    structured_available = any(key in raw for key in structured_keys)
+    if not structured_available:
+        return {
+            "structured_review_available": False,
+            "reviewer_recommendation": recommendation,
+            "summary": "Structured human-review summary is unavailable for this legacy candidate.",
+            "change_points": [],
+            "scope_assessment": "",
+            "proportionality_assessment": {
+                "status": "unavailable",
+                "explanation": "No structured proportionality assessment was stored for this legacy candidate.",
+            },
+            "concerns": [],
+            "human_checks": [],
+            "rationale": str(raw.get("rationale") or ""),
+            "human_decision": raw.get("human_decision") if isinstance(raw.get("human_decision"), dict) else {},
+        }
+
+    change_points = [
+        {
+            "title": str(point.get("title") or ""),
+            "before": str(point.get("before") or ""),
+            "after": str(point.get("after") or ""),
+            "evidence": str(point.get("evidence") or ""),
+            "evidence_source": str(point.get("evidence_source") or ""),
+            "impact": str(point.get("impact") or ""),
+        }
+        for point in (raw.get("change_points") if isinstance(raw.get("change_points"), list) else [])
+        if isinstance(point, dict)
+    ]
+    proportionality = (
+        dict(raw.get("proportionality_assessment") or {})
+        if isinstance(raw.get("proportionality_assessment"), dict)
+        else {}
+    )
+    status = str(proportionality.get("status") or "warning").strip().lower()
+    if status not in {"pass", "warning", "fail"}:
+        status = "warning"
+    return {
+        "structured_review_available": True,
+        "reviewer_recommendation": recommendation,
+        "summary": str(raw.get("summary") or "No reviewer summary was provided."),
+        "change_points": change_points,
+        "scope_assessment": str(raw.get("scope_assessment") or ""),
+        "proportionality_assessment": {
+            "status": status,
+            "explanation": str(proportionality.get("explanation") or ""),
+        },
+        "concerns": [str(item) for item in raw.get("concerns", []) if str(item).strip()]
+        if isinstance(raw.get("concerns"), list)
+        else [],
+        "human_checks": [str(item) for item in raw.get("human_checks", []) if str(item).strip()]
+        if isinstance(raw.get("human_checks"), list)
+        else [],
+        "rationale": str(raw.get("rationale") or ""),
+        "human_decision": raw.get("human_decision") if isinstance(raw.get("human_decision"), dict) else {},
+    }
+
+
 def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run_id: str) -> dict[str, Any]:
     if workspace is None:
         return {"enabled": True, "candidates": [], "jobs": []}
@@ -1443,6 +1516,7 @@ def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run
         data["change_preview"] = change_preview
         data["change_preview_truncated"] = change_preview_truncated
         data["promotion_readiness"] = promotion.promotion_readiness(item)
+        data["human_review"] = _candidate_human_review(item)
         candidates.append(data)
     jobs = [
         item.to_dict()
@@ -1451,7 +1525,7 @@ def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run
     ]
     status_counts = {
         status: sum(str(item.get("status") or "") == status for item in candidates)
-        for status in ("proposed", "invalid", "approved", "rejected", "promoted", "conflict", "rolled_back")
+        for status in ("proposed", "invalid", "reviewed", "approved", "rejected", "promoted", "conflict", "rolled_back")
     }
     effective_skill_count = sum(1 for _path in store.self_develop_skills_dir.glob("*/*/SKILL.md"))
     return {
@@ -1463,7 +1537,7 @@ def _self_evolution_for_run(*, workspace: Optional[Path], workspace_id: str, run
         "candidates": candidates[:50],
         "candidate_count": len(candidates),
         "status_counts": status_counts,
-        "pending_review_count": status_counts["approved"],
+        "pending_review_count": status_counts["reviewed"] + status_counts["approved"],
         "effective_skill_count": effective_skill_count,
         "jobs": jobs[-50:],
         "job_count": len(jobs),
@@ -1501,7 +1575,7 @@ def _self_evolution_candidate_detail(*, workspace: Path, workspace_id: str, cand
     ]
     change_preview, change_preview_truncated = _candidate_change_preview(store, candidate)
     return {
-        "candidate": candidate.to_dict(),
+        "candidate": {**candidate.to_dict(), "human_review": _candidate_human_review(candidate)},
         "validation_report": validation,
         "patch_text": patch_text,
         "change_preview": change_preview,
@@ -2671,7 +2745,7 @@ def create_app(
     @app.post("/api/session/{ctx}/self-evolution/candidates/{candidate_id}/rollback")
     async def _session_self_evolution_candidate_rollback(ctx: str, candidate_id: str, request: Request):
         _require_self_evolution_enabled()
-        _identity, session = _bound_session(ctx)
+        identity, session = _bound_session(ctx)
         payload = await _json_body(request)
         workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
         if workspace is None:
@@ -2679,7 +2753,12 @@ def create_app(
         coordinator = SelfEvolutionCoordinator(workspace=workspace, project_id=workspace_name)
         candidate = _read_self_evolution_candidate(coordinator.store, candidate_id)
         try:
-            rolled_back = await asyncio.to_thread(coordinator.promotion.rollback, candidate)
+            rolled_back = await asyncio.to_thread(
+                coordinator.promotion.rollback,
+                candidate,
+                actor=identity.username,
+                rationale=str(payload.get("rationale") or "").strip(),
+            )
         except PromotionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
@@ -2689,7 +2768,7 @@ def create_app(
     @app.post("/api/session/{ctx}/self-evolution/candidates/{candidate_id}/decision")
     async def _session_self_evolution_candidate_decision(ctx: str, candidate_id: str, request: Request):
         _require_self_evolution_enabled()
-        _identity, session = _bound_session(ctx)
+        identity, session = _bound_session(ctx)
         payload = await _json_body(request)
         workspace, workspace_name = _workspace_for_request(registry, session, str(payload.get("project_space") or ""))
         if workspace is None:
@@ -2698,28 +2777,49 @@ def create_app(
         candidate = _read_self_evolution_candidate(coordinator.store, candidate_id)
         action = str(payload.get("action") or "").strip().lower()
         if action == "reject":
-            if candidate.status != "approved":
-                raise HTTPException(status_code=400, detail="Only an observe-mode approved candidate can be rejected manually.")
-            candidate.status = "rejected"
-            candidate.review = {
-                **dict(candidate.review or {}),
-                "manual_decision": "reject",
-                "manual_rationale": str(payload.get("rationale") or "Manual WebUI rejection.").strip(),
-            }
-            coordinator.store.write_candidate(candidate)
-            return JSONResponse({"updated": True, "candidate": candidate.to_dict()})
+            try:
+                rejected = coordinator.promotion.reject(
+                    candidate,
+                    actor=identity.username,
+                    rationale=str(payload.get("rationale") or "").strip(),
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return JSONResponse(
+                {
+                    "updated": True,
+                    "candidate": {**rejected.to_dict(), "human_review": _candidate_human_review(rejected)},
+                }
+            )
         if action in {"approve", "promote"}:
-            if candidate.status != "approved":
-                raise HTTPException(status_code=400, detail="Only an observe-mode approved candidate can be promoted manually.")
+            readiness = coordinator.promotion.promotion_readiness(candidate)
+            if not readiness.get("ready"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=str(readiness.get("reason") or "Candidate is stale and cannot be promoted."),
+                )
             report = coordinator.gate.run(candidate)
             coordinator.store.write_validation_report(report)
             if not report.valid:
                 raise HTTPException(status_code=400, detail="Candidate no longer passes validation.")
             try:
-                promoted = await asyncio.to_thread(coordinator.promotion.promote, candidate, report)
+                promoted = await asyncio.to_thread(
+                    coordinator.promotion.promote,
+                    candidate,
+                    report,
+                    decision_source="human",
+                    actor=identity.username,
+                    rationale=str(payload.get("rationale") or payload.get("note") or "").strip(),
+                )
             except PromotionConflict as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
-            return JSONResponse({"updated": True, "candidate": promoted.to_dict(), "validation_report": report.to_dict()})
+            return JSONResponse(
+                {
+                    "updated": True,
+                    "candidate": {**promoted.to_dict(), "human_review": _candidate_human_review(promoted)},
+                    "validation_report": report.to_dict(),
+                }
+            )
         raise HTTPException(status_code=400, detail="action must be promote or reject.")
 
     @app.get("/api/session/{ctx}/files/tree")

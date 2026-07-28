@@ -4,7 +4,14 @@ import { Grid } from "gridjs-react";
 
 import ArtifactRenderer from "./ArtifactRenderer";
 import { apiFetch } from "../useCatMasterThreadRuntime";
-import { selfEvolutionCandidateTitle, selfEvolutionStatusCounts, sortSelfEvolutionCandidates } from "../selfEvolutionView";
+import {
+  selfEvolutionCandidateTitle,
+  selfEvolutionHumanReview,
+  selfEvolutionLifecycleLabel,
+  selfEvolutionPromotionConfirmation,
+  selfEvolutionStatusCounts,
+  sortSelfEvolutionCandidates,
+} from "../selfEvolutionView";
 
 function escapePath(value) {
   return encodeURIComponent(String(value || ""));
@@ -101,8 +108,11 @@ function formatMaybeDurationSec(value) {
 
 function formatTimestamp(value) {
   const number = Number(value || 0);
-  if (!Number.isFinite(number) || number <= 0) return "-";
-  const ms = number > 100000000000 ? number : number * 1000;
+  const parsed = Date.parse(String(value || ""));
+  const ms = Number.isFinite(number) && number > 0
+    ? (number > 100000000000 ? number : number * 1000)
+    : parsed;
+  if (!Number.isFinite(ms) || ms <= 0) return "-";
   return new Date(ms).toLocaleString();
 }
 
@@ -443,20 +453,37 @@ export function SelfEvolutionPanel({ ctx, workspaceName, payload, loading = fals
   const counts = selfEvolutionStatusCounts(payload);
   const visibleCandidates = candidates.filter((candidate) => {
     if (statusFilter === "all") return true;
-    if (statusFilter === "pending") return candidate.status === "approved" || candidate.status === "conflict";
+    if (statusFilter === "pending") {
+      return candidate.status === "reviewed" || candidate.status === "approved" || candidate.status === "conflict";
+    }
     return candidate.status === statusFilter;
   });
 
   async function decide(candidate, action) {
     if (!ctx || !candidate?.candidate_id) return;
-    const verb = action === "promote" ? "promote" : "reject";
-    if (!window.confirm(`Confirm ${verb} for ${selfEvolutionCandidateTitle(candidate)} in workspace ${workspaceName}?`)) return;
+    let rationale = "";
+    if (action === "reject") {
+      const response = window.prompt(
+        `Why reject ${selfEvolutionCandidateTitle(candidate)}? A rationale is optional but will be audited.`,
+        "",
+      );
+      if (response === null) return;
+      rationale = response.trim();
+    } else {
+      const response = window.prompt(
+        `Optional promotion note for ${selfEvolutionCandidateTitle(candidate)}:`,
+        "",
+      );
+      if (response === null) return;
+      rationale = response.trim();
+      if (!window.confirm(selfEvolutionPromotionConfirmation(candidate, workspaceName))) return;
+    }
     setActionError("");
     setBusyCandidateId(candidate.candidate_id);
     try {
       await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/decision`, {
         method: "POST",
-        body: JSON.stringify({ project_space: workspaceName, action }),
+        body: JSON.stringify({ project_space: workspaceName, action, rationale }),
       });
       await onRefresh?.();
     } catch (err) {
@@ -508,12 +535,17 @@ export function SelfEvolutionPanel({ ctx, workspaceName, payload, loading = fals
         <GitBranch size={18} />
         <div>
           <strong>Shared by every thread in this workspace</strong>
-          <span>Other workspaces remain isolated. Approved overrides become available when the next run stages its skills.</span>
+          <span>AI review is advisory. Only an explicit human Promote action activates a skill, beginning with the next run.</span>
         </div>
         <code>{payload?.mode || "observe"}</code>
       </div>
       <div className="v2-monitor-grid">
-        <MonitorMetric icon={GitBranch} label="Pending review" value={formatCount(payload?.pending_review_count ?? counts.approved)} note="human approval required" />
+        <MonitorMetric
+          icon={GitBranch}
+          label="Pending decision"
+          value={formatCount(payload?.pending_review_count ?? (counts.reviewed + counts.approved))}
+          note="human promotion required"
+        />
         <MonitorMetric icon={ListChecks} label="Effective overrides" value={formatCount(payload?.effective_skill_count)} note="workspace skills" />
         <MonitorMetric icon={Activity} label="Candidates" value={formatCount(payload?.candidate_count ?? candidates.length)} note={`${formatCount(counts.promoted)} promoted`} />
         <MonitorMetric icon={Clock} label="Learning jobs" value={formatCount(payload?.job_count ?? jobs.length)} note={`${formatCount(payload?.error_count)} errors`} />
@@ -524,8 +556,9 @@ export function SelfEvolutionPanel({ ctx, workspaceName, payload, loading = fals
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
             <option value="pending">Needs attention</option>
             <option value="all">All candidates</option>
-            <option value="approved">Approved by reviewer</option>
-            <option value="promoted">Promoted</option>
+            <option value="reviewed">AI reviewed</option>
+            <option value="approved">Legacy reviewed</option>
+            <option value="promoted">Human promoted</option>
             <option value="conflict">Conflict</option>
             <option value="invalid">Invalid</option>
             <option value="rejected">Rejected</option>
@@ -541,41 +574,116 @@ export function SelfEvolutionPanel({ ctx, workspaceName, payload, loading = fals
           <div className="v2-raw-list">
           {visibleCandidates.map((candidate) => {
           const status = String(candidate.status || "");
-          const canDecide = status === "approved";
+          const canDecide = status === "reviewed" || status === "approved";
           const canRollback = status === "promoted";
           const readiness = candidate.promotion_readiness || {};
           const canPromote = canDecide && readiness.ready !== false;
           const isBusy = busyCandidateId === candidate.candidate_id;
+          const review = selfEvolutionHumanReview(candidate);
+          const proportionalityStatus = String(review.proportionality?.status || "unavailable");
+          const hasReviewWarning = review.concerns.length > 0 || ["warning", "fail"].includes(proportionalityStatus);
           return (
-            <details key={candidate.candidate_id} className="v2-raw-row">
-              <summary>
-                <span>{selfEvolutionCandidateTitle(candidate)}</span>
-                <small className={`status-${status}`}>{status}</small>
+            <details key={candidate.candidate_id} className="v2-raw-row v2-evolution-candidate">
+              <summary className="v2-evolution-card-summary">
+                <div className="v2-evolution-card-main">
+                  <div className="v2-evolution-card-title">
+                    <strong>{selfEvolutionCandidateTitle(candidate)}</strong>
+                    <small className={`status-${status}`}>{selfEvolutionLifecycleLabel(candidate)}</small>
+                  </div>
+                  <p>{review.summary}</p>
+                  <div className="v2-evolution-card-facts">
+                    <span>AI recommendation: <strong>{review.recommendation}</strong></span>
+                    <span>{review.changePoints.length} change point{review.changePoints.length === 1 ? "" : "s"}</span>
+                    <span>Proportionality: <strong>{proportionalityStatus}</strong></span>
+                    <span>{review.concerns.length} concern{review.concerns.length === 1 ? "" : "s"}</span>
+                    <span>Run: {candidate.run_id || "unavailable"}</span>
+                    <span>Created: {formatTimestamp(candidate.created_at)}</span>
+                    <span>Promotion-ready: {readiness.ready === true ? "yes" : "no"}</span>
+                  </div>
+                </div>
               </summary>
               <div className="v2-evolution-meta">
-                <code>{candidate.run_id || "no run"}</code>
-                <code>{candidate.thread_id || "no thread"}</code>
                 <span>{candidate.kind || "candidate"}</span>
+                <span>{canDecide ? "AI reviewed/recommended; not human approved" : selfEvolutionLifecycleLabel(candidate)}</span>
               </div>
+              {!review.structuredReviewAvailable ? (
+                <div className="v2-evolution-warning">Legacy candidate: structured evidence and change points are unavailable. Inspect the exact diff before deciding.</div>
+              ) : null}
               {canDecide && !canPromote ? <div className="v2-evolution-warning">{readiness.reason || "This candidate is stale and must be regenerated."}</div> : null}
+              {canDecide && canPromote && hasReviewWarning ? (
+                <div className="v2-evolution-warning">
+                  This candidate has reviewer concerns or a non-passing proportionality assessment. A human may override the warning after reviewing it.
+                </div>
+              ) : null}
               <div className="v2-inline-actions">
                 {canDecide ? (
                   <>
-                    <button type="button" className="v2-primary-btn" disabled={!canPromote || isBusy} onClick={() => decide(candidate, "promote")}>Approve &amp; Promote</button>
+                    <button type="button" className="v2-primary-btn" disabled={!canPromote || isBusy} onClick={() => decide(candidate, "promote")}>Promote</button>
                     <button type="button" className="v2-ghost-btn" disabled={isBusy} onClick={() => decide(candidate, "reject")}>Reject</button>
                   </>
                 ) : null}
                 {canRollback ? <button type="button" className="v2-ghost-btn" disabled={isBusy} onClick={() => rollback(candidate)}>Rollback</button> : null}
               </div>
-              <pre>{jsonText({
-                candidate_id: candidate.candidate_id,
-                target: candidate.target,
-                rationale: candidate.rationale,
-                validation: candidate.validation,
-                review: candidate.review,
-                promotion: candidate.promotion,
-              })}</pre>
-              <pre>{candidate.change_preview || "(No frozen change preview is available for this candidate.)"}</pre>
+              <div className="v2-evolution-review">
+                <section>
+                  <h4>What will change</h4>
+                  {review.changePoints.length ? review.changePoints.map((point, index) => (
+                    <article key={`${candidate.candidate_id}-change-${index}`} className="v2-evolution-change-point">
+                      <strong>{point.title || `Change ${index + 1}`}</strong>
+                      <dl>
+                        <div><dt>Before</dt><dd>{point.before || "Unavailable"}</dd></div>
+                        <div><dt>After</dt><dd>{point.after || "Unavailable"}</dd></div>
+                        <div><dt>Impact</dt><dd>{point.impact || "Unavailable"}</dd></div>
+                      </dl>
+                    </article>
+                  )) : <p className="v2-muted">Structured change points are unavailable. No evidence has been inferred.</p>}
+                </section>
+                <section>
+                  <h4>Why it was proposed</h4>
+                  <p>{candidate.rationale || review.rationale || "No proposer rationale is available."}</p>
+                  {review.scopeAssessment ? <p><strong>Scope:</strong> {review.scopeAssessment}</p> : null}
+                  {review.changePoints.map((point, index) => (
+                    <p key={`${candidate.candidate_id}-evidence-${index}`}>
+                      <strong>{point.title || `Change ${index + 1}`} evidence:</strong>{" "}
+                      {point.evidence || "Unavailable"} {point.evidence_source ? `(${point.evidence_source})` : ""}
+                    </p>
+                  ))}
+                </section>
+                <section>
+                  <h4>Risks and possible overreach</h4>
+                  <p>
+                    <strong>Proportionality: {proportionalityStatus}</strong>
+                    {review.proportionality?.explanation ? ` — ${review.proportionality.explanation}` : ""}
+                  </p>
+                  {review.concerns.length ? (
+                    <ul>{review.concerns.map((item, index) => <li key={`${candidate.candidate_id}-concern-${index}`}>{item}</li>)}</ul>
+                  ) : <p className="v2-muted">No reviewer concerns were recorded.</p>}
+                </section>
+                <section>
+                  <h4>Human checks before promotion</h4>
+                  {review.humanChecks.length ? (
+                    <ul>{review.humanChecks.map((item, index) => <li key={`${candidate.candidate_id}-check-${index}`}>{item}</li>)}</ul>
+                  ) : <p className="v2-muted">No structured human checklist is available; inspect the exact diff.</p>}
+                </section>
+                <details className="v2-evolution-secondary">
+                  <summary>Exact diff</summary>
+                  <pre>{candidate.change_preview || "(No frozen change preview is available for this candidate.)"}</pre>
+                </details>
+                <details className="v2-evolution-secondary">
+                  <summary>Technical details</summary>
+                  <pre>{jsonText({
+                    candidate_id: candidate.candidate_id,
+                    target: candidate.target,
+                    run_id: candidate.run_id,
+                    thread_id: candidate.thread_id,
+                    base_target_hash: candidate.base_target_hash,
+                    bundle_hash: candidate.bundle_hash,
+                    validation: candidate.validation,
+                    review: candidate.review,
+                    promotion: candidate.promotion,
+                  })}</pre>
+                </details>
+              </div>
             </details>
           );
         })}

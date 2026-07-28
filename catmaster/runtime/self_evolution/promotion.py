@@ -21,10 +21,10 @@ class PromotionManager:
         self.repo_root = Path(repo_root or Path(__file__).resolve().parents[3]).expanduser().resolve()
 
     def promotion_readiness(self, candidate: LearningCandidate) -> dict[str, Any]:
-        if candidate.status != "approved":
+        if candidate.status not in {"reviewed", "approved"}:
             return {
                 "ready": False,
-                "reason": f"Candidate status is {candidate.status or 'unknown'}, not approved.",
+                "reason": f"Candidate status is {candidate.status or 'unknown'}, not awaiting a human decision.",
                 "bundle_unchanged": False,
                 "target_unchanged": False,
             }
@@ -58,27 +58,134 @@ class PromotionManager:
             "current_target_hash": current_hash,
         }
 
-    def promote(self, candidate: LearningCandidate, report: ValidationReport) -> LearningCandidate:
-        if candidate.status != "approved":
-            raise ValueError("only approved candidates can be promoted")
+    def promote(
+        self,
+        candidate: LearningCandidate,
+        report: ValidationReport,
+        *,
+        decision_source: str = "automatic_system",
+        actor: str = "",
+        rationale: str = "",
+    ) -> LearningCandidate:
+        if candidate.status not in {"reviewed", "approved"}:
+            raise ValueError("only reviewed candidates awaiting a decision can be promoted")
         if not report.valid:
             raise ValueError("candidate validation did not pass")
-        with self.store.promotion_lock():
-            if candidate.action == "memory":
-                self._promote_memory(candidate)
-            else:
-                self._promote_skill(candidate)
-            candidate.status = "promoted"
-            candidate.promotion = {**dict(candidate.promotion), "promoted_at": utc_now()}
+        source = str(decision_source or "").strip()
+        actor_name = str(actor or "").strip()
+        if candidate.action == "skill" and source != "human":
+            raise ValueError("workspace skill promotion requires an explicit human decision")
+        if source == "human" and not actor_name:
+            raise ValueError("authenticated human actor is required")
+        decision = {
+            "decision_source": source,
+            "actor": actor_name,
+            "decided_at": utc_now(),
+            "candidate_hash": candidate.bundle_hash,
+            "rationale": str(rationale or "").strip(),
+        }
+        try:
+            with self.store.promotion_lock():
+                live_candidate = self.store.read_candidate(candidate.candidate_id)
+                if live_candidate is None:
+                    raise ValueError("candidate disappeared before promotion")
+                if live_candidate.status not in {"reviewed", "approved"}:
+                    raise ValueError(
+                        f"candidate decision is already final with status {live_candidate.status or 'unknown'}"
+                    )
+                candidate = live_candidate
+                decision["candidate_hash"] = candidate.bundle_hash
+                if source == "human":
+                    self.store.append_audit_event(
+                        {
+                            "event": "human_decision",
+                            "candidate_id": candidate.candidate_id,
+                            "action": "promote",
+                            **decision,
+                        }
+                    )
+                if candidate.action == "memory":
+                    self._promote_memory(candidate)
+                else:
+                    self._promote_skill(candidate)
+                candidate.status = "promoted"
+                candidate.promotion = {
+                    **dict(candidate.promotion),
+                    "promoted_at": utc_now(),
+                    "decision": decision,
+                }
+                self.store.write_candidate(candidate)
+                self.store.append_audit_event(
+                    {
+                        "event": "candidate_promoted",
+                        "candidate_id": candidate.candidate_id,
+                        "action": candidate.action,
+                        "group": candidate.group,
+                        "name": candidate.name,
+                        **decision,
+                        "promotion": candidate.promotion,
+                    }
+                )
+        except PromotionConflict as exc:
+            candidate.status = "conflict"
+            candidate.promotion = {
+                **dict(candidate.promotion),
+                "error": str(exc),
+                "decision": decision,
+            }
             self.store.write_candidate(candidate)
             self.store.append_audit_event(
                 {
-                    "event": "candidate_promoted",
+                    "event": "promotion_conflict",
                     "candidate_id": candidate.candidate_id,
                     "action": candidate.action,
-                    "group": candidate.group,
-                    "name": candidate.name,
-                    "promotion": candidate.promotion,
+                    **decision,
+                    "error": str(exc),
+                }
+            )
+            raise
+        return candidate
+
+    def reject(
+        self,
+        candidate: LearningCandidate,
+        *,
+        actor: str,
+        rationale: str = "",
+    ) -> LearningCandidate:
+        if candidate.status not in {"reviewed", "approved"}:
+            raise ValueError("only reviewed candidates awaiting a decision can be rejected")
+        actor_name = str(actor or "").strip()
+        if not actor_name:
+            raise ValueError("authenticated human actor is required")
+        with self.store.promotion_lock():
+            live_candidate = self.store.read_candidate(candidate.candidate_id)
+            if live_candidate is None:
+                raise ValueError("candidate disappeared before rejection")
+            if live_candidate.status not in {"reviewed", "approved"}:
+                raise ValueError(
+                    f"candidate decision is already final with status {live_candidate.status or 'unknown'}"
+                )
+            candidate = live_candidate
+            decision = {
+                "decision_source": "human",
+                "actor": actor_name,
+                "decided_at": utc_now(),
+                "candidate_hash": candidate.bundle_hash,
+                "rationale": str(rationale or "").strip(),
+            }
+            candidate.status = "rejected"
+            candidate.review = {
+                **dict(candidate.review or {}),
+                "human_decision": {"action": "reject", **decision},
+            }
+            self.store.write_candidate(candidate)
+            self.store.append_audit_event(
+                {
+                    "event": "human_decision",
+                    "candidate_id": candidate.candidate_id,
+                    "action": "reject",
+                    **decision,
                 }
             )
         return candidate
@@ -165,7 +272,13 @@ class PromotionManager:
             "promoted_hash": hash_tree(target),
         }
 
-    def rollback(self, candidate: LearningCandidate) -> LearningCandidate:
+    def rollback(
+        self,
+        candidate: LearningCandidate,
+        *,
+        actor: str = "",
+        rationale: str = "",
+    ) -> LearningCandidate:
         if candidate.status != "promoted":
             raise ValueError("only promoted candidates can be rolled back")
         with self.store.promotion_lock():
@@ -183,6 +296,10 @@ class PromotionManager:
                     "action": candidate.action,
                     "group": candidate.group,
                     "name": candidate.name,
+                    "decision_source": "human" if str(actor or "").strip() else "system",
+                    "actor": str(actor or "").strip(),
+                    "rationale": str(rationale or "").strip(),
+                    "candidate_hash": candidate.bundle_hash,
                 }
             )
         return candidate

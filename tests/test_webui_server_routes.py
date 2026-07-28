@@ -55,6 +55,25 @@ def test_self_evolution_human_review_preview_includes_complete_bundle_diff(tmp_p
         status="approved",
         group="materials_worker",
         name="demo-skill",
+        review={
+            "recommendation": "needs_revision",
+            "summary": "Add a recovery check only at the failed-tail restart boundary.",
+            "change_points": [
+                {
+                    "title": "Narrow restart identity check",
+                    "before": "No restart-boundary identity check was recorded.",
+                    "after": "Validate identity only before retrying a failed tail.",
+                    "evidence": "The prior tail failed and required an accepted restart.",
+                    "evidence_source": "concrete failure",
+                    "impact": "Adds work only to failed-tail recovery.",
+                }
+            ],
+            "scope_assessment": "The rule is limited to failed-tail restart.",
+            "proportionality_assessment": {"status": "warning", "explanation": "Verify the boundary stays narrow."},
+            "concerns": ["Do not apply the check to ordinary handoffs."],
+            "human_checks": ["Confirm the exact diff is recovery-only."],
+            "rationale": "The useful core is valid but scope needs confirmation.",
+        },
         created_at=utc_now(),
     )
     root = store.reset_candidate_dir(candidate.candidate_id)
@@ -75,6 +94,13 @@ def test_self_evolution_human_review_preview_includes_complete_bundle_diff(tmp_p
     assert "+new rule" in preview
     assert "scripts/helper.py" in preview
     assert "+VALUE = 1" in preview
+    summary = _self_evolution_for_run(workspace=workspace, workspace_id="demo", run_id="")
+    human_review = summary["candidates"][0]["human_review"]
+    assert human_review["reviewer_recommendation"] == "needs_revision"
+    assert human_review["summary"].startswith("Add a recovery check")
+    assert human_review["change_points"][0]["evidence_source"] == "concrete failure"
+    assert human_review["proportionality_assessment"]["status"] == "warning"
+    assert human_review["concerns"] == ["Do not apply the check to ordinary handoffs."]
 
 
 def test_workspace_self_evolution_summary_is_not_thread_or_run_scoped(tmp_path: Path) -> None:
@@ -107,6 +133,9 @@ def test_workspace_self_evolution_summary_is_not_thread_or_run_scoped(tmp_path: 
     assert all_runs["activation"] == "next_run"
     assert all_runs["candidate_count"] == 2
     assert {row["thread_id"] for row in all_runs["candidates"]} == {"thread-one", "thread-two"}
+    assert all(row["human_review"]["structured_review_available"] is False for row in all_runs["candidates"])
+    assert all(row["human_review"]["change_points"] == [] for row in all_runs["candidates"])
+    assert all("legacy candidate" in row["human_review"]["summary"] for row in all_runs["candidates"])
     assert one_run["candidate_count"] == 1
 
 

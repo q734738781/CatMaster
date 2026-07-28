@@ -77,7 +77,9 @@ Agent 可以使用 workspace 范围的长期 memory，保存会影响未来任�
 
 Skill 比 memory 更适合保存一套可重复流程。假设一个项目多次验证了特定阶梯 CeO2 模型的终止面检查、原子命名、固定层和报告格式，系统可以提出 workspace skill 候选。候选应包含完整 `SKILL.md`，必要时还可包含参考文件和脚本。
 
-在默认 `observe` 模式中，候选先经过静态检查和独立 reviewer，再出现在 Skill Evolution 页面。用户可以查看它来自哪次 run、准备覆盖什么内容以及为什么建议固化，然后选择 Promote 或 Reject。Promote 从下一次 run 生效，不会改变正在运行的 Agent。
+候选先经过静态检查和独立 reviewer，再出现在 Skill Evolution 页面。Reviewer 的 `approve`、`reject` 或 `needs_revision` 只是 AI 建议，不是人工批准。候选卡片会直接显示一句话摘要、逐项行为变化、证据来源、适用范围、比例性判断、风险和人工检查项；完整 diff 与技术 JSON 收在后面的可展开区域。
+
+Workspace skill 必须由已登录用户明确选择 Promote 或 Reject。即使部署保留旧的 `auto` 模式，skill 也不会因 reviewer 建议而自动生效。Promote 前的确认会再次显示目标、摘要和 concerns，并记录账号、时间、候选 bundle hash 与可选说明。Bundle 已变化、目标已更新或静态校验失败时不能 Promote；一般 reviewer concern 或比例性 warning/fail 会给出醒目提示，但不会悄悄替代人工决定。Promote 从下一次 run 生效，不会改变正在运行的 Agent。
 
 适合提升为项目 skill 的内容包括：
 
@@ -94,7 +96,7 @@ Skill 比 memory 更适合保存一套可重复流程。假设一个项目多次
 
 如果确有值得复用的流程，请提出一个 project skill 候选，说明适用条件、输入、
 检查步骤、输出和不能推广的边界。不要把一次 CN 阈值或某个原子索引写成通用规则。
-候选只进入 observe 审阅，不要自动 Promote。
+候选只进入人工审阅，不要自动 Promote。
 ```
 
 ## 隔天继续时先恢复事实，再恢复计划

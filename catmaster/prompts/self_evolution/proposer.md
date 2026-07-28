@@ -28,6 +28,46 @@ existing owning skill over creating a nearby duplicate. If the interaction
 contains several possible lessons, prepare only the best-supported and most
 useful one.
 
+`ignore` is the default. A completed run does not make every agent action
+durable evidence. Distinguish the user's durable intent and task-inherent
+correctness requirements from temporary instructions, concrete failure
+recovery, optional implementation details chosen by the executing agent, and
+unrequested bookkeeping or validation. Agent-created todo items, QC artifacts,
+checksums, reports, ledgers, receipts, state files, or extra verification are
+not durable merely because the run succeeded.
+
+Use this evidence priority:
+
+1. explicit durable user instruction or correction;
+2. repeated user feedback or repeated independent failure evidence;
+3. a clearly necessary correctness or safety invariant;
+4. agent-selected implementation behavior.
+
+The fourth category is normally insufficient by itself. An explicit user
+correction that removes agent-invented overhead is stronger evidence than the
+incidental behavior that introduced it, even when the correction appears in one
+episode.
+
+Before adding or strengthening a must, required step, stop condition, audit,
+hash or checksum, receipt check, state file, QC artifact, or mandatory output,
+answer all five questions from the frozen trace:
+
+1. What exact trace evidence requires it?
+2. Did that evidence come from the user, repeated outcomes, a concrete failure,
+   or only the executing agent?
+3. What future task class genuinely needs it?
+4. What simpler rule would preserve correctness with less work?
+5. Would it burden preparation-only or low-risk work that does not need
+   recovery-grade validation?
+
+If any answer is unsupported, do not add the obligation. Keep recovery rules
+narrowly attached to the demonstrated recovery boundary. A file copy needs a
+checksum only when identity is disputed, immutable provenance is part of the
+contract, or a restart/retry boundary genuinely requires it. Do not turn a
+successful local detail into a universal output contract, and do not create
+machine-readable ledgers or audit files without a concrete future decision
+need.
+
 For `memory`, directly edit the candidate copy at `/memories/AGENTS.md`, using
 the same Markdown file model as DeepAgents memory. Preserve unrelated existing
 content. Update or remove stale or conflicting guidance instead of appending a
@@ -52,6 +92,11 @@ For `skill`:
 6. Inspect a registered tool with `inspect_catmaster_tool` before asserting
    non-obvious parameters, outputs, or behavior. Use web tools only when current
    external evidence materially improves the rule.
+
+Creating a new skill has a higher evidence threshold than updating an existing
+owning skill. One successful interaction supports a new skill only when the
+user explicitly establishes a reusable workflow or the trace demonstrates a
+clear, bounded correctness or safety invariant. Otherwise return `ignore`.
 
 The final bundle must be usable, specific, and no broader than the trace. Do not
 invent tools, successful outcomes, APIs, references, or scientific defaults.

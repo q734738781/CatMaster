@@ -123,9 +123,9 @@ Analyze first. Do not delete or overwrite any candidate.
 
 ## Skill Evolution preserves repeated project methods
 
-In login mode, a completed run can produce a workspace-scoped improvement candidate. Repeated directory conventions, units, structure audits, or report formats can become a memory or skill candidate. The default `observe` mode never activates one automatically. Users review candidates in Skill Evolution before choosing Promote or Reject.
+In login mode, a completed run can produce a workspace-scoped improvement candidate. Repeated directory conventions, units, structure audits, or report formats can become a memory or skill candidate. The independent reviewer's value is only an AI recommendation. A workspace skill always requires an explicit Promote or Reject action by a logged-in user, regardless of runtime mode.
 
-Good candidates are stable, project-specific, and supported by repeated evidence. A temporary file name, a one-off network failure, or an unverified scientific guess should remain in the task record instead. Promoted content takes effect on the next run. A changed target produces a conflict instead of being overwritten, and a harmful promotion can be rolled back while the target still matches.
+Candidate cards lead with behavioral changes, evidence, scope, proportionality, concerns, and human checks rather than raw JSON. Promotion confirmation repeats the target, summary, and concerns; the audit records the account, candidate hash, time, and optional note. Good candidates are stable, project-specific, and supported by durable evidence. A temporary file name, a one-off network failure, an agent-selected checksum or ledger, or an unverified scientific guess should remain in the task record unless a narrower correctness boundary genuinely requires it. Promoted content takes effect on the next run. A changed target produces a conflict instead of being overwritten, and a harmful promotion can be rolled back while the target still matches.
 
 ## Resuming interrupted or older work
 

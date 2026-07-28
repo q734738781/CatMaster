@@ -133,9 +133,9 @@ Monitor 将一次运行的模型、Agent、tools、tasks、token、费用和机�
 
 ## Skill Evolution 处理项目中反复出现的经验
 
-登录模式下，终态 run 可以产生 workspace 范围的改进候选。例如同一项目反复要求固定的目录命名、单位、结构审计或报告格式，系统可以提出 memory 或 skill 候选。默认 `observe` 模式不会自动生效，用户在 Skill Evolution 视图中审阅后才能 Promote 或 Reject。
+登录模式下，终态 run 可以产生 workspace 范围的改进候选。例如同一项目反复要求固定的目录命名、单位、结构审计或报告格式，系统可以提出 memory 或 skill 候选。独立 reviewer 只给出 AI recommendation；skill 无论运行模式如何都必须由已登录用户明确 Promote 或 Reject。
 
-这里适合保存稳定、项目特定且经过验证的做法，不适合把一次网络错误、临时文件名或未经证实的科学猜测固化成规则。Promote 后从下一次 run 生效；目标内容已变化时会进入 conflict，而不是直接覆盖。造成退化的已提升内容可以在目标仍匹配时 Rollback。
+候选卡片优先展示行为变化、证据、适用范围、比例性、concerns 和人工核对项，而不是 raw JSON。Promote 确认会重复目标、摘要与 concerns，并把登录账号、候选 hash、时间和可选说明写入审计。这里适合保存稳定、项目特定且经过验证的做法，不适合把一次网络错误、临时文件名、Agent 自选的 checksum/台账，或未经证实的科学猜测固化成通用规则。Promote 后从下一次 run 生效；目标内容已变化时会进入 conflict，而不是直接覆盖。造成退化的已提升内容可以在目标仍匹配时 Rollback。
 
 ## 继续一项已经中断或隔天再做的工作
 

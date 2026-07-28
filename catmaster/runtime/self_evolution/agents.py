@@ -20,7 +20,7 @@ from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
 from catmaster.tools.registry import get_tool_registry
 
-from .models import ProposerResult, ReviewerResult, SKILL_GROUPS
+from .models import ProposerResult, ProportionalityAssessment, ReviewerResult, SKILL_GROUPS
 from .storage import SelfEvolutionStore
 from .trace import TurnTrace
 
@@ -78,12 +78,29 @@ def _recover_proposer_result_from_files(*, result: Any, candidate_root: Path) ->
 
 def _recover_reviewer_result_from_text(result: Any) -> ReviewerResult:
     text = _last_ai_text(result)
-    matches = re.findall(r"(?im)^DECISION:\s*(APPROVE|REJECT)\s*$", text)
+    matches = re.findall(r"(?im)^(?:RECOMMENDATION|DECISION):\s*(APPROVE|REJECT|NEEDS_REVISION)\s*$", text)
     if len(matches) == 1:
-        return ReviewerResult(decision=matches[0].lower(), rationale=text[:2000])
+        return ReviewerResult(
+            recommendation=matches[0].lower(),
+            summary="Structured human-review details were unavailable from the reviewer response.",
+            proportionality_assessment=ProportionalityAssessment(
+                status="warning",
+                explanation="The host recovered only a textual recommendation, so proportionality needs human review.",
+            ),
+            concerns=["Structured change points and evidence mapping were unavailable from the reviewer response."],
+            human_checks=["Inspect the exact diff and verify every consequential change against the source trace."],
+            rationale=text[:2000],
+        )
     return ReviewerResult(
-        decision="reject",
-        rationale="Reviewer did not return a unique validated DECISION line; promotion was denied.",
+        recommendation="reject",
+        summary="The reviewer response could not be validated.",
+        proportionality_assessment=ProportionalityAssessment(
+            status="fail",
+            explanation="No unique validated recommendation was returned.",
+        ),
+        concerns=["Reviewer output did not contain one valid structured or textual recommendation."],
+        human_checks=["Regenerate the review before considering this candidate."],
+        rationale="Reviewer did not return a unique validated recommendation line; promotion was denied.",
     )
 
 
@@ -384,9 +401,11 @@ class ReviewerAgent:
             "instructions": (
                 "Read /trace.md and inspect the exact candidate /memories/AGENTS.md or complete /proposed bundle. "
                 "For memory, compare it with /current/AGENTS.md. "
-                "Use /current and source/web tools when needed. Approve or reject the exact files without editing them. "
+                "Use /current and source/web tools when needed. Recommend approve, reject, or needs_revision for "
+                "the exact files without editing them. Your recommendation supports a human decision and never "
+                "authorizes skill promotion. "
                 "In addition to structured output, end any textual conclusion with exactly one line: "
-                "DECISION: APPROVE or DECISION: REJECT."
+                "RECOMMENDATION: APPROVE, RECOMMENDATION: REJECT, or RECOMMENDATION: NEEDS_REVISION."
             ),
         }
         started = time.monotonic()
