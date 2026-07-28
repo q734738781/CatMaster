@@ -116,8 +116,6 @@ Materials worker 可以查询当前部署启用的 MACE、FairChem UMA、MatterS
 
 `mlff_ts` 从一个 TS-like 几何出发，使用受约束 RS-pRFO；它不是开放式鞍点搜索。优化器收敛与一阶鞍点验证分开报告，后者要求恰好一个显著虚频。
 
-科研 QC 应直接服务于科学判断，例如检查结构与输入一致性、收敛性、单位、样本覆盖、统计方法、模型适用性和证据是否支撑结论。Checksum 或内容哈希只说明文件身份，不是科学证据；普通分析、artifact 复核、完成审计或限定修改范围时，Agent 不应批量生成或比较 checksum。只有用户明确要求、文件身份存在争议、数据传输需要完整性校验，或 restart、retry、checkpoint、remote tool 协议明确依赖 hash 时才使用。
-
 `mlff_vib` 在不改变几何的前提下分析已经接受的最低点、过渡态、吸附物、分子或受约束材料结构。结构文件约束定义精确模式子空间；紧凑输出只有一个权威 `vibrations.npz`、一个频率表和一个多帧 mode 文件，不保留 ASE 逐位移 JSON cache。
 
 <details>
