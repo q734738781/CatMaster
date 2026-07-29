@@ -11,6 +11,7 @@ from typing import Any, Callable
 from fastapi import HTTPException
 
 from catmaster.llm.config import LLMProfile
+from catmaster.research.knowledge_graph.context import ResearchGraphContextBuilder
 from catmaster.runtime import RunControl
 from catmaster.runtime.document_access import MAX_DOCUMENT_TEXT_CHARS, read_document
 from catmaster.runtime.multimodal_blocks import (
@@ -24,6 +25,7 @@ from catmaster.runtime.multimodal_blocks import (
     parse_data_url,
     text_attachment_block,
 )
+from catmaster.tools.base import workspace_root
 
 from .artifact_registry import ArtifactRegistry
 from .thread_events import ThreadEventBroker
@@ -39,6 +41,11 @@ _ENTRYPOINT_TO_MODEL_ROLE = {
     "writing": "write_director",
     "peer_review": "write_reviewer",
     "literature_review": "literature_deep_research",
+}
+_RESEARCH_GRAPH_CONTEXT_ENTRYPOINTS = {
+    "research",
+    "experiment",
+    "literature_review",
 }
 
 
@@ -86,6 +93,66 @@ class ThreadAgentLoopService:
         self.normalize_entrypoint = normalize_entrypoint
         self.should_stop = should_stop
         self.on_turn_finished = on_turn_finished
+
+    def _research_graph_turn_content(
+        self,
+        *,
+        thread: Any,
+        prompt: str,
+        turn_content: str | list[dict[str, Any]] | None,
+        entrypoint: str,
+    ) -> str | list[dict[str, Any]] | None:
+        graph_id = str(
+            getattr(thread, "active_research_graph_id", "") or ""
+        ).strip()
+        if entrypoint not in _RESEARCH_GRAPH_CONTEXT_ENTRYPOINTS or not graph_id:
+            return turn_content
+        focus_node_id = str(
+            getattr(thread, "research_focus_node_id", "") or ""
+        ).strip()
+        context = ResearchGraphContextBuilder(
+            workspace=self.workspace
+        ).build(
+            graph_id,
+            focus_node_id=focus_node_id,
+            query=prompt,
+            max_nodes=24,
+            max_chars=12_000,
+        )
+        graph_markdown = str(context["markdown"]).strip()
+        if isinstance(turn_content, list):
+            blocks = [dict(block) for block in turn_content]
+            text_index = next(
+                (
+                    index
+                    for index, block in enumerate(blocks)
+                    if str(block.get("type") or "") == "text"
+                ),
+                None,
+            )
+            if text_index is None:
+                blocks.insert(
+                    0,
+                    {
+                        "type": "text",
+                        "text": (
+                            f"{graph_markdown}\n\n# Current user request\n"
+                            f"{prompt}"
+                        ),
+                    },
+                )
+            else:
+                original = str(blocks[text_index].get("text") or prompt)
+                blocks[text_index]["text"] = (
+                    f"{graph_markdown}\n\n# Current turn\n{original}"
+                )
+            return blocks
+        current = (
+            str(turn_content).strip()
+            if isinstance(turn_content, str) and turn_content.strip()
+            else str(prompt or "").strip()
+        )
+        return f"{graph_markdown}\n\n# Current user request\n{current}"
 
     def _capability_for_entrypoint(
         self,
@@ -419,7 +486,10 @@ class ThreadAgentLoopService:
         return count
 
     def pending_interrupt_action_requests(self, thread_id: str) -> list[dict[str, Any]]:
-        actions: list[dict[str, Any]] = []
+        return [item["action"] for item in self.pending_interrupt_reviews(thread_id)]
+
+    def pending_interrupt_reviews(self, thread_id: str) -> list[dict[str, Any]]:
+        reviews: list[dict[str, Any]] = []
         for message in self.store.list_messages(thread_id):
             for part in message.parts:
                 if part.type != "interrupt" or part.status == "resolved":
@@ -429,14 +499,149 @@ class ThreadAgentLoopService:
                 for row in rows:
                     value = row.get("value") if isinstance(row, dict) else None
                     requests = value.get("action_requests") if isinstance(value, dict) else None
+                    configs = value.get("review_configs") if isinstance(value, dict) else None
+                    allowed_by_name: dict[str, set[str]] = {}
+                    if isinstance(configs, list):
+                        for config in configs:
+                            if not isinstance(config, dict):
+                                continue
+                            action_name = str(config.get("action_name") or "").strip()
+                            allowed = config.get("allowed_decisions")
+                            if action_name and isinstance(allowed, list):
+                                allowed_by_name[action_name] = {
+                                    str(item).strip().lower()
+                                    for item in allowed
+                                    if str(item).strip()
+                                }
                     if isinstance(requests, list):
                         for request in requests:
                             if isinstance(request, dict):
-                                actions.append(dict(request))
+                                action = dict(request)
+                                name = str(action.get("name") or "").strip()
+                                reviews.append(
+                                    {
+                                        "action": action,
+                                        "allowed_decisions": allowed_by_name.get(name)
+                                        or {"approve", "reject", "respond"},
+                                    }
+                                )
                     elif isinstance(row, str) and "action_requests" in row:
                         for _ in re.findall(r"['\"]name['\"]\s*:", row):
-                            actions.append({})
-        return actions
+                            reviews.append(
+                                {
+                                    "action": {},
+                                    "allowed_decisions": {"approve", "reject", "respond"},
+                                }
+                            )
+        return reviews
+
+    @staticmethod
+    def _coerce_edited_field(original: Any, value: Any, *, field_name: str) -> Any:
+        if isinstance(original, bool):
+            if isinstance(value, bool):
+                return value
+            normalized = str(value or "").strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+            raise HTTPException(status_code=400, detail=f"{field_name} must be true or false.")
+        if isinstance(original, int) and not isinstance(original, bool):
+            try:
+                return int(value)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"{field_name} must be an integer.") from exc
+        if isinstance(original, float):
+            try:
+                return float(value)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"{field_name} must be a number.") from exc
+        if isinstance(original, str):
+            return str(value)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} is not editable in the ordinary review form.",
+        )
+
+    def decisions_from_public_actions(
+        self,
+        thread_id: str,
+        actions: list[Any],
+    ) -> list[dict[str, Any]]:
+        pending = self.pending_interrupt_reviews(thread_id)
+        if not pending:
+            raise HTTPException(status_code=409, detail="No pending review action was found.")
+        submitted: dict[int, Any] = {}
+        for item in actions:
+            try:
+                index = int(str(item.action_id))
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail="Review action id is invalid.") from exc
+            if index < 0 or index >= len(pending) or index in submitted:
+                raise HTTPException(status_code=400, detail="Review action id is invalid or duplicated.")
+            submitted[index] = item
+        if set(submitted) != set(range(len(pending))):
+            raise HTTPException(
+                status_code=400,
+                detail="Choose one decision for every pending action before continuing.",
+            )
+
+        decisions: list[dict[str, Any]] = []
+        for index, review in enumerate(pending):
+            item = submitted[index]
+            decision_type = str(item.decision or "").strip().lower()
+            allowed = set(review.get("allowed_decisions") or ())
+            if decision_type not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{decision_type} is not allowed for action {index + 1}.",
+                )
+            reason = str(item.reason or item.fields.get("reason") or "").strip()
+            if decision_type in {"reject", "respond"} and not reason:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A reason or response is required for action {index + 1}.",
+                )
+            if decision_type == "approve":
+                decisions.append({"type": "approve"})
+                continue
+            if decision_type == "reject":
+                decisions.append({"type": "reject", "message": reason})
+                continue
+            if decision_type == "respond":
+                decisions.append({"type": "respond", "message": reason})
+                continue
+
+            original_action = dict(review.get("action") or {})
+            original_args = (
+                dict(original_action.get("args"))
+                if isinstance(original_action.get("args"), dict)
+                else {}
+            )
+            edited_args = dict(original_args)
+            for field_name, value in dict(item.fields or {}).items():
+                if field_name == "reason":
+                    continue
+                if field_name not in original_args:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{field_name} is not an editable field for action {index + 1}.",
+                    )
+                edited_args[field_name] = self._coerce_edited_field(
+                    original_args[field_name],
+                    value,
+                    field_name=field_name,
+                )
+            decisions.append(
+                {
+                    "type": "edit",
+                    "edited_action": {
+                        "name": str(original_action.get("name") or ""),
+                        "args": edited_args,
+                    },
+                }
+            )
+        return decisions
 
     def resume_tool_inputs_from_decisions(self, thread_id: str, decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         pending_actions = self.pending_interrupt_action_requests(thread_id)
@@ -541,8 +746,13 @@ class ThreadAgentLoopService:
         return {"accepted": True, "queued": False, "thread": self.store.get_thread(thread_id), "message": user_message, "assistant_message": assistant_message}
 
     async def resume(self, *, thread_id: str, payload: Any, validate_decisions: Callable[[list[dict[str, Any]]], list[dict[str, Any]]]) -> dict[str, Any]:
+        requested_decisions = (
+            self.decisions_from_public_actions(thread_id, list(payload.actions or []))
+            if getattr(payload, "actions", None)
+            else payload.decisions
+        )
         try:
-            decisions = validate_decisions(payload.decisions)
+            decisions = validate_decisions(requested_decisions)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         thread = self.store.get_thread(thread_id)
@@ -594,13 +804,9 @@ class ThreadAgentLoopService:
         if thread.entrypoint != normalized_entrypoint:
             thread = self.store.update_thread(thread_id, entrypoint=normalized_entrypoint)
         turn_permission_mode = self.permission_mode_for_thread(thread, permission_mode)
-        prior_assistant_message_id = next(
-            (
-                message.id
-                for message in reversed(self.store.list_messages(thread_id))
-                if str(message.role or "").lower() == "assistant"
-            ),
-            "",
+        prior_assistant_message_id = self.store.latest_message_id(
+            thread_id,
+            role="assistant",
         )
         assistant_message, text_part_id = self.append_assistant_message(
             thread_id,
@@ -613,6 +819,12 @@ class ThreadAgentLoopService:
             rebuilt_attachments = self.rebuild_prepared_attachments(attachment_rows, capability=capability)
             turn_content = build_turn_content(prompt, rebuilt_attachments)
             attachment_rows = [item.sidecar() for item in rebuilt_attachments]
+        turn_content = self._research_graph_turn_content(
+            thread=thread,
+            prompt=prompt,
+            turn_content=turn_content,
+            entrypoint=normalized_entrypoint,
+        )
         event_attachments: list[PreparedAttachment] = []
         if attachment_rows:
             event_attachments = [
@@ -644,9 +856,6 @@ class ThreadAgentLoopService:
                     project_id=self.workspace_id or self.workspace.name,
                     preferred_entrypoint=normalized_entrypoint,
                     interrupt_on=self.interrupt_on_for_permission_mode(turn_permission_mode),
-                    research_campaign_id=str(
-                        dict(thread.meta or {}).get("research_campaign_id") or ""
-                    ),
                 )
                 active_run_context = built.run_context
                 self.store.update_message(

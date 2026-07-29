@@ -14,7 +14,7 @@ may still write the R script, provide `install.packages()` commands, or ask perm
 to install dependencies, but do not cross-render the figure in another language.
 
 Allowed non-R utilities are limited to non-visual tasks such as shell file inspection,
-CSV line counts, checksums, archive extraction, or text search. They must not create
+CSV line counts, archive extraction, or text search. They must not create
 image/vector outputs or alter visual layout.
 
 ## Required packages by task

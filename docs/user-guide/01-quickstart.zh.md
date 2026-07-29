@@ -71,7 +71,7 @@ CATMASTER_PORT=7991 \
 http://127.0.0.1:7991
 ```
 
-首次启动可能安装固定版本的 JSmol 资源，用于结构和轨迹预览，因此会比后续启动慢。查看状态和日志：
+MatterViz 和按需加载的 Ketcher 分子编辑器已经包含在 WebUI 构建产物中。首次启动还可能安装固定版本的 JSmol 兼容资源，用于 OUTCAR vibration 和 fallback 预览，因此会比后续启动慢。查看状态和日志：
 
 ```bash
 ./start_webui.sh --status
@@ -108,7 +108,7 @@ CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
 本轮只做结构操作，不查询远程 task，也不提交任何计算。
 ```
 
-这条请求会让你看到 CatMaster 的基本工作方式。Chat 中先出现 Progress，随后可能看到 `materials_worker` 委派和 `supercell` tool 卡。`supercell` 会在一次领域 tool 调用中直接写出声明的目标文件，所以当前 Review 模式不一定为这一步显示审批卡。发送前把输出路径写清楚，调用时核对 tool 参数，完成后再检查 artifact 和 Files 中的真实文件。生成的结构应能用 JSmol 预览。
+这条请求会让你看到 CatMaster 的基本工作方式。Chat 中先出现 Progress，随后可能看到 `materials_worker` 委派和 `supercell` tool 卡。`supercell` 会在一次领域 tool 调用中直接写出声明的目标文件，所以当前 Review 模式不一定为这一步显示审批卡。发送前把输出路径写清楚，调用时核对 tool 参数，完成后再检查 artifact 和 Files 中的真实文件。生成结构应能用 MatterViz 预览；点击 **Open Structure Workbench** 可以检查可编辑的 base atoms、晶胞、测量结果和 Save As 控件。
 
 这不是对 Fe 的正式建模，只是同时验证以下组件：
 
@@ -117,7 +117,7 @@ CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
 - Worker 能读取附件、执行结构工具并写入 workspace。
 - Artifact、Files 预览和 Monitor 事件能够对应同一次结构操作。
 
-Review 的审批卡可以在后续 `write_file`、`edit_file` 或远程提交时看到。它并不拦截所有会产生文件的领域 tool；第 4 章给出准确边界。
+Review 的审批卡会在后续真实远程提交时出现。本地文件编辑与领域 tool 不触发 Review 审批；第 4 章给出准确边界。
 
 如果你更关心文献工作，也可以上传一篇 PDF，选择 Literature Review，并发送：
 

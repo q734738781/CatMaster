@@ -11,8 +11,12 @@ if (!root) {
   throw new Error("Missing #app mount");
 }
 
+const boot = window.CATMASTER_BOOT || {
+  view: document.body.dataset.catmasterView || "workspace",
+};
+
 createRoot(root).render(
   <React.StrictMode>
-    <CatMasterWorkspace boot={window.CATMASTER_BOOT || { view: "workspace" }} />
+    <CatMasterWorkspace boot={boot} />
   </React.StrictMode>,
 );

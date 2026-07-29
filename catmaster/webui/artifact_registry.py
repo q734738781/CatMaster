@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
-import tempfile
 from pathlib import Path
 from typing import Any
 
+from catmaster.storage import connect_workspace_db
 from catmaster.tools.base import system_root, workspace_root
 
 from .thread_models import ArtifactRecord, utc_ts
@@ -17,6 +17,8 @@ MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdx", ".rst"}
 CSV_SUFFIXES = {".csv", ".tsv"}
 TEXT_SUFFIXES = {".json", ".jsonl", ".log", ".out", ".patch", ".py", ".sh", ".toml", ".txt", ".yaml", ".yml"}
 ARCHIVE_SUFFIXES = {".zip", ".tar", ".tgz", ".gz", ".bz2", ".xz", ".7z"}
+_SCHEMA_COMPONENT = "artifact_registry"
+_SCHEMA_VERSION = 1
 
 
 def infer_renderer(path: str, mime_type: str = "") -> str:
@@ -52,25 +54,38 @@ class ArtifactRegistry:
         self.root = system_root(self.workspace) / "artifacts"
         self.root.mkdir(parents=True, exist_ok=True)
         self.index_path = self.root / "index.jsonl"
-        self.index_path.touch(exist_ok=True)
+        self._init_storage()
 
     def list_artifacts(self, *, thread_id: str = "") -> list[ArtifactRecord]:
         self.migrate_legacy_run_artifacts()
         # Older streaming adapters could register schema field names such as
-        # ``task_config.fmax`` as paths. Keep the append-only index intact for
-        # auditability, but never expose records whose target is not an actual
-        # workspace file.
-        records = [record for record in self._read_all() if self._record_file_exists(record)]
-        if thread_id:
-            records = [record for record in records if record.thread_id == thread_id]
+        # ``task_config.fmax`` as paths. Keep any migrated legacy index intact,
+        # but never expose records whose target is not an actual workspace file.
+        records = [
+            record
+            for record in self._read_all(thread_id=thread_id)
+            if self._record_file_exists(record)
+        ]
         records.sort(key=lambda item: float(item.created_at or 0.0))
         return records
 
     def get(self, artifact_id: str) -> ArtifactRecord | None:
-        for record in self._read_all():
-            if record.artifact_id == artifact_id and self._record_file_exists(record):
-                return record
-        return None
+        with connect_workspace_db(self.workspace) as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json
+                FROM workspace_artifacts
+                WHERE artifact_id = ?
+                """,
+                (str(artifact_id or ""),),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            record = ArtifactRecord.model_validate(json.loads(str(row["payload_json"])))
+        except Exception:
+            return None
+        return record if self._record_file_exists(record) else None
 
     def register_path(
         self,
@@ -242,14 +257,18 @@ class ArtifactRegistry:
         if (root / "files").is_dir() and (root / "metadata").is_dir():
             candidates = [root]
         else:
-            candidates = [path for path in root.rglob("metadata/artifacts/index.jsonl") if path.is_file()]
-            workspaces = []
-            for index in candidates:
+            workspaces: list[Path] = []
+            for database in root.rglob("metadata/workspace.sqlite"):
+                if database.is_file():
+                    workspaces.append(database.parents[1])
+            for index in root.rglob("metadata/artifacts/index.jsonl"):
+                if not index.is_file():
+                    continue
                 try:
                     workspaces.append(index.parents[2])
                 except Exception:
                     continue
-            candidates = workspaces
+            candidates = list(dict.fromkeys(workspaces))
         for workspace in candidates:
             registry = ArtifactRegistry(workspace=workspace)
             record = registry.get(artifact_id)
@@ -262,7 +281,44 @@ class ArtifactRegistry:
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
         return f"art_{digest}"
 
-    def _read_all(self) -> list[ArtifactRecord]:
+    def _init_storage(self) -> None:
+        legacy_records = self._read_legacy_index()
+        with connect_workspace_db(self.workspace) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS workspace_artifacts (
+                    artifact_id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL DEFAULT '',
+                    payload_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS workspace_artifacts_thread_created
+                    ON workspace_artifacts(thread_id, created_at);
+                """
+            )
+            connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT version FROM schema_migrations WHERE component = ?",
+                (_SCHEMA_COMPONENT,),
+            ).fetchone()
+            version = int(row["version"]) if row is not None else 0
+            if version >= _SCHEMA_VERSION:
+                return
+            for record in legacy_records:
+                self._write_record(connection, record, keep_existing=True)
+            connection.execute(
+                """
+                INSERT INTO schema_migrations(component, version)
+                VALUES (?, ?)
+                ON CONFLICT(component) DO UPDATE SET version=excluded.version
+                """,
+                (_SCHEMA_COMPONENT, _SCHEMA_VERSION),
+            )
+
+    def _read_legacy_index(self) -> list[ArtifactRecord]:
         records: list[ArtifactRecord] = []
         if not self.index_path.exists():
             return records
@@ -277,23 +333,59 @@ class ArtifactRegistry:
                     continue
         return records
 
-    def _upsert(self, record: ArtifactRecord) -> None:
-        rows = self._read_all()
-        out: list[ArtifactRecord] = []
-        replaced = False
+    def _read_all(self, *, thread_id: str = "") -> list[ArtifactRecord]:
+        query = "SELECT payload_json FROM workspace_artifacts"
+        params: tuple[Any, ...] = ()
+        if thread_id:
+            query += " WHERE thread_id = ?"
+            params = (str(thread_id),)
+        query += " ORDER BY created_at ASC, artifact_id ASC"
+        with connect_workspace_db(self.workspace) as connection:
+            rows = connection.execute(query, params).fetchall()
+        records: list[ArtifactRecord] = []
         for row in rows:
-            if row.artifact_id == record.artifact_id:
-                out.append(record)
-                replaced = True
-            else:
-                out.append(row)
-        if not replaced:
-            out.append(record)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(self.root), delete=False) as handle:
-            for row in out:
-                handle.write(_dump_json(row.model_dump(mode="json")) + "\n")
-            temp_name = handle.name
-        Path(temp_name).replace(self.index_path)
+            try:
+                records.append(
+                    ArtifactRecord.model_validate(json.loads(str(row["payload_json"])))
+                )
+            except Exception:
+                continue
+        return records
+
+    @staticmethod
+    def _write_record(
+        connection: Any,
+        record: ArtifactRecord,
+        *,
+        keep_existing: bool = False,
+    ) -> None:
+        conflict = "DO NOTHING" if keep_existing else (
+            "DO UPDATE SET "
+            "thread_id=excluded.thread_id, "
+            "payload_json=excluded.payload_json, "
+            "created_at=excluded.created_at, "
+            "updated_at=excluded.updated_at"
+        )
+        connection.execute(
+            f"""
+            INSERT INTO workspace_artifacts (
+                artifact_id, thread_id, payload_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(artifact_id) {conflict}
+            """,
+            (
+                record.artifact_id,
+                record.thread_id,
+                _dump_json(record.model_dump(mode="json")),
+                float(record.created_at),
+                float(record.updated_at),
+            ),
+        )
+
+    def _upsert(self, record: ArtifactRecord) -> None:
+        with connect_workspace_db(self.workspace) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._write_record(connection, record)
 
 
 __all__ = ["ArtifactRegistry", "infer_renderer"]

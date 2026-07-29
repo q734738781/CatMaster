@@ -17,7 +17,7 @@ This separation lets a user begin with science rather than a tool chain. "Compar
 
 The boundary follows the research objective, not only the program name. Materials can retain an MLFF relaxation within an adsorption screen. Dynamics is the better owner when MLFF MD and trajectory interpretation are central. MACE model training and benchmarking remain with ML.
 
-All four workers also receive common project tools. `write_todos` maintains the current plan; `ls`, `glob`, `grep`, and `read_file` inspect files; `write_file` and `edit_file` save artifacts; and `execute` runs bounded local scripts or commands. `export_builtin_tool_source` can place the implementation of a registered built-in tool in the workspace for inspection. These common actions support the domain tools below and do not replace them. In Review mode, `write_file` and `edit_file` pause for approval.
+All four workers also receive common project tools. `write_todos` maintains the current plan; `ls`, `glob`, `grep`, and `read_file` inspect files; `write_file` and `edit_file` save artifacts; and `execute` runs bounded local scripts or commands. Codex OAuth workers can additionally use a Codex-compatible freeform `apply_patch` tool for multi-file patches. `export_builtin_tool_source` can place the implementation of a registered built-in tool in the workspace for inspection. These common actions support the domain tools below and do not replace them. Local file edits run without Review approval; Review still pauses real remote submissions.
 
 ## Materials worker: from crystals to surfaces, paths, and properties
 

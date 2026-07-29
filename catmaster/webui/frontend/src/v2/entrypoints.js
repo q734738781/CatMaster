@@ -24,7 +24,7 @@ export const DEFAULT_ENTRYPOINTS = [
   {
     id: "literature_review",
     label: "Literature Review",
-    summary: "Focused literature synthesis entry backed by the literature/deep-research lane.",
+    summary: "Focused literature synthesis with dedicated literature research support.",
   },
 ];
 
@@ -32,6 +32,23 @@ const ALIASES = {
   litreview: "literature_review",
   literature: "literature_review",
 };
+
+function labelFromId(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim();
+}
+
+function publicSummary(id, value) {
+  const defaultRow = DEFAULT_ENTRYPOINTS.find((item) => item.id === id);
+  if (defaultRow) return defaultRow.summary;
+  return String(value || "")
+    .replace(/\bdeep[- ]research\s+lane\b/gi, "dedicated research support")
+    .replace(/\blane\b/gi, "workflow")
+    .replace(/\bworker\b/gi, "specialist")
+    .trim();
+}
 
 export function normalizedEntrypoints(rows) {
   const source = Array.isArray(rows) && rows.length ? rows : DEFAULT_ENTRYPOINTS;
@@ -43,8 +60,8 @@ export function normalizedEntrypoints(rows) {
     seen.add(id);
     out.push({
       id,
-      label: String(row?.label || id).trim() || id,
-      summary: String(row?.summary || row?.description || "").trim(),
+      label: String(row?.label || labelFromId(id)).trim() || labelFromId(id),
+      summary: publicSummary(id, row?.summary || row?.description || ""),
     });
   }
   return out.length ? out : DEFAULT_ENTRYPOINTS;

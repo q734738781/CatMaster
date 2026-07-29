@@ -71,7 +71,7 @@ Open:
 http://127.0.0.1:7991
 ```
 
-The first start may install pinned JSmol assets for structure and trajectory previews, so it can take longer than later starts. Check status and logs with:
+MatterViz and the lazy Ketcher molecule editor are shipped in the built WebUI assets. The first start may also install pinned JSmol compatibility assets for OUTCAR vibration and fallback previews, so it can take longer than later starts. Check status and logs with:
 
 ```bash
 ./start_webui.sh --status
@@ -108,11 +108,11 @@ Choose an appropriate structure tool and explain how the cell and atom count cha
 This is a structure-only task. Do not query or submit any remote task.
 ```
 
-This request reveals the normal CatMaster workflow. Chat should show Progress, a `materials_worker` delegation, and a `supercell` tool card. `supercell` writes its declared output within one domain-tool call, so the current Review mode may not display an approval card for this step. State the output path before sending, inspect the tool arguments, and verify the artifact and file afterward. The generated structure should open in Files with a JSmol preview.
+This request reveals the normal CatMaster workflow. Chat should show Progress, a `materials_worker` delegation, and a `supercell` tool card. `supercell` writes its declared output within one domain-tool call, so the current Review mode may not display an approval card for this step. State the output path before sending, inspect the tool arguments, and verify the artifact and file afterward. The generated structure should open in the MatterViz preview; **Open Structure Workbench** exposes its editable base atoms, cell, measurements, and Save As controls.
 
 The Fe transformation is only a test. It verifies that the LLM can use the current tool schema, Experiment can delegate Materials, the worker can read an attachment and write a project file, and artifacts, Files, and Monitor all describe the same operation.
 
-Approval cards appear later for `write_file`, `edit_file`, and remote submission calls. Review does not intercept every domain tool that produces a file. Chapter 4 gives the exact boundary.
+Approval cards appear later for real remote submission calls. Local file edits and domain tools run without Review approval. Chapter 4 gives the exact boundary.
 
 If literature is your main use case, upload a paper, select Literature Review, and send:
 

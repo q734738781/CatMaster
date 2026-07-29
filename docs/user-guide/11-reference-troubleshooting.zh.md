@@ -163,7 +163,7 @@ tail -n 100 .runtime/webui.log
 ss -ltnp | grep 7991
 ```
 
-`conda is not available` 表示启动 shell 没有初始化 conda，或 `CATMASTER_CONDA_ENV` 指向错误环境。`Address already in use` 表示端口被占用。Project root permission denied 应修复目录 ownership，不要临时用 root 绕过。JSmol 下载失败通常只影响结构预览，可单独处理 cache。
+`conda is not available` 表示启动 shell 没有初始化 conda，或 `CATMASTER_CONDA_ENV` 指向错误环境。`Address already in use` 表示端口被占用。Project root permission denied 应修复目录 ownership，不要临时用 root 绕过。JSmol 下载失败只影响 OUTCAR vibration 和 fallback 预览，不影响 MatterViz 主工作台。
 
 启动脚本和 Python CLI 的隐式默认地址不同，所以诊断时总是显式写 host 与 port。
 
@@ -195,7 +195,9 @@ python -c 'from catmaster.llm.config import LLMProfile; p=LLMProfile.from_env_or
 
 ## Files 中结构、PDF 或表格不能预览
 
-JSmol 空白时检查资源 cache、浏览器控制台和结构格式。文本预览有大小上限，目录和文件树也有数量上限，所以"看不到"不一定代表文件不存在。PDF 字体或页面异常应打开原文件核对。
+主结构画布空白时，先看浏览器 console 与 network，确认 `chunk-MatterVizHost.js` 及其本地资源返回 200，再阅读 renderer boundary 给出的错误。用 **Source** 判断文件本身是否损坏。大结构会主动显示有界画布提示，但 Properties 中的完整原子数和分页坐标表仍以源结构为准。
+
+只有分子二维编辑失败时检查按需加载的 `chunk-KetcherEditor.js`，三维构象和 source 仍应可用。Volume 失败时查看 worker request，先 Cancel 再换 grid。只有 OUTCAR vibration 或明确进入 JSmol fallback 时才检查固定版本的 JSmol cache 和格式。文本、目录和文件树预览都有明确大小或数量边界，因此"看不到预览"不代表文件不存在。PDF 字体或页面异常应打开原文件核对。
 
 Files 上传同名文件会覆盖。若内容被覆盖，从外部备份恢复。误删 `metadata/` 后应立即停止写入并恢复一致性备份，重新上传 `files/` 不能恢复 thread checkpoint。
 
@@ -259,6 +261,27 @@ Scheduler completed 只说明调度结束。若结果缺失，检查 backward fi
 先确认 `CATMASTER_PROJECT_SPACE_ROOT` 是否与原部署一致，登录用户名是否相同。登录模式的数据位于 `users/<username>/`；无登录模式使用 `admin/`。旧 `.catmaster` 单根项目不能直接当作当前 workspace，需要迁移为 `files/` 与 `metadata/`。
 
 只恢复 `files/` 不会恢复 thread。检查 `metadata/`、DeepAgent SQLite 和认证数据库是否来自同一份一致性备份。
+
+## Skill Evolution 没有产生或发布 candidate
+
+这通常是正确边界，不一定是 queue 故障。每个有用户任务的 terminal run 会先进入
+语义反思；`no_change` 或 execution lapse 不会写 observation。系统根据完整轨迹和
+结果判断，不要求固定数量的 run、thread 或 counterexample。用户明确要求长期遵守
+的 correction 可以单独形成证据，但 candidate 仍要经过静态检查、独立建议与人工
+审核。先在 Skill Evolution 查看 job、observation 和 candidate，不要要求开发者用
+关键词强制路由 raw job。Tool/schema 问题与详细科学 notes 本来就不会进入 skill。
+
+`pending` 和 `revision` 都不能 Promote。打开精确 revision，检查 evidence、
+counterexample、适用边界、静态 validation 与 reviewer concerns，再选择 Request
+revision 或 Reject。状态为
+`review` 的 skill 还要先在明确 thread/run 上 Start canary；只有该精确 revision
+有一次成功的真实使用，而且没有 failure 或 false activation，才会出现 Promote
+stable。Start canary 不会创建新对话或模型调用，它只为所选 scope 绑定精确版本。
+
+Canary 消失时先看 candidate card：精确 revision 失败或错误激活后，只会自动移除
+对应 canary pointer，stable 不受影响。Builtin 或目标 hash 改变时会回到
+`revision`，不会静默遮蔽新版 skill。需要开发者排查时复制卡片上的 diagnostics
+reference，不要粘贴整页 raw event JSON。
 
 ## 当前 UI 限制速查
 

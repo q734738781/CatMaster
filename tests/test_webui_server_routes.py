@@ -41,7 +41,7 @@ def test_self_evolution_worker_discovers_authenticated_user_workspaces(tmp_path:
     assert discovered == [direct.resolve(), authenticated.resolve()]
 
 
-def test_self_evolution_human_review_preview_includes_complete_bundle_diff(tmp_path: Path) -> None:
+def test_self_evolution_review_preview_includes_complete_bundle_diff(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     (workspace / "files").mkdir(parents=True)
     (workspace / "metadata").mkdir()
@@ -52,7 +52,7 @@ def test_self_evolution_human_review_preview_includes_complete_bundle_diff(tmp_p
         run_id="run-one",
         thread_id="thread-one",
         action="skill",
-        status="approved",
+        status="review",
         group="materials_worker",
         name="demo-skill",
         review={
@@ -95,12 +95,12 @@ def test_self_evolution_human_review_preview_includes_complete_bundle_diff(tmp_p
     assert "scripts/helper.py" in preview
     assert "+VALUE = 1" in preview
     summary = _self_evolution_for_run(workspace=workspace, workspace_id="demo", run_id="")
-    human_review = summary["candidates"][0]["human_review"]
-    assert human_review["reviewer_recommendation"] == "needs_revision"
-    assert human_review["summary"].startswith("Add a recovery check")
-    assert human_review["change_points"][0]["evidence_source"] == "concrete failure"
-    assert human_review["proportionality_assessment"]["status"] == "warning"
-    assert human_review["concerns"] == ["Do not apply the check to ordinary handoffs."]
+    review = summary["candidates"][0]["review"]
+    assert review["recommendation"] == "needs_revision"
+    assert review["summary"].startswith("Add a recovery check")
+    assert review["change_points"][0]["evidence_source"] == "concrete failure"
+    assert review["proportionality_assessment"]["status"] == "warning"
+    assert review["concerns"] == ["Do not apply the check to ordinary handoffs."]
 
 
 def test_workspace_self_evolution_summary_is_not_thread_or_run_scoped(tmp_path: Path) -> None:
@@ -130,12 +130,10 @@ def test_workspace_self_evolution_summary_is_not_thread_or_run_scoped(tmp_path: 
     one_run = _self_evolution_for_run(workspace=workspace, workspace_id="workspace", run_id="run-one")
 
     assert all_runs["scope"] == "workspace"
-    assert all_runs["activation"] == "next_run"
+    assert all_runs["activation"] == "next_selected_run"
     assert all_runs["candidate_count"] == 2
     assert {row["thread_id"] for row in all_runs["candidates"]} == {"thread-one", "thread-two"}
-    assert all(row["human_review"]["structured_review_available"] is False for row in all_runs["candidates"])
-    assert all(row["human_review"]["change_points"] == [] for row in all_runs["candidates"])
-    assert all("legacy candidate" in row["human_review"]["summary"] for row in all_runs["candidates"])
+    assert all(row["review"] == {} for row in all_runs["candidates"])
     assert one_run["candidate_count"] == 1
 
 
@@ -146,14 +144,49 @@ def test_no_login_mode_disables_self_evolution_api(tmp_path: Path) -> None:
     candidates = client.get("/api/session/no-login/self-evolution/candidates")
     learn = client.post("/api/session/no-login/self-evolution/learn", json={"run": "run-one"})
     decision = client.post(
-        "/api/session/no-login/self-evolution/candidates/sec_one/decision",
-        json={"action": "promote"},
+        "/api/session/no-login/self-evolution/candidates/sec_one/revisions/1/reject",
+        json={"rationale": "Not justified."},
     )
 
     assert candidates.status_code == 403
     assert learn.status_code == 403
     assert decision.status_code == 403
     assert candidates.json()["detail"] == "Self-evolution is disabled in no-login mode."
+
+
+def test_candidate_projection_has_no_synthetic_evaluation_controls(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "files").mkdir(parents=True)
+    (workspace / "metadata").mkdir()
+    store = SelfEvolutionStore(workspace, project_id="workspace")
+    candidate = LearningCandidate(
+        candidate_id="sec_missing_cases",
+        project_id="workspace",
+        run_id="run-one",
+        thread_id="thread-one",
+        action="skill",
+        status="review",
+        group="materials_worker",
+        name="bounded-rule",
+        created_at=utc_now(),
+    )
+    store.reset_candidate_dir(candidate.candidate_id)
+    store.write_candidate(candidate)
+
+    payload = _self_evolution_for_run(
+        workspace=workspace,
+        workspace_id="workspace",
+        run_id="",
+    )
+    projected = payload["candidates"][0]
+
+    assert "evaluation" not in projected
+    assert "evaluation_progress" not in projected
+    assert "run_evaluation" not in projected["allowed_actions"]
+    assert "request_revision" in projected["allowed_actions"]
+    assert "reject" in projected["allowed_actions"]
 
 
 def test_monitor_path_redirect_route_precedes_root_mount(tmp_path: Path) -> None:
@@ -179,6 +212,11 @@ def test_default_page_loads_react_static_bundle_and_legacy_pages_redirect(tmp_pa
     assert 'rel="icon"' in home.text
     assert '/static/app.css' in home.text
     assert '/static/app.js' in home.text
+    assert 'data-catmaster-view="home"' in home.text
+    assert "window.CATMASTER_BOOT" not in home.text
+    assert "default-src 'self'" in home.headers["content-security-policy"]
+    assert "worker-src 'self' blob:" in home.headers["content-security-policy"]
+    assert home.headers["x-content-type-options"] == "nosniff"
 
     monitor = client.get("/monitor/", follow_redirects=False)
     assert monitor.status_code == 307
@@ -217,7 +255,8 @@ def test_bootstrap_recovers_from_stale_missing_project_space(tmp_path: Path) -> 
     assert response.status_code == 200
     payload = response.json()
     assert payload["ctx"] == "ctx_stale_001"
-    assert payload["workspace_root"] == str(tmp_path.resolve())
+    assert "workspace_root" not in payload
+    assert payload["workspace_root_locked"] is True
     assert payload["workspace_name"] == ""
     assert "Project space does not exist: missing_space" in payload["status_message"]
 
@@ -279,12 +318,8 @@ def test_files_routes_list_preview_and_download(tmp_path: Path) -> None:
     tree = client.get(f"/api/session/{ctx}/files/tree")
     assert tree.status_code == 200
     tree_payload = tree.json()
-    assert [item["name"] for item in tree_payload["children"][:2]] == ["files", "metadata"]
-
-    files_branch = client.get(f"/api/session/{ctx}/files/tree", params={"path": "files"})
-    assert files_branch.status_code == 200
-    files_payload = files_branch.json()
-    assert {item["name"] for item in files_payload["children"]} >= {"notes.md", "Fe.cif"}
+    assert {item["name"] for item in tree_payload["children"]} == {"notes.md", "Fe.cif"}
+    assert "metadata" not in {item["name"] for item in tree_payload["children"]}
 
     preview = client.get(f"/api/session/{ctx}/files/content", params={"path": "files/notes.md"})
     assert preview.status_code == 200
@@ -485,7 +520,7 @@ def test_structure_view_and_animation_routes(tmp_path: Path, monkeypatch) -> Non
     )
     original_read_structure_frames = server._read_structure_frames
 
-    def _patched_read_structure_frames(path: Path, *, limit: int = server.STRUCTURE_ANIMATION_FRAME_LIMIT):
+    def _patched_read_structure_frames(path: Path, *, limit: int | None = None):
         if path.name == "OUTCAR":
             return ([Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]])], 1, False)
         return original_read_structure_frames(path, limit=limit)
@@ -529,7 +564,7 @@ def test_plain_outcar_uses_native_view_without_vibration_controls(tmp_path: Path
     (ws / "files" / "OUTCAR").write_text("plain outcar without vibration block\n", encoding="utf-8")
     original_read_structure_frames = server._read_structure_frames
 
-    def _patched_read_structure_frames(path: Path, *, limit: int = server.STRUCTURE_ANIMATION_FRAME_LIMIT):
+    def _patched_read_structure_frames(path: Path, *, limit: int | None = None):
         if path.name == "OUTCAR":
             return ([Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]])], 1, False)
         return original_read_structure_frames(path, limit=limit)
@@ -566,7 +601,7 @@ def test_outcar_with_vibration_header_without_equals_uses_compatibility_view(tmp
     )
     original_read_structure_frames = server._read_structure_frames
 
-    def _patched_read_structure_frames(path: Path, *, limit: int = server.STRUCTURE_ANIMATION_FRAME_LIMIT):
+    def _patched_read_structure_frames(path: Path, *, limit: int | None = None):
         if path.name == "OUTCAR":
             return ([Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]])], 1, False)
         return original_read_structure_frames(path, limit=limit)
@@ -652,7 +687,7 @@ def test_poscar_uses_native_vasp_poscar_view(tmp_path: Path, monkeypatch) -> Non
     )
     original_read_structure_frames = server._read_structure_frames
 
-    def _patched_read_structure_frames(path: Path, *, limit: int = server.STRUCTURE_ANIMATION_FRAME_LIMIT):
+    def _patched_read_structure_frames(path: Path, *, limit: int | None = None):
         if path.name == "CONTCAR":
             return ([Atoms("Si2", cell=[5.43, 5.43, 5.43], pbc=True, scaled_positions=[[0, 0, 0], [0.25, 0.25, 0.25]])], 1, False)
         return original_read_structure_frames(path, limit=limit)
@@ -682,7 +717,7 @@ def test_cif_uses_native_cif_view(tmp_path: Path, monkeypatch) -> None:
     )
     original_read_structure_frames = server._read_structure_frames
 
-    def _patched_read_structure_frames(path: Path, *, limit: int = server.STRUCTURE_ANIMATION_FRAME_LIMIT):
+    def _patched_read_structure_frames(path: Path, *, limit: int | None = None):
         if path.name == "sample.cif":
             return ([Atoms("Si2", cell=[5.0, 5.0, 5.0], pbc=True, scaled_positions=[[0, 0, 0], [0.5, 0.5, 0.5]])], 1, False)
         return original_read_structure_frames(path, limit=limit)
@@ -715,7 +750,7 @@ def test_coerce_int_treats_empty_string_as_default() -> None:
     assert server._coerce_int("7", 0) == 7
 
 
-def test_memory_route_returns_workspace_memory(tmp_path: Path) -> None:
+def test_memory_route_returns_workspace_memory(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "demo"
     (ws / "files").mkdir(parents=True)
     (ws / "metadata").mkdir(parents=True)
@@ -731,13 +766,15 @@ def test_memory_route_returns_workspace_memory(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
+    monkeypatch.setenv("CATMASTER_WEBUI_DEVELOPER_DIAGNOSTICS", "1")
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
     assert boot.status_code == 200
     ctx = boot.json()["ctx"]
 
-    response = client.get(f"/api/session/{ctx}/memory")
+    assert client.get(f"/api/session/{ctx}/memory").status_code == 404
+    response = client.get(f"/api/diagnostics/session/{ctx}/memory")
     assert response.status_code == 200
     payload = response.json()
     assert "prefer compact reports" in payload["memory"]
@@ -912,7 +949,7 @@ def test_web_reporter_does_not_backfill_legacy_ui_events_before_sqlite_write(tmp
     assert [event["seq"] for event in page["events"]] == [1]
 
 
-def test_observability_route_returns_metrics_from_observability_store_only(tmp_path: Path) -> None:
+def test_observability_route_returns_metrics_from_observability_store_only(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "demo"
     run_dir = ws / "metadata" / "runs" / "run_obs"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -966,6 +1003,7 @@ def test_observability_route_returns_metrics_from_observability_store_only(tmp_p
         },
     )
 
+    monkeypatch.setenv("CATMASTER_WEBUI_DEVELOPER_DIAGNOSTICS", "1")
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
@@ -973,7 +1011,7 @@ def test_observability_route_returns_metrics_from_observability_store_only(tmp_p
     ctx = boot.json()["ctx"]
 
     response = client.get(
-        f"/api/session/{ctx}/observability",
+        f"/api/diagnostics/session/{ctx}/observability",
         params={"project_space": "demo", "lane": "experiment", "run": "run_obs"},
     )
 
@@ -992,7 +1030,7 @@ def test_observability_route_returns_metrics_from_observability_store_only(tmp_p
     assert payload["machine_time_summary"]["core_hours"] == 32.0
 
 
-def test_details_route_hides_legacy_traces_unless_requested(tmp_path: Path) -> None:
+def test_details_route_hides_legacy_traces_unless_requested(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "demo"
     run_dir = ws / "metadata" / "runs" / "run_trace"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1001,6 +1039,7 @@ def test_details_route_hides_legacy_traces_unless_requested(tmp_path: Path) -> N
     (run_dir / "event_trace.jsonl").write_text('{"event":"LLM_RAW_RESPONSE","payload":{"text":"legacy"}}\n', encoding="utf-8")
     (run_dir / "tool_trace.jsonl").write_text('{"tool_name":"legacy_tool","status":"success"}\n', encoding="utf-8")
 
+    monkeypatch.setenv("CATMASTER_WEBUI_DEVELOPER_DIAGNOSTICS", "1")
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
@@ -1008,7 +1047,7 @@ def test_details_route_hides_legacy_traces_unless_requested(tmp_path: Path) -> N
     ctx = boot.json()["ctx"]
 
     response = client.get(
-        f"/api/session/{ctx}/details",
+        f"/api/diagnostics/session/{ctx}/details",
         params={"project_space": "demo", "run": "run_trace"},
     )
     assert response.status_code == 200
@@ -1018,7 +1057,7 @@ def test_details_route_hides_legacy_traces_unless_requested(tmp_path: Path) -> N
     assert "trace_patch" not in payload
 
     legacy_response = client.get(
-        f"/api/session/{ctx}/details",
+        f"/api/diagnostics/session/{ctx}/details",
         params={"project_space": "demo", "run": "run_trace", "include_legacy_traces": "true"},
     )
     assert legacy_response.status_code == 200
@@ -1027,7 +1066,7 @@ def test_details_route_hides_legacy_traces_unless_requested(tmp_path: Path) -> N
     assert "legacy_tool" in legacy_payload["trace_tool"]
 
 
-def test_events_route_reads_unified_observability_events_with_filters(tmp_path: Path) -> None:
+def test_events_route_reads_unified_observability_events_with_filters(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "demo"
     run_dir = ws / "metadata" / "runs" / "run_obs"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1069,6 +1108,7 @@ def test_events_route_reads_unified_observability_events_with_filters(tmp_path: 
         },
     )
 
+    monkeypatch.setenv("CATMASTER_WEBUI_DEVELOPER_DIAGNOSTICS", "1")
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
@@ -1076,7 +1116,7 @@ def test_events_route_reads_unified_observability_events_with_filters(tmp_path: 
     ctx = boot.json()["ctx"]
 
     response = client.get(
-        f"/api/session/{ctx}/events",
+        f"/api/diagnostics/session/{ctx}/events",
         params={"project_space": "demo", "run": "run_obs", "limit": 20},
     )
     assert response.status_code == 200
@@ -1085,7 +1125,7 @@ def test_events_route_reads_unified_observability_events_with_filters(tmp_path: 
     assert "tool_call.completed" in names
 
     filtered = client.get(
-        f"/api/session/{ctx}/events",
+        f"/api/diagnostics/session/{ctx}/events",
         params={"project_space": "demo", "run": "run_obs", "channel": "thread", "thread_id": "thread_1"},
     )
     assert filtered.status_code == 200
@@ -1151,7 +1191,7 @@ def test_runtime_snapshot_omits_removed_prompt_payload() -> None:
     assert "prompt" not in snapshot
 
 
-def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path) -> None:
+def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "demo"
     runs_root = ws / "metadata" / "runs"
     run_dir = runs_root / "run_old"
@@ -1171,6 +1211,7 @@ def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path)
         encoding="utf-8",
     )
 
+    monkeypatch.setenv("CATMASTER_WEBUI_LEGACY_ROUTES", "1")
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "demo"})
@@ -1198,7 +1239,7 @@ def test_chat_create_clears_selected_run_view_when_no_active_run(tmp_path: Path)
     assert len(payload["chat_sessions"]) >= 2
 
 
-def test_same_ctx_snapshot_is_scoped_by_project_space(tmp_path: Path) -> None:
+def test_same_ctx_snapshot_is_scoped_by_project_space(tmp_path: Path, monkeypatch) -> None:
     for name in ("alpha", "beta"):
         ws = tmp_path / name
         (ws / "files").mkdir(parents=True, exist_ok=True)
@@ -1208,6 +1249,7 @@ def test_same_ctx_snapshot_is_scoped_by_project_space(tmp_path: Path) -> None:
             encoding="utf-8",
         )
 
+    monkeypatch.setenv("CATMASTER_WEBUI_LEGACY_ROUTES", "1")
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     boot = client.get("/api/bootstrap", params={"project_space": "alpha"})
@@ -1228,7 +1270,7 @@ def test_same_ctx_snapshot_is_scoped_by_project_space(tmp_path: Path) -> None:
     assert beta.json()["selected_run"] == "run_beta"
 
 
-def test_bootstrap_recovers_active_run_for_lane(tmp_path: Path) -> None:
+def test_bootstrap_recovers_active_run_for_lane(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "demo"
     run_dir = ws / "metadata" / "runs" / "run_live"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1251,14 +1293,24 @@ def test_bootstrap_recovers_active_run_for_lane(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    monkeypatch.setenv("CATMASTER_WEBUI_LEGACY_ROUTES", "1")
     app = create_app(project_space_root=str(tmp_path), no_login=True)
     client = TestClient(app)
     response = client.get("/api/bootstrap", params={"project_space": "demo", "lane": "experiment"})
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["selected_run"] == "run_live"
-    assert payload["active_run"] == "run_live"
-    assert payload["run_status"] == "running"
-    assert payload["live_state"]["status"] == "running"
-    assert payload["live_state"]["current_task_goal"] == "Still working."
+    assert "selected_run" not in payload
+    assert "active_run" not in payload
+    assert "live_state" not in payload
+    legacy = client.get(
+        f"/api/session/{payload['ctx']}/snapshot",
+        params={"project_space": "demo", "lane": "experiment"},
+    )
+    assert legacy.status_code == 200
+    legacy_payload = legacy.json()
+    assert legacy_payload["selected_run"] == "run_live"
+    assert legacy_payload["active_run"] == "run_live"
+    assert legacy_payload["run_status"] == "running"
+    assert legacy_payload["live_state"]["status"] == "running"
+    assert legacy_payload["live_state"]["current_task_goal"] == "Still working."

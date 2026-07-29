@@ -23,7 +23,7 @@ The MACE, UMA, MatterSim, and ORB-v3 requirement files describe isolated remote 
 
 ## Configure the LLM
 
-CatMaster routes models by role. One model can serve every role, or a deployment can assign different models to coordination, workers, writing, review, vision, and background candidate evaluation. Start from the standard template:
+CatMaster routes models by role. One model can serve every role, or a deployment can assign different models to coordination, workers, writing, review, vision, and low-frequency candidate proposal/review. Start from the standard template:
 
 ```bash
 cp -n configs/llm.template.yaml configs/llm.yaml
@@ -234,16 +234,20 @@ DPDispatcher commonly starts a non-interactive shell, so do not assume that it r
 
 Before releasing a task, run one inexpensive real case for every enabled engine and verify catalog visibility, environment, result transfer, `status.json`, stdout/stderr, and receipt. `python scripts/remote_execution_smoke.py --list` only lists cases. Other modes submit real work, so do not begin with the entire suite.
 
-## JSmol, VESTA, and VASPKIT
+## Structure Workbench, JSmol, VESTA, and VASPKIT
 
-The WebUI uses JSmol for structure and trajectory previews. The launcher installs pinned assets when the cache is missing. Prewarm a persistent cache for an offline server:
+The production frontend contains exact-pinned MatterViz/Svelte and lazy Ketcher chunks. They are served from `/static`; no CDN or external font request is required. The server sends a Content Security Policy that permits same-origin chunks, local fonts, data/blob images, and workers used by volume parsing.
+
+JSmol 16.3.13 is a compatibility fallback for OUTCAR vibration and unsupported formats. The launcher installs its pinned assets when the cache is missing. Prewarm a persistent cache for an offline server:
 
 ```bash
 CATMASTER_JSMOL_CACHE_DIR=/persistent/cache/jsmol \
 python scripts/install_jsmol_assets.py
 ```
 
-A missing JSmol cache affects previews, not LLM or remote-task execution.
+A missing JSmol cache affects only those fallback previews. MatterViz-supported structures, the Workbench, LLM calls, and remote-task execution remain available.
+
+After changing frontend dependencies, run `npm run build` under `catmaster/webui/frontend` and verify a periodic structure, a molecule 2D/3D switch, one trajectory frame request, and one volume grid in the deployed base path. Keep the exact versions in `package.json` and the lockfile; do not replace the lazy chunks with CDN scripts.
 
 Set VASPKIT explicitly if needed:
 
@@ -294,6 +298,49 @@ Install Julia in advance on offline machines and point `PYTHON_JULIACALL_BINDIR`
 `scripts/package_remote_deploy.sh` creates a package without `.git`, private config, keys, user projects, or runtime logs. `scripts/deploy_runtime.sh` synchronizes runtime files on the target. Consult each script's `--help` for current options.
 
 Before upgrading, record the Git commit, conda environment, active LLM profile, four DPDispatcher configurations, launch arguments, and external-program versions. Back up the project root and authentication database, then test conversation, files, structure preview, and one minimal case for every enabled remote engine in a disposable workspace.
+
+Migrate each workspace separately when upgrading from Research Kernel or a
+hypothesis campaign. Stop the old writer for that workspace, then run a dry
+run:
+
+```bash
+/home/chenhh/miniconda3/envs/catmaster/bin/python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace
+```
+
+The report separates deterministic v3 and v4 campaign imports, v2 or incomplete
+Kernel items that need review, and damaged files. After checking the counts,
+apply the migration:
+
+```bash
+/home/chenhh/miniconda3/envs/catmaster/bin/python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace --apply
+```
+
+The command returns a rollback manifest path. Legacy files move under
+`metadata/legacy_research_state/`, and the new runtime writes only
+`metadata/workspace.sqlite`. The batch has a stable in-progress pointer. If the
+process stops, another `--apply` resumes that batch. Do not run old and new
+writers against the same workspace during a rolling deployment.
+
+Before any new Research Graph work is written, the returned manifest can roll
+back the import:
+
+```bash
+/home/chenhh/miniconda3/envs/catmaster/bin/python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace \
+  --rollback metadata/legacy_research_state/<batch>/rollback_manifest.json
+```
+
+Rollback removes graphs imported by that batch, restores previous thread
+bindings, and moves legacy files back to their original paths. Once researchers
+have continued on the new graph, restore the backup into a separate workspace
+and merge deliberately instead of overwriting the new scientific state.
+
+Workspace SQLite chooses WAL only on a recognized local filesystem. Network or
+unknown filesystems use the rollback journal by default. Set
+`CATMASTER_WORKSPACE_SQLITE_JOURNAL_MODE=WAL` only after the deployment has
+independently verified its storage semantics.
 
 Code rollback must not overwrite user projects. Restore a compatible commit or package together with matching dependencies and config. Do not put project data, private YAML, or secrets into release archives as a rollback mechanism.
 

@@ -52,40 +52,51 @@ These parts answer different questions. Progress shows how the agent frames the 
 
 You do not need to inspect every file read. Expand activity when an important structure or manuscript changes, when the number of candidates differs from expectations, when a tool reports warning or error, when a remote submission has meaningful cost, or when the final answer disagrees with the files on disk.
 
-## Research Map shows a live verification network
+## Research Graph connects work across threads
 
-Research Map is the operational view of a branch-aware campaign in the current thread. It appears as its own top-level tab. Research creates a campaign only when competing explanations, shared evidence, dependent checks, or meaningful cost and wait tradeoffs justify the extra structure. An empty view is normal for a linear task.
+Research Graph is workspace scientific state, not a child of the current thread. Its catalog shows the question, node counts, runnable frontier, manual or automatic mode, last update, and whether the current thread is attached. The interface may preselect the only active graph. When several exist, you must choose one. Attach, Detach, and Switch change the thread's focus without copying or deleting scientific state.
 
-The graph has three node types:
+New graph accepts a research question, an optional title, and zero or more seed hypotheses. Each seed has its own claim, rationale, and observable predictions. You do not need to ask the agent to initialize the graph in Chat. You can also start with a question only and add nodes later.
 
-- Hypotheses show each claim, rationale, predictions, derivation, and current `open`, `supported`, `rejected`, or `contested` status.
-- Verification actions show the executor, scientific question, bounded task, decision rule, dependencies, information value, coarse cost, and controller status.
-- Evidence judgments show the result summary, scientific source, and one `supports`, `opposes`, or `inconclusive` effect for every target hypothesis.
+The graph has three scientific node types:
 
-Click a node to inspect its scientific content. The active packet panel shows the current executor, task, target hypotheses, and decision rule. Execution attempts, resource accounting, and remote receipts remain in the ordinary Activity and artifact views.
+- A Hypothesis shows its concise claim, relative importance, and an evidence state derived from all related Results.
+- An Experiment proposal shows its objective, plan, decision rule, execution lane, expected decision value, coarse compute cost, and preparation or execution state.
+- A Result shows a concise outcome. Labeled relationships connect it to the Hypotheses that it supports, opposes, or does not distinguish.
 
-Select an eligible action and use "Start Research thread." The server checks the displayed revision, reserves that action, creates a new Research thread, and submits one ordinary Research turn. It does not steer or reuse the source chat thread. The child keeps the complete Research behavior, specialist delegation, streaming, and Auto/Review permission mode. Its DeepAgent checkpoint and lightweight Research Kernel are isolated under the child thread id; only controller calls use the source campaign id. The reservation is rejected if the Map is stale or the source Research thread is still running, stopping, or waiting for review, so two Research turns cannot compete for the same campaign.
+The canvas supports pan, zoom, fit, a minimap, keyboard access, focus neighborhood, and density limits of 5, 25, or 100 nodes. Node cards keep the complete title and accessible name. Selecting a node opens the full scientific fields and sources in the inspector, so truncation never hides the only copy of the content.
 
-"Start automatic Research" enables a persistent asynchronous worker for the source campaign. The worker selects ranked non-human actions one at a time and creates the same kind of ordinary Research child thread. It waits while a child is running or interrupted, then reads the updated campaign before launching another. "Stop after current check" prevents the next launch without cancelling the current child. A human-owned action is never answered by the worker; start its thread manually and provide the requested evidence there. The original single-thread Research submit path is unchanged and can still run without Research Map.
+A Hypothesis can develop an experiment proposal, be edited, or open its related evidence. An Experiment can be prepared, run, replicated, linked to a dependency, marked blocked, or given a Result. A Result can lead to a user-authored Hypothesis or follow-up Experiment. It can also start a Research planning thread focused on that Result. Scientific cycles and branches are allowed. Only the Experiment dependency subgraph must remain acyclic.
 
-Map selection and automatic scheduling are not protected-tool approval. A selected experiment still follows the Experiment worker's managed execution path and uses the ordinary approval card when required. Cost affects ranking only and does not replace that approval system.
+Creating a graph through the Research Specialist attaches it to the current
+thread automatically. A launched Experiment or Literature Review child receives
+the same bounded graph focus but can only write back the Result or a concrete
+blocker for its bound Experiment. The child thread is attached as a source
+automatically. If the child finishes without a Result, the launch is shown as
+blocked rather than completed.
 
-The same evidence judgment can affect several hypotheses, and competing hypotheses can share one verification action. When evidence reveals a missing explanation, Research asks the hypothesis proposer for a separate revision before adding a derived hypothesis or follow-up action. This is why the view is a network rather than a literal tree. `Supported`, `rejected`, and `contested` summarize the recorded verdicts; they are not posterior probabilities. Check the cited paper, run, or artifact before treating a branch as a scientific conclusion.
+Running an Experiment atomically claims one launch, then creates an ordinary child thread bound to the graph and focus node. Repeated clicks on the same active launch are deduplicated. A completed Experiment can start an explicit replicate. A running, stopped, or deleted source thread does not block the graph. When remote submission status is uncertain, recovery checks the existing thread, run, and receipt before any new submission.
+
+Automatic orchestration advances one action at a time while preserving every competing branch. It orders ready Experiments by the importance of their Hypotheses, expected decision value, lower compute cost, and then creation order. Only one Experiment runs automatically per graph at a time. Otherwise, if the graph has research content, it starts one planning child. A planner that made no scientific change at the current graph version is not restarted in a loop. Switching back to Manual prevents later automatic launches but does not cancel the current thread or remote job.
+
+Graph nodes contain short scientific statements only. Papers, detailed notes, structures, logs, reports, artifacts, and receipts remain in their existing stores and connect through Sources. A moved or deleted source appears as "Source unavailable"; its reference is not silently removed. Graph actions do not grant protected execution. Computation still follows specialist ownership, managed execution, and the ordinary approval cards.
+
+Updates from other threads arrive through the durable graph event stream. If the graph changes before you submit an edit, the server rejects the overwrite and shows a readable conflict message. Refresh, review the new content, and submit again.
 
 ## Auto and Review support different working styles
 
-Auto lets an agent proceed within its current permissions and works well for reading, analysis, and trusted project workflows. Review pauses before `write_file`, `edit_file`, `remote_submission`, and `remote_submission_batch`, then presents an approval card in the message.
+Auto lets an agent proceed within its current permissions and works well for reading, analysis, and trusted project workflows. Review pauses before `remote_submission` and `remote_submission_batch`, then presents an approval card in the message. Local `write_file`, `edit_file`, and Codex OAuth `apply_patch` operations do not open approval cards.
 
-Review is a good default for a new project, important source files, or real remote computation. The card supports four actions:
+Review is useful when a thread may submit real remote computation. The card supports four actions:
 
 - Approve executes the proposed action.
 - Reject declines it and can include a reason.
 - Respond gives the agent feedback so it can rework the action.
 - Edit action changes the action JSON and is intended for users who understand the tool schema.
 
-Review is not a global approval gate. Reading, search, and some analyses still run automatically. Its purpose is to put protected file edits and remote compute at a clear human checkpoint. Resume an interruption through the card rather than sending an unrelated normal message.
+Review is not a global approval gate. Reading, search, analysis, and local file edits still run automatically. Its purpose is to put actual remote compute submission at a clear human checkpoint. Resume an interruption through the card rather than sending an unrelated normal message.
 
-In that statement, file mutation means the currently protected `write_file` and `edit_file` calls. Domain tools such as `supercell` and `build_slab` generate their declared outputs inside the tool call and do not receive a card solely because a file is created. Give those operations an explicit destination, inspect input and output paths on the tool card, and review the artifact in Files. Review protects named calls; it is not a transaction lock around every workspace change.
+`write_file`, `edit_file`, Codex OAuth `apply_patch`, and domain tools such as `supercell` and `build_slab` all write directly into the workspace. Give those operations an explicit destination, inspect input and output paths on the tool card, and review the artifact in Files. Review protects remote submission; it is not a transaction lock around workspace changes.
 
 ## Steer a running task without scripting every move
 
@@ -97,7 +108,13 @@ Stop asks the local agent turn to end at a stream boundary, with repeated reques
 
 ## Files holds the deliverables
 
-Files provides Browse, Preview, and Uploads. It can preview text, Markdown, JSON, images, PDF, CSV/TSV, common crystal and molecular formats, trajectories, and selected OUTCAR vibration content. JSmol handles many structure and trajectory previews, while VESTA renders can appear as image artifacts.
+Files provides Browse, Preview, and Uploads. It can preview text, Markdown, JSON, images, PDF, CSV/TSV, common crystal and molecular formats, trajectories, volume grids, and selected OUTCAR vibration content.
+
+Crystal, slab, defect, adsorbate, and ordinary molecule previews use MatterViz. Choose **Open Structure Workbench** for a full-viewport editor with base-atom selection, coordinate and cell editing, measurements, constraints, undo/redo, supercell and symmetry previews, slab/defect/adsorption candidate galleries, and explicit Save As. Display copies are view-only; use Make supercell before creating a real single defect. Large structures keep the complete source model for selection and saving while the canvas switches to a bounded representation.
+
+Molecule files open a lazy Ketcher 2D editor and a MatterViz 3D conformer view. SDF or MOL is the connection-table authority. Saving a molecule as XYZ loses bonds, aromaticity, bond order, charge, and stereo; saving as SMILES loses the current 3D coordinates. The Workbench blocks that save until the warning is acknowledged. Periodic constraints round-trip through POSCAR/VASP and ASE `.traj`; formats that cannot express them receive the same explicit warning.
+
+Trajectories are read-only and report their real frame count. Scrub or play them, inspect scalar properties, and extract one frame before editing. CUBE, CHGCAR, LOCPOT, ELFCAR, and XSF open as volume artifacts with structure overlay, positive/negative isosurfaces, and slices. JSmol remains the compatibility path for OUTCAR vibration and formats that the primary renderer cannot open; it is not a second editable state. VESTA renders can still appear as image artifacts.
 
 After an agent reports completion, check that the main deliverables exist at the promised paths. For structures, inspect candidates and the audit. For calculations, inspect the stage, status, stdout/stderr, and analysis. For literature, inspect the candidate and evidence tables plus the reference library. For writing, retain editable source files rather than only a compiled PDF.
 
@@ -123,9 +140,9 @@ Analyze first. Do not delete or overwrite any candidate.
 
 ## Skill Evolution preserves repeated project methods
 
-In login mode, a completed run can produce a workspace-scoped improvement candidate. Repeated directory conventions, units, structure audits, or report formats can become a memory or skill candidate. The independent reviewer's value is only an AI recommendation. A workspace skill always requires an explicit Promote or Reject action by a logged-in user, regardless of runtime mode.
+In login mode, every terminal run with a user task enters one Skill Evolution semantic reflection. The model reads the complete recorded trajectory and result, then distinguishes no durable change, failure to follow an adequate existing skill, and evidence that long-term behavior should change. CatMaster does not use regular expressions, embeddings, or a fixed recurrence count to make that decision. One explicit durable correction may be sufficient; repeated wording is not sufficient by itself. Product/schema defects and detailed scientific facts are kept out of skills, and an existing owner skill is preferred over a duplicate.
 
-Candidate cards lead with behavioral changes, evidence, scope, proportionality, concerns, and human checks rather than raw JSON. Promotion confirmation repeats the target, summary, and concerns; the audit records the account, candidate hash, time, and optional note. Good candidates are stable, project-specific, and supported by durable evidence. A temporary file name, a one-off network failure, an agent-selected checksum or ledger, or an unverified scientific guess should remain in the task record unless a narrower correctness boundary genuinely requires it. Promoted content takes effect on the next run. A changed target produces a conflict instead of being overwritten, and a harmful promotion can be rolled back while the target still matches.
+Candidate cards lead with behavioral changes, evidence episodes and sources, applicability boundaries, static validation, reviewer counterexamples, concerns, and human checks rather than raw JSON. Use status filters and Load more for the newest-first candidate and observation lists. The exact reviewed diff is revision-bound and appears under Technical details. AI review is advisory. The lifecycle uses only `pending`, `review`, `revision`, `canary`, `stable`, `rejected`, and `inactive`. A user may request a new immutable revision or reject it; a skill must then pass an explicitly scoped canary with successful actual use before Promote stable becomes available. Starting a canary only changes the exact-version pointer for the selected thread or run; it does not start another conversation or model call. Changed targets return the candidate to revision instead of being overwritten. Canary failures stop only that pointer, and stable revisions can be quarantined, retired, or rolled back.
 
 ## Resuming interrupted or older work
 
@@ -143,6 +160,6 @@ After a remote error, inspect the receipt and old job state before any retry. Ch
 
 ## Important current limitations
 
-The WebUI does not yet rename, delete, branch, or retry threads, and it has no historical run selector. A Research Map can branch scientific hypotheses inside one thread, but it is not a thread-history branch or rollback control. Files overwrites same-name uploads and has no recycle bin. Approval interruptions must resume through their message cards. Stop does not cancel remote jobs. Skill Evolution appears only in login mode and affects the next run.
+The WebUI does not yet rename, delete, branch, or retry threads, and it has no historical run selector. Research Graph can manage scientific branches across threads, but it is not a thread history or rollback control. Files overwrites same-name uploads and has no recycle bin. Approval interruptions must resume through their message cards. Stop does not cancel remote jobs. Skill Evolution appears only in login mode and affects the next run.
 
 Use versioned file names or external backup, divide independent objectives or incompatible project scopes into separate threads, and manage remote jobs through receipts. These practices cover the current UI gaps without pretending the agent can provide controls that do not exist.

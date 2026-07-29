@@ -29,8 +29,10 @@ Do not use DeepAgent checkpoints as the user-visible run status source.
 
 ## Middleware Added By CatMaster
 
-`SpecialistRunner._build_default_middleware()` currently injects LangChain's
-built-in model retry middleware plus two CatMaster middleware objects.
+`SpecialistRunner._build_default_middleware()` injects LangChain's built-in
+model retry middleware and the common CatMaster validation/error middleware.
+Provider- and workspace-specific middleware is composed around that common
+list when each agent is built.
 
 ### LangChain `ModelRetryMiddleware`
 
@@ -136,6 +138,38 @@ Possible future removal:
   messages and DeepAgents provides equivalent non-fatal behavior for tool
   exceptions.
 
+### Codex OAuth freeform `apply_patch`
+
+Purpose:
+
+- Register a LangChain OpenAI custom tool named `apply_patch` only for
+  `codex_oauth` model roles.
+- Match Codex CLI's freeform V4A envelope and Lark grammar. One call may add,
+  update, move, or delete several files.
+- Execute below the current project `files/` root with per-workspace locking,
+  atomic individual-file replacement, path traversal and symlink rejection,
+  and model-visible conflict errors.
+
+This is a normal LangChain custom tool, not the Responses built-in
+`{"type": "apply_patch"}`. Codex OAuth rejects that built-in declaration. The
+model emits a `custom_tool_call`; DeepAgents' standard tool node executes it and
+LangChain replays a `custom_tool_call_output` on the next model call. Keep this
+path on the framework's standard tool scheduler rather than adding a separate
+provider-call middleware.
+
+The checked-in manual acceptance test exercises real Codex OAuth model calls,
+multi-file patches, second-turn update/move/delete operations, concurrent
+threads, and the production model-retry middleware:
+
+```bash
+env -u ALL_PROXY PYTHONPATH=. \
+  /home/chenhh/miniconda3/envs/catmaster/bin/python \
+  tests/manual/codex_oauth_apply_patch_live.py --workers 3
+```
+
+`/memories` remains a routed DeepAgents store, not a physical workspace path.
+Agents must continue to use `edit_file` for persistent memory.
+
 ## OpenRouter Boundary Sanitizer
 
 OpenRouter-specific message normalization lives in `catmaster/llm/factory.py`.
@@ -213,6 +247,7 @@ Interactions that are currently justified:
 - Non-fatal tool error conversion.
 - LangChain model-call retry for transient Codex OAuth/OpenRouter/API failures.
 - Model-response validation for empty/invalid assistant output.
+- Codex OAuth custom `apply_patch` execution and call-output feedback.
 - WebUI upload artifact storage plus current-turn content block injection.
 - OpenRouter request-boundary conversion for standard image/file blocks and
   legacy checkpoint compatibility.
@@ -250,7 +285,7 @@ When changing DeepAgents, LangChain, or OpenRouter versions:
 1. Run the focused compatibility tests:
 
    ```bash
-   pytest tests/test_openrouter_message_sanitizer.py tests/test_specialist_runtime.py -q
+   pytest tests/test_native_apply_patch.py tests/test_openrouter_message_sanitizer.py tests/test_specialist_runtime.py -q
    ```
 
 2. Run the OpenRouter factory tests:

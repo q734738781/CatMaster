@@ -1,418 +1,668 @@
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MessagePrimitive, ThreadPrimitive, useMessage } from "@assistant-ui/react";
 import ReactMarkdown from "react-markdown";
-import { Bot, CircleAlert, FileBox, Hammer, Network, UserRound } from "lucide-react";
+import {
+  Bot,
+  CheckCircle2,
+  CircleAlert,
+  Clipboard,
+  FileBox,
+  Hammer,
+  Link as LinkIcon,
+  ListChecks,
+  LoaderCircle,
+  Network,
+  UserRound,
+} from "lucide-react";
 
-import { interruptActions, repeatInterruptDecision } from "../interruptPayload";
 import { normalizeMathMarkdown } from "../markdown";
+import {
+  displayValue,
+  isInternalStoragePath,
+  presentError,
+  redactErrorText,
+  userFacingFileTitle,
+} from "../presentation";
+import { apiFetch } from "../useCatMasterThreadRuntime";
 
 function MarkdownBlock({ text }) {
-  const source = normalizeMathMarkdown(text);
   return (
     <div className="v2-message-text">
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-        {source}
+        {normalizeMathMarkdown(text)}
       </ReactMarkdown>
     </div>
   );
 }
 
-function InterruptActions({ part, onResume }) {
-  const actions = useMemo(() => interruptActions(part), [part]);
-  const [text, setText] = useState("");
-  const [editJson, setEditJson] = useState(() => JSON.stringify(actions.length === 1 ? actions[0] : actions, null, 2));
-  const [error, setError] = useState("");
-  const resolved = part.status === "resolved";
-  if (resolved) return null;
-  const rejectPayload = text.trim() ? { type: "reject", message: text.trim() } : { type: "reject" };
+function statusLabel(value) {
+  const status = String(value || "updated").toLowerCase();
+  return {
+    created: "Starting",
+    streaming: "In progress",
+    running: "Running",
+    queued: "Queued",
+    pending: "Waiting",
+    interrupted: "Waiting for review",
+    resolved: "Reviewed",
+    completed: "Completed",
+    complete: "Completed",
+    done: "Completed",
+    success: "Completed",
+    failed: "Failed",
+    error: "Failed",
+  }[status] || status.replace(/[_-]+/g, " ");
+}
+
+function FieldList({ fields, redact = false }) {
+  const rows = Array.isArray(fields) ? fields : [];
+  if (!rows.length) return null;
+  const visible = (value, fallback = "Not available") => {
+    const text = displayValue(value, fallback);
+    return redact ? redactErrorText(text) : text;
+  };
   return (
-    <div className="v2-interrupt-actions">
-      <div className="v2-interrupt-row">
-        <button type="button" onClick={() => onResume(repeatInterruptDecision(part, { type: "approve" }))}>Approve</button>
-        <button type="button" onClick={() => onResume(repeatInterruptDecision(part, rejectPayload))}>Reject</button>
-      </div>
-      <textarea
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        placeholder="Response or rejection note"
-        rows={2}
-      />
-      <div className="v2-interrupt-row">
-        <button type="button" disabled={!text.trim()} onClick={() => onResume(repeatInterruptDecision(part, { type: "respond", message: text.trim() }))}>Respond</button>
-      </div>
-      <details className="v2-interrupt-edit">
-        <summary>Edit action</summary>
-        <textarea
-          value={editJson}
-          onChange={(event) => {
-            setEditJson(event.target.value);
-            setError("");
-          }}
-          rows={5}
-        />
-        {error ? <div className="v2-error compact">{error}</div> : null}
-        <button
-          type="button"
-          onClick={() => {
-            try {
-              const edited = JSON.parse(editJson || "{}");
-              const editedActions = Array.isArray(edited) ? edited : [edited];
-              if (editedActions.length !== actions.length) {
-                throw new Error(`Expected ${actions.length} edited action(s).`);
-              }
-              editedActions.forEach((item) => {
-                if (!item || typeof item !== "object" || !item.name || !item.args || typeof item.args !== "object") {
-                  throw new Error("Each edited action must include name and args.");
-                }
-              });
-              onResume(editedActions.map((item) => ({ type: "edit", edited_action: item })));
-            } catch (err) {
-              setError(err.message || String(err));
-            }
-          }}
-        >
-          Submit edit
-        </button>
-      </details>
+    <dl className="v2-semantic-fields">
+      {rows.map((field, index) => (
+        <div key={`${field.label || "field"}-${index}`}>
+          <dt>{visible(field.label, "Detail")}</dt>
+          <dd>
+            {field.href && !redact ? (
+              <a href={field.href} title={visible(field.value, "Open linked item")}>
+                {visible(field.value, "Open linked item")}
+              </a>
+            ) : (
+              <span title={visible(field.value, "") || undefined}>
+                {visible(field.value)}
+              </span>
+            )}
+            {field.copy_value ? (
+              <button
+                type="button"
+                className="v2-inline-copy"
+                aria-label={`Copy ${field.label || "value"}`}
+                onClick={() => navigator.clipboard?.writeText(
+                  redact ? visible(field.copy_value, "") : String(field.copy_value || ""),
+                )}
+              >
+                <Clipboard size={13} />
+              </button>
+            ) : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function DiagnosticsReference({ value, entries = [] }) {
+  const rows = [
+    ...entries,
+    ...(value ? [{ label: "Diagnostics reference", value }] : []),
+  ].filter((entry) => entry?.value);
+  if (!rows.length) return null;
+  return (
+    <details className="v2-technical-details">
+      <summary>Technical details</summary>
+      {rows.map((entry) => (
+        <div key={entry.label}>
+          <span>{entry.label}</span>
+          {entry.showValue ? <code>{entry.value}</code> : null}
+          <button
+            type="button"
+            className="v2-diagnostics-ref"
+            onClick={() => navigator.clipboard?.writeText(String(entry.value))}
+            title={`Copy ${entry.label.toLowerCase()}`}
+          >
+            <Clipboard size={13} />
+            Copy reference
+          </button>
+        </div>
+      ))}
+    </details>
+  );
+}
+
+function ErrorNotice({ error, compact = false }) {
+  const presented = presentError(error);
+  if (!presented.message) return null;
+  return (
+    <div className={`v2-error ${compact ? "compact" : ""}`} role="alert">
+      <span>{presented.message}</span>
+      {presented.technicalDetails ? (
+        <details className="v2-error-details">
+          <summary>Technical details</summary>
+          <pre>{presented.technicalDetails}</pre>
+        </details>
+      ) : null}
     </div>
   );
 }
 
-function progressEntries(text) {
-  const raw = String(text || "").trim();
-  if (!raw) return [];
-  const withBreaks = raw
-    .replace(/(?<!^)(\*\*[^*\n]{3,90}\*\*)/g, "\n\n$1")
-    .replace(/(?<!^)(#{1,4}\s+)/g, "\n\n$1");
-  const chunks = withBreaks
-    .split(/\n{2,}/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (chunks.length > 1) return chunks;
-  const sentences = raw.match(/.{1,520}(?:[。.!?]\s+|$)/g) || [raw];
-  return sentences.map((item) => item.trim()).filter(Boolean);
+function TruncationNotice({ truncation, onLoadMore, onOpenFull, loading }) {
+  const total = Number(truncation.total_count || 0);
+  const shown = Number(truncation.shown_count || 0);
+  const sliced = Boolean(truncation?.truncated) || (total > 0 && shown < total);
+  if (!sliced) return null;
+  const canLoadMore = Boolean(onLoadMore && truncation?.next_cursor);
+  return (
+    <div className="v2-truncation-notice" role="status">
+      <span>{total ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()} ${truncation.unit || "items"}.` : `Showing ${shown.toLocaleString()} ${truncation.unit || "items"}; more are available.`}</span>
+      {canLoadMore ? (
+        <button type="button" className="v2-ghost-btn compact" onClick={onLoadMore} disabled={loading}>
+          {loading ? <LoaderCircle className="spin" size={14} /> : null}
+          Load more
+        </button>
+      ) : null}
+      {!canLoadMore && onOpenFull ? (
+        <button type="button" className="v2-ghost-btn compact" onClick={onOpenFull}>
+          Open full details
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
-function ReasoningPart({ text }) {
-  const entries = progressEntries(text);
-  const latest = entries[entries.length - 1] || "";
-  const history = entries.slice(0, -1);
-  return (
-    <section className="v2-progress-card">
-      <div className="v2-progress-head">
-        <span>Progress</span>
-        <small>{history.length ? `${history.length} previous` : "latest"}</small>
-      </div>
-      {latest ? <MarkdownBlock text={latest} /> : null}
-      {history.length ? (
-        <details className="v2-progress-history">
-          <summary>History</summary>
-          <div className="v2-progress-history-list">
-            {history.slice().reverse().map((entry, index) => (
-              <div key={`${entry.slice(0, 40)}-${index}`} className="v2-progress-history-item">
-                <MarkdownBlock text={entry} />
-              </div>
-            ))}
+function progressTitle(part) {
+  const title = displayValue(part?.title, "");
+  const generic = !title || ["execution update", "progress", "update"].includes(title.toLowerCase());
+  if (!generic) return title;
+  const status = String(part?.status || "").toLowerCase();
+  if (["completed", "complete", "done", "success"].includes(status)) return "Step completed";
+  if (["failed", "error"].includes(status)) return "Step needs attention";
+  return String(part?.type || "") === "reasoning" ? "Reasoning trace" : "Work in progress";
+}
+
+function LongTextPart({ part, progress = false, onSelect }) {
+  const [text, setText] = useState(String(part?.text || ""));
+  const [page, setPage] = useState(part?.truncation || {});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setText(String(part?.text || ""));
+    setPage(part?.truncation || {});
+  }, [
+    part?.id,
+    part?.text,
+    part?.truncation?.shown_count,
+    part?.truncation?.total_count,
+    part?.truncation?.next_cursor,
+  ]);
+
+  async function loadMore() {
+    const ref = String(page?.full_content_ref || part?.truncation?.full_content_ref || "");
+    if (!ref) return;
+    setLoading(true);
+    setError("");
+    try {
+      const join = ref.includes("?") ? "&" : "?";
+      const cursor = String(page?.next_cursor || "");
+      if (!cursor) return;
+      const payload = await apiFetch(`${ref}${join}cursor=${encodeURIComponent(cursor)}`);
+      const nextText = String(payload.text || "");
+      setText((current) => `${current}${nextText}`);
+      setPage((current) => {
+        const next = payload.page || {};
+        const loaded = Number(current?.shown_count || 0) + Number(next?.shown_count || nextText.length || 0);
+        const total = Number(next?.total_count || current?.total_count || 0);
+        return {
+          ...next,
+          shown_count: total ? Math.min(total, loaded) : loaded,
+          total_count: total,
+        };
+      });
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (progress) {
+    return (
+      <section className="v2-progress-card">
+        <div className="v2-progress-head">
+          <span>{progressTitle(part)}</span>
+          <small>{statusLabel(part.status)}</small>
+        </div>
+        {text ? (
+          <MarkdownBlock text={text} />
+        ) : (
+          <div className="v2-muted">
+            {["completed", "complete", "done", "success"].includes(String(part?.status || "").toLowerCase())
+              ? "This step completed without a written trace."
+              : "No written trace has been recorded yet."}
           </div>
-        </details>
+        )}
+        <TruncationNotice truncation={page} onLoadMore={loadMore} loading={loading} />
+        {!text && part?.detail_ref ? (
+          <button
+            type="button"
+            className="v2-ghost-btn compact"
+            onClick={() => onSelect?.({ type: "activity", part })}
+          >
+            Open details
+          </button>
+        ) : null}
+        <ErrorNotice error={error} compact />
+      </section>
+    );
+  }
+  return (
+    <div>
+      {text ? <MarkdownBlock text={text} /> : null}
+      <TruncationNotice truncation={page} onLoadMore={loadMore} loading={loading} />
+      <ErrorNotice error={error} compact />
+    </div>
+  );
+}
+
+function ItemList({ items, ordered = false, redact = false }) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) return null;
+  const Root = ordered ? "ol" : "ul";
+  const visible = (value, fallback = "Not available") => {
+    const text = displayValue(value, fallback);
+    return redact ? redactErrorText(text) : text;
+  };
+  return (
+    <Root className="v2-semantic-items">
+      {rows.map((item, index) => (
+        <li key={`${item.label || "item"}-${index}`}>
+          <div>
+            {item.href && !redact ? (
+              <a href={item.href} target="_blank" rel="noreferrer" title={visible(item.label, "Open item")}>
+                {visible(item.label, "Open item")}
+              </a>
+            ) : (
+              <span title={visible(item.label, "") || undefined}>{visible(item.label, "Item")}</span>
+            )}
+            {item.summary ? <small>{visible(item.summary)}</small> : null}
+          </div>
+          {item.status ? <code>{statusLabel(item.status)}</code> : null}
+        </li>
+      ))}
+    </Root>
+  );
+}
+
+function CardActions({ actions, part, onSelect }) {
+  const rows = Array.isArray(actions) ? actions : [];
+  const detailTypes = new Set(["tool", "receipt", "attachment"]);
+  const isArtifactWithoutOpen = String(part?.type || "") === "artifact"
+    && !rows.some((action) => action?.id === "open_artifact");
+  const showDetail = detailTypes.has(String(part?.type || "")) || isArtifactWithoutOpen;
+  if (!rows.length && !showDetail) return null;
+  return (
+    <div className="v2-card-actions">
+      {rows.map((action, index) => {
+        if (action.id === "open_artifact") {
+          return (
+            <button
+              key={`${action.id}-${index}`}
+              type="button"
+              className="v2-ghost-btn compact"
+              onClick={() => onSelect?.({
+                type: "artifact",
+                artifact_id: part.artifact_id,
+                path: part.path,
+                artifact: part,
+              })}
+            >
+              <FileBox size={14} />
+              {action.label || "Open"}
+            </button>
+          );
+        }
+        const hidesErrorReference = String(part?.type || "") === "error"
+          || ["failed", "error"].includes(String(part?.status || "").toLowerCase());
+        if (action.href && !hidesErrorReference) {
+          return (
+            <button
+              key={`${action.id}-${index}`}
+              type="button"
+              className="v2-ghost-btn compact"
+              onClick={() => onSelect?.({ type: "file", path: action.href })}
+            >
+              <LinkIcon size={14} />
+              {displayValue(action.label, "Open")}
+            </button>
+          );
+        }
+        if (action.id === "focus_composer") {
+          return (
+            <button
+              key={`${action.id}-${index}`}
+              type="button"
+              className="v2-primary-btn compact"
+              onClick={() => {
+                const composer = document.querySelector(".v2-composer textarea");
+                composer?.focus();
+                composer?.scrollIntoView?.({ block: "nearest" });
+              }}
+            >
+              {displayValue(action.label, "Review and try again")}
+            </button>
+          );
+        }
+        return null;
+      })}
+      {showDetail ? (
+        <button
+          type="button"
+          className="v2-ghost-btn compact"
+          onClick={() => {
+            if (String(part?.type || "") === "artifact") {
+              onSelect?.({
+                type: "artifact",
+                artifact_id: part.artifact_id,
+                path: part.path,
+                artifact: part,
+              });
+              return;
+            }
+            onSelect?.({ type: "activity", part });
+          }}
+        >
+          Open details
+        </button>
       ) : null}
+    </div>
+  );
+}
+
+function SemanticCard({ part, icon: Icon = Hammer, className = "", onSelect }) {
+  const isError = String(part.type || "") === "error"
+    || ["failed", "error"].includes(String(part.status || "").toLowerCase());
+  const internalPath = isInternalStoragePath(part.path);
+  const publicTitle = String(part.type || "") === "artifact"
+    ? userFacingFileTitle(part.title, part.path, "Artifact")
+    : displayValue(part.title, "Activity");
+  const longFileContent = String(part.type || "") === "tool"
+    && /\bread file\b/i.test(publicTitle)
+    && displayValue(part.summary, "").length > 240;
+  const visible = (value, fallback) => {
+    const text = displayValue(value, fallback);
+    return isError ? redactErrorText(text) : text;
+  };
+  return (
+    <section
+      className={`v2-semantic-card ${className} status-${String(part.status || "updated").toLowerCase()}`}
+      role={isError ? "alert" : "region"}
+      aria-label={publicTitle}
+    >
+      <div className="v2-semantic-card-head">
+        <Icon size={16} />
+        <div>
+          <strong>{isError ? redactErrorText(publicTitle) : publicTitle}</strong>
+          {part.summary ? (
+            <p>{longFileContent ? "File contents are available in details." : visible(part.summary, "")}</p>
+          ) : null}
+        </div>
+        <small>{statusLabel(part.status)}</small>
+      </div>
+      <FieldList
+        fields={(Array.isArray(part.fields) ? part.fields : []).filter((field) => !isInternalStoragePath(field?.value))}
+        redact={isError}
+      />
+      <ItemList items={part.items} redact={isError} />
+      <CardActions actions={part.actions} part={part} onSelect={onSelect} />
+      <TruncationNotice
+        truncation={part.truncation || {}}
+        onOpenFull={part.detail_ref ? () => onSelect?.({ type: "activity", part }) : null}
+      />
+      <DiagnosticsReference
+        value={part.diagnostics_ref}
+        entries={internalPath ? [{ label: "Managed storage reference", value: part.path, showValue: true }] : []}
+      />
     </section>
   );
 }
 
-function toolSource(part) {
-  return String(
-    part?.source
-      || part?.artifact?.subagent_source
-      || part?.artifact?.agent_name
-      || part?.data?.subagent_source
-      || part?.data?.agent_name
-      || "",
-  ).trim();
-}
-
-function ToolPart({ toolName, toolCallId, args, result, artifact, source, status }) {
-  const normalizedStatus = status?.type || (result === undefined ? "running" : "completed");
-  const subagentSource = toolSource({ source, artifact });
-  const displayName = subagentSource ? `${subagentSource} · ${toolName || "Tool call"}` : (toolName || "Tool call");
-  const part = {
-    id: toolCallId,
-    type: "tool-call",
-    status: normalizedStatus,
-    tool: toolName,
-    meta: {
-      tool_call_id: toolCallId,
-      tool: toolName,
-      input: args || {},
-      output: result,
-      agent_name: artifact?.agent_name || "",
-      subagent_source: artifact?.subagent_source || source || "",
-      artifact,
-    },
-  };
-  const inputText = JSON.stringify(part.meta.input || {}, null, 2);
-  const outputText = result === undefined ? "" : (typeof result === "string" ? result : JSON.stringify(result, null, 2));
+function ReviewField({ field, value, onChange }) {
+  if (field.input_type === "boolean") {
+    return (
+      <label className="v2-review-field checkbox">
+        <input
+          type="checkbox"
+          checked={String(value) === "true" || value === true}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span>{field.label}</span>
+      </label>
+    );
+  }
+  const Input = field.input_type === "textarea" ? "textarea" : "input";
   return (
-    <details className={`v2-tool-card status-${normalizedStatus}`}>
-      <summary>
-        <Hammer size={16} />
-        <span>{displayName}</span>
-        <small>{normalizedStatus}</small>
-      </summary>
-      <div className="v2-tool-card-body">
-        <label>Input</label>
-        <pre className="v2-code compact">{inputText}</pre>
-        {outputText ? (
-          <>
-            <label>Output</label>
-            <pre className="v2-code compact">{outputText}</pre>
-          </>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
-function DataPart({ name, data, status, onSelect, onResume }) {
-  const type = String(data?.type || name || "data").replace(/^catmaster-/, "");
-  if (type === "artifact") {
-    return (
-      <button type="button" className="v2-part-card artifact" onClick={() => onSelect({ type: "artifact", artifact_id: data.artifact_id, path: data.path, artifact: data })}>
-        <FileBox size={16} />
-        <span>{data.title || data.path || "Artifact"}</span>
-        <small>{data.renderer || "file"}</small>
-      </button>
-    );
-  }
-  if (type === "interrupt") {
-    const part = { ...data, status: data.status || status?.type || "pending", meta: data.meta || data };
-    return (
-      <div className="v2-interrupt-card">
-        <div className="v2-part-card interrupt">
-          <CircleAlert size={16} />
-          <span>{part.meta?.title || "Review required"}</span>
-          <small>{part.status || "pending"}</small>
-        </div>
-        <InterruptActions part={part} onResume={onResume} />
-      </div>
-    );
-  }
-  if (type === "receipt") {
-    return (
-      <details className="v2-subagent-card">
-        <summary>
-          <FileBox size={16} />
-          <span>{data.meta?.remote_context_id || data.meta?.submission_hash || data.text || "Remote receipt"}</span>
-          <small>{data.status || status?.type || "updated"}</small>
-        </summary>
-        <pre className="v2-code compact">{JSON.stringify(data.meta || data, null, 2)}</pre>
-      </details>
-    );
-  }
-  if (type === "citations") {
-    const citations = Array.isArray(data.citations) ? data.citations : [];
-    return (
-      <details className="v2-subagent-card v2-citation-card">
-        <summary>
-          <Network size={16} />
-          <span>Web sources</span>
-          <small>{citations.length}</small>
-        </summary>
-        <ol className="v2-citation-list">
-          {citations.map((citation, index) => (
-            <li key={`${citation.url || "source"}-${index}`}>
-              <a href={citation.url} target="_blank" rel="noreferrer">
-                {citation.title || citation.url}
-              </a>
-            </li>
-          ))}
-        </ol>
-      </details>
-    );
-  }
-  if (type === "subagent" || type === "trace") {
-    const source = data.meta?.source || data.source || "internal";
-    const preview = String(data.text || "").trim();
-    return (
-      <details className="v2-subagent-card">
-        <summary>
-          <Network size={16} />
-          <span>{source}</span>
-          <small>{data.status || status?.type || "running"}</small>
-        </summary>
-        <div className="v2-subagent-body">
-          {preview ? <MarkdownBlock text={preview} /> : <span>No visible trace text.</span>}
-        </div>
-      </details>
-    );
-  }
-  return <pre className="v2-code compact">{JSON.stringify(data, null, 2)}</pre>;
-}
-
-function partActivityKind(part) {
-  if (part?.type === "tool-call") return "tool";
-  if (part?.type !== "data") return "";
-  const type = String(part.data?.type || part.name || "data").replace(/^catmaster-/, "");
-  return ["receipt", "subagent", "trace"].includes(type) ? type : "";
-}
-
-function compactText(value, max = 140) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  return text.length > max ? `${text.slice(0, max)}...` : text;
-}
-
-function toolSelectionPart(part) {
-  return {
-    id: part.toolCallId,
-    type: "tool-call",
-    status: part.status?.type || part.status || (part.result === undefined ? "running" : "completed"),
-    tool: part.toolName,
-    meta: {
-      tool_call_id: part.toolCallId,
-      tool: part.toolName,
-      input: part.args || {},
-      output: part.result,
-      agent_name: part.artifact?.agent_name || "",
-      subagent_source: part.artifact?.subagent_source || part.source || "",
-      artifact: part.artifact,
-    },
-  };
-}
-
-function activityLabel(part) {
-  const kind = partActivityKind(part);
-  if (kind === "tool") {
-    const source = toolSource(part);
-    const toolTitle = part.toolName || "Tool call";
-    return {
-      icon: Hammer,
-      title: source ? `${source} · ${toolTitle}` : toolTitle,
-      status: part.status?.type || part.status || (part.result === undefined ? "running" : "completed"),
-      detail: compactText(JSON.stringify(part.args || {})),
-    };
-  }
-  const data = part.data || {};
-  if (kind === "receipt") {
-    return {
-      icon: FileBox,
-      title: data.meta?.remote_context_id || data.meta?.submission_hash || data.text || "Remote receipt",
-      status: data.status || part.status?.type || "updated",
-      detail: compactText(data.meta?.receipt_rel || data.meta?.status_message || ""),
-    };
-  }
-  const source = data.meta?.source || data.source || kind;
-  return {
-    icon: Network,
-    title: source,
-    status: data.status || part.status?.type || "running",
-    detail: compactText(data.text || data.summary || ""),
-  };
-}
-
-function ActivityRow({ part }) {
-  const label = activityLabel(part);
-  const Icon = label.icon;
-  const kind = partActivityKind(part);
-  if (kind === "tool") {
-    return (
-      <ToolPart
-        toolName={part.toolName}
-        toolCallId={part.toolCallId}
-        args={part.args}
-        result={part.result}
-        artifact={part.artifact}
-        source={part.source}
-        status={part.status}
+    <label className="v2-review-field">
+      <span>{field.label}{field.required ? " *" : ""}</span>
+      <Input
+        type={field.input_type === "number" ? "number" : undefined}
+        rows={field.input_type === "textarea" ? 4 : undefined}
+        value={value ?? ""}
+        required={field.required}
+        onChange={(event) => onChange(event.target.value)}
       />
-    );
+    </label>
+  );
+}
+
+function InterruptCard({ part, onResume }) {
+  const actions = Array.isArray(part.actions) ? part.actions : [];
+  const actionIds = useMemo(
+    () => [...new Set(actions.map((action) => String(action.id || "")).filter(Boolean))],
+    [actions],
+  );
+  const [selected, setSelected] = useState({});
+  const [values, setValues] = useState({});
+  const [error, setError] = useState("");
+  const resolved = part.status === "resolved";
+  const cardRef = useRef(null);
+  const validationErrorRef = useRef(null);
+  const wasPendingRef = useRef(!resolved);
+
+  useEffect(() => {
+    if (!resolved) {
+      wasPendingRef.current = true;
+      if (!document.activeElement || document.activeElement === document.body) {
+        cardRef.current?.focus();
+      }
+      return;
+    }
+    if (wasPendingRef.current) {
+      wasPendingRef.current = false;
+      window.requestAnimationFrame(() => {
+        document.querySelector(".v2-composer textarea")?.focus();
+      });
+    }
+  }, [resolved]);
+
+  useEffect(() => {
+    if (error) validationErrorRef.current?.focus();
+  }, [error]);
+
+  function choose(action) {
+    const id = String(action.id || "");
+    const defaults = {};
+    (action.fields || []).forEach((field) => {
+      defaults[field.name] = field.value ?? "";
+    });
+    setSelected((current) => ({ ...current, [id]: action.decision }));
+    setValues((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] || {}),
+        ...defaults,
+      },
+    }));
+    setError("");
   }
-  const data = part.data || {};
-  return (
-    <details className={`v2-activity-row status-${label.status}`}>
-      <summary>
-        <Icon size={15} />
-        <span>{label.title}</span>
-        {label.detail ? <small>{label.detail}</small> : null}
-        <code>{label.status}</code>
-      </summary>
-      <pre className="v2-code compact">{JSON.stringify(data.meta || data, null, 2)}</pre>
-    </details>
-  );
-}
 
-function ActivityGroup({ parts, onSelect }) {
-  const counts = parts.reduce((acc, part) => {
-    const kind = partActivityKind(part) || "event";
-    acc[kind] = (acc[kind] || 0) + 1;
-    const status = activityLabel(part).status;
-    if (["failed", "error", "incomplete"].includes(String(status))) acc.failed += 1;
-    if (["running", "streaming"].includes(String(status))) acc.running += 1;
-    return acc;
-  }, { tool: 0, receipt: 0, trace: 0, subagent: 0, failed: 0, running: 0 });
-  const summary = [
-    counts.tool ? `${counts.tool} tools` : "",
-    counts.subagent || counts.trace ? `${counts.subagent + counts.trace} traces` : "",
-    counts.receipt ? `${counts.receipt} receipts` : "",
-  ].filter(Boolean).join(" / ");
-  const status = counts.failed ? `${counts.failed} failed` : counts.running ? `${counts.running} running` : "complete";
+  async function submit() {
+    if (actionIds.some((id) => !selected[id])) {
+      setError("Choose one decision for every pending action.");
+      return;
+    }
+    const reviews = [];
+    for (const id of actionIds) {
+      const action = actions.find((item) => String(item.id) === id && item.decision === selected[id]);
+      const fields = { ...(values[id] || {}) };
+      const missing = (action?.fields || []).find((field) => field.required && !String(fields[field.name] ?? "").trim());
+      if (missing) {
+        setError(`${missing.label} is required.`);
+        return;
+      }
+      if (action?.confirmation && !window.confirm(action.confirmation)) return;
+      reviews.push({
+        action_id: id,
+        decision: selected[id],
+        fields,
+        reason: String(fields.reason || ""),
+      });
+    }
+    setError("");
+    await onResume?.(reviews);
+  }
+
   return (
-    <details className="v2-activity-group">
-      <summary>
-        <Hammer size={16} />
-        <span>Activity</span>
-        <small>{summary || `${parts.length} events`}</small>
-        <code>{status}</code>
-      </summary>
-      <div className="v2-activity-list">
-        {parts.map((part, index) => (
-          <ActivityRow key={part.toolCallId || part.data?.id || part.data?.meta?.submission_hash || `${part.name || part.type}-${index}`} part={part} />
-        ))}
+    <section
+      ref={cardRef}
+      className={`v2-interrupt-card status-${part.status || "pending"}`}
+      role="region"
+      aria-label={part.title || "Review required"}
+      tabIndex={resolved ? undefined : -1}
+    >
+      <div className="v2-semantic-card-head">
+        <CircleAlert size={17} />
+        <div>
+          <strong>{part.title || "Your decision is required"}</strong>
+          <p>{part.summary || "The task is paused until you decide."}</p>
+        </div>
+        <small>{statusLabel(part.status)}</small>
       </div>
-    </details>
+      <ItemList items={part.items} ordered />
+      {!resolved ? actionIds.map((id, index) => {
+        const variants = actions.filter((action) => String(action.id) === id);
+        const active = variants.find((action) => action.decision === selected[id]);
+        return (
+          <fieldset key={id} className="v2-review-action">
+            <legend>{part.items?.[index]?.label || `Action ${index + 1}`}</legend>
+            <div className="v2-interrupt-row">
+              {variants.map((action) => (
+                <button
+                  key={`${id}-${action.decision}`}
+                  type="button"
+                  className={`v2-review-choice kind-${action.kind || "secondary"} ${selected[id] === action.decision ? "active" : ""}`}
+                  aria-pressed={selected[id] === action.decision}
+                  onClick={() => choose(action)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            {active?.fields?.length ? (
+              <div className="v2-review-fields">
+                {active.fields.map((field) => (
+                  <ReviewField
+                    key={field.name}
+                    field={field}
+                    value={values[id]?.[field.name] ?? field.value ?? ""}
+                    onChange={(value) => setValues((current) => ({
+                      ...current,
+                      [id]: { ...(current[id] || {}), [field.name]: value },
+                    }))}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </fieldset>
+        );
+      }) : null}
+      {error ? <div ref={validationErrorRef} className="v2-error compact" role="alert" tabIndex={-1}>{error}</div> : null}
+      {!resolved && actionIds.length ? (
+        <button type="button" className="v2-primary-btn" onClick={submit}>Submit decisions</button>
+      ) : null}
+      <DiagnosticsReference value={part.diagnostics_ref} />
+    </section>
   );
 }
 
-function groupMessageParts(parts) {
-  const groups = [];
-  let activity = [];
-  const flushActivity = () => {
-    if (!activity.length) return;
-    if (activity.length <= 2) {
-      activity.forEach((part) => groups.push({ type: "part", part }));
-    } else {
-      groups.push({ type: "activity", parts: activity });
-    }
-    activity = [];
-  };
-  (Array.isArray(parts) ? parts : []).forEach((part) => {
-    if (partActivityKind(part)) {
-      activity.push(part);
-    } else {
-      flushActivity();
-      groups.push({ type: "part", part });
-    }
-  });
-  flushActivity();
-  return groups;
+function RenderProjectedPart({ part, onSelect, onResume }) {
+  const type = String(part?.type || "unknown");
+  if (type === "text") return <LongTextPart part={part} />;
+  if (type === "reasoning") return <LongTextPart part={part} progress onSelect={onSelect} />;
+  if (type === "progress") {
+    if (part.items?.length) return <SemanticCard part={part} icon={ListChecks} className="progress" onSelect={onSelect} />;
+    return <LongTextPart part={part} progress onSelect={onSelect} />;
+  }
+  if (type === "artifact" || type === "attachment") return <SemanticCard part={part} icon={FileBox} className="artifact" onSelect={onSelect} />;
+  if (type === "tool") return <SemanticCard part={part} icon={Hammer} className="tool" onSelect={onSelect} />;
+  if (type === "receipt") return <SemanticCard part={part} icon={Network} className="receipt" onSelect={onSelect} />;
+  if (type === "interrupt") return <InterruptCard part={part} onResume={onResume} />;
+  if (type === "error") return <SemanticCard part={part} icon={CircleAlert} className="error" onSelect={onSelect} />;
+  if (type === "citations") return <SemanticCard part={part} icon={LinkIcon} className="citations" onSelect={onSelect} />;
+  return <SemanticCard part={part} icon={CircleAlert} className="unknown" onSelect={onSelect} />;
 }
 
-function RenderMessagePart({ part, onSelect, onResume }) {
-  if (part?.type === "text") return <MarkdownBlock text={part.text} />;
-  if (part?.type === "reasoning") return <ReasoningPart text={part.text} />;
-  if (part?.type === "tool-call") return <ToolPart {...part} />;
-  if (part?.type === "data") return <DataPart {...part} onSelect={onSelect} onResume={onResume} />;
-  return <pre className="v2-code compact">{JSON.stringify(part, null, 2)}</pre>;
+function partFromAssistantContent(part) {
+  if (part?.type === "data") return part.data || {};
+  return {
+    id: "",
+    type: "unknown",
+    status: "unsupported",
+    title: "This activity cannot be displayed yet",
+    summary: "The record remains available to developer diagnostics.",
+    fields: [],
+    actions: [],
+    items: [],
+  };
 }
 
 function CatMasterMessage({ onSelect, onResume }) {
   const message = useMessage();
   const role = String(message?.role || "assistant");
   const status = message?.status?.type || message?.status || "";
-  const contentGroups = groupMessageParts(message?.content);
+  const projectedMessage = message?.metadata?.custom?.catmaster || {};
+  const initialParts = (Array.isArray(message?.content) ? message.content : []).map(partFromAssistantContent);
+  const [additionalParts, setAdditionalParts] = useState([]);
+  const [partsPage, setPartsPage] = useState(projectedMessage.parts_page || {});
+  const [loadingParts, setLoadingParts] = useState(false);
+  const [partsError, setPartsError] = useState("");
+  const parts = [...initialParts, ...additionalParts];
+
+  useEffect(() => {
+    setAdditionalParts([]);
+    setPartsPage(projectedMessage.parts_page || {});
+    setPartsError("");
+  }, [message?.id]);
+
+  async function loadMoreParts() {
+    const ref = String(partsPage?.full_content_ref || "");
+    const cursor = String(partsPage?.next_cursor || "");
+    if (!ref || !cursor || loadingParts) return;
+    setLoadingParts(true);
+    setPartsError("");
+    try {
+      const join = ref.includes("?") ? "&" : "?";
+      const payload = await apiFetch(`${ref}${join}cursor=${encodeURIComponent(cursor)}`);
+      const rows = Array.isArray(payload.parts) ? payload.parts : [];
+      setAdditionalParts((current) => {
+        const seen = new Set([...initialParts, ...current].map((part) => part.id));
+        return [...current, ...rows.filter((part) => !seen.has(part.id))];
+      });
+      setPartsPage(payload.page || {});
+    } catch (err) {
+      setPartsError(err.message || String(err));
+    } finally {
+      setLoadingParts(false);
+    }
+  }
+
+  if (!parts.length && role === "assistant") return null;
   return (
     <MessagePrimitive.Root asChild>
       <article className={`v2-message role-${role} status-${status}`}>
@@ -420,14 +670,25 @@ function CatMasterMessage({ onSelect, onResume }) {
         <div className="v2-message-body">
           <div className="v2-message-meta">
             <span>{role === "user" ? "You" : "CatMaster"}</span>
-            <small>{status}</small>
+            <small>{statusLabel(status)}</small>
           </div>
           <div className="v2-message-parts">
-            {contentGroups.map((group, index) => (
-              group.type === "activity"
-                ? <ActivityGroup key={`activity-${index}`} parts={group.parts} onSelect={onSelect} />
-                : <RenderMessagePart key={group.part?.toolCallId || group.part?.data?.id || `${group.part?.type || "part"}-${index}`} part={group.part} onSelect={onSelect} onResume={onResume} />
+            {parts.map((part, index) => (
+              <RenderProjectedPart
+                key={part.id || `${part.type || "part"}-${index}`}
+                part={part}
+                onSelect={onSelect}
+                onResume={onResume}
+              />
             ))}
+            {partsPage?.truncated ? (
+              <TruncationNotice
+                truncation={partsPage}
+                onLoadMore={loadMoreParts}
+                loading={loadingParts}
+              />
+            ) : null}
+            <ErrorNotice error={partsError} compact />
           </div>
         </div>
       </article>
@@ -435,20 +696,159 @@ function CatMasterMessage({ onSelect, onResume }) {
   );
 }
 
-export default function ThreadMessages({ messages, loading, error, onSelect, onResume }) {
-  if (loading) return <div className="v2-empty">Loading thread...</div>;
-  if (error) return <div className="v2-error">{error}</div>;
+export default function ThreadMessages({
+  threadId = "",
+  messages,
+  loading,
+  error,
+  onSelect,
+  onResume,
+  hasMore = false,
+  onLoadOlder,
+  loadingOlder = false,
+}) {
+  const viewportRef = useRef(null);
+  const [preservingHistoryAnchor, setPreservingHistoryAnchor] = useState(false);
+  const preservingHistoryRef = useRef(false);
+  const followBottomRef = useRef(true);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+    const updateFollowState = () => {
+      if (preservingHistoryRef.current) return;
+      followBottomRef.current = (
+        Math.abs(viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 2
+        || viewport.scrollHeight <= viewport.clientHeight
+      );
+    };
+    const content = viewport.querySelector(".v2-thread-messages");
+    const observer = new ResizeObserver(() => {
+      if (!preservingHistoryRef.current && followBottomRef.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    });
+    viewport.addEventListener("scroll", updateFollowState, { passive: true });
+    if (content) observer.observe(content);
+    updateFollowState();
+    return () => {
+      viewport.removeEventListener("scroll", updateFollowState);
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !threadId) return;
+    followBottomRef.current = true;
+    window.requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+  }, [threadId]);
+
+  async function loadOlder() {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      await onLoadOlder?.();
+      return;
+    }
+    const viewportRect = viewport.getBoundingClientRect();
+    const anchor = [...viewport.querySelectorAll("[data-message-id]")].find((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.bottom > viewportRect.top + 1;
+    });
+    const anchorId = anchor?.getAttribute("data-message-id") || "";
+    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - viewportRect.top : 0;
+    const previousHeight = viewport.scrollHeight;
+    const previousTop = viewport.scrollTop;
+    const previousMessageCount = viewport.querySelectorAll("[data-message-id]").length;
+    preservingHistoryRef.current = true;
+    setPreservingHistoryAnchor(true);
+    try {
+      await onLoadOlder?.();
+      let attempt = 0;
+      let stableFrames = 0;
+      let observedPrepend = false;
+      let lastHeight = previousHeight;
+      const restoreAnchor = () => {
+        const messageCount = viewport.querySelectorAll("[data-message-id]").length;
+        const currentHeight = viewport.scrollHeight;
+        if (messageCount > previousMessageCount || currentHeight !== previousHeight) {
+          observedPrepend = true;
+        }
+        const nextAnchor = anchorId
+          ? viewport.querySelector(`[data-message-id="${CSS.escape(anchorId)}"]`)
+          : null;
+        let offsetError = Number.POSITIVE_INFINITY;
+        if (nextAnchor) {
+          const nextOffset = nextAnchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+          offsetError = nextOffset - anchorOffset;
+          if (Math.abs(offsetError) > 0.25) viewport.scrollTop += offsetError;
+        } else if (observedPrepend && attempt === 0) {
+          viewport.scrollTop = previousTop + Math.max(0, viewport.scrollHeight - previousHeight);
+        }
+        const heightStable = Math.abs(currentHeight - lastHeight) <= 0.5;
+        const anchorStable = nextAnchor && Math.abs(offsetError) <= 0.5;
+        stableFrames = observedPrepend && heightStable && anchorStable ? stableFrames + 1 : 0;
+        lastHeight = currentHeight;
+        attempt += 1;
+        // React and assistant-ui may commit the prepended window after the
+        // request promise resolves. Wait for the DOM change, then require a
+        // short quiet period so late Markdown/font layout cannot move the
+        // reader's visual anchor.
+        if (attempt < 180 && (!observedPrepend || stableFrames < 12)) {
+          window.requestAnimationFrame(restoreAnchor);
+          return;
+        }
+        viewport.dispatchEvent(new Event("scroll"));
+        preservingHistoryRef.current = false;
+        followBottomRef.current = (
+          Math.abs(viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 2
+        );
+        setPreservingHistoryAnchor(false);
+      };
+      window.requestAnimationFrame(restoreAnchor);
+    } catch (loadError) {
+      preservingHistoryRef.current = false;
+      setPreservingHistoryAnchor(false);
+      throw loadError;
+    }
+  }
+  if (loading) return <div className="v2-empty" role="status">Loading this conversation…</div>;
+  if (error) return <ErrorNotice error={error} />;
   if (!messages.length) {
-    return <div className="v2-empty">Start a thread from the composer.</div>;
+    return (
+      <div className="v2-empty">
+        <strong>This conversation is ready.</strong>
+        <span>Describe the research question or task in the composer below.</span>
+      </div>
+    );
   }
   return (
     <ThreadPrimitive.Root className="v2-thread-root">
-      <ThreadPrimitive.Viewport className="v2-thread-viewport" autoScroll>
+      <ThreadPrimitive.Viewport
+        ref={viewportRef}
+        className="v2-thread-viewport"
+        autoScroll={false}
+        scrollToBottomOnInitialize={false}
+        scrollToBottomOnRunStart={false}
+        scrollToBottomOnThreadSwitch={false}
+        data-preserving-history-anchor={preservingHistoryAnchor ? "true" : undefined}
+      >
         <div className="v2-thread-messages">
+          {hasMore ? (
+            <button type="button" className="v2-load-history" onClick={loadOlder} disabled={loadingOlder}>
+              {loadingOlder ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
+              Load earlier messages
+            </button>
+          ) : null}
           <ThreadPrimitive.Messages>
             {() => <CatMasterMessage onSelect={onSelect} onResume={onResume} />}
           </ThreadPrimitive.Messages>
         </div>
+        <ThreadPrimitive.ScrollToBottom className="v2-new-messages">
+          New messages
+        </ThreadPrimitive.ScrollToBottom>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
   );

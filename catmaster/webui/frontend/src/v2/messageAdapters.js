@@ -22,30 +22,14 @@ function assistantStatus(status) {
 
 function catPartToAssistant(part) {
   const type = String(part?.type || "");
-  if (type === "text") {
-    return { type: "text", text: String(part.text || "") };
-  }
-  if (type === "reasoning") {
-    return { type: "reasoning", text: String(part.text || "") };
-  }
-  if (type === "tool-call") {
-    const meta = part.meta || {};
-    const source = String(meta.subagent_source || meta.agent_name || part.subagent_source || part.agent_name || "").trim();
-    return {
-      type: "tool-call",
-      toolCallId: String(part.tool_call_id || meta.tool_call_id || part.id || ""),
-      toolName: String(part.tool || meta.tool || "tool"),
-      args: meta.input || part.input || {},
-      argsText: JSON.stringify(meta.input || part.input || {}),
-      result: part.output ?? meta.output,
-      artifact: meta,
-      source,
-    };
-  }
   return {
     type: "data",
     name: `catmaster-${type || "part"}`,
-    data: part || {},
+    data: part || {
+      type: "unknown",
+      title: "This activity cannot be displayed yet",
+      summary: "The record remains available to developer diagnostics.",
+    },
   };
 }
 
@@ -54,16 +38,6 @@ export function catMessageToAssistant(message) {
   const content = Array.isArray(message?.parts)
     ? message.parts.map(catPartToAssistant)
     : [{ type: "text", text: String(message?.content || "") }];
-  const citations = Array.isArray(message?.structured_sidecar?.citations)
-    ? message.structured_sidecar.citations.filter((citation) => citation && citation.url)
-    : [];
-  if (role === "assistant" && citations.length) {
-    content.push({
-      type: "data",
-      name: "catmaster-citations",
-      data: { type: "citations", citations },
-    });
-  }
   const base = {
     id: String(message?.id || ""),
     role,

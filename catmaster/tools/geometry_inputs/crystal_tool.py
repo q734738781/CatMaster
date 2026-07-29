@@ -12,6 +12,7 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.symmetry.bandstructure import HighSymmKpath
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.structures.defects import apply_site_defect, insert_interstitial
 from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 
 
@@ -651,9 +652,8 @@ def create_vacancy(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             out_path = resolve_workspace_path(params.output_path) if params.output_path else (
                 structure_path.parent / f"{structure_path.stem}_vacancy_idx{target_index}{suffix}"
             )
-            modified = structure.copy()
-            removed_species = modified[target_index].species_string
-            modified.remove_sites([target_index])
+            removed_species = structure[target_index].species_string
+            modified = apply_site_defect(structure, kind="vacancy", site_index=target_index)
             _write_structure(out_path, modified)
             data = {
                 "input_rel": workspace_relpath(structure_path),
@@ -681,9 +681,8 @@ def create_vacancy(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for group in groups:
             target_index = int(group["representative_index"])
-            modified = structure.copy()
-            removed_species = modified[target_index].species_string
-            modified.remove_sites([target_index])
+            removed_species = structure[target_index].species_string
+            modified = apply_site_defect(structure, kind="vacancy", site_index=target_index)
             out_path = output_dir / f"group_{group['group_id']:03d}_idx{target_index}_{removed_species}{suffix}"
             _write_structure(out_path, modified)
             results.append(
@@ -750,9 +749,13 @@ def substitute_species(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             out_path = resolve_workspace_path(params.output_path) if params.output_path else (
                 structure_path.parent / f"{structure_path.stem}_sub_{params.new_species}_idx{target_index}{suffix}"
             )
-            modified = structure.copy()
-            old_species = modified[target_index].species_string
-            modified.replace(target_index, params.new_species)
+            old_species = structure[target_index].species_string
+            modified = apply_site_defect(
+                structure,
+                kind="substitution",
+                site_index=target_index,
+                new_species=params.new_species,
+            )
             _write_structure(out_path, modified)
             data = {
                 "input_rel": workspace_relpath(structure_path),
@@ -781,9 +784,13 @@ def substitute_species(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for group in groups:
             target_index = int(group["representative_index"])
-            modified = structure.copy()
-            old_species = modified[target_index].species_string
-            modified.replace(target_index, params.new_species)
+            old_species = structure[target_index].species_string
+            modified = apply_site_defect(
+                structure,
+                kind="substitution",
+                site_index=target_index,
+                new_species=params.new_species,
+            )
             out_path = output_dir / f"group_{group['group_id']:03d}_idx{target_index}_{old_species}_to_{params.new_species}{suffix}"
             _write_structure(out_path, modified)
             results.append(
@@ -836,13 +843,16 @@ def insert_interstitial_at_coords(payload: Dict[str, Any]) -> tuple[str, dict[st
         params = InsertInterstitialAtCoordsInput(**payload)
         structure_path, structure = _load_structure(params.structure_file)
         suffix = _default_structure_suffix(structure_path)
-        frac_mode = params.coordinate_type == "fractional"
         if len(params.coords) == 1:
             out_path = resolve_workspace_path(params.output_path) if params.output_path else (
                 structure_path.parent / f"{structure_path.stem}_interstitial_{params.species}{suffix}"
             )
-            modified = structure.copy()
-            modified.append(params.species, np.array(params.coords[0], dtype=float), coords_are_cartesian=not frac_mode)
+            modified = insert_interstitial(
+                structure,
+                species=params.species,
+                coordinates=params.coords[0],
+                coordinate_type=params.coordinate_type,
+            )
             _write_structure(out_path, modified)
             data = {
                 "input_rel": workspace_relpath(structure_path),
@@ -863,8 +873,12 @@ def insert_interstitial_at_coords(payload: Dict[str, Any]) -> tuple[str, dict[st
         output_dir.mkdir(parents=True, exist_ok=True)
         results: list[dict[str, Any]] = []
         for idx, coords in enumerate(params.coords):
-            modified = structure.copy()
-            modified.append(params.species, np.array(coords, dtype=float), coords_are_cartesian=not frac_mode)
+            modified = insert_interstitial(
+                structure,
+                species=params.species,
+                coordinates=coords,
+                coordinate_type=params.coordinate_type,
+            )
             out_path = output_dir / f"interstitial_{idx:03d}_{params.species}{suffix}"
             _write_structure(out_path, modified)
             results.append(

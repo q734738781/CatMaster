@@ -70,7 +70,6 @@ Strongly recommended when available:
 - Map source data to exact figure panels and table numbers.
 - Preserve units in column names or data dictionaries, not only in manuscript captions.
 - Record missing-value codes and filtering decisions.
-- Include checksums for large or critical files when the repository does not generate them.
 
 ## Provenance prompts
 

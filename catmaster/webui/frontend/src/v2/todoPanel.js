@@ -1,16 +1,9 @@
-function sourceFromMeta(meta = {}) {
-  return String(meta.subagent_source || meta.agent_name || meta.source || "").trim() || "CatMaster";
-}
-
 function normalizeTodoRows(value) {
-  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const candidates = Array.isArray(value)
-    ? value
-    : (Array.isArray(input.todos) ? input.todos : Array.isArray(input.items) ? input.items : Array.isArray(input.tasks) ? input.tasks : []);
+  const candidates = Array.isArray(value) ? value : [];
   return candidates
     .map((item) => {
       if (item && typeof item === "object") {
-        const content = String(item.content || item.task || item.text || "").trim();
+        const content = String(item.label || "").trim();
         const status = String(item.status || "pending").trim() || "pending";
         return content ? { content, status } : null;
       }
@@ -30,18 +23,15 @@ export function todoGroupsFromMessages(messages) {
   for (const message of scopedMessages) {
     const parts = Array.isArray(message?.parts) ? message.parts : [];
     parts.forEach((part, index) => {
-      if (part?.type !== "tool-call") return;
-      const meta = part.meta || {};
-      const tool = String(part.tool || meta.tool || "").trim();
-      if (tool !== "write_todos") return;
-      const rows = normalizeTodoRows(meta.input || part.input || {});
-      if (!rows.length) return;
-      const source = sourceFromMeta(meta);
+      if (part?.type !== "progress" || !Array.isArray(part.items) || !part.items.length) return;
+      const todoRows = normalizeTodoRows(part.items);
+      if (!todoRows.length) return;
+      const source = String(part.title || "CatMaster").replace(/\s+plan$/i, "") || "CatMaster";
       groups.set(source, {
         source,
-        rows,
+        rows: todoRows,
         status: String(part.status || "running"),
-        toolCallId: String(meta.tool_call_id || part.tool_call_id || part.id || ""),
+        toolCallId: String(part.id || ""),
         updatedAt: Number(message.updated_at || message.created_at || 0) || index,
       });
     });

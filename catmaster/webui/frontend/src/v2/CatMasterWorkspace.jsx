@@ -1,18 +1,53 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { Files, GitBranch, LogIn, LogOut, MonitorDot, Network, RefreshCw, ShieldAlert, ShieldCheck, UserPlus, Workflow } from "lucide-react";
+import { Files, GitBranch, LogIn, LogOut, Menu, MonitorDot, Network, PanelRight, RefreshCw, ShieldAlert, ShieldCheck, UserPlus, Workflow, X } from "lucide-react";
 
 import WorkspaceRail from "./components/WorkspaceRail";
 import ThreadMessages from "./components/ThreadMessages";
 import ThreadComposer from "./components/ThreadComposer";
 import FilePreviewTabs from "./components/FilePreviewTabs";
-import ResearchTechTreePanel from "./components/ResearchTechTreePanel";
 import { FilesPanel, MonitorPanel, SelfEvolutionPanel } from "./components/WorkspacePanels";
 import { apiFetch, useCatMasterThreadRuntime } from "./useCatMasterThreadRuntime";
 import { DEFAULT_ENTRYPOINT, entrypointMeta, normalizedEntrypoints, normalizeEntrypoint } from "./entrypoints";
 import { selectionFromHash, selectionToHash, tabFromHash } from "./inspectorSelection";
 import { artifactForSelection } from "./artifactSelection.js";
 import { todoGroupsFromMessages } from "./todoPanel.js";
+import { displayValue, presentError, userFacingFileTitle } from "./presentation.js";
+
+const ResearchTechTreePanel = lazy(
+  () => import("./components/ResearchTechTreePanel"),
+);
+
+function ErrorNotice({ error }) {
+  const presented = presentError(error);
+  if (!presented.message) return null;
+  return (
+    <div className="v2-error" role="alert">
+      <span>{presented.message}</span>
+      {presented.technicalDetails ? (
+        <details className="v2-error-details">
+          <summary>Technical details</summary>
+          <pre>{presented.technicalDetails}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function threadStatusLabel(value) {
+  const status = String(value || "idle").toLowerCase();
+  return {
+    idle: "Ready",
+    created: "Ready",
+    queued: "Queued",
+    pending: "Waiting",
+    running: "Running",
+    stopping: "Stopping",
+    interrupted: "Waiting for review",
+    completed: "Completed",
+    failed: "Needs attention",
+  }[status] || displayValue(status.replace(/[_-]+/g, " "), "Ready");
+}
 
 function AuthPanel({ onReady, registrationEnabled = true }) {
   const [mode, setMode] = useState("login");
@@ -25,7 +60,7 @@ function AuthPanel({ onReady, registrationEnabled = true }) {
 
   useEffect(() => {
     if (!isRegister) return;
-    apiFetch("/api/auth/captcha").then(setCaptcha).catch((err) => setError(err.message || String(err)));
+    apiFetch("/api/auth/captcha").then(setCaptcha).catch(setError);
   }, [isRegister]);
 
   useEffect(() => {
@@ -48,7 +83,7 @@ function AuthPanel({ onReady, registrationEnabled = true }) {
       await apiFetch(`/api/auth/${action}`, { method: "POST", body: JSON.stringify(body) });
       onReady();
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }
 
@@ -56,15 +91,15 @@ function AuthPanel({ onReady, registrationEnabled = true }) {
     <main className="v2-auth">
       <form className="v2-auth-card" onSubmit={submit}>
         <h1>CatMaster</h1>
-        <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" autoComplete="username" />
-        <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete={isRegister ? "new-password" : "current-password"} />
+        <input aria-label="Username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" autoComplete="username" />
+        <input aria-label="Password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete={isRegister ? "new-password" : "current-password"} />
         {isRegister && captcha?.question ? (
           <label className="v2-captcha">
             <span>{captcha.question}</span>
-            <input value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value)} placeholder="Answer" />
+            <input aria-label="Captcha answer" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value)} placeholder="Answer" />
           </label>
         ) : null}
-        {error ? <div className="v2-error">{error}</div> : null}
+        <ErrorNotice error={error} />
         <button type="submit" className="v2-primary-btn">
           {isRegister ? <UserPlus size={15} /> : <LogIn size={15} />}
           {isRegister ? "Register" : "Log in"}
@@ -86,6 +121,7 @@ function PermissionModeToggle({ mode, disabled, onChange }) {
       <button
         type="button"
         className={normalized === "hitl" ? "active" : ""}
+        aria-pressed={normalized === "hitl"}
         disabled={disabled}
         onClick={() => onChange("hitl")}
         title="Review protected tool calls before they run"
@@ -96,6 +132,7 @@ function PermissionModeToggle({ mode, disabled, onChange }) {
       <button
         type="button"
         className={normalized === "auto" ? "active" : ""}
+        aria-pressed={normalized === "auto"}
         disabled={disabled}
         onClick={() => onChange("auto")}
         title="Automatically approve protected tool calls"
@@ -144,7 +181,15 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function ColumnResizeHandle({ className = "", label, onResize }) {
+function ColumnResizeHandle({
+  className = "",
+  label,
+  value,
+  min,
+  max,
+  onResize,
+  onResizeValue,
+}) {
   const [dragging, setDragging] = useState(false);
 
   function startResize(event) {
@@ -164,14 +209,30 @@ function ColumnResizeHandle({ className = "", label, onResize }) {
     window.addEventListener("pointercancel", stop);
   }
 
+  function resizeWithKeyboard(event) {
+    let next = null;
+    if (event.key === "ArrowLeft") next = value + 16;
+    if (event.key === "ArrowRight") next = value - 16;
+    if (event.key === "Home") next = min;
+    if (event.key === "End") next = max;
+    if (next === null) return;
+    event.preventDefault();
+    onResizeValue(clampNumber(next, min, max));
+  }
+
   return (
     <div
       className={`v2-resize-handle ${className} ${dragging ? "dragging" : ""}`}
       role="separator"
       aria-label={label}
       aria-orientation="vertical"
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(value)}
+      aria-valuetext={`${Math.round(value)} pixels`}
       tabIndex={0}
       onPointerDown={startResize}
+      onKeyDown={resizeWithKeyboard}
     />
   );
 }
@@ -185,6 +246,8 @@ export default function CatMasterWorkspace({ boot }) {
   const [activeTab, setActiveTab] = useState(() => (typeof window === "undefined" ? "chat" : tabFromHash(window.location.hash)));
   const [previewTabs, setPreviewTabs] = useState([]);
   const [activePreviewTabId, setActivePreviewTabId] = useState("");
+  const [railDrawerOpen, setRailDrawerOpen] = useState(false);
+  const [inspectorDrawerOpen, setInspectorDrawerOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     if (typeof window === "undefined") return 360;
     const saved = Number(window.localStorage.getItem("catmaster:v2:inspector-width"));
@@ -196,6 +259,9 @@ export default function CatMasterWorkspace({ boot }) {
   const [selfEvolutionLoading, setSelfEvolutionLoading] = useState(false);
   const [selfEvolutionError, setSelfEvolutionError] = useState("");
   const selfEvolutionRequestKey = useRef(0);
+  const railDrawerButtonRef = useRef(null);
+  const inspectorDrawerButtonRef = useRef(null);
+  const drawerCloseButtonRef = useRef(null);
 
   const requestedProjectSpace = useMemo(() => {
     if (boot?.project_space) return String(boot.project_space);
@@ -228,6 +294,37 @@ export default function CatMasterWorkspace({ boot }) {
   });
   const todoGroups = useMemo(() => todoGroupsFromMessages(runtimeState.messages), [runtimeState.messages]);
 
+  useEffect(() => {
+    function closeDrawers(event) {
+      if (event.key !== "Escape") return;
+      if (inspectorDrawerOpen) {
+        setInspectorDrawerOpen(false);
+        inspectorDrawerButtonRef.current?.focus();
+      } else if (railDrawerOpen) {
+        setRailDrawerOpen(false);
+        railDrawerButtonRef.current?.focus();
+      }
+    }
+    function closeAtDesktop() {
+      if (window.innerWidth >= 1200) {
+        setRailDrawerOpen(false);
+        setInspectorDrawerOpen(false);
+      }
+    }
+    window.addEventListener("keydown", closeDrawers);
+    window.addEventListener("resize", closeAtDesktop);
+    return () => {
+      window.removeEventListener("keydown", closeDrawers);
+      window.removeEventListener("resize", closeAtDesktop);
+    };
+  }, [inspectorDrawerOpen, railDrawerOpen]);
+
+  useEffect(() => {
+    if (!railDrawerOpen && !inspectorDrawerOpen) return undefined;
+    const frame = window.requestAnimationFrame(() => drawerCloseButtonRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [inspectorDrawerOpen, railDrawerOpen]);
+
   const checkAuthAndBootstrap = useCallback(async (projectSpace = "") => {
     setLoading(true);
     setError("");
@@ -257,7 +354,7 @@ export default function CatMasterWorkspace({ boot }) {
       setThreads(nextThreads);
       setActiveThreadId((current) => current && nextThreads.some((thread) => thread.thread_id === current) ? current : (nextThreads[0]?.thread_id || ""));
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -291,10 +388,7 @@ export default function CatMasterWorkspace({ boot }) {
 
   useEffect(() => {
     refreshSelfEvolution();
-    if (!selfEvolutionEnabled) return undefined;
-    const timer = window.setInterval(refreshSelfEvolution, 30000);
-    return () => window.clearInterval(timer);
-  }, [refreshSelfEvolution, selfEvolutionEnabled]);
+  }, [refreshSelfEvolution]);
 
   useEffect(() => {
     if (auth && !selfEvolutionEnabled && activeTab === "evolution") setActiveTab("chat");
@@ -328,40 +422,8 @@ export default function CatMasterWorkspace({ boot }) {
         setActiveThreadId(payload.thread.thread_id);
       }
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
-  }
-
-  async function launchResearchMapAction({ sourceThreadId, actionId, revision }) {
-    setError("");
-    const payload = await apiFetch(
-      `/api/threads/${encodeURIComponent(sourceThreadId)}/hypothesis-engine/launch`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          action_id: actionId,
-          expected_revision: revision,
-        }),
-      },
-    );
-    if (payload.thread) {
-      updateThread(payload.thread);
-      setActiveThreadId(payload.thread.thread_id);
-      setActiveTab("chat");
-    }
-    return payload;
-  }
-
-  async function setResearchMapAutopilot({ sourceThreadId, enabled }) {
-    setError("");
-    const command = enabled ? "start" : "stop";
-    const payload = await apiFetch(
-      `/api/threads/${encodeURIComponent(sourceThreadId)}/hypothesis-engine/autopilot/${command}`,
-      { method: "POST", body: "{}" },
-    );
-    if (payload.source_thread) updateThread(payload.source_thread);
-    if (payload.automation?.child_thread) updateThread(payload.automation.child_thread);
-    return payload;
   }
 
   async function openThread(threadId) {
@@ -372,7 +434,7 @@ export default function CatMasterWorkspace({ boot }) {
       setActiveThreadId(threadId);
       setActiveTab("chat");
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }
 
@@ -388,7 +450,7 @@ export default function CatMasterWorkspace({ boot }) {
       if (payload.ok === false) throw new Error(payload.status_message || "Workspace create failed.");
       await checkAuthAndBootstrap(name.trim());
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }
 
@@ -409,7 +471,7 @@ export default function CatMasterWorkspace({ boot }) {
       });
       await checkAuthAndBootstrap("");
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }
 
@@ -432,15 +494,27 @@ export default function CatMasterWorkspace({ boot }) {
         preview: nextSelection.preview || null,
       };
     }
-    if (nextSelection?.type === "artifact" && nextSelection.artifact_id) {
-      const artifact = artifactForSelection(nextSelection, runtimeState.artifacts);
+    if (nextSelection?.type === "artifact" && (nextSelection.artifact_id || nextSelection.path)) {
+      const artifact = artifactForSelection(nextSelection, runtimeState.artifacts) || nextSelection.artifact || null;
+      const artifactId = nextSelection.artifact_id || artifact?.artifact_id || "";
+      const artifactPath = artifact?.path || nextSelection.path || "";
       return {
-        id: `artifact:${nextSelection.artifact_id}`,
+        id: `artifact:${artifactId || artifactPath}`,
         type: "artifact",
-        artifact_id: nextSelection.artifact_id,
-        path: artifact?.path || nextSelection.path || "",
-        title: artifact?.title || artifact?.path || nextSelection.artifact_id,
+        artifact_id: artifactId,
+        path: artifactPath,
+        title: userFacingFileTitle(artifact?.title, artifactPath, "Artifact"),
         artifact,
+      };
+    }
+    if (nextSelection?.type === "activity" && nextSelection.part) {
+      const part = nextSelection.part;
+      const stableKey = part.id || `${part.type || "activity"}:${part.title || "details"}:${part.path || ""}`;
+      return {
+        id: `activity:${stableKey}`,
+        type: "activity",
+        title: displayValue(part.title, "Activity details"),
+        part,
       };
     }
     return null;
@@ -460,8 +534,11 @@ export default function CatMasterWorkspace({ boot }) {
   }
 
   function handleSelection(nextSelection) {
-    if (nextSelection?.type === "file" || nextSelection?.type === "artifact") {
+    if (["file", "artifact", "activity"].includes(nextSelection?.type)) {
       openPreviewTab(nextSelection);
+      if (typeof window !== "undefined" && window.innerWidth < 1200) {
+        setInspectorDrawerOpen(true);
+      }
     }
     setSelection(nextSelection || null);
   }
@@ -477,10 +554,10 @@ export default function CatMasterWorkspace({ boot }) {
   }
 
   useEffect(() => {
-    if (selection?.type === "file" || selection?.type === "artifact") {
+    if (["file", "artifact", "activity"].includes(selection?.type)) {
       openPreviewTab(selection);
     }
-  }, [selection?.type, selection?.path, selection?.artifact_id, runtimeState.artifacts.length]);
+  }, [selection?.type, selection?.path, selection?.artifact_id, selection?.part?.id, runtimeState.artifacts.length]);
 
   function selectFile(node) {
     if (!node) return;
@@ -491,16 +568,21 @@ export default function CatMasterWorkspace({ boot }) {
   const hasInterrupt = runtimeState.messages.some((message) => (
     Array.isArray(message.parts) && message.parts.some((part) => part.type === "interrupt" && part.status !== "resolved")
   ));
-  const permissionMode = activeThread?.meta?.permission_mode === "hitl" ? "hitl" : "auto";
+  const permissionMode = activeThread?.permission_mode === "hitl" ? "hitl" : "auto";
   const selectedEntrypoint = normalizeEntrypoint(activeThread?.entrypoint || bootstrap?.default_entrypoint || DEFAULT_ENTRYPOINT, entrypoints);
   const inspectorVisible = activeTab === "chat";
   const pendingEvolutionCount = Number(selfEvolutionPayload?.pending_review_count || 0);
 
-  function resizeInspector(event) {
-    const maxWidth = Math.max(300, Math.min(760, window.innerWidth - 620));
-    const next = clampNumber(window.innerWidth - event.clientX, 280, maxWidth);
+  const inspectorMaxWidth = Math.max(300, Math.min(760, (typeof window === "undefined" ? 1366 : window.innerWidth) - 620));
+
+  function setInspectorWidthPersisted(value) {
+    const next = clampNumber(value, 280, inspectorMaxWidth);
     setInspectorWidth(next);
     window.localStorage.setItem("catmaster:v2:inspector-width", String(Math.round(next)));
+  }
+
+  function resizeInspector(event) {
+    setInspectorWidthPersisted(window.innerWidth - event.clientX);
   }
 
   async function updateEntrypoint(nextEntrypoint) {
@@ -515,7 +597,7 @@ export default function CatMasterWorkspace({ boot }) {
       });
       if (payload.thread) updateThread(payload.thread);
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }
 
@@ -529,7 +611,7 @@ export default function CatMasterWorkspace({ boot }) {
       });
       if (payload.thread) updateThread(payload.thread);
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }
 
@@ -545,7 +627,7 @@ export default function CatMasterWorkspace({ boot }) {
   return (
     <AssistantRuntimeProvider runtime={runtimeState.runtime}>
       <main
-        className={`v2-workspace tab-${activeTab} ${inspectorVisible ? "has-inspector" : ""}`}
+        className={`v2-shell v2-workspace tab-${activeTab} ${inspectorVisible ? "has-inspector" : ""} ${railDrawerOpen ? "rail-drawer-open" : ""} ${inspectorDrawerOpen ? "inspector-drawer-open" : ""}`}
         style={inspectorVisible ? { "--v2-inspector-width": `${inspectorWidth}px` } : undefined}
       >
         <WorkspaceRail
@@ -561,30 +643,61 @@ export default function CatMasterWorkspace({ boot }) {
           onSelectThread={(threadId) => {
             setActiveThreadId(threadId);
             handleSelection(null);
+            setRailDrawerOpen(false);
           }}
-          onSelectFile={selectFile}
+          onSelectFile={(item) => {
+            selectFile(item);
+            setRailDrawerOpen(false);
+          }}
         />
         <section className="v2-center">
           <header className="v2-topbar">
+            <div className="v2-drawer-triggers">
+              <button
+                ref={railDrawerButtonRef}
+                type="button"
+                className="v2-icon-btn"
+                aria-label="Open workspace navigation"
+                aria-expanded={railDrawerOpen}
+                onClick={() => setRailDrawerOpen(true)}
+              >
+                <Menu size={17} />
+              </button>
+              {inspectorVisible ? (
+                <button
+                  ref={inspectorDrawerButtonRef}
+                  type="button"
+                  className="v2-icon-btn"
+                  aria-label="Open file inspector"
+                  aria-expanded={inspectorDrawerOpen}
+                  onClick={() => setInspectorDrawerOpen(true)}
+                >
+                  <PanelRight size={17} />
+                </button>
+              ) : null}
+            </div>
             <div>
               <div className="v2-eyebrow">CatMaster Workspace</div>
               <h1>{activeThread?.title || "Thread"}</h1>
               <div className="v2-thread-status-strip">
-                <span>{activeThread?.status || "idle"}</span>
-                <code>{activeThread?.thread_id || "no-thread"}</code>
+                <span title={`Conversation status: ${threadStatusLabel(activeThread?.status)}`}>
+                  {threadStatusLabel(activeThread?.status)}
+                </span>
+                <span>{entrypoints.find((item) => item.id === selectedEntrypoint)?.label || "Research"}</span>
+                <span>{activeThread?.active_research_graph_id ? "Research graph attached" : "No research graph"}</span>
                 <span>{runtimeState.artifacts.length} artifacts</span>
               </div>
-              <nav className="v2-workspace-tabs" aria-label="Workspace tabs">
-                <button type="button" className={activeTab === "chat" ? "active" : ""} onClick={() => setActiveTab("chat")}>Chat</button>
-                <button type="button" className={activeTab === "monitor" ? "active" : ""} onClick={() => setActiveTab("monitor")}><MonitorDot size={14} />Monitor</button>
-                <button type="button" className={activeTab === "hypotheses" ? "active" : ""} onClick={() => setActiveTab("hypotheses")}><Network size={14} />Research Map</button>
+              <nav className="v2-workspace-tabs" aria-label="Workspace tabs" role="tablist">
+                <button type="button" role="tab" aria-selected={activeTab === "chat"} className={activeTab === "chat" ? "active" : ""} onClick={() => setActiveTab("chat")}>Chat</button>
+                <button type="button" role="tab" aria-selected={activeTab === "monitor"} className={activeTab === "monitor" ? "active" : ""} onClick={() => setActiveTab("monitor")}><MonitorDot size={14} />Monitor</button>
+                <button type="button" role="tab" aria-selected={activeTab === "hypotheses"} className={activeTab === "hypotheses" ? "active" : ""} onClick={() => setActiveTab("hypotheses")}><Network size={14} />Research Graph</button>
                 {selfEvolutionEnabled ? (
-                  <button type="button" className={activeTab === "evolution" ? "active" : ""} onClick={() => { setActiveTab("evolution"); refreshSelfEvolution(); }}>
+                  <button type="button" role="tab" aria-selected={activeTab === "evolution"} className={activeTab === "evolution" ? "active" : ""} onClick={() => { setActiveTab("evolution"); refreshSelfEvolution(); }}>
                     <GitBranch size={14} />Skill Evolution
                     {pendingEvolutionCount > 0 ? <span className="v2-tab-badge">{pendingEvolutionCount}</span> : null}
                   </button>
                 ) : null}
-                <button type="button" className={activeTab === "files" ? "active" : ""} onClick={() => setActiveTab("files")}><Files size={14} />Files</button>
+                <button type="button" role="tab" aria-selected={activeTab === "files"} className={activeTab === "files" ? "active" : ""} onClick={() => setActiveTab("files")}><Files size={14} />Files</button>
               </nav>
             </div>
             <div className="v2-topbar-actions">
@@ -611,16 +724,20 @@ export default function CatMasterWorkspace({ boot }) {
               ) : null}
             </div>
           </header>
-          {error ? <div className="v2-error">{error}</div> : null}
+          <ErrorNotice error={error} />
           {activeTab === "chat" ? (
             <>
               <div className="v2-thread-scroll">
                 <ThreadMessages
+                  threadId={activeThread?.thread_id || ""}
                   messages={runtimeState.messages}
                   loading={loading || runtimeState.loading}
                   error={runtimeState.error}
                   onSelect={handleSelection}
                   onResume={runtimeState.resume}
+                  hasMore={Boolean(runtimeState.messagePage?.truncated)}
+                  onLoadOlder={runtimeState.loadOlderMessages}
+                  loadingOlder={runtimeState.loadingOlder}
                 />
               </div>
               <ThreadComposer
@@ -633,14 +750,15 @@ export default function CatMasterWorkspace({ boot }) {
           ) : null}
           {activeTab === "monitor" ? <MonitorPanel ctx={bootstrap?.ctx || ""} workspaceName={workspaceName} thread={activeThread} entrypoint={selectedEntrypoint} events={runtimeState.events} /> : null}
           {activeTab === "hypotheses" ? (
-            <ResearchTechTreePanel
-              thread={activeThread}
-              isRunning={runtimeState.isRunning}
-              onLaunchAction={launchResearchMapAction}
-              onSetAutopilot={setResearchMapAutopilot}
-              onOpenThread={openThread}
-              onThreadUpdate={updateThread}
-            />
+            <Suspense fallback={<div className="v2-empty">Loading Research Graph workspace…</div>}>
+              <ResearchTechTreePanel
+                workspaceName={workspaceName}
+                thread={activeThread}
+                onOpenThread={openThread}
+                onThreadUpdate={updateThread}
+                onOpenReference={handleSelection}
+              />
+            </Suspense>
           ) : null}
           {activeTab === "evolution" && selfEvolutionEnabled ? (
             <SelfEvolutionPanel
@@ -662,7 +780,15 @@ export default function CatMasterWorkspace({ boot }) {
           ) : null}
         </section>
         {inspectorVisible ? (
-          <ColumnResizeHandle className="v2-resize-handle-inspector" label="Resize inspector" onResize={resizeInspector} />
+          <ColumnResizeHandle
+            className="v2-resize-handle-inspector"
+            label="Resize inspector"
+            value={inspectorWidth}
+            min={280}
+            max={inspectorMaxWidth}
+            onResize={resizeInspector}
+            onResizeValue={setInspectorWidthPersisted}
+          />
         ) : null}
         {inspectorVisible ? (
           <FilePreviewTabs
@@ -674,6 +800,43 @@ export default function CatMasterWorkspace({ boot }) {
             onActivate={setActivePreviewTabId}
             onClose={closePreviewTab}
           />
+        ) : null}
+        {(railDrawerOpen || inspectorDrawerOpen) ? (
+          <>
+            <button
+              type="button"
+              className="v2-drawer-backdrop"
+              aria-label="Close open panel"
+              onClick={() => {
+                const returnToInspector = inspectorDrawerOpen;
+                setRailDrawerOpen(false);
+                setInspectorDrawerOpen(false);
+                window.requestAnimationFrame(() => (
+                  returnToInspector
+                    ? inspectorDrawerButtonRef.current?.focus()
+                    : railDrawerButtonRef.current?.focus()
+                ));
+              }}
+            />
+            <button
+              ref={drawerCloseButtonRef}
+              type="button"
+              className="v2-drawer-close"
+              aria-label="Close open panel"
+              onClick={() => {
+              const returnToInspector = inspectorDrawerOpen;
+              setRailDrawerOpen(false);
+              setInspectorDrawerOpen(false);
+              window.requestAnimationFrame(() => (
+                returnToInspector
+                  ? inspectorDrawerButtonRef.current?.focus()
+                  : railDrawerButtonRef.current?.focus()
+              ));
+            }}
+            >
+              <X size={18} />
+            </button>
+          </>
         ) : null}
       </main>
     </AssistantRuntimeProvider>

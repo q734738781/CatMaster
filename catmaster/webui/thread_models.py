@@ -4,8 +4,7 @@ import time
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
-
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
 def utc_ts() -> float:
     return time.time()
@@ -24,7 +23,11 @@ class MessagePart(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     id: str
-    type: Literal["text", "reasoning", "tool-call", "artifact", "interrupt", "receipt", "subagent", "trace"]
+    # Persisted provider and legacy records may contain part kinds introduced
+    # after this WebUI build. Keep the base record loadable so the public
+    # projector can render its safe, human-readable unknown-part card. Typed
+    # subclasses below retain their narrower literals for active writers.
+    type: str
     text: str = ""
     status: str = ""
     meta: dict[str, Any] = Field(default_factory=dict)
@@ -85,6 +88,8 @@ class ThreadRecord(BaseModel):
     updated_at: float = Field(default_factory=utc_ts)
     active_message_id: str = ""
     active_run_id: str = ""
+    active_research_graph_id: str = ""
+    research_focus_node_id: str = ""
     pending_steering: list[dict[str, Any]] = Field(default_factory=list)
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -133,13 +138,16 @@ class ThreadSubmitRequest(BaseModel):
     attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ResearchMapLaunchRequest(BaseModel):
-    action_id: str = Field(..., min_length=1)
-    expected_revision: int = Field(-1, ge=-1)
+class ThreadResumeAction(BaseModel):
+    action_id: str
+    decision: Literal["approve", "edit", "reject", "respond"]
+    fields: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    reason: str = ""
 
 
 class ThreadResumeRequest(BaseModel):
     decisions: list[dict[str, Any]] = Field(default_factory=list)
+    actions: list[ThreadResumeAction] = Field(default_factory=list)
     text: str = ""
 
 
@@ -149,11 +157,20 @@ class ThreadStopRequest(BaseModel):
 
 
 class ThreadPatchRequest(BaseModel):
-    title: str | None = None
-    entrypoint: str | None = None
-    status: ThreadStatus | None = None
-    permission_mode: str | None = None
-    metadata: dict[str, Any] | None = None
+    title: str = ""
+    entrypoint: str = ""
+    status: ThreadStatus = ThreadStatus.IDLE
+    permission_mode: str = ""
+    active_research_graph_id: str = ""
+    research_focus_node_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_legacy_nulls(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        return {key: item for key, item in value.items() if item is not None}
 
 
 __all__ = [
@@ -161,13 +178,13 @@ __all__ = [
     "ArtifactRecord",
     "InterruptRecord",
     "MessagePart",
-    "ResearchMapLaunchRequest",
     "ThreadCreateRequest",
     "ThreadEventEnvelope",
     "ThreadMessage",
     "ThreadPatchRequest",
     "ThreadRecord",
     "ThreadResumeRequest",
+    "ThreadResumeAction",
     "ThreadStatus",
     "ThreadStopRequest",
     "ThreadSubmitRequest",

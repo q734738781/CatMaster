@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
+import os
 import re
 import shutil
+import tempfile
 import threading
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
@@ -22,14 +25,22 @@ from pydantic import BaseModel
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
-from catmaster.research.hypothesis_engine import EvidenceJudgment, HypothesisPlan
-from catmaster.research.hypothesis_engine.storage import engine_relpath, load_engine
+from catmaster.research.knowledge_graph.models import (
+    ResearchGraphEvidenceJudgment,
+    ResearchGraphPlanningProposal,
+)
 from catmaster.runtime.artifact_callback import LangChainStepLogger, ObservabilityCallbackHandler, UIEventHandler
 from catmaster.runtime.deepagent_context_refresh import ReloadDeepAgentContextMiddleware
 from catmaster.runtime.document_access import DocumentAccessMiddleware
+from catmaster.runtime.native_apply_patch import build_native_apply_patch_tool
 from catmaster.runtime.observability_store import ObservabilityStore
 from catmaster.runtime.run_context import RunContext
 from catmaster.runtime.run_control import RunControl
+from catmaster.runtime.self_evolution.storage import SelfEvolutionStore, hash_tree
+from catmaster.runtime.self_evolution.telemetry import (
+    record_presented_skills,
+    write_skill_version_manifest,
+)
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError, content_to_text
 from catmaster.runtime.usage_stats import write_usage_summary_from_metadata
 from catmaster.runtime.workspace_python_env import workspace_python_env_overrides
@@ -38,7 +49,7 @@ from catmaster.tools.registry import get_tool_registry
 from catmaster.ui import make_event
 from catmaster.ui.reporters import NullReporter, Reporter
 
-from .schemas import ProposalCheckpoint, ResearchGoalRecord, ResearchKernel, SpecialistEntrypoint
+from .schemas import ProposalCheckpoint, ResearchGoalRecord, SpecialistEntrypoint
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +66,6 @@ PROPOSAL_FILE = "proposal.md"
 MEMORY_STORE_FILE = "deepagent_memory.sqlite"
 CHECKPOINT_STORE_FILE = "deepagent_threads.sqlite"
 MEMORY_FILE_PATH = "/memories/AGENTS.md"
-RESEARCH_KERNEL_DIR = "research_kernels"
 RESEARCH_GOAL_DIR = "research_goals"
 
 _ENTRYPOINT_TO_MODEL_ROLE: dict[str, str] = {
@@ -156,13 +166,20 @@ _WRITING_TOOL_ALLOWLIST = {
     "review_pdf_manuscript",
 }
 _RESEARCH_TOOL_ALLOWLIST: set[str] = {
-    "advance_hypothesis_campaign",
-    "extend_hypothesis_campaign",
-    "initialize_hypothesis_campaign",
-    "inspect_hypothesis_campaign",
-    "record_hypothesis_result",
+    "add_research_experiment",
+    "add_research_hypothesis",
+    "create_research_graph",
+    "inspect_research_graph",
+    "list_research_graphs",
+    "mark_research_experiment_failed",
+    "record_research_result",
+}
+_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST = {
+    "mark_bound_research_experiment_failed",
+    "record_bound_research_result",
 }
 _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {
+    *_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST,
     "get_avail_remote_task",
     "mp_search_materials",
     "mp_download_structure",
@@ -170,6 +187,7 @@ _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {
 _PEER_REVIEW_TOOL_ALLOWLIST = {"peer_review_request"}
 _PEER_REVIEW_WORKER_TOOL_ALLOWLIST = set(_PEER_REVIEW_TOOL_ALLOWLIST)
 _LITREVIEW_LOCAL_TOOL_ALLOWLIST = {
+    *_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST,
     "ingest_literature_files",
     "query_literature_corpus",
     "finalize_citations",
@@ -177,6 +195,7 @@ _LITREVIEW_LOCAL_TOOL_ALLOWLIST = {
 _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES = {"web_search"}
 _NATIVE_WEB_SEARCH_PROVIDERS = {"codex_oauth", "openai"}
 _NATIVE_WEB_SEARCH_TOOL = {"type": "web_search"}
+_NATIVE_APPLY_PATCH_PROVIDERS = {"codex_oauth"}
 _DEEPAGENT_BUILTIN_TOOL_NAMES = {
     "write_todos",
     "ls",
@@ -188,8 +207,6 @@ _DEEPAGENT_BUILTIN_TOOL_NAMES = {
     "execute",
 }
 _THREAD_HITL_INTERRUPT_ON = {
-    "write_file": True,
-    "edit_file": True,
     "remote_submission": True,
     "remote_submission_batch": True,
 }
@@ -415,7 +432,6 @@ def build_specialist_runner(
     run_dir: Path | None = None,
     preferred_entrypoint: SpecialistEntrypoint = "research",
     interrupt_on: dict[str, Any] | None = None,
-    research_campaign_id: str = "",
 ) -> BuiltSpecialistRunner:
     if run_dir is not None and Path(run_dir).exists():
         run_ctx = RunContext.load(Path(run_dir))
@@ -438,7 +454,6 @@ def build_specialist_runner(
         reporter=reporter or NullReporter(),
         run_control=run_control,
         interrupt_on=interrupt_on,
-        research_campaign_id=research_campaign_id,
     )
     return BuiltSpecialistRunner(runner=runner, run_context=run_ctx)
 
@@ -462,7 +477,6 @@ class SpecialistRunner:
         reporter: Reporter | None = None,
         run_control: RunControl | None = None,
         interrupt_on: dict[str, Any] | None = None,
-        research_campaign_id: str = "",
     ) -> None:
         self.llm_profile = llm_profile
         self.run_context = run_context
@@ -470,7 +484,11 @@ class SpecialistRunner:
         self.run_control = run_control
         self.registry = get_tool_registry()
         self.interrupt_on = dict(interrupt_on or {})
-        self.research_campaign_id = str(research_campaign_id or "").strip()
+        self._skill_snapshot_root: Path | None = None
+        self._skill_snapshot_mount = ""
+        self._skill_snapshot_id = ""
+        self._skill_version_entries: list[dict[str, str]] = []
+        self._presented_skill_entries: dict[tuple[str, str], dict[str, str]] = {}
 
     def _raise_if_interrupt_requested(self, *, phase: str, details: dict[str, Any] | None = None) -> None:
         control = self.run_control
@@ -556,12 +574,10 @@ class SpecialistRunner:
 
         files_root = workspace_root(self.run_context.workspace)
         files_root.mkdir(parents=True, exist_ok=True)
-        self._stage_deepagent_assets(files_root)
-        research_kernel_relpath = ""
+        self._stage_deepagent_assets(files_root, thread_id=thread_id)
         research_goal: ResearchGoalRecord | None = None
         research_goal_relpath = ""
         if entrypoint == "research":
-            research_kernel_relpath = self._ensure_research_kernel_seed(files_root=files_root, thread_id=thread_id, prompt=prompt)
             research_goal = self._research_goal_for_run(thread_id=thread_id, prompt=prompt, resume_feedback=resume_feedback)
             research_goal_relpath = self._research_goal_relpath(thread_id)
         self._emit("RUN_START", payload={"entrypoint": entrypoint, "status": "running"})
@@ -680,7 +696,6 @@ class SpecialistRunner:
                             "summary": parsed["summary"],
                             "facts": list(parsed["facts"]),
                             "review_target": str(parsed.get("review_target") or "").strip(),
-                            **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
                             **self._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
                         }
                     )
@@ -746,7 +761,6 @@ class SpecialistRunner:
                 "final_answer": "",
                 "summary": "Run interrupted by user.",
                 "facts": [],
-                **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
                 **self._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
             }
             self._write_run_state(interrupted_state)
@@ -776,7 +790,6 @@ class SpecialistRunner:
                 "final_answer": "",
                 "summary": str(exc).strip() or "Run failed.",
                 "facts": [],
-                **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
                 **self._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
             }
             self._write_run_state(failed_state)
@@ -921,51 +934,6 @@ class SpecialistRunner:
         except Exception:
             return ""
 
-    def _persist_proposal_review_state(
-        self,
-        *,
-        entrypoint: str,
-        prompt: str,
-        checkpoint: ProposalCheckpoint,
-        thread_id: str,
-        chat_session_id: str,
-        files_root: Path,
-        research_kernel_relpath: str,
-        revision_count: int,
-    ) -> None:
-        proposal_path = self.run_context.run_dir / PROPOSAL_FILE
-        proposal_path.write_text(checkpoint.proposal_md, encoding="utf-8")
-        self._write_run_state(
-            {
-                "schema_version": 1,
-                "entrypoint": entrypoint,
-                "status": "awaiting_human_feedback",
-                "phase": "proposal_review",
-                "active_specialist": entrypoint,
-                "thread_id": thread_id,
-                "proposal_review": True,
-                "proposal_revision_count": max(0, int(revision_count or 0)),
-                "pending_human_input": {
-                    "kind": "proposal_review",
-                    "questions_for_human": list(checkpoint.questions_for_human),
-                    "todo_items": list(checkpoint.todo_items),
-                    "revision_count": max(0, int(revision_count or 0)),
-                    "approval_token": self._proposal_approval_token(),
-                },
-                "todo_items": list(checkpoint.todo_items),
-                "artifacts": [],
-                "delegation_log": [],
-                "text_preview": checkpoint.proposal_md[:280],
-                "user_prompt": prompt,
-                "chat_session_id": chat_session_id,
-                **self._research_kernel_state_fields(files_root=files_root, thread_id=thread_id, relpath=research_kernel_relpath),
-                **self._research_goal_state_fields(
-                    research_goal=self._load_research_goal(thread_id) if entrypoint == "research" else None,
-                    relpath=self._research_goal_relpath(thread_id) if entrypoint == "research" else "",
-                ),
-            }
-        )
-
     def _final_response_from_state(self, payload: dict[str, Any]) -> dict[str, Any]:
         artifacts = list(payload.get("artifacts") or [])
         return {
@@ -985,14 +953,20 @@ class SpecialistRunner:
         entrypoint: SpecialistEntrypoint,
         runtime: dict[str, Any],
         thread_id: str,
+        tool_thread_id: str = "",
     ) -> Any:
         if entrypoint in {"research", "literature_review"}:
             await self._attach_literature_browser_tools(runtime=runtime)
         if entrypoint == "literature_review":
-            _ = thread_id
-            return self._build_litreview_agent(runtime=runtime)
+            return self._build_litreview_agent(
+                runtime=runtime,
+                thread_id=tool_thread_id or thread_id,
+            )
         create_deep_agent = self._load_create_deep_agent()
-        tools = self._specialist_tools(entrypoint)
+        tools = self._specialist_tools(
+            entrypoint,
+            thread_id=tool_thread_id or thread_id,
+        )
         entry_skills = self._entry_skill_roots(entrypoint)
         kwargs: dict[str, Any] = {
             "model": self._build_deepagent_chat_model(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint]),
@@ -1001,7 +975,6 @@ class SpecialistRunner:
             "middleware": self._catmaster_agent_middleware(
                 runtime=runtime,
                 skills=entry_skills,
-                agent_name=f"{entrypoint}_specialist",
             ),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
@@ -1064,7 +1037,7 @@ class SpecialistRunner:
                 system_prompt=self._hypothesis_proposer_prompt(),
                 tools=[],
                 model=self._build_deepagent_chat_model("hypothesis_proposer"),
-                response_format=HypothesisPlan,
+                response_format=ResearchGraphPlanningProposal,
             ),
             SubAgent(
                 name="evidence_judge",
@@ -1075,7 +1048,7 @@ class SpecialistRunner:
                 system_prompt=self._evidence_judge_prompt(),
                 tools=[],
                 model=self._build_deepagent_chat_model("evidence_judge"),
-                response_format=EvidenceJudgment,
+                response_format=ResearchGraphEvidenceJudgment,
             ),
         ]
 
@@ -1260,7 +1233,6 @@ class SpecialistRunner:
             "middleware": self._catmaster_agent_middleware(
                 runtime=runtime,
                 skills=entry_skills,
-                agent_name=f"{entrypoint}_specialist",
             ),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
@@ -1295,7 +1267,6 @@ class SpecialistRunner:
             "middleware": self._catmaster_agent_middleware(
                 runtime=runtime,
                 skills=list(skills or []),
-                agent_name=name,
                 extra=list(middleware or []),
             ),
             "checkpointer": runtime["checkpointer"],
@@ -1309,14 +1280,27 @@ class SpecialistRunner:
         self._apply_interrupt_on(kwargs)
         return create_deep_agent(**kwargs)
 
-    def _build_litreview_agent(self, *, runtime: dict[str, Any]) -> Any:
+    def _build_litreview_agent(
+        self,
+        *,
+        runtime: dict[str, Any],
+        thread_id: str = "",
+    ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
         litreview_skills = self._skill_roots_for_groups("litreview_agent", "writing_quality")
-        tools = [
-            *self._named_tools(_LITREVIEW_LOCAL_TOOL_ALLOWLIST, audience="litreview_agent"),
-            *self._search_tools_for_role("literature_deep_research", audience="litreview_agent"),
-            *list(runtime.get("literature_browser_tools") or []),
-        ]
+        tools = self._augment_with_default_autonomous_tools(
+            [
+                *self._named_tools(
+                    _LITREVIEW_LOCAL_TOOL_ALLOWLIST,
+                    audience="litreview_agent",
+                    thread_id=thread_id,
+                    entrypoint="literature_review",
+                ),
+                *list(runtime.get("literature_browser_tools") or []),
+            ],
+            model_role="literature_deep_research",
+            audience="litreview_agent",
+        )
         kwargs: dict[str, Any] = {
             "model": self._build_deepagent_chat_model("literature_deep_research"),
             "tools": tools,
@@ -1324,7 +1308,6 @@ class SpecialistRunner:
             "middleware": self._catmaster_agent_middleware(
                 runtime=runtime,
                 skills=litreview_skills,
-                agent_name="litreview_agent",
             ),
             "checkpointer": runtime["checkpointer"],
             "store": runtime["store"],
@@ -1408,6 +1391,11 @@ class SpecialistRunner:
     def _make_backend(self, *, files_root: Path, store: Any) -> Any:
         from deepagents.backends import CompositeBackend, LocalShellBackend, StoreBackend
 
+        memory_backend: Any = StoreBackend(
+            store=store,
+            namespace=lambda _runtime: self._memory_namespace(),
+        )
+
         workspace_env = workspace_python_env_overrides(self.run_context.workspace)
         return CompositeBackend(
             default=LocalShellBackend(
@@ -1418,11 +1406,16 @@ class SpecialistRunner:
                 inherit_env=True,
             ),
             routes={
-                "/memories/": StoreBackend(store=store, namespace=lambda _runtime: self._memory_namespace()),
+                "/memories/": memory_backend,
             },
         )
 
-    def _specialist_tools(self, entrypoint: SpecialistEntrypoint) -> list[Any]:
+    def _specialist_tools(
+        self,
+        entrypoint: SpecialistEntrypoint,
+        *,
+        thread_id: str = "",
+    ) -> list[Any]:
         if entrypoint == "writing":
             requested = _WRITING_TOOL_ALLOWLIST
         elif entrypoint == "peer_review":
@@ -1432,7 +1425,11 @@ class SpecialistRunner:
         else:
             requested = _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
         return self._augment_with_default_autonomous_tools(
-            self._named_tools(requested),
+            self._named_tools(
+                requested,
+                thread_id=thread_id,
+                entrypoint=entrypoint,
+            ),
             model_role=_ENTRYPOINT_TO_MODEL_ROLE[entrypoint],
         )
 
@@ -1450,7 +1447,14 @@ class SpecialistRunner:
             model_role=_ENTRYPOINT_TO_MODEL_ROLE[entrypoint],
         )
 
-    def _named_tools(self, requested: set[str] | list[str] | tuple[str, ...], *, audience: str = "") -> list[Any]:
+    def _named_tools(
+        self,
+        requested: set[str] | list[str] | tuple[str, ...],
+        *,
+        audience: str = "",
+        thread_id: str = "",
+        entrypoint: str = "",
+    ) -> list[Any]:
         requested_names = {str(name).strip() for name in requested if str(name).strip()}
         all_names = set(self.registry.tools.keys())
         missing = sorted(name for name in requested_names if name not in all_names)
@@ -1465,6 +1469,11 @@ class SpecialistRunner:
                 run_dir=str(self.run_context.run_dir),
                 workspace=str(self.run_context.workspace),
                 audience=audience,
+                runtime_context={
+                    "run_id": self.run_context.run_id,
+                    "thread_id": str(thread_id or "").strip(),
+                    "entrypoint": str(entrypoint or "").strip(),
+                },
             )
         except TypeError:
             tools = self.registry.as_langchain_tools(
@@ -1491,6 +1500,15 @@ class SpecialistRunner:
             if name and name not in existing:
                 augmented.append(tool)
                 existing.add(name)
+        provider = str(
+            self.llm_profile.config_for_role(model_role).provider or ""
+        ).strip().lower()
+        if provider in _NATIVE_APPLY_PATCH_PROVIDERS and "apply_patch" not in existing:
+            augmented.append(
+                build_native_apply_patch_tool(
+                    files_root=workspace_root(self.run_context.workspace)
+                )
+            )
         return augmented
 
     def _search_tools_for_role(self, model_role: str, *, audience: str = "") -> list[Any]:
@@ -1598,35 +1616,161 @@ class SpecialistRunner:
         else:
             target.mkdir(parents=True, exist_ok=True)
 
-    def _stage_deepagent_assets(self, files_root: Path) -> None:
+    @staticmethod
+    def _parse_candidate_version(value: str) -> tuple[str, int] | None:
+        candidate_id, separator, revision_text = str(value or "").strip().partition("@r")
+        if not separator or not candidate_id or not revision_text.isdigit():
+            return None
+        return candidate_id, max(1, int(revision_text))
+
+    @staticmethod
+    def _canary_applies(canary: Any, *, run_id: str, thread_id: str) -> bool:
+        if not isinstance(canary, dict):
+            return False
+        run_ids = {str(item).strip() for item in canary.get("run_ids", []) if str(item).strip()}
+        thread_ids = {str(item).strip() for item in canary.get("thread_ids", []) if str(item).strip()}
+        return (run_id in run_ids) or (thread_id in thread_ids)
+
+    def _active_skill_sources(
+        self,
+        *,
+        thread_id: str,
+        include_canary: bool = True,
+    ) -> dict[str, tuple[Path, str]]:
+        store = SelfEvolutionStore(self.run_context.workspace, project_id=self.run_context.project_id)
+        active = store.read_active_skills().get("skills") or {}
+        selected: dict[str, tuple[Path, str]] = {}
+        for key, pointers in active.items():
+            if not isinstance(pointers, dict) or "/" not in str(key):
+                continue
+            group, name = str(key).split("/", 1)
+            if group not in _SKILL_GROUPS or not name:
+                continue
+            version = str(pointers.get("stable") or "").strip()
+            canary = pointers.get("canary")
+            if include_canary and self._canary_applies(
+                canary,
+                run_id=self.run_context.run_id,
+                thread_id=thread_id,
+            ):
+                version = str(canary.get("version") or "").strip()
+            parsed = self._parse_candidate_version(version)
+            if parsed is None:
+                continue
+            candidate_id, revision = parsed
+            candidate = store.read_candidate_revision(candidate_id, revision)
+            if candidate is None:
+                continue
+            source = store.revision_dir(candidate_id, revision) / "proposed" / group / name
+            if not (source / "SKILL.md").is_file() or hash_tree(source) != candidate.bundle_hash:
+                store.update_candidate_status(candidate_id, "revision")
+                continue
+            current_root = store.revision_dir(candidate_id, revision) / "current"
+            builtin_snapshot = current_root / "builtin_target"
+            builtin_absent = current_root / "builtin_absent"
+            builtin = Path(__file__).resolve().parents[2] / "skills" / group / name
+            builtin_drift = (
+                builtin_snapshot.is_dir()
+                and hash_tree(builtin) != hash_tree(builtin_snapshot)
+            ) or (
+                builtin_absent.is_file()
+                and builtin.is_dir()
+            )
+            if builtin_drift:
+                store.update_candidate_status(candidate_id, "revision")
+                continue
+            selected[key] = (source, version)
+        return selected
+
+    @staticmethod
+    def _seal_snapshot_tree(root: Path) -> None:
+        paths = [root, *root.rglob("*")]
+        for path in reversed(paths):
+            try:
+                path.chmod(0o555 if path.is_dir() else 0o444)
+            except OSError:
+                continue
+
+    def _stage_deepagent_assets(self, files_root: Path, *, thread_id: str = "") -> None:
+        """Create and bind one immutable, content-addressed skill snapshot per run.
+
+        Stable and canary runs can now execute concurrently without overwriting
+        the shared ``files/.deepagents`` tree.
+        """
+
         repo_root = Path(__file__).resolve().parents[2]
-        deepagents_root = files_root / ".deepagents"
-        built_in_root = deepagents_root / "skills"
-        override_root = deepagents_root / "self_develop_skills"
-        canonical_override_root = system_root(self.run_context.workspace) / "self_evolution" / "self_develop_skills"
+        selected = self._active_skill_sources(
+            thread_id=thread_id,
+            include_canary=True,
+        )
+        manifest_parts: list[str] = []
         for group in _SKILL_GROUPS:
-            self._replace_staged_tree(
-                source=repo_root / "skills" / group,
-                target=built_in_root / group,
-            )
-            self._replace_staged_tree(
-                source=canonical_override_root / group,
-                target=override_root / group,
-            )
-        staged_agents = deepagents_root / "AGENTS.md"
+            manifest_parts.append(f"builtin:{group}:{hash_tree(repo_root / 'skills' / group)}")
+        for key, (source, version) in sorted(selected.items()):
+            manifest_parts.append(f"active:{key}:{version}:{hash_tree(source)}")
         workspace_agents = Path(self.run_context.workspace) / "AGENTS.md"
-        if workspace_agents.exists():
-            staged_agents.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(workspace_agents, staged_agents)
-        elif staged_agents.exists():
-            staged_agents.unlink()
+        if workspace_agents.is_file():
+            manifest_parts.append(
+                "agents:" + hashlib.sha256(workspace_agents.read_bytes()).hexdigest()
+            )
+        snapshot_hash = hashlib.sha256("\n".join(manifest_parts).encode("utf-8")).hexdigest()[:24]
+        snapshots_root = files_root / ".deepagents" / "snapshots"
+        snapshot_root = snapshots_root / snapshot_hash
+        if not snapshot_root.is_dir():
+            snapshots_root.mkdir(parents=True, exist_ok=True)
+            temp_root = Path(tempfile.mkdtemp(prefix=f".{snapshot_hash}.", dir=str(snapshots_root)))
+            try:
+                skills_root = temp_root / "skills"
+                for group in _SKILL_GROUPS:
+                    source = repo_root / "skills" / group
+                    target = skills_root / group
+                    if source.is_dir():
+                        shutil.copytree(source, target)
+                    else:
+                        target.mkdir(parents=True, exist_ok=True)
+                for key, (source, _version) in selected.items():
+                    group, name = key.split("/", 1)
+                    target = skills_root / group / name
+                    if target.exists():
+                        shutil.rmtree(target)
+                    shutil.copytree(source, target)
+                if workspace_agents.is_file():
+                    shutil.copyfile(workspace_agents, temp_root / "AGENTS.md")
+                try:
+                    os.replace(temp_root, snapshot_root)
+                except OSError:
+                    if not snapshot_root.is_dir():
+                        raise
+            finally:
+                if temp_root.exists():
+                    shutil.rmtree(temp_root)
+        self._seal_snapshot_tree(snapshot_root)
+
+        version_entries: list[dict[str, str]] = []
+        for key, (_source, version) in sorted(selected.items()):
+            group, name = key.split("/", 1)
+            if (snapshot_root / "skills" / group / name / "SKILL.md").is_file():
+                version_entries.append(
+                    {
+                        "skill_name": key,
+                        "skill_version": version,
+                        "virtual_path": f"/.deepagents/snapshots/{snapshot_hash}/skills/{group}/{name}",
+                    }
+                )
+        self._skill_snapshot_root = snapshot_root
+        self._skill_snapshot_mount = f"/.deepagents/snapshots/{snapshot_hash}/skills"
+        self._skill_snapshot_id = snapshot_hash
+        self._skill_version_entries = version_entries
+        self._presented_skill_entries = {}
 
     def _skill_roots_for_group(self, group_name: str) -> list[str]:
         return self._skill_roots_for_groups(group_name)
 
-    @staticmethod
-    def _skill_roots_for_groups(*group_names: str) -> list[str]:
+    def _skill_roots_for_groups(self, *group_names: str) -> list[str]:
         groups = [str(group or "").strip() for group in group_names if str(group or "").strip()]
+        if self._skill_snapshot_mount:
+            return [f"{self._skill_snapshot_mount}/{group}" for group in groups]
+        # Only used by tests that exercise agent construction without staging.
         return [
             *(f"{_SKILLS_ROOT}/{group}" for group in groups),
             *(f"{_SELF_DEVELOP_SKILLS_ROOT}/{group}" for group in groups),
@@ -1684,7 +1828,6 @@ class SpecialistRunner:
         return self._base_system_prompt(
             entrypoint,
             thread_id=thread_id,
-            campaign_thread_id=self.research_campaign_id or thread_id,
             allow_memory_write=allow_memory_write,
             execution_contract=execution_contract,
         )
@@ -1708,6 +1851,9 @@ class SpecialistRunner:
         )
 
     def _memory_sources(self) -> list[str]:
+        if self._skill_snapshot_mount:
+            snapshot_root = self._skill_snapshot_mount.rsplit("/skills", 1)[0]
+            return [f"{snapshot_root}/AGENTS.md", MEMORY_FILE_PATH]
         return ["/.deepagents/AGENTS.md", MEMORY_FILE_PATH]
 
     def _catmaster_agent_middleware(
@@ -1715,17 +1861,46 @@ class SpecialistRunner:
         *,
         runtime: dict[str, Any],
         skills: list[str],
-        agent_name: str,
         extra: list[Any] | None = None,
     ) -> list[Any]:
-        _ = agent_name
+        selected_entries = [
+            entry
+            for entry in self._skill_version_entries
+            if any(
+                str(entry.get("virtual_path") or "").startswith(str(root).rstrip("/") + "/")
+                for root in skills
+            )
+        ]
+        for entry in selected_entries:
+            key = (entry["skill_name"], entry["skill_version"])
+            self._presented_skill_entries[key] = entry
+        presented = list(self._presented_skill_entries.values())
+        if presented:
+            write_skill_version_manifest(
+                run_dir=self.run_context.run_dir,
+                run_id=self.run_context.run_id,
+                entries=presented,
+            )
+            record_presented_skills(
+                store=SelfEvolutionStore(
+                    self.run_context.workspace,
+                    project_id=self.run_context.project_id,
+                ),
+                run_id=self.run_context.run_id,
+                entries=presented,
+            )
         document_access = DocumentAccessMiddleware(files_root=workspace_root(self.run_context.workspace))
         context_refresh = ReloadDeepAgentContextMiddleware(
             backend=runtime["backend"],
             skills=skills,
             memory=self._memory_sources(),
         )
-        return [document_access, *self._build_default_middleware(), context_refresh, *(extra or [])]
+        return [
+            document_access,
+            *self._build_default_middleware(),
+            context_refresh,
+            *(extra or []),
+        ]
 
     def _memory_namespace(self) -> tuple[str, ...]:
         project_id = str(self.run_context.project_id or "default").strip() or "default"
@@ -1757,21 +1932,18 @@ class SpecialistRunner:
         entrypoint: SpecialistEntrypoint,
         *,
         thread_id: str = "",
-        campaign_thread_id: str = "",
         allow_memory_write: bool = True,
         execution_contract: str = "",
     ) -> str:
         memory_policy = cls._deepagent_memory_policy(allow_memory_write=allow_memory_write)
         if entrypoint == "research":
-            kernel_path = cls._research_kernel_virtual_path(thread_id)
-            campaign_id = str(campaign_thread_id or thread_id).strip()
             return (
                 "You are ResearchSpecialist, the only orchestration-capable specialist.\n"
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
                 "You may delegate only to `hypothesis_proposer`, `evidence_judge`, `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
-                "For a persistent hypothesis campaign, delegate initial hypothesis formation and every evidence-driven hypothesis revision to `hypothesis_proposer`; do not invent campaign hypotheses or verification rules in the coordinator.\n"
-                "After a campaign verification succeeds, delegate the returned scientific result to `evidence_judge` with the complete target hypotheses and decision rule; record its structured judgment without grading the evidence yourself.\n"
+                "For a bound Research Graph, delegate initial hypothesis formation and evidence-driven revisions to `hypothesis_proposer`; do not invent graph hypotheses or decision rules in the coordinator.\n"
+                "After a graph experiment succeeds, delegate its scientific result to `evidence_judge` with the target hypothesis node IDs and decision rule; record the returned typed judgments without grading the evidence yourself.\n"
                 "Delegate literature-review work that needs source discovery, full-text evidence, or citation finalization to `litreview_agent`.\n"
                 f"{cls._physical_chemical_property_lookup_policy()}\n"
                 "If the user requests a paper, manuscript, journal-style LaTeX draft, cover letter, rebuttal-style response, or other author-facing publication artifact, delegate that work to `writing_specialist` rather than drafting it directly in the research thread.\n"
@@ -1780,7 +1952,7 @@ class SpecialistRunner:
                 "Launch `peer_review_specialist` only when the user explicitly asks for publication-level paper quality, submission-ready or peer-review-ready manuscript quality, formal submission requirements, journal submission standards, or another equivalent formal publication bar.\n"
                 "When you do launch it, treat it as an editor-style review process over the manuscript PDF, not as the primary scientific decision-maker.\n"
                 "When delegating to `peer_review_specialist`, explicitly hand it the canonical workspace-relative manuscript PDF path; if one PDF is the review target, state that path clearly in the handoff instead of making the reviewer infer it.\n"
-                "When `peer_review_specialist` returns, treat its returned markdown or saved review memo as the authoritative revision brief. Do not rely on the Research Kernel to preserve full editor/reviewer comment text.\n"
+                "When `peer_review_specialist` returns, treat its returned markdown or saved review memo as the authoritative revision brief. Do not rely on a graph node to preserve full editor/reviewer comment text.\n"
                 "If `peer_review_specialist` gives you a saved review memo path, read that memo directly before deciding the next revision or experiment step.\n"
                 "You remain the sole coordinator and final decision-maker for the run.\n"
                 "Treat the user's requested deliverable or explicitly approved stage as the stop condition. After a delegate returns, delegate again only when required to finish that stage or for one bounded recovery of a failed required step.\n"
@@ -1797,8 +1969,7 @@ class SpecialistRunner:
                 f"{execution_contract}\n"
                 "Do not perform large direct execution yourself when delegation is more appropriate.\n"
                 f"{cls._research_goal_guard_contract()}\n"
-                f"{cls._research_kernel_contract(kernel_path)}\n"
-                f"{cls._hypothesis_engine_contract(campaign_id, execution_thread_id=thread_id)}\n"
+                f"{cls._research_graph_contract()}\n"
                 f"{cls._research_completion_audit_contract()}\n"
                 f"{memory_policy}\n"
                 f"{cls._memory_write_policy()}\n"
@@ -2027,6 +2198,7 @@ class SpecialistRunner:
     @staticmethod
     def _tool_policy() -> str:
         return (
+            "By default, do not calculate or compare hashes/checksums unless the user explicitly requests it. "
             "Tool discipline: if a relevant skill is available to the current agent, read it before acting. "
             "Treat tool schemas as compact invocation interfaces, not as complete SOP; skills carry workflow rules, method-critical defaults, and common edge-case guidance that may be intentionally absent from short schema descriptions. "
             "Before the first expensive, managed, or irreversible tool call in a workflow, do a brief skill-grounded preflight: confirm required input paths exist, choose method-critical toggles explicitly, and decide whether the builtin tool fits the task without probing by trial calls. "
@@ -2034,9 +2206,8 @@ class SpecialistRunner:
             "Before writing custom code, first try to satisfy the task by adjusting the parameters and supported variants of a relevant builtin tool. "
             "Builtin tools often already encode validated parameter choices, implementation optimizations, and known pitfall handling, so avoid reimplementing that logic unless the builtin boundary truly does not fit. "
             "For any code that overlaps internal tool functionality, first inspect the builtin tool source through the available source-inspection capability and code against that reference instead of starting from scratch; if custom code is still necessary, preserve validated behavior rather than writing an approximate look-alike from memory. "
-            "Keep validation proportional to the scientific decision. A checksum or content hash is an operational file-identity signal, not scientific QC: do not generate or compare checksums for ordinary research analysis, artifact review, completion audits, reproducibility notes, or merely to prove that unrelated files were unchanged. "
-            "Use scientific checks that bear on the result instead, such as structure and input consistency, convergence, units, sample coverage, statistics, method applicability, and evidence-claim fit; use targeted inspection or a version-control diff when the question is edit scope. "
-            "Use a checksum only when the user explicitly requests one, file identity is genuinely disputed, immutable provenance is contractual, transfer/download integrity must be checked, or a restart, retry, checkpoint, or tool protocol requires it. Preserve an operational hash returned by a managed tool when needed by that protocol, but do not present it as scientific evidence."
+            "Keep validation proportional to the scientific decision. "
+            "Use scientific checks that bear on the result, such as structure and input consistency, convergence, units, sample coverage, statistics, method applicability, and evidence-claim fit; use targeted inspection or a version-control diff when the question is edit scope."
         )
 
     @staticmethod
@@ -2129,75 +2300,29 @@ class SpecialistRunner:
     def _research_goal_guard_contract() -> str:
         return (
             "Research goal guard: the active objective is runtime-owned. "
-            "Use the Research Kernel only as working memory, not as the authority for rewriting the objective. "
+            "Use a bound Research Graph as shared scientific context, not as authority for rewriting the user's objective. "
             "On resume, continue the original objective plus any human resume note; do not treat the note as a replacement objective."
+        )
+
+    @staticmethod
+    def _research_graph_contract() -> str:
+        return (
+            "Research Graph contract: ordinary one-off questions do not require a graph. "
+            "For multi-step falsifiable work, evidence-driven hypothesis revision, or work that must continue across threads, use the explicitly bound workspace Research Graph or suggest creating one. "
+            "Never guess among multiple graphs. Keep graph nodes concise and scientific; put detailed notes, calculations, logs, receipts, and reports in their owning workspace stores and connect them with typed refs. "
+            "A result may support, oppose, or remain inconclusive for different hypotheses, and no single judgment closes later independent verification."
         )
 
     @staticmethod
     def _research_completion_audit_contract() -> str:
         return (
             "Research completion audit: before final answer, verify completion against the original objective and current workspace evidence. "
-            "Check run cards, artifact paths, reports, figures, literature notes, calculation outputs, and workspace files. "
+            "Check graph results and refs, artifact paths, reports, figures, literature notes, calculation outputs, and workspace files. "
             "Perform a scientific reasonableness audit: compare claims against methods, controls, convergence/QC evidence, literature context, and internal consistency before accepting a conclusion. "
-            "When the audit finds a weak or inconsistent result, record the gap in `frontier` and state it as a limitation or recommended next action; do not dispatch follow-up work unless it is required by the user's requested stage. "
-            "A requested stage may be complete while frontier items remain, provided the delivered claims clearly respect those limitations. "
+            "When the audit finds a weak or inconsistent result, state the gap as a limitation or recommended next action and update a bound graph only when it is durable scientific state; do not dispatch follow-up work unless it is required by the user's requested stage. "
+            "A requested stage may be complete while graph frontier items remain, provided the delivered claims clearly respect those limitations. "
             "If a required deliverable is still incomplete, either dispatch the one next required specialist step sequentially or return a precise blocker plus the minimal next action. "
             "Final conclusions should cite the evidence paths or saved memos they depend on."
-        )
-
-    @classmethod
-    def _research_kernel_contract(cls, kernel_path: str) -> str:
-        return (
-            f"Maintain a lightweight Research Kernel in `{kernel_path}` as valid JSON. "
-            "It must contain exactly these top-level fields: `question`, `hypotheses`, `run_cards`, `frontier`, `conclusion_draft`. "
-            "Keep `hypotheses` to only the currently active 3-5 lines. "
-            "Every time a subagent returns, immediately update `run_cards` with one compact card containing only `source`, `summary`, `facts`, and `artifacts`. "
-            "After every delegated specialist return or major direct tool result, reconcile progress against the runtime objective: refresh `frontier`, revise `conclusion_draft` when evidence changes, and determine whether the user's requested stage is complete. "
-            "Treat `frontier` as a non-executing record of unresolved questions and recommended future actions, not as authorization to launch another experiment, re-analysis, or literature check. "
-            "Do not inline long editor comments, reviewer comments, or other bulky source text into the kernel; keep only a short summary plus artifact paths pointing to any saved full memo. "
-            "Keep only the minimum decision-relevant facts needed for the next choice. "
-            "Use `frontier` for the next unresolved questions or actions to validate. "
-            "When delegating, write a clear bounded brief. For normal execution lanes, prefer the compact `Summary` / `Facts` / `Files` contract so the result can be distilled into a run card. For `peer_review_specialist`, keep the full editor/reviewer markdown in the returned text or saved memo instead of forcing it into the compact kernel shape."
-        )
-
-    @classmethod
-    def _hypothesis_engine_contract(
-        cls,
-        campaign_thread_id: str,
-        *,
-        execution_thread_id: str = "",
-    ) -> str:
-        safe_campaign = cls._sanitize_kernel_component(campaign_thread_id)
-        safe_execution = cls._sanitize_kernel_component(execution_thread_id)
-        identity_note = (
-            f"This execution uses its own Research Kernel and checkpoint under `{safe_execution}`, "
-            f"but it is attached to source campaign `{safe_campaign}`. "
-            if safe_execution and safe_execution != safe_campaign
-            else ""
-        )
-        return (
-            "A persistent scientific campaign controller is available for research questions "
-            "with competing explanations, shared evidence, dependent verification steps, or "
-            "meaningful differences in verification cost. Use it only when that structure improves "
-            "the next scientific decision; ordinary linear tasks should keep using the "
-            "lightweight Research Kernel. "
-            f"{identity_note}"
-            f"The campaign identity is `{safe_campaign}` and its sidecar, when present, is "
-            f"`/{engine_relpath(safe_campaign)}`. Use this campaign identity for every campaign "
-            "read or mutation; do not substitute the execution thread id. "
-            "Treat the sidecar as the source of truth for hypotheses, dependencies, execution "
-            "packets, evidence judgments, and ranking while keeping the Research "
-            "Kernel as compact conversational memory. An active execution packet is a bounded "
-            "handoff: perform exactly that one delegation or direct bounded action, check its "
-            "scientific decision rule, and obtain an independent evidence judgment before "
-            "recording the result or requesting another packet. Keep scientific authorship "
-            "separated: the hypothesis role forms or revises hypotheses and checks, execution "
-            "roles produce results, and the evidence role judges those results. The coordinator "
-            "moves their structured scientific content between stages without silently replacing it. "
-            "Cost and information labels rank scientific checks; they are not execution "
-            "permissions or probabilities. Automatic Map continuation is an external scheduling "
-            "concern and never broadens user authority: delegation ownership, managed execution "
-            "rules, and protected-tool approval still apply."
         )
 
     @staticmethod
@@ -2206,13 +2331,16 @@ class SpecialistRunner:
             "You are hypothesis_proposer. Your sole role is to form or revise scientific "
             "hypotheses and the smallest set of checks that can distinguish them. Work only from "
             "the research question and scientific evidence supplied in the task. Return a "
-            "HypothesisPlan. Keep the set small, cover plausible alternatives, and avoid cosmetic "
+            "ResearchGraphPlanningProposal. Keep the set small, cover plausible alternatives, and avoid cosmetic "
             "paraphrases. Every hypothesis must be falsifiable and include a rationale plus "
             "observable predictions. Every verification must state the scientific question, a "
-            "bounded task, all hypotheses it judges, and a decision rule for support, opposition, "
-            "or an inconclusive result. Use dependencies only when scientifically necessary. "
-            "Use high cost only for genuinely burdensome work. Do not search, execute, judge "
-            "completed evidence, write files, set hypothesis status, or discuss controller metadata."
+            "bounded plan, existing hypothesis node IDs it tests, and a decision rule for support, "
+            "opposition, or an inconclusive result. Use dependencies only when scientifically necessary. "
+            "Use only the coarse fields provided by the schema: relative hypothesis importance, "
+            "expected decision value, and estimated compute cost. These fields order work; they do "
+            "not express confidence or truth. Do not invent confidence, novelty, composite scores, "
+            "or precise resource estimates. Do not search, "
+            "execute, judge completed evidence, write files, set hypothesis status, or discuss scheduler metadata."
         )
 
     @staticmethod
@@ -2220,13 +2348,13 @@ class SpecialistRunner:
         return (
             "You are evidence_judge. Independently judge one completed verification from the "
             "scientific result, source, target hypotheses, predictions, and decision rule supplied "
-            "in the task. Return one EvidenceJudgment with exactly one effect for every target "
+            "in the task. Return one ResearchGraphEvidenceJudgment with exactly one effect for every target "
             "hypothesis. Use supports only when the result matches a discriminating prediction, "
             "opposes only when it conflicts with one, and inconclusive when the source, result, "
-            "controls, or decision rule cannot decide. Give a short scientific reason for each "
-            "effect and copy the resolvable source exactly. Do not propose hypotheses, design the "
-            "next verification, schedule work, infer missing results, write files, or discuss "
-            "controller metadata."
+            "controls, or decision rule cannot decide. Use the supplied graph hypothesis node IDs "
+            "and give a short scientific reason for each effect. Do not propose hypotheses, design "
+            "the next experiment, schedule work, infer missing results, write files, or discuss "
+            "scheduler metadata."
         )
 
     @classmethod
@@ -2376,73 +2504,6 @@ class SpecialistRunner:
         normalized = normalized.strip("._") or "default"
         return normalized[:80]
 
-    @classmethod
-    def _research_kernel_virtual_path(cls, thread_id: str) -> str:
-        safe_thread = cls._sanitize_kernel_component(thread_id)
-        return f"/{RESEARCH_KERNEL_DIR}/{safe_thread}/kernel.json"
-
-    @classmethod
-    def _research_kernel_fs_path(cls, files_root: Path, thread_id: str) -> Path:
-        safe_thread = cls._sanitize_kernel_component(thread_id)
-        return files_root / RESEARCH_KERNEL_DIR / safe_thread / "kernel.json"
-
-    def _ensure_research_kernel_seed(self, *, files_root: Path, thread_id: str, prompt: str) -> str:
-        path = self._research_kernel_fs_path(files_root, thread_id)
-        if path.exists():
-            return str(path.relative_to(files_root)).replace("\\", "/")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = ResearchKernel(question=str(prompt or "").strip())
-        path.write_text(payload.model_dump_json(indent=2), encoding="utf-8")
-        return str(path.relative_to(files_root)).replace("\\", "/")
-
-    def _load_research_kernel(self, *, files_root: Path, thread_id: str) -> dict[str, Any]:
-        path = self._research_kernel_fs_path(files_root, thread_id)
-        if not path.exists():
-            return {}
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-        if not isinstance(payload, dict):
-            return {}
-        try:
-            kernel = ResearchKernel.model_validate(payload)
-        except Exception:
-            return {}
-        return kernel.model_dump()
-
-    def _research_kernel_state_fields(
-        self,
-        *,
-        files_root: Path,
-        thread_id: str,
-        relpath: str = "",
-        campaign_thread_id: str = "",
-    ) -> dict[str, Any]:
-        if not thread_id:
-            return {}
-        kernel = self._load_research_kernel(files_root=files_root, thread_id=thread_id)
-        if not kernel and not relpath:
-            return {}
-        result: dict[str, Any] = {}
-        if relpath:
-            result["research_kernel_path"] = relpath
-        if kernel:
-            result["research_kernel"] = kernel
-        campaign_id = str(
-            campaign_thread_id or self.research_campaign_id or thread_id
-        ).strip()
-        try:
-            engine = load_engine(files_root, campaign_id)
-        except (FileNotFoundError, ValueError, json.JSONDecodeError):
-            engine = None
-        if engine is not None:
-            result["hypothesis_engine_path"] = engine_relpath(campaign_id)
-            result["hypothesis_campaign_id"] = campaign_id
-            result["hypothesis_engine"] = engine.state.model_dump(mode="json")
-            result["hypothesis_engine_graph"] = engine.graph_projection()
-        return result
-
     @staticmethod
     def _utc_now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -2564,9 +2625,10 @@ class SpecialistRunner:
             "</objective>\n\n"
             "User resume note:\n"
             f"{note}\n\n"
-            "Do not shrink, reinterpret, or replace the objective. Treat the current workspace, Research Kernel, run cards, "
-            "saved reports, and calculation/literature artifacts as the authoritative state. Make concrete progress toward "
-            "the original objective. If the objective is complete, perform the completion audit before final answer."
+            "Do not shrink, reinterpret, or replace the objective. Treat the current workspace files, saved reports, "
+            "calculation/literature artifacts, and the bounded active Research Graph projection when one is attached as "
+            "the authoritative state. Make concrete progress toward the original objective. If the objective is complete, "
+            "perform the completion audit before final answer."
         ).strip()
 
     @classmethod

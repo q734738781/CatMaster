@@ -21,24 +21,28 @@ Research 特别适合以下工作：
 
 它不适合代替 Experiment 做一次简单结构转换，也不适合代替 Literature Review 只查一组论文。Research 的价值在于跨阶段判断和整合。
 
-当多个解释仍需并行保留，或一条结果会同时影响多条假设时，Research 可以建立持久 hypothesis campaign。专门的 `hypothesis_proposer` 会先返回可证伪的 claim、科学依据、预测和有区分力的验证。Research 通过 controller 校验并保存这份科学计划，不自行编写 campaign 假设。
+当研究需要跨 thread 延续、保留竞争解释，或让一条结果同时作用于多个假设时，可以建立 workspace 级 Research Graph。它不是聊天记录，也不属于创建它的 thread。图只保存三类简短科学节点：
 
-每个 verification action 都必须声明执行者、科学问题、有边界的任务、目标假设、判定规则、前置动作、信息价值和粗粒度成本。确定性 controller 只检查依赖、重复科学任务和尚未解决的目标，再按信息价值优先、粗粒度成本次之的固定规则排序。成本只是排序标签，不是执行权限；高成本动作与其他动作一样遵守受管执行和审批规则。Controller 不生成假设、不解释证据、不调度后台 job，也不维护算力预算。
+- Hypothesis 保存可证伪的 claim、rationale 和 observable predictions。
+- Experiment 保存 objective、plan summary、decision rule 和 execution lane。
+- Result 保存简短结论，再用关系分别表示它支持、反对或不能区分哪些假设。
 
-Research 把一个选中的 packet 交给指定执行者。文献验证仍由 Literature Review 完成，计算验证仍由 Experiment 及其 worker 完成。执行结束后，独立的 `evidence_judge` 会把完整结果与假设、预测和判定规则比较，并为每个目标假设返回 `supports`、`opposes` 或 `inconclusive`。Research 只负责原样记录判断。执行失败只保存失败原因，不作为科学证据。
+Hypothesis 不会因为一条结果变成不可修改的 "supported" 或 "rejected" 终态。界面根据所有入边显示目前有支持证据、反对证据、证据冲突、尚未区分或尚无结果。一个 Experiment 可以有多个 Result，所以复现实验不会覆盖已有证据。
 
-如果证据暴露出遗漏解释或必要的后续验证，controller 会返回 `needs_hypothesis_revision`。Research 必须再次调用 hypothesis proposer，得到单独的修订计划后才能扩展 campaign。记录结果的同一次调用不能顺便创建分支。科学状态中不再保存 interactive/full-auto 模式。原始 Research 请求仍可在自己的 thread 中按需连续推进；WebUI 的 Automatic Research 是独立异步调度器，会为排序后的非人工 action 逐个建立普通 Research thread。人工 action 则等待用户手动建立 thread 并提供输入。
+图与 note 的职责不同。论文精读、长分析、结构、图像、日志、报告和远程 receipt 继续放在 Files、artifact、run 或 note 中。Graph 节点只保存短科学命题，并用受控引用连接这些来源。Research thread 绑定 graph 后，每一轮都会收到有节点数和字符数上限的相关子图，不会把整个 workspace 或全部 graph 原样塞进 prompt。多个 active graph 同时存在时必须显式选择。
 
-这套 campaign 不会改变原有执行边界。文献 packet 仍交给 Literature Review，DFT 或实验 packet 仍要经过 Experiment、相应 worker、受管执行和必要的人工审批。普通线性任务不会额外建立这套状态。
+用户可以自己创建 seed hypotheses、实验 proposal 和结果，也可以从 Result 节点启动一个绑定的 Research planning thread。`hypothesis_proposer` 和 `evidence_judge` 仍负责独立的科学计划与证据判断。自动模式一次只启动一个 ready Experiment；没有 ready Experiment 时，才启动一个 planning child。Planner 在同一 graph revision 没有产生修改时不会循环重启。
+
+Research Graph 不改变执行边界。文献任务仍由 Literature Review 完成，DFT 或实验任务仍经过 Experiment、相应 worker、受管执行和必要的人工审批。一次性问答和简单线性任务可以不创建 graph。
 
 <details>
 <summary>Research 当前可调用的角色、tools 与 skills</summary>
 
 Research 把科学计划形成交给 `hypothesis_proposer`，把证据解释交给 `evidence_judge`，把实际执行交给 `experiment_specialist`、`writing_specialist`、`peer_review_specialist` 或 `litreview_agent`。它自己保留文件、任务计划和项目记忆等通用能力，不直接持有 VASP、slab 或远程提交工具。Proposer 和 judge 都没有执行工具。
 
-对于需要分支管理的研究，Research 有五个 controller tools，分别负责初始化、检查、扩展、推进和记录结果。持久状态位于 `files/research_hypothesis_engines/<campaign_id>/state.json`，只保存问题、假设、验证动作、证据判断、当前预留 action 和 revision，不保存 WebUI 自动任务或 thread 审计字段。所有修改都会串行执行并原子保存。Map 点击会按页面 revision 预留 action，并建立一条新的普通 Research thread；子 thread 使用自己的 DeepAgent checkpoint 和轻量 Research Kernel，但运行时会把 controller 调用指向父 campaign id。证据可以引用 DOI、URL、run 或 artifact 作为科学来源；详细执行记录和资源用量仍保存在原有 thread、receipt 与 artifact store 中。
+Research 可使用 `list_research_graphs`、`create_research_graph`、`inspect_research_graph`、`add_research_hypothesis`、`add_research_experiment`、`record_research_result` 和 `mark_research_experiment_failed`。这些工具要求显式 graph ID 和当前 revision，不接受通用 metadata。持久数据位于 workspace 的 `metadata/workspace.sqlite`。Graph 只保存科学节点、关系和 refs；详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
 
-它可按需读取的研究 skills 包括 `hypothesis-campaign-control`、`nature-citation`、`nature-data`、`nature-experiment-log`、`nature-figure`、`nature-literature-pipeline`、`nature-paper-to-patent`、`researchwrite`、`nature-reader`、`nature-ref-verifier` 和 `nature-writing`。真正执行计算时会进入 Experiment 及其 worker 的 skill 范围。
+它可按需读取的研究 skills 包括 `research-graph-control`、`nature-citation`、`nature-data`、`nature-experiment-log`、`nature-figure`、`nature-literature-pipeline`、`nature-paper-to-patent`、`researchwrite`、`nature-reader`、`nature-ref-verifier` 和 `nature-writing`。真正执行计算时会进入 Experiment 及其 worker 的 skill 范围。
 
 </details>
 

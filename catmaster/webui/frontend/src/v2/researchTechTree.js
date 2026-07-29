@@ -1,88 +1,136 @@
-const KIND_ORDER = ["hypothesis", "action", "evidence"];
-const COLUMN_LABELS = {
-  hypothesis: "Hypotheses",
-  action: "Scientific checks",
-  evidence: "Evidence judgments",
+const RELATION_LABELS = {
+  tests: "tests",
+  produces: "produces",
+  supports: "supports",
+  opposes: "opposes",
+  inconclusive: "inconclusive for",
+  suggests: "suggests",
+  depends_on: "depends on",
 };
-export function layoutResearchTechTree(graph) {
-  const sourceNodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const sourceEdges = Array.isArray(graph?.edges) ? graph.edges : [];
-  const grouped = Object.fromEntries(KIND_ORDER.map((kind) => [kind, []]));
-  for (const node of sourceNodes) {
-    if (grouped[node?.kind]) grouped[node.kind].push(node);
-  }
-  for (const kind of KIND_ORDER) {
-    grouped[kind].sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  }
 
-  const nodeWidth = 238;
-  const nodeHeight = 84;
-  const columnGap = 90;
-  const rowGap = 34;
-  const left = 52;
-  const top = 76;
-  const maxRows = Math.max(1, ...KIND_ORDER.map((kind) => grouped[kind].length));
-  const width = left * 2 + KIND_ORDER.length * nodeWidth + (KIND_ORDER.length - 1) * columnGap;
-  const height = top + maxRows * (nodeHeight + rowGap) + 42;
-  const nodes = [];
+const EVIDENCE_LABELS = {
+  conflicting_evidence: "Conflicting supporting and opposing evidence",
+  supporting_evidence: "Supporting evidence available",
+  opposing_evidence: "Opposing evidence available",
+  not_distinguished: "Not yet distinguished",
+  no_results: "No results yet",
+};
 
-  KIND_ORDER.forEach((kind, columnIndex) => {
-    const x = left + columnIndex * (nodeWidth + columnGap);
-    const rows = grouped[kind];
-    const occupied = rows.length * nodeHeight + Math.max(0, rows.length - 1) * rowGap;
-    const available = maxRows * (nodeHeight + rowGap) - rowGap;
-    const offset = Math.max(0, (available - occupied) / 2);
-    rows.forEach((node, rowIndex) => {
-      nodes.push({
-        ...node,
-        x,
-        y: top + offset + rowIndex * (nodeHeight + rowGap),
-        width: nodeWidth,
-        height: nodeHeight,
-      });
-    });
-  });
+const EXPERIMENT_STATE_LABELS = {
+  draft: "Draft proposal",
+  ready: "Ready to run",
+  running: "Running",
+  has_results: "Results recorded",
+  blocked: "Blocked",
+};
 
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const edges = sourceEdges.flatMap((edge) => {
-    const source = byId.get(edge?.source);
-    const target = byId.get(edge?.target);
-    if (!source || !target) return [];
-    const sourceCenter = {
-      x: source.x + source.width / 2,
-      y: source.y + source.height / 2,
-    };
-    const targetCenter = {
-      x: target.x + target.width / 2,
-      y: target.y + target.height / 2,
-    };
-    let path;
-    if (source.kind === target.kind) {
-      const bend = Math.max(source.x + source.width, target.x + target.width) + 44;
-      path = `M ${sourceCenter.x} ${sourceCenter.y} C ${bend} ${sourceCenter.y}, ${bend} ${targetCenter.y}, ${targetCenter.x} ${targetCenter.y}`;
-    } else {
-      const middle = (sourceCenter.x + targetCenter.x) / 2;
-      path = `M ${sourceCenter.x} ${sourceCenter.y} C ${middle} ${sourceCenter.y}, ${middle} ${targetCenter.y}, ${targetCenter.x} ${targetCenter.y}`;
-    }
-    return [{ ...edge, path }];
-  });
+const EXECUTION_LANE_LABELS = {
+  experiment: "Experiment",
+  research: "Research",
+  literature_review: "Literature review",
+};
 
-  return {
-    width,
-    height,
-    nodes,
-    edges,
-    columns: KIND_ORDER.map((kind, columnIndex) => ({
-      kind,
-      label: COLUMN_LABELS[kind],
-      x: left + columnIndex * (nodeWidth + columnGap),
-      width: nodeWidth,
-    })),
-  };
+const ORCHESTRATION_MODE_LABELS = {
+  manual: "Manual",
+  auto: "Automatic",
+};
+
+export function relationLabel(relation) {
+  return RELATION_LABELS[String(relation || "")] || "related";
 }
 
-export function compactNodeLabel(label, limit = 92) {
-  const text = String(label || "").trim();
-  if (text.length <= limit) return text;
-  return `${text.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+export function evidenceStateLabel(state) {
+  return EVIDENCE_LABELS[String(state || "")] || "No evidence state";
+}
+
+export function experimentStateLabel(state) {
+  return EXPERIMENT_STATE_LABELS[String(state || "")] || "Unknown state";
+}
+
+export function executionLaneLabel(lane) {
+  return EXECUTION_LANE_LABELS[String(lane || "")] || "Unassigned";
+}
+
+export function orchestrationModeLabel(mode) {
+  return ORCHESTRATION_MODE_LABELS[String(mode || "")] || "Manual";
+}
+
+export function boundedResearchGraph(payload, {
+  limit = 25,
+  focusNodeId = "",
+  hops = 2,
+  query = "",
+} = {}) {
+  const sourceNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+  const sourceEdges = Array.isArray(payload?.edges) ? payload.edges : [];
+  const cappedLimit = Math.max(1, Math.min(100, Number(limit) || 25));
+  const adjacency = new Map();
+  for (const edge of sourceEdges) {
+    const source = String(edge?.source_node_id || "");
+    const target = String(edge?.target_node_id || "");
+    if (!source || !target) continue;
+    if (!adjacency.has(source)) adjacency.set(source, []);
+    if (!adjacency.has(target)) adjacency.set(target, []);
+    adjacency.get(source).push(target);
+    adjacency.get(target).push(source);
+  }
+
+  let candidates = sourceNodes;
+  if (focusNodeId) {
+    const distance = new Map([[focusNodeId, 0]]);
+    const queue = [focusNodeId];
+    while (queue.length) {
+      const current = queue.shift();
+      const depth = distance.get(current);
+      if (depth >= Math.max(1, Math.min(2, Number(hops) || 2))) continue;
+      for (const neighbor of adjacency.get(current) || []) {
+        if (distance.has(neighbor)) continue;
+        distance.set(neighbor, depth + 1);
+        queue.push(neighbor);
+      }
+    }
+    candidates = sourceNodes.filter((node) => distance.has(String(node.node_id || "")));
+    candidates.sort((left, right) => {
+      const leftDistance = distance.get(String(left.node_id || "")) ?? 99;
+      const rightDistance = distance.get(String(right.node_id || "")) ?? 99;
+      return leftDistance - rightDistance || String(left.node_id).localeCompare(String(right.node_id));
+    });
+  }
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
+  if (normalizedQuery) {
+    const searchableText = (value) => {
+      if (Array.isArray(value)) return value.map(searchableText).join(" ");
+      if (value && typeof value === "object") {
+        return Object.values(value).map(searchableText).join(" ");
+      }
+      return typeof value === "string" || typeof value === "number"
+        ? String(value)
+        : "";
+    };
+    candidates = candidates.filter((node) => (
+      searchableText({
+        kind: node.kind,
+        title: node.title,
+        state: node.state,
+        evidence_state: node.evidence_state,
+        body: node.body,
+      }).toLocaleLowerCase().includes(normalizedQuery)
+    ));
+  }
+  const nodes = candidates.slice(0, cappedLimit);
+  const ids = new Set(nodes.map((node) => String(node.node_id || "")));
+  const edges = sourceEdges.filter((edge) => (
+    ids.has(String(edge.source_node_id || ""))
+    && ids.has(String(edge.target_node_id || ""))
+  ));
+  return {
+    nodes,
+    edges,
+    totalCount: sourceNodes.length,
+    matchingCount: candidates.length,
+    omittedCount: Math.max(
+      0,
+      (normalizedQuery ? candidates.length : sourceNodes.length) - nodes.length,
+    ),
+  };
 }

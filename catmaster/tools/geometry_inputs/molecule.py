@@ -11,6 +11,7 @@ from ase import Atoms
 from ase.io import write, read
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.structures.molecules import generate_conformers
 from catmaster.tools.base import resolve_workspace_path, workspace_relpath
 
 
@@ -30,26 +31,20 @@ def _build_conformer(smiles: str):
     """Return RDKit Mol with embedded 3D coords; raise if fails."""
     try:
         from rdkit import Chem
-        from rdkit.Chem import AllChem
     except Exception as exc:  # pragma: no cover - dependency import
         raise ImportError("RDKit is required for create_molecule_from_smiles") from exc
 
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError(f"Invalid SMILES: {smiles}")
-    mol = Chem.AddHs(mol)
-    params = AllChem.ETKDGv3()
-    params.randomSeed = 42
-    status = AllChem.EmbedMolecule(mol, params)
-    if status != 0:
-        raise RuntimeError("ETKDG embedding failed")
-
-    # Optimize geometry
-    ff_status = AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
-    if ff_status != 0:
-        AllChem.UFFOptimizeMolecule(mol, maxIters=500)
-
-    return mol
+    candidates = generate_conformers(
+        mol,
+        count=1,
+        random_seed=42,
+        optimize="mmff",
+        prune_rms_threshold=0.0,
+    )
+    return candidates[0][0]
 
 
 def _mol_to_ase(mol) -> Atoms:

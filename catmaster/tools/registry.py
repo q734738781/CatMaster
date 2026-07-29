@@ -214,17 +214,25 @@ class ToolRegistry:
             export_builtin_tool_source,
             ExportBuiltinToolSourceInput,
         )
-        from catmaster.tools.misc.hypothesis_engine import (
-            AdvanceHypothesisCampaignInput,
-            ExtendHypothesisCampaignInput,
-            InitializeHypothesisCampaignInput,
-            InspectHypothesisCampaignInput,
-            RecordHypothesisResultInput,
-            advance_hypothesis_campaign,
-            extend_hypothesis_campaign,
-            initialize_hypothesis_campaign,
-            inspect_hypothesis_campaign,
-            record_hypothesis_result,
+        from catmaster.tools.misc.research_graph import (
+            AddResearchExperimentInput,
+            AddResearchHypothesisInput,
+            CreateResearchGraphInput,
+            InspectResearchGraphInput,
+            ListResearchGraphsInput,
+            MarkBoundResearchExperimentFailedInput,
+            MarkResearchExperimentFailedInput,
+            RecordBoundResearchResultInput,
+            RecordResearchResultInput,
+            add_research_experiment,
+            add_research_hypothesis,
+            create_research_graph,
+            inspect_research_graph,
+            list_research_graphs,
+            mark_bound_research_experiment_failed,
+            mark_research_experiment_failed,
+            record_bound_research_result,
+            record_research_result,
         )
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
@@ -314,30 +322,26 @@ class ToolRegistry:
         self.register_tool("find_in_page", find_in_page, FindInPageInput)
         self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
         self.register_tool("export_builtin_tool_source", export_builtin_tool_source, ExportBuiltinToolSourceInput)
+        self.register_tool("list_research_graphs", list_research_graphs, ListResearchGraphsInput)
+        self.register_tool("create_research_graph", create_research_graph, CreateResearchGraphInput)
+        self.register_tool("inspect_research_graph", inspect_research_graph, InspectResearchGraphInput)
+        self.register_tool("add_research_hypothesis", add_research_hypothesis, AddResearchHypothesisInput)
+        self.register_tool("add_research_experiment", add_research_experiment, AddResearchExperimentInput)
+        self.register_tool("record_research_result", record_research_result, RecordResearchResultInput)
         self.register_tool(
-            "initialize_hypothesis_campaign",
-            initialize_hypothesis_campaign,
-            InitializeHypothesisCampaignInput,
+            "record_bound_research_result",
+            record_bound_research_result,
+            RecordBoundResearchResultInput,
         )
         self.register_tool(
-            "extend_hypothesis_campaign",
-            extend_hypothesis_campaign,
-            ExtendHypothesisCampaignInput,
+            "mark_research_experiment_failed",
+            mark_research_experiment_failed,
+            MarkResearchExperimentFailedInput,
         )
         self.register_tool(
-            "inspect_hypothesis_campaign",
-            inspect_hypothesis_campaign,
-            InspectHypothesisCampaignInput,
-        )
-        self.register_tool(
-            "advance_hypothesis_campaign",
-            advance_hypothesis_campaign,
-            AdvanceHypothesisCampaignInput,
-        )
-        self.register_tool(
-            "record_hypothesis_result",
-            record_hypothesis_result,
-            RecordHypothesisResultInput,
+            "mark_bound_research_experiment_failed",
+            mark_bound_research_experiment_failed,
+            MarkBoundResearchExperimentFailedInput,
         )
         self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
         self.register_tool("calculate_al_candidates", calculate_al_candidates, CalculateALCandidatesInput)
@@ -479,6 +483,7 @@ class ToolRegistry:
         run_dir: Optional[str] = None,
         workspace: Optional[str] = None,
         audience: Optional[str] = None,
+        runtime_context: Optional[dict[str, Any]] = None,
     ) -> list[StructuredTool]:
         """Convert registered tools to LangChain StructuredTool instances.
 
@@ -508,6 +513,7 @@ class ToolRegistry:
                 run_dir=run_dir,
                 workspace=workspace,
                 audience=audience,
+                runtime_context=runtime_context,
             ))
         return tools
 
@@ -520,6 +526,7 @@ def _make_langchain_tool(
     run_dir: Optional[str] = None,
     workspace: Optional[str] = None,
     audience: Optional[str] = None,
+    runtime_context: Optional[dict[str, Any]] = None,
 ) -> StructuredTool:
     """Wrap CatMaster ``func/coroutine(payload)`` as a LangChain StructuredTool."""
     if func is None and coroutine is None:
@@ -528,8 +535,9 @@ def _make_langchain_tool(
     resolved_workspace = workspace
     resolved_run_dir = (run_dir or "").strip()
     resolved_audience = (audience or "").strip()
+    resolved_runtime_context = dict(runtime_context or {})
 
-    def _runtime_scope(runtime: ToolRuntime | None) -> tuple[str, str]:
+    def _runtime_scope(runtime: ToolRuntime | None) -> tuple[str, str, dict[str, Any]]:
         toolcall_key = str(getattr(runtime, "tool_call_id", "") or "").strip()
         if not toolcall_key:
             toolcall_key = f"{name}_{uuid4().hex[:8]}"
@@ -538,7 +546,15 @@ def _make_langchain_tool(
         runtime_context = getattr(runtime, "context", None)
         if not runtime_run_dir and isinstance(runtime_context, dict):
             runtime_run_dir = str(runtime_context.get("run_dir") or "").strip()
-        return toolcall_key, runtime_run_dir
+        merged_context = (
+            dict(runtime_context)
+            if isinstance(runtime_context, dict)
+            else {}
+        )
+        # Host-bound values win over generic LangChain runtime context. Tool
+        # arguments never participate in this mapping.
+        merged_context.update(resolved_runtime_context)
+        return toolcall_key, runtime_run_dir, merged_context
 
     def _workspace_files_root() -> Path:
         if resolved_workspace:
@@ -548,9 +564,14 @@ def _make_langchain_tool(
     def _wrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
         if func is None:
             raise NotImplementedError(f"Tool {name} does not support sync invocation.")
-        toolcall_key, runtime_run_dir = _runtime_scope(runtime)
+        toolcall_key, runtime_run_dir, current_context = _runtime_scope(runtime)
 
-        with toolcall_context(toolcall_key, run_dir=runtime_run_dir, audience=resolved_audience):
+        with toolcall_context(
+            toolcall_key,
+            run_dir=runtime_run_dir,
+            audience=resolved_audience,
+            context=current_context,
+        ):
             if resolved_workspace:
                 with workspace_scope(resolved_workspace):
                     result = func(kwargs)
@@ -566,9 +587,14 @@ def _make_langchain_tool(
     async def _awrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
         if coroutine is None:
             raise NotImplementedError(f"Tool {name} does not support async invocation.")
-        toolcall_key, runtime_run_dir = _runtime_scope(runtime)
+        toolcall_key, runtime_run_dir, current_context = _runtime_scope(runtime)
 
-        with toolcall_context(toolcall_key, run_dir=runtime_run_dir, audience=resolved_audience):
+        with toolcall_context(
+            toolcall_key,
+            run_dir=runtime_run_dir,
+            audience=resolved_audience,
+            context=current_context,
+        ):
             if resolved_workspace:
                 with workspace_scope(resolved_workspace):
                     result = await coroutine(kwargs)

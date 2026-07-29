@@ -6,11 +6,14 @@ from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
-from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.core import Structure, Molecule
 from pymatgen.io.vasp.inputs import Poscar
 
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.structures.adsorption import (
+    enumerate_adsorption_sites as enumerate_adsorption_sites_domain,
+    place_adsorbate_at_site,
+)
 from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 
 ADS_META_SCHEMA = "catmaster.adsorbate_meta.v1"
@@ -165,21 +168,6 @@ def _parse_site(site: str) -> Tuple[str, int]:
     if idx < 0:
         raise ValueError("site index must be >=0")
     return kind, idx
-
-
-def _enumerated_site_rows(ads_sites: Dict[str, Any], kinds: List[str]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for kind in kinds:
-        for i, c in enumerate(ads_sites.get(kind, [])):
-            coord = _to_list3(c)
-            rows.append(
-                {
-                    "label": f"{kind}_{i}",
-                    "kind": kind,
-                    "cart_coords": coord,
-                }
-            )
-    return rows
 
 
 def _choose_site(
@@ -474,11 +462,12 @@ def enumerate_adsorption_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, 
         out_json.parent.mkdir(parents=True, exist_ok=True)
 
         slab = Structure.from_file(str(slab_path))
-        asf = AdsorbateSiteFinder(slab)
-        ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
-
         kinds = ["ontop", "bridge", "hollow"] if params.mode == "all" else [params.mode]
-        site_rows = _enumerated_site_rows(ads_sites, kinds)
+        site_rows = enumerate_adsorption_sites_domain(
+            slab,
+            distance=float(params.distance),
+            site_kinds=kinds,
+        )
 
         total_found = len(site_rows)
 
@@ -502,9 +491,9 @@ def enumerate_adsorption_sites(payload: Dict[str, Any]) -> tuple[str, dict[str, 
             "sites_json_rel": workspace_relpath(out_json),
             "default_site_label": default_site,
             "counts": {
-                "ontop": len(ads_sites.get("ontop", [])),
-                "bridge": len(ads_sites.get("bridge", [])),
-                "hollow": len(ads_sites.get("hollow", [])),
+                "ontop": sum(row["kind"] == "ontop" for row in site_rows),
+                "bridge": sum(row["kind"] == "bridge" for row in site_rows),
+                "hollow": sum(row["kind"] == "hollow" for row in site_rows),
                 "returned": total_found,
                 "total_in_mode": total_found,
                 "truncated": False,
@@ -542,11 +531,20 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         slab = Structure.from_file(str(slab_path))
-        slab_sd = slab.site_properties.get("selective_dynamics") if slab.site_properties else None
         mol = _load_adsorbate_molecule(ads_path)
-
-        asf = AdsorbateSiteFinder(slab)
-        ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
+        site_rows = enumerate_adsorption_sites_domain(
+            slab,
+            distance=float(params.distance),
+            site_kinds=["ontop", "bridge", "hollow"],
+        )
+        ads_sites = {
+            kind: [
+                np.asarray(row["cart_coords"], dtype=float)
+                for row in site_rows
+                if row["kind"] == kind
+            ]
+            for kind in ("ontop", "bridge", "hollow")
+        }
 
         site_label, site_coord, selection_mode, requested_site_cart_coords = _choose_site(
             ads_sites=ads_sites,
@@ -554,19 +552,12 @@ def place_adsorbate(payload: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
             site_cart_coords=params.site_cart_coords,
         )
 
-        ads_struct = asf.add_adsorbate(mol, site_coord, translate=True, reorient=False)
-
-        # Selective dynamics handling: preserve slab flags and set adsorbate to [True,True,True]
-        slab_sd_list: List[List[bool]]
-        if slab_sd and len(slab_sd) == len(slab):
-            slab_sd_list = [list(map(bool, v)) for v in slab_sd]
-        else:
-            slab_sd_list = [[True, True, True] for _ in range(len(slab))]
-        ads_flags = [[True, True, True] for _ in range(len(mol))]
-        sd_new = slab_sd_list + ads_flags
-        if "selective_dynamics" in ads_struct.site_properties:
-            ads_struct.remove_site_property("selective_dynamics")
-        ads_struct.add_site_property("selective_dynamics", sd_new)
+        ads_struct = place_adsorbate_at_site(
+            slab,
+            mol,
+            site_coord,
+            reorient=False,
+        )
 
         Poscar(ads_struct).write_file(str(out_path))
 
@@ -698,12 +689,14 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, 
         for slab_path in slab_paths:
             try:
                 slab = Structure.from_file(str(slab_path))
-                slab_sd = slab.site_properties.get("selective_dynamics") if slab.site_properties else None
                 inherited_indices, inherit_warnings = _load_inherited_ads_indices(slab_path)
                 warnings.extend([f"{workspace_relpath(slab_path)}: {msg}" for msg in inherit_warnings])
 
-                asf = AdsorbateSiteFinder(slab)
-                ads_sites = asf.find_adsorption_sites(distance=float(params.distance))
+                site_rows = enumerate_adsorption_sites_domain(
+                    slab,
+                    distance=float(params.distance),
+                    site_kinds=kinds,
+                )
 
                 if slab_root is None:
                     slab_id = slab_path.stem
@@ -718,70 +711,50 @@ def generate_batch_adsorption_structures(payload: Dict[str, Any]) -> tuple[str, 
                 slab_out_dir.mkdir(parents=True, exist_ok=True)
 
                 generated = 0
-                for kind in kinds:
-                    for idx, coord in enumerate(ads_sites.get(kind, [])):
-                        if generated >= params.max_structures:
-                            break
-                        ads_struct = asf.add_adsorbate(mol, coord, translate=True, reorient=False)
+                for site_row in site_rows[: params.max_structures]:
+                    site_label = str(site_row["label"])
+                    coord = site_row["cart_coords"]
+                    ads_struct = place_adsorbate_at_site(
+                        slab,
+                        mol,
+                        coord,
+                        reorient=False,
+                    )
 
-                        slab_sd_list = [list(map(bool, v)) for v in slab_sd] if slab_sd and len(slab_sd) == len(slab) else [
-                            [True, True, True] for _ in range(len(slab))
-                        ]
-                        sd_new = slab_sd_list + [[True, True, True] for _ in range(len(mol))]
-                        if "selective_dynamics" in ads_struct.site_properties:
-                            ads_struct.remove_site_property("selective_dynamics")
-                        ads_struct.add_site_property("selective_dynamics", sd_new)
+                    file_path = slab_out_dir / f"{site_label}.vasp"
+                    Poscar(ads_struct).write_file(str(file_path))
+                    ads_indices_added = list(range(len(slab), len(slab) + len(mol)))
+                    ads_indices = _merge_indices(inherited_indices, ads_indices_added)
+                    meta_path = _write_adsorbate_meta(
+                        output_structure_path=file_path,
+                        parent_structure_path=slab_path,
+                        adsorbate_path=ads_path,
+                        tool_name="generate_batch_adsorption_structures",
+                        site_label=site_label,
+                        site_input_mode="label",
+                        site_cart_coords_input=None,
+                        site_cart_coords=_to_list3(coord),
+                        distance=float(params.distance),
+                        ads_indices_added=ads_indices_added,
+                        ads_indices=ads_indices,
+                    )
 
-                        file_path = slab_out_dir / f"{kind}_{idx}.vasp"
-                        Poscar(ads_struct).write_file(str(file_path))
-                        ads_indices_added = list(range(len(slab), len(slab) + len(mol)))
-                        ads_indices = _merge_indices(inherited_indices, ads_indices_added)
-                        site_label = f"{kind}_{idx}"
-                        meta_path = _write_adsorbate_meta(
-                            output_structure_path=file_path,
-                            parent_structure_path=slab_path,
-                            adsorbate_path=ads_path,
-                            tool_name="generate_batch_adsorption_structures",
-                            site_label=site_label,
-                            site_input_mode="label",
-                            site_cart_coords_input=None,
-                            site_cart_coords=_to_list3(coord),
-                            distance=float(params.distance),
-                            ads_indices_added=ads_indices_added,
-                            ads_indices=ads_indices,
-                        )
+                    result_row = {
+                        "slab_file_rel": slab_rel,
+                        "slab_id": slab_id,
+                        "label": site_label,
+                        "output_poscar_rel": workspace_relpath(file_path),
+                        "ads_indices_added": ads_indices_added,
+                        "ads_indices": ads_indices,
+                        "ads_count_added": len(ads_indices_added),
+                        "ads_count_total": len(ads_indices),
+                        "metadata_rel": workspace_relpath(meta_path),
+                    }
+                    results.append(result_row)
+                    ads_index_entries.append(dict(result_row))
+                    generated += 1
 
-                        results.append(
-                            {
-                                "slab_file_rel": slab_rel,
-                                "slab_id": slab_id,
-                                "label": site_label,
-                                "output_poscar_rel": workspace_relpath(file_path),
-                                "ads_indices_added": ads_indices_added,
-                                "ads_indices": ads_indices,
-                                "ads_count_added": len(ads_indices_added),
-                                "ads_count_total": len(ads_indices),
-                                "metadata_rel": workspace_relpath(meta_path),
-                            }
-                        )
-                        ads_index_entries.append(
-                            {
-                                "slab_file_rel": slab_rel,
-                                "slab_id": slab_id,
-                                "label": site_label,
-                                "output_poscar_rel": workspace_relpath(file_path),
-                                "metadata_rel": workspace_relpath(meta_path),
-                                "ads_indices_added": ads_indices_added,
-                                "ads_indices": ads_indices,
-                                "ads_count_added": len(ads_indices_added),
-                                "ads_count_total": len(ads_indices),
-                            }
-                        )
-                        generated += 1
-                    if generated >= params.max_structures:
-                        break
-
-                total_candidates_slab = sum(len(ads_sites.get(k, [])) for k in kinds)
+                total_candidates_slab = len(site_rows)
                 total_candidates += total_candidates_slab
                 generated_total += generated
                 truncated_any = truncated_any or (generated < total_candidates_slab)

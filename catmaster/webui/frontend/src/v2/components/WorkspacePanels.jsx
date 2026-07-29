@@ -1,16 +1,42 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, BarChart3, Braces, Clock, Cpu, Database, Download, FileBox, Filter, GitBranch, ListChecks, MessageSquare, RefreshCw, Trash2, Upload } from "lucide-react";
-import { Grid } from "gridjs-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Activity, BarChart3, Braces, Clock, Cpu, Database, Download, FileBox, GitBranch, ListChecks, MessageSquare, RefreshCw, Trash2, Upload, X } from "lucide-react";
 
 import ArtifactRenderer from "./ArtifactRenderer";
 import { apiFetch } from "../useCatMasterThreadRuntime";
 import {
+  displayValue,
+  humanizeKey,
+  isInternalStoragePath,
+  makeApiError,
+  presentError,
+  redactErrorText,
+  userFacingFileTitle,
+} from "../presentation.js";
+import {
+  SELF_EVOLUTION_STATUS_VALUES,
+  mergeSelfEvolutionCandidates,
+  mergeSelfEvolutionObservations,
+  redactSelfEvolutionText,
+  selfEvolutionActionDefinition,
+  selfEvolutionActionEndpoint,
+  selfEvolutionActionRequest,
+  selfEvolutionAllowedActions,
+  selfEvolutionBehaviorChange,
   selfEvolutionCandidateTitle,
+  selfEvolutionCandidateVersion,
+  selfEvolutionDisplayError,
+  selfEvolutionEvidenceItems,
+  selfEvolutionFilterCandidates,
   selfEvolutionHumanReview,
   selfEvolutionLifecycleLabel,
+  selfEvolutionObservationView,
   selfEvolutionPromotionConfirmation,
-  selfEvolutionStatusCounts,
+  selfEvolutionRouteLabel,
+  selfEvolutionSafeText,
+  selfEvolutionStatusLabel,
+  selfEvolutionTextItems,
   sortSelfEvolutionCandidates,
+  sortSelfEvolutionObservations,
 } from "../selfEvolutionView";
 
 function escapePath(value) {
@@ -64,48 +90,6 @@ function jsonText(value) {
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
-function compactJson(value, max = 3200) {
-  const text = jsonText(value);
-  return text.length > max ? `${text.slice(0, max)}\n... truncated ...` : text;
-}
-
-function plainText(value, fallback = "-") {
-  if (value == null) return fallback;
-  if (typeof value === "string") {
-    const text = value.trim();
-    return text || fallback;
-  }
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : fallback;
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "object") {
-    const text = jsonText(value).replace(/\s+/g, " ").trim();
-    return text || fallback;
-  }
-  return String(value);
-}
-
-function compactPlainText(value, max = 420) {
-  const text = plainText(value, "").replace(/\s+/g, " ").trim();
-  return text.length > max ? `${text.slice(0, max)}...` : text;
-}
-
-function asRecord(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function formatDurationMs(value) {
-  const ms = Number(value || 0);
-  if (!Number.isFinite(ms) || ms <= 0) return "-";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return formatDurationSec(ms / 1000);
-}
-
-function formatMaybeDurationSec(value) {
-  const seconds = Number(value || 0);
-  if (!Number.isFinite(seconds) || seconds <= 0) return "-";
-  return formatDurationSec(seconds);
-}
-
 function formatTimestamp(value) {
   const number = Number(value || 0);
   const parsed = Date.parse(String(value || ""));
@@ -116,42 +100,90 @@ function formatTimestamp(value) {
   return new Date(ms).toLocaleString();
 }
 
-function formatTokenUsage(value) {
-  const usage = asRecord(value);
-  const total = usage.total_tokens ?? usage.totalTokens ?? usage.total;
-  const input = usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.prompt;
-  const output = usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.completion;
-  const chunks = [];
-  if (Number(total) > 0) chunks.push(`${formatCount(total)} total`);
-  if (Number(input) > 0) chunks.push(`${formatCount(input)} in`);
-  if (Number(output) > 0) chunks.push(`${formatCount(output)} out`);
-  return chunks.join(" / ") || "-";
-}
-
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function monitorRowsFromMap(value) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  if (typeof value === "object") {
-    return Object.entries(value).map(([name, count]) => ({ name, count }));
-  }
-  return [];
+function statusLabel(value) {
+  const status = String(value || "idle").toLowerCase();
+  return {
+    idle: "Ready",
+    created: "Ready",
+    streaming: "In progress",
+    queued: "Queued",
+    pending: "Waiting",
+    running: "Running",
+    stopping: "Stopping",
+    interrupted: "Waiting for review",
+    resolved: "Reviewed",
+    completed: "Completed",
+    complete: "Completed",
+    success: "Completed",
+    failed: "Needs attention",
+    error: "Needs attention",
+  }[status] || displayValue(status.replace(/[_-]+/g, " "), "Ready");
 }
 
-function TreeNode({ node, depth, selectedPath, childrenByPath, loadingByPath, onToggle, onSelect }) {
+function statusAwareText(value, status, fallback = "Not available") {
+  const text = displayValue(value, fallback);
+  return ["failed", "error"].includes(String(status || "").toLowerCase())
+    ? redactErrorText(text)
+    : text;
+}
+
+function ErrorNotice({ error, compact = false }) {
+  const presented = presentError(error);
+  if (!presented.message) return null;
+  return (
+    <div className={`v2-error ${compact ? "compact" : ""}`} role="alert">
+      <span>{presented.message}</span>
+      {presented.technicalDetails ? (
+        <details className="v2-error-details">
+          <summary>Technical details</summary>
+          <pre>{presented.technicalDetails}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function TreeNode({
+  node,
+  depth,
+  selectedPath,
+  childrenByPath,
+  loadingByPath,
+  pageByPath,
+  onToggle,
+  onSelect,
+  onLoadMore,
+}) {
   const isDirectory = node.node_type === "directory";
   const open = Boolean(childrenByPath[node.path || ""]);
-  const children = childrenByPath[node.path || ""] || [];
+  const allChildren = childrenByPath[node.path || ""] || [];
+  const children = allChildren.filter((child) => !isInternalStoragePath(child?.path));
   return (
     <div className="v2-file-branch">
       <div className={`v2-file-row ${selectedPath === node.path ? "selected" : ""}`} style={{ paddingLeft: `${depth * 14}px` }}>
-        <button type="button" className="v2-file-toggle" disabled={!isDirectory} onClick={() => onToggle(node)}>
+        <button
+          type="button"
+          className="v2-file-toggle"
+          disabled={!isDirectory}
+          aria-label={isDirectory ? `${open ? "Collapse" : "Expand"} ${node.name || "directory"}` : `File ${node.name || ""}`}
+          aria-expanded={isDirectory ? open : undefined}
+          title={displayValue(node.name || node.path, isDirectory ? "Directory" : "File")}
+          onClick={() => onToggle(node)}
+        >
           {isDirectory ? (open ? "-" : "+") : ""}
         </button>
-        <button type="button" className={`v2-file-label kind-${node.preview_kind || node.node_type}`} onClick={() => onSelect(node)}>
+        <button
+          type="button"
+          className={`v2-file-label kind-${node.preview_kind || node.node_type}`}
+          aria-current={selectedPath === node.path ? "true" : undefined}
+          aria-label={`Open ${displayValue(node.name || node.path, "file")}`}
+          title={displayValue(node.name || node.path, "File")}
+          onClick={() => onSelect(node)}
+        >
           <span>{node.name || "."}</span>
           {node.node_type === "file" ? <small>{formatBytes(node.size)}</small> : null}
         </button>
@@ -168,74 +200,80 @@ function TreeNode({ node, depth, selectedPath, childrenByPath, loadingByPath, on
               selectedPath={selectedPath}
               childrenByPath={childrenByPath}
               loadingByPath={loadingByPath}
+              pageByPath={pageByPath}
               onToggle={onToggle}
               onSelect={onSelect}
+              onLoadMore={onLoadMore}
             />
           ))}
+          {pageByPath[node.path || ""]?.truncated ? (
+            <button
+              type="button"
+              className="v2-file-load-more"
+              disabled={loadingByPath[node.path || ""]}
+              onClick={() => onLoadMore(node.path || "", pageByPath[node.path || ""].next_cursor)}
+            >
+              Load more files ({allChildren.length} of {pageByPath[node.path || ""].total_count})
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-function CsvGrid({ preview }) {
-  const rows = useMemo(() => {
-    const text = String(preview?.preview_text || "").trim();
-    if (!text) return [];
-    const separator = String(preview?.path || "").toLowerCase().endsWith(".tsv") ? "\t" : ",";
-    return text.split(/\r?\n/).slice(0, 200).map((line) => line.split(separator));
-  }, [preview]);
-  if (!rows.length) return <div className="v2-empty">CSV preview is empty.</div>;
-  const columns = rows[0].map((item, index) => String(item || `Column ${index + 1}`));
-  const data = rows.slice(1).map((row) => columns.map((_, index) => row[index] || ""));
-  return <Grid columns={columns} data={data} search pagination={{ limit: 25 }} sort />;
-}
-
 function FilePreview({ ctx, workspaceName, preview, loading, error, onRefresh, onDelete }) {
-  if (loading) return <div className="v2-empty">Loading preview...</div>;
-  if (error) return <div className="v2-error">{error}</div>;
-  if (!preview) return <div className="v2-empty">Select a file or directory.</div>;
-  const isCsv = preview.kind === "csv" || String(preview.path || "").toLowerCase().endsWith(".csv") || String(preview.path || "").toLowerCase().endsWith(".tsv");
+  if (loading) return <div className="v2-empty" role="status">Loading preview…</div>;
+  if (error) return <ErrorNotice error={error} />;
+  if (!preview) return <div className="v2-empty">Select a file or folder from Browse to inspect it here.</div>;
   const archiveUrl = `/api/session/${escapePath(ctx)}/files/archive?path=${escapePath(preview.path || "")}&project_space=${escapePath(workspaceName || "")}`;
   return (
     <div className="v2-files-preview">
       <div className="v2-inspector-head">
         <div>
-          <div className="v2-eyebrow">{preview.kind || preview.node_type || "file"}</div>
-          <h3>{preview.name || preview.path || "."}</h3>
+          <div className="v2-eyebrow">{humanizeKey(preview.kind || preview.node_type || "file")}</div>
+          <h3>{displayValue(preview.name || preview.path, "Workspace files")}</h3>
           <div className="v2-muted">{preview.path || "."}</div>
         </div>
         <div className="v2-icon-row">
-          <button type="button" className="v2-icon-btn" onClick={onRefresh} title="Refresh"><RefreshCw size={16} /></button>
-          {preview.download_url ? <a className="v2-icon-btn" href={preview.download_url} title="Download"><Download size={16} /></a> : null}
-          <a className="v2-icon-btn" href={archiveUrl} title="Download ZIP"><FileBox size={16} /></a>
-          {preview.path ? <button type="button" className="v2-icon-btn danger" onClick={onDelete} title="Delete"><Trash2 size={16} /></button> : null}
+          <button type="button" className="v2-icon-btn" onClick={onRefresh} aria-label="Refresh preview"><RefreshCw size={16} /></button>
+          {preview.download_url ? <a className="v2-icon-btn" href={preview.download_url} aria-label={`Download ${preview.name || "file"}`}><Download size={16} /></a> : null}
+          <a className="v2-icon-btn" href={archiveUrl} aria-label={`Download ${preview.name || "user files"} as ZIP`}><FileBox size={16} /></a>
+          {preview.path ? <button type="button" className="v2-icon-btn danger" onClick={onDelete} aria-label={`Delete ${preview.name || preview.path}`}><Trash2 size={16} /></button> : null}
         </div>
       </div>
       <div className="v2-file-meta">
-        <span>{preview.node_type}</span>
+        <span>{humanizeKey(preview.node_type || "file")}</span>
         <span>{formatBytes(preview.size)}</span>
         {preview.mime_type ? <span>{preview.mime_type}</span> : null}
       </div>
       {preview.kind === "directory" ? (
-        <div className="v2-directory-list">
-          {(preview.children || []).map((child) => (
-            <div key={child.path || child.name}><span>{child.name}</span><small>{child.node_type === "file" ? formatBytes(child.size) : "directory"}</small></div>
-          ))}
-        </div>
+        <>
+          <div className="v2-directory-list">
+            {(preview.children || []).filter((child) => !isInternalStoragePath(child?.path)).map((child) => (
+              <div key={child.path || child.name}>
+                <span title={displayValue(child.name || child.path, "Item")}>{displayValue(child.name || child.path, "Item")}</span>
+                <small>{child.node_type === "file" ? formatBytes(child.size) : "Folder"}</small>
+              </div>
+            ))}
+          </div>
+          {preview.page?.truncated ? (
+            <div className="v2-truncation-notice" role="status">
+              Showing {preview.page.shown_count} of {preview.page.total_count} entries. Use the Browse tree to load the remaining entries.
+            </div>
+          ) : null}
+        </>
       ) : null}
-      {preview.kind === "image" && preview.download_url ? <img className="v2-image-preview" src={preview.download_url} alt={preview.name || "file"} /> : null}
-      {preview.kind === "structure" ? <ArtifactRenderer filePreview={preview} /> : null}
-      {preview.kind === "markdown" || preview.kind === "pdf" ? <ArtifactRenderer filePreview={preview} /> : null}
-      {isCsv ? <div className="v2-grid-wrap"><CsvGrid preview={preview} /></div> : null}
-      {!["directory", "image", "structure", "markdown", "pdf"].includes(preview.kind) && !isCsv ? <pre className="v2-code">{preview.preview_text || "(binary file)"}</pre> : null}
-      {preview.truncated ? <div className="v2-muted">Preview truncated.</div> : null}
+      {preview.kind !== "directory" ? (
+        <ArtifactRenderer filePreview={preview} showHeader={false} workspaceName={workspaceName} ctx={ctx} onRefresh={onRefresh} />
+      ) : null}
     </div>
   );
 }
 
 export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelectFile }) {
   const [childrenByPath, setChildrenByPath] = useState({});
+  const [pageByPath, setPageByPath] = useState({});
   const [loadingByPath, setLoadingByPath] = useState({});
   const [selectedPath, setSelectedPath] = useState("");
   const [preview, setPreview] = useState(null);
@@ -252,15 +290,23 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
   const inputRef = useRef(null);
   const shellRef = useRef(null);
 
-  async function loadTree(path = "") {
+  async function loadTree(path = "", cursor = "") {
     if (!ctx || !workspaceName) return;
     setLoadingByPath((prev) => ({ ...prev, [path]: true }));
     try {
-      const payload = await apiFetch(`/api/session/${escapePath(ctx)}/files/tree?path=${escapePath(path)}&project_space=${escapePath(workspaceName)}`);
-      setChildrenByPath((prev) => ({ ...prev, [payload.path || ""]: payload.children || [] }));
+      const cursorQuery = cursor ? `&cursor=${escapePath(cursor)}` : "";
+      const payload = await apiFetch(`/api/session/${escapePath(ctx)}/files/tree?path=${escapePath(path)}&project_space=${escapePath(workspaceName)}${cursorQuery}`);
+      const key = payload.path || "";
+      setChildrenByPath((prev) => ({
+        ...prev,
+        [key]: cursor
+          ? [...(prev[key] || []), ...(payload.children || [])]
+          : (payload.children || []),
+      }));
+      setPageByPath((prev) => ({ ...prev, [key]: payload.page || {} }));
       setError("");
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     } finally {
       setLoadingByPath((prev) => ({ ...prev, [path]: false }));
     }
@@ -274,7 +320,7 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
       setPreview(payload);
       onSelectFile?.({ path, preview: payload });
     } catch (err) {
-      setPreviewError(err.message || String(err));
+      setPreviewError(err);
     } finally {
       setPreviewLoading(false);
     }
@@ -282,6 +328,7 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
 
   useEffect(() => {
     setChildrenByPath({});
+    setPageByPath({});
     setSelectedPath("");
     setPreview(null);
     loadTree("");
@@ -304,6 +351,24 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
     await loadPreview(path);
   }
 
+  function toggleTree(node) {
+    const path = node.path || "";
+    if (Object.prototype.hasOwnProperty.call(childrenByPath, path)) {
+      setChildrenByPath((current) => {
+        const next = { ...current };
+        delete next[path];
+        return next;
+      });
+      setPageByPath((current) => {
+        const next = { ...current };
+        delete next[path];
+        return next;
+      });
+      return;
+    }
+    loadTree(path);
+  }
+
   async function uploadFiles(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
@@ -314,7 +379,10 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
         method: "POST",
         body: file,
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) {
+        const text = await response.text();
+        throw makeApiError(response.status, text, response.headers.get("content-type") || "");
+      }
     }
     setUploadStatus(`Uploaded ${list.length} file(s).`);
     await loadTree(target);
@@ -325,7 +393,10 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
     if (!preview?.path) return;
     if (!window.confirm(`Delete ${preview.path}?`)) return;
     const response = await fetch(`/api/session/${escapePath(ctx)}/files/delete?path=${escapePath(preview.path)}&project_space=${escapePath(workspaceName)}`, { method: "DELETE" });
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) {
+      const text = await response.text();
+      throw makeApiError(response.status, text, response.headers.get("content-type") || "");
+    }
     const parent = preview.path.split("/").slice(0, -1).join("/");
     setPreview(null);
     setSelectedPath(parent);
@@ -355,7 +426,29 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
     window.addEventListener("pointercancel", stop);
   }
 
-  const roots = childrenByPath[""] || [];
+  function setTreeWidthPersisted(value) {
+    const shell = shellRef.current;
+    const rect = shell?.getBoundingClientRect();
+    const availableMax = rect ? Math.max(260, rect.width - 360) : 680;
+    const maxWidth = Math.min(680, availableMax);
+    const next = clampNumber(value, 240, maxWidth);
+    setTreeWidth(next);
+    window.localStorage.setItem("catmaster:v2:file-tree-width", String(Math.round(next)));
+  }
+
+  function resizeTreeWithKeyboard(event) {
+    let next = null;
+    if (event.key === "ArrowLeft") next = treeWidth - 16;
+    if (event.key === "ArrowRight") next = treeWidth + 16;
+    if (event.key === "Home") next = 240;
+    if (event.key === "End") next = 680;
+    if (next === null) return;
+    event.preventDefault();
+    setTreeWidthPersisted(next);
+  }
+
+  const allRoots = childrenByPath[""] || [];
+  const roots = allRoots.filter((node) => !isInternalStoragePath(node?.path));
   const previewNode = (
     <FilePreview
       ctx={ctx}
@@ -364,7 +457,7 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
       loading={previewLoading}
       error={previewError}
       onRefresh={() => loadPreview(selectedPath)}
-      onDelete={() => deleteSelected().catch((err) => setPreviewError(err.message || String(err)))}
+      onDelete={() => deleteSelected().catch(setPreviewError)}
     />
   );
 
@@ -378,7 +471,16 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
         <div className="v2-icon-row">
           <button type="button" className="v2-ghost-btn" onClick={() => loadTree("")}><RefreshCw size={15} />Refresh</button>
           <button type="button" className="v2-ghost-btn" onClick={() => inputRef.current?.click()}><Upload size={15} />Upload</button>
-          <input ref={inputRef} type="file" multiple className="v2-hidden-input" onChange={(event) => uploadFiles(event.target.files).catch((err) => setError(err.message || String(err)))} />
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            className="v2-hidden-input"
+            onChange={(event) => uploadFiles(event.target.files).catch((reason) => {
+              setUploadStatus("");
+              setError(reason);
+            })}
+          />
         </div>
       </div>
       <div className="v2-file-tabs" role="tablist" aria-label="File workspace views">
@@ -386,17 +488,53 @@ export function FilesPanel({ ctx, workspaceName, selectedFilePath = "", onSelect
         <button type="button" className={activeFileTab === "preview" ? "active" : ""} onClick={() => setActiveFileTab("preview")} role="tab" aria-selected={activeFileTab === "preview"}>Preview</button>
         <button type="button" className={activeFileTab === "uploads" ? "active" : ""} onClick={() => setActiveFileTab("uploads")} role="tab" aria-selected={activeFileTab === "uploads"}>Uploads</button>
       </div>
-      {error ? <div className="v2-error">{error}</div> : null}
+      <ErrorNotice error={error} />
       {uploadStatus ? <div className="v2-muted">{uploadStatus}</div> : null}
       {activeFileTab === "browse" ? (
         <div ref={shellRef} className="v2-files-shell resizable" style={{ "--v2-file-tree-width": `${treeWidth}px` }}>
           <div className="v2-files-tree">
             {roots.map((node) => (
-              <TreeNode key={node.path || node.name} node={node} depth={0} selectedPath={selectedPath} childrenByPath={childrenByPath} loadingByPath={loadingByPath} onToggle={(item) => loadTree(item.path || "")} onSelect={selectNode} />
+              <TreeNode
+                key={node.path || node.name}
+                node={node}
+                depth={0}
+                selectedPath={selectedPath}
+                childrenByPath={childrenByPath}
+                loadingByPath={loadingByPath}
+                pageByPath={pageByPath}
+                onToggle={toggleTree}
+                onSelect={selectNode}
+                onLoadMore={loadTree}
+              />
             ))}
-            {!roots.length ? <div className="v2-empty">No files in this workspace.</div> : null}
+            {pageByPath[""]?.truncated ? (
+              <button
+                type="button"
+                className="v2-file-load-more"
+                disabled={loadingByPath[""]}
+                onClick={() => loadTree("", pageByPath[""].next_cursor)}
+              >
+                Load more files ({allRoots.length} of {pageByPath[""].total_count})
+              </button>
+            ) : null}
+            {!loadingByPath[""] && !roots.length ? (
+              <div className="v2-empty">No files yet. Upload a file or create one through a task.</div>
+            ) : null}
+            {loadingByPath[""] && !roots.length ? <div className="v2-empty" role="status">Loading workspace files…</div> : null}
           </div>
-          <div className="v2-resize-handle v2-resize-handle-files" role="separator" aria-label="Resize file browser" aria-orientation="vertical" tabIndex={0} onPointerDown={startTreeResize} />
+          <div
+            className="v2-resize-handle v2-resize-handle-files"
+            role="separator"
+            aria-label="Resize file browser"
+            aria-orientation="vertical"
+            aria-valuemin={240}
+            aria-valuemax={680}
+            aria-valuenow={Math.round(treeWidth)}
+            aria-valuetext={`${Math.round(treeWidth)} pixels`}
+            tabIndex={0}
+            onPointerDown={startTreeResize}
+            onKeyDown={resizeTreeWithKeyboard}
+          />
           {previewNode}
         </div>
       ) : null}
@@ -433,81 +571,640 @@ function MonitorMetric({ icon: Icon, label, value, note }) {
   );
 }
 
-function MonitorCodeBlock({ title, text }) {
+function EvolutionTextList({ items, empty = "None recorded." }) {
+  const rows = selfEvolutionTextItems(items);
+  return rows.length ? (
+    <ul className="v2-evolution-text-list">
+      {rows.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+    </ul>
+  ) : <p className="v2-muted">{empty}</p>;
+}
+
+function EvolutionEvidenceList({ items }) {
+  const rows = selfEvolutionEvidenceItems(items);
+  return rows.length ? (
+    <div className="v2-evolution-evidence-list">
+      {rows.map((item, index) => (
+        <article key={`${item.title}-${index}`}>
+          {item.title ? <strong>{item.title}</strong> : null}
+          {item.summary ? <p>{item.summary}</p> : null}
+          <footer>
+            {item.sourceLabel ? <span>{item.sourceLabel}</span> : null}
+            {item.href ? <a href={item.href} target="_blank" rel="noreferrer">Open source</a> : null}
+            {!item.href && item.sourceRef ? (
+              <details className="v2-evolution-source-ref">
+                <summary>Trace reference</summary>
+                <code>{item.sourceRef}</code>
+              </details>
+            ) : null}
+          </footer>
+        </article>
+      ))}
+    </div>
+  ) : <p className="v2-muted">No evidence source was supplied.</p>;
+}
+
+function CandidateDiff({ candidate }) {
+  const technical = candidate?.technical_details && typeof candidate.technical_details === "object"
+    ? candidate.technical_details
+    : {};
+  const diffRef = String(candidate?.diff_ref || technical.diff_ref || "");
+  const inlineDiff = redactSelfEvolutionText(candidate?.technical_diff || technical.diff || "");
+  const technicalNotes = selfEvolutionTextItems(technical.notes || technical.summary);
+  const [text, setText] = useState(inlineDiff);
+  const [page, setPage] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setText(inlineDiff);
+    setPage(null);
+    setError("");
+  }, [candidate?.candidate_id, candidate?.revision, inlineDiff]);
+
+  async function load(cursor = "") {
+    if (!diffRef || loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const separator = diffRef.includes("?") ? "&" : "?";
+      const url = cursor ? `${diffRef}${separator}cursor=${encodeURIComponent(cursor)}` : diffRef;
+      const response = await apiFetch(url);
+      const nextText = redactSelfEvolutionText(response.diff || "");
+      setText((current) => (cursor ? `${current}${nextText}` : nextText));
+      setPage(response.page || null);
+    } catch (err) {
+      setError(selfEvolutionDisplayError(err, "The reviewed diff could not be loaded. Refresh and try again."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!diffRef && !inlineDiff && !technicalNotes.length) return null;
   return (
-    <section className="v2-monitor-panel">
-      <div className="v2-monitor-panel-head">
-        <h3>{title}</h3>
+    <details
+      className="v2-evolution-secondary"
+      aria-busy={loading}
+      onToggle={(event) => {
+        if (event.currentTarget.open && diffRef && !page && !text && !loading) load();
+      }}
+    >
+      <summary>Technical details and reviewed diff</summary>
+      <div className="v2-evolution-technical">
+        {technicalNotes.length ? <EvolutionTextList items={technicalNotes} /> : null}
+        {text ? <pre>{text}</pre> : null}
+        {!text && diffRef && !loading && !error ? <p className="v2-muted">Open this section to load the redacted reviewed diff.</p> : null}
+        {loading ? <p className="v2-muted" role="status">Loading reviewed diff…</p> : null}
+        {error ? <div className="v2-error compact" role="alert">{error}</div> : null}
+        {page ? (
+          <div className="v2-truncation-notice">
+            <span>
+              Loaded {Number(page.shown_count || text.length).toLocaleString()} of{" "}
+              {Number(page.total_count || 0).toLocaleString()} characters.
+            </span>
+            {page.truncated && page.next_cursor ? (
+              <button type="button" className="v2-ghost-btn compact" onClick={() => load(page.next_cursor)} disabled={loading}>
+                Load more diff
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <pre className="v2-code tall">{text || "(empty)"}</pre>
-    </section>
+    </details>
+  );
+}
+
+function SelfEvolutionActionDialog({
+  candidate,
+  action,
+  workspaceName,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useRef(null);
+  const initialFocusRef = useRef(null);
+  const [rationale, setRationale] = useState("");
+  const [guidance, setGuidance] = useState("");
+  const [scopeKind, setScopeKind] = useState("thread");
+  const [scopeId, setScopeId] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const definition = selfEvolutionActionDefinition(action);
+  const isIndependentReview = action === "run-review";
+  const isRevision = action === "request-revision";
+  const isCanary = action === "start-canary";
+  const isStablePromotion = action === "promote-stable";
+  const needsExactConfirmation = isCanary || isStablePromotion;
+  const needsSafetyConfirmation = ["reject", "quarantine", "retire", "rollback"].includes(action);
+  const scopeLabel = isCanary
+    ? `${scopeKind === "run" ? "Run" : "Thread"} ${scopeId.trim() || "(select a reference)"}`
+    : `Stable for every future run in ${workspaceName || "this workspace"}`;
+  const review = selfEvolutionHumanReview(candidate);
+  const canSubmit = Boolean(
+    definition
+    && (isIndependentReview || rationale.trim())
+    && (!isRevision || guidance.trim())
+    && (!isCanary || scopeId.trim())
+    && (!(needsExactConfirmation || needsSafetyConfirmation) || confirmed),
+  );
+
+  useEffect(() => {
+    setRationale("");
+    setGuidance("");
+    setScopeKind("thread");
+    setScopeId("");
+    setConfirmed(false);
+    const frame = window.requestAnimationFrame(() => initialFocusRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [candidate?.candidate_id, candidate?.revision, action]);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const controls = [...dialogRef.current.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, a[href]',
+      )].filter((element) => element.getClientRects().length > 0);
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose]);
+
+  if (!candidate || !definition) return null;
+  return (
+    <div
+      className="v2-evolution-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        ref={dialogRef}
+        className="v2-evolution-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        aria-busy={busy}
+      >
+        <header>
+          <div>
+            <div className="v2-eyebrow">Human decision</div>
+            <h3 id={titleId}>{definition.label}</h3>
+          </div>
+          <button type="button" className="v2-icon-btn" aria-label={`Close ${definition.label}`} onClick={onClose} disabled={busy}>
+            <X size={17} />
+          </button>
+        </header>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canSubmit) onSubmit({ rationale, guidance, scopeKind, scopeId });
+          }}
+        >
+          <p id={descriptionId}>{definition.description}</p>
+          <div className="v2-evolution-dialog-target">
+            <strong>{selfEvolutionCandidateTitle(candidate)}</strong>
+            <span>{selfEvolutionCandidateVersion(candidate)}</span>
+          </div>
+          {needsExactConfirmation ? (
+            <section className="v2-evolution-confirmation" aria-label="Exact release confirmation">
+              <h4>Confirm the exact release</h4>
+              <dl>
+                <div><dt>Version</dt><dd>{selfEvolutionCandidateVersion(candidate)}</dd></div>
+                <div><dt>Target</dt><dd>{selfEvolutionCandidateTitle(candidate)}</dd></div>
+                <div><dt>Scope</dt><dd>{scopeLabel}</dd></div>
+              </dl>
+              <h5>Reviewer concerns</h5>
+              <EvolutionTextList items={review.concerns} empty="No reviewer concerns were recorded." />
+            </section>
+          ) : null}
+          {isCanary ? (
+            <div className="v2-evolution-dialog-fields two-column">
+              <label>
+                <span>Canary scope</span>
+                <select value={scopeKind} onChange={(event) => setScopeKind(event.target.value)}>
+                  <option value="thread">One thread</option>
+                  <option value="run">One run</option>
+                </select>
+              </label>
+              <label>
+                <span>{scopeKind === "run" ? "Run reference" : "Thread reference"}</span>
+                <input
+                  value={scopeId}
+                  onChange={(event) => setScopeId(event.target.value)}
+                  placeholder={`Enter the exact ${scopeKind} reference`}
+                  autoComplete="off"
+                  required
+                />
+              </label>
+            </div>
+          ) : null}
+          {isIndependentReview ? null : (
+            <label className="v2-evolution-dialog-field">
+              <span>{isRevision ? "Why is a new revision needed?" : "Decision rationale"}</span>
+              <textarea
+                ref={initialFocusRef}
+                value={rationale}
+                onChange={(event) => setRationale(event.target.value)}
+                rows={3}
+                required
+                placeholder="Record the evidence-based reason for this human decision."
+              />
+            </label>
+          )}
+          {isRevision ? (
+            <label className="v2-evolution-dialog-field">
+              <span>Guidance for the next revision</span>
+              <textarea
+                value={guidance}
+                onChange={(event) => setGuidance(event.target.value)}
+                rows={3}
+                required
+                placeholder="State the boundary, evidence, or behavior that the next immutable revision must address."
+              />
+            </label>
+          ) : null}
+          {needsExactConfirmation || needsSafetyConfirmation ? (
+            <label className="v2-evolution-confirm-check">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(event) => setConfirmed(event.target.checked)}
+              />
+              <span>
+                {needsExactConfirmation
+                  ? "I reviewed this exact version, target, scope, applicability boundaries, and concerns."
+                  : `I understand that this action applies to ${selfEvolutionCandidateVersion(candidate)} of ${selfEvolutionCandidateTitle(candidate)}.`}
+              </span>
+            </label>
+          ) : null}
+          {isStablePromotion ? (
+            <details className="v2-evolution-dialog-summary">
+              <summary>Read the full release confirmation</summary>
+              <p>{selfEvolutionPromotionConfirmation(candidate, workspaceName, scopeLabel)}</p>
+            </details>
+          ) : null}
+          {error ? <div className="v2-error compact" role="alert">{error}</div> : null}
+          <footer>
+            <button type="button" className="v2-ghost-btn" onClick={onClose} disabled={busy}>Cancel</button>
+            <button
+              ref={isIndependentReview ? initialFocusRef : undefined}
+              type="submit"
+              className={isStablePromotion || isCanary ? "v2-primary-btn" : "v2-ghost-btn"}
+              disabled={!canSubmit || busy}
+            >
+              {busy ? "Saving decision…" : definition.submitLabel}
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function SelfEvolutionCandidateCard({ candidate, busy, onAction }) {
+  const behavior = selfEvolutionBehaviorChange(candidate);
+  const review = selfEvolutionHumanReview(candidate);
+  const episodeCount = Array.isArray(candidate.evidence)
+    ? candidate.evidence.length
+    : (candidate.evidence ? 1 : 0);
+  const counterexamples = [
+    ...review.counterexamples,
+  ].filter((item, index, rows) => rows.indexOf(item) === index);
+  const applicability = selfEvolutionTextItems(candidate.applicability_boundary);
+  const nonApplicability = selfEvolutionTextItems(candidate.non_applicability);
+  const actions = selfEvolutionAllowedActions(candidate);
+  const candidateKey = `${candidate.candidate_id}:${candidate.revision ?? candidate.version ?? ""}`;
+
+  return (
+    <details className="v2-evolution-candidate" aria-busy={busy}>
+      <summary className="v2-evolution-card-summary">
+        <div className="v2-evolution-card-main">
+          <div className="v2-evolution-card-title">
+            <strong>{selfEvolutionCandidateTitle(candidate)}</strong>
+            <small className={`status-${String(candidate.status || "")}`}>{selfEvolutionLifecycleLabel(candidate)}</small>
+          </div>
+          <p>{behavior.summary}</p>
+          <div className="v2-evolution-card-facts">
+            <span>{selfEvolutionCandidateVersion(candidate)}</span>
+            <span>{selfEvolutionRouteLabel(candidate.route)}</span>
+            <span>{episodeCount} complete episode observation{episodeCount === 1 ? "" : "s"}</span>
+            <span>{review.recommendationLabel}</span>
+            <span>{actions.length ? `${actions.length} human action${actions.length === 1 ? "" : "s"} available` : "No action available"}</span>
+          </div>
+        </div>
+      </summary>
+      <div className="v2-evolution-review">
+        <section>
+          <h4>What behavior will change</h4>
+          <p>{behavior.summary}</p>
+          {behavior.before || behavior.after || behavior.impact ? (
+            <dl className="v2-evolution-change-dl">
+              {behavior.before ? <div><dt>Before</dt><dd>{behavior.before}</dd></div> : null}
+              {behavior.after ? <div><dt>After</dt><dd>{behavior.after}</dd></div> : null}
+              {behavior.impact ? <div><dt>Expected impact</dt><dd>{behavior.impact}</dd></div> : null}
+            </dl>
+          ) : null}
+          {review.changePoints.map((point, index) => (
+            <article key={`${candidateKey}-change-${index}`} className="v2-evolution-change-point">
+              <strong>{point.title}</strong>
+              <dl className="v2-evolution-change-dl">
+                {point.before ? <div><dt>Before</dt><dd>{point.before}</dd></div> : null}
+                {point.after ? <div><dt>After</dt><dd>{point.after}</dd></div> : null}
+                {point.impact ? <div><dt>Impact</dt><dd>{point.impact}</dd></div> : null}
+                {point.evidence ? (
+                  <div>
+                    <dt>Evidence</dt>
+                    <dd>{point.evidence}{point.evidenceSource ? ` · ${point.evidenceSource}` : ""}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </article>
+          ))}
+        </section>
+        <section>
+          <h4>Why it is being proposed</h4>
+          {candidate.why_now ? <p>{candidate.why_now}</p> : null}
+          <p>{selfEvolutionSafeText(candidate.evidence_summary, "No evidence summary was supplied.")}</p>
+          <EvolutionEvidenceList items={candidate.evidence} />
+        </section>
+        <section>
+          <h4>Where it applies — and where it must not</h4>
+          <div className="v2-evolution-boundary-grid">
+            <div>
+              <h5>Applies when</h5>
+              <EvolutionTextList items={applicability} empty="No applicability boundary was supplied." />
+            </div>
+            <div>
+              <h5>Must not apply when</h5>
+              <EvolutionTextList items={nonApplicability} empty="No non-applicability boundary was supplied." />
+            </div>
+          </div>
+          <h5>Counterexamples</h5>
+          <EvolutionTextList items={counterexamples} empty="No counterexample was supplied." />
+        </section>
+        <section>
+          <h4>Independent review</h4>
+          <p><strong>{review.recommendationLabel}</strong></p>
+          <p>{review.summary}</p>
+          {review.evidenceSufficiency ? <p><strong>Evidence sufficiency:</strong> {review.evidenceSufficiency}</p> : null}
+          {review.scopeAssessment ? <p><strong>Scope assessment:</strong> {review.scopeAssessment}</p> : null}
+          <p>
+            <strong>Proportionality:</strong> {review.proportionality.label}
+            {review.proportionality.explanation ? ` · ${review.proportionality.explanation}` : ""}
+          </p>
+          <h5>Reviewer concerns</h5>
+          <EvolutionTextList items={review.concerns} empty="No reviewer concerns were recorded." />
+        </section>
+        <section>
+          <h4>Human checks</h4>
+          <EvolutionTextList items={review.humanChecks} empty="No human checklist was supplied. Review the evidence and boundaries before acting." />
+        </section>
+        <section className="v2-evolution-actions-section" aria-label={`Actions for ${selfEvolutionCandidateTitle(candidate)} ${selfEvolutionCandidateVersion(candidate)}`}>
+          <h4>Human actions</h4>
+          {actions.length ? (
+            <div className="v2-inline-actions">
+              {actions.map((action) => {
+                const definition = selfEvolutionActionDefinition(action);
+                const prominent = ["start-canary", "promote-stable"].includes(action);
+                const destructive = ["reject", "quarantine", "retire", "rollback"].includes(action);
+                return (
+                  <button
+                    key={action}
+                    type="button"
+                    className={prominent ? "v2-primary-btn" : `v2-ghost-btn${destructive ? " danger" : ""}`}
+                    disabled={busy}
+                    aria-label={`${definition.label} ${selfEvolutionCandidateVersion(candidate)} of ${selfEvolutionCandidateTitle(candidate)}`}
+                    onClick={(event) => onAction(candidate, action, event.currentTarget)}
+                  >
+                    {definition.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : <p className="v2-muted">No human action is currently available for this revision.</p>}
+        </section>
+        <CandidateDiff candidate={candidate} />
+      </div>
+    </details>
+  );
+}
+
+function SelfEvolutionObservationCard({ observation }) {
+  const view = selfEvolutionObservationView(observation);
+  return (
+    <article className="v2-evolution-observation">
+      <header>
+        <span>{view.signalLabel}</span>
+        <small>{view.statusLabel}</small>
+      </header>
+      <strong>{view.title}</strong>
+      {view.summary ? <p>{view.summary}</p> : null}
+      {view.outcome ? <p><strong>Observed outcome:</strong> {view.outcome}</p> : null}
+      {view.evidence.length ? (
+        <details>
+          <summary>Supporting source excerpts</summary>
+          <EvolutionEvidenceList items={observation.evidence || observation.evidence_refs} />
+        </details>
+      ) : null}
+      {view.createdAt ? <time dateTime={view.createdAt}>{formatTimestamp(view.createdAt)}</time> : null}
+    </article>
   );
 }
 
 export function SelfEvolutionPanel({ ctx, workspaceName, payload, loading = false, error: loadError = "", onRefresh }) {
-  const [statusFilter, setStatusFilter] = useState("pending");
-  const [busyCandidateId, setBusyCandidateId] = useState("");
+  const statusFilterId = useId();
+  const workspaceRef = useRef("");
+  const initialCandidateCursorRef = useRef("");
+  const initialObservationCursorRef = useRef("");
+  const candidateFilterRequestRef = useRef(0);
+  const [statusFilter, setStatusFilter] = useState("needs-action");
+  const [candidates, setCandidates] = useState(() => sortSelfEvolutionCandidates(payload?.candidates));
+  const [observations, setObservations] = useState(() => sortSelfEvolutionObservations(payload?.observations));
+  const [candidateCursor, setCandidateCursor] = useState(String(payload?.next_cursor || ""));
+  const [observationCursor, setObservationCursor] = useState(String(payload?.observation_next_cursor || ""));
+  const [pageLoading, setPageLoading] = useState("");
+  const [pageError, setPageError] = useState("");
+  const [dialog, setDialog] = useState(null);
+  const [busyCandidateKey, setBusyCandidateKey] = useState("");
   const [actionError, setActionError] = useState("");
-  const candidates = sortSelfEvolutionCandidates(payload?.candidates);
-  const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
-  const counts = selfEvolutionStatusCounts(payload);
-  const visibleCandidates = candidates.filter((candidate) => {
-    if (statusFilter === "all") return true;
-    if (statusFilter === "pending") {
-      return candidate.status === "reviewed" || candidate.status === "approved" || candidate.status === "conflict";
-    }
-    return candidate.status === statusFilter;
-  });
+  const [actionMessage, setActionMessage] = useState("");
 
-  async function decide(candidate, action) {
-    if (!ctx || !candidate?.candidate_id) return;
-    let rationale = "";
-    if (action === "reject") {
-      const response = window.prompt(
-        `Why reject ${selfEvolutionCandidateTitle(candidate)}? A rationale is optional but will be audited.`,
-        "",
-      );
-      if (response === null) return;
-      rationale = response.trim();
+  useEffect(() => {
+    const nextWorkspace = String(workspaceName || "");
+    const workspaceChanged = workspaceRef.current !== nextWorkspace;
+    const incomingCandidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+    const incomingObservations = Array.isArray(payload?.observations) ? payload.observations : [];
+    const nextInitialCandidateCursor = String(payload?.next_cursor || "");
+    const nextInitialObservationCursor = String(payload?.observation_next_cursor || "");
+    if (workspaceChanged) {
+      candidateFilterRequestRef.current += 1;
+      workspaceRef.current = nextWorkspace;
+      setCandidates(sortSelfEvolutionCandidates(incomingCandidates));
+      setObservations(sortSelfEvolutionObservations(incomingObservations));
+      setCandidateCursor(nextInitialCandidateCursor);
+      setObservationCursor(nextInitialObservationCursor);
+      setStatusFilter("needs-action");
+      setDialog(null);
+      setPageLoading("");
+      setPageError("");
     } else {
-      const response = window.prompt(
-        `Optional promotion note for ${selfEvolutionCandidateTitle(candidate)}:`,
-        "",
-      );
-      if (response === null) return;
-      rationale = response.trim();
-      if (!window.confirm(selfEvolutionPromotionConfirmation(candidate, workspaceName))) return;
+      setCandidates((current) => mergeSelfEvolutionCandidates(current, incomingCandidates));
+      setObservations((current) => mergeSelfEvolutionObservations(current, incomingObservations));
+      setCandidateCursor((current) => (
+        !current || current === initialCandidateCursorRef.current ? nextInitialCandidateCursor : current
+      ));
+      setObservationCursor((current) => (
+        !current || current === initialObservationCursorRef.current ? nextInitialObservationCursor : current
+      ));
     }
+    initialCandidateCursorRef.current = nextInitialCandidateCursor;
+    initialObservationCursorRef.current = nextInitialObservationCursor;
+  }, [payload, workspaceName]);
+
+  const visibleCandidates = useMemo(
+    () => selfEvolutionFilterCandidates(candidates, statusFilter),
+    [candidates, statusFilter],
+  );
+  const statusOptions = useMemo(
+    () => [...new Set([
+      ...SELF_EVOLUTION_STATUS_VALUES,
+      ...candidates.map((candidate) => String(candidate?.status || "")).filter(Boolean),
+    ])]
+      .sort((left, right) => selfEvolutionStatusLabel(left).localeCompare(selfEvolutionStatusLabel(right))),
+    [candidates],
+  );
+  const needsActionCount = useMemo(
+    () => candidates.filter((candidate) => selfEvolutionAllowedActions(candidate).length > 0).length,
+    [candidates],
+  );
+  const activeCount = useMemo(
+    () => candidates.filter((candidate) => ["canary", "stable"].includes(String(candidate?.status || ""))).length,
+    [candidates],
+  );
+
+  function closeDialog() {
+    const opener = dialog?.opener;
+    setDialog(null);
     setActionError("");
-    setBusyCandidateId(candidate.candidate_id);
+    window.requestAnimationFrame(() => {
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    });
+  }
+
+  function openAction(candidate, action, opener) {
+    if (!selfEvolutionAllowedActions(candidate).includes(action)) return;
+    setActionMessage("");
+    setActionError("");
+    setDialog({ candidate, action, opener });
+  }
+
+  async function submitAction({ rationale, guidance, scopeKind, scopeId }) {
+    if (!dialog?.candidate || !dialog.action) return;
+    const endpoint = selfEvolutionActionEndpoint(ctx, dialog.candidate, dialog.action);
+    if (!endpoint) {
+      setActionError("This action is unavailable because the immutable revision reference is missing.");
+      return;
+    }
+    const key = `${dialog.candidate.candidate_id}:${dialog.candidate.revision ?? dialog.candidate.version ?? ""}`;
+    setBusyCandidateKey(key);
+    setActionError("");
     try {
-      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/decision`, {
+      const response = await apiFetch(endpoint, {
         method: "POST",
-        body: JSON.stringify({ project_space: workspaceName, action, rationale }),
+        body: JSON.stringify(selfEvolutionActionRequest(dialog.action, {
+          actor: "human",
+          rationale,
+          guidance,
+          scopeKind,
+          scopeId,
+        })),
       });
+      if (response?.candidate) {
+        setCandidates((current) => mergeSelfEvolutionCandidates(current, [response.candidate]));
+      }
+      const definition = selfEvolutionActionDefinition(dialog.action);
+      const message = `${definition.label} was recorded for ${selfEvolutionCandidateVersion(dialog.candidate)} of ${selfEvolutionCandidateTitle(dialog.candidate)}.`;
+      closeDialog();
+      setActionMessage(message);
       await onRefresh?.();
     } catch (err) {
-      setActionError(err.message || String(err));
+      setActionError(selfEvolutionDisplayError(err));
     } finally {
-      setBusyCandidateId("");
+      setBusyCandidateKey("");
     }
   }
 
-  async function rollback(candidate) {
-    if (!ctx || !candidate?.candidate_id) return;
-    if (!window.confirm(`Roll back ${selfEvolutionCandidateTitle(candidate)} in workspace ${workspaceName}?`)) return;
-    setActionError("");
-    setBusyCandidateId(candidate.candidate_id);
+  async function changeStatusFilter(nextFilter) {
+    setStatusFilter(nextFilter);
+    if (!ctx || pageLoading) return;
+    const requestKey = candidateFilterRequestRef.current + 1;
+    candidateFilterRequestRef.current = requestKey;
+    setPageLoading("candidates");
+    setPageError("");
+    const params = new URLSearchParams();
+    if (workspaceName) params.set("project_space", workspaceName);
+    if (!["all", "needs-action"].includes(nextFilter)) params.set("status", nextFilter);
     try {
-      await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates/${escapePath(candidate.candidate_id)}/rollback`, {
-        method: "POST",
-        body: JSON.stringify({ project_space: workspaceName }),
+      const page = await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates?${params.toString()}`);
+      if (candidateFilterRequestRef.current !== requestKey) return;
+      setCandidates((current) => {
+        const retained = ["all", "needs-action"].includes(nextFilter)
+          ? current
+          : current.filter((candidate) => String(candidate?.status || "") !== nextFilter);
+        return mergeSelfEvolutionCandidates(retained, page.candidates);
       });
-      await onRefresh?.();
+      setObservations((current) => mergeSelfEvolutionObservations(current, page.observations));
+      setCandidateCursor(String(page.next_cursor || ""));
     } catch (err) {
-      setActionError(err.message || String(err));
+      if (candidateFilterRequestRef.current === requestKey) {
+        setPageError(selfEvolutionDisplayError(err, "This status view could not be loaded. Refresh and try again."));
+      }
     } finally {
-      setBusyCandidateId("");
+      if (candidateFilterRequestRef.current === requestKey) setPageLoading("");
+    }
+  }
+
+  async function loadMore(kind) {
+    const cursor = kind === "candidates" ? candidateCursor : observationCursor;
+    if (!ctx || !cursor || pageLoading) return;
+    setPageLoading(kind);
+    setPageError("");
+    const params = new URLSearchParams();
+    if (workspaceName) params.set("project_space", workspaceName);
+    params.set(kind === "candidates" ? "cursor" : "observation_cursor", cursor);
+    if (kind === "candidates" && !["all", "needs-action"].includes(statusFilter)) {
+      params.set("status", statusFilter);
+    }
+    try {
+      const page = await apiFetch(`/api/session/${escapePath(ctx)}/self-evolution/candidates?${params.toString()}`);
+      setCandidates((current) => mergeSelfEvolutionCandidates(current, page.candidates));
+      setObservations((current) => mergeSelfEvolutionObservations(current, page.observations));
+      if (kind === "candidates") setCandidateCursor(String(page.next_cursor || ""));
+      else setObservationCursor(String(page.observation_next_cursor || ""));
+    } catch (err) {
+      setPageError(selfEvolutionDisplayError(err, `More ${kind} could not be loaded. Refresh and try again.`));
+    } finally {
+      setPageLoading("");
     }
   }
 
@@ -515,508 +1212,167 @@ export function SelfEvolutionPanel({ ctx, workspaceName, payload, loading = fals
     return (
       <section className="v2-tab-panel">
         <div className="v2-panel-toolbar"><div><div className="v2-eyebrow">Workspace</div><h2>Skill Evolution</h2></div></div>
-        <div className="v2-evolution-scope warning">{payload.disabled_reason || "Skill evolution is disabled."}</div>
+        <div className="v2-evolution-scope warning">
+          {selfEvolutionSafeText(payload.disabled_reason, "Skill Evolution is not available in this workspace.")}
+        </div>
       </section>
     );
   }
 
   return (
-    <section className="v2-tab-panel">
+    <section className="v2-tab-panel v2-self-evolution-panel" aria-busy={loading}>
       <div className="v2-panel-toolbar">
         <div>
-          <div className="v2-eyebrow">Workspace-scoped learning</div>
+          <div className="v2-eyebrow">Workspace evidence and reviewed releases</div>
           <h2>Skill Evolution</h2>
           <div className="v2-muted">{workspaceName || "No workspace selected"}</div>
         </div>
-        <button type="button" className="v2-ghost-btn" onClick={() => onRefresh?.()} disabled={loading}><RefreshCw size={15} />Refresh</button>
+        <button type="button" className="v2-ghost-btn" onClick={() => onRefresh?.()} disabled={loading || Boolean(pageLoading)}>
+          <RefreshCw size={15} />Refresh
+        </button>
       </div>
-      {loadError || actionError ? <div className="v2-error">{actionError || loadError}</div> : null}
+      {loadError ? <div className="v2-error" role="alert">{selfEvolutionDisplayError(loadError, "Skill Evolution could not be loaded. Refresh and try again.")}</div> : null}
+      {pageError ? <div className="v2-error" role="alert">{pageError}</div> : null}
+      {actionMessage ? <div className="v2-success" role="status" aria-live="polite">{actionMessage}</div> : null}
       <div className="v2-evolution-scope">
-        <GitBranch size={18} />
+        <GitBranch size={18} aria-hidden="true" />
         <div>
-          <strong>Shared by every thread in this workspace</strong>
-          <span>AI review is advisory. Only an explicit human Promote action activates a skill, beginning with the next run.</span>
+          <strong>Evidence is shared across threads; release decisions remain human-controlled</strong>
+          <span>
+            A completed run is semantically reflected first. Only an actionable durable signal can enter candidate review.
+          </span>
         </div>
-        <code>{payload?.mode || "observe"}</code>
       </div>
-      <div className="v2-monitor-grid">
-        <MonitorMetric
-          icon={GitBranch}
-          label="Pending decision"
-          value={formatCount(payload?.pending_review_count ?? (counts.reviewed + counts.approved))}
-          note="human promotion required"
-        />
-        <MonitorMetric icon={ListChecks} label="Effective overrides" value={formatCount(payload?.effective_skill_count)} note="workspace skills" />
-        <MonitorMetric icon={Activity} label="Candidates" value={formatCount(payload?.candidate_count ?? candidates.length)} note={`${formatCount(counts.promoted)} promoted`} />
-        <MonitorMetric icon={Clock} label="Learning jobs" value={formatCount(payload?.job_count ?? jobs.length)} note={`${formatCount(payload?.error_count)} errors`} />
+      <div className="v2-monitor-grid v2-evolution-metrics">
+        <MonitorMetric icon={GitBranch} label="Loaded revisions" value={formatCount(candidates.length)} note={candidateCursor ? "more available" : "all loaded"} />
+        <MonitorMetric icon={ListChecks} label="Needs human action" value={formatCount(needsActionCount)} note="actions come from the reviewed revision" />
+        <MonitorMetric icon={Activity} label="Active versions" value={formatCount(activeCount)} note="canary or stable" />
+        <MonitorMetric icon={Clock} label="Evidence observations" value={formatCount(observations.length)} note={observationCursor ? "more available" : "all loaded"} />
       </div>
       <div className="v2-evolution-toolbar">
-        <label>
-          <span>Status</span>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="pending">Needs attention</option>
-            <option value="all">All candidates</option>
-            <option value="reviewed">AI reviewed</option>
-            <option value="approved">Legacy reviewed</option>
-            <option value="promoted">Human promoted</option>
-            <option value="conflict">Conflict</option>
-            <option value="invalid">Invalid</option>
-            <option value="rejected">Rejected</option>
-            <option value="rolled_back">Rolled back</option>
+        <label htmlFor={statusFilterId}>
+          <span>Status filter</span>
+          <select
+            id={statusFilterId}
+            value={statusFilter}
+            onChange={(event) => changeStatusFilter(event.target.value)}
+            disabled={pageLoading === "candidates"}
+          >
+            <option value="needs-action">Needs human action</option>
+            <option value="all">All loaded revisions</option>
+            {statusOptions.map((status) => <option key={status} value={status}>{selfEvolutionStatusLabel(status)}</option>)}
           </select>
         </label>
-        <span>{visibleCandidates.length} shown</span>
+        <span aria-live="polite">{visibleCandidates.length} of {candidates.length} loaded revisions shown</span>
       </div>
-      {loading && !payload ? <div className="v2-muted">Loading workspace learning state...</div> : null}
+      {loading && !payload ? <div className="v2-muted" role="status">Loading workspace learning state…</div> : null}
       <div className="v2-evolution-columns">
-        <section className="v2-monitor-panel">
-          <div className="v2-monitor-panel-head"><GitBranch size={15} /><h3>Workspace candidates</h3></div>
-          <div className="v2-raw-list">
-          {visibleCandidates.map((candidate) => {
-          const status = String(candidate.status || "");
-          const canDecide = status === "reviewed" || status === "approved";
-          const canRollback = status === "promoted";
-          const readiness = candidate.promotion_readiness || {};
-          const canPromote = canDecide && readiness.ready !== false;
-          const isBusy = busyCandidateId === candidate.candidate_id;
-          const review = selfEvolutionHumanReview(candidate);
-          const proportionalityStatus = String(review.proportionality?.status || "unavailable");
-          const hasReviewWarning = review.concerns.length > 0 || ["warning", "fail"].includes(proportionalityStatus);
-          return (
-            <details key={candidate.candidate_id} className="v2-raw-row v2-evolution-candidate">
-              <summary className="v2-evolution-card-summary">
-                <div className="v2-evolution-card-main">
-                  <div className="v2-evolution-card-title">
-                    <strong>{selfEvolutionCandidateTitle(candidate)}</strong>
-                    <small className={`status-${status}`}>{selfEvolutionLifecycleLabel(candidate)}</small>
-                  </div>
-                  <p>{review.summary}</p>
-                  <div className="v2-evolution-card-facts">
-                    <span>AI recommendation: <strong>{review.recommendation}</strong></span>
-                    <span>{review.changePoints.length} change point{review.changePoints.length === 1 ? "" : "s"}</span>
-                    <span>Proportionality: <strong>{proportionalityStatus}</strong></span>
-                    <span>{review.concerns.length} concern{review.concerns.length === 1 ? "" : "s"}</span>
-                    <span>Run: {candidate.run_id || "unavailable"}</span>
-                    <span>Created: {formatTimestamp(candidate.created_at)}</span>
-                    <span>Promotion-ready: {readiness.ready === true ? "yes" : "no"}</span>
-                  </div>
-                </div>
-              </summary>
-              <div className="v2-evolution-meta">
-                <span>{candidate.kind || "candidate"}</span>
-                <span>{canDecide ? "AI reviewed/recommended; not human approved" : selfEvolutionLifecycleLabel(candidate)}</span>
-              </div>
-              {!review.structuredReviewAvailable ? (
-                <div className="v2-evolution-warning">Legacy candidate: structured evidence and change points are unavailable. Inspect the exact diff before deciding.</div>
-              ) : null}
-              {canDecide && !canPromote ? <div className="v2-evolution-warning">{readiness.reason || "This candidate is stale and must be regenerated."}</div> : null}
-              {canDecide && canPromote && hasReviewWarning ? (
-                <div className="v2-evolution-warning">
-                  This candidate has reviewer concerns or a non-passing proportionality assessment. A human may override the warning after reviewing it.
-                </div>
-              ) : null}
-              <div className="v2-inline-actions">
-                {canDecide ? (
-                  <>
-                    <button type="button" className="v2-primary-btn" disabled={!canPromote || isBusy} onClick={() => decide(candidate, "promote")}>Promote</button>
-                    <button type="button" className="v2-ghost-btn" disabled={isBusy} onClick={() => decide(candidate, "reject")}>Reject</button>
-                  </>
-                ) : null}
-                {canRollback ? <button type="button" className="v2-ghost-btn" disabled={isBusy} onClick={() => rollback(candidate)}>Rollback</button> : null}
-              </div>
-              <div className="v2-evolution-review">
-                <section>
-                  <h4>What will change</h4>
-                  {review.changePoints.length ? review.changePoints.map((point, index) => (
-                    <article key={`${candidate.candidate_id}-change-${index}`} className="v2-evolution-change-point">
-                      <strong>{point.title || `Change ${index + 1}`}</strong>
-                      <dl>
-                        <div><dt>Before</dt><dd>{point.before || "Unavailable"}</dd></div>
-                        <div><dt>After</dt><dd>{point.after || "Unavailable"}</dd></div>
-                        <div><dt>Impact</dt><dd>{point.impact || "Unavailable"}</dd></div>
-                      </dl>
-                    </article>
-                  )) : <p className="v2-muted">Structured change points are unavailable. No evidence has been inferred.</p>}
-                </section>
-                <section>
-                  <h4>Why it was proposed</h4>
-                  <p>{candidate.rationale || review.rationale || "No proposer rationale is available."}</p>
-                  {review.scopeAssessment ? <p><strong>Scope:</strong> {review.scopeAssessment}</p> : null}
-                  {review.changePoints.map((point, index) => (
-                    <p key={`${candidate.candidate_id}-evidence-${index}`}>
-                      <strong>{point.title || `Change ${index + 1}`} evidence:</strong>{" "}
-                      {point.evidence || "Unavailable"} {point.evidence_source ? `(${point.evidence_source})` : ""}
-                    </p>
-                  ))}
-                </section>
-                <section>
-                  <h4>Risks and possible overreach</h4>
-                  <p>
-                    <strong>Proportionality: {proportionalityStatus}</strong>
-                    {review.proportionality?.explanation ? ` — ${review.proportionality.explanation}` : ""}
-                  </p>
-                  {review.concerns.length ? (
-                    <ul>{review.concerns.map((item, index) => <li key={`${candidate.candidate_id}-concern-${index}`}>{item}</li>)}</ul>
-                  ) : <p className="v2-muted">No reviewer concerns were recorded.</p>}
-                </section>
-                <section>
-                  <h4>Human checks before promotion</h4>
-                  {review.humanChecks.length ? (
-                    <ul>{review.humanChecks.map((item, index) => <li key={`${candidate.candidate_id}-check-${index}`}>{item}</li>)}</ul>
-                  ) : <p className="v2-muted">No structured human checklist is available; inspect the exact diff.</p>}
-                </section>
-                <details className="v2-evolution-secondary">
-                  <summary>Exact diff</summary>
-                  <pre>{candidate.change_preview || "(No frozen change preview is available for this candidate.)"}</pre>
-                </details>
-                <details className="v2-evolution-secondary">
-                  <summary>Technical details</summary>
-                  <pre>{jsonText({
-                    candidate_id: candidate.candidate_id,
-                    target: candidate.target,
-                    run_id: candidate.run_id,
-                    thread_id: candidate.thread_id,
-                    base_target_hash: candidate.base_target_hash,
-                    bundle_hash: candidate.bundle_hash,
-                    validation: candidate.validation,
-                    review: candidate.review,
-                    promotion: candidate.promotion,
-                  })}</pre>
-                </details>
-              </div>
-            </details>
-          );
-        })}
-          {!visibleCandidates.length ? <div className="v2-empty">No workspace candidates match this filter.</div> : null}
+        <section className="v2-monitor-panel" aria-labelledby="v2-evolution-candidates-heading">
+          <div className="v2-monitor-panel-head">
+            <GitBranch size={15} aria-hidden="true" />
+            <h3 id="v2-evolution-candidates-heading">Reviewed candidate revisions</h3>
           </div>
+          <div className="v2-evolution-candidate-list">
+            {visibleCandidates.map((candidate) => {
+              const key = `${candidate.candidate_id}:${candidate.revision ?? candidate.version ?? ""}`;
+              return (
+                <SelfEvolutionCandidateCard
+                  key={key}
+                  candidate={candidate}
+                  busy={busyCandidateKey === key}
+                  onAction={openAction}
+                />
+              );
+            })}
+            {!visibleCandidates.length ? <div className="v2-empty">No candidate revision matches this filter.</div> : null}
+          </div>
+          {candidateCursor ? (
+            <button
+              type="button"
+              className="v2-ghost-btn v2-evolution-load-more"
+              onClick={() => loadMore("candidates")}
+              disabled={Boolean(pageLoading)}
+            >
+              {pageLoading === "candidates" ? "Loading revisions…" : "Load more revisions"}
+            </button>
+          ) : <p className="v2-evolution-page-end">All matching revision pages are loaded.</p>}
         </section>
-        <section className="v2-monitor-panel">
-          <div className="v2-monitor-panel-head"><Clock size={15} /><h3>Learning jobs</h3></div>
-          <div className="v2-raw-list">
-            {jobs.slice().reverse().map((job) => (
-              <details key={job.job_id} className="v2-raw-row">
-                <summary><span>{job.trigger_kind || "learning job"}</span><small>{job.status || "unknown"}</small></summary>
-                <pre>{jsonText({ job_id: job.job_id, run_id: job.run_id, thread_id: job.thread_id, attempt_count: job.attempt_count, candidate_id: job.candidate_id, error: job.error })}</pre>
-              </details>
+        <section className="v2-monitor-panel" aria-labelledby="v2-evolution-observations-heading">
+          <div className="v2-monitor-panel-head">
+            <Clock size={15} aria-hidden="true" />
+            <h3 id="v2-evolution-observations-heading">Evidence observations</h3>
+          </div>
+          <p className="v2-muted">
+            Observations are target-bound semantic signals from complete run evidence. They are not automatically promoted into skills.
+          </p>
+          <div className="v2-evolution-observation-list">
+            {observations.map((observation) => (
+              <SelfEvolutionObservationCard key={observation.observation_id} observation={observation} />
             ))}
-            {!jobs.length ? <div className="v2-empty">No learning jobs have been recorded for this workspace.</div> : null}
+            {!observations.length ? <div className="v2-empty">No durable learning observations are available yet.</div> : null}
           </div>
+          {observationCursor ? (
+            <button
+              type="button"
+              className="v2-ghost-btn v2-evolution-load-more"
+              onClick={() => loadMore("observations")}
+              disabled={Boolean(pageLoading)}
+            >
+              {pageLoading === "observations" ? "Loading observations…" : "Load more observations"}
+            </button>
+          ) : <p className="v2-evolution-page-end">All observation pages are loaded.</p>}
         </section>
       </div>
-    </section>
-  );
-}
-
-function MonitorList({ rows, empty = "No rows." }) {
-  const normalized = monitorRowsFromMap(rows);
-  if (!normalized.length) return <div className="v2-empty">{empty}</div>;
-  return (
-    <div className="v2-monitor-list">
-      {normalized.slice(0, 40).map((row, index) => {
-        const name = row.name || row.label || row.model || row.agent || row.tool || row[0] || `Row ${index + 1}`;
-        const count = row.count ?? row.calls ?? row.value ?? row[1] ?? "";
-        return (
-          <div key={`${name}-${index}`}>
-            <span>{String(name)}</span>
-            <strong>{String(count)}</strong>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function LivePanel({ icon: Icon, title, children }) {
-  return (
-    <section className="v2-monitor-panel">
-      <div className="v2-monitor-panel-head">
-        {Icon ? <Icon size={15} /> : null}
-        <h3>{title}</h3>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function LiveFieldGrid({ rows }) {
-  const visibleRows = rows.filter((row) => row && (row.always || plainText(row.value, "") !== ""));
-  if (!visibleRows.length) return <div className="v2-empty">No live fields yet.</div>;
-  return (
-    <div className="v2-live-fields">
-      {visibleRows.map((row) => (
-        <div key={row.label}>
-          <span>{row.label}</span>
-          <strong title={plainText(row.value)}>{plainText(row.value)}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function LiveProgress({ progress }) {
-  const state = asRecord(progress);
-  const completed = Number(state.completed || 0);
-  const pending = Number(state.pending || 0);
-  const failed = Number(state.failed || 0);
-  const needsIntervention = Number(state.needs_intervention || 0);
-  const total = Number(state.total || completed + pending + failed + needsIntervention || 0);
-  const pct = total > 0 ? clampNumber((completed / total) * 100, 0, 100) : 0;
-  return (
-    <div className="v2-live-progress">
-      <div className="v2-live-progress-bar" aria-label="Task progress">
-        <span style={{ width: `${pct}%` }} />
-      </div>
-      <div className="v2-live-progress-counts">
-        <div><span>Done</span><strong>{formatCount(completed)}</strong></div>
-        <div><span>Pending</span><strong>{formatCount(pending)}</strong></div>
-        <div><span>Failed</span><strong>{formatCount(failed)}</strong></div>
-        <div><span>Needs input</span><strong>{formatCount(needsIntervention)}</strong></div>
-        <div><span>Total</span><strong>{formatCount(total)}</strong></div>
-      </div>
-    </div>
-  );
-}
-
-function LiveToolDetails({ toolcall, empty = "No active tool call." }) {
-  const call = asRecord(toolcall);
-  if (!call.tool) return <div className="v2-empty">{empty}</div>;
-  const paramsText = call.params_compact || (call.params_full != null ? compactJson(call.params_full, 1400) : "");
-  return (
-    <>
-      <LiveFieldGrid
-        rows={[
-          { label: "Tool", value: call.tool, always: true },
-          { label: "Status", value: call.status || "running", always: true },
-          { label: "Elapsed", value: formatMaybeDurationSec(call.elapsed_sec ?? call.duration_sec), always: true },
-          { label: "Task", value: call.task_id },
-          { label: "Step", value: call.step_id },
-          { label: "Tool call", value: call.toolcall_id },
-        ]}
-      />
-      {paramsText ? (
-        <details className="v2-live-details">
-          <summary>Parameters</summary>
-          <pre>{paramsText}</pre>
-        </details>
-      ) : null}
-    </>
-  );
-}
-
-function LiveToolList({ rows }) {
-  const normalized = Array.isArray(rows) ? rows.filter((row) => row && typeof row === "object" && row.tool) : [];
-  if (!normalized.length) return <div className="v2-empty">No recent tool calls.</div>;
-  return (
-    <div className="v2-live-list">
-      {normalized.slice().reverse().slice(0, 10).map((row, index) => (
-        <div key={row.toolcall_id || `${row.tool}-${index}`} className="v2-live-row">
-          <div>
-            <strong>{row.tool}</strong>
-            <small>{row.highlights || compactPlainText(row.params_compact, 180) || row.task_id || ""}</small>
-          </div>
-          <span>{row.status || "done"}</span>
-          <code>{formatMaybeDurationSec(row.duration_sec ?? row.elapsed_sec)}</code>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function LiveTodoList({ liveState }) {
-  const rows = Array.isArray(liveState?.todo_rows) ? liveState.todo_rows : [];
-  const items = rows.length
-    ? rows
-    : (Array.isArray(liveState?.todo_items) ? liveState.todo_items.map((item) => ({ content: item, status: "pending" })) : []);
-  const visibleItems = items.filter((item) => item && plainText(item.content || item, "")).slice(0, 8);
-  if (!visibleItems.length) return <div className="v2-empty">No task list has been published.</div>;
-  return (
-    <div className="v2-live-list">
-      {visibleItems.map((item, index) => (
-        <div key={`${item.content || item}-${index}`} className="v2-live-row">
-          <div>
-            <strong>{plainText(item.content || item)}</strong>
-          </div>
-          <span>{item.status || "pending"}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function liveAgentStatus(agent) {
-  const state = asRecord(agent);
-  const llm = asRecord(state.llm);
-  if (asRecord(state.active_toolcall).tool || String(llm.status || "") === "running") return "active";
-  return plainText(state.status, "idle");
-}
-
-function LiveAgentList({ agents }) {
-  const rows = Object.entries(asRecord(agents))
-    .map(([name, agent]) => ({ name, agent: asRecord(agent), status: liveAgentStatus(agent) }))
-    .filter((row) => row.name)
-    .sort((left, right) => {
-      const rank = (status) => (status === "active" ? 0 : status === "completed" ? 1 : 2);
-      const rankDiff = rank(left.status) - rank(right.status);
-      if (rankDiff !== 0) return rankDiff;
-      return Number(right.agent.last_updated_ts || 0) - Number(left.agent.last_updated_ts || 0);
-    });
-  if (!rows.length) return <div className="v2-empty">No subagent state captured yet.</div>;
-  return (
-    <div className="v2-live-list">
-      {rows.slice(0, 12).map(({ name, agent, status }) => {
-        const activeTool = asRecord(agent.active_toolcall);
-        const llm = asRecord(agent.llm);
-        const detail = activeTool.tool || llm.phase || llm.model || formatTimestamp(agent.last_updated_ts);
-        return (
-          <div key={name} className="v2-live-row">
-            <div>
-              <strong>{name}</strong>
-              <small>{detail}</small>
-            </div>
-            <span>{status}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function LiveLlmPanel({ llm }) {
-  const state = asRecord(llm);
-  const hasContent = state.model || state.phase || state.status || state.text || state.reasoning_text || Object.keys(asRecord(state.usage)).length;
-  if (!hasContent) return <div className="v2-empty">No LLM call captured yet.</div>;
-  return (
-    <>
-      <LiveFieldGrid
-        rows={[
-          { label: "Model", value: state.model },
-          { label: "Phase", value: state.phase },
-          { label: "Status", value: state.status || "idle", always: true },
-          { label: "Elapsed", value: formatDurationMs(state.elapsed_ms), always: true },
-          { label: "Usage", value: formatTokenUsage(state.usage), always: true },
-        ]}
-      />
-      {state.reasoning_text ? <p className="v2-live-note"><strong>Reasoning</strong>{compactPlainText(state.reasoning_text, 700)}</p> : null}
-      {state.text ? <p className="v2-live-note"><strong>Output</strong>{compactPlainText(state.text, 700)}</p> : null}
-    </>
-  );
-}
-
-function LiveStateView({ liveState }) {
-  const state = asRecord(liveState);
-  const summary = asRecord(state.live_summary);
-  const headline = summary.live_headline || state.current_task_goal || state.current_phase || state.status || "No active run state.";
-  const taskSummary = asRecord(state.last_task_summary);
-  const journal = Array.isArray(state.journal_recent) ? state.journal_recent : [];
-  return (
-    <div className="v2-monitor-columns v2-live-grid">
-      <LivePanel icon={Activity} title="Current Activity">
-        <div className="v2-live-headline">{plainText(headline)}</div>
-        {summary.live_summary ? <p className="v2-live-note">{summary.live_summary}</p> : null}
-        {summary.next_expected_step ? <p className="v2-live-note"><strong>Next</strong>{summary.next_expected_step}</p> : null}
-        <LiveFieldGrid
-          rows={[
-            { label: "Status", value: state.status || "unknown", always: true },
-            { label: "Phase", value: state.current_phase || "unknown", always: true },
-            { label: "Task", value: state.current_task_id },
-            { label: "Run", value: state.run_id },
-            { label: "Updated", value: formatTimestamp(state.last_updated_ts), always: true },
-          ]}
+      {dialog ? (
+        <SelfEvolutionActionDialog
+          candidate={dialog.candidate}
+          action={dialog.action}
+          workspaceName={workspaceName}
+          busy={Boolean(busyCandidateKey)}
+          error={actionError}
+          onClose={closeDialog}
+          onSubmit={submitAction}
         />
-      </LivePanel>
-
-      <LivePanel icon={Cpu} title="Active Tool">
-        <LiveToolDetails toolcall={state.active_toolcall} />
-      </LivePanel>
-
-      <LivePanel icon={ListChecks} title="Progress">
-        <LiveProgress progress={state.progress} />
-        <LiveTodoList liveState={state} />
-      </LivePanel>
-
-      <LivePanel icon={GitBranch} title="Recent Tools">
-        <LiveToolList rows={state.recent_toolcalls} />
-      </LivePanel>
-
-      <LivePanel icon={MessageSquare} title="Agents">
-        <LiveAgentList agents={state.agents} />
-      </LivePanel>
-
-      <LivePanel icon={BarChart3} title="Recent LLM">
-        <LiveLlmPanel llm={state.llm} />
-      </LivePanel>
-
-      {(taskSummary.summary_snippet || journal.length) ? (
-        <LivePanel icon={Clock} title="Task Journal">
-          {taskSummary.summary_snippet ? (
-            <p className="v2-live-note"><strong>{taskSummary.outcome || "latest"}</strong>{taskSummary.summary_snippet}</p>
-          ) : null}
-          <div className="v2-live-list">
-            {journal.slice().reverse().slice(0, 5).map((item, index) => (
-              <div key={`${item.task_id || "journal"}-${index}`} className="v2-live-row">
-                <div>
-                  <strong>{item.task_id || `Entry ${index + 1}`}</strong>
-                  <small>{item.summary_snippet || ""}</small>
-                </div>
-                <span>{item.outcome || ""}</span>
-              </div>
-            ))}
-          </div>
-        </LivePanel>
       ) : null}
-    </div>
+    </section>
   );
 }
 
-function matchesMonitorFilters(event, filters) {
-  if (!event || !filters) return true;
-  const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
-  const data = event.data && typeof event.data === "object" ? event.data : {};
-  const fields = {
-    thread: event.thread_id || data.thread_id || payload.thread_id || "",
-    run: event.run_id || data.run_id || payload.run_id || data.receipt?.run_id || "",
-    agent: event.agent_name || data.agent_name || payload.agent_name || payload.agent || "",
-    tool: event.tool || data.tool || data.tool_name || payload.tool || payload.tool_name || "",
-    category: event.category || data.category || payload.category || "",
-    channel: event.channel || data.channel || payload.channel || "",
-  };
-  return Object.entries(filters).every(([key, value]) => {
-    const needle = String(value || "").trim().toLowerCase();
-    if (!needle) return true;
-    return String(fields[key] || "").toLowerCase().includes(needle);
-  });
-}
-
-export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events }) {
+export function MonitorPanel({ ctx, workspaceName, thread, entrypoint }) {
   const [activeSubtab, setActiveSubtab] = useState("overview");
-  const [observability, setObservability] = useState(null);
-  const [details, setDetails] = useState(null);
-  const [eventFilters, setEventFilters] = useState({ thread: "", run: "", agent: "", tool: "", category: "", channel: "" });
-  const [sessionEvents, setSessionEvents] = useState([]);
-  const [eventPage, setEventPage] = useState(null);
+  const [monitor, setMonitor] = useState(null);
+  const [diagnostics, setDiagnostics] = useState([]);
+  const [diagnosticsPage, setDiagnosticsPage] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const threadRows = Array.isArray(events) ? events.slice(-200).reverse() : [];
-  const lane = String(entrypoint || thread?.entrypoint || "research");
+  const entrypointKey = String(entrypoint || thread?.entrypoint || "research");
   const projectParam = workspaceName ? `&project_space=${escapePath(workspaceName)}` : "";
-  const selectedRun = observability?.selected_run || "";
 
   async function loadMonitor() {
     if (!ctx) return;
     setLoading(true);
     setError("");
     try {
-      const baseSuffix = `lane=${escapePath(lane)}${projectParam}`;
-      const obs = await apiFetch(`/api/session/${escapePath(ctx)}/observability?${baseSuffix}&limit=600`);
-      const runParam = obs?.selected_run ? `run=${escapePath(obs.selected_run)}` : "";
-      const suffix = `${runParam}${projectParam ? `${runParam ? "&" : ""}${projectParam.slice(1)}` : ""}`;
-      const query = suffix ? `?${suffix}` : "";
-      const ev = await apiFetch(`/api/session/${escapePath(ctx)}/events${query}${query ? "&" : "?"}limit=300`);
-      setObservability(obs);
-      setSessionEvents(Array.isArray(ev?.events) ? ev.events : []);
-      setEventPage(ev);
+      setMonitor(await apiFetch(`/api/session/${escapePath(ctx)}/monitor?lane=${escapePath(entrypointKey)}${projectParam}&limit=400`));
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadDiagnostics(beforeId = 0) {
+    if (!ctx || !monitor?.developer_diagnostics_available) return;
+    setLoading(true);
+    setError("");
+    try {
+      const before = beforeId ? `&before_id=${beforeId}` : "";
+      const payload = await apiFetch(`/api/diagnostics/session/${escapePath(ctx)}/events?limit=100${before}${projectParam}`);
+      const rows = Array.isArray(payload.events) ? payload.events : [];
+      setDiagnostics((current) => (beforeId ? [...rows, ...current] : rows));
+      setDiagnosticsPage(payload);
+    } catch (err) {
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -1028,160 +1384,193 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint, events })
       if (thread?.status === "running") loadMonitor();
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [ctx, workspaceName, thread?.status, lane]);
+  }, [ctx, workspaceName, thread?.status, entrypointKey]);
 
   useEffect(() => {
-    setDetails(null);
-  }, [selectedRun, ctx, workspaceName]);
+    if (activeSubtab === "diagnostics" && !diagnostics.length) loadDiagnostics();
+  }, [activeSubtab, monitor?.developer_diagnostics_available]);
 
-  async function loadDetails() {
-    if (!ctx) return;
-    setError("");
-    try {
-      const runParam = selectedRun ? `run=${escapePath(selectedRun)}` : "";
-      const suffix = `${runParam}${projectParam ? `${runParam ? "&" : ""}${projectParam.slice(1)}` : ""}`;
-      const query = suffix ? `?${suffix}` : "";
-      setDetails(await apiFetch(`/api/session/${escapePath(ctx)}/details${query}`));
-    } catch (err) {
-      setError(err.message || String(err));
-    }
-  }
-
-  useEffect(() => {
-    if (activeSubtab === "details" && !details) loadDetails();
-  }, [activeSubtab, selectedRun, ctx, workspaceName]);
-
-  const metrics = observability?.metrics || {};
-  const usage = observability?.usage_summary || {};
-  const machine = observability?.machine_time_summary || {};
-  const liveState = observability?.live_state || {};
-  const rawEvents = Array.isArray(observability?.raw_logs?.events) && observability.raw_logs.events.length ? observability.raw_logs.events : sessionEvents;
-  const chatMessages = Array.isArray(observability?.chat_messages) ? observability.chat_messages : [];
-  const filteredRawEvents = rawEvents.filter((event) => matchesMonitorFilters(event, eventFilters));
-  const filteredThreadRows = threadRows.filter((event) => matchesMonitorFilters(event, eventFilters));
-  const filteredSessionEvents = sessionEvents.filter((event) => matchesMonitorFilters(event, eventFilters));
-  const visibleEvents = [...filteredThreadRows, ...filteredSessionEvents.slice().reverse()].slice(0, 300);
+  const overview = monitor?.overview || {};
+  const live = monitor?.live || {};
+  const progress = live.progress || {};
+  const progressTotal = Number(progress.total || 0);
+  const progressDone = Number(progress.completed || 0);
+  const overviewFailed = ["failed", "error"].includes(String(overview.status || thread?.status || "").toLowerCase());
+  const overviewStatusText = displayValue(
+    overview.status_text,
+    monitor?.has_run ? "Run information is available." : "No run is selected.",
+  );
 
   return (
     <section className="v2-tab-panel">
       <div className="v2-panel-toolbar">
         <div>
           <div className="v2-eyebrow">Monitor</div>
-          <h2>Execution Monitor</h2>
-          <div className="v2-muted">{selectedRun || thread?.thread_id || "No active run selected"}</div>
+          <h2>Execution monitor</h2>
+          <div className="v2-muted">{overviewFailed ? redactErrorText(overviewStatusText) : overviewStatusText}</div>
         </div>
-        <button type="button" className="v2-ghost-btn" onClick={() => loadMonitor()} disabled={loading}><RefreshCw size={15} />Refresh</button>
+        <button type="button" className="v2-ghost-btn" onClick={loadMonitor} disabled={loading}><RefreshCw size={15} />Refresh</button>
       </div>
-      {error ? <div className="v2-error">{error}</div> : null}
+      <ErrorNotice error={error} />
       <div className="v2-monitor-grid">
-        <MonitorMetric icon={Activity} label="Status" value={thread?.status || observability?.run_status || "idle"} note={observability?.run_status_text || ""} />
-        <MonitorMetric icon={Clock} label="Duration" value={formatDurationSec(metrics.duration_sec)} note={selectedRun} />
-        <MonitorMetric icon={BarChart3} label="LLM calls" value={formatCount(metrics.llm_calls || usage.calls)} note={`${formatCount(usage.total_tokens || 0)} tokens`} />
-        <MonitorMetric icon={Cpu} label="Machine" value={`${formatHours(machine.core_hours)} core h`} note={`${formatHours(machine.node_hours)} node h`} />
-        <MonitorMetric icon={Database} label="Cost" value={formatCost(usage.cost_usd)} note={usage.cost_source || ""} />
-        <MonitorMetric icon={GitBranch} label="Tool calls" value={formatCount(metrics.tool_calls)} note={`${formatCount(metrics.tool_failures)} failed`} />
+        <MonitorMetric icon={Activity} label="Status" value={statusLabel(overview.status || thread?.status)} note={displayValue(overview.phase, "")} />
+        <MonitorMetric icon={Clock} label="Duration" value={formatDurationSec(overview.duration_sec)} note={displayValue(overview.current_task, "")} />
+        <MonitorMetric icon={BarChart3} label="Model usage" value={`${formatCount(overview.total_tokens)} tokens`} note={`${formatCount(overview.llm_calls)} calls${overview.model ? ` · ${overview.model}` : ""}`} />
+        <MonitorMetric icon={Cpu} label="Compute" value={`${formatHours(overview.core_hours)} core h`} note={`${formatHours(overview.node_hours)} node h`} />
+        <MonitorMetric icon={Database} label="Cost" value={formatCost(overview.cost_usd)} note={`${formatCount(overview.input_tokens)} in · ${formatCount(overview.output_tokens)} out`} />
+        <MonitorMetric icon={GitBranch} label="Operations" value={formatCount(overview.tool_calls)} note={`${formatCount(overview.tool_failures)} failed`} />
       </div>
-      <div className="v2-subtabs">
+      <div className="v2-subtabs" role="tablist" aria-label="Monitor views">
         {[
           ["overview", "Overview"],
           ["live", "Live"],
-          ["events", "Events"],
-          ["raw", "Raw"],
-          ["details", "Details"],
+          ["timeline", "Timeline"],
+          ...(monitor?.developer_diagnostics_available ? [["diagnostics", "Developer diagnostics"]] : []),
         ].map(([value, label]) => (
-          <button key={value} type="button" className={activeSubtab === value ? "active" : ""} onClick={() => setActiveSubtab(value)}>{label}</button>
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={activeSubtab === value}
+            className={activeSubtab === value ? "active" : ""}
+            onClick={() => setActiveSubtab(value)}
+          >
+            {label}
+          </button>
         ))}
       </div>
-      <div className="v2-monitor-filters">
-        <Filter size={14} />
-        {[
-          ["thread", "Thread"],
-          ["run", "Run"],
-          ["agent", "Agent"],
-          ["tool", "Tool"],
-          ["category", "Category"],
-          ["channel", "Channel"],
-        ].map(([key, label]) => (
-          <input
-            key={key}
-            value={eventFilters[key] || ""}
-            onChange={(event) => setEventFilters((prev) => ({ ...prev, [key]: event.target.value }))}
-            placeholder={label}
-            aria-label={`${label} filter`}
-          />
-        ))}
-      </div>
-      {loading ? <div className="v2-muted">Loading monitor data...</div> : null}
+      {loading ? <div className="v2-muted">Loading monitor data…</div> : null}
       {activeSubtab === "overview" ? (
         <div className="v2-monitor-columns">
           <section className="v2-monitor-panel">
-            <div className="v2-monitor-panel-head"><MessageSquare size={15} /><h3>Models / Agents</h3></div>
-            <MonitorList rows={metrics.models} empty="No model calls captured yet." />
-            <MonitorList rows={metrics.agents} empty="No agent attribution captured yet." />
+            <div className="v2-monitor-panel-head"><ListChecks size={15} /><h3>Current work</h3></div>
+            <p>{displayValue(overview.current_task, "No active research step.")}</p>
+            {progressTotal ? (
+              <div className="v2-progress-meter">
+                <div
+                  role="progressbar"
+                  aria-label="Research progress"
+                  aria-valuemin={0}
+                  aria-valuemax={progressTotal}
+                  aria-valuenow={progressDone}
+                >
+                  <span style={{ width: `${Math.min(100, (progressDone / progressTotal) * 100)}%` }} />
+                </div>
+                <small>{progressDone} of {progressTotal} steps complete</small>
+              </div>
+            ) : null}
+            <div className="v2-monitor-semantic-list">
+              {(live.todos || []).map((todo, index) => (
+                <div key={`${todo.label}-${index}`}>
+                  <strong>{displayValue(todo.label, "Plan item")}</strong>
+                  <small>{statusLabel(todo.status)}</small>
+                </div>
+              ))}
+              {!live.todos?.length ? <div className="v2-empty compact">No active plan items.</div> : null}
+            </div>
           </section>
           <section className="v2-monitor-panel">
-            <div className="v2-monitor-panel-head"><ListChecks size={15} /><h3>Tools / Tasks</h3></div>
-            <MonitorList rows={metrics.tools} empty="No tool calls captured yet." />
-            <pre className="v2-code compact">{compactJson(observability?.todo_items || [], 1600)}</pre>
+            <div className="v2-monitor-panel-head"><FileBox size={15} /><h3>Key artifacts</h3></div>
+            <div className="v2-monitor-semantic-list">
+              {(monitor?.artifacts || []).map((artifact, index) => (
+                <div key={`${artifact.path || artifact.title}-${index}`}>
+                  <strong>{userFacingFileTitle(artifact.title, artifact.path, "Artifact")}</strong>
+                  <small>{displayValue(artifact.summary || (artifact.renderer ? humanizeKey(artifact.renderer) : ""), "Result file")}</small>
+                </div>
+              ))}
+              {!monitor?.artifacts?.length ? <div className="v2-empty compact">No artifacts recorded for this run.</div> : null}
+            </div>
           </section>
         </div>
       ) : null}
       {activeSubtab === "live" ? (
-        <LiveStateView liveState={liveState} />
+        <div className="v2-monitor-columns">
+          <section className="v2-monitor-panel">
+            <div className="v2-monitor-panel-head"><GitBranch size={15} /><h3>Recent operations</h3></div>
+            <div className="v2-monitor-semantic-list">
+              {(live.tools || []).map((tool, index) => (
+                <div key={`${tool.title}-${index}`}>
+                  <strong>{statusAwareText(tool.title, tool.status, "Operation")}</strong>
+                  <span>{statusAwareText(tool.summary, tool.status, "No additional update.")}</span>
+                  <small>{statusLabel(tool.status)}</small>
+                </div>
+              ))}
+              {!live.tools?.length ? <div className="v2-empty compact">No recent operations.</div> : null}
+            </div>
+          </section>
+          <section className="v2-monitor-panel">
+            <div className="v2-monitor-panel-head"><MessageSquare size={15} /><h3>Specialists</h3></div>
+            <div className="v2-monitor-semantic-list">
+              {(live.agents || []).map((agent, index) => (
+                <div key={`${agent.title}-${index}`}>
+                  <strong>{statusAwareText(agent.title, agent.status, "Specialist")}</strong>
+                  <span>{statusAwareText(agent.summary, agent.status, "No additional update.")}</span>
+                  <small>{statusLabel(agent.status)}</small>
+                </div>
+              ))}
+              {!live.agents?.length ? <div className="v2-empty compact">No specialist activity.</div> : null}
+            </div>
+          </section>
+        </div>
       ) : null}
-      {activeSubtab === "events" ? (
+      {activeSubtab === "timeline" ? (
         <div className="v2-event-list">
-          {visibleEvents.map((event, index) => {
-            const payload = event.data || event.payload || event;
-            return (
-              <details key={event.seq || event.id || `${event.event || event.name}-${index}`} className="v2-event-row">
-                <summary>
-                  <span>{event.event || event.name || event.category || "event"}</span>
-                  <small>{event.status || event.source || ""}</small>
-                  <code>{compactJson(payload, 900)}</code>
-                </summary>
-                <pre>{jsonText(payload) || "(empty)"}</pre>
+          {(monitor?.timeline || []).slice().reverse().map((event, index) => (
+            <article key={event.id || `${event.title}-${index}`} className={`v2-public-event status-${event.status || "updated"}`}>
+              <div>
+                <strong>{statusAwareText(event.title, event.status, "Timeline update")}</strong>
+                {event.summary ? <p>{statusAwareText(event.summary, event.status, "")}</p> : null}
+              </div>
+              <small>{statusLabel(event.status)}{event.timestamp ? ` · ${formatTimestamp(event.timestamp)}` : ""}</small>
+              {(event.fields || []).length ? (
+                <dl>{event.fields.map((field, fieldIndex) => (
+                  <div key={`${field.label}-${fieldIndex}`}>
+                    <dt>{statusAwareText(field.label, event.status, "Detail")}</dt>
+                    <dd>{statusAwareText(field.value, event.status, "Not available")}</dd>
+                  </div>
+                ))}</dl>
+              ) : null}
+            </article>
+          ))}
+          {!monitor?.timeline?.length ? <div className="v2-empty">No user-facing timeline entries yet.</div> : null}
+          {monitor?.page?.truncated ? (
+            <div className="v2-truncation-notice" role="status">
+              <span>
+                Showing {Number(monitor.page.shown_count || monitor.timeline?.length || 0).toLocaleString()} of {Number(monitor.page.total_count || 0).toLocaleString()} timeline entries.
+              </span>
+              {monitor?.page?.full_content_ref ? (
+                <a className="v2-ghost-btn compact" href={monitor.page.full_content_ref}>Open full timeline</a>
+              ) : monitor?.developer_diagnostics_available ? (
+                <button type="button" className="v2-ghost-btn compact" onClick={() => setActiveSubtab("diagnostics")}>Open complete diagnostics</button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {activeSubtab === "diagnostics" && monitor?.developer_diagnostics_available ? (
+        <section className="v2-developer-diagnostics" aria-label="Developer diagnostics">
+          <div className="v2-diagnostics-warning" role="alert">
+            <Braces size={17} />
+            <div><strong>Internal developer data</strong><p>This view may contain raw event payloads, internal IDs, and paths. It is loaded only after you open this tab.</p></div>
+          </div>
+          {diagnosticsPage?.has_more ? (
+            <button type="button" className="v2-ghost-btn" onClick={() => loadDiagnostics(diagnosticsPage.min_id)} disabled={loading}>Load older diagnostics</button>
+          ) : null}
+          {diagnostics.length ? (
+            <div className="v2-range-label">
+              Showing {diagnostics.length.toLocaleString()} loaded diagnostic entries{diagnosticsPage?.has_more ? " of an unreported total." : "."}
+            </div>
+          ) : null}
+          <div className="v2-raw-list">
+            {diagnostics.map((event, index) => (
+              <details key={`${event.id || index}-${event.name || "event"}`} className="v2-raw-row">
+                <summary><span>{event.name || "Internal event"}</span><small>{event.ts || ""}</small></summary>
+                <pre>{jsonText(event)}</pre>
               </details>
-            );
-          })}
-          {!visibleEvents.length ? <div className="v2-empty">No events captured yet.</div> : null}
-        </div>
+            ))}
+          </div>
+        </section>
       ) : null}
-      {activeSubtab === "raw" ? (
-        <div className="v2-monitor-columns">
-          <section className="v2-monitor-panel">
-            <div className="v2-monitor-panel-head"><MessageSquare size={15} /><h3>Chat History</h3></div>
-            <div className="v2-raw-list">
-              {chatMessages.slice().reverse().slice(0, 80).map((message, index) => (
-                <details key={`${message.message_id || index}-${index}`} className="v2-raw-row">
-                  <summary><span>{message.role || "message"}</span><small>{message.created_at || ""}</small></summary>
-                  <pre>{compactJson(message.content || message, 1600)}</pre>
-                </details>
-              ))}
-              {!chatMessages.length ? <div className="v2-empty">No chat history for this run.</div> : null}
-            </div>
-          </section>
-          <section className="v2-monitor-panel">
-            <div className="v2-monitor-panel-head"><Braces size={15} /><h3>Raw Logs</h3></div>
-            <div className="v2-raw-list">
-              {filteredRawEvents.slice().reverse().slice(0, 120).map((event, index) => (
-                <details key={`${event.id || event.seq || index}-${event.name || event.event}`} className="v2-raw-row">
-                  <summary><span>{event.name || event.event || event.category || "event"}</span><small>{event.ts || event.created_at || ""}</small></summary>
-                  <pre>{compactJson(event.payload || event, 1600)}</pre>
-                </details>
-              ))}
-              {!filteredRawEvents.length ? <div className="v2-empty">No raw logs captured yet.</div> : null}
-            </div>
-          </section>
-        </div>
-      ) : null}
-      {activeSubtab === "details" ? (
-        <div className="v2-monitor-columns">
-          <MonitorCodeBlock title="Task State" text={details?.task_state || ""} />
-          <MonitorCodeBlock title="Memory" text={details?.memory || ""} />
-        </div>
-      ) : null}
-      {eventPage?.has_more ? <div className="v2-muted">Older event pages are available in the API.</div> : null}
     </section>
   );
 }

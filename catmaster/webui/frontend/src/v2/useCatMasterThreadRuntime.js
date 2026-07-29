@@ -4,6 +4,8 @@ import { useExternalStoreRuntime } from "@assistant-ui/react";
 import { CatMasterAttachmentAdapter } from "./catmasterAttachmentAdapter.js";
 import { catMessagesToAssistant, requestFromAssistantAppend, upsertById } from "./messageAdapters.js";
 import { applyThreadEvent } from "./threadEventReducer.js";
+import { isEmergencyStopAttempt } from "./stopPolicy.js";
+import { makeApiError } from "./presentation.js";
 
 export async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
@@ -15,28 +17,28 @@ export async function apiFetch(url, options = {}) {
   });
   const text = await response.text();
   if (!response.ok) {
-    let message = text || `Request failed: ${response.status}`;
-    try {
-      const payload = JSON.parse(text || "{}");
-      message = String(payload.detail || payload.message || message);
-    } catch {
-      // Keep raw text.
-    }
-    throw new Error(message);
+    throw makeApiError(response.status, text, response.headers.get("content-type") || "");
   }
-  return text ? JSON.parse(text) : {};
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    const error = new Error("CatMaster received an unreadable server response. Refresh the workspace and try again.");
+    error.status = response.status;
+    error.details = {};
+    error.technicalDetails = `HTTP ${response.status}\nThe server returned non-JSON content where application data was expected.`;
+    throw error;
+  }
 }
 
 function threadIsRunning(thread) {
   return ["running", "stopping"].includes(String(thread?.status || "").toLowerCase());
 }
 
-export function isEmergencyStopAttempt(attempt) {
-  return Number(attempt) >= 3;
-}
-
 export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArtifact }) {
   const [messages, setMessages] = useState([]);
+  const [messagePage, setMessagePage] = useState({});
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [artifacts, setArtifacts] = useState([]);
   const [events, setEvents] = useState([]);
   const [error, setError] = useState("");
@@ -55,9 +57,32 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
 
   const refreshMessages = useCallback(async () => {
     if (!thread?.thread_id) return;
-    const payload = await apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/messages`);
+    const payload = await apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/messages?limit=50`);
     setMessages(Array.isArray(payload.messages) ? payload.messages : []);
+    setMessagePage(payload.page || {});
   }, [thread?.thread_id]);
+
+  const loadOlderMessages = useCallback(async () => {
+    const cursor = String(messagePage?.next_cursor || "");
+    if (!thread?.thread_id || !cursor || loadingOlder) return;
+    setLoadingOlder(true);
+    setError("");
+    try {
+      const payload = await apiFetch(
+        `/api/threads/${encodeURIComponent(thread.thread_id)}/messages?limit=50&before=${encodeURIComponent(cursor)}`,
+      );
+      const older = Array.isArray(payload.messages) ? payload.messages : [];
+      setMessages((current) => {
+        const existing = new Set(current.map((message) => message.id));
+        return [...older.filter((message) => !existing.has(message.id)), ...current];
+      });
+      setMessagePage(payload.page || {});
+    } catch (err) {
+      setError(err);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [thread?.thread_id, messagePage?.next_cursor, loadingOlder]);
 
   const refreshArtifacts = useCallback(async () => {
     if (!thread?.thread_id) return;
@@ -70,6 +95,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
     async function load() {
       if (!thread?.thread_id) {
         setMessages([]);
+        setMessagePage({});
         setArtifacts([]);
         setEvents([]);
         return;
@@ -78,15 +104,16 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
       setError("");
       try {
         const [messagePayload, artifactPayload] = await Promise.all([
-          apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/messages`),
+          apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/messages?limit=50`),
           apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/artifacts`),
         ]);
         if (!cancelled) {
           setMessages(Array.isArray(messagePayload.messages) ? messagePayload.messages : []);
+          setMessagePage(messagePayload.page || {});
           setArtifacts(Array.isArray(artifactPayload.artifacts) ? artifactPayload.artifacts : []);
         }
       } catch (err) {
-        if (!cancelled) setError(err.message || String(err));
+        if (!cancelled) setError(err);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -109,10 +136,13 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
         const payload = JSON.parse(event.data || "{}");
         setEvents((prev) => [...prev.slice(-299), payload]);
         setMessages((prev) => applyThreadEvent(prev, payload));
-        if (payload.event === "artifact.created" && payload.data?.artifact_id) {
+        const artifactPart = payload.event === "activity.updated" && payload.data?.part?.type === "artifact"
+          ? payload.data.part
+          : null;
+        if (artifactPart?.artifact_id) {
           setArtifacts((prev) => {
-            if (prev.some((item) => item.artifact_id === payload.data.artifact_id)) return prev;
-            return [...prev, payload.data];
+            if (prev.some((item) => item.artifact_id === artifactPart.artifact_id)) return prev;
+            return [...prev, artifactPart];
           });
         }
         if (payload.event === "thread.status" && thread?.thread_id) {
@@ -122,7 +152,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
           });
         }
       } catch (err) {
-        setError(err.message || String(err));
+        setError(err);
       }
     };
     [
@@ -136,6 +166,8 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
       "reasoning.delta",
       "message.completed",
       "message.failed",
+      "activity.updated",
+      "run.failed",
       "tool_call.started",
       "tool_call.delta",
       "tool_call.completed",
@@ -174,7 +206,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
         body: JSON.stringify({
           text: body,
           entrypoint: submitOptions.entrypoint || thread.entrypoint || "research",
-          permission_mode: submitOptions.permission_mode || thread?.meta?.permission_mode || "auto",
+          permission_mode: submitOptions.permission_mode || thread?.permission_mode || "auto",
           attachments: attachmentRows,
         }),
       });
@@ -183,7 +215,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
       if (payload.thread) onThreadUpdate?.(payload.thread);
       return payload;
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
       throw err;
     }
   }, [thread, onThreadUpdate]);
@@ -197,22 +229,22 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
       });
       if (payload.thread) onThreadUpdate?.(payload.thread);
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }, [thread, onThreadUpdate]);
 
-  const resume = useCallback(async (decision) => {
+  const resume = useCallback(async (review) => {
     if (!thread?.thread_id) return;
-    const decisions = Array.isArray(decision) ? decision : [decision];
+    const actions = Array.isArray(review) ? review : [review];
     try {
       const payload = await apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/resume`, {
         method: "POST",
-        body: JSON.stringify({ decisions }),
+        body: JSON.stringify({ actions }),
       });
       if (payload.assistant_message) setMessages((prev) => upsertById(prev, payload.assistant_message));
       if (payload.thread) onThreadUpdate?.(payload.thread);
     } catch (err) {
-      setError(err.message || String(err));
+      setError(err);
     }
   }, [thread, onThreadUpdate]);
 
@@ -244,13 +276,16 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
     messages,
     artifacts,
     events,
+    messagePage,
     loading,
+    loadingOlder,
     error,
     isRunning: threadIsRunning(thread),
     submitText,
     stop,
     resume,
     refreshMessages,
+    loadOlderMessages,
     refreshArtifacts,
     onSelectArtifact,
   };

@@ -19,7 +19,7 @@ Experiment 会依据主要对象和交付物选择执行者：
 
 边界并非只由软件名决定。MLFF 几何优化属于材料筛选时，Materials worker 可以保持整条筛选链；MLFF MD 的重点是轨迹和动力学时，Dynamics worker 更合适；MACE 模型的训练和 benchmark 则属于 ML worker。Experiment 会结合你的目标判断，而不是机械匹配关键词。
 
-四类 worker 还共享项目内的通用工具：`write_todos` 用于维护本轮计划，`ls`、`glob`、`grep` 和 `read_file` 用于检查文件，`write_file` 与 `edit_file` 用于保存产物，`execute` 用于边界清楚的本地脚本和命令。`export_builtin_tool_source` 可以把已注册内置 tool 的实现导出到 workspace 供核对。它们是通用工作能力，不代替下面的领域 tools；在 Review 模式下，`write_file` 和 `edit_file` 会等待审批。
+四类 worker 还共享项目内的通用工具：`write_todos` 用于维护本轮计划，`ls`、`glob`、`grep` 和 `read_file` 用于检查文件，`write_file` 与 `edit_file` 用于保存产物，`execute` 用于边界清楚的本地脚本和命令。使用 Codex OAuth 的 worker 还可以用兼容 Codex 语法的 freeform `apply_patch` 一次修改多个文件。`export_builtin_tool_source` 可以把已注册内置 tool 的实现导出到 workspace 供核对。它们是通用工作能力，不代替下面的领域 tools。本地文件编辑不触发 Review 审批；Review 仍会在真实远程提交前暂停。
 
 ## Materials worker：从晶体到表面、反应路径和性质
 

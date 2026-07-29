@@ -10,9 +10,10 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from pydantic import BaseModel, Field
 from pymatgen.core import Structure
-from pymatgen.core.surface import SlabGenerator
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.structures.serialization import snapshot_to_structure
+from catmaster.structures.surfaces import generate_slab_candidates
 from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
 from catmaster.tools.geometry_inputs.adsorbate_tool import propagate_adsorbate_metadata
 
@@ -233,40 +234,38 @@ def _build_slab_single(
 ) -> Dict[str, object]:
     structure = Structure.from_file(bulk_path)
     structure = SpacegroupAnalyzer(structure, symprec=0.01, angle_tolerance=2.0).get_refined_structure()
-    gen = SlabGenerator(
-        initial_structure=structure,
-        miller_index=miller,
+    candidates = generate_slab_candidates(
+        structure,
+        miller_index=list(miller),
         min_slab_size=slab_thickness,
         min_vacuum_size=vacuum_thickness,
         center_slab=True,
+        symmetrize=get_symmetry,
+        orthogonal=orthogonal,
         lll_reduce=lll_reduce,
+        surface_supercell=[
+            [int(supercell[0]), 0, 0],
+            [0, int(supercell[1]), 0],
+            [0, 0, int(supercell[2])],
+        ],
     )
-    slabs = gen.get_slabs(symmetrize=get_symmetry)
-    if orthogonal:
-        slabs = [s.get_orthogonal_c_slab() for s in slabs]
-    if not slabs:
+    if not candidates:
         raise ValueError("SlabGenerator returned no slabs")
 
     _ensure_dir(output_root)
     base = bulk_path.stem
     emitted = []
-    for term_index, slab in enumerate(slabs):
-        slab_copy = slab.copy()
-        if supercell != (1, 1, 1):
-            slab_copy.make_supercell(np.diag(supercell))
-
+    for term_index, candidate in enumerate(candidates):
+        slab_copy = snapshot_to_structure(candidate["snapshot"])
         fname = f"{base}_h{miller[0]}{miller[1]}{miller[2]}_t{term_index}.vasp"
         out_path = output_root / fname
         slab_copy.to(fmt="poscar", filename=out_path)
-
-        a, b, _ = slab_copy.lattice.matrix
-        surface_area = float(np.linalg.norm(np.cross(a, b)))
 
         emitted.append(
             {
                 "termination_index": term_index,
                 "slab_structure_rel": workspace_relpath(out_path),
-                "surface_area": surface_area,
+                "surface_area": float(candidate["surface_area"]),
                 "natoms": len(slab_copy),
             }
         )

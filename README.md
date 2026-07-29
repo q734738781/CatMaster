@@ -20,7 +20,9 @@ WebUI 提供五个研究入口：
 | Writing | 把已有证据组织成科研交付物 | 论文写作、润色、引用、数据声明、图件、PPT、投稿回复和专利 skills | Markdown、LaTeX、DOCX、PPTX、图件和 PDF |
 | Peer Review | 独立审查一份固定稿件 | 多 reviewer 模型、审稿 worker 和 `peer_review_request` | 原始 reviewer reports、editor synthesis 和修订问题单 |
 
-Research 会负责方向判断，也会继续把阶段任务交给可执行的 specialist。在用户授权的范围内，一条 Research thread 可以从文献证据缺口推进到结构建模、远程计算、结果复核、写作和独立审稿。具体领域操作由拥有相应 tools 与 skills 的 specialist 或 worker 完成；结果返回同一 workspace 后，Research 可以核对证据、补发下一阶段任务或收束结论。对于包含竞争解释或共享证据的问题，Research 还可以运行持久假设 campaign。专门的 hypothesis proposer 负责提出和修订可证伪假设，执行 specialist 完成验证，独立 evidence judge 判断结果支持、反对还是无法区分各目标假设。确定性 controller 只校验和保存科学状态并给出排序，不替代任何科学角色。WebUI 的 Research Map 点击会为所选验证建立一条完整、独立的普通 Research thread；Automatic Research 则由异步 worker 串行建立同样的 thread。每条执行 thread 有自己的 Research Kernel 和 checkpoint，只共享父 campaign 的科学状态。原有单 thread Research 请求和普通线性任务保持不变。
+Research 负责方向判断，并把有边界的阶段交给能够执行的 specialist。在用户授权范围内，一项研究可以从文献证据缺口推进到结构建模、远程计算、结果复核、写作和独立审稿。具体操作由拥有相应 tools 与 skills 的 specialist 或 worker 完成。结果返回 workspace 后，Research 会核对证据，再决定补充验证还是收束结论。
+
+需要跨 thread 延续、比较竞争解释或让一条结果影响多个假设时，可以建立 workspace 级 Research Graph。图中只保存简短的 Hypothesis、Experiment 和 Result 节点及其关系。论文、笔记、结构、报告和运行记录仍留在原有文件、artifact 和 receipt 中，通过引用连接到图。多个 thread 可以显式附着同一个 graph；删除或运行某个 thread 不会锁住它。用户既可像操作科技树一样添加假设、准备或运行实验、记录结果和发展下一步，也可启用一次只推进一个 ready experiment 或 planning step 的自动编排。由图启动的计算仍遵守原有 specialist 分工、受管执行和人工审批。
 
 Experiment 下的四类 worker 进一步分工：Materials 负责晶体、表面、吸附、缺陷、反应路径和性质计算；Dynamics 负责 AIMD、LAMMPS、MLFF MD、restart 与轨迹；ML 负责数据集、MACE 训练评估和主动学习；ORCA/xTB 负责分子、构象、xTB、CREST、ORCA、TS、IRC、TDDFT 与 NMR。
 
@@ -77,7 +79,9 @@ The WebUI exposes five research entries:
 | Writing | Turns existing evidence into scientific deliverables | Manuscript, polishing, citation, data, figure, slide, response, and patent skills | Markdown, LaTeX, DOCX, PPTX, figures, PDF |
 | Peer Review | Independently assesses one fixed manuscript | Multiple reviewer models, a review worker, and `peer_review_request` | Raw reviewer reports, editor synthesis, revision issue lists |
 
-Research decides how to advance an open objective and dispatches stages to specialists that can execute them. Within the authority granted by the user, one Research thread can move from a literature evidence gap to structure modeling, remote computation, result checks, writing, and independent review. For questions with competing explanations or shared evidence, Research can run a persistent hypothesis campaign. A dedicated hypothesis proposer forms and revises falsifiable hypotheses, an execution specialist performs each verification, and an independent evidence judge decides whether the result supports, opposes, or fails to distinguish every target hypothesis. The deterministic controller only validates and persists scientific state and ranks available checks. Clicking a WebUI Research Map action creates a complete, independent ordinary Research thread; Automatic Research uses an asynchronous worker to create the same threads serially. Every execution thread has its own Research Kernel and checkpoint while sharing only the source campaign's scientific state. Existing single-thread Research requests and ordinary linear work remain unchanged.
+Research decides how to advance an open objective and delegates bounded stages to specialists that can execute them. Within the authority granted by the user, a study can move from a literature evidence gap to structure modeling, remote computation, result checks, writing, and independent review. Research checks returned evidence before it launches another stage or closes the question.
+
+Studies that span threads, retain competing explanations, or share evidence can use a workspace Research Graph. The graph stores only concise Hypothesis, Experiment, and Result nodes and their typed relationships. Papers, notes, structures, reports, artifacts, and run receipts stay in their existing stores and connect through references. Several threads can explicitly attach to the same graph; running or deleting one thread does not lock it. Users can add hypotheses, prepare or run experiments, record results, and develop follow-up work from the graph. Automatic orchestration advances one ready experiment or planning step at a time. Work launched from the graph still follows the ordinary specialist boundaries, managed execution, and approval rules.
 
 Experiment delegates crystal, surface, adsorption, defect, path, and property work to Materials; AIMD, LAMMPS, MLFF MD, restart, and trajectory work to Dynamics; datasets, MACE, and active learning to ML; and molecular, conformer, xTB, CREST, ORCA, TS, IRC, TDDFT, and NMR work to ORCA/xTB.
 
@@ -117,10 +121,12 @@ CatMaster's main code is released under the [Apache License 2.0](LICENSE). The p
 | [`figures4papers`](https://github.com/ChenLiu-1996/figures4papers) and [Peng Sida's research notes](https://github.com/pengsida/learning_research) | Figure patterns and scientific-writing references | Source notes are retained in the local [`nature-figure`](skills/research_specialist/nature-figure/README.md) and [`nature-writing`](skills/research_specialist/nature-writing/README.md) documentation |
 | [K-Dense scientific agent skills](https://github.com/K-Dense-AI/scientific-agent-skills) | Scientific writing, visualization, citation management, and venue guidance | MIT upstream; author metadata is retained in the bundled skill files |
 | baihe26 | Institution-authorized literature download workflow | MIT; local notice at [`skills/litreview_agent/nature-downloader/LICENSE`](skills/litreview_agent/nature-downloader/LICENSE) |
+| [`MatterViz`](https://github.com/janosh/matterviz) | Primary materials 3D preview and Structure Workbench canvas | Exact-pinned frontend dependency, MIT |
+| [`Ketcher`](https://github.com/epam/ketcher) | Lazy 2D molecule connection-table editor | Exact-pinned `ketcher-react` and `ketcher-core`, Apache-2.0 |
 
-The WebUI installs pinned JSmol 16.3.13 assets from the [official Jmol package](https://sourceforge.net/projects/jmol/) for interactive structure and trajectory previews. Jmol/JSmol is distributed upstream under LGPLv2. JSmol is a viewer only; calculation engines and remote execution continue to work if its preview assets are unavailable.
+The WebUI installs pinned JSmol 16.3.13 assets from the [official Jmol package](https://sourceforge.net/projects/jmol/) for OUTCAR vibration and compatibility fallback previews. Jmol/JSmol is distributed upstream under LGPLv2. JSmol is a viewer only; the primary MatterViz Workbench, calculation engines, and remote execution continue to work if its fallback assets are unavailable.
 
-WebUI 会从 [Jmol 官方发布包](https://sourceforge.net/projects/jmol/)安装固定版本的 JSmol 16.3.13，用于交互式预览结构和轨迹。Jmol/JSmol 的上游许可证为 LGPLv2。JSmol 只负责预览；其资源缺失不会影响计算引擎或远程任务。
+WebUI 会从 [Jmol 官方发布包](https://sourceforge.net/projects/jmol/)安装固定版本的 JSmol 16.3.13，用于 OUTCAR vibration 和兼容 fallback 预览。Jmol/JSmol 的上游许可证为 LGPLv2。JSmol 只负责 fallback；其资源缺失不会影响 MatterViz 主工作台、计算引擎或远程任务。
 
 Core dependencies include DeepAgents, LangGraph, LangChain, FastAPI, Pydantic, React, assistant-ui, ASE, pymatgen, RDKit, and DPDispatcher. The exact Python and frontend dependency lists are maintained in [`requirements/pc-conda.yml`](requirements/pc-conda.yml) and [`catmaster/webui/frontend/package.json`](catmaster/webui/frontend/package.json).
 

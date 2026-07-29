@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,14 +19,6 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
 import catmaster.specialists.runtime as runtime_mod
-from catmaster.research.hypothesis_engine import (
-    ExecutionLane,
-    Hypothesis,
-    HypothesisEngine,
-    HypothesisEngineState,
-    VerificationAction,
-)
-from catmaster.research.hypothesis_engine.storage import save_engine
 from catmaster.specialists.runtime import (
     RUN_STATE_FILE,
     _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
@@ -137,14 +130,40 @@ class _FailingToolInput(BaseModel):
 
 
 def _assert_native_skill_groups(agent_kwargs: dict, *groups: str) -> None:
-    assert list(agent_kwargs.get("skills") or []) == [
-        *(f"/.deepagents/skills/{group}" for group in groups),
-        *(f"/.deepagents/self_develop_skills/{group}" for group in groups),
+    paths = list(agent_kwargs.get("skills") or [])
+    assert len(paths) == len(groups)
+    matches = [
+        re.fullmatch(
+            r"/\.deepagents/snapshots/([0-9a-f]{24})/skills/([^/]+)",
+            path,
+        )
+        for path in paths
     ]
+    assert all(match is not None for match in matches)
+    assert [match.group(2) for match in matches if match is not None] == list(groups)
+    assert len({match.group(1) for match in matches if match is not None}) == 1
 
 
 def _assert_native_memory(agent_kwargs: dict) -> None:
-    assert agent_kwargs["memory"] == ["/.deepagents/AGENTS.md", "/memories/AGENTS.md"]
+    memory = list(agent_kwargs["memory"])
+    assert len(memory) == 2
+    match = re.fullmatch(
+        r"/\.deepagents/snapshots/([0-9a-f]{24})/AGENTS\.md",
+        memory[0],
+    )
+    assert match is not None
+    assert memory[1] == "/memories/AGENTS.md"
+    skill_hashes = {
+        skill_match.group(1)
+        for path in list(agent_kwargs.get("skills") or [])
+        if (
+            skill_match := re.fullmatch(
+                r"/\.deepagents/snapshots/([0-9a-f]{24})/skills/[^/]+",
+                path,
+            )
+        )
+    }
+    assert not skill_hashes or skill_hashes == {match.group(1)}
 
 
 def test_deepagent_context_profile_cap_limits_fraction_summarization_window(tmp_path: Path) -> None:
@@ -213,6 +232,24 @@ def test_real_registry_covers_specialist_allowlists() -> None:
     assert _DYNAMICS_WORKER_TOOL_ALLOWLIST <= registered
     assert _LITREVIEW_LOCAL_TOOL_ALLOWLIST <= registered
     assert _WRITING_WORKER_TOOL_ALLOWLIST <= registered
+    bound_writeback = {
+        "record_bound_research_result",
+        "mark_bound_research_experiment_failed",
+    }
+    assert bound_writeback <= _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+    assert bound_writeback <= _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+    assert {
+        "record_research_result",
+        "mark_research_experiment_failed",
+        "add_research_hypothesis",
+        "add_research_experiment",
+    }.isdisjoint(_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST)
+    assert {
+        "record_research_result",
+        "mark_research_experiment_failed",
+        "add_research_hypothesis",
+        "add_research_experiment",
+    }.isdisjoint(_LITREVIEW_LOCAL_TOOL_ALLOWLIST)
     assert "bash" not in _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
     assert "bash" not in _RESEARCH_TOOL_ALLOWLIST
     assert "bash" not in _WRITING_TOOL_ALLOWLIST
@@ -408,18 +445,24 @@ def test_prose_quality_policy_requires_skill_without_changing_science() -> None:
 
 def test_tool_policy_keeps_checksum_out_of_ordinary_scientific_qc() -> None:
     policy = runtime_mod.SpecialistRunner._tool_policy()
-    assert "A checksum or content hash is an operational file-identity signal, not scientific QC" in policy
-    assert "do not generate or compare checksums for ordinary research analysis" in policy
+    checksum_rule = "By default, do not calculate or compare hashes/checksums unless the user explicitly requests it."
+    assert policy.startswith(checksum_rule)
+    assert policy.count("hash") == 1
     assert "use targeted inspection or a version-control diff when the question is edit scope" in policy
-    assert "restart, retry, checkpoint, or tool protocol requires it" in policy
-    assert "do not present it as scientific evidence" in policy
 
-    research_prompt = runtime_mod.SpecialistRunner._base_system_prompt("research", thread_id="thread-1")
-    experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
-    materials_prompt = runtime_mod.SpecialistRunner._materials_worker_prompt()
-    writing_prompt = runtime_mod.SpecialistRunner._writing_worker_prompt()
-    for prompt in (research_prompt, experiment_prompt, materials_prompt, writing_prompt):
-        assert "not scientific QC" in prompt
+    shared_prompts = (
+        *(runtime_mod.SpecialistRunner._base_system_prompt(entrypoint) for entrypoint in ("research", "experiment", "writing", "peer_review")),
+        runtime_mod.SpecialistRunner._litreview_wrapper_prompt(),
+        runtime_mod.SpecialistRunner._materials_worker_prompt(),
+        runtime_mod.SpecialistRunner._dynamics_worker_prompt(),
+        runtime_mod.SpecialistRunner._ml_worker_prompt(),
+        runtime_mod.SpecialistRunner._orca_xtb_worker_prompt(),
+        runtime_mod.SpecialistRunner._writing_worker_prompt(),
+        runtime_mod.SpecialistRunner._writing_polisher_prompt(),
+        runtime_mod.SpecialistRunner._peer_review_worker_prompt(),
+    )
+    for prompt in shared_prompts:
+        assert checksum_rule in prompt
 
 
 def test_litreview_downloader_batch_limit_is_not_review_coverage_target() -> None:
@@ -538,12 +581,11 @@ def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
     assert "Research goal guard: the active objective is runtime-owned" in research_prompt
     assert "On resume, continue the original objective plus any human resume note" in research_prompt
     assert "Research completion audit: before final answer" in research_prompt
-    assert "reconcile progress against the runtime objective" in research_prompt
+    assert "Research Graph contract" in research_prompt
+    assert "Never guess among multiple graphs" in research_prompt
     assert "Perform a scientific reasonableness audit" in research_prompt
     assert "A scientific reasonableness check is required for research closeouts" in research_prompt
     assert "do not force fixed `Summary` / `Facts` / `Files` headings" in research_prompt
-    assert "frontier` as a non-executing record" in research_prompt
-    assert "A requested stage may be complete while frontier items remain" in research_prompt
     assert "Final conclusions should cite the evidence paths or saved memos they depend on" in research_prompt
     for prompt in (research_prompt, experiment_prompt, writing_prompt):
         assert "Delegate sequentially" in prompt
@@ -556,70 +598,6 @@ def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
     assert "Do not rerun or reparse calculation outputs just to repeat domain QC" in experiment_prompt
     assert "When one writing-worker pass returns, actively decide whether another bounded delegate pass is needed" in writing_prompt
     assert "When one worker review episode returns, actively decide whether another bounded delegate pass is needed" in peer_review_prompt
-
-
-def test_map_research_thread_separates_kernel_identity_from_campaign_identity(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "project_space"
-    files_root = workspace / "files"
-    files_root.mkdir(parents=True)
-    campaign_id = "thread-parent-campaign"
-    execution_id = "thread-map-child"
-    engine = HypothesisEngine(
-        HypothesisEngineState(
-            question="Which mechanism survives?",
-            hypotheses=[
-                Hypothesis(
-                    id="h1",
-                    claim="Mechanism one is active.",
-                    rationale="It matches the observed trend.",
-                    predictions=["Observable one increases."],
-                )
-            ],
-            actions=[
-                VerificationAction(
-                    id="a1",
-                    executor=ExecutionLane.LITERATURE,
-                    question="Does the source report observable one?",
-                    task="Check the primary source.",
-                    target_hypotheses=["h1"],
-                    decision_rule="A reported increase supports h1.",
-                )
-            ],
-        )
-    )
-    save_engine(files_root, campaign_id, engine)
-    built = build_specialist_runner(
-        workspace=workspace,
-        llm_profile=_FakeProfile(),
-        reporter=None,
-        run_control=None,
-        project_id="project",
-        preferred_entrypoint="research",
-        research_campaign_id=campaign_id,
-    )
-    kernel_relpath = built.runner._ensure_research_kernel_seed(
-        files_root=files_root,
-        thread_id=execution_id,
-        prompt="Execute map action a1.",
-    )
-
-    prompt = built.runner._system_prompt("research", thread_id=execution_id)
-    state = built.runner._research_kernel_state_fields(
-        files_root=files_root,
-        thread_id=execution_id,
-        relpath=kernel_relpath,
-    )
-
-    assert f"`{execution_id}`" in prompt
-    assert f"`{campaign_id}`" in prompt
-    assert f"research_kernels/{execution_id}/kernel.json" in kernel_relpath
-    assert state["research_kernel"]["question"] == "Execute map action a1."
-    assert state["hypothesis_campaign_id"] == campaign_id
-    assert state["hypothesis_engine"]["question"] == "Which mechanism survives?"
-    assert campaign_id in state["hypothesis_engine_path"]
-    assert execution_id not in state["hypothesis_engine_path"]
 
 
 def test_specialist_prompts_integrate_property_lookup_and_delegated_compute_rules() -> None:
@@ -1639,22 +1617,19 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in agent_kwargs["tools"]} == (
             _RESEARCH_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
         )
-        assert "Maintain a lightweight Research Kernel" in agent_kwargs["system_prompt"]
-        assert "/research_kernels/" in agent_kwargs["system_prompt"]
         assert "Research goal guard: the active objective is runtime-owned" in agent_kwargs["system_prompt"]
-        assert "Use the Research Kernel only as working memory" in agent_kwargs["system_prompt"]
+        assert "Research Graph contract" in agent_kwargs["system_prompt"]
+        assert "Never guess among multiple graphs" in agent_kwargs["system_prompt"]
+        assert "Research Kernel" not in agent_kwargs["system_prompt"]
         assert "Research completion audit: before final answer" in agent_kwargs["system_prompt"]
-        assert "reconcile progress against the runtime objective" in agent_kwargs["system_prompt"]
         assert "Default to on-demand closeout, not autonomous research expansion" in agent_kwargs["system_prompt"]
         assert "Perform a scientific reasonableness audit" in agent_kwargs["system_prompt"]
-        assert "frontier` as a non-executing record" in agent_kwargs["system_prompt"]
         assert "A scientific reasonableness check is required for research closeouts" in agent_kwargs["system_prompt"]
         assert "do not force fixed `Summary` / `Facts` / `Files` headings" in agent_kwargs["system_prompt"]
-        assert "A requested stage may be complete while frontier items remain" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "hypothesis_proposer" in agent_kwargs["system_prompt"]
         assert "evidence_judge" in agent_kwargs["system_prompt"]
-        assert "do not invent campaign hypotheses" in agent_kwargs["system_prompt"]
+        assert "do not invent graph hypotheses" in agent_kwargs["system_prompt"]
         assert "without grading the evidence yourself" in agent_kwargs["system_prompt"]
         assert "metadata_agent" not in agent_kwargs["system_prompt"]
         assert "paper, manuscript, journal-style LaTeX draft" in agent_kwargs["system_prompt"]
@@ -1665,7 +1640,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "publication-level paper quality" in agent_kwargs["system_prompt"]
         assert "formal submission requirements" in agent_kwargs["system_prompt"]
         assert "explicitly hand it the canonical workspace-relative manuscript PDF path" in agent_kwargs["system_prompt"]
-        assert "Do not rely on the Research Kernel to preserve full editor/reviewer comment text" in agent_kwargs["system_prompt"]
+        assert "Do not rely on a graph node to preserve full editor/reviewer comment text" in agent_kwargs["system_prompt"]
         assert "If `peer_review_specialist` gives you a saved review memo path, read that memo directly" in agent_kwargs["system_prompt"]
         assert "You remain the sole coordinator and final decision-maker" in agent_kwargs["system_prompt"]
         assert "Report weak evidence as a limitation" in agent_kwargs["system_prompt"]
@@ -1680,8 +1655,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert judge["tools"] == []
         assert proposer["model"] == {"model": "hypothesis_proposer-model"}
         assert judge["model"] == {"model": "evidence_judge-model"}
-        assert proposer["response_format"].__name__ == "HypothesisPlan"
-        assert judge["response_format"].__name__ == "EvidenceJudgment"
+        assert proposer["response_format"].__name__ == "ResearchGraphPlanningProposal"
+        assert judge["response_format"].__name__ == "ResearchGraphEvidenceJudgment"
         assert "does not execute or judge evidence" in proposer["description"]
         assert "does not propose branches or schedule work" in judge["description"]
 
@@ -1953,14 +1928,20 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "dedicated peer-review request capability on that PDF exactly once" in peer_review_worker_kwargs["system_prompt"]
 
     deepagents_root = workspace / "files" / ".deepagents"
-    staged_agents = deepagents_root / "AGENTS.md"
-    staged_materials = deepagents_root / "skills" / "materials_worker"
-    staged_writing = deepagents_root / "skills" / "writing_specialist"
-    staged_researcher = deepagents_root / "skills" / "research_specialist"
-    staged_literature = deepagents_root / "skills" / "litreview_agent"
-    staged_writing_quality = deepagents_root / "skills" / "writing_quality"
-    staged_quantum_chemistry = deepagents_root / "skills" / "orca_xtb_worker"
-    staged_execution = deepagents_root / "skills" / "execution"
+    snapshot_match = re.fullmatch(
+        r"/\.deepagents/snapshots/([0-9a-f]{24})/AGENTS\.md",
+        agent_kwargs["memory"][0],
+    )
+    assert snapshot_match is not None
+    snapshot_root = deepagents_root / "snapshots" / snapshot_match.group(1)
+    staged_agents = snapshot_root / "AGENTS.md"
+    staged_materials = snapshot_root / "skills" / "materials_worker"
+    staged_writing = snapshot_root / "skills" / "writing_specialist"
+    staged_researcher = snapshot_root / "skills" / "research_specialist"
+    staged_literature = snapshot_root / "skills" / "litreview_agent"
+    staged_writing_quality = snapshot_root / "skills" / "writing_quality"
+    staged_quantum_chemistry = snapshot_root / "skills" / "orca_xtb_worker"
+    staged_execution = snapshot_root / "skills" / "execution"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
     assert staged_materials.is_dir()
     assert staged_writing.is_dir()
@@ -1969,9 +1950,16 @@ def test_specialist_lanes_start_with_staged_skills(
     assert staged_writing_quality.is_dir()
     assert staged_quantum_chemistry.is_dir()
     assert staged_execution.is_dir()
-    staged_workspace_override = deepagents_root / "self_develop_skills" / "materials_worker" / "workspace-demo" / "SKILL.md"
-    assert staged_workspace_override.is_file()
-    staged_machine_learning = deepagents_root / "skills" / "ml_worker"
+    staged_workspace_override = (
+        snapshot_root
+        / "skills"
+        / "materials_worker"
+        / "workspace-demo"
+        / "SKILL.md"
+    )
+    assert not staged_workspace_override.exists()
+    assert (override / "SKILL.md").is_file()
+    staged_machine_learning = snapshot_root / "skills" / "ml_worker"
     assert staged_machine_learning.is_dir()
     repo_root = Path(runtime_mod.__file__).resolve().parents[2]
 
@@ -1994,11 +1982,9 @@ def test_specialist_lanes_start_with_staged_skills(
     assert "skill_projection" not in run_state
     assert isinstance(run_state.get("facts"), list)
     if entrypoint == "research":
-        assert run_state["research_kernel_path"].endswith("/kernel.json")
-        assert run_state["research_kernel"]["question"] == "Run the lane smoke test."
-        assert run_state["research_kernel"]["hypotheses"] == []
-        kernel_file = workspace / "files" / run_state["research_kernel_path"]
-        assert kernel_file.is_file()
+        assert "research_kernel_path" not in run_state
+        assert "research_kernel" not in run_state
+        assert "hypothesis_engine" not in run_state
         assert run_state["research_goal_path"].endswith("/goal.json")
         assert run_state["research_goal"]["objective"] == "Run the lane smoke test."
         assert run_state["research_goal"]["status"] == "complete"

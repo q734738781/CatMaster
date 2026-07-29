@@ -77,20 +77,27 @@ The more memory resembles a concise project convention document, the more reliab
 
 A skill is appropriate when a full workflow repeats. If a stepped CeO2 project has repeatedly validated one termination audit, atom naming rule, fixed-layer policy, and report structure, the system can propose a workspace skill containing a complete `SKILL.md` and, where needed, references or scripts.
 
-Static checks and an independent reviewer examine a candidate before it appears in Skill Evolution. The reviewer's `approve`, `reject`, or `needs_revision` value is an AI recommendation, not human approval. Candidate cards expose a one-sentence summary, separate behavioral changes, evidence sources, scope, proportionality, concerns, and human checks. The exact diff and raw diagnostics remain available in secondary expandable sections.
+The system does not turn every completed run into a skill, but it does send each terminal run with a user task through one semantic reflection. The reflection model reads the complete recorded model results, tool inputs, tool results, and final result. It distinguishes `no_change`, a failure to follow an adequate existing skill, and evidence that durable behavior should change. The first two outcomes create neither an observation nor a candidate. CatMaster does not use keywords, regular expressions, embeddings, or a fixed recurrence count to make that decision. One explicit durable correction may be sufficient; repeated wording is not sufficient by itself. Tool-schema defects, detailed scientific notes, and one-off facts remain in their authoritative stores instead of being disguised as skills. When an existing skill owns the behavior, CatMaster amends it rather than growing a duplicate.
 
-Every workspace skill requires an explicit Promote or Reject action from a logged-in user. A legacy `auto` deployment mode never auto-promotes skills. Promotion confirmation repeats the target, summary, and concerns, and the audit records the account, time, exact candidate bundle hash, and optional note. A changed bundle, changed target, or structural validation failure blocks promotion. Ordinary reviewer concerns or a proportionality warning/failure are shown prominently but do not silently replace an authorized human decision. Promotion affects the next run, not the current one.
+The reflection model selects one exact target for an actionable signal. CatMaster combines only evidence with that exact target across threads and reopens the complete semantic trajectory for every related episode. There is no similarity cluster or minimum episode count. The proposer can still return ignore when the full evidence is insufficient.
 
-Good skill candidates include stable project-specific QC methods, directory and delivery contracts, a verified stage-and-result workflow for a remote task, or repeated writing and figure conventions. Temporary errors, one sample-specific threshold, fixed atom indices, and unverified scientific conclusions should not become skills. A skill changes method guidance, not tool permissions or remote availability.
+Every candidate revision is immutable. CatMaster does not generate test prompts or start extra conversations to compare variants. Static validation covers mechanical contracts such as paths, bundle structure, frontmatter, references, code, the final tool registry, and hashes. The independent reviewer reads the same complete evidence and exact diff. Its `approve`, `reject`, or `needs_revision` value is advisory and cannot authorize release. Request revision creates a new revision without altering the reviewed one.
+
+Candidate cards show the behavior change, evidence episodes and sources, applicability and non-applicability, static validation, reviewer counterexamples and concerns, and the available human actions. The lifecycle has seven states: `pending`, `review`, `revision`, `canary`, `stable`, `rejected`, and `inactive`. The reviewed diff is loaded only from the exact revision under Technical details; raw event JSON and internal payloads remain in gated Developer Diagnostics. Lists are newest first and support status filters and cursor pagination.
+
+A logged-in user may request another revision, reject it, or start a skill canary on explicitly named threads or runs. The canary pins that exact revision while the stable version remains the default elsewhere. Starting it does not create a conversation, copy a prompt, or trigger another model call. Stable promotion is unavailable until the normal research run both reads or uses that revision and succeeds without false activation. A failure stops only that canary pointer. Stable revisions can later be quarantined, retired, or rolled back without deleting their immutable bundles. Workspace-memory preferences follow the same static-validation and human-review boundary but do not need a skill canary.
+
+Good skill candidates include stable project-specific QC methods, directory and delivery contracts, a verified stage-and-result workflow for a remote task, or repeated writing and figure conventions. Temporary errors, one sample-specific threshold, fixed atom indices, incidental checksums, and unverified scientific conclusions should not become skills. A skill changes method guidance, not tool permissions or remote availability.
 
 ```text
 Review the last three slab tasks and their audit reports in this workspace.
 Identify conventions that genuinely repeated and were independently validated. Separate stable rules
 from choices that belong only to one structure.
 
-If a reusable workflow exists, propose one project-skill candidate with applicability, inputs, checks,
-outputs, and non-generalizable boundaries. Do not turn one coordination cutoff or atom index into a universal rule.
-Keep the candidate in human review and do not promote it automatically.
+If a reusable workflow exists, judge its cause from the complete episodes and results first.
+Prefer amending the owning skill. State applicability, non-applicability, and the exact expected decision change.
+Do not turn one cutoff, atom index, or incidental checksum into a universal rule.
+Keep every revision in human review; use an explicitly scoped canary before stable release.
 ```
 
 ## Resume facts before resuming a plan

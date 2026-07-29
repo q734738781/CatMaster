@@ -77,9 +77,15 @@ Agent 可以使用 workspace 范围的长期 memory，保存会影响未来任�
 
 Skill 比 memory 更适合保存一套可重复流程。假设一个项目多次验证了特定阶梯 CeO2 模型的终止面检查、原子命名、固定层和报告格式，系统可以提出 workspace skill 候选。候选应包含完整 `SKILL.md`，必要时还可包含参考文件和脚本。
 
-候选先经过静态检查和独立 reviewer，再出现在 Skill Evolution 页面。Reviewer 的 `approve`、`reject` 或 `needs_revision` 只是 AI 建议，不是人工批准。候选卡片会直接显示一句话摘要、逐项行为变化、证据来源、适用范围、比例性判断、风险和人工检查项；完整 diff 与技术 JSON 收在后面的可展开区域。
+系统不会把每个完成的 run 都变成 skill，但会把有用户任务的 terminal run 交给一次语义反思。反思模型直接读取已记录的完整模型结果、tool input、tool result 和最终结果，判断这是 `no_change`、执行 Agent 没有遵守现有 skill，还是确实需要修改长期行为。前两种情况不会写 observation，也不会生成 candidate。系统不用关键词、正则、embedding 或固定复现次数替模型做这个判断。用户明确要求长期遵守的 correction 可以单独形成证据；多次措辞相似也不自动成为 skill。Tool/schema 缺陷、详细科学结论和一次性事实仍留在各自的权威位置，不会伪装成 skill；已有 skill 能承接时优先修订已有 owner。
 
-Workspace skill 必须由已登录用户明确选择 Promote 或 Reject。即使部署保留旧的 `auto` 模式，skill 也不会因 reviewer 建议而自动生效。Promote 前的确认会再次显示目标、摘要和 concerns，并记录账号、时间、候选 bundle hash 与可选说明。Bundle 已变化、目标已更新或静态校验失败时不能 Promote；一般 reviewer concern 或比例性 warning/fail 会给出醒目提示，但不会悄悄替代人工决定。Promote 从下一次 run 生效，不会改变正在运行的 Agent。
+反思模型会为可学习信号选择一个精确 target。系统只合并同一 target 下已经发生的跨 thread evidence，并把每个相关 episode 的完整语义轨迹重新交给 proposer。这里没有相似度聚类或“至少三个 episode”门槛。Proposer 仍可在证据不足时返回 ignore。
+
+每个 candidate revision 都是不可变版本。CatMaster 不会为候选生成测试题，也不会额外启动多组对话比较版本。静态检查只验证路径、bundle、frontmatter、引用、代码、tool registry 和 hash 等机械合同。独立 reviewer 会读取相同的完整 evidence 和精确 diff；它的 `approve`、`reject` 或 `needs_revision` 只是建议，不能授权发布。Request revision 会新建 revision，不会改写已经审核的版本。
+
+候选卡片展示行为变化、evidence episode 与来源、适用范围、静态 validation、reviewer 的 counterexample 和 concerns，以及可执行的人工作业。生命周期只使用 `pending`、`review`、`revision`、`canary`、`stable`、`rejected` 和 `inactive` 七个状态。完整 diff 只从当前精确 revision 的 Technical details 按需读取；raw event JSON 和内部 payload 只在受控 Developer Diagnostics 中出现。候选和 observation 列表均为 newest first，支持状态筛选与 cursor pagination。
+
+已登录用户可以 Request revision、Reject，或把某个 skill revision 只用于明确指定的 thread/run 做 canary。Canary 固定精确 revision，其他任务仍使用 stable；Start canary 不会新建对话、复制 prompt 或触发额外模型调用。只有该正常研究 run 确实读取或使用该版本、执行成功且没有 false activation 时，才允许 Promote stable；失败只停止该 canary pointer。Stable revision 以后可以 Quarantine、Retire 或 Roll back，旧 bundle 不会被物理删除。Workspace memory 偏好同样要经过静态检查和人工审核，但不需要 skill canary。
 
 适合提升为项目 skill 的内容包括：
 
@@ -88,15 +94,16 @@ Workspace skill 必须由已登录用户明确选择 Promote 或 Reject。即使
 - 特定远程 task 的 stage 准备与结果验收方式。
 - 经多次使用证明有效的写作、图件或报告流程。
 
-不适合提升的内容包括一次网络错误、暂时可用的文件名、某个单独样本上的偶然参数，以及未经独立验证的科学结论。Skill 只改变 Agent 的工作方法，不会给它新增 tool 权限，也不会自动启用缺失的 remote task。
+不适合提升的内容包括一次网络错误、暂时可用的文件名、某个单独样本上的偶然参数、没有改变任务决策的 checksum，以及未经独立验证的科学结论。Skill 只改变 Agent 的工作方法，不会给它新增 tool 权限，也不会自动启用缺失的 remote task。
 
 ```text
 回顾这个 workspace 中最近三次 slab 任务及其审计报告。
 找出真正重复且已经验证的项目约定，区分稳定规则与只适用于某个结构的临时选择。
 
-如果确有值得复用的流程，请提出一个 project skill 候选，说明适用条件、输入、
-检查步骤、输出和不能推广的边界。不要把一次 CN 阈值或某个原子索引写成通用规则。
-候选只进入人工审阅，不要自动 Promote。
+如果确有值得复用的流程，先根据完整 episode 与结果判断根因，
+并优先修订已有 owner skill。写清适用与不适用范围，以及预期改变的具体决策。
+不要把一次 CN 阈值、某个原子索引或顺手做的 checksum 写成通用规则。
+每个 revision 都只进入人工审阅；skill 先做明确范围的 canary，再考虑 stable。
 ```
 
 ## 隔天继续时先恢复事实，再恢复计划

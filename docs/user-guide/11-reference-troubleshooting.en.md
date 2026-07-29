@@ -171,7 +171,7 @@ tail -n 100 .runtime/webui.log
 ss -ltnp | grep 7991
 ```
 
-`conda is not available` means the shell lacks conda initialization or `CATMASTER_CONDA_ENV` is wrong. `Address already in use` means another process owns the port. Repair project-root ownership instead of running as root. A JSmol download error usually affects structure preview alone.
+`conda is not available` means the shell lacks conda initialization or `CATMASTER_CONDA_ENV` is wrong. `Address already in use` means another process owns the port. Repair project-root ownership instead of running as root. A JSmol download error affects OUTCAR vibration and fallback previews, not the primary MatterViz Workbench.
 
 Always use an explicit host and port while diagnosing because the launcher and direct Python CLI have different embedded defaults.
 
@@ -203,7 +203,9 @@ Common limits are 64 MiB per Composer file, 512 MiB for backend storage, 32 MiB 
 
 ## A structure, PDF, or table does not preview
 
-For a blank JSmol view, inspect cache, browser console, and structure format. Text, directory, and tree previews have size or count limits, so a missing preview does not always mean the file is absent. Open the original PDF when fonts or layout look suspicious.
+For a blank primary structure view, open the browser console and network panel, confirm that `chunk-MatterVizHost.js` and its local assets return 200, and read the human error shown by the renderer boundary. Use **Source** to determine whether the file itself is malformed. Large structures deliberately show a bounded canvas notice while keeping the full atom count in Properties and the paged coordinate table.
+
+If only molecule 2D editing fails, check the lazy `chunk-KetcherEditor.js`; the 3D conformer and source remain available. If volume loading fails, inspect the worker request and use Cancel before retrying another grid. For OUTCAR vibration or an explicit JSmol fallback, inspect the pinned JSmol cache and format. Text, directory, and tree previews have documented size or count limits, so a missing preview does not mean the file is absent. Open the original PDF when fonts or layout look suspicious.
 
 Files overwrites same-name uploads. Restore from an external backup if necessary. After accidental `metadata/` deletion, stop writes and recover a consistent backup. Re-uploading `files/` cannot restore checkpoints.
 
@@ -267,6 +269,30 @@ This is expected. Stop cancels the local agent turn, not Slurm or a remote shell
 Verify `CATMASTER_PROJECT_SPACE_ROOT` and the username. Login deployments use `users/<username>/`, while no-login mode uses `admin/`. A legacy `.catmaster` root needs migration to `files/` and `metadata/`.
 
 Restoring only `files/` does not restore threads. `metadata/`, DeepAgent SQLite, and the authentication database must belong to the same consistent backup.
+
+## Skill Evolution did not create or release a candidate
+
+This is usually a boundary, not a queue failure. A successful run creates no
+observation unless it has a named verified outcome. Ordinary experience needs
+recurrence across runs and threads plus a counterexample; an explicit durable
+correction may proceed without recurrence but still needs static validation,
+independent advice, and human review. Check the observation status and route in Skill Evolution
+before asking the developer worker to process raw jobs. Tool/schema issues and
+scientific notes are intentionally routed away from skills.
+
+`pending` and `revision` cannot be promoted. Open the exact revision, read the
+evidence, counterexamples, applicability boundaries, static validation, and reviewer
+concerns, then choose Request revision or Reject. A skill in `review` must first start a canary on an explicit
+thread or run. Promote stable appears only after that exact revision has a
+successful actual-use record with no failure or false activation. Starting the
+canary does not create a conversation or model call; it only binds the exact
+version to the selected scope.
+
+If a canary disappears, inspect its candidate card: a failed or falsely
+activated exact revision automatically loses only its canary pointer; the
+stable revision remains unchanged. A builtin or target hash change returns the
+candidate to `revision` rather than silently shadowing the newer skill. For a developer,
+copy the diagnostics reference from the card instead of pasting raw event JSON.
 
 ## Current UI limitations
 

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import multiprocessing
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +23,48 @@ from catmaster.webui.thread_models import ArtifactPart, MessagePart, ThreadMessa
 from catmaster.webui.thread_store import ThreadStore, new_id
 from catmaster.specialists.runtime import SpecialistUsageCallbackHandler
 from catmaster.specialists.streaming_runner import CatMasterStreamTranslator, StreamingSpecialistRunner, _extract_sidecar_artifact_paths, _extract_workspace_paths_from_text
+
+
+def _register_artifact_process(
+    workspace: str,
+    path: str,
+    thread_id: str,
+    barrier: Any,
+    results: Any,
+) -> None:
+    try:
+        barrier.wait(timeout=10)
+        record = ArtifactRegistry(
+            workspace=Path(workspace),
+            workspace_id="default",
+        ).register_path(path, thread_id=thread_id)
+        results.put({"artifact_id": record.artifact_id})
+    except Exception as exc:  # pragma: no cover - surfaced in the parent
+        results.put({"error": f"{type(exc).__name__}: {exc}"})
+
+
+def _wait_for_thread_event_process(
+    workspace: str,
+    thread_id: str,
+    ready: Any,
+    results: Any,
+) -> None:
+    try:
+        broker = ThreadEventBroker(workspace=Path(workspace))
+        ready.set()
+        events, cursor = broker.wait_for_events(
+            thread_id,
+            last_seq=0,
+            timeout_s=5,
+        )
+        results.put(
+            {
+                "events": [event.event for event in events],
+                "cursor": cursor,
+            }
+        )
+    except Exception as exc:  # pragma: no cover - surfaced in the parent
+        results.put({"error": f"{type(exc).__name__}: {exc}"})
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -76,6 +120,37 @@ def test_thread_event_broker_persists_stream_events_to_observability_store(tmp_p
     assert [event.event for event in replay] == ["reasoning.delta"]
 
 
+def test_thread_event_broker_wakes_a_different_process(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    thread_id = ThreadStore(
+        workspace=workspace,
+        workspace_id="default",
+    ).create_thread(title="cross-process").thread_id
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    results = context.Queue()
+    process = context.Process(
+        target=_wait_for_thread_event_process,
+        args=(str(workspace), thread_id, ready, results),
+    )
+    process.start()
+    assert ready.wait(timeout=10)
+
+    emitted = ThreadEventBroker(workspace=workspace).emit(
+        thread_id,
+        "message.created",
+        message_id="msg_cross_process",
+    )
+    outcome = results.get(timeout=10)
+    process.join(timeout=10)
+
+    assert process.exitcode == 0
+    assert outcome == {
+        "events": ["message.created"],
+        "cursor": emitted.seq,
+    }
+
+
 def test_thread_stream_route_replays_observability_events_after_reconnect(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     app = create_app(project_space_root=str(tmp_path), no_login=True)
@@ -92,6 +167,65 @@ def test_thread_stream_route_replays_observability_events_after_reconnect(tmp_pa
 
     assert response.status_code == 200
     assert "event: message.delta" in response.text
+
+
+def test_thread_stream_deduplicates_the_same_failure_across_reconnects(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    thread_id = client.post(
+        "/api/workspaces/default/threads",
+        json={"title": "SSE failure reconnect"},
+    ).json()["thread"]["thread_id"]
+    broker = ThreadEventBroker(workspace=workspace)
+    first = broker.emit(
+        thread_id,
+        "message.failed",
+        message_id="msg_failure_domain",
+        data={"error": "Remote calculation failed."},
+    )
+
+    initial = client.get(
+        f"/api/threads/{thread_id}/stream",
+        params={"last_seq": str(first.seq - 1), "once": "true"},
+    )
+    assert initial.text.count("event: run.failed") == 1
+
+    duplicate = broker.emit(
+        thread_id,
+        "error",
+        message_id="msg_failure_domain",
+        data={"error": "Remote calculation failed."},
+    )
+    reconnected = client.get(
+        f"/api/threads/{thread_id}/stream",
+        params={"last_seq": str(first.seq), "once": "true"},
+        headers={"Last-Event-ID": str(first.seq)},
+    )
+    assert duplicate.seq > first.seq
+    assert reconnected.text.count("event: run.failed") == 0
+
+    broker.emit(
+        thread_id,
+        "thread.status",
+        message_id="msg_failure_domain",
+        status="running",
+        data={"status": "running"},
+    )
+    next_failure = broker.emit(
+        thread_id,
+        "message.failed",
+        message_id="msg_failure_domain",
+        data={"error": "A later retry failed."},
+    )
+    retried = client.get(
+        f"/api/threads/{thread_id}/stream",
+        params={"last_seq": str(duplicate.seq), "once": "true"},
+    )
+    assert next_failure.seq > duplicate.seq
+    assert retried.text.count("event: run.failed") == 1
 
 
 def test_thread_store_migrates_legacy_chat_sessions(tmp_path: Path) -> None:
@@ -146,6 +280,72 @@ def test_artifact_registry_renderer_and_path_safety(tmp_path: Path) -> None:
         assert "invalid" in str(exc) or "escapes" in str(exc)
     else:
         raise AssertionError("unsafe artifact path was accepted")
+
+
+def test_artifact_registry_imports_legacy_index_once_without_rewriting_it(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    output = workspace / "files" / "legacy-index.txt"
+    output.write_text("legacy", encoding="utf-8")
+    legacy_root = system_root(workspace) / "artifacts"
+    legacy_root.mkdir(parents=True)
+    index_path = legacy_root / "index.jsonl"
+    original = (
+        json.dumps(
+            {
+                "artifact_id": "art_legacy_index",
+                "thread_id": "thread_legacy",
+                "workspace_id": "default",
+                "path": "files/legacy-index.txt",
+                "title": "Legacy index",
+            }
+        )
+        + "\n"
+    )
+    index_path.write_text(original, encoding="utf-8")
+
+    first = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    second = ArtifactRegistry(workspace=workspace, workspace_id="default")
+
+    assert first.get("art_legacy_index") is not None
+    assert [item.artifact_id for item in second.list_artifacts()] == [
+        "art_legacy_index"
+    ]
+    assert index_path.read_text(encoding="utf-8") == original
+
+
+def test_artifact_registry_concurrent_processes_do_not_lose_updates(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    paths = ["first.txt", "second.txt"]
+    for path in paths:
+        (workspace / "files" / path).write_text(path, encoding="utf-8")
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(len(paths) + 1)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_register_artifact_process,
+            args=(str(workspace), path, f"thread_{index}", barrier, results),
+        )
+        for index, path in enumerate(paths)
+    ]
+    for process in processes:
+        process.start()
+    barrier.wait(timeout=10)
+    outcomes = [results.get(timeout=10) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+
+    assert [process.exitcode for process in processes] == [0, 0]
+    assert all("error" not in outcome for outcome in outcomes)
+    records = ArtifactRegistry(
+        workspace=workspace,
+        workspace_id="default",
+    ).list_artifacts()
+    assert {record.path for record in records} == {
+        "files/first.txt",
+        "files/second.txt",
+    }
+    assert not (system_root(workspace) / "artifacts" / "index.jsonl").exists()
 
 
 def test_artifact_registry_renderer_mapping_covers_domain_artifacts(tmp_path: Path) -> None:
@@ -253,7 +453,13 @@ def test_server_thread_routes_and_artifact_preview(tmp_path: Path) -> None:
     assert listed.json()["threads"][0]["thread_id"] == thread_id
 
     assert client.get(f"/api/threads/{thread_id}").status_code == 200
-    assert client.get(f"/api/threads/{thread_id}/messages").json() == {"messages": []}
+    empty_page = client.get(f"/api/threads/{thread_id}/messages").json()
+    assert empty_page["messages"] == []
+    assert empty_page["page"]["shown_count"] == 0
+    assert empty_page["page"]["total_count"] == 0
+    assert empty_page["page"]["total_unknown"] is False
+    assert empty_page["page"]["truncated"] is False
+    assert empty_page["page"]["next_cursor"] == ""
 
     registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
     artifact = registry.register_path("note.md", thread_id=thread_id, message_id="msg_x")
@@ -315,20 +521,21 @@ def test_thread_permission_mode_create_patch_and_interrupt_mapping(tmp_path: Pat
     default_created = client.post("/api/workspaces/default/threads", json={"title": "default"})
     assert default_created.status_code == 200
     default_thread = default_created.json()["thread"]
-    assert default_thread["meta"]["permission_mode"] == "auto"
+    assert default_thread["permission_mode"] == "auto"
+    assert "meta" not in default_thread
     assert server._thread_permission_mode(SimpleNamespace(meta={})) == "auto"
 
     created = client.post("/api/workspaces/default/threads", json={"title": "auto", "permission_mode": "auto-approve"})
     assert created.status_code == 200
     thread = created.json()["thread"]
-    assert thread["meta"]["permission_mode"] == "auto"
-    assert server._interrupt_on_for_permission_mode(thread["meta"]["permission_mode"]) == {}
+    assert thread["permission_mode"] == "auto"
+    assert server._interrupt_on_for_permission_mode(thread["permission_mode"]) == {}
 
     patched = client.patch(f"/api/threads/{thread['thread_id']}", json={"permission_mode": "review"})
     assert patched.status_code == 200
     thread = patched.json()["thread"]
-    assert thread["meta"]["permission_mode"] == "hitl"
-    assert server._interrupt_on_for_permission_mode(thread["meta"]["permission_mode"]) == server.default_thread_interrupt_on()
+    assert thread["permission_mode"] == "hitl"
+    assert server._interrupt_on_for_permission_mode(thread["permission_mode"]) == server.default_thread_interrupt_on()
 
     invalid = client.patch(f"/api/threads/{thread['thread_id']}", json={"permission_mode": "bad"})
     assert invalid.status_code == 400
@@ -531,8 +738,8 @@ def test_submit_creates_user_and_running_assistant_message(tmp_path: Path, monke
     payload = submitted.json()
     assert payload["message"]["role"] == "user"
     assert payload["assistant_message"]["role"] == "assistant"
-    assert payload["assistant_message"]["meta"]["permission_mode"] == "auto"
-    assert payload["thread"]["meta"]["permission_mode"] == "auto"
+    assert "meta" not in payload["assistant_message"]
+    assert payload["thread"]["permission_mode"] == "auto"
 
 
 def test_submit_image_attachment_registers_artifact_without_persisting_data_url(tmp_path: Path, monkeypatch) -> None:
@@ -587,16 +794,18 @@ def test_submit_image_attachment_registers_artifact_without_persisting_data_url(
     assert isinstance(content, list)
     assert content[0]["type"] == "text"
     assert "figure.png" in content[0]["text"]
-    assert content[1]["type"] == "image"
-    assert content[1]["base64"] == image_data
-    assert content[1]["mime_type"] == "image/png"
+    # The checked-in profile uses the local codex_oauth adapter. Its installed
+    # LangChain bridge currently accepts text blocks only, so the file must be
+    # retained as an artifact without claiming it was sent to the model.
+    assert len(content) == 1
     assert (workspace / artifact_parts[0]["path"]).exists()
     multimodal_events = [event for event in ThreadEventBroker(workspace=workspace).replay(thread_id) if event.event == "multimodal.prepared"]
     assert multimodal_events
     event_data = multimodal_events[-1].data
     assert event_data["attachment_count"] == 1
-    assert event_data["attachments"][0]["sent_to_model"] is True
-    assert event_data["attachments"][0]["sent_as"] == "image"
+    assert event_data["attachments"][0]["sent_to_model"] is False
+    assert event_data["attachments"][0]["sent_as"] == "stored_only"
+    assert "does not enable image blocks" in event_data["attachments"][0]["warnings"][0]
     assert "base64" not in json.dumps(event_data)
 
 
@@ -959,6 +1168,7 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
     )
     store.append_message(message)
     broker = ThreadEventBroker(workspace=workspace)
+    staged_assets: list[dict[str, str]] = []
     model_message = AIMessage(
         id="resp_usage_stream",
         content="streamed answer",
@@ -998,8 +1208,13 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
             project_id="default",
         )
 
-        def _stage_deepagent_assets(self, _files_root):
-            return None
+        def _stage_deepagent_assets(self, files_root, *, thread_id):
+            staged_assets.append(
+                {
+                    "files_root": str(files_root),
+                    "thread_id": str(thread_id),
+                }
+            )
 
         def _new_usage_callback(self):
             return SpecialistUsageCallbackHandler()
@@ -1014,7 +1229,15 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
         async def _open_agent_runtime(self, *, files_root):
             yield {}
 
-        async def _build_entry_agent(self, *, entrypoint, runtime, thread_id):
+        async def _build_entry_agent(
+            self,
+            *,
+            entrypoint,
+            runtime,
+            thread_id,
+            tool_thread_id,
+        ):
+            assert tool_thread_id == thread.thread_id
             return FakeAgent()
 
         def _langchain_callbacks(self, *, usage_handler, default_agent_name):
@@ -1109,6 +1332,12 @@ def test_streaming_runner_emits_usage_updated_after_summary_write(tmp_path: Path
     )
 
     assert result["status"] == "done"
+    assert staged_assets == [
+        {
+            "files_root": str(workspace / "files"),
+            "thread_id": thread.thread_id,
+        }
+    ]
     assert result["artifact_ids"]
     saved = store.get_message(thread.thread_id, message.id)
     artifact_parts = [part for part in saved.parts if part.type == "artifact"]

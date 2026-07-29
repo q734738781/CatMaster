@@ -465,26 +465,13 @@ class CatMasterStreamTranslator:
         Pending HITL tool calls are intentionally excluded so a resumed tool can
         still be rendered when it finally completes.
         """
-        out: set[str] = set()
         try:
-            messages = self.store.list_messages(self.thread_id)
+            return self.store.completed_tool_call_ids(
+                self.thread_id,
+                exclude_message_id=self.message_id,
+            )
         except Exception:
-            return out
-        for message in messages:
-            if message.id == self.message_id:
-                continue
-            for part in message.parts:
-                if part.type != "tool-call":
-                    continue
-                meta = dict(part.meta or {})
-                call_id = str(meta.get("tool_call_id") or getattr(part, "tool_call_id", "") or "").strip()
-                if not call_id:
-                    continue
-                status = str(part.status or "").strip().lower()
-                has_output = "output" in meta and meta.get("output") not in (None, "")
-                if status in {"completed", "failed"} or has_output:
-                    out.add(call_id)
-        return out
+            return set()
 
     def apply_v3_event(self, event: Any) -> None:
         method = _event_method(event)
@@ -797,6 +784,7 @@ class CatMasterStreamTranslator:
                 "server_tool_call_chunk",
                 "server_tool_result",
                 "web_search_call",
+                "custom_tool_call",
             }:
                 self._handle_provider_content_blocks([delta], metadata=metadata)
                 handled = True
@@ -1042,6 +1030,29 @@ class CatMasterStreamTranslator:
                         metadata=metadata,
                         failed=status in {"failed", "error"},
                     )
+                continue
+            if block_type == "custom_tool_call":
+                call_id = str(
+                    block.get("call_id")
+                    or block.get("id")
+                    or block.get("index")
+                    or ""
+                ).strip()
+                if not call_id or call_id in self.completed_tool_call_ids:
+                    continue
+                if (
+                    call_id in self.historical_completed_tool_call_ids
+                    and call_id not in self.tool_parts_by_call_id
+                ):
+                    continue
+                self._handle_tool_call_payload(
+                    {
+                        "id": call_id,
+                        "name": str(block.get("name") or "custom_tool").strip(),
+                        "args": {"__arg1": str(block.get("input") or "")},
+                    },
+                    metadata=metadata,
+                )
                 continue
             if block_type == "server_tool_result":
                 call_id = str(block.get("tool_call_id") or block.get("id") or "").strip()
@@ -1855,17 +1866,12 @@ class StreamingSpecialistRunner:
         runner = self.runner
         files_root = workspace_root(runner.run_context.workspace)
         files_root.mkdir(parents=True, exist_ok=True)
-        runner._stage_deepagent_assets(files_root)
-        research_kernel_relpath = ""
+        recorded_prompt = user_prompt
+        runner._stage_deepagent_assets(files_root, thread_id=thread_id)
         research_goal: ResearchGoalRecord | None = None
         research_goal_relpath = ""
         if entrypoint == "research":
-            prompt_for_goal = user_prompt or "Resume interrupted thread."
-            research_kernel_relpath = runner._ensure_research_kernel_seed(
-                files_root=files_root,
-                thread_id=deepagent_thread_id,
-                prompt=prompt_for_goal,
-            )
+            prompt_for_goal = recorded_prompt or "Resume interrupted thread."
             research_goal = runner._research_goal_for_run(thread_id=deepagent_thread_id, prompt=prompt_for_goal, resume_feedback=None)
             research_goal_relpath = runner._research_goal_relpath(deepagent_thread_id)
 
@@ -1909,17 +1915,21 @@ class StreamingSpecialistRunner:
                     "todo_items": [],
                     "artifacts": [],
                     "delegation_log": [],
-                    "text_preview": user_prompt[:280],
-                    "user_prompt": user_prompt,
+                    "text_preview": recorded_prompt[:280],
+                    "user_prompt": recorded_prompt,
                     "final_answer": "",
                     "summary": "",
                     "facts": [],
-                    **runner._research_kernel_state_fields(files_root=files_root, thread_id=deepagent_thread_id, relpath=research_kernel_relpath),
                     **runner._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
                 }
             )
             async with runner._open_agent_runtime(files_root=files_root) as runtime:
-                agent = await runner._build_entry_agent(entrypoint=entrypoint, runtime=runtime, thread_id=deepagent_thread_id)
+                agent = await runner._build_entry_agent(
+                    entrypoint=entrypoint,
+                    runtime=runtime,
+                    thread_id=deepagent_thread_id,
+                    tool_thread_id=thread_id,
+                )
                 config = {
                     "configurable": {
                         "thread_id": deepagent_thread_id,
@@ -1960,11 +1970,10 @@ class StreamingSpecialistRunner:
                     "artifacts": [],
                     "delegation_log": [],
                     "text_preview": "Waiting for human review.",
-                    "user_prompt": user_prompt,
+                    "user_prompt": recorded_prompt,
                     "final_answer": "",
                     "summary": "Waiting for human review.",
                     "facts": [],
-                    **runner._research_kernel_state_fields(files_root=files_root, thread_id=deepagent_thread_id, relpath=research_kernel_relpath),
                     **runner._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
                 }
                 runner._write_run_state(interrupted_state)
@@ -2055,12 +2064,11 @@ class StreamingSpecialistRunner:
                 "artifact_ids": [record.artifact_id for record in artifact_records],
                 "delegation_log": [],
                 "text_preview": parsed["text"][:280],
-                "user_prompt": user_prompt,
+                "user_prompt": recorded_prompt,
                 "final_answer": parsed["text"],
                 "summary": parsed["summary"],
                 "facts": list(parsed["facts"]),
                 "review_target": str(parsed.get("review_target") or "").strip(),
-                **runner._research_kernel_state_fields(files_root=files_root, thread_id=deepagent_thread_id, relpath=research_kernel_relpath),
                 **runner._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
             }
             runner._write_run_state(run_state)
@@ -2092,7 +2100,7 @@ class StreamingSpecialistRunner:
                     "thread_id": deepagent_thread_id,
                     "webui_thread_id": thread_id,
                     "text_preview": "Thread stopped by user.",
-                    "user_prompt": user_prompt,
+                    "user_prompt": recorded_prompt,
                     "final_answer": "",
                     "summary": "Thread stopped by user.",
                     "facts": [],
@@ -2117,7 +2125,7 @@ class StreamingSpecialistRunner:
                     "thread_id": deepagent_thread_id,
                     "webui_thread_id": thread_id,
                     "text_preview": error[:280],
-                    "user_prompt": user_prompt,
+                    "user_prompt": recorded_prompt,
                     "final_answer": "",
                     "summary": error.strip() or "Run failed.",
                     "facts": [],

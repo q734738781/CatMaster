@@ -200,33 +200,40 @@ Maintenance rules for active-path code:
 
 This is a replay-safety rule for the active DeepAgent stack, not a ban on multimodal prompting. The goal is to keep `thread_id`-based continuity while preserving current-turn and fresh image/tool-result multimodal context.
 
-## 4) Research Kernel
+## 4) Workspace Research Graph
 
-`ResearchSpecialist` maintains a lightweight research board file at:
+Research threads do not own a Research Kernel or campaign file. Long-lived
+scientific state belongs to a workspace Research Graph in
+`metadata/workspace.sqlite`. A thread may bind one graph and one focus node
+through its formal `active_research_graph_id` and `research_focus_node_id`
+fields. The binding is attention, not ownership.
 
-- `files/research_kernels/<thread_id>/kernel.json`
+Use a Research Graph when a question needs falsifiable hypotheses, several
+experiments, evidence shared across explanations, or continuation across
+threads. A one-off answer does not need a graph. When several active graphs
+exist, use the explicitly bound graph or ask the user to choose. Never scan
+workspace files and guess from similar titles.
 
-The schema is intentionally small:
+The scientific model has only Hypothesis, Experiment, and Result nodes.
+Hypotheses carry one coarse relative importance band. Experiments carry an
+objective, short plan, decision rule, execution lane, expected decision value,
+and coarse compute-cost band. These fields order ready work; they are not
+confidence or truth scores. Preserve competing branches. Auto orchestration may
+select one next experiment per graph without pruning the other branches.
+Result edges express support, opposition, inconclusive evidence, or a suggested
+next hypothesis. Keep detailed notes, logs, reports, receipts, and artifacts in
+their existing owners and attach stable refs to the concise graph node.
 
-- `question`
-- `hypotheses`
-- `run_cards`
-- `frontier`
-- `conclusion_draft`
-
-`run_cards` are compact and decision-oriented. Each card keeps only:
-
-- `source`
-- `summary`
-- `facts`
-- `artifacts`
-
-Keep `hypotheses` to the currently active 3-5 items only.
-
-`frontier` is a non-executing record of unresolved questions and recommended
-future work. It does not authorize another experiment or literature round. A
-requested stage may close with frontier items still present when the limitations
-are stated clearly.
+Every bound Research, Experiment, or Literature Review turn receives a
+deterministic bounded graph projection. Research owns the general graph
+mutation surface. Execution children receive only a runtime-bound result or
+blocked writeback surface; they cannot select another graph, thread, or
+experiment, and a terminal execution without a Result is blocked rather than
+successful. Mutations require the current graph revision. Do not introduce
+generic metadata, confidence or composite scores, debug nodes, model
+provenance, token counts, checksums, precise invented resource estimates, or
+saved layout coordinates. Managed execution and human approval still apply to
+work launched from an experiment node.
 
 ## 5) Final output contract
 

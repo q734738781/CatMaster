@@ -4,12 +4,11 @@ import assert from "node:assert/strict";
 import { catMessageToAssistant } from "./messageAdapters.js";
 import { entrypointMeta, normalizeEntrypoint, normalizedEntrypoints } from "./entrypoints.js";
 import { selectionFromHash, selectionToHash, tabFromHash } from "./inspectorSelection.js";
-import { interruptActions, repeatInterruptDecision } from "./interruptPayload.js";
 import { applyThreadEvent } from "./threadEventReducer.js";
 import { artifactForSelection } from "./artifactSelection.js";
 import { todoGroupsFromMessages } from "./todoPanel.js";
 import { normalizeMathMarkdown } from "./markdown.js";
-import { isEmergencyStopAttempt } from "./useCatMasterThreadRuntime.js";
+import { isEmergencyStopAttempt } from "./stopPolicy.js";
 
 test("the third stop click escalates to an emergency stop", () => {
   assert.equal(isEmergencyStopAttempt(1), false);
@@ -18,41 +17,31 @@ test("the third stop click escalates to an emergency stop", () => {
   assert.equal(isEmergencyStopAttempt(4), true);
 });
 
-test("catMessageToAssistant converts text, tool, artifact, and interrupt parts", () => {
+test("catMessageToAssistant preserves only projected presentation parts", () => {
   const converted = catMessageToAssistant({
     id: "msg_1",
     role: "assistant",
     status: "interrupted",
     created_at: 1,
     parts: [
-      { id: "part_text", type: "text", text: "hello" },
-      { id: "part_tool", type: "tool-call", meta: { tool_call_id: "tc1", tool: "write_file", input: { path: "x" }, agent_name: "materials_worker" } },
+      { id: "part_text", type: "text", text: "hello", fields: [], actions: [], items: [] },
+      { id: "part_tool", type: "tool", title: "Write file", summary: "The operation completed.", fields: [{ label: "Path", value: "files/x" }], actions: [], items: [] },
       { id: "part_artifact", type: "artifact", artifact_id: "art_1", title: "table", renderer: "csv", path: "files/table.csv" },
-      { id: "part_interrupt", type: "interrupt", status: "pending", text: "Review", meta: { title: "Review required" } },
+      { id: "part_interrupt", type: "interrupt", status: "pending", title: "Review required", summary: "Choose an action.", actions: [], items: [] },
+      { id: "part_sources", type: "citations", title: "Sources", items: [{ label: "OpenAI API", href: "https://developers.openai.com/api/docs/guides/tools-web-search" }] },
     ],
-    structured_sidecar: {
-      citations: [
-        {
-          title: "Web search | OpenAI API",
-          url: "https://developers.openai.com/api/docs/guides/tools-web-search",
-        },
-      ],
-    },
   });
 
   assert.equal(converted.status.type, "requires-action");
-  assert.equal(converted.content[0].type, "text");
-  assert.equal(converted.content[1].type, "tool-call");
-  assert.equal(converted.content[1].toolName, "write_file");
-  assert.equal(converted.content[1].source, "materials_worker");
-  assert.deepEqual(converted.content[1].args, { path: "x" });
-  assert.equal(converted.content[2].type, "data");
+  assert.equal(converted.content[0].type, "data");
+  assert.equal(converted.content[0].data.text, "hello");
+  assert.equal(converted.content[1].data.type, "tool");
+  assert.equal(converted.content[1].data.title, "Write file");
+  assert.equal(converted.content[1].data.meta, undefined);
   assert.equal(converted.content[2].data.type, "artifact");
-  assert.equal(converted.content[3].type, "data");
   assert.equal(converted.content[3].data.type, "interrupt");
-  assert.equal(converted.content[4].type, "data");
   assert.equal(converted.content[4].data.type, "citations");
-  assert.equal(converted.content[4].data.citations[0].title, "Web search | OpenAI API");
+  assert.equal(converted.content[4].data.items[0].label, "OpenAI API");
 });
 
 test("normalizeMathMarkdown converts common LLM math delimiters", () => {
@@ -62,7 +51,7 @@ test("normalizeMathMarkdown converts common LLM math delimiters", () => {
   assert.match(normalized, /\$\$\nx\^2 \+ y\^2 = z\^2\n\$\$/);
 });
 
-test("applyThreadEvent preserves tool call agent source metadata", () => {
+test("applyThreadEvent consumes projected activity updates without raw tool metadata", () => {
   const messages = [
     {
       id: "msg_1",
@@ -73,33 +62,42 @@ test("applyThreadEvent preserves tool call agent source metadata", () => {
   ];
 
   const started = applyThreadEvent(messages, {
-    event: "tool_call.started",
+    event: "activity.updated",
     message_id: "msg_1",
     data: {
-      part_id: "part_tool_1",
-      tool_call_id: "tc1",
-      tool: "write_todos",
-      input: { todos: [] },
-      agent_name: "experiment_specialist",
+      part: {
+        id: "part_tool_1",
+        type: "tool",
+        status: "running",
+        title: "Research plan",
+        summary: "Work is in progress.",
+        fields: [],
+        actions: [],
+        items: [],
+      },
     },
   });
   const completed = applyThreadEvent(started, {
-    event: "tool_call.completed",
+    event: "activity.updated",
     message_id: "msg_1",
     data: {
-      part_id: "part_tool_1",
-      tool_call_id: "tc1",
-      tool: "write_todos",
-      input: { todos: [] },
-      output: "ok",
-      subagent_source: "materials_worker",
+      part: {
+        id: "part_tool_1",
+        type: "tool",
+        status: "completed",
+        title: "Research plan",
+        summary: "The operation completed.",
+        fields: [],
+        actions: [],
+        items: [],
+      },
     },
   });
 
-  assert.equal(started[0].parts[1].meta.agent_name, "experiment_specialist");
-  assert.equal(completed[0].parts[1].meta.agent_name, "experiment_specialist");
-  assert.equal(completed[0].parts[1].meta.subagent_source, "materials_worker");
-  assert.equal(catMessageToAssistant(completed[0]).content[1].source, "materials_worker");
+  assert.equal(started[0].parts[1].title, "Research plan");
+  assert.equal(completed[0].parts[1].status, "completed");
+  assert.equal(completed[0].parts[1].meta, undefined);
+  assert.equal(catMessageToAssistant(completed[0]).content[1].data.summary, "The operation completed.");
 });
 
 test("todoGroupsFromMessages keeps latest write_todos per agent source", () => {
@@ -117,14 +115,10 @@ test("todoGroupsFromMessages keeps latest write_todos per agent source", () => {
       parts: [
         {
           id: "part_tool_1",
-          type: "tool-call",
+          type: "progress",
           status: "completed",
-          meta: {
-            tool_call_id: "tc1",
-            tool: "write_todos",
-            agent_name: "research_specialist",
-            input: { todos: [{ content: "Old plan", status: "completed" }] },
-          },
+          title: "Research specialist plan",
+          items: [{ label: "Old plan", status: "completed" }],
         },
       ],
     },
@@ -141,25 +135,17 @@ test("todoGroupsFromMessages keeps latest write_todos per agent source", () => {
       parts: [
         {
           id: "part_tool_2",
-          type: "tool-call",
+          type: "progress",
           status: "running",
-          meta: {
-            tool_call_id: "tc2",
-            tool: "write_todos",
-            agent_name: "research_specialist",
-            input: { todos: [{ content: "New plan", status: "in_progress" }] },
-          },
+          title: "Research specialist plan",
+          items: [{ label: "New plan", status: "in_progress" }],
         },
         {
           id: "part_tool_3",
-          type: "tool-call",
+          type: "progress",
           status: "completed",
-          meta: {
-            tool_call_id: "tc3",
-            tool: "write_todos",
-            subagent_source: "materials_worker",
-            input: { todos: ["Prepare input"] },
-          },
+          title: "Materials specialist plan",
+          items: [{ label: "Prepare input", status: "pending" }],
         },
       ],
     },
@@ -168,9 +154,9 @@ test("todoGroupsFromMessages keeps latest write_todos per agent source", () => {
   const groups = todoGroupsFromMessages(messages);
 
   assert.equal(groups.length, 2);
-  assert.equal(groups[0].source, "materials_worker");
+  assert.equal(groups[0].source, "Materials specialist");
   assert.deepEqual(groups[0].rows, [{ content: "Prepare input", status: "pending" }]);
-  assert.equal(groups[1].source, "research_specialist");
+  assert.equal(groups[1].source, "Research specialist");
   assert.deepEqual(groups[1].rows, [{ content: "New plan", status: "in_progress" }]);
 });
 
@@ -190,13 +176,10 @@ test("todoGroupsFromMessages scopes todos to the latest user turn", () => {
       parts: [
         {
           id: "part_old_todos",
-          type: "tool-call",
+          type: "progress",
           status: "completed",
-          meta: {
-            tool: "write_todos",
-            agent_name: "research_specialist",
-            input: { todos: [{ content: "Old completed task", status: "completed" }] },
-          },
+          title: "Research specialist plan",
+          items: [{ label: "Old completed task", status: "completed" }],
         },
       ],
     },
@@ -220,13 +203,10 @@ test("todoGroupsFromMessages scopes todos to the latest user turn", () => {
       parts: [
         {
           id: "part_new_todos",
-          type: "tool-call",
+          type: "progress",
           status: "completed",
-          meta: {
-            tool: "write_todos",
-            agent_name: "experiment_specialist",
-            input: { todos: [{ content: "New interrupted task", status: "in_progress" }] },
-          },
+          title: "Experiment specialist plan",
+          items: [{ label: "New interrupted task", status: "in_progress" }],
         },
       ],
     },
@@ -234,11 +214,11 @@ test("todoGroupsFromMessages scopes todos to the latest user turn", () => {
 
   const groups = todoGroupsFromMessages(interruptedNewTurn);
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].source, "experiment_specialist");
+  assert.equal(groups[0].source, "Experiment specialist");
   assert.deepEqual(groups[0].rows, [{ content: "New interrupted task", status: "in_progress" }]);
 });
 
-test("applyThreadEvent replaces completed messages from SSE snapshots", () => {
+test("applyThreadEvent completes a message without requiring a repeated full snapshot", () => {
   const messages = [
     {
       id: "msg_1",
@@ -252,17 +232,12 @@ test("applyThreadEvent replaces completed messages from SSE snapshots", () => {
     event: "message.completed",
     message_id: "msg_1",
     data: {
-      message: {
-        id: "msg_1",
-        role: "assistant",
-        status: "completed",
-        parts: [{ id: "part_text", type: "text", text: "Final answer.", status: "completed" }],
-      },
+      status: "completed",
     },
   });
 
   assert.equal(updated[0].status, "completed");
-  assert.equal(updated[0].parts[0].text, "Final answer.");
+  assert.equal(updated[0].parts[0].text, "");
 });
 
 test("applyThreadEvent streams reasoning deltas into audit parts", () => {
@@ -348,29 +323,7 @@ test("workspace tab hash state preserves monitor, research map, evolution, and f
   assert.equal(selectionToHash(null, "evolution"), "#tab=evolution");
 });
 
-test("interrupt payload helpers repeat decisions for each pending action", () => {
-  const part = {
-    meta: {
-      payload: {
-        interrupts: [
-          {
-            value: {
-              action_requests: [
-                { name: "write_file", args: { path: "a" } },
-                { name: "edit_file", args: { path: "b" } },
-              ],
-            },
-          },
-        ],
-      },
-    },
-  };
-
-  assert.deepEqual(interruptActions(part).map((item) => item.name), ["write_file", "edit_file"]);
-  assert.deepEqual(repeatInterruptDecision(part, { type: "approve" }), [{ type: "approve" }, { type: "approve" }]);
-});
-
-test("entrypoint helpers preserve the specialist lanes and aliases", () => {
+test("entrypoint helpers preserve specialist entries and aliases without internal labels", () => {
   const rows = normalizedEntrypoints([
     { id: "research", label: "Research" },
     { id: "experiment", label: "Experiment" },
@@ -383,4 +336,11 @@ test("entrypoint helpers preserve the specialist lanes and aliases", () => {
   assert.equal(normalizeEntrypoint("literature", rows), "literature_review");
   assert.equal(normalizeEntrypoint("bad-entry", rows), "research");
   assert.equal(entrypointMeta("peer-review", rows).label, "Peer Review");
+  assert.doesNotMatch(entrypointMeta("literature", rows).summary, /\blane\b/i);
+
+  const backendRows = normalizedEntrypoints([
+    { id: "research", summary: "Routes work to the coordinator worker lane." },
+  ]);
+  assert.equal(backendRows[0].label, "Research");
+  assert.doesNotMatch(backendRows[0].summary, /\b(?:worker|lane)\b/i);
 });

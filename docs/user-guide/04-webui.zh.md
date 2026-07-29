@@ -60,40 +60,49 @@ Agent 回复时，Chat 不只显示最终文字。Progress 卡会保留当前推
 - 远程提交涉及较多任务、GPU、许可证或长 walltime。
 - 最终回复与 Files 中的实际产物不一致。
 
-## Research Map 显示持续更新的验证网络
+## Research Graph 连接跨 thread 的研究进展
 
-Research Map 是当前 thread 中分支研究的操作界面，在页面上方有独立标签。只有当问题包含竞争解释、共享证据、前后依赖的检查，或明显的成本与等待权衡时，Research 才会建立这套状态。线性任务看到空白 Research Map 是正常现象。
+Research Graph 是 workspace 级科学图，不属于当前 thread。顶部 catalog 会列出每个 graph 的研究问题、节点数量、可运行的 frontier、手动或自动模式、最近更新时间，以及当前 thread 是否已经附着。只有一个 active graph 时界面可以预选；有多个时必须显式选择。Attach、Detach 或切换 graph 只改变当前 thread 的关注点，不会复制或删除科学状态。
 
-图中包含三类节点：
+New graph 支持直接输入研究问题、标题和零个或多个 seed hypotheses。每个 seed hypothesis 都有独立的 claim、rationale 和 observable predictions。用户不必先在 Chat 中让 Agent 初始化，也可以先建一个空问题图，随后自己或让 Research 补充节点。
 
-- Hypothesis 显示 claim、科学依据、预测、派生关系，以及当前 `open`、`supported`、`rejected` 或 `contested` 状态。
-- Verification action 显示执行者、科学问题、有边界的任务、判定规则、依赖、信息价值、粗粒度成本和 controller 状态。
-- Evidence judgment 显示结果摘要、科学来源，以及它对每个目标假设的 `supports`、`opposes` 或 `inconclusive` 判断。
+图中只有三种科学节点：
 
-点击节点可以查看其中的科学内容。Active packet 区域会显示当前执行者、任务、目标假设和判定规则。执行尝试、资源核算和远程 receipt 仍在原有 Activity 与 artifact 视图中查看。
+- Hypothesis 显示简短命题、相对重要性及由所有 Result 关系派生的证据状态。
+- Experiment proposal 显示 objective、plan、decision rule、execution lane、预期决策价值、粗粒度算力成本和准备或执行状态。
+- Result 显示简短结果，并通过带文字标签的关系连接它支持、反对或无法区分的 Hypothesis。
 
-选中 eligible action 后点击 "Start Research thread"。服务端会检查页面显示的 revision、预留该 action、建立新的 Research thread，并提交一个普通 Research turn；它不会 steering 或复用来源聊天 thread。子 thread 完整保留 Research 的 specialist 委派、streaming 和 Auto/Review 权限模式。它的 DeepAgent checkpoint 与轻量 Research Kernel 都按子 thread id 隔离，只有 controller 调用使用父 campaign id。如果 Map 已经过期，或来源 Research thread 仍在运行、停止中或等待审批，预留操作会被拒绝，避免两个 Research turn 竞争同一个 campaign。
+画布支持平移、缩放、fit、minimap、键盘访问、focus neighborhood，以及 5、25、100 个节点的密度选择。节点卡保留完整标题和可访问名称。点击节点后，右侧 inspector 显示完整科学字段和来源，不会用不可恢复的字符截断代替内容。
 
-"Start automatic Research" 会为来源 campaign 启用一个持久异步 worker。Worker 每次只选择一个排序后的非人工 action，并建立同样的普通 Research 子 thread；它会等待当前子 thread 完成或解除审批中断，再读取更新后的 campaign 并决定下一项。"Stop after current check" 只阻止下一次启动，不取消正在执行的子 thread。人工 action 不会由 worker 代答，需要手动建立 thread 并在其中提供证据。原有单 thread Research submit 路径保持不变，不使用 Research Map 也能照常执行。
+Hypothesis 可以发展实验 proposal、编辑或查看关联证据。Experiment 可以准备、运行、复现、查看 active launch、添加依赖、记录结果或标记阻塞。Result 可以由用户直接发展新 Hypothesis 或 follow-up Experiment，也可以启动一个绑定当前 Result 的 Research planning thread。图中允许科学循环和分叉；只有 Experiment 的 dependency 关系必须无环。
 
-Map 选择和自动调度都不等于批准受保护执行。实验分支仍要进入 Experiment worker 的受管执行路径，并在需要时使用原有审批卡。成本只影响排序，不代替这套审批机制。
+Research Specialist 创建 graph 后会自动附着到当前 thread。由 Experiment 或
+Literature Review 启动的 child 会得到同一个有界 graph focus，但只能为绑定的
+Experiment 写回 Result 或具体阻塞原因，且系统会自动把 child thread 附成来源。
+如果 child 结束时没有 Result，launch 会显示为 blocked，而不是 completed。
 
-同一条 evidence judgment 可以影响多条假设，竞争假设也可以共用一个验证动作。如果证据暴露出遗漏解释，Research 会先让 hypothesis proposer 单独修订，再添加派生假设或后续动作。因此这里显示的是网络，而不是强行复制共享证据的纯树。`supported`、`rejected` 和 `contested` 是已记录 verdict 的摘要，不是后验概率。把某个分支当作科学结论前，仍应检查它指向的论文、run 或 artifact。
+运行 Experiment 会原子占用一次 launch，再创建绑定 graph 和 focus node 的普通 child thread。同一个 active launch 的重复点击会合并，但完成后的 Experiment 可以显式启动 replicate。来源 thread 正在运行、停止或已经删除，都不会阻塞 graph。远程状态不明时，系统先对账已有 thread、run 和 receipt，不会自动重提。
+
+Automatic orchestration 一次只推进一个动作，但不会删除其他竞争分支。有多个 ready Experiment 时，依次按其 Hypothesis 重要性、预期决策价值、更低算力成本和创建顺序选择；每个 graph 同时只自动运行一个 Experiment。没有 ready Experiment 但图中已有研究内容时，启动一个 planning child。Planner 在当前图版本没有写入新科学内容时不会循环重启。切回 Manual 只停止后续自动启动，不取消当前 thread 或远程任务。
+
+Graph 节点只保存短科学命题。论文、详细笔记、结构、日志、报告、artifact 和 receipt 仍在原有位置，通过 Sources 连接。来源被移动或删除后会显示 "Source unavailable"，不会静默删除引用。Graph 操作也不等于批准受保护执行；计算仍经过相应 specialist、受管执行和原有审批卡。
+
+其他 thread 更新同一 graph 时，页面通过持久事件流刷新。若你提交编辑前 graph 已变化，服务端会拒绝覆盖并显示可读的冲突说明。刷新后核对新内容，再重新提交。
 
 ## Auto 与 Review 代表不同的协作方式
 
-Auto 允许 Agent 在当前权限范围内连续工作，适合读取、分析和已建立信任的项目流程。Review 会在 `write_file`、`edit_file`、`remote_submission` 和 `remote_submission_batch` 前暂停，消息中出现审批卡。
+Auto 允许 Agent 在当前权限范围内连续工作，适合读取、分析和已建立信任的项目流程。Review 会在 `remote_submission` 和 `remote_submission_batch` 前暂停，消息中出现审批卡。本地 `write_file`、`edit_file` 与 Codex OAuth 的 `apply_patch` 不会弹出审批卡。
 
-首次处理重要项目、可能覆盖文件或准备真实计算时，建议使用 Review。审批卡提供四种处理方式：
+线程可能提交真实远程计算时，可以使用 Review。审批卡提供四种处理方式：
 
 - Approve 按当前 action 执行。
 - Reject 拒绝这次 action，可以附上原因。
 - Respond 给 Agent 补充说明，让它根据反馈重新处理。
 - Edit action 直接修改 action JSON，适合熟悉 tool schema 的高级用户。
 
-Review 不是所有行为的总开关。读取、搜索和部分分析仍可自动进行。它的价值是把受保护的文件编辑和远程提交交给用户确认。审批应在消息卡中完成；不要另发一条普通消息冒充审批结果。
+Review 不是所有行为的总开关。读取、搜索、分析和本地文件编辑仍可自动进行。它的价值是把会真实提交远程计算的动作交给用户确认。审批应在消息卡中完成；不要另发一条普通消息冒充审批结果。
 
-这里的"写文件"特指当前受保护的 `write_file` 与 `edit_file`。`supercell`、`build_slab` 等领域 tool 会在自己的调用中直接生成已声明的输出，当前不会仅因为产生文件就自动弹卡。对这类操作，应在 prompt 中给出目标目录，在 tool 卡中核对输入与输出路径，并在 Files 中审查产物。Review 是针对明确调用的保护层，不是所有 workspace 变更的事务锁。
+`write_file`、`edit_file`、Codex OAuth `apply_patch`，以及会生成声明输出的 `supercell`、`build_slab` 等领域 tool 都会直接写入 workspace。对这类操作，应在 prompt 中给出目标目录，在 tool 卡中核对输入与输出路径，并在 Files 中审查产物。Review 是远程提交保护层，不是 workspace 变更的事务锁。
 
 ## 运行中可以 Steer，但不必把每个想法都打断进去
 
@@ -105,7 +114,13 @@ Stop 会请求本地 Agent 在流事件边界停止；连续请求会升级为 e
 
 ## Files 是交付物所在的地方
 
-Files 视图提供 Browse、Preview 和 Uploads。它可以预览文本、Markdown、JSON、图片、PDF、CSV/TSV、常见晶体与分子结构、轨迹以及部分 OUTCAR 振动内容。结构和轨迹可以通过 JSmol 查看，VESTA 生成的标准视图也可以作为图片 artifact 打开。
+Files 视图提供 Browse、Preview 和 Uploads。它可以预览文本、Markdown、JSON、图片、PDF、CSV/TSV、常见晶体与分子结构、轨迹、体数据以及部分 OUTCAR 振动内容。
+
+晶体、slab、defect、adsorbate 和普通分子预览以 MatterViz 为主。点击 **Open Structure Workbench** 后进入全屏工作台，可以按 base atom 选择，编辑坐标、晶胞与约束，测量距离和角度，undo/redo，预览 supercell、对称性、termination、defect 和 adsorption candidates，再明确 Save As。显示复制只用于观察；要建立一个真实单缺陷，必须先 Make supercell。大结构仍以完整源模型执行选择和保存，画布只切换为有界显示。
+
+分子文件按需加载 Ketcher 二维编辑器，并用 MatterViz 查看三维构象。SDF/MOL 的 connection table 是权威数据。分子改存 XYZ 会丢失键、芳香性、键级、电荷和立体化学，改存 SMILES 会丢失当前三维坐标；Workbench 会先阻止保存并要求确认。周期结构约束可以通过 POSCAR/VASP 和 ASE `.traj` 往返；目标格式无法表达约束时也会给出同样明确的警告。
+
+轨迹以只读方式打开，显示真实总帧数；可以 scrub、play、查看标量性质，并在 Extract frame 后编辑单帧。CUBE、CHGCAR、LOCPOT、ELFCAR 和 XSF 作为独立 volume artifact 打开，支持结构 overlay、正负等值面和切片。JSmol 只保留给 OUTCAR vibration 和主 renderer 无法打开的兼容格式，不维护第二份可编辑状态。VESTA 生成的标准视图仍可作为图片 artifact 打开。
 
 Agent 报告完成后，至少检查核心交付物是否真的存在，文件名和目录是否符合约定。结构任务看候选与审计，计算任务看 stage、status、stdout/stderr 和分析，文献任务看候选表、证据表与引用库，写作任务看可编辑源文件而不只看编译 PDF。
 
@@ -133,9 +148,9 @@ Monitor 将一次运行的模型、Agent、tools、tasks、token、费用和机�
 
 ## Skill Evolution 处理项目中反复出现的经验
 
-登录模式下，终态 run 可以产生 workspace 范围的改进候选。例如同一项目反复要求固定的目录命名、单位、结构审计或报告格式，系统可以提出 memory 或 skill 候选。独立 reviewer 只给出 AI recommendation；skill 无论运行模式如何都必须由已登录用户明确 Promote 或 Reject。
+登录模式下，每个有用户任务的 terminal run 会进入一次 Skill Evolution 语义反思。模型读取完整的已记录轨迹和结果，区分无需学习、执行 Agent 没有遵守现有 skill，以及确实需要修改长期行为。系统不用正则、embedding 或固定复现次数替模型判断。一个明确的长期 correction 可以单独形成证据；多次措辞相似也不自动产生候选。产品/schema 缺陷与详细科学事实不会写成 skill；已有 owner skill 能承接时优先修订。
 
-候选卡片优先展示行为变化、证据、适用范围、比例性、concerns 和人工核对项，而不是 raw JSON。Promote 确认会重复目标、摘要与 concerns，并把登录账号、候选 hash、时间和可选说明写入审计。这里适合保存稳定、项目特定且经过验证的做法，不适合把一次网络错误、临时文件名、Agent 自选的 checksum/台账，或未经证实的科学猜测固化成通用规则。Promote 后从下一次 run 生效；目标内容已变化时会进入 conflict，而不是直接覆盖。造成退化的已提升内容可以在目标仍匹配时 Rollback。
+候选卡片优先展示行为变化、evidence episode 与来源、适用边界、静态检查、reviewer counterexample、concerns 和人工核对项，而不是 raw JSON。Candidate 与 observation 列表为 newest first，可按状态筛选并 Load more；精确 revision 的 diff 只在 Technical details 中按需打开。生命周期只使用 `pending`、`review`、`revision`、`canary`、`stable`、`rejected` 和 `inactive`。AI reviewer 只给建议。用户可以 Request revision 或 Reject；skill 必须先绑定到明确指定的 thread/run 做 canary，并有一次成功的真实使用，才会出现 Promote stable。Start canary 只改变精确版本指针，不会新建对话或触发额外模型调用。目标已变化时 candidate 回到 `revision`，不能覆盖；canary 失败只停止对应 pointer，stable revision 以后可以 Quarantine、Retire 或 Roll back。
 
 ## 继续一项已经中断或隔天再做的工作
 
@@ -153,6 +168,6 @@ calculations/mlff_screen/output/，核对已有候选、失败项和排序依据
 
 ## 当前界面的重要限制
 
-WebUI 目前不能重命名、删除、分支或 retry thread，也不能从历史 run 选择器恢复某个任意节点。Research Map 可以在一个 thread 内管理科学假设分支，但它不是 thread 历史分支或 rollback 控件。Files 上传同名文件会覆盖，删除不会进入回收站。审批中断必须用消息内卡片恢复。Stop 不取消远程 job。Skill Evolution 只在登录模式显示，并从下一次 run 生效。
+WebUI 目前不能重命名、删除、分支或 retry thread，也不能从历史 run 选择器恢复某个任意节点。Research Graph 可以跨 thread 管理科学分支，但它不是 thread 历史或 rollback 控件。Files 上传同名文件会覆盖，删除不会进入回收站。审批中断必须用消息内卡片恢复。Stop 不取消远程 job。Skill Evolution 只在登录模式显示，并从下一次 run 生效。
 
 这些限制不会阻止正常研究流程，但会影响如何备份、续跑和停止任务。重要文件使用版本化名称或 Git/外部备份；远程任务依靠 receipt；相互独立的目标或不兼容的项目范围使用不同 thread。这样可以避免把 UI 中缺少的操作误认为 Agent 会自动补齐。

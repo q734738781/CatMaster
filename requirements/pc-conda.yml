@@ -9,7 +9,7 @@ dependencies:
 
   # Core scientific stack. Let conda solve compatible builds; keep the
   # constraints that avoid currently known package-family conflicts.
-  - numpy<2.5
+  - numpy=2.4.6
   - scipy
   - pandas<3
   - joblib
@@ -20,12 +20,12 @@ dependencies:
   - ruamel.yaml
 
   # Atomistic modeling / materials.
-  - ase
-  - pymatgen
+  - ase=3.29.0
+  - pymatgen=2026.5.4
   - phonopy
   - mp-api=0.46.4
   - emmet-core=0.87.1
-  - rdkit
+  - rdkit=2026.3.3
 
   # Machine learning / descriptors used by CatMaster workflows.
   - scikit-learn

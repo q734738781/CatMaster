@@ -51,6 +51,7 @@ export default function ThreadComposer({ thread, isRunning, hasInterrupt, onSubm
       <div className="v2-composer-main">
         <ComposerPrimitive.Attachments components={{ Attachment: ComposerAttachment }} />
         <ComposerPrimitive.Input
+          aria-label={isRunning ? "Steer CatMaster" : "Message CatMaster"}
           placeholder={isRunning ? "Steer the next safe boundary..." : "Ask CatMaster..."}
           submitMode="ctrlEnter"
           disabled={!thread?.thread_id}

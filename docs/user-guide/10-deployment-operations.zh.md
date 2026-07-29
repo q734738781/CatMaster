@@ -23,7 +23,7 @@ MACE、UMA、MatterSim 和 ORB-v3 的 requirements 文件用于远程隔离环�
 
 ## 配置 LLM
 
-CatMaster 按角色选择模型。一个模型可以承担所有角色，也可以把研究协调、worker、写作、审稿、图像理解和后台候选审查分给不同模型。第一次安装先用标准模板：
+CatMaster 按角色选择模型。一个模型可以承担所有角色，也可以把研究协调、worker、写作、审稿、图像理解和低频候选 proposal/review 分给不同模型。第一次安装先用标准模板：
 
 ```bash
 cp -n configs/llm.template.yaml configs/llm.yaml
@@ -235,16 +235,20 @@ DPDispatcher 通常启动非交互 shell，不能假设它会读取用户的 `.b
 
 投入使用前，每个已启用引擎至少跑一个成本可控的 smoke case，确认 task catalog、环境、结果回传、`status.json`、stdout/stderr 和 receipt。`python scripts/remote_execution_smoke.py --list` 只列 case；其他参数会提交真实作业，不要一开始运行全部 suite。
 
-## JSmol、VESTA 与 VASPKIT
+## Structure Workbench、JSmol、VESTA 与 VASPKIT
 
-WebUI 使用 JSmol 预览结构和轨迹。启动器会在缓存缺失时安装固定资源。离线服务器可先预热持久 cache：
+生产前端包含精确固定版本的 MatterViz/Svelte 和按需加载的 Ketcher chunks，统一从 `/static` 提供，不依赖 CDN 或外部字体。Server 会发送 Content Security Policy，只允许同源 chunks、本地字体、data/blob 图片和体数据解析所需 worker。
+
+JSmol 16.3.13 只作为 OUTCAR vibration 与未支持格式的兼容 fallback。启动器会在缓存缺失时安装固定资源。离线服务器可先预热持久 cache：
 
 ```bash
 CATMASTER_JSMOL_CACHE_DIR=/persistent/cache/jsmol \
 python scripts/install_jsmol_assets.py
 ```
 
-JSmol 缺失只影响相应预览，不会让 LLM 或远程 task 本身失效。
+JSmol 缺失只影响这些 fallback 预览；MatterViz 支持的结构、Workbench、LLM 和远程 task 不受影响。
+
+修改前端依赖后，在 `catmaster/webui/frontend` 执行 `npm run build`，并在部署使用的 base path 中分别验证一个周期结构、一次分子 2D/3D 切换、一个轨迹帧请求和一个 volume grid。版本必须同时精确写入 `package.json` 与 lockfile，不能改成 CDN 脚本。
 
 VASPKIT 可通过 `CATMASTER_VASPKIT_BIN` 指定：
 
@@ -295,6 +299,39 @@ LLM profile 中的 `recursion_limit`、`max_tool_calls` 和上下文压缩阈值
 `scripts/package_remote_deploy.sh` 生成不包含 `.git`、私有配置、key、用户项目和运行日志的离线包。部署后使用 `scripts/deploy_runtime.sh` 同步 runtime，并在目标环境完成依赖与外部工具检查。实际命令和选项以脚本 `--help` 为准。
 
 升级前记录当前 Git commit、conda 环境、活动 LLM profile、四个 DPDispatcher 配置、启动参数和外部程序版本。备份项目根与认证数据库，再在副本或测试 workspace 做一次对话、文件、结构预览和至少一个已启用远程 task 的最小验收。
+
+从旧 Research Kernel 或 hypothesis campaign 升级时，每个 workspace 单独迁移。先停止该 workspace 的旧 writer，再运行 dry-run：
+
+```bash
+/home/chenhh/miniconda3/envs/catmaster/bin/python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace
+```
+
+报告会区分可确定迁移的 v3/v4 campaign、需要人工检查的 v2 或不完整 Kernel，以及损坏文件。确认数量后执行：
+
+```bash
+/home/chenhh/miniconda3/envs/catmaster/bin/python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace --apply
+```
+
+命令返回 rollback manifest 路径。旧文件会移到
+`metadata/legacy_research_state/`，新版本只写
+`metadata/workspace.sqlite`。迁移批次有稳定的 in-progress 指针；进程中断后重复
+`--apply` 会续跑同一批次。不要让旧版和新版服务在同一 workspace 滚动混跑。
+
+如果尚未用新版本写入 Research Graph，可以用返回的 manifest 回滚：
+
+```bash
+/home/chenhh/miniconda3/envs/catmaster/bin/python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace \
+  --rollback metadata/legacy_research_state/<batch>/rollback_manifest.json
+```
+
+回滚会删除该批次导入的 graph、恢复原 thread 绑定并把旧文件移回原路径。已经在新 graph 上继续研究后，不要用这个命令覆盖新科学状态，应从备份恢复到独立 workspace 后人工合并。
+
+Workspace SQLite 只在已识别的本地文件系统上默认使用 WAL；网络或未知文件系统
+默认使用 rollback journal。只有部署已经独立验证存储语义时，才设置
+`CATMASTER_WORKSPACE_SQLITE_JOURNAL_MODE=WAL`。
 
 回滚代码时不要覆盖用户项目。恢复先前 commit 或部署包后，还要恢复与它兼容的依赖和配置。不要把项目数据、私有 YAML 和密钥打进代码发布包作为回滚手段。
 

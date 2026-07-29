@@ -4,27 +4,35 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "node --test src/v2/*.test.mjs",
+    "test": "node --test src/v2/*.test.mjs src/v2/structure/*.test.mjs",
     "build": "vite build && python3 ../../../scripts/install_jsmol_assets.py --quiet"
   },
   "dependencies": {
     "@assistant-ui/react": "0.14.24",
     "@assistant-ui/react-markdown": "0.14.5",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@xyflow/react": "12.11.2",
+    "elkjs": "0.12.0",
     "gridjs": "^6.2.0",
     "gridjs-react": "^6.1.1",
     "katex": "^0.16.38",
+    "ketcher-core": "3.17.1",
+    "ketcher-react": "3.17.1",
+    "ketcher-standalone": "3.17.1",
     "lucide-react": "^1.14.0",
+    "matterviz": "0.4.3",
     "papaparse": "^5.5.3",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "svelte": "5.56.8"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^6.0.0",
-    "vite": "^8.0.0"
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "@vitejs/plugin-react": "6.0.0",
+    "vite": "8.0.0"
   }
 }
