@@ -60,7 +60,7 @@ to the worker agent that owns the domain.
 In the current shared-workspace runtime, all specialist and worker subagent
 episodes are sequential by default. A parent must issue at most one subagent
 delegation in a model response, wait for it to
-finish, inspect its result and workspace effects, and only then decide whether
+finish, consume its result, and only then decide whether
 another delegation is required. Do not launch multiple subagents in the same
 turn: they share the workspace and can race on scripts, outputs, and cleanup.
 A future parallel-hypothesis runtime may opt into concurrency only when it

@@ -592,7 +592,7 @@ def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
         assert "current shared workspace makes parallel subagents unsafe" in prompt
     assert "Run delegated review episodes sequentially" in peer_review_prompt
     assert "Run such delegated branches sequentially" in litreview_prompt
-    assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in experiment_prompt
+    assert "treat its execution and domain QC as authoritative" in experiment_prompt
     assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in experiment_prompt
     assert "Experiment closeout discipline: use worker/tool returns as the QC source of record" in experiment_prompt
     assert "Do not rerun or reparse calculation outputs just to repeat domain QC" in experiment_prompt
@@ -1836,7 +1836,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Treat xTB/CREST as the fast exploration layer" in orca_worker_kwargs["system_prompt"]
         assert "If a handy Python package is missing for a bounded local step" in orca_worker_kwargs["system_prompt"]
         assert "registered managed execution in this worker is authoritative" in orca_worker_kwargs["system_prompt"]
-        assert "When one worker pass returns, actively decide whether another bounded delegate pass is needed" in agent_kwargs["system_prompt"]
+        assert "treat its execution and domain QC as authoritative" in agent_kwargs["system_prompt"]
         assert not any(
             type(item).__name__ == "_FakeToolSelectorMiddleware"
             for item in materials_worker_kwargs["middleware"]
