@@ -1067,6 +1067,101 @@ def test_memory_requires_human_promotion_and_rollback_restores_exact_parent(tmp_
     assert coordinator.store.read_memory_text() == before
 
 
+def test_skill_rollback_restores_exact_previous_stable_revision(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    ensure_project_space_layout(workspace, create=True)
+    coordinator, revision_one = _actual_owner_candidate(
+        workspace,
+        run_id="stable-revision-one",
+        note=(
+            "Surface termination screening must preserve the established slab "
+            "generation and freezing policy."
+        ),
+        marker="stable revision one",
+    )
+    report_one = coordinator.gate.run(revision_one)
+    canary_one = coordinator.promotion.start_canary(
+        revision_one,
+        report_one,
+        actor="alice",
+        run_ids=["canary-revision-one"],
+    )
+    version_one = f"{revision_one.candidate_id}@r{revision_one.revision:04d}"
+    coordinator.store.upsert_skill_run(
+        SkillRun(
+            run_id="canary-revision-one",
+            skill_name="materials_worker/surface-and-termination-screening",
+            skill_version=version_one,
+            presented=True,
+            read=True,
+            outcome="verified_success",
+        )
+    )
+    coordinator.promotion.promote_stable(
+        canary_one,
+        report_one,
+        actor="alice",
+        rationale="The first exact revision passed its selected canary.",
+    )
+
+    coordinator_two, revision_two = _actual_owner_candidate(
+        workspace,
+        run_id="stable-revision-two",
+        note=(
+            "Surface termination screening must also preserve the bounded "
+            "neighbor criterion in the same workflow."
+        ),
+        marker="stable revision two",
+    )
+    assert revision_two.candidate_id == revision_one.candidate_id
+    assert revision_two.revision == revision_one.revision + 1
+    report_two = coordinator_two.gate.run(revision_two)
+    canary_two = coordinator_two.promotion.start_canary(
+        revision_two,
+        report_two,
+        actor="alice",
+        run_ids=["canary-revision-two"],
+    )
+    version_two = f"{revision_two.candidate_id}@r{revision_two.revision:04d}"
+    coordinator_two.store.upsert_skill_run(
+        SkillRun(
+            run_id="canary-revision-two",
+            skill_name="materials_worker/surface-and-termination-screening",
+            skill_version=version_two,
+            presented=True,
+            read=True,
+            outcome="verified_success",
+        )
+    )
+    stable_two = coordinator_two.promotion.promote_stable(
+        canary_two,
+        report_two,
+        actor="alice",
+        rationale="The second exact revision passed its selected canary.",
+    )
+    materialized = (
+        coordinator_two.store.self_develop_skills_dir
+        / "materials_worker"
+        / "surface-and-termination-screening"
+        / "SKILL.md"
+    )
+    assert "stable revision two" in materialized.read_text(encoding="utf-8")
+
+    rolled_back = coordinator_two.promotion.rollback(
+        stable_two,
+        actor="alice",
+        rationale="Restore the previous exact stable revision.",
+    )
+    active = coordinator_two.store.read_active_skills()["skills"][
+        "materials_worker/surface-and-termination-screening"
+    ]
+    assert rolled_back.status == "inactive"
+    assert active == {"stable": version_one}
+    restored = materialized.read_text(encoding="utf-8")
+    assert "stable revision one" in restored
+    assert "stable revision two" not in restored
+
+
 def test_skill_must_canary_exact_scope_and_actual_use_before_stable(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     ensure_project_space_layout(workspace, create=True)

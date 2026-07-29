@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -588,27 +589,21 @@ class PromotionManager:
             if hash_tree(temp) != candidate.bundle_hash:
                 raise PromotionConflict("temporary stable bundle hash differs from reviewed revision")
             discard = target.parent / f".{candidate.name}.old-{candidate.candidate_id}"
-            with contextlib.suppress(FileNotFoundError):
-                if discard.is_dir():
-                    shutil.rmtree(discard)
-                else:
-                    discard.unlink()
+            self._remove_path(discard)
             if target.exists():
                 os.replace(target, discard)
             os.replace(temp, target)
-            if discard.exists():
-                shutil.rmtree(discard)
+            self._remove_path(discard)
         finally:
-            if temp.exists():
-                shutil.rmtree(temp)
+            self._remove_path(temp)
 
     def _materialize_pointer(self, version: str, *, group: str, name: str) -> None:
         parsed = self._parse_version(version)
         if parsed is None:
             raise PromotionConflict("previous stable pointer is invalid")
         candidate_id, revision = parsed
-        candidate = self.store.read_candidate(candidate_id)
-        if candidate is None or candidate.revision != revision:
+        candidate = self.store.read_candidate_revision(candidate_id, revision)
+        if candidate is None:
             raise PromotionConflict("previous stable revision is unavailable")
         self._materialize_skill(candidate)
 
@@ -621,8 +616,22 @@ class PromotionManager:
 
     def _remove_materialized_skill(self, candidate: LearningCandidate) -> None:
         target = self.store.self_develop_skills_dir / candidate.group / candidate.name
-        if target.is_dir():
-            shutil.rmtree(target)
+        self._remove_path(target)
+
+    @staticmethod
+    def _remove_path(path: Path) -> None:
+        if path.is_dir() and not path.is_symlink():
+            for item in [path, *path.rglob("*")]:
+                if item.is_symlink():
+                    continue
+                with contextlib.suppress(OSError):
+                    writable = stat.S_IWUSR | (stat.S_IXUSR if item.is_dir() else 0)
+                    item.chmod(item.stat().st_mode | writable)
+            shutil.rmtree(path)
+        elif path.exists() or path.is_symlink():
+            with contextlib.suppress(OSError):
+                path.chmod(path.stat().st_mode | stat.S_IWUSR)
+            path.unlink()
 
     def _rollback_memory(self, candidate: LearningCandidate) -> None:
         before = (
