@@ -221,7 +221,7 @@ class RecommendSemanticScholarInput(BaseModel):
 
 
 class WebSearchInput(BaseModel):
-    """[web/search] Search the public web for broad scientific background or landing-page summaries."""
+    """[web/search] Search the public web for scientific background and usable source summaries."""
 
     query: str = Field(..., description="Public-web query.")
     max_results: int = Field(5, ge=1, le=20, description="Maximum number of results to return.")
@@ -274,7 +274,7 @@ def _format_web_search_content(
             continue
         title = _compact_search_text(item.get("title") or "Untitled result", max_chars=120)
         url = _compact_search_text(item.get("url") or "", max_chars=220)
-        snippet = _compact_search_text(item.get("snippet") or item.get("content") or "", max_chars=220)
+        snippet = _compact_search_text(item.get("snippet") or item.get("content") or "", max_chars=800)
         if not snippet:
             snippet = "(no summary provided)"
         lines.append(f"- [{idx}] {title}")
@@ -436,7 +436,7 @@ def recommend_semantic_scholar(payload: dict[str, Any]) -> tuple[str, dict[str, 
 
 
 def web_search(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """[web/search] Search the public web for broad scientific context."""
+    """[web/search] Search the public web for scientific background and usable source summaries."""
     tool_name = "web_search"
     try:
         params = WebSearchInput(**payload)

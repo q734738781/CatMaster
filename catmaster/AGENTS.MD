@@ -118,6 +118,15 @@ deterministic fallback during final citation resolution. Other specialists and
 workers receive the same provider-routed search surface for narrow checks. Do
 not bind hosted and Tavily tools under the same `web_search` name in one agent.
 
+Search summaries, abstracts, and verified metadata are the default Literature
+Review evidence route. Use them for claims they actually support and qualify a
+material limitation in ordinary language. Browser access and full-text
+acquisition are optional escalation for decision-critical details or an
+explicit full-paper request, not completion criteria. After one reasonable
+access attempt fails, continue with other evidence instead of trying alternate
+pages or downloads repeatedly. Do not add numeric confidence scores, mandatory
+per-paper evidence labels, or entitlement checks to enforce this policy.
+
 Physical/chemical property lookups are a literature-first case: answer from public literature, citation-grade metadata, or existing workspace evidence before proposing new calculations. Missing property evidence is not implicit approval to run DFT; ask for or invite an explicit calculation instruction when the property is computable.
 
 Final metadata normalization happens only after paper selection in one bounded

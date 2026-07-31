@@ -710,7 +710,9 @@ class ThreadAgentLoopService:
         if permission_mode != current_permission_mode:
             thread = self.store.update_thread(thread_id, meta={**dict(thread.meta or {}), "permission_mode": permission_mode})
         task = self.thread_tasks.get(thread_id)
-        running = bool(task and not task.done()) or thread.status in {ThreadStatus.RUNNING, ThreadStatus.STOPPING}
+        if thread.status == ThreadStatus.STOPPING:
+            raise HTTPException(status_code=409, detail="Thread is stopping. Wait for it to stop before sending another message.")
+        running = bool(task and not task.done()) or thread.status == ThreadStatus.RUNNING
         if running:
             user_message = self.append_user_message(
                 thread_id,
@@ -782,15 +784,49 @@ class ThreadAgentLoopService:
     async def stop(self, *, thread_id: str, payload: Any) -> dict[str, Any]:
         task = self.thread_tasks.get(thread_id)
         if task is None or task.done():
-            thread = self.store.update_thread(thread_id, status=ThreadStatus.STOPPED, active_message_id="", active_run_id="")
+            thread = self.store.update_thread(
+                thread_id,
+                status=ThreadStatus.STOPPED,
+                active_message_id="",
+                active_run_id="",
+                pending_steering=[],
+            )
             self.broker.emit(thread_id, "thread.status", status="stopped", data={"status": "stopped", "reason": payload.reason})
             return {"accepted": True, "status": "stopped", "thread": thread}
         self.thread_stop_flags.add(thread_id)
-        thread = self.store.update_thread(thread_id, status=ThreadStatus.STOPPING)
+        thread = self.store.update_thread(
+            thread_id,
+            status=ThreadStatus.STOPPING,
+            pending_steering=[],
+        )
         self.broker.emit(thread_id, "thread.status", status="stopping", data={"status": "stopping", "emergency": payload.emergency, "reason": payload.reason})
-        if payload.emergency:
-            task.cancel()
-        return {"accepted": True, "status": "stopping", "thread": thread}
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        current = self.thread_tasks.get(thread_id)
+        if current is task:
+            self.thread_tasks.pop(thread_id, None)
+        self.thread_stop_flags.discard(thread_id)
+        thread = self.store.get_thread(thread_id)
+        if thread.status == ThreadStatus.STOPPING:
+            thread = self.store.update_thread(
+                thread_id,
+                status=ThreadStatus.STOPPED,
+                active_message_id="",
+                active_run_id="",
+                pending_steering=[],
+            )
+            self.broker.emit(
+                thread_id,
+                "thread.status",
+                status="stopped",
+                data={"status": "stopped", "reason": payload.reason},
+            )
+        elif thread.pending_steering:
+            thread = self.store.update_thread(thread_id, pending_steering=[])
+        return {"accepted": True, "status": "stopped", "thread": thread}
 
     async def launch_turn(
         self,
@@ -955,7 +991,11 @@ class ThreadAgentLoopService:
                 self.thread_stop_flags.discard(thread_id)
                 try:
                     latest = self.store.get_thread(thread_id)
-                    if latest.pending_steering and latest.status in {ThreadStatus.IDLE, ThreadStatus.STOPPED, ThreadStatus.ERROR}:
+                    if (
+                        terminal_status == "done"
+                        and latest.status == ThreadStatus.IDLE
+                        and latest.pending_steering
+                    ):
                         pending = list(latest.pending_steering)
                         steering = pending.pop(0)
                         self.store.update_thread(thread_id, pending_steering=pending, status=ThreadStatus.IDLE)

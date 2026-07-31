@@ -1,8 +1,8 @@
 name: nature-academic-search
 version: 3.0.0
 description: >
-  CatMaster LitReview discovery, full-text evidence, and final bibliography
-  workflow using the active web_search, agent-browser, corpus, and citation tools.
+  CatMaster LitReview discovery, summary and abstract evidence, selective source
+  reading, and final bibliography workflow using the active literature tools.
 
 always_load:
   - SKILL.md

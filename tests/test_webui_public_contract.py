@@ -140,6 +140,47 @@ def test_ordinary_message_projection_hides_raw_and_diagnostics_recovers_it(
     assert "provider_payload" in diagnostics_text
 
 
+def test_tool_projection_hides_truncated_json_and_opaque_agent_namespace() -> None:
+    projected = project_message(
+        ThreadMessage(
+            id="msg_structured",
+            thread_id="thread_structured",
+            role="assistant",
+            status="completed",
+            parts=[
+                MessagePart(
+                    id="part_structured",
+                    type="tool-call",
+                    status="completed",
+                    text='{"meta":{"count":9470},"results":[{"title":"paper"}]...[truncated]',
+                    meta={
+                        "tool": "agent_browser_read",
+                        "output": '{"meta":{"count":9470},"results":[{"title":"paper"}]...[truncated]',
+                        "agent_name": "tools:da002fa7-6e8f-a97a-2045-fd9eb51d8b06",
+                    },
+                ),
+                MessagePart(
+                    id="part_plan",
+                    type="tool-call",
+                    status="completed",
+                    meta={
+                        "tool": "write_todos",
+                        "input": {"todos": [{"content": "Read the evidence", "status": "pending"}]},
+                        "agent_name": "tools:da002fa7-6e8f-a97a-2045-fd9eb51d8b06",
+                    },
+                ),
+            ],
+        )
+    )
+
+    serialized = projected.model_dump_json()
+    assert '"title":"paper"' not in serialized
+    assert "publication_year" not in serialized
+    assert "da002fa7" not in serialized
+    assert projected.parts[0].summary == "Structured results are available in details."
+    assert projected.parts[1].title == "Specialist plan"
+
+
 def test_unknown_persisted_part_has_safe_fallback_and_raw_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

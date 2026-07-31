@@ -465,13 +465,15 @@ def test_tool_policy_keeps_checksum_out_of_ordinary_scientific_qc() -> None:
         assert checksum_rule in prompt
 
 
-def test_litreview_downloader_batch_limit_is_not_review_coverage_target() -> None:
+def test_litreview_downloader_is_optional_and_stops_after_one_reasonable_attempt() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "skills/litreview_agent/nature-downloader/SKILL.md").read_text(encoding="utf-8")
     assert "full-text acquisition should remain a decision-relevant subset" in text
     assert "review may screen many candidates" in text
-    assert "access as unknown until tested" in text
-    assert "open its DOI or publisher page in the controlled Chrome browser" in text
+    assert "one reasonable acquisition attempt" in text
+    assert "do not cycle through DOI pages" in text
+    assert "full-text access into a default literature-review requirement" in text
+    assert "access as unknown until tested" not in text
     assert not (repo_root / "skills/research_specialist/nature-downloader").exists()
 
 
@@ -481,6 +483,9 @@ def test_litreview_academic_search_defaults_reviews_to_perspective_scale() -> No
     assert "50-60+ candidates" in text
     assert "candidate-pool target" in text
     assert "full-text acquisition remains selective" in text.lower()
+    assert "Search summaries and abstracts are usable evidence" in text
+    assert "Browser use and the number of downloaded papers are never review-completion targets" in text
+    assert "Only record an access blocker after this direct attempt" not in text
     assert not (repo_root / "skills/research_specialist/nature-academic-search").exists()
 
 
@@ -1546,7 +1551,6 @@ def test_specialist_lanes_start_with_staged_skills(
         _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert not litreview_agent_kwargs.get("subagents")
-        assert "50-60+ candidates" in litreview_agent_kwargs["system_prompt"]
         assert "candidate pool" in litreview_agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in litreview_agent_kwargs["system_prompt"]
         assert "metadata_agent" not in litreview_agent_kwargs["system_prompt"]
@@ -1557,8 +1561,10 @@ def test_specialist_lanes_start_with_staged_skills(
         )
         _assert_native_skill_groups(agent_kwargs, "litreview_agent", "writing_quality")
         assert "Own the review question" in agent_kwargs["system_prompt"]
-        assert "full-text access as unknown until tested" in agent_kwargs["system_prompt"]
-        assert "real browser access attempt" in agent_kwargs["system_prompt"]
+        assert "substantive summaries or abstracts" in agent_kwargs["system_prompt"]
+        assert "browser use and full-text acquisition as optional escalation" in agent_kwargs["system_prompt"]
+        assert "at most one reasonable access attempt" in agent_kwargs["system_prompt"]
+        assert "full-text access as unknown until tested" not in agent_kwargs["system_prompt"]
         assert "local literature corpus" in agent_kwargs["system_prompt"]
         assert "deterministic batch" in agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]

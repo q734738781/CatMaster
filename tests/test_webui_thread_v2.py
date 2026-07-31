@@ -301,6 +301,32 @@ def test_artifact_registry_renderer_and_path_safety(tmp_path: Path) -> None:
         raise AssertionError("unsafe artifact path was accepted")
 
 
+def test_artifact_registry_reuses_one_thread_artifact_for_the_same_path(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "files" / "table.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+
+    first = registry.register_path(
+        "table.csv",
+        thread_id="thread_x",
+        message_id="msg_one",
+        tool_call_id="call_one",
+    )
+    second = registry.register_path(
+        "table.csv",
+        thread_id="thread_x",
+        message_id="msg_two",
+        tool_call_id="call_two",
+    )
+
+    assert second.artifact_id == first.artifact_id
+    assert [record.artifact_id for record in registry.list_artifacts(thread_id="thread_x")] == [
+        first.artifact_id
+    ]
+
+
 def test_artifact_registry_imports_legacy_index_once_without_rewriting_it(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     output = workspace / "files" / "legacy-index.txt"
@@ -1122,6 +1148,85 @@ def test_agent_loop_applies_queued_steering_at_safe_boundary(tmp_path: Path) -> 
     asyncio.run(_run())
 
 
+def test_agent_loop_stop_cancels_active_turn_and_discards_queued_steering(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    async def _run() -> None:
+        workspace = _workspace(tmp_path)
+        store = ThreadStore(workspace=workspace, workspace_id="default")
+        thread = store.create_thread(meta={"permission_mode": "hitl"})
+        broker = ThreadEventBroker(workspace=workspace)
+        registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+        tasks: dict[str, asyncio.Task] = {}
+        started = asyncio.Event()
+        prompts: list[str] = []
+
+        class FakeRunner:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def arun_turn(self, **kwargs):
+                prompts.append(str(kwargs.get("prompt") or ""))
+                started.set()
+                await asyncio.Event().wait()
+
+        service = ThreadAgentLoopService(
+            workspace=workspace,
+            workspace_id="default",
+            store=store,
+            broker=broker,
+            artifact_registry=registry,
+            thread_tasks=tasks,
+            thread_stop_flags=set(),
+            build_runner=lambda **_kwargs: SimpleNamespace(
+                runner=object(),
+                run_context=SimpleNamespace(run_id="run_stop", run_dir=tmp_path / "run_stop"),
+            ),
+            streaming_runner_cls=FakeRunner,
+            permission_mode_for_thread=lambda _thread, override="": override or "hitl",
+            interrupt_on_for_permission_mode=lambda _mode: {},
+            normalize_entrypoint=lambda value: value or "research",
+            should_stop=lambda _thread_id: False,
+        )
+
+        await service.submit(
+            thread_id=thread.thread_id,
+            payload=SimpleNamespace(
+                text="first",
+                attachments=[],
+                entrypoint="research",
+                llm_config="",
+                permission_mode="hitl",
+            ),
+        )
+        await started.wait()
+        await service.submit(
+            thread_id=thread.thread_id,
+            payload=SimpleNamespace(
+                text="stale steering",
+                attachments=[],
+                entrypoint="research",
+                llm_config="",
+                permission_mode="hitl",
+            ),
+        )
+
+        result = await service.stop(
+            thread_id=thread.thread_id,
+            payload=SimpleNamespace(emergency=False, reason="user stop"),
+        )
+        assert result["status"] == "stopped"
+        assert prompts == ["first"]
+        stopped = store.get_thread(thread.thread_id)
+        assert stopped.status == "stopped"
+        assert stopped.pending_steering == []
+        assert thread.thread_id not in tasks
+
+    asyncio.run(_run())
+
+
 def test_agent_loop_stop_preserves_remote_receipt_parts(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     store = ThreadStore(workspace=workspace, workspace_id="default")
@@ -1437,6 +1542,52 @@ def test_stream_translator_persists_interrupt_state(tmp_path: Path) -> None:
     refreshed_interrupt_parts = [part for part in refreshed.parts if part.type == "interrupt"]
     assert refreshed_interrupt_parts and refreshed_interrupt_parts[0].status == "pending"
     assert [event.event for event in broker.replay(thread.thread_id, last_seq=0)] == ["interrupt.created", "thread.status"]
+
+
+def test_stream_translator_projects_each_artifact_once_per_message(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "files" / "evidence.pdf").write_bytes(b"%PDF-1.4\n")
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=registry,
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_artifact",
+    )
+    first = registry.register_path(
+        "evidence.pdf",
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        tool_call_id="call_one",
+    )
+    repeated = registry.register_path(
+        "evidence.pdf",
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        tool_call_id="call_two",
+    )
+
+    assert translator.publish_artifact(first) is True
+    assert translator.publish_artifact(repeated) is False
+    saved = store.get_message(thread.thread_id, message.id)
+    assert len([part for part in saved.parts if part.type == "artifact"]) == 1
+    assert [event.event for event in broker.replay(thread.thread_id, last_seq=0)] == [
+        "artifact.created"
+    ]
 
 
 def test_extract_workspace_paths_from_natural_final_text() -> None:

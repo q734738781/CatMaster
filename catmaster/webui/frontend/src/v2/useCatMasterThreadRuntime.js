@@ -4,7 +4,6 @@ import { useExternalStoreRuntime } from "@assistant-ui/react";
 import { CatMasterAttachmentAdapter } from "./catmasterAttachmentAdapter.js";
 import { catMessagesToAssistant, requestFromAssistantAppend, upsertById } from "./messageAdapters.js";
 import { applyThreadEvent } from "./threadEventReducer.js";
-import { isEmergencyStopAttempt } from "./stopPolicy.js";
 import { makeApiError } from "./presentation.js";
 
 export async function apiFetch(url, options = {}) {
@@ -44,16 +43,6 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const eventSourceRef = useRef(null);
-  const stopAttemptRef = useRef(0);
-  const stopAttemptThreadRef = useRef("");
-
-  useEffect(() => {
-    const threadId = String(thread?.thread_id || "");
-    if (stopAttemptThreadRef.current !== threadId || !threadIsRunning(thread)) {
-      stopAttemptThreadRef.current = threadId;
-      stopAttemptRef.current = 0;
-    }
-  }, [thread?.thread_id, thread?.status]);
 
   const refreshMessages = useCallback(async () => {
     if (!thread?.thread_id) return;
@@ -258,13 +247,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
       await submitText(request.text, request.attachments);
     },
     onCancel: async () => {
-      const threadId = String(thread?.thread_id || "");
-      if (stopAttemptThreadRef.current !== threadId) {
-        stopAttemptThreadRef.current = threadId;
-        stopAttemptRef.current = 0;
-      }
-      stopAttemptRef.current += 1;
-      await stop(isEmergencyStopAttempt(stopAttemptRef.current));
+      await stop(true);
     },
     adapters: {
       attachments: attachmentAdapter,

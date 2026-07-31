@@ -1,9 +1,9 @@
 name: nature-downloader
 version: 2.0.0
 description: >
-  Acquire legitimate open-access or institution-authorized full text through
-  CatMaster's runtime-owned agent-browser session and ingest it into the local
-  evidence corpus.
+  Acquire legitimate open-access or institution-authorized full text only for
+  an explicit full-paper request or a decision-critical detail, then optionally
+  ingest it into the local evidence corpus.
 
 always_load:
   - SKILL.md

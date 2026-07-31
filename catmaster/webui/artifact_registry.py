@@ -66,6 +66,13 @@ class ArtifactRegistry:
             for record in self._read_all(thread_id=thread_id)
             if self._record_file_exists(record)
         ]
+        latest_by_path: dict[tuple[str, str], ArtifactRecord] = {}
+        for record in records:
+            key = (record.thread_id, record.path)
+            current = latest_by_path.get(key)
+            if current is None or record.updated_at >= current.updated_at:
+                latest_by_path[key] = record
+        records = list(latest_by_path.values())
         records.sort(key=lambda item: float(item.created_at or 0.0))
         return records
 
@@ -108,13 +115,7 @@ class ArtifactRegistry:
             raise ValueError("Artifact path must reference an existing workspace file.")
         guessed_mime = mime_type or mimetypes.guess_type(Path(normalized).name)[0] or ""
         renderer_value = renderer or infer_renderer(normalized, guessed_mime)
-        aid = artifact_id or self._artifact_id(
-            normalized,
-            thread_id=thread_id,
-            message_id=message_id,
-            tool_call_id=tool_call_id,
-            run_id=run_id,
-        )
+        aid = artifact_id or self._artifact_id(normalized, thread_id=thread_id)
         now = utc_ts()
         existing = self.get(aid)
         created_at = existing.created_at if existing else now
@@ -276,8 +277,10 @@ class ArtifactRegistry:
                 return workspace, record
         return None
 
-    def _artifact_id(self, path: str, *, thread_id: str, message_id: str, tool_call_id: str, run_id: str) -> str:
-        key = "\n".join([self.workspace_id, thread_id, message_id, tool_call_id, run_id, path])
+    def _artifact_id(self, path: str, *, thread_id: str) -> str:
+        # A workspace file is one user-facing artifact within a thread. Tool
+        # retries and later references must update it rather than minting rows.
+        key = "\n".join([self.workspace_id, thread_id, path])
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
         return f"art_{digest}"
 

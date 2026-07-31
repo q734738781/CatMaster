@@ -211,7 +211,7 @@ Files overwrites same-name uploads. Restore from an external backup if necessary
 
 ## Literature Review finds a title but no full text
 
-Confirm open-access availability or legitimate institutional rights. Use a headed browser when login is required and let the user complete verification. Do not bypass CAPTCHA or paywalls.
+This is not necessarily a search failure or a reason to keep pursuing full text. Use an abstract or substantive search summary when it supports the required statement and explain its boundary. Only when a key decision depends on missing detail should the agent check open-access or legitimate institutional access once; after failure it should continue with other sources rather than retrying. Do not bypass CAPTCHA or paywalls.
 
 ```bash
 agent-browser doctor --offline --quick

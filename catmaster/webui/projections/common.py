@@ -15,6 +15,21 @@ _SENSITIVE_KEY_RE = re.compile(
 )
 _ABSOLUTE_PATH_RE = re.compile(r"(?<![\w.-])(?:/[A-Za-z0-9_.@+ -]+){2,}|[A-Za-z]:\\(?:[^\\\s]+\\)+[^\\\s]+")
 _INTERNAL_SUFFIX_RE = re.compile(r"(?:^|[_\s-])(worker|tool)$", re.IGNORECASE)
+_OPAQUE_AGENT_SOURCE_RE = re.compile(
+    r"(?:^|[\s:/.])tools?(?:[\s:/.]|$)|[0-9a-f]{8}(?:[\s-]+[0-9a-f]{4}){3}[\s-]+[0-9a-f]{12}",
+    re.IGNORECASE,
+)
+_AGENT_LABELS = {
+    "general-purpose": "Research assistant",
+    "litreview_agent": "Literature review",
+    "research_specialist": "Research",
+    "materials_worker": "Materials",
+    "ml_worker": "Machine learning",
+    "dynamics_worker": "Dynamics",
+    "writing_worker_agent": "Writing",
+    "writing_polisher_agent": "Writing",
+    "peer_review_worker_agent": "Review",
+}
 
 
 def encode_public_cursor(kind: str, identity: str, position: str | int) -> str:
@@ -63,6 +78,21 @@ def humanize_identifier(value: Any, *, fallback: str = "") -> str:
     text = re.sub(r"[_./:-]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:1].upper() + text[1:] if text else fallback
+
+
+def humanize_agent_name(value: Any, *, fallback: str = "Specialist") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    normalized = text.lower()
+    if normalized in _AGENT_LABELS:
+        return _AGENT_LABELS[normalized]
+    for name, label in _AGENT_LABELS.items():
+        if name in normalized:
+            return label
+    if _OPAQUE_AGENT_SOURCE_RE.search(text):
+        return fallback
+    return humanize_identifier(text, fallback=fallback)
 
 
 def display_path(value: Any, *, workspace: Path | None = None) -> str:

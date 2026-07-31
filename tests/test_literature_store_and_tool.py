@@ -250,7 +250,7 @@ def test_direct_web_search_tool_returns_compact_hits(monkeypatch) -> None:
                                 "model_dump": lambda self: {
                                     "title": "Result",
                                     "url": "https://example.org",
-                                    "snippet": "snippet",
+                                    "snippet": "A" * 600,
                                     "source": "public_web",
                                 }
                             },
@@ -267,6 +267,7 @@ def test_direct_web_search_tool_returns_compact_hits(monkeypatch) -> None:
 
     assert "Top results:" in content
     assert "https://example.org" in content
+    assert "A" * 600 in content
     assert artifact["data"]["count"] == 1
 
 

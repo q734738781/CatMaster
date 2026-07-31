@@ -455,6 +455,12 @@ class CatMasterStreamTranslator:
         self.reasoning_text_emitted = ""
         self.observed_reasoning_event_id = 0
         self.subagent_parts_by_source: dict[str, str] = {}
+        existing_message = self.store.get_message(self.thread_id, self.message_id)
+        self.projected_artifact_ids = {
+            str(part.artifact_id)
+            for part in (existing_message.parts if existing_message is not None else [])
+            if isinstance(part, ArtifactPart) and str(part.artifact_id or "").strip()
+        }
 
     def _historical_completed_tool_call_ids(self) -> set[str]:
         """Tool ids already represented by earlier WebUI messages.
@@ -1516,24 +1522,7 @@ class CatMasterStreamTranslator:
         )
         artifact_payload = getattr(message, "artifact", None)
         for record in self._register_tool_artifacts(artifact_payload, tool_call_id=call_id):
-            self.store.append_part(
-                self.thread_id,
-                self.message_id,
-                ArtifactPart(
-                    id=new_id("part_artifact"),
-                    artifact_id=record.artifact_id,
-                    renderer=record.renderer,
-                    title=record.title,
-                    summary=record.summary,
-                    path=record.path,
-                    status="completed",
-                ),
-            )
-            self._emit(
-                "artifact.created",
-                status="completed",
-                data=record.model_dump(mode="json"),
-            )
+            self.publish_artifact(record)
         for receipt in self._extract_remote_receipts(artifact_payload):
             self._upsert_receipt_part(receipt, tool_call_id=call_id)
 
@@ -1593,6 +1582,31 @@ class CatMasterStreamTranslator:
                 continue
             out.append(record)
         return out
+
+    def publish_artifact(self, record: Any) -> bool:
+        artifact_id = str(getattr(record, "artifact_id", "") or "").strip()
+        if not artifact_id or artifact_id in self.projected_artifact_ids:
+            return False
+        self.projected_artifact_ids.add(artifact_id)
+        self.store.append_part(
+            self.thread_id,
+            self.message_id,
+            ArtifactPart(
+                id=new_id("part_artifact"),
+                artifact_id=artifact_id,
+                renderer=record.renderer,
+                title=record.title,
+                summary=record.summary,
+                path=record.path,
+                status="completed",
+            ),
+        )
+        self._emit(
+            "artifact.created",
+            status="completed",
+            data=record.model_dump(mode="json"),
+        )
+        return True
 
     def _extract_artifact_paths(self, payload: Any) -> list[str]:
         paths: list[str] = []
@@ -2011,20 +2025,7 @@ class StreamingSpecialistRunner:
                 run_id=runner.run_context.run_id,
             )
             for record in artifact_records:
-                self.thread_store.append_part(
-                    thread_id,
-                    message_id,
-                    ArtifactPart(
-                        id=new_id("part_artifact"),
-                        artifact_id=record.artifact_id,
-                        renderer=record.renderer,
-                        title=record.title,
-                        summary=record.summary,
-                        path=record.path,
-                        status="completed",
-                    ),
-                )
-                self._emit_thread_event(thread_id, "artifact.created", message_id=message_id, status="completed", data=record.model_dump(mode="json"))
+                translator.publish_artifact(record)
             sidecar = {
                 "summary": parsed["summary"],
                 "facts": list(parsed["facts"]),

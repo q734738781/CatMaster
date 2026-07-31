@@ -10,18 +10,18 @@ Literature Review can answer a focused verification question or conduct a larger
 
 ### Discovery is not close reading
 
-Public web search discovers papers, project pages, and database records. Search results generally establish that a paper exists and may expose title, authors, an abstract fragment, or DOI. The agent distinguishes those records from content read at abstract, full-text, or supplementary level.
+Public web search discovers papers, project pages, and database records. Title, author, and DOI metadata generally establish discovery only, but a complete or substantive abstract in the results can support the claims it explicitly makes. The agent preserves that boundary without discarding useful abstract evidence or extending it into unreported methods and values.
 
-For open-access or user-authorized institutional content, a controlled browser can open dynamic pages and acquire legitimate full text. CAPTCHA, QR code, OTP, license prompts, and security warnings remain human actions. A paper without full text can stay in the candidate table but cannot support method details or precise values that are absent from its abstract.
+When a key decision genuinely depends on methods, conditions, values, figures, or supplementary material absent from the abstract, a controlled browser is one escalation path for open-access or user-authorized institutional content. After one reasonable access attempt fails, the agent states the limitation and continues with other evidence instead of cycling through pages or downloads. CAPTCHA, QR code, OTP, license prompts, and security warnings remain human actions.
 
 ```text
 Use Literature Review to find in situ evidence for aggregation and redispersion of single-atom catalysts
 since 2018. Begin with broad discovery and save the complete candidate set. Prioritize papers that use
-operando or in situ methods, directly discuss aggregation or redispersion, and provide accessible full text.
+operando or in situ methods, directly discuss aggregation or redispersion, and are scientifically relevant.
 
-Separate metadata, abstract, full-text, and SI evidence. For core papers, extract catalyst, atmosphere,
-temperature, method, observed dynamics, author interpretation, and limitations. Do not turn search snippets
-into close-reading conclusions.
+Separate metadata, abstract, full-text, and SI evidence. Synthesize what abstracts explicitly report first;
+read source text only when catalyst, atmosphere, temperature, method, or figure details are decisive and absent.
+State the remaining limitation naturally.
 ```
 
 ### Local corpora support repeated project questions

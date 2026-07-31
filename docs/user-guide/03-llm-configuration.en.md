@@ -91,11 +91,11 @@ but do not submit remote computation.
 
 ## Literature Review agent: building traceable evidence
 
-Literature Review does more than rewrite search snippets. It discovers papers, obtains legitimately accessible text, distinguishes metadata from abstract and full-text evidence, deduplicates records, reads selected sources, builds evidence tables, and finalizes citation metadata after papers have been chosen.
+Literature Review works from the evidence that is actually available. Search summaries and abstracts can support claims they explicitly make; title and bibliographic metadata establish discovery only. The agent preserves those boundaries, deduplicates records, synthesizes evidence, and finalizes citation metadata without making full-text acquisition a per-paper completion requirement.
 
-It can begin with public web search and, when configured, open a controlled browser. That browser may reuse the user's authorized institutional session, but it does not bypass CAPTCHA, paywalls, or security warnings. Accessible PDF, HTML, XML/JATS, Markdown, and other readable text can be read directly; corpus ingestion is optional when repeated question-focused retrieval is useful. A mixed ingest keeps successful documents and reports unreadable files separately. Citation finalization uses a deterministic batch tool rather than asking the model to guess every bibliographic field.
+It begins with public web search. A controlled browser or download is used only when a key conclusion depends on methods, conditions, values, figures, or disagreements absent from available summaries, or when the user explicitly requests full-paper reading. After one reasonable access attempt fails, the agent states the limitation and continues with other evidence instead of cycling through publisher pages, mirrors, or downloads. The browser may reuse the user's authorized institutional session, but it does not bypass CAPTCHA, paywalls, or security warnings. Corpus ingestion remains optional for repeated question-focused retrieval.
 
-This entry supports topic reviews, method comparisons, full-paper reading, bilingual readers, claim-evidence matrices, citation placement, reference verification, and full-text availability records. It does not run materials calculations, and it must not write detailed method claims from title or abstract evidence alone.
+This entry supports topic reviews, method comparisons, full-paper reading, bilingual readers, claim-evidence matrices, citation placement, and reference verification. It does not run materials calculations or write detailed method claims from evidence that does not contain those details. When partial evidence materially limits a conclusion, it explains that limitation in ordinary language rather than requiring a confidence field for every paper.
 
 <details>
 <summary>Current Literature Review tools and skills</summary>
@@ -114,8 +114,8 @@ on isolated atoms on oxide supports and reversible redispersion. Design a broad 
 and deduplicate titles, DOIs, and versions.
 
 Distinguish records that were only discovered from papers read at abstract, full-text, or supplementary level.
-Read the sources that directly discuss stabilization mechanisms, migration, or sintering experiments. Build a table
-of material, conditions, evidence type, conclusion, and limitation. Save the candidate table, unavailable list,
+Form a bounded synthesis from abstracts first, and read source text only when a conclusion depends on exact
+conditions, values, or figures. Build a table of material, conditions, evidence basis, conclusion, and limitation. Save the candidate table,
 evidence table, and final reference library. Do not invent parameters that cannot be verified.
 ```
 

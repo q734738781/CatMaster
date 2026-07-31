@@ -13,6 +13,7 @@ from pptx import Presentation
 from pptx.util import Inches
 
 from catmaster.runtime import document_access
+from catmaster.runtime.checkpoint_serde import DocumentSafeCheckpointSerializer
 from catmaster.runtime.document_access import (
     DocumentAccessMiddleware,
     ReadDocumentInput,
@@ -350,6 +351,43 @@ def test_document_tool_message_sanitizer_preserves_message_identity() -> None:
     assert "base64" not in str(sanitized.content)
     assert sanitized.additional_kwargs["read_file_path"] == "/literature/paper.pdf"
     assert sanitized.additional_kwargs["catmaster_document_payload_removed"] is True
+
+
+def test_checkpoint_serializer_removes_document_bytes_before_persistence() -> None:
+    original = _pdf_tool_message()
+    serializer = DocumentSafeCheckpointSerializer()
+
+    type_name, payload = serializer.dumps_typed(
+        {"channel_values": {"messages": [original]}}
+    )
+    restored = serializer.loads_typed((type_name, payload))
+    message = restored["channel_values"]["messages"][0]
+
+    assert b"JVBERi0xLjQ" not in payload
+    assert isinstance(message, ToolMessage)
+    assert message.tool_call_id == original.tool_call_id
+    assert message.additional_kwargs["catmaster_document_payload_removed"] is True
+    assert "read_document" in str(message.content)
+
+
+def test_checkpoint_serializer_preserves_inline_images() -> None:
+    original = ToolMessage(
+        content_blocks=[
+            {"type": "image", "base64": "aW1hZ2U=", "mime_type": "image/png"}
+        ],
+        additional_kwargs={
+            "read_file_path": "/figure.png",
+            "read_file_media_type": "image/png",
+        },
+        tool_call_id="call-image",
+        name="read_file",
+    )
+    serializer = DocumentSafeCheckpointSerializer()
+
+    restored = serializer.loads_typed(serializer.dumps_typed(original))
+
+    assert isinstance(restored, ToolMessage)
+    assert restored.content[0]["base64"] == "aW1hZ2U="
 
 
 def test_document_message_sanitizer_preserves_text_and_image_blocks() -> None:

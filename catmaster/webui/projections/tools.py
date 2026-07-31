@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .common import (
+    humanize_agent_name,
     humanize_identifier,
     parse_json_object,
     redact_internal_text,
@@ -84,6 +85,28 @@ def _raw_tool_payload(raw_part: Any) -> tuple[dict[str, Any], str, Any]:
     return raw, name, input_payload
 
 
+def _structured_result_summary(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return "Structured results are available in details."
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    count = payload.get("count") if isinstance(payload.get("count"), (int, float)) else meta.get("count")
+    rows = next(
+        (
+            value
+            for key in ("results", "items", "papers", "records", "data")
+            if isinstance((value := payload.get(key)), list)
+        ),
+        None,
+    )
+    if isinstance(count, (int, float)) and not isinstance(count, bool):
+        shown = len(rows) if rows is not None else 0
+        suffix = f"; {shown:,} shown" if shown else ""
+        return f"Found {int(count):,} structured records{suffix}."
+    if rows is not None:
+        return f"Returned {len(rows):,} structured items."
+    return "Structured results are available in details."
+
+
 def project_todo_items(
     raw_part: Any,
     *,
@@ -136,7 +159,7 @@ def project_tool_part(
             id=part_id,
             type="progress",
             status=status,
-            title=f"{humanize_identifier(source)} plan" if source else "Research plan",
+            title=f"{humanize_agent_name(source)} plan" if source else "Research plan",
             summary=f"{complete} of {len(todos)} items complete.",
             items=todos,
             diagnostics_ref=diagnostics_ref,
@@ -169,14 +192,17 @@ def project_tool_part(
     else:
         summary = "The operation completed."
     detail = ""
-    if isinstance(output_payload, str) and not output_object:
+    structured_text = isinstance(output_payload, str) and output_payload.lstrip().startswith(("{", "["))
+    if output_object or structured_text:
+        summary = _structured_result_summary(output_object)
+    elif isinstance(output_payload, str):
         detail = redact_internal_text(output_payload, workspace=workspace, limit=1200)
         if detail:
             summary = detail
     source = str(meta.get("subagent_source") or meta.get("agent_name") or "").strip()
     title = _tool_title(name)
     if source:
-        title = f"{humanize_identifier(source)} · {title}"
+        title = f"{humanize_agent_name(source)} · {title}"
     return PublicPart(
         id=part_id,
         type="tool",

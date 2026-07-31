@@ -49,7 +49,22 @@ def test_browser_schema_hides_host_control_fields() -> None:
 
     assert set(sanitized.args_schema["properties"]) == {"url"}
     assert "untrusted evidence" in sanitized.description
+    assert "fallback for dynamic or user-authorized source access" in sanitized.description
+    assert "search summaries, abstracts, or metadata" in sanitized.description
     assert "read_document" in sanitized.description
+
+
+def test_browser_download_description_discourages_repeated_full_text_acquisition() -> None:
+    tool = SimpleNamespace(
+        name="agent_browser_download",
+        args_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        description="Download a linked document.",
+    )
+
+    sanitized = _sanitize_tool(tool)
+
+    assert "full text is decision-relevant or explicitly requested" in sanitized.description
+    assert "do not cycle through alternate routes" in sanitized.description
 
 
 def test_browser_session_name_stays_below_unix_socket_limit(tmp_path: Path) -> None:

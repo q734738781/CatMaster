@@ -6,6 +6,7 @@ from typing import Any
 from .common import (
     display_path,
     encode_public_cursor,
+    humanize_agent_name,
     humanize_identifier,
     redact_internal_text,
     safe_scalar_fields,
@@ -357,7 +358,7 @@ def project_part(
             id=part_id,
             type="progress",
             status=status,
-            title=humanize_identifier(meta.get("source"), fallback="Specialist progress"),
+            title=humanize_agent_name(meta.get("source"), fallback="Specialist progress"),
             text=text,
             diagnostics_ref=diagnostics_ref,
             truncation=truncation,

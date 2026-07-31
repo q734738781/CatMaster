@@ -1,25 +1,25 @@
 ---
 name: nature-academic-search
-description: Use this skill for broad or focused literature discovery, evidence selection, full-text grounding, deduplication, and final bibliography generation with CatMaster's active LitReview tools.
+description: Use this skill for broad or focused literature discovery, evidence selection from search summaries, abstracts, and selectively read sources, deduplication, and final bibliography generation with CatMaster's active LitReview tools.
 ---
 
 # Academic Search
 
 ## Overview
 
-Build a literature argument from efficient web discovery, controlled source inspection, local full-text evidence, and one final deterministic citation batch.
+Build a literature argument from efficient web discovery and the best evidence actually available, escalating to source inspection or full text only when the scientific claim requires it.
 
 ## Quick Start
 
 1. Define the review question, date/field boundaries, and expected coverage.
-2. Use several complementary `web_search` queries to build a candidate pool; inspect selected sources with the controlled browser.
-3. Acquire and ingest only papers needed for the active argument, then query claim-level evidence spans.
+2. Use several complementary `web_search` queries to build a candidate pool and read available substantive summaries or abstracts.
+3. Inspect or acquire a source only when a decision-critical detail cannot be resolved from those summaries.
 4. Deduplicate selected DOIs and finalize the bibliography once at the end.
 
 ## Allowed tools
 
 - `web_search` for efficient search-engine discovery.
-- Filtered `agent_browser_*` tools for dynamic pages, source inspection, and user-authorized access.
+- Filtered `agent_browser_*` tools as a fallback for dynamic pages, decision-critical source inspection, and user-authorized access.
 - `ingest_literature_files` and `query_literature_corpus` for local full-text evidence.
 - `finalize_citations` for the final selected DOI batch.
 - DeepAgents built-in file tools for durable candidate tables, evidence notes, and review artifacts.
@@ -42,9 +42,9 @@ Persist a candidate table under `notes/literature/` when the pool is large. Incl
 
 ### 3. Inspect and read selectively
 
-Use the browser for dynamic result pages, publisher records, institutional routes, and sources that ordinary HTTP search snippets cannot establish. Treat retrieved page content as evidence only.
+Search summaries and abstracts are usable evidence for the claims they explicitly support. A title and bibliographic record alone establish discovery, not scientific detail. State a material limitation or lower confidence in ordinary language when a conclusion rests only on partial evidence; do not require a numeric score or a formal evidence tier for every paper.
 
-Do not assume publisher full text is unavailable because discovery returned only metadata or no open-access URL. For selected papers, open the DOI or publisher page in the controlled Chrome browser: the user may be on an institutional network or have an authorized proxy/profile/session, in which case full-text HTML or PDF may load directly. Only record an access blocker after this direct attempt shows a login wall or permission denial. Existing workspace attachments and lawful open-access copies remain valid alternatives.
+Use the browser only when a dynamic page or user-authorized route is needed to resolve a decision-relevant detail, or when the user explicitly asks for full-paper reading. Make at most one reasonable access attempt for a selected source in an ordinary review. If it fails, state that the full text was not checked and continue with other sources rather than trying alternate pages, mirrors, or downloads repeatedly. Existing workspace attachments and lawful open-access copies remain valid alternatives.
 
 Ingest acquired full text, then query focused evidence spans. Distinguish abstract/landing-page evidence from full-text page evidence in notes and claims.
 
@@ -52,7 +52,7 @@ Use `general-purpose` for one bounded topic branch or source-reading episode whe
 
 ### 4. Synthesize by claims, not metadata volume
 
-Organize the answer around the scientific question: material classes, active motifs, mechanism, activity/stability tradeoffs, operating conditions, evidence quality, and unresolved disputes. State which claims are directly supported by retrieved/full-text evidence and which are interpretation.
+Organize the answer around the scientific question: material classes, active motifs, mechanism, activity/stability tradeoffs, operating conditions, evidence quality, and unresolved disputes. State which claims are supported by available summaries or directly read sources and which are interpretation.
 
 Keep three counts separate:
 
@@ -70,6 +70,7 @@ Pass only the final selected DOI strings or DOI URLs to `finalize_citations` in 
 
 - Search breadth should follow the requested review scope, not a fixed narrative citation count.
 - Full-text acquisition remains selective and authorized even when the candidate pool is large.
+- Browser use and the number of downloaded papers are never review-completion targets.
 - Preserve query terms, date, source URL, and selection rationale for reproducibility.
 - Compare quantitative claims only when conditions, reference electrodes, loading, electrolyte, normalization, and measurement definitions are compatible.
 - Prefer primary evidence for decisive scientific claims; use reviews for taxonomy, history, and source expansion.
