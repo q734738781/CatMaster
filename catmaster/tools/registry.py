@@ -224,6 +224,9 @@ class ToolRegistry:
             MarkResearchExperimentFailedInput,
             RecordBoundResearchResultInput,
             RecordResearchResultInput,
+            SetResearchGraphCompletionInput,
+            SetResearchResultJudgmentInput,
+            StageResearchPlanInput,
             add_research_experiment,
             add_research_hypothesis,
             create_research_graph,
@@ -233,6 +236,9 @@ class ToolRegistry:
             mark_research_experiment_failed,
             record_bound_research_result,
             record_research_result,
+            set_research_graph_completion,
+            set_research_result_judgment,
+            stage_research_plan,
         )
         # Register each tool with its Pydantic schema
         self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
@@ -328,6 +334,21 @@ class ToolRegistry:
         self.register_tool("add_research_hypothesis", add_research_hypothesis, AddResearchHypothesisInput)
         self.register_tool("add_research_experiment", add_research_experiment, AddResearchExperimentInput)
         self.register_tool("record_research_result", record_research_result, RecordResearchResultInput)
+        self.register_tool(
+            "set_research_result_judgment",
+            set_research_result_judgment,
+            SetResearchResultJudgmentInput,
+        )
+        self.register_tool(
+            "stage_research_plan",
+            stage_research_plan,
+            StageResearchPlanInput,
+        )
+        self.register_tool(
+            "set_research_graph_completion",
+            set_research_graph_completion,
+            SetResearchGraphCompletionInput,
+        )
         self.register_tool(
             "record_bound_research_result",
             record_bound_research_result,

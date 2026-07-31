@@ -16,6 +16,8 @@ This repository now uses a DeepAgent-native specialist runtime as the active pat
 
 Maintainer notes for CatMaster's non-standard DeepAgents/LangChain/OpenRouter
 interaction layers are in [deepagents_interactions.md](../docs/deepagents_interactions.md).
+Current multimodal file behavior is documented in
+[deepagents_multimodal.md](../docs/deepagents_multimodal.md).
 
 ## 1) Active architecture
 
@@ -45,7 +47,7 @@ They are built in [runtime.py](specialists/runtime.py).
   - May delegate only to `materials_worker`, `dynamics_worker`, `ml_worker`, and `orca_xtb_worker`.
   - Uses direct public-source checking only for narrow best-practice, literature, or official documentation checks. Keep this limited to focused implementation grounding, not broad review.
   - Do not answer that CatMaster cannot calculate solely because the specialist thread lacks direct execution tools. If a task fits a worker-owned domain or managed execution path, delegate a bounded calculation/probe before declaring a capability blocker.
-  - `materials_worker` may keep managed MLFF inference workflows together, including screening, relaxation, single-point ranking, path optimization, and connected MLFF dynamics. `dynamics_worker` may also run MLFF MD when dynamics or trajectory analysis is the primary task, and owns LAMMPS workflows. MLFF dataset/model lifecycle work, including MACE training, fine-tuning, and benchmark evaluation, remains with `ml_worker`.
+  - `materials_worker` owns structure preparation, screening, relaxation, single-point ranking, and path optimization. `dynamics_worker` owns all MLFF MD, restart, trajectory-QC, and LAMMPS workflows, including MD that continues a materials workflow. MLFF dataset/model lifecycle work, including MACE training, fine-tuning, and benchmark evaluation, remains with `ml_worker`.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
@@ -215,21 +217,35 @@ exist, use the explicitly bound graph or ask the user to choose. Never scan
 workspace files and guess from similar titles.
 
 The scientific model has only Hypothesis, Experiment, and Result nodes.
-Hypotheses carry one coarse relative importance band. Experiments carry an
-objective, short plan, decision rule, execution lane, expected decision value,
-and coarse compute-cost band. These fields order ready work; they are not
-confidence or truth scores. Preserve competing branches. Auto orchestration may
-select one next experiment per graph without pruning the other branches.
+Hypotheses may carry one coarse relative importance band. Experiments may carry
+an expected decision-value band and coarse compute-cost band alongside their
+objective, short plan, decision rule, and execution lane. Leave these bands
+empty when they are not known; they are not confidence or truth scores.
+Preserve competing branches. Auto orchestration may select one next experiment
+per graph without pruning the other branches. Planning compares the complete
+concise active hypothesis set and runnable experiment frontier, then recommends
+one route with a short scientific reason when the evidence distinguishes a
+useful next step. The proposer decides how many scientifically distinct
+temporary branches the evidence warrants; do not impose a hypothesis/experiment
+quota. A host-only total safety guard may bound one abnormal staging payload,
+but it is not a search target or scientific policy. Do not persist numeric
+utility, score deltas, synthetic visits, or search-tree statistics.
 Result edges express support, opposition, inconclusive evidence, or a suggested
 next hypothesis. Keep detailed notes, logs, reports, receipts, and artifacts in
 their existing owners and attach stable refs to the concise graph node.
+A Result normally links to its producing graph Experiment, but a literature
+finding, collaborator result, historical observation, or other evidence obtained
+outside the graph may omit that edge. Do not invent a retrospective Experiment
+solely to satisfy the graph shape.
 
 Every bound Research, Experiment, or Literature Review turn receives a
 deterministic bounded graph projection. Research owns the general graph
 mutation surface. Execution children receive only a runtime-bound result or
 blocked writeback surface; they cannot select another graph, thread, or
 experiment, and a terminal execution without a Result is blocked rather than
-successful. Mutations require the current graph revision. Do not introduce
+successful. General mutations require the current graph revision; the internal
+planning write boundary derives its graph and revision from the trusted bound
+thread instead of relaying protocol IDs between agents. Do not introduce
 generic metadata, confidence or composite scores, debug nodes, model
 provenance, token counts, checksums, precise invented resource estimates, or
 saved layout coordinates. Managed execution and human approval still apply to

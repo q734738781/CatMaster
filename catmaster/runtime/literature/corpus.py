@@ -22,7 +22,11 @@ class IngestLiteratureFilesInput(BaseModel):
         ...,
         min_length=1,
         max_length=100,
-        description="Workspace-relative PDF, HTML, Markdown, or text paths to ingest.",
+        description=(
+            "Workspace-relative full-text paths to index when durable corpus "
+            "search is useful. PDF, HTML, XML/JATS, Markdown, and other readable "
+            "text are accepted."
+        ),
     )
     doi_by_path: dict[str, str] = Field(
         default_factory=dict,
@@ -131,22 +135,39 @@ def _extract_pdf(path: Path) -> tuple[str, list[ExtractedChunk]]:
 
 def _extract_text_file(path: Path) -> tuple[str, list[ExtractedChunk]]:
     raw = path.read_text(encoding="utf-8", errors="replace")
-    if path.suffix.lower() in {".html", ".htm"}:
-        soup = BeautifulSoup(raw, "html.parser")
-        title = soup.title.get_text(" ", strip=True) if soup.title else path.stem
+    stripped = raw.lstrip()
+    looks_like_markup = stripped.startswith("<") and ">" in stripped[:500]
+    if looks_like_markup:
+        parser = (
+            "xml"
+            if path.suffix.lower() in {".xml", ".nxml", ".jats"}
+            or stripped.startswith("<?xml")
+            else "html.parser"
+        )
+        try:
+            soup = BeautifulSoup(raw, parser)
+        except Exception:
+            soup = BeautifulSoup(raw, "html.parser")
+        title_node = soup.find(["article-title", "title"])
+        title = (
+            title_node.get_text(" ", strip=True)
+            if title_node is not None
+            else path.stem
+        )
         raw = soup.get_text("\n")
     else:
+        if "\x00" in raw:
+            raise ValueError("File is binary rather than readable full text.")
         title = path.stem
     return title, _split_text(raw, page=1)
 
 
 def _extract(path: Path) -> tuple[str, list[ExtractedChunk]]:
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
+    with path.open("rb") as handle:
+        header = handle.read(16)
+    if header.startswith(b"%PDF-"):
         return _extract_pdf(path)
-    if suffix in {".html", ".htm", ".md", ".txt"}:
-        return _extract_text_file(path)
-    raise ValueError(f"Unsupported literature file type: {path.suffix or '(none)'}")
+    return _extract_text_file(path)
 
 
 def _write_manifest(connection: sqlite3.Connection) -> str:
@@ -161,69 +182,108 @@ def ingest_literature_files(payload: dict[str, Any]) -> tuple[str, dict[str, Any
     params = IngestLiteratureFilesInput.model_validate(payload)
     root = workspace_root().resolve()
     results: list[dict[str, Any]] = []
-    with _connect() as connection:
+    errors: list[dict[str, str]] = []
+    connection = _connect()
+    try:
         for raw_path in params.paths:
-            path = resolve_scoped_path(raw_path, "files", must_exist=True)
-            source_path = str(path.relative_to(root)).replace("\\", "/")
-            digest = _file_hash(path)
-            cached = connection.execute(
-                "SELECT document_id, title, page_count FROM documents WHERE file_hash = ?",
-                (digest,),
-            ).fetchone()
-            if cached is not None:
+            source_path = str(raw_path or "").strip()
+            try:
+                path = resolve_scoped_path(raw_path, "files", must_exist=True)
+                source_path = str(path.relative_to(root)).replace("\\", "/")
+                digest = _file_hash(path)
+                cached = connection.execute(
+                    "SELECT document_id, title, page_count FROM documents WHERE file_hash = ?",
+                    (digest,),
+                ).fetchone()
+                if cached is not None:
+                    results.append(
+                        {
+                            "path": source_path,
+                            "document_id": cached["document_id"],
+                            "title": cached["title"],
+                            "page_count": cached["page_count"],
+                            "status": "cached",
+                        }
+                    )
+                    continue
+
+                title, chunks = _extract(path)
+                if not chunks:
+                    raise ValueError("No extractable text was found.")
+                document_id = f"doc-{digest[:16]}"
+                doi = str(
+                    params.doi_by_path.get(raw_path)
+                    or params.doi_by_path.get(source_path)
+                    or ""
+                ).strip()
+                with connection:
+                    connection.execute(
+                        "DELETE FROM chunks WHERE source_path = ?",
+                        (source_path,),
+                    )
+                    connection.execute(
+                        "DELETE FROM documents WHERE source_path = ?",
+                        (source_path,),
+                    )
+                    connection.execute(
+                        "INSERT INTO documents(document_id, source_path, file_hash, doi, title, page_count, ingested_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            document_id,
+                            source_path,
+                            digest,
+                            doi,
+                            title,
+                            max(chunk.page for chunk in chunks),
+                            datetime.now(timezone.utc).isoformat(),
+                        ),
+                    )
+                    connection.executemany(
+                        "INSERT INTO chunks(document_id, source_path, doi, page, section, text) VALUES (?, ?, ?, ?, ?, ?)",
+                        [
+                            (
+                                document_id,
+                                source_path,
+                                doi,
+                                chunk.page,
+                                chunk.section,
+                                chunk.text,
+                            )
+                            for chunk in chunks
+                        ],
+                    )
                 results.append(
                     {
                         "path": source_path,
-                        "document_id": cached["document_id"],
-                        "title": cached["title"],
-                        "page_count": cached["page_count"],
-                        "status": "cached",
+                        "document_id": document_id,
+                        "title": title,
+                        "page_count": max(chunk.page for chunk in chunks),
+                        "chunk_count": len(chunks),
+                        "status": "ingested",
                     }
                 )
-                continue
-
-            title, chunks = _extract(path)
-            if not chunks:
-                raise ValueError(f"No extractable text found in {source_path}")
-            document_id = f"doc-{digest[:16]}"
-            doi = str(params.doi_by_path.get(raw_path) or params.doi_by_path.get(source_path) or "").strip()
-            connection.execute("DELETE FROM chunks WHERE source_path = ?", (source_path,))
-            connection.execute("DELETE FROM documents WHERE source_path = ?", (source_path,))
-            connection.execute(
-                "INSERT INTO documents(document_id, source_path, file_hash, doi, title, page_count, ingested_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    document_id,
-                    source_path,
-                    digest,
-                    doi,
-                    title,
-                    max(chunk.page for chunk in chunks),
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-            connection.executemany(
-                "INSERT INTO chunks(document_id, source_path, doi, page, section, text) VALUES (?, ?, ?, ?, ?, ?)",
-                [(document_id, source_path, doi, chunk.page, chunk.section, chunk.text) for chunk in chunks],
-            )
-            results.append(
-                {
-                    "path": source_path,
-                    "document_id": document_id,
-                    "title": title,
-                    "page_count": max(chunk.page for chunk in chunks),
-                    "chunk_count": len(chunks),
-                    "status": "ingested",
-                }
-            )
+            except Exception as exc:
+                errors.append(
+                    {
+                        "path": source_path,
+                        "error": str(exc).strip() or type(exc).__name__,
+                    }
+                )
         manifest_path = _write_manifest(connection)
+    finally:
+        connection.close()
 
     data = {
-        "status": "ok",
+        "status": "ok" if not errors else ("partial" if results else "error"),
         "documents": results,
+        "errors": errors,
         "manifest_path": manifest_path,
     }
-    lines = [f"Literature corpus: {len(results)} document(s) processed."]
+    lines = [
+        f"Literature corpus: {len(results)} document(s) processed, "
+        f"{len(errors)} skipped."
+    ]
     lines.extend(f"- {item['status']}: {item['path']} ({item['document_id']})" for item in results)
+    lines.extend(f"- skipped: {item['path']} — {item['error']}" for item in errors)
     lines.append(f"Manifest: {manifest_path}")
     return "\n".join(lines), {
         "tool_name": "ingest_literature_files",

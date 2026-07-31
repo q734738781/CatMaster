@@ -104,6 +104,14 @@ python -c \
 export CATMASTER_LLM_CONFIG=configs/llm_codex_oauth.template.yaml
 ```
 
+Codex OAuth 模板会传入 `timeout_s: 180`，但不显式设置 `max_retries`；传输
+错误、限流和 HTTP 服务端错误使用已锁定 OpenAI SDK 的默认重试值。Codex
+后端也可能先接受一个 HTTP 200 stream，随后以结构化的
+`server_is_overloaded` 错误结束；SDK 无法在 HTTP 层重试这种情况。CatMaster
+只对这一种 stream 错误再做最多六次重试，依次等待
+30、60、120、240、480 和 600 秒；该行为覆盖所有 DeepAgent 层级，包括原生
+`general-purpose` 子代理，不会捕获其他模型异常。
+
 不要复制 OAuth token store，也不要把个人 OAuth profile 当作共享多用户服务的公共身份。
 
 ### Reviewer、图片与多模态

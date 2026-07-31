@@ -12,6 +12,7 @@ from catmaster.tools.base import ensure_project_space_layout
 from catmaster.research.knowledge_graph.store import ResearchGraphStore
 from catmaster.webui.agent_loop import ThreadAgentLoopService
 from catmaster.webui.server import create_app
+from catmaster.webui.thread_store import ThreadStore
 
 
 def _register(client: TestClient, username: str) -> None:
@@ -45,6 +46,9 @@ def test_workspace_first_graph_api_and_cross_thread_binding(tmp_path: Path) -> N
         json={
             "question": "Which mechanism controls selectivity?",
             "title": "Selectivity mechanism",
+            "completion_criterion": (
+                "A discriminating Result with a source resolves the selectivity mechanism."
+            ),
             "initial_hypotheses": [
                 {
                     "claim": "Pathway A controls selectivity.",
@@ -57,6 +61,9 @@ def test_workspace_first_graph_api_and_cross_thread_binding(tmp_path: Path) -> N
     assert created.status_code == 200
     graph = created.json()
     graph_id = graph["graph"]["graph_id"]
+    assert graph["graph"]["completion_criterion"].startswith(
+        "A discriminating Result"
+    )
     node_id = graph["nodes"][0]["node_id"]
 
     for thread in (thread_a, thread_b):
@@ -66,6 +73,17 @@ def test_workspace_first_graph_api_and_cross_thread_binding(tmp_path: Path) -> N
         )
         assert bound.status_code == 200
         assert bound.json()["thread"]["active_research_graph_id"] == graph_id
+
+    ThreadStore(
+        workspace=tmp_path / "default",
+        workspace_id="default",
+    ).update_thread(thread_a["thread_id"], workspace_id="workspace-before-rename")
+    catalog = client.get(
+        "/api/workspaces/default/research-graphs",
+        params={"include_archived": "true", "thread_id": thread_a["thread_id"]},
+    )
+    assert catalog.status_code == 200
+    assert catalog.json()["graphs"][0]["graph_id"] == graph_id
 
     catalog = client.get(
         "/api/workspaces/default/research-graphs",
@@ -130,6 +148,186 @@ def test_graph_api_rejects_cross_workspace_refs_even_with_known_path(
     assert "workspace" in response.json()["detail"]
 
 
+def test_graph_api_accepts_a_sourced_observation_without_an_experiment(
+    tmp_path: Path,
+) -> None:
+    ensure_project_space_layout(tmp_path / "default", create=True)
+    client = TestClient(create_app(project_space_root=str(tmp_path), no_login=True))
+    graph = client.post(
+        "/api/workspaces/default/research-graphs",
+        json={
+            "question": "What explains the new operando feature?",
+            "initial_hypotheses": [{"claim": "The feature is interfacial."}],
+        },
+    ).json()
+    hypothesis_id = graph["nodes"][0]["node_id"]
+
+    response = client.post(
+        (
+            "/api/workspaces/default/research-graphs/"
+            f"{graph['graph']['graph_id']}/results"
+        ),
+        json={
+            "expected_revision": graph["graph"]["revision"],
+            "title": "Collaboration result",
+            "summary": "A reversible band appeared only under the reactant feed.",
+            "judgments": [
+                {
+                    "hypothesis_node_id": hypothesis_id,
+                    "relation": "inconclusive",
+                }
+            ],
+            "refs": [
+                {
+                    "ref_kind": "url",
+                    "ref_id": "https://example.org/shared-result",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    result = next(node for node in payload["nodes"] if node["kind"] == "result")
+    assert result["body"]["summary"].startswith("A reversible band")
+    assert result["refs"][0]["ref_id"] == "https://example.org/shared-result"
+    assert not any(
+        edge["relation"] == "produces"
+        and edge["target_node_id"] == result["node_id"]
+        for edge in payload["edges"]
+    )
+
+    replaced = client.put(
+        (
+            "/api/workspaces/default/research-graphs/"
+            f"{graph['graph']['graph_id']}/results/{result['node_id']}"
+            f"/judgments/{hypothesis_id}"
+        ),
+        json={
+            "expected_revision": payload["graph"]["revision"],
+            "relation": "opposes",
+        },
+    )
+    assert replaced.status_code == 200
+    assert {
+        edge["relation"]
+        for edge in replaced.json()["edges"]
+        if edge["source_node_id"] == result["node_id"]
+        and edge["target_node_id"] == hypothesis_id
+    } == {"opposes"}
+
+    cleared = client.put(
+        (
+            "/api/workspaces/default/research-graphs/"
+            f"{graph['graph']['graph_id']}/results/{result['node_id']}"
+            f"/judgments/{hypothesis_id}"
+        ),
+        json={
+            "expected_revision": replaced.json()["graph"]["revision"],
+            "relation": "unjudged",
+        },
+    )
+    assert cleared.status_code == 200
+    assert not any(
+        edge["source_node_id"] == result["node_id"]
+        and edge["target_node_id"] == hypothesis_id
+        and edge["relation"] in {"supports", "opposes", "inconclusive"}
+        for edge in cleared.json()["edges"]
+    )
+
+
+def test_internal_research_planning_threads_are_hidden_from_user_lists(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "default"
+    ensure_project_space_layout(workspace, create=True)
+    client = TestClient(create_app(project_space_root=str(tmp_path), no_login=True))
+    visible = client.post(
+        "/api/workspaces/default/threads",
+        json={"title": "Visible research thread", "entrypoint": "research"},
+    ).json()["thread"]
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    marked = store.create_thread(
+        thread_id="thread_rg_marked",
+        title="Plan next step: marked",
+        entrypoint="research",
+        meta={"internal_kind": "research_graph_planning"},
+    )
+    legacy = store.create_thread(
+        thread_id="thread_rg_legacy",
+        title="Plan next step: legacy",
+        entrypoint="research",
+    )
+
+    listed = client.get("/api/workspaces/default/threads")
+    assert listed.status_code == 200
+    assert [thread["thread_id"] for thread in listed.json()["threads"]] == [
+        visible["thread_id"]
+    ]
+    assert client.get(f"/api/threads/{marked.thread_id}").status_code == 200
+
+    graph = ResearchGraphService(
+        workspace=workspace,
+        workspace_id="default",
+    ).create_graph(GraphCreateRequest(question="Which route should be tested?"))
+    graph_id = graph["graph"]["graph_id"]
+    for thread_id in (visible["thread_id"], marked.thread_id, legacy.thread_id):
+        store.update_thread(thread_id, active_research_graph_id=graph_id)
+    catalog = ResearchGraphService(
+        workspace=workspace,
+        workspace_id="default",
+    ).catalog()
+    assert catalog[0]["bound_thread_count"] == 1
+
+
+def test_graph_plan_response_serializes_its_internal_thread(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ensure_project_space_layout(tmp_path / "default", create=True)
+    client = TestClient(create_app(project_space_root=str(tmp_path), no_login=True))
+    graph = client.post(
+        "/api/workspaces/default/research-graphs",
+        json={"question": "Which literature-grounded route should be tested?"},
+    ).json()
+
+    async def _fake_plan_next_step(
+        service: ResearchGraphService,
+        graph_id: str,
+        *,
+        expected_revision: int,
+        focus_node_id: str = "",
+    ) -> dict:
+        thread = service.thread_store.create_thread(
+            thread_id="thread_rg_serialization",
+            title="Plan next step",
+            entrypoint="research",
+            meta={"internal_kind": "research_graph_planning"},
+        )
+        return {
+            "accepted": True,
+            "deduplicated": False,
+            "thread": thread,
+            **service.presentation(graph_id),
+        }
+
+    monkeypatch.setattr(
+        ResearchGraphService,
+        "plan_next_step",
+        _fake_plan_next_step,
+    )
+    response = client.post(
+        (
+            "/api/workspaces/default/research-graphs/"
+            f"{graph['graph']['graph_id']}/plan"
+        ),
+        json={"expected_revision": graph["graph"]["revision"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["thread"]["thread_id"] == "thread_rg_serialization"
+
+
 def test_graph_context_api_is_human_readable_and_bounded(tmp_path: Path) -> None:
     ensure_project_space_layout(tmp_path / "default", create=True)
     client = TestClient(create_app(project_space_root=str(tmp_path), no_login=True))
@@ -146,6 +344,7 @@ def test_graph_context_api_is_human_readable_and_bounded(tmp_path: Path) -> None
     assert payload["markdown"].startswith("# Active Research Graph")
     assert len(payload["markdown"]) <= 2_000
     assert payload["presentation"]["total_count"] == 1
+    assert "Completion criterion:" in payload["markdown"]
     assert "body_json" not in response.text
 
 
@@ -238,3 +437,50 @@ def test_bound_research_and_execution_turns_get_readable_bounded_graph_context(
         entrypoint="writing",
     )
     assert unchanged == "Write this up."
+
+
+def test_internal_planning_turn_sees_the_complete_concise_hypothesis_set(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "default"
+    ensure_project_space_layout(workspace, create=True)
+    graph = ResearchGraphService(workspace=workspace).create_graph(
+        GraphCreateRequest(
+            question="Which mechanism should guide the next experiment?",
+            initial_hypotheses=[
+                {"claim": f"Mechanism {index:02d} controls the response."}
+                for index in range(30)
+            ],
+        )
+    )
+    loop = object.__new__(ThreadAgentLoopService)
+    loop.workspace = workspace
+    focus_node = next(
+        node
+        for node in graph["nodes"]
+        if node["title"] == "Mechanism 00 controls the response."
+    )
+    common = {
+        "active_research_graph_id": graph["graph"]["graph_id"],
+        "research_focus_node_id": focus_node["node_id"],
+    }
+    ordinary = loop._research_graph_turn_content(
+        thread=SimpleNamespace(**common, meta={}),
+        prompt="What should we test next?",
+        turn_content="What should we test next?",
+        entrypoint="research",
+    )
+    planning = loop._research_graph_turn_content(
+        thread=SimpleNamespace(
+            **common,
+            meta={"internal_kind": "research_graph_planning"},
+        ),
+        prompt="Re-evaluate the runnable routes from current evidence.",
+        turn_content="Re-evaluate the runnable routes from current evidence.",
+        entrypoint="research",
+    )
+
+    assert isinstance(ordinary, str)
+    assert isinstance(planning, str)
+    assert "Mechanism 29 controls the response." not in ordinary
+    assert "Mechanism 29 controls the response." in planning

@@ -168,8 +168,7 @@ models:
     base_url: null
 
     default_headers: {}
-    timeout_s: 120
-    max_retries: 3
+    timeout_s: 180
 
     # Provider-bound options passed to langchain_openai.chat_models.codex._ChatOpenAICodex.
     provider_options:

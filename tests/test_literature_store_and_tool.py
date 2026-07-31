@@ -47,6 +47,53 @@ def test_literature_corpus_ingest_query_and_cache(tmp_path: Path) -> None:
     assert (layout["metadata_root"] / "literature" / "corpus.sqlite").is_file()
 
 
+def test_literature_corpus_accepts_jats_and_keeps_successes_when_one_file_fails(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    layout = ensure_project_space_layout(project)
+    papers = layout["files_root"] / "papers"
+    papers.mkdir(parents=True)
+    (papers / "operando.xml").write_text(
+        """
+        <article>
+          <front><article-meta><title-group>
+            <article-title>Operando reconstruction of catalyst A</article-title>
+          </title-group></article-meta></front>
+          <body><sec><title>Results</title><p>
+            Operando XAS reveals a reversible coordination change under reaction conditions.
+          </p></sec></body>
+        </article>
+        """,
+        encoding="utf-8",
+    )
+    (papers / "binary.dat").write_bytes(b"\x00\x01not-readable-full-text")
+
+    with workspace_scope(project):
+        content, artifact = ingest_literature_files(
+            {"paths": ["papers/operando.xml", "papers/binary.dat"]}
+        )
+        query_content, query_artifact = query_literature_corpus(
+            {"query": "reversible coordination change", "top_k": 3}
+        )
+
+    assert artifact["data"]["status"] == "partial"
+    assert [item["path"] for item in artifact["data"]["documents"]] == [
+        "papers/operando.xml"
+    ]
+    assert artifact["data"]["documents"][0]["title"] == (
+        "Operando reconstruction of catalyst A"
+    )
+    assert [item["path"] for item in artifact["data"]["errors"]] == [
+        "papers/binary.dat"
+    ]
+    assert "1 document(s) processed, 1 skipped" in content
+    assert "coordination change" in query_content
+    assert query_artifact["data"]["evidence"][0]["source_path"] == (
+        "papers/operando.xml"
+    )
+
+
 def test_finalize_citations_deduplicates_and_writes_batch_artifacts(
     tmp_path: Path,
     monkeypatch,

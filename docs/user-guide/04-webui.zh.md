@@ -64,17 +64,17 @@ Agent 回复时，Chat 不只显示最终文字。Progress 卡会保留当前推
 
 Research Graph 是 workspace 级科学图，不属于当前 thread。顶部 catalog 会列出每个 graph 的研究问题、节点数量、可运行的 frontier、手动或自动模式、最近更新时间，以及当前 thread 是否已经附着。只有一个 active graph 时界面可以预选；有多个时必须显式选择。Attach、Detach 或切换 graph 只改变当前 thread 的关注点，不会复制或删除科学状态。
 
-New graph 支持直接输入研究问题、标题和零个或多个 seed hypotheses。每个 seed hypothesis 都有独立的 claim、rationale 和 observable predictions。用户不必先在 Chat 中让 Agent 初始化，也可以先建一个空问题图，随后自己或让 Research 补充节点。
+New graph 只强制填写研究问题。标题、完成条件、编排模式和 seed hypotheses 都收在可选设置中；完成条件留空时，系统使用可见默认值：由已记录 Result 和可追溯来源支撑一个站得住脚的答案。seed Hypothesis 只需一条 claim，也可以在创建时直接附上启发它的论文、note 或其他来源。没有 seed 时，可以直接点击 “Ask Research to propose starting routes”，不必先在 Chat 中让 Agent 初始化。
 
 图中只有三种科学节点：
 
 - Hypothesis 显示简短命题、相对重要性及由所有 Result 关系派生的证据状态。
 - Experiment proposal 显示 objective、plan、decision rule、execution lane、预期决策价值、粗粒度算力成本和准备或执行状态。
-- Result 显示简短结果，并通过带文字标签的关系连接它支持、反对或无法区分的 Hypothesis。
+- Result 显示简短观察或结果，并通过带文字标签的关系连接它支持、反对或无法区分的 Hypothesis。文献发现、合作组结果和历史观察可以不绑定图中 Experiment 直接记录。
 
 画布支持平移、缩放、fit、minimap、键盘访问、focus neighborhood，以及 5、25、100 个节点的密度选择。节点卡保留完整标题和可访问名称。点击节点后，右侧 inspector 显示完整科学字段和来源，不会用不可恢复的字符截断代替内容。
 
-Hypothesis 可以发展实验 proposal、编辑或查看关联证据。Experiment 可以准备、运行、复现、查看 active launch、添加依赖、记录结果或标记阻塞。Result 可以由用户直接发展新 Hypothesis 或 follow-up Experiment，也可以启动一个绑定当前 Result 的 Research planning thread。图中允许科学循环和分叉；只有 Experiment 的 dependency 关系必须无环。
+“Add scientific input” 支持先写一两句话：Hypothesis 只需 claim，draft Experiment 只需 objective，Observation/Result 只需 summary；标题、rationale、predictions、关系、优先级、解释和来源都在可选细节中。draft Experiment 可以暂时不完整，但没有 plan 和 decision rule 时不能标记为 Ready，也不能运行。Hypothesis 可以发展实验 proposal、编辑或查看关联证据。Experiment 可以准备、运行、复现、查看 active launch、添加依赖、记录结果或标记阻塞。Result 可以由用户直接发展新 Hypothesis 或 follow-up Experiment；它对任一 Hypothesis 的支持、反对或无法区分判断也可以事后新增、替换或清除，不必重建 Result。图中允许科学循环和分叉；只有 Experiment 的 dependency 关系必须无环。
 
 Research Specialist 创建 graph 后会自动附着到当前 thread。由 Experiment 或
 Literature Review 启动的 child 会得到同一个有界 graph focus，但只能为绑定的
@@ -83,7 +83,11 @@ Experiment 写回 Result 或具体阻塞原因，且系统会自动把 child thr
 
 运行 Experiment 会原子占用一次 launch，再创建绑定 graph 和 focus node 的普通 child thread。同一个 active launch 的重复点击会合并，但完成后的 Experiment 可以显式启动 replicate。来源 thread 正在运行、停止或已经删除，都不会阻塞 graph。远程状态不明时，系统先对账已有 thread、run 和 receipt，不会自动重提。
 
-Automatic orchestration 一次只推进一个动作，但不会删除其他竞争分支。有多个 ready Experiment 时，依次按其 Hypothesis 重要性、预期决策价值、更低算力成本和创建顺序选择；每个 graph 同时只自动运行一个 Experiment。没有 ready Experiment 但图中已有研究内容时，启动一个 planning child。Planner 在当前图版本没有写入新科学内容时不会循环重启。切回 Manual 只停止后续自动启动，不取消当前 thread 或远程任务。
+Research planning 会先让 `hypothesis_proposer` 阅读当前证据，并按需检索网络、受控浏览器和本地文献 corpus。它给 Research 返回普通科学语言的 memo，也可以通过绑定的 staging action 发布带来源的临时 Hypothesis/Experiment 分支。分支数量由当前证据支持的科学差异决定，不要求固定的 Hypothesis/Experiment 数量或比例；开始重复已有解释时就停止扩展。临时 Experiment 可以只是只有 objective 的 draft，只有补齐可执行 plan 和 decision rule 后才会成为 runnable。规划会同时考虑完整 runnable frontier，但推荐依据是一段科学理由，而不是持久化数值分数。候选分支在落图前以半透明节点显示。规划 run 属于内部编排，不会污染普通 thread 列表；对用户有用的进度和推荐直接显示在 graph 上。Manual 模式下可以点击任一临时节点把相关路线原子加入图中；未选分支会随下一次规划替换，不进入永久科学图。
+
+Automatic orchestration 会在每次 graph 变化后先重新规划，再最多运行一个真实 Experiment；这只限制执行并发，不限制图中并行 Hypothesis 的数量。如果规划推荐临时路线，系统只实体化该路线；如果推荐已有 ready Experiment，则直接推进它。完成条件被已有 Result 满足后，graph 标记为 Completed 并停止自动推进。切回 Manual 只停止后续自动启动，不取消当前 thread 或远程任务。
+
+Completed 是停止推进标记，不是写保护：新增或修改科学内容会自动重新打开 graph，只补一条来源不会改变完成状态。Archived graph 则是只读的，必须显式 Restore 后才能继续修改。
 
 Graph 节点只保存短科学命题。论文、详细笔记、结构、日志、报告、artifact 和 receipt 仍在原有位置，通过 Sources 连接。来源被移动或删除后会显示 "Source unavailable"，不会静默删除引用。Graph 操作也不等于批准受保护执行；计算仍经过相应 specialist、受管执行和原有审批卡。
 

@@ -42,6 +42,7 @@ const GRAPH_EVENT_TYPES = [
   "research_graph.updated",
   "research_graph.planning_started",
   "research_graph.planning_attached",
+  "research_graph.planning_preview",
   "research_graph.planning_finished",
   "research_graph.planning_no_change",
   "research_graph.planning_stale",
@@ -50,6 +51,16 @@ const NODE_COLORS = {
   hypothesis: "#7c3aed",
   experiment: "#0284c7",
   result: "#15803d",
+};
+const SOURCE_KINDS = ["note", "artifact", "run", "doi", "url", "thread", "message"];
+const SOURCE_KIND_LABELS = {
+  note: "Workspace note",
+  artifact: "Artifact",
+  run: "Research run",
+  doi: "DOI",
+  url: "Web page",
+  thread: "Thread",
+  message: "Message",
 };
 const EMPTY_FORM = {};
 
@@ -66,36 +77,50 @@ function bandLabel(value) {
     low: "Low",
     medium: "Medium",
     high: "High",
-  }[String(value || "").toLowerCase()] || "Medium";
+  }[String(value || "").toLowerCase()] || "Not specified";
 }
 
 function nodeRankLabel(node) {
   if (node.kind === "hypothesis") {
-    return `${bandLabel(node.body?.importance)} importance`;
+    return node.body?.importance
+      ? `${bandLabel(node.body.importance)} importance`
+      : "";
   }
   if (node.kind === "experiment") {
-    return `${bandLabel(node.body?.expected_value)} expected value · ${bandLabel(node.body?.estimated_compute_cost)} compute`;
+    return [
+      node.body?.expected_value
+        ? `${bandLabel(node.body.expected_value)} expected value`
+        : "",
+      node.body?.estimated_compute_cost
+        ? `${bandLabel(node.body.estimated_compute_cost)} compute`
+        : "",
+    ].filter(Boolean).join(" · ");
   }
   return "";
 }
 
 function ResearchNodeCard({ data, selected }) {
   const node = data.node;
+  const provisional = node.provisional === true;
   const kindLabel = {
-    hypothesis: "Hypothesis",
-    experiment: "Experiment proposal",
+    hypothesis: provisional ? "Proposed hypothesis" : "Hypothesis",
+    experiment: provisional ? "Proposed experiment" : "Experiment proposal",
     result: "Result",
   }[node.kind] || "Research node";
-  const state = node.kind === "hypothesis"
-    ? evidenceStateLabel(node.evidence_state)
-    : node.kind === "experiment"
-      ? experimentStateLabel(node.state)
-      : "Result recorded";
+  const state = provisional
+    ? (node.recommended ? "Recommended temporary route" : "Temporary planning branch")
+    : node.recommended
+      ? `Recommended next · ${node.kind === "experiment" ? experimentStateLabel(node.state) : evidenceStateLabel(node.evidence_state)}`
+      : node.kind === "hypothesis"
+        ? evidenceStateLabel(node.evidence_state)
+        : node.kind === "experiment"
+          ? experimentStateLabel(node.state)
+          : "Result recorded";
   const rank = nodeRankLabel(node);
   return (
     <button
       type="button"
-      className={`v2-rg-node kind-${node.kind} ${selected ? "selected" : ""}`}
+      className={`v2-rg-node kind-${node.kind} ${provisional ? "provisional" : ""} ${node.recommended ? "recommended" : ""} ${selected ? "selected" : ""}`}
       aria-label={`${kindLabel}: ${node.title}. ${state}${rank ? `. ${rank}` : ""}`}
       data-research-node-id={node.node_id}
       title={node.title}
@@ -239,6 +264,46 @@ function Field({ label, children, hint = "" }) {
       {hint ? <small>{hint}</small> : null}
     </label>
   );
+}
+
+function OptionalDetails({ children, label = "Optional details" }) {
+  return (
+    <details className="v2-rg-optional-details">
+      <summary>{label}</summary>
+      <div>{children}</div>
+    </details>
+  );
+}
+
+function OptionalSourceFields({ form, setForm, hint = "" }) {
+  return (
+    <>
+      <Field label="Source type (optional)">
+        <select
+          value={form.ref_kind || "note"}
+          onChange={(event) => setForm({ ...form, ref_kind: event.target.value })}
+        >
+          {SOURCE_KINDS.map((kind) => (
+            <option value={kind} key={kind}>{SOURCE_KIND_LABELS[kind]}</option>
+          ))}
+        </select>
+      </Field>
+      <Field
+        label="Source identifier (optional)"
+        hint={hint || "Use a DOI, URL, workspace note path, artifact, run, thread, or message. More sources can be attached later."}
+      >
+        <input
+          value={form.ref_id || ""}
+          onChange={(event) => setForm({ ...form, ref_id: event.target.value })}
+        />
+      </Field>
+    </>
+  );
+}
+
+function sourceRefs(form) {
+  const refId = String(form.ref_id || "").trim();
+  return refId ? [{ ref_kind: form.ref_kind || "note", ref_id: refId }] : [];
 }
 
 function ReferenceList({ refs, onOpenThread, onOpenReference }) {
@@ -419,6 +484,7 @@ function GraphCanvas({ payload, selectedNodeId, onSelectNode }) {
           <MiniMap
             pannable
             zoomable
+            style={{ width: 120, height: 90 }}
             nodeColor={(node) => NODE_COLORS[node.data?.node?.kind] || "#64748b"}
             ariaLabel="Research graph minimap"
           />
@@ -458,11 +524,52 @@ function ResearchGraphPanelContent({
   const activeGraphId = String(thread?.active_research_graph_id || "");
   const graphId = selectedGraphId || activeGraphId;
   const graph = payload?.graph || null;
+  const displayPayload = useMemo(() => {
+    const recommendedExistingId = String(
+      payload?.planning_preview?.recommended_existing_node_id || "",
+    );
+    const planningSummary = String(payload?.planning_preview?.summary || "");
+    const durableNodes = (Array.isArray(payload?.nodes) ? payload.nodes : []).map(
+      (node) => (
+        recommendedExistingId
+        && String(node.node_id || "") === recommendedExistingId
+          ? {
+              ...node,
+              recommended: true,
+              planning_reason: planningSummary,
+            }
+          : node
+      ),
+    );
+    const durableEdges = Array.isArray(payload?.edges) ? payload.edges : [];
+    const previewNodes = Array.isArray(payload?.planning_preview?.nodes)
+      ? payload.planning_preview.nodes
+      : [];
+    const previewEdges = Array.isArray(payload?.planning_preview?.edges)
+      ? payload.planning_preview.edges
+      : [];
+    const durableIds = new Set(durableNodes.map((node) => String(node.node_id || "")));
+    const nodes = [
+      ...durableNodes,
+      ...previewNodes.filter((node) => !durableIds.has(String(node.node_id || ""))),
+    ];
+    const nodeIds = new Set(nodes.map((node) => String(node.node_id || "")));
+    const seenEdges = new Set();
+    const edges = [...durableEdges, ...previewEdges].filter((edge) => {
+      const source = String(edge.source_node_id || "");
+      const target = String(edge.target_node_id || "");
+      const key = `${source}:${edge.relation}:${target}`;
+      if (!nodeIds.has(source) || !nodeIds.has(target) || seenEdges.has(key)) return false;
+      seenEdges.add(key);
+      return true;
+    });
+    return { ...payload, nodes, edges };
+  }, [payload]);
   const selectedNode = useMemo(
-    () => (payload?.nodes || []).find((node) => node.node_id === selectedNodeId)
-      || payload?.nodes?.[0]
+    () => (displayPayload?.nodes || []).find((node) => node.node_id === selectedNodeId)
+      || displayPayload?.nodes?.[0]
       || null,
-    [payload?.nodes, selectedNodeId],
+    [displayPayload?.nodes, selectedNodeId],
   );
 
   const openInspector = useCallback(() => {
@@ -588,14 +695,16 @@ function ResearchGraphPanelContent({
     };
   }, [graphId, loadCatalog, refreshGraph, workspaceName]);
 
-  async function mutate(request, successMessage = "") {
+  async function mutate(request, successMessage = "", options = {}) {
     setMutating(true);
     setError("");
     setNotice("");
     try {
       const next = await request();
       if (next?.graph) setPayload(next);
-      if (next?.thread) onThreadUpdate?.(next.thread);
+      if (next?.thread && options.updateThread !== false) {
+        onThreadUpdate?.(next.thread);
+      }
       if (next?.node?.node_id) {
         setSelectedNodeId(next.node.node_id);
         openInspector();
@@ -650,6 +759,7 @@ function ResearchGraphPanelContent({
           body: JSON.stringify({
             question: form.question || "",
             title: form.title || "",
+            completion_criterion: form.completion_criterion || "",
             orchestration_mode: form.orchestration_mode || "manual",
             initial_hypotheses: (form.initial_hypotheses || [])
               .filter((item) => String(item?.claim || "").trim())
@@ -658,7 +768,8 @@ function ResearchGraphPanelContent({
                 claim: item.claim || "",
                 rationale: item.rationale || "",
                 predictions: splitLines(item.predictions),
-                importance: item.importance || "medium",
+                importance: item.importance || "",
+                refs: sourceRefs(item),
               })),
           }),
         }),
@@ -674,7 +785,20 @@ function ResearchGraphPanelContent({
     }
     if (!graph?.graph_id) return;
     const graphBase = `${base}/${encodeURIComponent(graph.graph_id)}`;
-    if (modal === "hypothesis") {
+    if (modal === "graph") {
+      await mutate(
+        () => apiFetch(graphBase, {
+          method: "PATCH",
+          body: JSON.stringify({
+            expected_revision: graph.revision,
+            title: form.title || graph.title,
+            question: form.question || graph.question,
+            completion_criterion: form.completion_criterion || graph.completion_criterion,
+          }),
+        }),
+        "Research goal updated.",
+      );
+    } else if (modal === "hypothesis") {
       await mutate(
         () => apiFetch(`${graphBase}/hypotheses`, {
           method: "POST",
@@ -684,9 +808,9 @@ function ResearchGraphPanelContent({
             claim: form.claim || "",
             rationale: form.rationale || "",
             predictions: splitLines(form.predictions),
-            importance: form.importance || "medium",
+            importance: form.importance || "",
             suggested_by_result_ids: form.suggested_by_result_id ? [form.suggested_by_result_id] : [],
-            refs: [],
+            refs: sourceRefs(form),
           }),
         }),
         "Hypothesis added.",
@@ -702,12 +826,12 @@ function ResearchGraphPanelContent({
             plan_summary: form.plan_summary || "",
             decision_rule: form.decision_rule || "",
             execution_lane: form.execution_lane || "experiment",
-            expected_value: form.expected_value || "medium",
-            estimated_compute_cost: form.estimated_compute_cost || "medium",
+            expected_value: form.expected_value || "",
+            estimated_compute_cost: form.estimated_compute_cost || "",
             state: form.state || "draft",
             tests_hypothesis_ids: form.tests_hypothesis_ids || [],
             depends_on_experiment_ids: [],
-            refs: [],
+            refs: sourceRefs(form),
           }),
         }),
         "Experiment proposal added.",
@@ -725,10 +849,26 @@ function ResearchGraphPanelContent({
             summary: form.summary || "",
             experiment_node_id: form.experiment_node_id || "",
             judgments,
-            refs: [],
+            refs: sourceRefs(form),
           }),
         }),
-        "Result recorded.",
+        "Observation or result recorded.",
+      );
+    } else if (modal === "judgment" && selectedNode?.kind === "result") {
+      await mutate(
+        () => apiFetch(
+          `${graphBase}/results/${encodeURIComponent(selectedNode.node_id)}/judgments/${encodeURIComponent(form.hypothesis_node_id || "")}`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              expected_revision: graph.revision,
+              relation: form.relation || "unjudged",
+            }),
+          },
+        ),
+        form.relation === "unjudged"
+          ? "Result left unjudged for this hypothesis."
+          : "Result judgment updated.",
       );
     } else if (modal === "edit" && selectedNode) {
       const body = selectedNode.kind === "hypothesis"
@@ -736,7 +876,7 @@ function ResearchGraphPanelContent({
           claim: form.claim || "",
           rationale: form.rationale || "",
           predictions: splitLines(form.predictions),
-          importance: form.importance || "medium",
+          importance: form.importance || "",
         }
         : selectedNode.kind === "experiment"
           ? {
@@ -744,8 +884,9 @@ function ResearchGraphPanelContent({
             plan_summary: form.plan_summary || "",
             decision_rule: form.decision_rule || "",
             execution_lane: form.execution_lane || "experiment",
-            expected_value: form.expected_value || "medium",
-            estimated_compute_cost: form.estimated_compute_cost || "medium",
+            expected_value: form.expected_value || "",
+            estimated_compute_cost: form.estimated_compute_cost || "",
+            blocking_reason: selectedNode.body?.blocking_reason || "",
           }
           : { summary: form.summary || "" };
       await mutate(
@@ -810,13 +951,13 @@ function ResearchGraphPanelContent({
       claim: body.claim,
       rationale: body.rationale,
       predictions: (body.predictions || []).join("\n"),
-      importance: body.importance || "medium",
+      importance: body.importance || "",
       objective: body.objective,
       plan_summary: body.plan_summary,
       decision_rule: body.decision_rule,
       execution_lane: body.execution_lane,
-      expected_value: body.expected_value || "medium",
-      estimated_compute_cost: body.estimated_compute_cost || "medium",
+      expected_value: body.expected_value || "",
+      estimated_compute_cost: body.estimated_compute_cost || "",
       summary: body.summary,
   });
 }
@@ -838,14 +979,13 @@ function countLabel(count, singular, plural = `${singular}s`) {
       replicate ? "Replicate thread started." : "Experiment thread started.",
     );
     if (next?.thread) {
-      onThreadUpdate?.(next.thread);
       onOpenThread?.(next.thread.thread_id);
     }
   }
 
   async function planNextStep(focusNodeId = "") {
     if (!graph) return;
-    const next = await mutate(
+    await mutate(
       () => apiFetch(
         `/api/workspaces/${encodeURIComponent(workspaceName)}/research-graphs/${encodeURIComponent(graph.graph_id)}/plan`,
         {
@@ -856,12 +996,26 @@ function countLabel(count, singular, plural = `${singular}s`) {
           }),
         },
       ),
-      "A bound Research thread is developing the next scientific step.",
+      "Research is developing the next scientific step.",
+      { updateThread: false },
     );
-    if (next?.thread) {
-      onThreadUpdate?.(next.thread);
-      onOpenThread?.(next.thread.thread_id);
-    }
+  }
+
+  async function materializeProposal(proposalId) {
+    if (!graph || !payload?.planning_preview?.planning_id || !proposalId) return;
+    await mutate(
+      () => apiFetch(
+        `/api/workspaces/${encodeURIComponent(workspaceName)}/research-graphs/${encodeURIComponent(graph.graph_id)}/plans/${encodeURIComponent(payload.planning_preview.planning_id)}/materialize`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            expected_revision: graph.revision,
+            proposal_id: proposalId,
+          }),
+        },
+      ),
+      "The selected route is now part of the Research Graph.",
+    );
   }
 
   async function toggleAutomation() {
@@ -881,11 +1035,50 @@ function countLabel(count, singular, plural = `${singular}s`) {
     );
   }
 
+  async function toggleCompletion() {
+    if (!graph) return;
+    await mutate(
+      () => apiFetch(
+        `/api/workspaces/${encodeURIComponent(workspaceName)}/research-graphs/${encodeURIComponent(graph.graph_id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            expected_revision: graph.revision,
+            completed: !graph.completed,
+          }),
+        },
+      ),
+      graph.completed
+        ? "Research Graph reopened."
+        : "Research Graph completion criterion marked satisfied.",
+    );
+  }
+
   function resultDefaults(experimentNode = null) {
     return {
       experiment_node_id: experimentNode?.node_id || "",
       judgments: {},
+      ref_kind: "note",
     };
+  }
+
+  function resultJudgment(resultNodeId, hypothesisNodeId) {
+    return (payload?.edges || []).find((edge) => (
+      edge.source_node_id === resultNodeId
+      && edge.target_node_id === hypothesisNodeId
+      && ["supports", "opposes", "inconclusive"].includes(edge.relation)
+    ))?.relation || "unjudged";
+  }
+
+  function openJudgmentEditor(hypothesisNodeId = "") {
+    if (selectedNode?.kind !== "result") return;
+    const targetId = hypothesisNodeId || hypotheses[0]?.node_id || "";
+    openModal("judgment", {
+      hypothesis_node_id: targetId,
+      relation: targetId
+        ? resultJudgment(selectedNode.node_id, targetId)
+        : "unjudged",
+    });
   }
 
   const hypotheses = (payload?.nodes || []).filter((node) => node.kind === "hypothesis");
@@ -908,7 +1101,8 @@ function countLabel(count, singular, plural = `${singular}s`) {
           <button type="button" className="v2-primary-btn" onClick={() => openModal("new_graph", {
             orchestration_mode: "manual",
             attach: true,
-            initial_hypotheses: [{ title: "", claim: "", rationale: "", predictions: "" }],
+            completion_criterion: "",
+            initial_hypotheses: [],
           })}>
             <CirclePlus size={14} /> New graph
           </button>
@@ -929,7 +1123,7 @@ function countLabel(count, singular, plural = `${singular}s`) {
           >
             <div>
               <span>
-                {item.archived ? "Archived" : "Active"} · {orchestrationModeLabel(item.orchestration_mode)}
+                {item.archived ? "Archived" : item.completed ? "Completed" : "Active"} · {orchestrationModeLabel(item.orchestration_mode)}
                 {item.bound_to_current_thread ? " · Attached to this thread" : ""}
               </span>
               <h3>{item.title}</h3>
@@ -962,10 +1156,20 @@ function countLabel(count, singular, plural = `${singular}s`) {
           <header className="v2-rg-header">
             <div>
               <div className="v2-eyebrow">
-                {activeGraphId === graph.graph_id ? "Attached to this thread" : "Open, not attached"}
+                {graph.archived
+                  ? "Archived · read only"
+                  : graph.completed
+                    ? "Completion criterion satisfied"
+                    : activeGraphId === graph.graph_id
+                      ? "Attached to this thread"
+                      : "Open, not attached"}
               </div>
               <h3>{graph.title}</h3>
               <p>{graph.question}</p>
+              <div className="v2-rg-goal">
+                <strong>Completion criterion</strong>
+                <span>{graph.completion_criterion}</span>
+              </div>
               <div className="v2-rg-summary">
                 <span>{countLabel(graph.counts.hypotheses, "hypothesis", "hypotheses")}</span>
                 <span>{countLabel(graph.counts.experiments, "experiment")}</span>
@@ -983,9 +1187,30 @@ function countLabel(count, singular, plural = `${singular}s`) {
                   <Link2 size={14} /> Attach to thread
                 </button>
               )}
-              <button type="button" className="v2-ghost-btn" onClick={toggleAutomation} disabled={mutating || graph.archived}>
+              <button type="button" className="v2-ghost-btn" onClick={toggleAutomation} disabled={mutating || graph.archived || graph.completed}>
                 {graph.orchestration_mode === "auto" ? <Pause size={14} /> : <Bot size={14} />}
                 {graph.orchestration_mode === "auto" ? "Use manual orchestration" : "Enable automatic orchestration"}
+              </button>
+              <button
+                type="button"
+                className="v2-ghost-btn"
+                onClick={toggleCompletion}
+                disabled={mutating || graph.archived || (!graph.completed && !graph.counts.results)}
+                title={!graph.completed && !graph.counts.results ? "Record at least one Result before completing the graph." : ""}
+              >
+                {graph.completed ? "Reopen research" : "Mark criterion satisfied"}
+              </button>
+              <button
+                type="button"
+                className="v2-ghost-btn"
+                onClick={() => openModal("graph", {
+                  title: graph.title,
+                  question: graph.question,
+                  completion_criterion: graph.completion_criterion,
+                })}
+                disabled={mutating || graph.archived}
+              >
+                Edit research goal
               </button>
               <button
                 type="button"
@@ -1007,20 +1232,47 @@ function countLabel(count, singular, plural = `${singular}s`) {
             </div>
           </header>
 
-          <div className="v2-rg-add-actions">
-            <button type="button" className="v2-ghost-btn" onClick={() => openModal("hypothesis")}><CirclePlus size={14} /> Hypothesis</button>
-            <button type="button" className="v2-ghost-btn" onClick={() => openModal("experiment")}><CirclePlus size={14} /> Experiment proposal</button>
-            <button type="button" className="v2-ghost-btn" onClick={() => openModal("result", resultDefaults())} disabled={!resultExperiments.length}><CirclePlus size={14} /> Result</button>
+          <div className="v2-rg-add-actions" aria-label="Add scientific input">
+            <span className="v2-rg-input-label">Add scientific input</span>
+            <button
+              type="button"
+              className="v2-primary-btn"
+              disabled={mutating || graph.archived || graph.completed}
+              onClick={() => planNextStep("")}
+            >
+              <Bot size={14} /> {(payload?.nodes || []).length
+                ? "Ask Research to update routes"
+                : "Ask Research to propose starting routes"}
+            </button>
+            <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={() => openModal("hypothesis")}><CirclePlus size={14} /> Hypothesis or idea</button>
+            <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={() => openModal("result", resultDefaults())}><CirclePlus size={14} /> Observation or result</button>
+            <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={() => openModal("experiment")}><CirclePlus size={14} /> Experiment proposal</button>
           </div>
+
+          {payload?.planning_preview ? (
+            <section className="v2-rg-plan-summary" aria-label="Evidence-aware research planning">
+              <div>
+                <strong>Evidence-aware route planning</strong>
+                <p>{payload.planning_preview.summary}</p>
+              </div>
+            </section>
+          ) : null}
 
           <div className="v2-rg-workspace">
             <GraphCanvas
-              payload={payload}
+              payload={displayPayload}
               selectedNodeId={selectedNodeId}
               onSelectNode={(nodeId) => {
                 setSelectedNodeId(nodeId);
                 openInspector();
-                if (activeGraphId === graph.graph_id && thread?.thread_id) {
+                const selected = displayPayload?.nodes?.find(
+                  (node) => node.node_id === nodeId,
+                );
+                if (
+                  activeGraphId === graph.graph_id
+                  && thread?.thread_id
+                  && !selected?.provisional
+                ) {
                   bindGraph(graph.graph_id, nodeId);
                 }
               }}
@@ -1061,18 +1313,37 @@ function countLabel(count, singular, plural = `${singular}s`) {
                 <>
                   <div className="v2-eyebrow">{selectedNode.kind}</div>
                   <h3>{selectedNode.title}</h3>
+                  {selectedNode.provisional || selectedNode.recommended ? (
+                    <div className="v2-rg-provisional-note">
+                      <strong>
+                        {selectedNode.provisional
+                          ? (selectedNode.recommended ? "Recommended temporary route" : "Temporary planning branch")
+                          : "Recommended next experiment"}
+                      </strong>
+                      <p>
+                        {selectedNode.planning_reason
+                          || (selectedNode.provisional
+                            ? "This branch has not been added to the durable Research Graph."
+                            : "Recommended from the current graph evidence.")}
+                      </p>
+                    </div>
+                  ) : null}
                   {selectedNode.kind === "hypothesis" ? (
                     <>
                       <p>{selectedNode.body.claim}</p>
                       <h4>Importance</h4>
-                      <p>{bandLabel(selectedNode.body.importance)}</p>
+                      <p className={selectedNode.body.importance ? "" : "v2-muted"}>
+                        {bandLabel(selectedNode.body.importance)}
+                      </p>
                       <h4>Rationale</h4>
                       <p>{selectedNode.body.rationale || "No rationale recorded."}</p>
                       <h4>Predictions</h4>
                       {selectedNode.body.predictions?.length ? (
                         <ul>{selectedNode.body.predictions.map((item) => <li key={item}>{item}</li>)}</ul>
                       ) : <p className="v2-muted">No predictions recorded.</p>}
-                      <p className="v2-rg-state">{evidenceStateLabel(selectedNode.evidence_state)}</p>
+                      <p className="v2-rg-state">
+                        {selectedNode.provisional ? "Not yet part of the durable graph" : evidenceStateLabel(selectedNode.evidence_state)}
+                      </p>
                     </>
                   ) : null}
                   {selectedNode.kind === "experiment" ? (
@@ -1080,29 +1351,84 @@ function countLabel(count, singular, plural = `${singular}s`) {
                       <h4>Objective</h4>
                       <p>{selectedNode.body.objective}</p>
                       <h4>Plan</h4>
-                      <p>{selectedNode.body.plan_summary}</p>
-                      <h4>Decision rule</h4>
-                      <p>{selectedNode.body.decision_rule}</p>
-                      <h4>Planning order</h4>
-                      <p>
-                        {bandLabel(selectedNode.body.expected_value)} expected value ·{" "}
-                        {bandLabel(selectedNode.body.estimated_compute_cost)} compute
+                      <p className={selectedNode.body.plan_summary ? "" : "v2-muted"}>
+                        {selectedNode.body.plan_summary || "Not specified yet; this proposal remains a draft."}
                       </p>
+                      <h4>Decision rule</h4>
+                      <p className={selectedNode.body.decision_rule ? "" : "v2-muted"}>
+                        {selectedNode.body.decision_rule || "Not specified yet; add one before marking the experiment ready."}
+                      </p>
+                      {selectedNode.body.expected_value || selectedNode.body.estimated_compute_cost ? (
+                        <>
+                          <h4>Planning order</h4>
+                          <p>{[
+                            selectedNode.body.expected_value
+                              ? `${bandLabel(selectedNode.body.expected_value)} expected value`
+                              : "",
+                            selectedNode.body.estimated_compute_cost
+                              ? `${bandLabel(selectedNode.body.estimated_compute_cost)} compute`
+                              : "",
+                          ].filter(Boolean).join(" · ")}</p>
+                        </>
+                      ) : null}
+                      {selectedNode.state === "blocked" && selectedNode.body.blocking_reason ? (
+                        <>
+                          <h4>Why it is blocked</h4>
+                          <p>{selectedNode.body.blocking_reason}</p>
+                        </>
+                      ) : null}
                       <p className="v2-rg-state">
-                        {experimentStateLabel(selectedNode.state)} · {executionLaneLabel(selectedNode.body.execution_lane)}
+                        {selectedNode.provisional ? "Temporary proposal" : experimentStateLabel(selectedNode.state)} · {executionLaneLabel(selectedNode.body.execution_lane)}
                       </p>
                     </>
                   ) : null}
-                  {selectedNode.kind === "result" ? <p>{selectedNode.body.summary}</p> : null}
+                  {selectedNode.kind === "result" ? (
+                    <>
+                      <p>{selectedNode.body.summary}</p>
+                      <h4>Effect on hypotheses</h4>
+                      {hypotheses.some((node) => resultJudgment(selectedNode.node_id, node.node_id) !== "unjudged") ? (
+                        <ul>
+                          {hypotheses
+                            .filter((node) => resultJudgment(selectedNode.node_id, node.node_id) !== "unjudged")
+                            .map((node) => (
+                              <li key={node.node_id}>
+                                {relationLabel(resultJudgment(selectedNode.node_id, node.node_id))}: {node.title}
+                              </li>
+                            ))}
+                        </ul>
+                      ) : <p className="v2-muted">Not yet judged against a hypothesis.</p>}
+                    </>
+                  ) : null}
                   <h4>Sources</h4>
                   <ReferenceList refs={selectedNode.refs} onOpenThread={onOpenThread} onOpenReference={onOpenReference} />
                   <div className="v2-rg-node-actions">
-                    <button type="button" className="v2-ghost-btn" onClick={editSelected}>Edit with confirmation</button>
-                    <button type="button" className="v2-ghost-btn" onClick={() => openModal("ref", { ref_kind: "note" })}><Link2 size={13} /> Add source</button>
-                    {selectedNode.kind === "hypothesis" ? (
+                    {selectedNode.provisional ? (
+                      <button
+                        type="button"
+                        className="v2-primary-btn"
+                        onClick={() => materializeProposal(selectedNode.node_id)}
+                        disabled={mutating || graph.archived || graph.completed}
+                      >
+                        <CirclePlus size={13} /> Add this route to the graph
+                      </button>
+                    ) : (
                       <>
-                        <button type="button" className="v2-primary-btn" onClick={() => openModal("experiment", { tests_hypothesis_ids: [selectedNode.node_id], state: "draft" })}>
+                        <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={editSelected}>Edit with confirmation</button>
+                        <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={() => openModal("ref", { ref_kind: "note" })}><Link2 size={13} /> Add source</button>
+                      </>
+                    )}
+                    {!selectedNode.provisional && selectedNode.kind === "hypothesis" ? (
+                      <>
+                        <button type="button" className="v2-primary-btn" disabled={mutating || graph.archived} onClick={() => openModal("experiment", { tests_hypothesis_ids: [selectedNode.node_id], state: "draft" })}>
                           Develop experiment proposal <ArrowRight size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          className="v2-primary-btn"
+                          onClick={() => planNextStep(selectedNode.node_id)}
+                          disabled={mutating || graph.archived || graph.completed}
+                        >
+                          <Bot size={13} /> Ask Research to develop the next step
                         </button>
                         <button
                           type="button"
@@ -1126,13 +1452,14 @@ function countLabel(count, singular, plural = `${singular}s`) {
                         </button>
                       </>
                     ) : null}
-                    {selectedNode.kind === "experiment" && selectedNode.state === "ready" ? (
-                      <button type="button" className="v2-primary-btn" onClick={() => launchExperiment(false)} disabled={mutating}><Play size={13} /> Run</button>
+                    {!selectedNode.provisional && selectedNode.kind === "experiment" && selectedNode.state === "ready" ? (
+                      <button type="button" className="v2-primary-btn" onClick={() => launchExperiment(false)} disabled={mutating || graph.archived}><Play size={13} /> Run</button>
                     ) : null}
-                    {selectedNode.kind === "experiment" && selectedNode.state === "draft" ? (
+                    {!selectedNode.provisional && selectedNode.kind === "experiment" && selectedNode.state === "draft" ? (
                       <button
                         type="button"
                         className="v2-primary-btn"
+                        disabled={mutating || graph.archived}
                         onClick={() => {
                           editSelected();
                           setForm((current) => ({ ...current, state: "ready" }));
@@ -1141,39 +1468,48 @@ function countLabel(count, singular, plural = `${singular}s`) {
                         Prepare and mark ready
                       </button>
                     ) : null}
-                    {selectedNode.kind === "experiment" && selectedNode.state === "has_results" ? (
-                      <button type="button" className="v2-primary-btn" onClick={() => launchExperiment(true)} disabled={mutating}><Play size={13} /> Run replicate</button>
+                    {!selectedNode.provisional && selectedNode.kind === "experiment" && selectedNode.state === "has_results" ? (
+                      <button type="button" className="v2-primary-btn" onClick={() => launchExperiment(true)} disabled={mutating || graph.archived}><Play size={13} /> Run replicate</button>
                     ) : null}
-                    {selectedNode.kind === "experiment" && selectedNode.active_launch?.thread_id ? (
+                    {!selectedNode.provisional && selectedNode.kind === "experiment" && selectedNode.active_launch?.thread_id ? (
                       <button type="button" className="v2-ghost-btn" onClick={() => onOpenThread?.(selectedNode.active_launch.thread_id)}><ExternalLink size={13} /> Open active launch</button>
                     ) : null}
-                    {selectedNode.kind === "experiment" ? (
+                    {!selectedNode.provisional && selectedNode.kind === "experiment" ? (
                       <>
-                        <button type="button" className="v2-ghost-btn" onClick={() => openModal("dependency")}>Add dependency</button>
+                        <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={() => openModal("dependency")}>Add dependency</button>
                         {!["has_results", "blocked"].includes(selectedNode.state) ? (
-                          <button type="button" className="v2-ghost-btn" onClick={() => openModal("blocked")}>Mark blocked</button>
+                          <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={() => openModal("blocked")}>Mark blocked</button>
                         ) : null}
                         {["ready", "running", "has_results"].includes(selectedNode.state) ? (
-                          <button type="button" className="v2-ghost-btn" onClick={() => openModal("result", resultDefaults(selectedNode))}>Record result</button>
+                          <button type="button" className="v2-ghost-btn" disabled={mutating || graph.archived} onClick={() => openModal("result", resultDefaults(selectedNode))}>Record result</button>
                         ) : null}
                       </>
                     ) : null}
-                    {selectedNode.kind === "result" ? (
+                    {!selectedNode.provisional && selectedNode.kind === "result" ? (
                       <>
                         <button
                           type="button"
                           className="v2-primary-btn"
                           onClick={() => planNextStep(selectedNode.node_id)}
-                          disabled={mutating}
+                          disabled={mutating || graph.archived || graph.completed}
                         >
-                          <Bot size={13} /> Ask Research to develop the next step
+                          <Bot size={13} /> Re-evaluate routes from this result
                         </button>
-                        <button type="button" className="v2-primary-btn" onClick={() => openModal("hypothesis", { suggested_by_result_id: selectedNode.node_id })}>
+                        <button type="button" className="v2-primary-btn" disabled={mutating || graph.archived} onClick={() => openModal("hypothesis", { suggested_by_result_id: selectedNode.node_id })}>
                           Add next hypothesis yourself <ArrowRight size={13} />
                         </button>
                         <button
                           type="button"
                           className="v2-ghost-btn"
+                          onClick={() => openJudgmentEditor()}
+                          disabled={mutating || graph.archived || !hypotheses.length}
+                        >
+                          Set or clear hypothesis effect
+                        </button>
+                        <button
+                          type="button"
+                          className="v2-ghost-btn"
+                          disabled={mutating || graph.archived}
                           onClick={() => openModal("experiment", {
                             state: "draft",
                             tests_hypothesis_ids: (payload.edges || [])
@@ -1206,9 +1542,11 @@ function countLabel(count, singular, plural = `${singular}s`) {
         <GraphModal
           title={{
             new_graph: "Create Research Graph",
+            graph: "Edit research goal",
             hypothesis: "Add hypothesis",
             experiment: "Add experiment proposal",
-            result: "Record result",
+            result: "Record observation or result",
+            judgment: "Set hypothesis effect",
             edit: "Confirm scientific node edit",
             ref: "Attach source",
             dependency: "Add experiment dependency",
@@ -1220,8 +1558,12 @@ function countLabel(count, singular, plural = `${singular}s`) {
             {modal === "new_graph" ? (
               <>
                 <Field label="Research question"><textarea required value={form.question || ""} onChange={(event) => setForm({ ...form, question: event.target.value })} /></Field>
-                <Field label="Title" hint="Optional; the question is used when left empty."><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
-                <fieldset className="v2-rg-seed-list">
+                <OptionalDetails label="Optional setup and initial hypotheses">
+                  <Field label="Title" hint="The question is used when left empty."><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+                  <Field label="Completion criterion" hint="Leave empty to use the default: a defensible answer supported by recorded results and traceable sources.">
+                    <textarea value={form.completion_criterion || ""} onChange={(event) => setForm({ ...form, completion_criterion: event.target.value })} />
+                  </Field>
+                  <fieldset className="v2-rg-seed-list">
                   <legend>Initial hypotheses (optional)</legend>
                   {(form.initial_hypotheses || []).map((item, index) => (
                     <section key={`seed-${index}`} className="v2-rg-seed-card">
@@ -1238,7 +1580,7 @@ function countLabel(count, singular, plural = `${singular}s`) {
                           Remove
                         </button>
                       </div>
-                      <Field label="Title"><input value={item.title || ""} onChange={(event) => setForm({
+                      <Field label="Title (optional)"><input value={item.title || ""} onChange={(event) => setForm({
                         ...form,
                         initial_hypotheses: form.initial_hypotheses.map((seed, itemIndex) => (
                           itemIndex === index ? { ...seed, title: event.target.value } : seed
@@ -1250,30 +1592,41 @@ function countLabel(count, singular, plural = `${singular}s`) {
                           itemIndex === index ? { ...seed, claim: event.target.value } : seed
                         )),
                       })} /></Field>
-                      <Field label="Rationale"><textarea value={item.rationale || ""} onChange={(event) => setForm({
+                      <Field label="Rationale (optional)"><textarea value={item.rationale || ""} onChange={(event) => setForm({
                         ...form,
                         initial_hypotheses: form.initial_hypotheses.map((seed, itemIndex) => (
                           itemIndex === index ? { ...seed, rationale: event.target.value } : seed
                         )),
                       })} /></Field>
-                      <Field label="Observable predictions" hint="One prediction per line."><textarea value={item.predictions || ""} onChange={(event) => setForm({
+                      <Field label="Observable predictions (optional)" hint="One prediction per line."><textarea value={item.predictions || ""} onChange={(event) => setForm({
                         ...form,
                         initial_hypotheses: form.initial_hypotheses.map((seed, itemIndex) => (
                           itemIndex === index ? { ...seed, predictions: event.target.value } : seed
                         )),
                       })} /></Field>
                       <Field label="Relative importance" hint="Scientific importance within this graph, not confidence that it is true.">
-                        <select value={item.importance || "medium"} onChange={(event) => setForm({
+                        <select value={item.importance || ""} onChange={(event) => setForm({
                           ...form,
                           initial_hypotheses: form.initial_hypotheses.map((seed, itemIndex) => (
                             itemIndex === index ? { ...seed, importance: event.target.value } : seed
                           )),
                         })}>
+                          <option value="">Not specified</option>
                           <option value="low">Low</option>
                           <option value="medium">Medium</option>
                           <option value="high">High</option>
                         </select>
                       </Field>
+                      <OptionalSourceFields
+                        form={item}
+                        setForm={(nextSeed) => setForm({
+                          ...form,
+                          initial_hypotheses: form.initial_hypotheses.map((seed, itemIndex) => (
+                            itemIndex === index ? nextSeed : seed
+                          )),
+                        })}
+                        hint="Attach the literature, note, or other source that motivated this hypothesis. More sources can be attached later."
+                      />
                     </section>
                   ))}
                   <button
@@ -1283,33 +1636,53 @@ function countLabel(count, singular, plural = `${singular}s`) {
                       ...form,
                       initial_hypotheses: [
                         ...(form.initial_hypotheses || []),
-                        { title: "", claim: "", rationale: "", predictions: "", importance: "medium" },
+                        {
+                          title: "",
+                          claim: "",
+                          rationale: "",
+                          predictions: "",
+                          importance: "",
+                          ref_kind: "note",
+                          ref_id: "",
+                        },
                       ],
                     })}
                   >
-                    <CirclePlus size={13} /> Add another hypothesis
+                    <CirclePlus size={13} /> {(form.initial_hypotheses || []).length ? "Add another hypothesis" : "Add initial hypothesis"}
                   </button>
-                </fieldset>
-                <Field label="Orchestration"><select value={form.orchestration_mode || "manual"} onChange={(event) => setForm({ ...form, orchestration_mode: event.target.value })}><option value="manual">Manual</option><option value="auto">Automatic</option></select></Field>
-                <label className="v2-rg-checkbox"><input type="checkbox" checked={form.attach !== false} onChange={(event) => setForm({ ...form, attach: event.target.checked })} /> Attach to this thread</label>
+                  </fieldset>
+                  <Field label="Orchestration"><select value={form.orchestration_mode || "manual"} onChange={(event) => setForm({ ...form, orchestration_mode: event.target.value })}><option value="manual">Manual</option><option value="auto">Automatic</option></select></Field>
+                  <label className="v2-rg-checkbox"><input type="checkbox" checked={form.attach !== false} onChange={(event) => setForm({ ...form, attach: event.target.checked })} /> Attach to this thread</label>
+                </OptionalDetails>
+              </>
+            ) : null}
+            {modal === "graph" ? (
+              <>
+                <Field label="Title"><input required value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+                <Field label="Research question"><textarea required value={form.question || ""} onChange={(event) => setForm({ ...form, question: event.target.value })} /></Field>
+                <Field label="Completion criterion" hint="State what recorded evidence would make this research question sufficiently answered."><textarea required value={form.completion_criterion || ""} onChange={(event) => setForm({ ...form, completion_criterion: event.target.value })} /></Field>
               </>
             ) : null}
             {modal === "hypothesis" ? (
               <>
-                <Field label="Title"><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
                 <Field label="Falsifiable claim"><textarea required value={form.claim || ""} onChange={(event) => setForm({ ...form, claim: event.target.value })} /></Field>
-                <Field label="Rationale"><textarea value={form.rationale || ""} onChange={(event) => setForm({ ...form, rationale: event.target.value })} /></Field>
-                <Field label="Observable predictions" hint="One prediction per line."><textarea value={form.predictions || ""} onChange={(event) => setForm({ ...form, predictions: event.target.value })} /></Field>
-                <Field label="Relative importance" hint="Scientific importance within this graph, not confidence that it is true."><select value={form.importance || "medium"} onChange={(event) => setForm({ ...form, importance: event.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
+                <OptionalDetails>
+                  <Field label="Title"><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+                  <Field label="Rationale"><textarea value={form.rationale || ""} onChange={(event) => setForm({ ...form, rationale: event.target.value })} /></Field>
+                  <Field label="Observable predictions" hint="One prediction per line."><textarea value={form.predictions || ""} onChange={(event) => setForm({ ...form, predictions: event.target.value })} /></Field>
+                  <Field label="Relative importance" hint="Optional; leave unspecified when it has not been assessed."><select value={form.importance || ""} onChange={(event) => setForm({ ...form, importance: event.target.value })}><option value="">Not specified</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
+                  <OptionalSourceFields form={form} setForm={setForm} />
+                </OptionalDetails>
               </>
             ) : null}
             {modal === "experiment" ? (
               <>
-                <Field label="Title"><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
                 <Field label="Objective"><textarea required value={form.objective || ""} onChange={(event) => setForm({ ...form, objective: event.target.value })} /></Field>
-                <Field label="Plan summary"><textarea required value={form.plan_summary || ""} onChange={(event) => setForm({ ...form, plan_summary: event.target.value })} /></Field>
-                <Field label="Decision rule"><textarea required value={form.decision_rule || ""} onChange={(event) => setForm({ ...form, decision_rule: event.target.value })} /></Field>
-                <fieldset className="v2-rg-judgments">
+                <OptionalDetails label="Optional planning and execution details">
+                  <Field label="Title"><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+                  <Field label="Plan summary" hint="Required only when this proposal is marked ready to run."><textarea required={(form.state || "draft") === "ready"} value={form.plan_summary || ""} onChange={(event) => setForm({ ...form, plan_summary: event.target.value })} /></Field>
+                  <Field label="Decision rule" hint="Required only when this proposal is marked ready to run."><textarea required={(form.state || "draft") === "ready"} value={form.decision_rule || ""} onChange={(event) => setForm({ ...form, decision_rule: event.target.value })} /></Field>
+                  <fieldset className="v2-rg-judgments">
                   <legend>Hypotheses tested</legend>
                   {hypotheses.length ? hypotheses.map((node) => (
                     <label key={node.node_id} className="v2-rg-check-row">
@@ -1326,38 +1699,169 @@ function countLabel(count, singular, plural = `${singular}s`) {
                       <span>{node.title}</span>
                     </label>
                   )) : <p className="v2-muted">No hypothesis exists yet; this proposal can be linked later.</p>}
-                </fieldset>
-                <Field label="Execution lane"><select value={form.execution_lane || "experiment"} onChange={(event) => setForm({ ...form, execution_lane: event.target.value })}><option value="experiment">Experiment</option><option value="research">Research</option><option value="literature_review">Literature review</option></select></Field>
-                <Field label="Expected decision value" hint="How useful a usable result would be; not its probability of success."><select value={form.expected_value || "medium"} onChange={(event) => setForm({ ...form, expected_value: event.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
-                <Field label="Estimated compute cost" hint="Use a coarse band; do not invent a precise estimate."><select value={form.estimated_compute_cost || "medium"} onChange={(event) => setForm({ ...form, estimated_compute_cost: event.target.value })}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
-                <Field label="Readiness"><select value={form.state || "draft"} onChange={(event) => setForm({ ...form, state: event.target.value })}><option value="draft">Draft</option><option value="ready">Ready to run</option></select></Field>
+                  </fieldset>
+                  <Field label="Execution lane"><select value={form.execution_lane || "experiment"} onChange={(event) => setForm({ ...form, execution_lane: event.target.value })}><option value="experiment">Experiment</option><option value="research">Research</option><option value="literature_review">Literature review</option></select></Field>
+                  <Field label="Expected decision value" hint="Optional; usefulness of a usable result, not success probability."><select value={form.expected_value || ""} onChange={(event) => setForm({ ...form, expected_value: event.target.value })}><option value="">Not specified</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
+                  <Field label="Estimated compute cost" hint="Optional; leave unspecified rather than inventing an estimate."><select value={form.estimated_compute_cost || ""} onChange={(event) => setForm({ ...form, estimated_compute_cost: event.target.value })}><option value="">Not specified</option><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
+                  <Field label="Readiness"><select value={form.state || "draft"} onChange={(event) => setForm({ ...form, state: event.target.value })}><option value="draft">Draft</option><option value="ready">Ready to run</option></select></Field>
+                  <OptionalSourceFields form={form} setForm={setForm} />
+                </OptionalDetails>
               </>
             ) : null}
             {modal === "result" ? (
               <>
-                <Field label="Title"><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
-                <Field label="Result summary"><textarea required value={form.summary || ""} onChange={(event) => setForm({ ...form, summary: event.target.value })} /></Field>
-                <Field label="Producing experiment"><select required value={form.experiment_node_id || ""} onChange={(event) => setForm({ ...form, experiment_node_id: event.target.value })}><option value="">Choose an experiment</option>{resultExperiments.map((node) => <option key={node.node_id} value={node.node_id}>{node.title}</option>)}</select></Field>
-                <fieldset className="v2-rg-judgments">
+                <Field label="Observed result" hint="State what was observed before adding a causal interpretation."><textarea required value={form.summary || ""} onChange={(event) => setForm({ ...form, summary: event.target.value })} /></Field>
+                <OptionalDetails label="Optional provenance and interpretation">
+                  <Field label="Title"><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+                  <Field label="Producing experiment" hint="Leave empty for a literature finding, collaborator result, historical observation, or other evidence obtained outside this graph.">
+                  <select value={form.experiment_node_id || ""} onChange={(event) => setForm({ ...form, experiment_node_id: event.target.value })}>
+                    <option value="">No Research Graph experiment</option>
+                    {resultExperiments.map((node) => <option key={node.node_id} value={node.node_id}>{node.title}</option>)}
+                  </select>
+                  </Field>
+                  <fieldset className="v2-rg-judgments">
                   <legend>Effect on hypotheses</legend>
                   {hypotheses.map((node) => (
                     <label key={node.node_id}><span>{node.title}</span><select value={form.judgments?.[node.node_id] || ""} onChange={(event) => setForm({ ...form, judgments: { ...(form.judgments || {}), [node.node_id]: event.target.value } })}><option value="">Not judged</option><option value="supports">Supports</option><option value="opposes">Opposes</option><option value="inconclusive">Inconclusive</option></select></label>
                   ))}
-                </fieldset>
+                  </fieldset>
+                  <OptionalSourceFields
+                    form={form}
+                    setForm={setForm}
+                    hint="Attach the DOI, URL, note, artifact, run, thread, or message that preserves the observation. More sources can be attached later."
+                  />
+                </OptionalDetails>
+              </>
+            ) : null}
+            {modal === "judgment" && selectedNode?.kind === "result" ? (
+              <>
+                <Field
+                  label="Hypothesis"
+                  hint="Choose the hypothesis whose interpretation should be added, replaced, or cleared."
+                >
+                  <select
+                    required
+                    value={form.hypothesis_node_id || ""}
+                    onChange={(event) => {
+                      const hypothesisNodeId = event.target.value;
+                      setForm({
+                        ...form,
+                        hypothesis_node_id: hypothesisNodeId,
+                        relation: hypothesisNodeId
+                          ? resultJudgment(selectedNode.node_id, hypothesisNodeId)
+                          : "unjudged",
+                      });
+                    }}
+                  >
+                    <option value="">Choose a hypothesis</option>
+                    {hypotheses.map((node) => (
+                      <option key={node.node_id} value={node.node_id}>{node.title}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field
+                  label="Effect"
+                  hint="Unjudged clears the existing interpretation for this result-hypothesis pair without deleting either node."
+                >
+                  <select
+                    value={form.relation || "unjudged"}
+                    onChange={(event) => setForm({ ...form, relation: event.target.value })}
+                  >
+                    <option value="supports">Supports</option>
+                    <option value="opposes">Opposes</option>
+                    <option value="inconclusive">Inconclusive</option>
+                    <option value="unjudged">Not judged / clear existing effect</option>
+                  </select>
+                </Field>
               </>
             ) : null}
             {modal === "edit" && selectedNode ? (
               <>
                 <p className="v2-rg-confirmation">You are editing shared cross-thread scientific state. Review the complete fields before saving.</p>
                 <Field label="Title"><input required value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
-                {selectedNode.kind === "hypothesis" ? <><Field label="Claim"><textarea required value={form.claim || ""} onChange={(event) => setForm({ ...form, claim: event.target.value })} /></Field><Field label="Rationale"><textarea value={form.rationale || ""} onChange={(event) => setForm({ ...form, rationale: event.target.value })} /></Field><Field label="Predictions"><textarea value={form.predictions || ""} onChange={(event) => setForm({ ...form, predictions: event.target.value })} /></Field><Field label="Relative importance" hint="Scientific importance within this graph, not confidence."><select value={form.importance || "medium"} onChange={(event) => setForm({ ...form, importance: event.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field></> : null}
-                {selectedNode.kind === "experiment" ? <><Field label="Objective"><textarea required value={form.objective || ""} onChange={(event) => setForm({ ...form, objective: event.target.value })} /></Field><Field label="Plan summary"><textarea required value={form.plan_summary || ""} onChange={(event) => setForm({ ...form, plan_summary: event.target.value })} /></Field><Field label="Decision rule"><textarea required value={form.decision_rule || ""} onChange={(event) => setForm({ ...form, decision_rule: event.target.value })} /></Field><Field label="Execution lane"><select value={form.execution_lane || "experiment"} onChange={(event) => setForm({ ...form, execution_lane: event.target.value })}><option value="experiment">Experiment</option><option value="research">Research</option><option value="literature_review">Literature review</option></select></Field><Field label="Expected decision value" hint="Usefulness of a usable result, not success probability."><select value={form.expected_value || "medium"} onChange={(event) => setForm({ ...form, expected_value: event.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field><Field label="Estimated compute cost"><select value={form.estimated_compute_cost || "medium"} onChange={(event) => setForm({ ...form, estimated_compute_cost: event.target.value })}><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field><Field label="Readiness" hint={["running", "has_results"].includes(selectedNode.state) ? "Execution and result states change through their dedicated actions." : ""}><select value={form.state || selectedNode.state} disabled={["running", "has_results"].includes(selectedNode.state)} onChange={(event) => setForm({ ...form, state: event.target.value })}>{(selectedNode.state === "blocked" ? ["blocked", "draft", "ready"] : ["running", "has_results"].includes(selectedNode.state) ? [selectedNode.state] : ["draft", "ready"]).map((state) => <option key={state} value={state}>{experimentStateLabel(state)}</option>)}</select></Field></> : null}
+                {selectedNode.kind === "hypothesis" ? <><Field label="Claim"><textarea required value={form.claim || ""} onChange={(event) => setForm({ ...form, claim: event.target.value })} /></Field><Field label="Rationale"><textarea value={form.rationale || ""} onChange={(event) => setForm({ ...form, rationale: event.target.value })} /></Field><Field label="Predictions"><textarea value={form.predictions || ""} onChange={(event) => setForm({ ...form, predictions: event.target.value })} /></Field><Field label="Relative importance" hint="Optional; leave unspecified when it has not been assessed."><select value={form.importance || ""} onChange={(event) => setForm({ ...form, importance: event.target.value })}><option value="">Not specified</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field></> : null}
+                {selectedNode.kind === "experiment" ? (
+                  <>
+                    <Field label="Objective">
+                      <textarea
+                        required
+                        value={form.objective || ""}
+                        onChange={(event) => setForm({ ...form, objective: event.target.value })}
+                      />
+                    </Field>
+                    <Field
+                      label="Plan summary (optional for a draft)"
+                      hint="Required before this proposal can be marked ready to run."
+                    >
+                      <textarea
+                        required={(form.state || selectedNode.state) === "ready"}
+                        value={form.plan_summary || ""}
+                        onChange={(event) => setForm({ ...form, plan_summary: event.target.value })}
+                      />
+                    </Field>
+                    <Field
+                      label="Decision rule (optional for a draft)"
+                      hint="Required before this proposal can be marked ready to run."
+                    >
+                      <textarea
+                        required={(form.state || selectedNode.state) === "ready"}
+                        value={form.decision_rule || ""}
+                        onChange={(event) => setForm({ ...form, decision_rule: event.target.value })}
+                      />
+                    </Field>
+                    <Field label="Execution lane">
+                      <select value={form.execution_lane || "experiment"} onChange={(event) => setForm({ ...form, execution_lane: event.target.value })}>
+                        <option value="experiment">Experiment</option>
+                        <option value="research">Research</option>
+                        <option value="literature_review">Literature review</option>
+                      </select>
+                    </Field>
+                    <Field label="Expected decision value" hint="Usefulness of a usable result, not success probability.">
+                      <select value={form.expected_value || ""} onChange={(event) => setForm({ ...form, expected_value: event.target.value })}>
+                        <option value="">Not specified</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </Field>
+                    <Field label="Estimated compute cost">
+                      <select value={form.estimated_compute_cost || ""} onChange={(event) => setForm({ ...form, estimated_compute_cost: event.target.value })}>
+                        <option value="">Not specified</option>
+                        <option value="none">None</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </Field>
+                    <Field
+                      label="Readiness"
+                      hint={["running", "has_results"].includes(selectedNode.state)
+                        ? "Execution and result states change through their dedicated actions."
+                        : "Drafts need only an objective; ready experiments also need a plan and decision rule."}
+                    >
+                      <select
+                        value={form.state || selectedNode.state}
+                        disabled={["running", "has_results"].includes(selectedNode.state)}
+                        onChange={(event) => setForm({ ...form, state: event.target.value })}
+                      >
+                        {(selectedNode.state === "blocked"
+                          ? ["blocked", "draft", "ready"]
+                          : ["running", "has_results"].includes(selectedNode.state)
+                            ? [selectedNode.state]
+                            : ["draft", "ready"]
+                        ).map((state) => (
+                          <option key={state} value={state}>{experimentStateLabel(state)}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  </>
+                ) : null}
                 {selectedNode.kind === "result" ? <Field label="Summary"><textarea required value={form.summary || ""} onChange={(event) => setForm({ ...form, summary: event.target.value })} /></Field> : null}
               </>
             ) : null}
             {modal === "ref" ? (
               <>
-                <Field label="Source type"><select value={form.ref_kind || "note"} onChange={(event) => setForm({ ...form, ref_kind: event.target.value })}>{["note", "artifact", "run", "doi", "url", "thread", "message"].map((kind) => <option value={kind} key={kind}>{kind}</option>)}</select></Field>
+                <Field label="Source type"><select value={form.ref_kind || "note"} onChange={(event) => setForm({ ...form, ref_kind: event.target.value })}>{SOURCE_KINDS.map((kind) => <option value={kind} key={kind}>{SOURCE_KIND_LABELS[kind]}</option>)}</select></Field>
                 <Field label="Source identifier" hint="Notes must be existing workspace file paths; messages may use thread_id:message_id."><input required value={form.ref_id || ""} onChange={(event) => setForm({ ...form, ref_id: event.target.value })} /></Field>
               </>
             ) : null}

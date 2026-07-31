@@ -7,10 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from catmaster.research.knowledge_graph.models import (
     ExperimentCreateRequest,
     GraphCreateRequest,
+    GraphPatchRequest,
     HypothesisCreateRequest,
+    ResearchGraphPlanningProposal,
     ResearchRefInput,
     ResultJudgmentInput,
     ResultCreateRequest,
+    ResultJudgmentSetRequest,
 )
 from catmaster.research.knowledge_graph.service import ResearchGraphService
 from catmaster.research.knowledge_graph.store import ResearchGraphConflict
@@ -32,6 +35,15 @@ class ListResearchGraphsInput(BaseModel):
 
 class CreateResearchGraphInput(GraphCreateRequest):
     """[research/graph] Create a workspace Research Graph from a question and optional seed hypotheses."""
+
+    completion_criterion: str = Field(
+        "",
+        max_length=4_000,
+        description=(
+            "Optional human-readable evidence threshold. Leave empty to use "
+            "the default defensible-answer criterion."
+        ),
+    )
 
 
 class InspectResearchGraphInput(BaseModel):
@@ -69,15 +81,51 @@ class AddResearchHypothesisInput(HypothesisCreateRequest):
 
 
 class AddResearchExperimentInput(ExperimentCreateRequest):
-    """[research/graph] Add one complete experiment proposal with graph revision CAS."""
+    """[research/graph] Add a draft or ready experiment proposal with graph revision CAS."""
 
     graph_id: str = Field(..., min_length=3, description="Explicit target graph ID.")
+
+
+class StageResearchPlanInput(ResearchGraphPlanningProposal):
+    """[research/graph] Publish temporary scientific branches from the bound planning turn."""
+
+
+class SetResearchGraphCompletionInput(BaseModel):
+    """[research/graph] Mark whether recorded Results satisfy the graph's completion criterion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    graph_id: str = Field(..., min_length=3, description="Explicit target graph ID.")
+    expected_revision: int = Field(..., ge=1, description="Latest inspected graph revision.")
+    completed: bool = Field(
+        ...,
+        description=(
+            "True only when recorded Results and sources satisfy the explicit "
+            "completion criterion; false reopens the graph."
+        ),
+    )
 
 
 class RecordResearchResultInput(ResultCreateRequest):
-    """[research/graph] Record one concise scientific result, source refs, and typed judgments."""
+    """[research/graph] Record one concise observation or result, source refs, and typed judgments."""
 
     graph_id: str = Field(..., min_length=3, description="Explicit target graph ID.")
+
+
+class SetResearchResultJudgmentInput(ResultJudgmentSetRequest):
+    """[research/graph] Replace one Result-to-Hypothesis evidence judgment."""
+
+    graph_id: str = Field(..., min_length=3, description="Explicit target graph ID.")
+    result_node_id: str = Field(
+        ...,
+        min_length=3,
+        description="Result whose effect is being judged.",
+    )
+    hypothesis_node_id: str = Field(
+        ...,
+        min_length=3,
+        description="Hypothesis affected by this Result.",
+    )
 
 
 class MarkResearchExperimentFailedInput(BaseModel):
@@ -282,7 +330,13 @@ def list_research_graphs(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         else:
             lines = [f"Workspace Research Graphs ({len(rows)}):"]
             for graph in rows:
-                state = "archived" if graph["archived"] else "active"
+                state = (
+                    "archived"
+                    if graph["archived"]
+                    else "completed"
+                    if graph["completed"]
+                    else "active"
+                )
                 lines.append(
                     f"- {graph['title']} ({graph['graph_id']}, revision "
                     f"{graph['revision']}, {state}, {graph['orchestration_mode']}): "
@@ -298,6 +352,8 @@ def list_research_graphs(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                         "graph_id": graph["graph_id"],
                         "title": graph["title"],
                         "question": graph["question"],
+                        "completion_criterion": graph["completion_criterion"],
+                        "completed": graph["completed"],
                         "archived": graph["archived"],
                         "revision": graph["revision"],
                         "orchestration_mode": graph["orchestration_mode"],
@@ -418,6 +474,85 @@ def add_research_experiment(payload: dict[str, Any]) -> tuple[str, dict[str, Any
         _error(tool_name, graph_id, exc)
 
 
+def stage_research_plan(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    tool_name = "stage_research_plan"
+    graph_id = ""
+    try:
+        params = StageResearchPlanInput.model_validate(payload)
+        planning_thread_id = _trusted_thread_id()
+        if not planning_thread_id:
+            raise ValueError("The planning turn has no trusted thread binding.")
+        service = _service()
+        planning = service.store.find_planning_by_thread(planning_thread_id)
+        if planning is None:
+            raise ValueError(
+                "The current thread is not an active Research Graph planning turn."
+            )
+        graph_id = str(planning["graph_id"])
+        proposal = ResearchGraphPlanningProposal.model_validate(
+            params.model_dump(mode="json")
+        )
+        result = service.stage_planning_proposal(
+            graph_id,
+            expected_revision=int(planning["revision"]),
+            planning_thread_id=planning_thread_id,
+            proposal=proposal,
+        )
+        summary = str(result.get("summary") or "Temporary plan published.")
+        materialized = dict(result.get("materialized") or {})
+        return summary, _artifact(
+            tool_name,
+            {
+                "graph_id": graph_id,
+                "planning_id": result["planning_id"],
+                "recommended_target_id": result["recommended_target_id"],
+                "materialized": {
+                    key: materialized[key]
+                    for key in (
+                        "proposal_id",
+                        "node_ids",
+                        "next_experiment_node_id",
+                    )
+                    if key in materialized
+                },
+            },
+        )
+    except CatMasterToolExecutionError:
+        raise
+    except Exception as exc:
+        _error(tool_name, graph_id, exc)
+
+
+def set_research_graph_completion(
+    payload: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    tool_name = "set_research_graph_completion"
+    graph_id = str(payload.get("graph_id") or "")
+    try:
+        params = SetResearchGraphCompletionInput.model_validate(payload)
+        service = _service()
+        service.patch_graph(
+            params.graph_id,
+            GraphPatchRequest(
+                expected_revision=params.expected_revision,
+                completed=params.completed,
+            ),
+        )
+        return _context_result(
+            tool_name=tool_name,
+            graph_id=params.graph_id,
+            prefix=(
+                "Research Graph completion criterion marked satisfied."
+                if params.completed
+                else "Research Graph reopened."
+            ),
+        )
+    except CatMasterToolExecutionError:
+        raise
+    except Exception as exc:
+        _error(tool_name, graph_id, exc)
+
+
 def record_research_result(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     tool_name = "record_research_result"
     graph_id = str(payload.get("graph_id") or "")
@@ -432,6 +567,40 @@ def record_research_result(payload: dict[str, Any]) -> tuple[str, dict[str, Any]
             graph_id=params.graph_id,
             focus_node_id=result["node"]["node_id"],
             prefix=f"Recorded result {result['node']['title']}.",
+        )
+    except CatMasterToolExecutionError:
+        raise
+    except Exception as exc:
+        _error(tool_name, graph_id, exc)
+
+
+def set_research_result_judgment(
+    payload: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    tool_name = "set_research_result_judgment"
+    graph_id = str(payload.get("graph_id") or "")
+    try:
+        params = SetResearchResultJudgmentInput.model_validate(payload)
+        request = ResultJudgmentSetRequest.model_validate(
+            params.model_dump(
+                mode="json",
+                exclude={"graph_id", "result_node_id", "hypothesis_node_id"},
+            )
+        )
+        _service().set_result_judgment(
+            params.graph_id,
+            params.result_node_id,
+            params.hypothesis_node_id,
+            request,
+        )
+        return _context_result(
+            tool_name=tool_name,
+            graph_id=params.graph_id,
+            focus_node_id=params.result_node_id,
+            prefix=(
+                f"Result judgment set to {params.relation} for hypothesis "
+                f"{params.hypothesis_node_id}."
+            ),
         )
     except CatMasterToolExecutionError:
         raise
@@ -562,6 +731,9 @@ __all__ = [
     "MarkResearchExperimentFailedInput",
     "RecordBoundResearchResultInput",
     "RecordResearchResultInput",
+    "SetResearchResultJudgmentInput",
+    "SetResearchGraphCompletionInput",
+    "StageResearchPlanInput",
     "add_research_experiment",
     "add_research_hypothesis",
     "create_research_graph",
@@ -571,4 +743,7 @@ __all__ = [
     "mark_research_experiment_failed",
     "record_bound_research_result",
     "record_research_result",
+    "set_research_result_judgment",
+    "set_research_graph_completion",
+    "stage_research_plan",
 ]

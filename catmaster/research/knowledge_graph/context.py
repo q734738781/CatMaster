@@ -12,8 +12,8 @@ from .models import NodeKind, RefKind
 from .store import ResearchGraphStore
 
 _TOKEN_RE = re.compile(r"[\w\u3400-\u9fff]{2,}", re.UNICODE)
-_PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2}
-_COMPUTE_COST_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3}
+_PRIORITY_RANK = {"": 0, "low": 1, "medium": 2, "high": 3}
+_COMPUTE_COST_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3, "": 4}
 
 
 def _node_search_text(node: dict[str, Any]) -> str:
@@ -80,21 +80,21 @@ def ranked_frontier_ids(
                                 dict,
                             )
                             else {}
-                        ).get("importance", "medium")
+                        ).get("importance", "")
                     ),
-                    1,
+                    0,
                 )
                 for hypothesis_id in tested_hypotheses.get(node_id, [])
             ),
-            default=1,
+            default=0,
         )
         expected_value = _PRIORITY_RANK.get(
-            str(body.get("expected_value") or "medium"),
-            1,
+            str(body.get("expected_value") or ""),
+            0,
         )
         compute_cost = _COMPUTE_COST_RANK.get(
-            str(body.get("estimated_compute_cost") or "medium"),
-            2,
+            str(body.get("estimated_compute_cost") or ""),
+            4,
         )
         return (
             -hypothesis_importance,
@@ -288,17 +288,25 @@ class ResearchGraphContextBuilder:
         body = node["body"]
         kind = node["kind"]
         if kind == "hypothesis":
-            detail = (
-                f"{body['claim']} | importance: "
-                f"{body.get('importance', 'medium')}"
-            )
+            details = [str(body["claim"])]
+            if str(body.get("importance") or "").strip():
+                details.append(f"importance: {body['importance']}")
+            detail = " | ".join(details)
         elif kind == "experiment":
-            detail = (
-                f"{body['objective']} | decision: {body['decision_rule']} "
-                f"| state: {node['state']} | value: "
-                f"{body.get('expected_value', 'medium')} | compute: "
-                f"{body.get('estimated_compute_cost', 'medium')}"
-            )
+            details = [str(body["objective"])]
+            if str(body.get("decision_rule") or "").strip():
+                details.append(f"decision: {body['decision_rule']}")
+            details.append(f"state: {node['state']}")
+            if (
+                node["state"] == "blocked"
+                and str(body.get("blocking_reason") or "").strip()
+            ):
+                details.append(f"blocked because: {body['blocking_reason']}")
+            if str(body.get("expected_value") or "").strip():
+                details.append(f"value: {body['expected_value']}")
+            if str(body.get("estimated_compute_cost") or "").strip():
+                details.append(f"compute: {body['estimated_compute_cost']}")
+            detail = " | ".join(details)
         else:
             detail = body["summary"]
         suffix = f" | evidence: {evidence_state}" if evidence_state else ""
@@ -345,6 +353,7 @@ class ResearchGraphContextBuilder:
         max_nodes: int = 24,
         max_chars: int = 12_000,
         hops: int = 2,
+        planning: bool = False,
     ) -> dict[str, Any]:
         snapshot = self.store.get_snapshot(graph_id)
         graph = snapshot["graph"]
@@ -497,6 +506,14 @@ class ResearchGraphContextBuilder:
             add_evidence_cluster([node_id])
         for node_id in frontier:
             add_priority(node_id)
+        if planning:
+            # Scientific planning needs the whole concise hypothesis landscape,
+            # not only the focused neighborhood. Runnable experiments stay
+            # first so a large set of dormant hypotheses cannot hide work that
+            # can actually run. Detailed notes and logs remain behind refs.
+            for node in all_nodes:
+                if node["kind"] == NodeKind.HYPOTHESIS.value:
+                    add_priority(str(node["node_id"]))
         for node_id, _depth in sorted(distance.items(), key=lambda item: (item[1], item[0])):
             add_priority(node_id)
         if not priority:
@@ -513,6 +530,11 @@ class ResearchGraphContextBuilder:
                 f"({graph['graph_id']}, revision {graph['revision']})"
             ),
             f"Question: {self._compact_text(graph['question'], 360)}",
+            (
+                "Completion criterion: "
+                f"{self._compact_text(graph['completion_criterion'], 360)}"
+            ),
+            f"Completion state: {'satisfied' if graph['completed'] else 'open'}",
         ]
         if focus_node_id:
             focus = node_by_id[focus_node_id]
@@ -520,6 +542,50 @@ class ResearchGraphContextBuilder:
                 f"Focus: {self._compact_text(focus['title'], 120)} "
                 f"({focus_node_id})"
             )
+            focus_refs = [
+                ref for ref in refs if str(ref["node_id"]) == focus_node_id
+            ]
+            if focus_refs:
+                source_budget = max(320, min(1_600, max_chars // 5))
+                focus_source_lines = ["", "## Focus sources"]
+                shown_sources = 0
+                for ref in focus_refs:
+                    label_limit = min(
+                        360,
+                        max(
+                            80,
+                            source_budget
+                            - len("\n".join(focus_source_lines))
+                            - 4,
+                        ),
+                    )
+                    label = self._compact_text(
+                        f"{ref['ref_kind']}:{ref['ref_id']}",
+                        label_limit,
+                    )
+                    candidate = f"- {label}"
+                    if len("\n".join([*focus_source_lines, candidate])) > source_budget:
+                        break
+                    focus_source_lines.append(candidate)
+                    shown_sources += 1
+                    if ref["ref_kind"] == RefKind.NOTE.value:
+                        excerpt = self._compact_text(
+                            note_text_by_node.get(focus_node_id, ""),
+                            240,
+                        )
+                        excerpt_line = f"  Note excerpt: {excerpt}"
+                        if excerpt and len(
+                            "\n".join([*focus_source_lines, excerpt_line])
+                        ) <= source_budget:
+                            focus_source_lines.append(excerpt_line)
+                if shown_sources:
+                    omitted_sources = len(focus_refs) - shown_sources
+                    omitted_line = f"- {omitted_sources} more focus source(s) omitted."
+                    if omitted_sources and len(
+                        "\n".join([*focus_source_lines, omitted_line])
+                    ) <= source_budget:
+                        focus_source_lines.append(omitted_line)
+                    prefix_lines.extend(focus_source_lines)
         prefix_lines.extend(["", "## Focus path"])
         if focus_path:
             path_text = "- Research question -> " + " -> ".join(
@@ -652,6 +718,43 @@ class ResearchGraphContextBuilder:
                 ]
             ).strip()
 
+        optional_refs = [
+            ref for ref in selected_refs
+            if str(ref["node_id"]) != focus_node_id
+        ]
+        if optional_refs:
+            source_lines: list[str] = []
+            for ref in optional_refs:
+                label = self._compact_text(
+                    f"{ref['ref_kind']}:{ref['ref_id']}",
+                    260,
+                )
+                line = f"- {ref['node_id']} -> {label}"
+                candidate = ["", "## Sources", *source_lines, line]
+                if len(with_optional([*optional_lines, *candidate])) > max_chars:
+                    break
+                source_lines.append(line)
+                if ref["ref_kind"] == RefKind.NOTE.value:
+                    excerpt = self._compact_text(
+                        note_text_by_node.get(str(ref["node_id"]), ""),
+                        240,
+                    )
+                    excerpt_line = f"  Note excerpt: {excerpt}"
+                    if excerpt and len(
+                        with_optional(
+                            [
+                                *optional_lines,
+                                "",
+                                "## Sources",
+                                *source_lines,
+                                excerpt_line,
+                            ]
+                        )
+                    ) <= max_chars:
+                        source_lines.append(excerpt_line)
+            if source_lines:
+                optional_lines.extend(["", "## Sources", *source_lines])
+
         relation_candidates = (
             [
                 f"- {edge['source_node_id']} --{edge['relation']}--> "
@@ -663,35 +766,22 @@ class ResearchGraphContextBuilder:
         )
         relation_section = ["", "## Typed relations"]
         if len(with_optional([*optional_lines, *relation_section])) <= max_chars:
-            optional_lines.extend(relation_section)
+            relation_lines: list[str] = []
             for line in relation_candidates:
-                if len(with_optional([*optional_lines, line])) > max_chars:
-                    break
-                optional_lines.append(line)
-
-        if selected_refs:
-            source_section = ["", "## Sources"]
-            if len(with_optional([*optional_lines, *source_section])) <= max_chars:
-                optional_lines.extend(source_section)
-                for ref in selected_refs:
-                    label = self._compact_text(
-                        f"{ref['ref_kind']}:{ref['ref_id']}",
-                        260,
+                if len(
+                    with_optional(
+                        [
+                            *optional_lines,
+                            *relation_section,
+                            *relation_lines,
+                            line,
+                        ]
                     )
-                    line = f"- {ref['node_id']} -> {label}"
-                    if len(with_optional([*optional_lines, line])) > max_chars:
-                        break
-                    optional_lines.append(line)
-                    if ref["ref_kind"] == RefKind.NOTE.value:
-                        excerpt = self._compact_text(
-                            note_text_by_node.get(str(ref["node_id"]), ""),
-                            240,
-                        )
-                        excerpt_line = f"  Note excerpt: {excerpt}"
-                        if excerpt and len(
-                            with_optional([*optional_lines, excerpt_line])
-                        ) <= max_chars:
-                            optional_lines.append(excerpt_line)
+                ) > max_chars:
+                    break
+                relation_lines.append(line)
+            if relation_lines:
+                optional_lines.extend([*relation_section, *relation_lines])
 
         markdown = with_optional(optional_lines)
         if len(markdown) > max_chars:
@@ -711,6 +801,8 @@ class ResearchGraphContextBuilder:
                         "graph_id",
                         "title",
                         "question",
+                        "completion_criterion",
+                        "completed",
                         "orchestration_mode",
                         "archived",
                         "revision",

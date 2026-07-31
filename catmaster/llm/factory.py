@@ -678,7 +678,7 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         except ImportError as exc:  # pragma: no cover - dependency guidance
             raise RuntimeError(
                 "provider=codex_oauth requires langchain-openai with Codex OAuth support. "
-                "Install the pinned CatMaster environment or `python -m pip install langchain-openai==1.3.5`."
+                "Install the pinned CatMaster environment or `python -m pip install langchain-openai==1.4.1`."
             ) from exc
 
         kwargs = _provider_chat_kwargs_for(cfg, "codex_oauth")

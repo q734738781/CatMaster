@@ -18,7 +18,6 @@ from catmaster.runtime.native_apply_patch import (
     parse_apply_patch,
 )
 from catmaster.specialists.runtime import (
-    SpecialistRunner,
     build_specialist_runner,
     default_thread_interrupt_on,
 )
@@ -261,31 +260,6 @@ def test_specialist_runtime_enables_patch_only_for_codex_oauth(tmp_path: Path) -
 
     assert names_by_provider["codex_oauth"].count("apply_patch") == 1
     assert "apply_patch" not in names_by_provider["openai"]
-
-
-def test_custom_patch_call_counts_as_usable_model_output() -> None:
-    patch = _patch("*** Delete File: old.txt")
-    message = AIMessage(
-        content=[
-            {
-                "type": "custom_tool_call",
-                "name": "apply_patch",
-                "input": patch,
-                "call_id": "patch-1",
-            }
-        ],
-        tool_calls=[
-            {
-                "name": "apply_patch",
-                "args": {"__arg1": patch},
-                "id": "patch-1",
-                "type": "tool_call",
-            }
-        ],
-        response_metadata={"finish_reason": "tool_calls"},
-    )
-
-    SpecialistRunner._validate_ai_message_for_retry(message)
 
 
 def test_review_mode_default_only_interrupts_remote_submission() -> None:

@@ -14,4 +14,4 @@ The maintained manual is available in [Chinese](user-guide/README.zh.md) and [En
 | [Installation and deployment](user-guide/10-deployment-operations.en.md) | Configure models, accounts, servers, external programs, and operations |
 | [Prompt library and troubleshooting](user-guide/11-reference-troubleshooting.en.md) | Copy a starting prompt or diagnose a symptom |
 
-The short files under [`readme/`](readme/README.en.md) are compatibility entrypoints for older links. Other documents in this directory record specific implementation or validation work and do not replace the user manual.
+The short files under [`readme/`](readme/README.en.md) are compatibility entrypoints for older links. Maintainers can use the current-state references for [DeepAgents integration](deepagents_interactions.md) and [multimodal files](deepagents_multimodal.md). Notable behavior changes made from now on are recorded in the repository [Changelog](../CHANGELOG.md).

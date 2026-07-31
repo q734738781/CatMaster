@@ -19,7 +19,13 @@ from catmaster.webui import server
 from catmaster.webui.artifact_registry import ArtifactRegistry, infer_renderer
 from catmaster.webui.server import create_app
 from catmaster.webui.thread_events import ThreadEventBroker
-from catmaster.webui.thread_models import ArtifactPart, MessagePart, ThreadMessage
+from catmaster.webui.thread_models import (
+    ArtifactPart,
+    MessagePart,
+    ThreadMessage,
+    ThreadStopRequest,
+    ThreadSubmitRequest,
+)
 from catmaster.webui.thread_store import ThreadStore, new_id
 from catmaster.specialists.runtime import SpecialistUsageCallbackHandler
 from catmaster.specialists.streaming_runner import CatMasterStreamTranslator, StreamingSpecialistRunner, _extract_sidecar_artifact_paths, _extract_workspace_paths_from_text
@@ -71,6 +77,19 @@ def _workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "default"
     ensure_project_space_layout(workspace, create=True)
     return workspace
+
+
+def test_thread_request_models_keep_model_config_as_an_api_alias() -> None:
+    default_request = ThreadSubmitRequest(text="hello")
+    selected_request = ThreadSubmitRequest(text="hello", model_config="configs/custom.yaml")
+
+    assert default_request.llm_config == ""
+    assert selected_request.llm_config == "configs/custom.yaml"
+    assert ThreadSubmitRequest(text="hello", llm_config="configs/by-name.yaml").llm_config == "configs/by-name.yaml"
+    assert "model_config" in ThreadSubmitRequest.model_json_schema()["properties"]
+    assert "llm_config" not in ThreadSubmitRequest.model_json_schema()["properties"]
+    assert ThreadStopRequest().emergency is False
+    assert ThreadStopRequest().reason == ""
 
 
 def test_thread_store_persists_messages_and_events_replay(tmp_path: Path) -> None:
@@ -969,7 +988,7 @@ def test_agent_loop_service_launches_turn_and_queues_steering(tmp_path: Path) ->
         should_stop=lambda _thread_id: False,
     )
 
-    result = awaitable_result(service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="hello", attachments=[], entrypoint="research", model_config="", permission_mode="hitl")))
+    result = awaitable_result(service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="hello", attachments=[], entrypoint="research", llm_config="", permission_mode="hitl")))
 
     assert result["queued"] is False
     assert "build_runner" in captured
@@ -978,10 +997,11 @@ def test_agent_loop_service_launches_turn_and_queues_steering(tmp_path: Path) ->
 
     running_thread = store.update_thread(thread.thread_id, status="running")
     tasks[thread.thread_id] = SimpleNamespace(done=lambda: False)
-    queued = awaitable_result(service.submit(thread_id=running_thread.thread_id, payload=SimpleNamespace(text="steer", attachments=[], entrypoint="research", model_config="", permission_mode="hitl")))
+    queued = awaitable_result(service.submit(thread_id=running_thread.thread_id, payload=SimpleNamespace(text="steer", attachments=[], entrypoint="research", llm_config="", permission_mode="hitl")))
 
     assert queued["queued"] is True
     assert store.get_thread(thread.thread_id).pending_steering[0]["text"] == "steer"
+    assert store.get_thread(thread.thread_id).pending_steering[0]["model_config"] == ""
 
 
 def test_agent_loop_persists_submit_entrypoint_and_passes_it_to_runner(tmp_path: Path) -> None:
@@ -1025,7 +1045,7 @@ def test_agent_loop_persists_submit_entrypoint_and_passes_it_to_runner(tmp_path:
         should_stop=lambda _thread_id: False,
     )
 
-    result = awaitable_result(service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="draft", attachments=[], entrypoint="writing", model_config="", permission_mode="hitl")))
+    result = awaitable_result(service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="draft", attachments=[], entrypoint="writing", llm_config="", permission_mode="hitl")))
 
     assert result["queued"] is False
     assert store.get_thread(thread.thread_id).entrypoint == "writing"
@@ -1050,11 +1070,12 @@ def test_agent_loop_applies_queued_steering_at_safe_boundary(tmp_path: Path) -> 
         prompts: list[str] = []
 
         class FakeRunner:
-            def __init__(self, **_kwargs):
-                pass
+            def __init__(self, **kwargs):
+                self.thread_store = kwargs["thread_store"]
 
             async def arun_turn(self, **kwargs):
-                prompts.append(str(kwargs.get("prompt") or ""))
+                prompt = str(kwargs.get("prompt") or "")
+                prompts.append(prompt)
                 if len(prompts) == 1:
                     started.set()
                     await release.wait()
@@ -1084,10 +1105,10 @@ def test_agent_loop_applies_queued_steering_at_safe_boundary(tmp_path: Path) -> 
             should_stop=lambda _thread_id: False,
         )
 
-        first = await service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="first", attachments=[], entrypoint="research", model_config="", permission_mode="hitl"))
+        first = await service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="first", attachments=[], entrypoint="research", llm_config="", permission_mode="hitl"))
         assert first["queued"] is False
         await started.wait()
-        queued = await service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="steer", attachments=[], entrypoint="research", model_config="", permission_mode="hitl"))
+        queued = await service.submit(thread_id=thread.thread_id, payload=SimpleNamespace(text="steer", attachments=[], entrypoint="research", llm_config="", permission_mode="hitl"))
         assert queued["queued"] is True
         assert store.get_thread(thread.thread_id).pending_steering
         release.set()
@@ -2733,7 +2754,6 @@ def test_streaming_adapter_flushes_observed_reasoning_before_stop(tmp_path: Path
     )
 
     import asyncio
-
     async def _run() -> str:
         try:
             await runner._consume_agent_stream(

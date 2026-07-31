@@ -39,8 +39,10 @@ from catmaster.research.knowledge_graph.models import (
     GraphPlanningRequest,
     HypothesisCreateRequest,
     NodePatchRequest,
+    PlanMaterializeRequest,
     RefCreateRequest,
     ResultCreateRequest,
+    ResultJudgmentSetRequest,
     ThreadGraphBindingRequest,
 )
 from catmaster.research.knowledge_graph.service import ResearchGraphService
@@ -165,6 +167,17 @@ _HIDDEN_USER_DIRECTORY_NAMES = {
     "__pycache__",
     "metadata",
 }
+
+
+def _is_internal_planning_thread(thread: Any) -> bool:
+    meta = thread.meta if isinstance(getattr(thread, "meta", None), dict) else {}
+    if str(meta.get("internal_kind") or "") == "research_graph_planning":
+        return True
+    # Compatibility for planning threads created before the marker existed.
+    return (
+        str(getattr(thread, "thread_id", "")).startswith("thread_rg_")
+        and str(getattr(thread, "title", "")).startswith("Plan next step:")
+    )
 
 
 def _public_dump(value: Any) -> dict[str, Any]:
@@ -2809,7 +2822,11 @@ def create_app(
     def _threads_list(workspace_id: str):
         identity = _identity_or_401()
         workspace, workspace_name = _workspace_from_id(workspace_id, identity)
-        threads = _thread_store(workspace, workspace_name).list_threads()
+        threads = [
+            thread
+            for thread in _thread_store(workspace, workspace_name).list_threads()
+            if not _is_internal_planning_thread(thread)
+        ]
         return {"threads": [project_thread(thread) for thread in threads]}
 
     @app.get("/api/threads/{thread_id}", response_model=PublicThreadEnvelope)
@@ -3144,11 +3161,12 @@ def create_app(
         workspace, workspace_name = _workspace_from_id(workspace_id, identity)
         if thread_id:
             try:
-                thread = _thread_store(workspace, workspace_name).get_thread(thread_id)
+                _thread_store(workspace, workspace_name).get_thread(thread_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
-            if thread.workspace_id != workspace_name:
-                raise HTTPException(status_code=404, detail="Thread not found.")
+            # The exact workspace-scoped store is the authorization boundary.
+            # A thread's display workspace_id may be stale after a workspace
+            # rename and must not make the graph catalog disappear.
         service = _research_graph_service(workspace, workspace_name)
         return JSONResponse(
             {
@@ -3261,6 +3279,34 @@ def create_app(
             result = _research_graph_service(
                 workspace, workspace_name
             ).record_result(graph_id, payload)
+        except Exception as exc:
+            _raise_research_graph_http(exc)
+        if research_graph_wakeup is not None:
+            research_graph_wakeup.set()
+        return JSONResponse(result)
+
+    @app.put(
+        "/api/workspaces/{workspace_id}/research-graphs/{graph_id}"
+        "/results/{result_node_id}/judgments/{hypothesis_node_id}"
+    )
+    def _research_graph_set_result_judgment(
+        workspace_id: str,
+        graph_id: str,
+        result_node_id: str,
+        hypothesis_node_id: str,
+        payload: ResultJudgmentSetRequest,
+    ):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_from_id(workspace_id, identity)
+        try:
+            result = _research_graph_service(
+                workspace, workspace_name
+            ).set_result_judgment(
+                graph_id,
+                result_node_id,
+                hypothesis_node_id,
+                payload,
+            )
         except Exception as exc:
             _raise_research_graph_http(exc)
         if research_graph_wakeup is not None:
@@ -3392,7 +3438,7 @@ def create_app(
         if research_graph_wakeup is not None:
             research_graph_wakeup.set()
         if hasattr(result.get("thread"), "model_dump"):
-            result["thread"] = project_thread(result["thread"])
+            result["thread"] = project_thread(result["thread"]).model_dump(mode="json")
         return JSONResponse(result)
 
     @app.post(
@@ -3442,7 +3488,34 @@ def create_app(
         if research_graph_wakeup is not None:
             research_graph_wakeup.set()
         if hasattr(result.get("thread"), "model_dump"):
-            result["thread"] = project_thread(result["thread"])
+            result["thread"] = project_thread(result["thread"]).model_dump(mode="json")
+        return JSONResponse(result)
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/research-graphs/{graph_id}"
+        "/plans/{planning_id}/materialize"
+    )
+    def _research_graph_materialize_plan(
+        workspace_id: str,
+        graph_id: str,
+        planning_id: str,
+        payload: PlanMaterializeRequest,
+    ):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_from_id(workspace_id, identity)
+        try:
+            result = _research_graph_service(
+                workspace, workspace_name
+            ).materialize_planning_proposal(
+                graph_id,
+                planning_id,
+                expected_revision=payload.expected_revision,
+                proposal_id=payload.proposal_id,
+            )
+        except Exception as exc:
+            _raise_research_graph_http(exc)
+        if research_graph_wakeup is not None:
+            research_graph_wakeup.set()
         return JSONResponse(result)
 
     @app.get(

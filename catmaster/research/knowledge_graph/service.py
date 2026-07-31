@@ -24,13 +24,20 @@ from .models import (
     NodeKind,
     NodePatchRequest,
     RefKind,
+    ResearchGraphPlanningProposal,
     ResearchRefInput,
     ResultCreateRequest,
+    ResultJudgmentSetRequest,
 )
+from .planning import build_planning_preview
 from .store import ResearchGraphConflict, ResearchGraphStore
 
 _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.IGNORECASE)
 _ACTIVE_LAUNCH_STATUSES = {"claimed", "submitting", "running", "unknown"}
+_PLANNING_THREAD_KIND = "research_graph_planning"
+# Operational circuit breaker for one staged tool payload, not a scientific
+# branching target. It intentionally stays out of the agent-visible schema.
+_MAX_STAGED_PLAN_NODES = 64
 
 
 class ResearchGraphService:
@@ -94,6 +101,16 @@ class ResearchGraphService:
     @staticmethod
     def _frontier_ids(snapshot: dict[str, Any]) -> list[str]:
         return ranked_frontier_ids(snapshot["nodes"], snapshot["edges"])
+
+    @staticmethod
+    def _is_internal_planning_thread(thread: Any) -> bool:
+        meta = thread.meta if isinstance(getattr(thread, "meta", None), dict) else {}
+        if str(meta.get("internal_kind") or "") == _PLANNING_THREAD_KIND:
+            return True
+        return (
+            str(getattr(thread, "thread_id", "")).startswith("thread_rg_")
+            and str(getattr(thread, "title", "")).startswith("Plan next step:")
+        )
 
     def _safe_note_path(self, ref_id: str) -> tuple[str, Path] | None:
         raw = str(ref_id or "").strip().replace("\\", "/").lstrip("/")
@@ -281,6 +298,8 @@ class ResearchGraphService:
             "graph_id": str(graph["graph_id"]),
             "title": str(graph["title"]),
             "question": str(graph["question"]),
+            "completion_criterion": str(graph["completion_criterion"]),
+            "completed": bool(graph["completed"]),
             "orchestration_mode": str(graph["orchestration_mode"]),
             "archived": bool(graph["archived"]),
             "revision": int(graph["revision"]),
@@ -342,6 +361,7 @@ class ResearchGraphService:
             thread
             for thread in self.thread_store.list_threads()
             if thread.active_research_graph_id == graph_id
+            and not self._is_internal_planning_thread(thread)
         ]
         graph = {
             **self._public_graph(snapshot["graph"]),
@@ -363,11 +383,50 @@ class ResearchGraphService:
                 thread.thread_id == current_thread_id for thread in bound_threads
             ),
         }
-        return {
+        result = {
             "graph": graph,
             "nodes": nodes,
             "edges": [self._public_edge(edge) for edge in snapshot["edges"]],
         }
+        planning = self.store.latest_planning_preview(graph_id)
+        if planning is not None and not graph["completed"]:
+            stored_preview = dict(planning.get("preview") or {})
+            raw_proposal = stored_preview.get("proposal")
+            if isinstance(raw_proposal, dict):
+                proposal = ResearchGraphPlanningProposal.model_validate(raw_proposal)
+                public_preview = build_planning_preview(
+                    snapshot,
+                    proposal,
+                    focus_node_id=str(stored_preview.get("focus_node_id") or ""),
+                )
+            else:
+                # Read legacy previews without carrying their duplicated shape
+                # into newly written planning state.
+                public_preview = {
+                    key: stored_preview[key]
+                    for key in (
+                        "focus_node_id",
+                        "nodes",
+                        "edges",
+                        "recommended_target_id",
+                        "recommended_proposal_id",
+                        "recommended_existing_node_id",
+                        "route_ids",
+                        "summary",
+                    )
+                    if key in stored_preview
+                }
+            for node in public_preview.get("nodes", []):
+                node["refs"] = [
+                    self.resolve_ref(ref)
+                    for ref in list(node.get("refs") or [])
+                ]
+            result["planning_preview"] = {
+                "planning_id": str(planning["planning_id"]),
+                "revision": int(planning["revision"]),
+                **public_preview,
+            }
+        return result
 
     def catalog(
         self,
@@ -387,6 +446,7 @@ class ResearchGraphService:
                 thread
                 for thread in threads
                 if thread.active_research_graph_id == graph["graph_id"]
+                and not self._is_internal_planning_thread(thread)
             ]
             entries.append(
                 {
@@ -426,12 +486,15 @@ class ResearchGraphService:
         return entries
 
     def create_graph(self, request: GraphCreateRequest) -> dict[str, Any]:
-        seeds = [
-            seed.model_dump(mode="json") for seed in request.initial_hypotheses
-        ]
+        seeds = []
+        for seed in request.initial_hypotheses:
+            payload = seed.model_dump(mode="json")
+            payload["refs"] = [self.validate_ref(ref) for ref in seed.refs]
+            seeds.append(payload)
         graph = self.store.create_graph(
             title=request.title,
             question=request.question,
+            completion_criterion=request.completion_criterion,
             orchestration_mode=request.orchestration_mode,
             initial_hypotheses=seeds,
         )
@@ -447,6 +510,17 @@ class ResearchGraphService:
             for key in request.model_fields_set
             if key != "expected_revision"
         }
+        if changes.get("completed"):
+            snapshot = self.store.get_snapshot(graph_id)
+            if not any(node["kind"] == "result" for node in snapshot["nodes"]):
+                raise ValueError(
+                    "A Research Graph cannot be completed before it records a Result."
+                )
+        if (
+            {"question", "completion_criterion"} & set(changes)
+            and "completed" not in changes
+        ):
+            changes["completed"] = False
         self.store.update_graph(
             graph_id,
             expected_revision=request.expected_revision,
@@ -557,6 +631,23 @@ class ResearchGraphService:
             ],
             refs=refs,
         )
+        return {"node": self._public_node(node), **self.presentation(graph_id)}
+
+    def set_result_judgment(
+        self,
+        graph_id: str,
+        result_node_id: str,
+        hypothesis_node_id: str,
+        request: ResultJudgmentSetRequest,
+    ) -> dict[str, Any]:
+        self.store.set_result_judgment(
+            graph_id,
+            expected_revision=request.expected_revision,
+            result_node_id=result_node_id,
+            hypothesis_node_id=hypothesis_node_id,
+            relation=request.relation,
+        )
+        node = self.store.get_node(graph_id, result_node_id)
         return {"node": self._public_node(node), **self.presentation(graph_id)}
 
     def update_node(
@@ -805,13 +896,17 @@ class ResearchGraphService:
             if planning is None:
                 return
             graph = self.store.get_graph(planning["graph_id"])
+            has_staged_proposal = bool(
+                dict(planning.get("preview") or {}).get("proposal")
+            )
             self.store.update_planning(
                 planning["graph_id"],
                 planning["planning_id"],
                 start_revision=int(planning["revision"]),
                 status=(
                     "finished"
-                    if int(graph["revision"]) > int(planning["revision"])
+                    if has_staged_proposal
+                    or int(graph["revision"]) > int(planning["revision"])
                     else "no_change"
                 ),
                 thread_id=child_thread_id,
@@ -852,77 +947,367 @@ class ResearchGraphService:
             "streaming",
         }:
             return
-        if normalized_status in {"error", "stopped", "failure"}:
-            reason = (
-                f"Execution thread {child_thread_id} ended with status "
-                f"{normalized_status} before recording a result."
-            )
-        else:
-            reason = (
-                f"Execution thread {child_thread_id} completed without "
-                "recording the required Research Graph result."
-            )
-        for attempt in range(2):
-            graph = self.store.get_graph(launch["graph_id"])
-            try:
-                self.store.mark_experiment_blocked(
-                    launch["graph_id"],
-                    launch["experiment_node_id"],
-                    expected_revision=graph["revision"],
-                    reason=reason,
-                    refs=[
-                        {
-                            "ref_kind": RefKind.THREAD.value,
-                            "ref_id": child_thread_id,
-                        },
-                        *(
-                            [
-                                {
-                                    "ref_kind": RefKind.RUN.value,
-                                    "ref_id": run_id,
-                                }
-                            ]
-                            if run_id
-                            else []
-                        ),
-                    ],
-                )
-                break
-            except ResearchGraphConflict:
-                if attempt:
-                    return
-        self.store.update_launch(
+        # A stopped, failed, or simply incomplete child is operational state,
+        # not a scientific Result. Make the experiment runnable again and keep
+        # thread/run identity on the launch for diagnosis and late writeback.
+        self.store.release_incomplete_launch(
             launch["launch_id"],
-            status="blocked",
             run_id=run_id,
             thread_id=child_thread_id,
-            lease_owner="",
-            lease_until=0,
         )
-        return
 
-    def _planning_focus(self, snapshot: dict[str, Any]) -> str:
-        # Continue from the latest result first, then a hypothesis that has no
-        # testing experiment. This is deterministic and avoids scoring metadata.
-        for node in reversed(snapshot["nodes"]):
-            if node["kind"] == "result":
-                return str(node["node_id"])
-        tested = {
-            str(edge["source_node_id"])
-            for edge in snapshot["edges"]
-            if edge["relation"] == "tests"
+    def _validated_planning_proposal(
+        self,
+        snapshot: dict[str, Any],
+        proposal: ResearchGraphPlanningProposal,
+    ) -> ResearchGraphPlanningProposal:
+        payload = proposal.model_dump(mode="json")
+        durable_by_id = {
+            str(node["node_id"]): node for node in snapshot["nodes"]
         }
-        for node in snapshot["nodes"]:
-            if node["kind"] == "hypothesis" and node["node_id"] not in tested:
-                return str(node["node_id"])
-        return next(
+        proposed_hypothesis_ids = {
+            str(item["proposal_id"]) for item in payload["hypotheses"]
+        }
+        proposed_experiment_ids = {
+            str(item["proposal_id"]) for item in payload["experiments"]
+        }
+        proposal_ids = proposed_hypothesis_ids | proposed_experiment_ids
+        if len(payload["hypotheses"]) + len(payload["experiments"]) > (
+            _MAX_STAGED_PLAN_NODES
+        ):
+            raise ValueError(
+                "This planning pass exceeds the host safety limit for temporary "
+                "nodes. Keep the scientifically distinct branches and continue "
+                "additional exploration in a later planning pass."
+            )
+        valid_hypothesis_ids = {
+            node_id
+            for node_id, node in durable_by_id.items()
+            if node["kind"] == "hypothesis"
+        } | proposed_hypothesis_ids
+        valid_experiment_ids = {
+            node_id
+            for node_id, node in durable_by_id.items()
+            if node["kind"] == "experiment"
+        } | proposed_experiment_ids
+        for item in payload["hypotheses"]:
+            item["refs"] = [self.validate_ref(ref) for ref in item["refs"]]
+        dependencies: dict[str, list[str]] = {}
+        for item in payload["experiments"]:
+            item["refs"] = [self.validate_ref(ref) for ref in item["refs"]]
+            unknown_hypotheses = sorted(
+                set(item["tests_hypothesis_ids"]) - valid_hypothesis_ids
+            )
+            if unknown_hypotheses:
+                raise ValueError(
+                    "A planning experiment references unknown hypothesis IDs: "
+                    + ", ".join(unknown_hypotheses)
+                )
+            unknown_dependencies = sorted(
+                set(item["depends_on_experiment_ids"]) - valid_experiment_ids
+            )
+            if unknown_dependencies:
+                raise ValueError(
+                    "A planning experiment references unknown dependency IDs: "
+                    + ", ".join(unknown_dependencies)
+                )
+            dependencies[item["proposal_id"]] = [
+                dependency_id
+                for dependency_id in item["depends_on_experiment_ids"]
+                if dependency_id in proposed_experiment_ids
+            ]
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(proposal_id: str) -> None:
+            if proposal_id in visiting:
+                raise ValueError(
+                    "Planning experiment dependencies must remain acyclic."
+                )
+            if proposal_id in visited:
+                return
+            visiting.add(proposal_id)
+            for dependency_id in dependencies.get(proposal_id, []):
+                visit(dependency_id)
+            visiting.remove(proposal_id)
+            visited.add(proposal_id)
+
+        for proposal_id in sorted(dependencies):
+            visit(proposal_id)
+
+        recommended_target_id = str(payload["recommended_target_id"] or "")
+        ready_ids = set(self._frontier_ids(snapshot))
+        if (
+            recommended_target_id
+            and recommended_target_id not in proposal_ids
+            and recommended_target_id not in ready_ids
+        ):
+            raise ValueError(
+                "The recommended route must be a proposal in this plan or an "
+                "existing ready experiment."
+            )
+        return ResearchGraphPlanningProposal.model_validate(payload)
+
+    def stage_planning_proposal(
+        self,
+        graph_id: str,
+        *,
+        expected_revision: int,
+        planning_thread_id: str,
+        proposal: ResearchGraphPlanningProposal,
+    ) -> dict[str, Any]:
+        """Publish one temporary evidence-aware route plan from the bound child."""
+
+        planning = self.store.find_planning_by_thread(planning_thread_id)
+        if planning is None or str(planning["graph_id"]) != str(graph_id):
+            raise ValueError(
+                "This tool is available only inside the active bound Research "
+                "Graph planning thread."
+            )
+        if int(planning["revision"]) != int(expected_revision):
+            raise ResearchGraphConflict(
+                expected_revision=int(expected_revision),
+                current_revision=int(self.store.get_graph(graph_id)["revision"]),
+            )
+        snapshot = self.store.get_snapshot(graph_id)
+        if int(snapshot["graph"]["revision"]) != int(expected_revision):
+            raise ResearchGraphConflict(
+                expected_revision=int(expected_revision),
+                current_revision=int(snapshot["graph"]["revision"]),
+            )
+        proposal = self._validated_planning_proposal(snapshot, proposal)
+        thread = self.thread_store.get_thread(planning_thread_id)
+        focus_node_id = str(thread.research_focus_node_id or "")
+        public_preview = build_planning_preview(
+            snapshot,
+            proposal,
+            focus_node_id=focus_node_id,
+        )
+        stored_preview = {
+            "focus_node_id": focus_node_id,
+            "proposal": proposal.model_dump(mode="json"),
+        }
+        self.store.set_planning_preview(
+            graph_id,
+            planning["planning_id"],
+            start_revision=expected_revision,
+            preview=stored_preview,
+        )
+
+        materialized: dict[str, Any] | None = None
+        graph = snapshot["graph"]
+        route_ids = set(public_preview.get("route_ids") or [])
+        auto_route_is_runnable = all(
+            item.plan_summary and item.decision_rule
+            for item in proposal.experiments
+            if item.proposal_id in route_ids
+        )
+        if (
+            graph["orchestration_mode"] == "auto"
+            and public_preview.get("recommended_proposal_id")
+            and auto_route_is_runnable
+        ):
+            materialized = self.materialize_planning_proposal(
+                graph_id,
+                planning["planning_id"],
+                expected_revision=expected_revision,
+                proposal_id=str(public_preview["recommended_proposal_id"]),
+                keep_preview_for_scheduler=True,
+            )
+        result = {
+            "accepted": True,
+            "planning_id": str(planning["planning_id"]),
+            "summary": str(public_preview.get("summary") or ""),
+            "recommended_target_id": str(
+                public_preview.get("recommended_target_id") or ""
+            ),
+            **self.presentation(graph_id),
+        }
+        if materialized is not None:
+            result["materialized"] = materialized
+        return result
+
+    def materialize_planning_proposal(
+        self,
+        graph_id: str,
+        planning_id: str,
+        *,
+        expected_revision: int,
+        proposal_id: str,
+        keep_preview_for_scheduler: bool = False,
+    ) -> dict[str, Any]:
+        """Atomically materialize one selected temporary route."""
+
+        graph = self.store.get_graph(graph_id)
+        if int(graph["revision"]) != int(expected_revision):
+            raise ResearchGraphConflict(
+                expected_revision=int(expected_revision),
+                current_revision=int(graph["revision"]),
+            )
+        planning = self.store.get_planning(graph_id, planning_id)
+        preview = dict(planning.get("preview") or {})
+        if int(planning["revision"]) != int(expected_revision):
+            raise ValueError(
+                "This temporary plan is stale. Refresh and plan against the "
+                "current graph revision."
+            )
+        raw_proposal = dict(preview.get("proposal") or {})
+        proposal = ResearchGraphPlanningProposal.model_validate(raw_proposal)
+        projected_preview = build_planning_preview(
+            self.store.get_snapshot(graph_id),
+            proposal,
+            focus_node_id=str(preview.get("focus_node_id") or ""),
+        )
+        hypotheses = {
+            item.proposal_id: item for item in proposal.hypotheses
+        }
+        experiments = {
+            item.proposal_id: item for item in proposal.experiments
+        }
+        if proposal_id not in hypotheses and proposal_id not in experiments:
+            raise ValueError("The selected provisional node is not in this plan.")
+
+        selected_hypotheses: set[str] = set()
+        selected_experiments: set[str] = set()
+
+        def include_experiment(experiment_id: str) -> None:
+            if experiment_id in selected_experiments:
+                return
+            item = experiments[experiment_id]
+            for dependency_id in item.depends_on_experiment_ids:
+                if dependency_id in experiments:
+                    include_experiment(dependency_id)
+            selected_experiments.add(experiment_id)
+            selected_hypotheses.update(
+                hypothesis_id
+                for hypothesis_id in item.tests_hypothesis_ids
+                if hypothesis_id in hypotheses
+            )
+
+        if proposal_id in hypotheses:
+            selected_hypotheses.add(proposal_id)
+        else:
+            include_experiment(proposal_id)
+
+        nodes: list[dict[str, Any]] = []
+        for hypothesis_id in sorted(selected_hypotheses):
+            item = hypotheses[hypothesis_id]
+            nodes.append(
+                {
+                    "proposal_id": hypothesis_id,
+                    "kind": "hypothesis",
+                    "title": item.title or item.claim[:120],
+                    "state": "",
+                    "body": item.model_dump(
+                        mode="json",
+                        exclude={"proposal_id", "title", "refs"},
+                    ),
+                    "refs": [
+                        self.validate_ref(ref) for ref in item.refs
+                    ],
+                }
+            )
+        for experiment_id in sorted(selected_experiments):
+            item = experiments[experiment_id]
+            experiment_state = (
+                ExperimentState.READY.value
+                if item.plan_summary and item.decision_rule
+                else ExperimentState.DRAFT.value
+            )
+            nodes.append(
+                {
+                    "proposal_id": experiment_id,
+                    "kind": "experiment",
+                    "title": item.title or item.objective[:120],
+                    "state": experiment_state,
+                    "body": item.model_dump(
+                        mode="json",
+                        exclude={
+                            "proposal_id",
+                            "title",
+                            "tests_hypothesis_ids",
+                            "depends_on_experiment_ids",
+                            "refs",
+                        },
+                    ),
+                    "refs": [
+                        self.validate_ref(ref) for ref in item.refs
+                    ],
+                }
+            )
+
+        selected_ids = selected_hypotheses | selected_experiments
+        durable_ids = {
+            str(node["node_id"])
+            for node in self.store.get_snapshot(graph_id)["nodes"]
+        }
+        edges = [
+            dict(edge)
+            for edge in list(projected_preview.get("edges") or [])
+            if (
+                str(edge.get("source_node_id") or "") in selected_ids
+                or str(edge.get("target_node_id") or "") in selected_ids
+            )
+            and (
+                str(edge.get("source_node_id") or "") in selected_ids
+                or str(edge.get("source_node_id") or "")
+                in durable_ids
+            )
+            and (
+                str(edge.get("target_node_id") or "") in selected_ids
+                or str(edge.get("target_node_id") or "")
+                in durable_ids
+            )
+        ]
+        mapping, _event_id = self.store.materialize_plan_bundle(
+            graph_id,
+            expected_revision=expected_revision,
+            nodes=nodes,
+            edges=edges,
+        )
+        current = self.store.get_snapshot(graph_id)
+        frontier = self._frontier_ids(current)
+        materialized_ids = set(mapping.values())
+        next_experiment_id = next(
             (
-                str(node["node_id"])
-                for node in snapshot["nodes"]
-                if node["kind"] == "hypothesis"
+                node_id
+                for node_id in frontier
+                if node_id in materialized_ids
             ),
             "",
         )
+        if keep_preview_for_scheduler:
+            preview["materialized_node_ids"] = mapping
+            preview["materialized_next_experiment_id"] = next_experiment_id
+            self.store.set_planning_preview(
+                graph_id,
+                planning_id,
+                start_revision=int(planning["revision"]),
+                preview=preview,
+            )
+        return {
+            "proposal_id": proposal_id,
+            "node_ids": mapping,
+            "next_experiment_node_id": next_experiment_id,
+            **self.presentation(graph_id),
+        }
+
+    def _planning_focus(self, snapshot: dict[str, Any]) -> str:
+        nodes = list(snapshot["nodes"])
+        if not nodes:
+            return ""
+        # Mutation-driven planning follows the most recently changed scientific
+        # node. An explicit user planning request still supplies its own focus.
+        latest = max(
+            enumerate(nodes),
+            key=lambda item: (
+                float(item[1].get("updated_at") or 0.0),
+                float(item[1].get("created_at") or 0.0),
+                item[0],
+            ),
+        )
+        return str(latest[1]["node_id"])
 
     async def _launch_planning_child(
         self,
@@ -939,7 +1324,6 @@ class ResearchGraphService:
         claim, claimed = self.store.claim_planning(
             graph_id,
             expected_revision=revision,
-            lease_owner=self.worker_id,
             allow_same_revision_after_no_change=allow_same_revision_after_no_change,
         )
         if not claimed:
@@ -959,11 +1343,13 @@ class ResearchGraphService:
                 thread_id=child_thread_id,
                 title=f"Plan next step: {snapshot['graph']['title']}",
                 entrypoint="research",
+                meta={"internal_kind": _PLANNING_THREAD_KIND},
             )
             child = self.thread_store.update_thread(
                 child.thread_id,
                 active_research_graph_id=graph_id,
                 research_focus_node_id=focus_node_id,
+                meta={**child.meta, "internal_kind": _PLANNING_THREAD_KIND},
             )
             self.store.update_planning(
                 graph_id,
@@ -979,14 +1365,18 @@ class ResearchGraphService:
                     thread_id=child.thread_id,
                     payload=ThreadSubmitRequest(
                         text=(
-                            "Advance the bound Research Graph with a bounded "
-                            "portfolio of scientifically distinct branches. "
-                            "Inspect the focused result or hypothesis, preserve "
-                            "plausible competing hypotheses, and propose complete "
-                            "experiments with explicit decision rules. Mark only "
-                            "coarse relative hypothesis importance, expected "
-                            "decision value, and compute cost. Do not add a node "
-                            "merely to report debugging or restate existing content."
+                            "Run one bounded scientific planning pass for the bound "
+                            "Research Graph. Inspect the focused node, active hypotheses, "
+                            "and runnable experiment frontier, then ask "
+                            "hypothesis_proposer to compare the meaningful alternatives "
+                            "using graph and literature evidence. The proposer should "
+                            "publish useful provisional branches through its bound "
+                            "planning tool and return a concise scientific memo in normal "
+                            "language. Do not request JSON, numeric route scores, or a "
+                            "mechanical judgment for every branch. Preserve competing "
+                            "hypotheses when evidence does not distinguish them. Return "
+                            "the memo to the planning thread; do not copy the proposer's "
+                            "payload into another tool call."
                         ),
                         entrypoint="research",
                     ),
@@ -1032,11 +1422,11 @@ class ResearchGraphService:
         return result
 
     async def tick(self) -> None:
-        """Recover active work, then advance each auto graph by at most one child.
+        """Recover active work, then advance each auto graph by one planning or execution child.
 
-        A graph may retain many ready branches. Auto mode deliberately starts
-        only the first ranked branch so concurrent execution remains one per
-        graph until worker isolation is introduced.
+        A fresh planning pass follows each graph mutation, including a Result.
+        Temporary model values may reorder many branches, while actual execution
+        remains one experiment per graph until worker isolation is introduced.
         """
 
         for launch in self.store.active_launches():
@@ -1078,7 +1468,10 @@ class ResearchGraphService:
                     )
 
         for graph in self.store.list_graphs(include_archived=False):
-            if graph["orchestration_mode"] != "auto":
+            if (
+                graph["orchestration_mode"] != "auto"
+                or graph["completed"]
+            ):
                 continue
             snapshot = self.store.get_snapshot(graph["graph_id"])
             if any(
@@ -1086,21 +1479,45 @@ class ResearchGraphService:
                 for launch in snapshot["launches"]
             ):
                 continue
-            frontier = self._frontier_ids(snapshot)
-            if frontier:
-                try:
-                    await self.launch_experiment(
-                        graph["graph_id"],
-                        frontier[0],
-                        expected_revision=graph["revision"],
-                    )
-                except (ResearchGraphConflict, ValueError):
-                    continue
-            elif snapshot["nodes"]:
+            if not self.store.planning_covers_current_graph(graph["graph_id"]):
                 try:
                     await self._launch_planning_child(
                         graph["graph_id"],
                         revision=graph["revision"],
+                    )
+                except (ResearchGraphConflict, ValueError):
+                    continue
+                continue
+            frontier = self._frontier_ids(snapshot)
+            if frontier:
+                selected_id = ""
+                planning = self.store.latest_planning_preview(
+                    graph["graph_id"],
+                    current_revision_only=False,
+                )
+                if planning is not None:
+                    preview = dict(planning.get("preview") or {})
+                    selected_id = str(
+                        preview.get("materialized_next_experiment_id") or ""
+                    )
+                    if not selected_id and isinstance(preview.get("proposal"), dict):
+                        proposal = ResearchGraphPlanningProposal.model_validate(
+                            preview["proposal"]
+                        )
+                        if proposal.recommended_target_id in frontier:
+                            selected_id = proposal.recommended_target_id
+                    elif not selected_id:
+                        selected_id = str(
+                            preview.get("recommended_existing_node_id") or ""
+                        )
+                experiment_id = (
+                    selected_id if selected_id in frontier else frontier[0]
+                )
+                try:
+                    await self.launch_experiment(
+                        graph["graph_id"],
+                        experiment_id,
+                        expected_revision=graph["revision"],
                     )
                 except (ResearchGraphConflict, ValueError):
                     continue

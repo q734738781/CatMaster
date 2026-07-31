@@ -20,7 +20,7 @@ from catmaster.webui.thread_models import ArtifactPart, InterruptRecord, Message
 from catmaster.webui.thread_store import ThreadStore, new_id
 
 from .runtime import RUN_STATE_FILE, SpecialistRunner
-from .schemas import ResearchGoalRecord, SpecialistEntrypoint
+from .schemas import SpecialistEntrypoint
 
 logger = logging.getLogger(__name__)
 
@@ -1868,12 +1868,6 @@ class StreamingSpecialistRunner:
         files_root.mkdir(parents=True, exist_ok=True)
         recorded_prompt = user_prompt
         runner._stage_deepagent_assets(files_root, thread_id=thread_id)
-        research_goal: ResearchGoalRecord | None = None
-        research_goal_relpath = ""
-        if entrypoint == "research":
-            prompt_for_goal = recorded_prompt or "Resume interrupted thread."
-            research_goal = runner._research_goal_for_run(thread_id=deepagent_thread_id, prompt=prompt_for_goal, resume_feedback=None)
-            research_goal_relpath = runner._research_goal_relpath(deepagent_thread_id)
 
         usage_handler = runner._new_usage_callback()
         set_usage_update_callback = getattr(usage_handler, "set_usage_update_callback", None)
@@ -1920,7 +1914,6 @@ class StreamingSpecialistRunner:
                     "final_answer": "",
                     "summary": "",
                     "facts": [],
-                    **runner._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
                 }
             )
             async with runner._open_agent_runtime(files_root=files_root) as runtime:
@@ -1949,8 +1942,6 @@ class StreamingSpecialistRunner:
                     usage_handler=usage_handler,
                 )
             if translator.interrupt_id:
-                if entrypoint == "research" and research_goal is not None:
-                    research_goal = runner._update_research_goal_status(research_goal, status="paused")
                 interrupted_state = {
                     "schema_version": 1,
                     "entrypoint": entrypoint,
@@ -1974,7 +1965,6 @@ class StreamingSpecialistRunner:
                     "final_answer": "",
                     "summary": "Waiting for human review.",
                     "facts": [],
-                    **runner._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
                 }
                 runner._write_run_state(interrupted_state)
                 runner._write_usage_summary(usage_handler)
@@ -2043,11 +2033,6 @@ class StreamingSpecialistRunner:
                 "review_target": str(parsed.get("review_target") or "").strip(),
             }
             translator.complete(parsed["text"], sidecar=sidecar)
-            if entrypoint == "research" and research_goal is not None:
-                research_goal = runner._complete_research_goal(
-                    research_goal,
-                    completion_audit_md=runner._research_completion_audit_md(objective=research_goal.objective, parsed=parsed),
-                )
             run_state = {
                 "schema_version": 1,
                 "entrypoint": entrypoint,
@@ -2069,7 +2054,6 @@ class StreamingSpecialistRunner:
                 "summary": parsed["summary"],
                 "facts": list(parsed["facts"]),
                 "review_target": str(parsed.get("review_target") or "").strip(),
-                **runner._research_goal_state_fields(research_goal=research_goal, relpath=research_goal_relpath),
             }
             runner._write_run_state(run_state)
             runner._write_usage_summary(usage_handler)

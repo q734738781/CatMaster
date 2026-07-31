@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import openai
 import pytest
-from langchain.agents.middleware import ModelRetryMiddleware
-from langchain.agents.middleware.types import ModelResponse
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
@@ -578,15 +578,11 @@ def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
     assert "Default to on-demand closeout, not autonomous research expansion" in research_prompt
     assert "Report weak evidence as a limitation" in research_prompt
     assert "issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread" in research_prompt
-    assert "Research goal guard: the active objective is runtime-owned" in research_prompt
-    assert "On resume, continue the original objective plus any human resume note" in research_prompt
-    assert "Research completion audit: before final answer" in research_prompt
     assert "Research Graph contract" in research_prompt
     assert "Never guess among multiple graphs" in research_prompt
-    assert "Perform a scientific reasonableness audit" in research_prompt
+    assert "scientific reasonableness check" in research_prompt.lower()
     assert "A scientific reasonableness check is required for research closeouts" in research_prompt
     assert "do not force fixed `Summary` / `Facts` / `Files` headings" in research_prompt
-    assert "Final conclusions should cite the evidence paths or saved memos they depend on" in research_prompt
     for prompt in (research_prompt, experiment_prompt, writing_prompt):
         assert "Delegate sequentially" in prompt
         assert "current shared workspace makes parallel subagents unsafe" in prompt
@@ -692,7 +688,7 @@ def test_default_tool_error_middleware_returns_tool_message() -> None:
 
 def test_tool_result_middleware_preserves_multimodal_tool_messages() -> None:
     middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    assert all(getattr(item, "name", "") != "catmaster_textualize_multimodal_tool_results" for item in middleware)
+    assert [type(item).__name__ for item in middleware] == ["catmaster_nonfatal_tool_errors"]
     tool_mw = middleware[-1]
 
     class _Request:
@@ -734,369 +730,117 @@ def test_tool_result_middleware_preserves_multimodal_tool_messages() -> None:
     assert result.tool_call_id == "call-1"
 
 
-def _model_call_middlewares() -> tuple[ModelRetryMiddleware, object]:
-    middleware = runtime_mod.SpecialistRunner._build_default_middleware()
-    retry_mw = middleware[0]
-    validator_mw = middleware[1]
-    assert isinstance(retry_mw, ModelRetryMiddleware)
-    assert getattr(validator_mw, "name", "") == "catmaster_validate_model_responses"
-    return retry_mw, validator_mw
-
-
-async def _call_model_middleware_stack(
-    request: object,
-    handler: object,
-    *,
-    retry_mw: ModelRetryMiddleware,
-    validator_mw: object,
-) -> ModelResponse:
-    async def _validated(inner_request):
-        return await validator_mw.awrap_model_call(inner_request, handler)
-
-    return await retry_mw.awrap_model_call(request, _validated)
-
-
-def test_model_retry_middleware_uses_langchain_retry_contract() -> None:
-    retry_mw, _ = _model_call_middlewares()
-
-    assert retry_mw.max_retries == 3
-    assert retry_mw.initial_delay == 5.0
-    assert retry_mw.backoff_factor == 2.0
-    assert retry_mw.max_delay == 30.0
-    assert retry_mw.jitter is True
-    assert retry_mw.on_failure == "error"
-
-
-def test_model_retry_middleware_retries_empty_ai_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-    retry_mw.jitter = False
-    sleeps: list[float] = []
-    attempts = {"count": 0}
-
-    async def _fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
-    async def _handler(_request):
-        attempts["count"] += 1
-        if attempts["count"] < 3:
-            return ModelResponse(result=[AIMessage(content="")])
-        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
-
-    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
-
-    async def _run():
-        return await _call_model_middleware_stack(
-            object(),
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
-
-    result = asyncio.run(_run())
-
-    assert isinstance(result, ModelResponse)
-    assert attempts["count"] == 3
-    assert sleeps == [5.0, 10.0]
-
-
-def test_model_retry_middleware_preserves_multimodal_tool_history() -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-    seen_messages = []
-
-    class _Request:
-        def __init__(self, messages):
-            self.messages = messages
-
-        def override(self, **kwargs):
-            return _Request(kwargs.get("messages", self.messages))
-
-    request = _Request(
-        [
-            ToolMessage(
-                content_blocks=[
-                    {
-                        "type": "image",
-                        "id": "img-1",
-                        "base64": "not-for-model-history",
-                        "mime_type": "image/png",
-                    }
-                ],
-                additional_kwargs={"read_file_path": "/paper/page.png"},
-                tool_call_id="call-1",
-                name="read_file",
-            )
-        ]
-    )
-
-    async def _handler(sanitized_request):
-        seen_messages.extend(sanitized_request.messages)
-        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
-
-    async def _run():
-        return await _call_model_middleware_stack(
-            request,
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
-
-    result = asyncio.run(_run())
-
-    assert isinstance(result, ModelResponse)
-    assert isinstance(seen_messages[0], ToolMessage)
-    assert isinstance(seen_messages[0].content, list)
-    assert seen_messages[0].content[0]["type"] == "image"
-    assert seen_messages[0].content[0]["base64"] == "not-for-model-history"
-    assert seen_messages[0].additional_kwargs["read_file_path"] == "/paper/page.png"
-
-
-def test_model_retry_middleware_accepts_tool_calls_without_text() -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-
-    async def _handler(_request):
-        return ModelResponse(
-            result=[
-                AIMessage(
-                    content="",
-                    tool_calls=[{"name": "vasp_prepare", "args": {"path": "x"}, "id": "call-1", "type": "tool_call"}],
-                    response_metadata={"finish_reason": "tool_calls"},
-                )
-            ]
-        )
-
-    async def _run():
-        return await _call_model_middleware_stack(
-            object(),
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
-
-    result = asyncio.run(_run())
-    assert isinstance(result, ModelResponse)
-    assert result.result[0].tool_calls
-
-
-def test_model_retry_middleware_retries_openrouter_unmarshaller_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-    retry_mw.jitter = False
-    sleeps: list[float] = []
-    attempts = {"count": 0}
-
-    async def _fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
-    async def _handler(_request):
-        attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise ValueError(
-                "ValidationError: 40 validation errors for Unmarshaller "
-                "body.174.tool.content.str Input should be a valid string"
-            )
-        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
-
-    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
-
-    async def _run():
-        return await _call_model_middleware_stack(
-            object(),
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
-
-    result = asyncio.run(_run())
-
-    assert isinstance(result, ModelResponse)
-    assert attempts["count"] == 2
-    assert sleeps == [5.0]
-
-
-def test_model_retry_middleware_retries_wellau_upstream_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-    retry_mw.jitter = False
-    sleeps: list[float] = []
-    attempts = {"count": 0}
-
-    async def _fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
-    async def _handler(_request):
-        attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise RuntimeError(
-                'InternalServerError: {"error":{"message":"Upstream stream ended without a terminal response event",'
-                '"type":"api_error"}}event: error data: {"error":{"type":"upstream_error",'
-                '"message":"Upstream request failed"}}'
-            )
-        return ModelResponse(result=[AIMessage(content="## Summary\nok")])
-
-    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
-
-    async def _run():
-        return await _call_model_middleware_stack(
-            object(),
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
-
-    result = asyncio.run(_run())
-
-    assert isinstance(result, ModelResponse)
-    assert attempts["count"] == 2
-    assert sleeps == [5.0]
-
-
-def test_model_retry_classifier_retries_remote_protocol_errors_only() -> None:
-    remote_error = httpx.RemoteProtocolError(
-        "peer closed connection without sending complete message body "
-        "(incomplete chunked read)"
-    )
-
-    assert runtime_mod.SpecialistRunner._is_retryable_model_exception(remote_error) is True
-    assert (
-        runtime_mod.SpecialistRunner._is_retryable_model_exception(
-            httpx.LocalProtocolError("invalid local request state")
-        )
-        is False
-    )
-
-
-def test_model_retry_classifier_follows_remote_protocol_error_cause() -> None:
-    remote_error = httpx.RemoteProtocolError(
-        "peer closed connection without sending complete message body "
-        "(incomplete chunked read)"
-    )
-    wrapped_error = RuntimeError("provider stream failed")
-    wrapped_error.__cause__ = remote_error
-
-    assert runtime_mod.SpecialistRunner._is_retryable_model_exception(wrapped_error) is True
-
-
-def test_model_retry_middleware_retries_codex_stream_api_error_without_parent_visibility(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-    retry_mw.jitter = False
-    request = object()
-    seen_requests: list[object] = []
-    sleeps: list[float] = []
-    provider_error = openai.APIError(
-        "An error occurred while processing your request. You can retry your request.",
-        request=httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses"),
-        body=None,
-    )
-
-    async def _fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
-    async def _handler(inner_request):
-        seen_requests.append(inner_request)
-        if len(seen_requests) == 1:
-            raise provider_error
-        return ModelResponse(result=[AIMessage(content="## Summary\nrecovered")])
-
-    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
-
-    async def _run():
-        return await _call_model_middleware_stack(
-            request,
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
-
-    result = asyncio.run(_run())
-
-    assert result.result[0].content == "## Summary\nrecovered"
-    assert seen_requests == [request, request]
-    assert sleeps == [5.0]
-
-
-@pytest.mark.parametrize(
-    ("error_type", "status_code"),
-    [
-        (openai.AuthenticationError, 401),
-        (openai.BadRequestError, 400),
-    ],
-)
-def test_model_retry_middleware_does_not_retry_deterministic_client_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    error_type: type[openai.APIStatusError],
-    status_code: int,
-) -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-    attempts = {"count": 0}
-    sleeps: list[float] = []
+def test_codex_stream_overload_retry_is_narrow_and_centrally_configured() -> None:
     request = httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses")
-    provider_error = error_type(
-        "deterministic client failure",
-        response=httpx.Response(status_code, request=request),
-        body=None,
+    overload = openai.APIError(
+        "Our servers are currently overloaded. Please try again later.",
+        request=request,
+        body={
+            "type": "service_unavailable_error",
+            "code": "server_is_overloaded",
+        },
+    )
+    unrelated = openai.APIError(
+        "A different stream failure",
+        request=request,
+        body={"type": "server_error", "code": "different_error"},
+    )
+    overload_without_code = openai.APIError(
+        "Our servers are currently overloaded. Please try again later.",
+        request=request,
+        body={"type": "server_error"},
+    )
+    retryable_request_error = openai.APIError(
+        "An error occurred while processing your request. You can retry your "
+        "request, or contact support. Please include the request ID request-123.",
+        request=request,
+        body={"type": "server_error"},
     )
 
-    async def _fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
+    assert runtime_mod._is_codex_stream_overload_error(overload)
+    assert runtime_mod._is_codex_stream_overload_error(overload_without_code)
+    assert runtime_mod._is_codex_stream_overload_error(retryable_request_error)
+    assert not runtime_mod._is_codex_stream_overload_error(unrelated)
+    assert not runtime_mod._is_codex_stream_overload_error(RuntimeError("overloaded"))
 
-    async def _handler(_request):
-        attempts["count"] += 1
-        raise provider_error
-
-    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
-
-    async def _run():
-        return await _call_model_middleware_stack(
-            object(),
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
-
-    with pytest.raises(error_type) as caught:
-        asyncio.run(_run())
-
-    assert caught.value is provider_error
-    assert attempts["count"] == 1
-    assert sleeps == []
+    retry = runtime_mod._build_codex_overload_retry_middleware()[0]
+    assert type(retry).__name__ == "ModelRetryMiddleware"
+    assert retry.max_retries == 6
+    assert retry.initial_delay == 30.0
+    assert retry.backoff_factor == 2.0
+    assert retry.max_delay == 600.0
+    assert retry.jitter is False
+    assert retry.on_failure == "error"
 
 
-def test_model_retry_middleware_reraises_original_error_after_budget(
+def test_deepagent_loader_registers_codex_retry_as_provider_middleware(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retry_mw, validator_mw = _model_call_middlewares()
-    retry_mw.jitter = False
-    attempts = {"count": 0}
-    sleeps: list[float] = []
-    provider_error = openai.APIError(
-        "An error occurred while processing your request. You can retry your request.",
-        request=httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses"),
-        body=None,
+    import deepagents
+
+    registrations: list[tuple[str, Any]] = []
+    monkeypatch.setattr(
+        deepagents,
+        "register_harness_profile",
+        lambda key, profile: registrations.append((key, profile)),
     )
+    runtime_mod.SpecialistRunner._load_create_deep_agent.cache_clear()
+    try:
+        assert runtime_mod.SpecialistRunner._load_create_deep_agent() is deepagents.create_deep_agent
+    finally:
+        runtime_mod.SpecialistRunner._load_create_deep_agent.cache_clear()
 
-    async def _fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
+    assert len(registrations) == 1
+    key, profile = registrations[0]
+    assert key == "openai-codex"
+    retry = profile.materialize_extra_middleware()[0]
+    assert type(retry).__name__ == "ModelRetryMiddleware"
+    assert retry.retry_on is runtime_mod._is_codex_stream_overload_error
 
-    async def _handler(_request):
-        attempts["count"] += 1
-        raise provider_error
 
-    monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
+def test_codex_retry_profile_reaches_native_general_purpose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deepagents import HarnessProfile, create_deep_agent
+    from deepagents.profiles.harness import harness_profiles
+    from langchain_openai.chat_models.codex import _ChatOpenAICodex
 
-    async def _run():
-        return await _call_model_middleware_stack(
-            object(),
-            _handler,
-            retry_mw=retry_mw,
-            validator_mw=validator_mw,
-        )
+    built_retries: list[Any] = []
 
-    with pytest.raises(openai.APIError) as caught:
-        asyncio.run(_run())
+    def build_retry() -> list[Any]:
+        retry = runtime_mod._build_codex_overload_retry_middleware()[0]
+        built_retries.append(retry)
+        return [retry]
 
-    assert caught.value is provider_error
-    assert attempts["count"] == 4
-    assert sleeps == [5.0, 10.0, 20.0]
+    monkeypatch.setitem(
+        harness_profiles._HARNESS_PROFILES,
+        "openai-codex",
+        HarnessProfile(extra_middleware=build_retry),
+    )
+    for name in (
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    token_provider = SimpleNamespace(
+        get_token=lambda: None,
+        aget_token=lambda: None,
+        get_access_token=lambda: "unused",
+        aget_access_token=lambda: None,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = _ChatOpenAICodex(model="gpt-5.6-sol", token_provider=token_provider)
+
+    assert model._get_ls_params()["ls_provider"] == "openai-codex"
+    create_deep_agent(model=model, tools=[])
+
+    assert len(built_retries) == 2
+    assert built_retries[0] is not built_retries[1]
 
 
 def test_extract_final_text_ignores_user_message_fallback() -> None:
@@ -1409,7 +1153,7 @@ def test_run_impl_retries_invalid_final_report_and_recovers(
     assert sleeps == [30.0]
 
 
-def test_run_impl_does_not_restart_episode_after_model_retry_budget(
+def test_run_impl_does_not_restart_episode_after_model_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1467,6 +1211,65 @@ def test_run_impl_does_not_restart_episode_after_model_retry_budget(
 
     assert caught.value is provider_error
     assert failed_agent.calls == 1
+
+
+def test_hypothesis_proposer_boundary_hides_injected_general_purpose_tools() -> None:
+    class _Request:
+        def __init__(self, tools: list[Any]) -> None:
+            self.tools = tools
+
+        def override(self, **kwargs: Any) -> "_Request":
+            return _Request(list(kwargs.get("tools", self.tools)))
+
+    tools = [
+        SimpleNamespace(name="inspect_research_graph"),
+        SimpleNamespace(name="query_literature_corpus"),
+        SimpleNamespace(name="stage_research_plan"),
+        {"type": "web_search"},
+        SimpleNamespace(name="write_todos"),
+        SimpleNamespace(name="read_file"),
+        SimpleNamespace(name="execute"),
+        SimpleNamespace(name="apply_patch"),
+    ]
+    boundary = runtime_mod._HypothesisProposerToolBoundaryMiddleware()
+
+    async def _handler(request: _Request) -> _Request:
+        return request
+
+    bounded = asyncio.run(boundary.awrap_model_call(_Request(tools), _handler))
+    visible_names = {runtime_mod._agent_tool_name(tool) for tool in bounded.tools}
+
+    assert visible_names == {
+        "inspect_research_graph",
+        "query_literature_corpus",
+        "stage_research_plan",
+        "web_search",
+    }
+
+    blocked_handler_called = False
+
+    async def _blocked_handler(_request: Any) -> ToolMessage:
+        nonlocal blocked_handler_called
+        blocked_handler_called = True
+        return ToolMessage(content="executed", tool_call_id="call-execute")
+
+    blocked = asyncio.run(
+        boundary.awrap_tool_call(
+            SimpleNamespace(
+                tool_call={
+                    "name": "execute",
+                    "args": {"command": "printenv"},
+                    "id": "call-execute",
+                }
+            ),
+            _blocked_handler,
+        )
+    )
+
+    assert blocked_handler_called is False
+    assert isinstance(blocked, ToolMessage)
+    assert blocked.status == "error"
+    assert blocked.tool_call_id == "call-execute"
 
 
 @pytest.mark.parametrize(
@@ -1592,7 +1395,13 @@ def test_specialist_lanes_start_with_staged_skills(
             assert all(getattr(tool, "name", None) != "bash" for tool in subagent.kwargs["tools"])
         if "middleware" in subagent.kwargs:
             middleware_names = {type(item).__name__ for item in (subagent.kwargs.get("middleware") or [])}
-            assert any(name == "catmaster_nonfatal_tool_errors" for name in middleware_names)
+            if subagent.kwargs["name"] == "hypothesis_proposer":
+                assert {
+                    "_HypothesisProposerToolBoundaryMiddleware",
+                    "catmaster_nonfatal_tool_errors",
+                } <= middleware_names
+            else:
+                assert "catmaster_nonfatal_tool_errors" in middleware_names
 
     subagents_by_name = {subagent.kwargs["name"]: subagent.kwargs for subagent in top_subagents}
 
@@ -1617,20 +1426,21 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in agent_kwargs["tools"]} == (
             _RESEARCH_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
         )
-        assert "Research goal guard: the active objective is runtime-owned" in agent_kwargs["system_prompt"]
         assert "Research Graph contract" in agent_kwargs["system_prompt"]
         assert "Never guess among multiple graphs" in agent_kwargs["system_prompt"]
         assert "Research Kernel" not in agent_kwargs["system_prompt"]
-        assert "Research completion audit: before final answer" in agent_kwargs["system_prompt"]
         assert "Default to on-demand closeout, not autonomous research expansion" in agent_kwargs["system_prompt"]
-        assert "Perform a scientific reasonableness audit" in agent_kwargs["system_prompt"]
+        assert "scientific reasonableness check" in agent_kwargs["system_prompt"].lower()
         assert "A scientific reasonableness check is required for research closeouts" in agent_kwargs["system_prompt"]
         assert "do not force fixed `Summary` / `Facts` / `Files` headings" in agent_kwargs["system_prompt"]
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "hypothesis_proposer" in agent_kwargs["system_prompt"]
         assert "evidence_judge" in agent_kwargs["system_prompt"]
         assert "do not invent graph hypotheses" in agent_kwargs["system_prompt"]
-        assert "without grading the evidence yourself" in agent_kwargs["system_prompt"]
+        assert (
+            "record only the hypothesis effects that the evidence actually addresses"
+            in agent_kwargs["system_prompt"]
+        )
         assert "metadata_agent" not in agent_kwargs["system_prompt"]
         assert "paper, manuscript, journal-style LaTeX draft" in agent_kwargs["system_prompt"]
         assert "experiment report, validation summary, QC note" in agent_kwargs["system_prompt"]
@@ -1651,13 +1461,24 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["peer_review_specialist"]
         proposer = subagents_by_name["hypothesis_proposer"]
         judge = subagents_by_name["evidence_judge"]
-        assert proposer["tools"] == []
+        assert {tool.name for tool in proposer["tools"]} == {
+            "inspect_research_graph",
+            "query_literature_corpus",
+            "stage_research_plan",
+            "web_search",
+        }
+        assert {
+            "_HypothesisProposerToolBoundaryMiddleware",
+            "catmaster_nonfatal_tool_errors",
+        } <= {
+            type(item).__name__ for item in proposer["middleware"]
+        }
         assert judge["tools"] == []
         assert proposer["model"] == {"model": "hypothesis_proposer-model"}
         assert judge["model"] == {"model": "evidence_judge-model"}
-        assert proposer["response_format"].__name__ == "ResearchGraphPlanningProposal"
-        assert judge["response_format"].__name__ == "ResearchGraphEvidenceJudgment"
-        assert "does not execute or judge evidence" in proposer["description"]
+        assert "response_format" not in proposer
+        assert "response_format" not in judge
+        assert "does not execute scientific experiments" in proposer["description"]
         assert "does not propose branches or schedule work" in judge["description"]
 
         experiment_agents = [kwargs for kwargs in created_agents if kwargs["name"] == "experiment_specialist"]
@@ -1777,8 +1598,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Keep direct work in the specialist thread minimal and coordination-oriented" in agent_kwargs["system_prompt"]
         assert "Route by the current working artifact" in agent_kwargs["system_prompt"]
         assert "When a request clearly falls into one of those worker-owned domains, delegate first instead of doing the domain work yourself." in agent_kwargs["system_prompt"]
-        assert "keep a connected managed-MLFF materials workflow in `materials_worker`" in agent_kwargs["system_prompt"]
-        assert "use `dynamics_worker` when the primary task is a dynamics protocol, restart, LAMMPS workflow, or trajectory-health analysis" in agent_kwargs["system_prompt"]
+        assert "route every MLFF MD, restart, and trajectory-QC task to `dynamics_worker`" in agent_kwargs["system_prompt"]
         assert "Model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`" in agent_kwargs["system_prompt"]
         assert "use `orca_xtb_worker` for molecular or cluster quantum-chemistry work" in agent_kwargs["system_prompt"]
         assert "purely report writing from already completed evidence" in agent_kwargs["system_prompt"]
@@ -1801,8 +1621,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "If the scope is complete, state the executed scope, key evidence paths, and residual limitations" in agent_kwargs["system_prompt"]
         assert "remote_submission" in {tool.name for tool in materials_worker_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in materials_worker_kwargs["tools"]}
-        assert "Typical managed MLFF work here includes surrogate screening, relaxation, single-point ranking, path optimization" in materials_worker_kwargs["system_prompt"]
-        assert "Dynamics-first MLFF MD and trajectory-health tasks may instead go to `dynamics_worker`" in materials_worker_kwargs["system_prompt"]
+        assert "Typical managed MLFF work here includes surrogate screening, relaxation, single-point ranking, and path optimization" in materials_worker_kwargs["system_prompt"]
+        assert "All MLFF MD, restart, and trajectory-health tasks belong to `dynamics_worker`" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in materials_worker_kwargs["system_prompt"]
@@ -1985,12 +1805,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "research_kernel_path" not in run_state
         assert "research_kernel" not in run_state
         assert "hypothesis_engine" not in run_state
-        assert run_state["research_goal_path"].endswith("/goal.json")
-        assert run_state["research_goal"]["objective"] == "Run the lane smoke test."
-        assert run_state["research_goal"]["status"] == "complete"
-        assert "Completion audit" in run_state["research_goal"]["completion_audit_md"]
-        goal_file = workspace / "metadata" / run_state["research_goal_path"]
-        assert goal_file.is_file()
+        assert "research_goal_path" not in run_state
+        assert "research_goal" not in run_state
     usage_summary = load_usage_summary(built.run_context.run_dir)
     assert usage_summary["source"] == "langchain_usage_metadata"
     assert usage_summary["input_tokens"] == 123
@@ -2208,7 +2024,7 @@ def test_interrupted_run_can_resume_into_normal_execution(
     assert run_state["proposal_revision_count"] == 0
 
 
-def test_research_resume_uses_runtime_owned_goal_objective(
+def test_research_resume_preserves_original_prompt_without_goal_shadow_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2250,14 +2066,12 @@ def test_research_resume_uses_runtime_owned_goal_objective(
         llm_profile=_FakeProfile(),
         reporter=None,
         run_control=None,
-        project_id="proj_resume_research_goal",
+        project_id="proj_resume_research_prompt",
         preferred_entrypoint="research",
     )
-    goal = built.runner._create_or_replace_research_goal(
-        thread_id="thread-research-goal",
-        objective="Use MACE to compute the O2 bond length and report the evidence path.",
+    original_prompt = (
+        "Use MACE to compute the O2 bond length and report the evidence path."
     )
-    built.runner._update_research_goal_status(goal, status="paused")
     (built.run_context.run_dir / RUN_STATE_FILE).write_text(
         json.dumps(
             {
@@ -2266,15 +2080,15 @@ def test_research_resume_uses_runtime_owned_goal_objective(
                 "status": "interrupted_paused",
                 "phase": "interrupted",
                 "active_specialist": "research",
-                "thread_id": "thread-research-goal",
+                "thread_id": "thread-research-prompt",
                 "proposal_review": False,
                 "proposal_revision_count": 0,
                 "pending_human_input": None,
                 "todo_items": [],
                 "artifacts": [],
                 "delegation_log": [],
-                "user_prompt": "This stale prompt must not replace the goal.",
-                "chat_session_id": "chat-research-goal",
+                "user_prompt": original_prompt,
+                "chat_session_id": "chat-research-prompt",
             },
             ensure_ascii=False,
             indent=2,
@@ -2288,15 +2102,12 @@ def test_research_resume_uses_runtime_owned_goal_objective(
     payload = captured["payload"]
     assert isinstance(payload, dict)
     resume_message = payload["messages"][0]["content"]
-    assert "Continue the active research objective." in resume_message
-    assert "Use MACE to compute the O2 bond length and report the evidence path." in resume_message
+    assert original_prompt in resume_message
     assert "also include a short caveat" in resume_message
-    assert "Do not shrink, reinterpret, or replace the objective" in resume_message
-    assert "This stale prompt must not replace the goal." not in resume_message
+    assert "formal completion audit" in resume_message
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
-    assert run_state["research_goal"]["status"] == "complete"
-    assert run_state["research_goal"]["objective"] == "Use MACE to compute the O2 bond length and report the evidence path."
-    assert "notes/research/resume.md" in run_state["research_goal"]["completion_audit_md"]
+    assert run_state["user_prompt"] == original_prompt
+    assert "research_goal" not in run_state
 
 
 def test_conversation_messages_are_replayed_only_for_new_run(
@@ -2396,8 +2207,8 @@ def test_specialist_runner_returns_interrupted_paused_when_interrupt_requested_b
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["status"] == "interrupted_paused"
     assert run_state["summary"] == "Run interrupted by user."
-    assert run_state["research_goal"]["objective"] == "Stop before any deepagent work starts."
-    assert run_state["research_goal"]["status"] == "paused"
+    assert run_state["user_prompt"] == "Stop before any deepagent work starts."
+    assert "research_goal" not in run_state
 
 
 def test_specialist_resume_clears_stale_interrupt_request(

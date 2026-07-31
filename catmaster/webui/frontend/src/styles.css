@@ -8917,6 +8917,40 @@ body,
   line-height: 1.5;
 }
 
+.v2-rg-goal {
+  display: grid;
+  gap: 2px;
+  max-width: 900px;
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-left: 3px solid #6b7280;
+  background: rgba(255, 255, 255, 0.72);
+  color: #383838;
+}
+
+.v2-rg-goal strong {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+.v2-rg-plan-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 13px;
+  border: 1px dashed #8c6bc0;
+  border-radius: 5px;
+  background: #faf7ff;
+}
+
+.v2-rg-plan-summary p {
+  margin: 4px 0 0;
+  color: #4b3f5f;
+  line-height: 1.45;
+}
+
 .v2-rg-header-actions,
 .v2-rg-add-actions,
 .v2-rg-node-actions {
@@ -8928,6 +8962,15 @@ body,
 
 .v2-rg-header-actions {
   justify-content: flex-end;
+}
+
+.v2-rg-input-label {
+  margin-right: 3px;
+  color: #525252;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
 }
 
 .v2-rg-summary {
@@ -9043,6 +9086,8 @@ body,
 .v2-rg-node:focus-visible,
 .v2-rg-node.selected {
   border-color: #007acc;
+  background: #f3f8fc;
+  color: #202020;
   outline: 2px solid rgba(0, 122, 204, 0.24);
   outline-offset: 1px;
 }
@@ -9057,6 +9102,21 @@ body,
 
 .v2-rg-node.kind-result {
   border-left-color: #15803d;
+}
+
+.v2-rg-node.provisional {
+  border-style: dashed;
+  background: rgba(250, 247, 255, 0.76);
+  box-shadow: none;
+}
+
+.v2-rg-node.provisional:not(.recommended) {
+  opacity: 0.78;
+}
+
+.v2-rg-node.provisional.recommended {
+  border-color: #7c3aed;
+  outline: 2px solid rgba(124, 58, 237, 0.15);
 }
 
 .v2-rg-node-kind {
@@ -9185,6 +9245,17 @@ body,
   border-left: 3px solid #7c3aed;
   background: #f7f3ff;
   font-weight: 600;
+}
+
+.v2-rg-provisional-note {
+  padding: 9px 10px;
+  border: 1px dashed #9c7acb;
+  border-radius: 4px;
+  background: #faf7ff;
+}
+
+.v2-rg-provisional-note p {
+  margin: 4px 0 0;
 }
 
 .v2-rg-node-actions {
@@ -9339,6 +9410,27 @@ body,
   max-width: 100%;
 }
 
+.v2-rg-optional-details {
+  border: 1px solid #d4d4d4;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.v2-rg-optional-details > summary {
+  padding: 9px 10px;
+  cursor: pointer;
+  color: #444444;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.v2-rg-optional-details > div {
+  display: grid;
+  gap: 11px;
+  padding: 10px;
+  border-top: 1px solid #dddddd;
+}
+
 .v2-rg-checkbox {
   display: flex;
   align-items: center;
@@ -9467,6 +9559,10 @@ body,
   .v2-rg-header-actions button,
   .v2-rg-add-actions button {
     width: 100%;
+  }
+
+  .v2-rg-input-label {
+    margin: 0 0 2px;
   }
 
   .v2-rg-canvas-toolbar {

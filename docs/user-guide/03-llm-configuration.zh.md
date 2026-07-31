@@ -25,22 +25,22 @@ Research 特别适合以下工作：
 
 - Hypothesis 保存可证伪的 claim、rationale 和 observable predictions。
 - Experiment 保存 objective、plan summary、decision rule 和 execution lane。
-- Result 保存简短结论，再用关系分别表示它支持、反对或不能区分哪些假设。
+- Result 保存简短观察或结论，再用关系分别表示它支持、反对或不能区分哪些假设。来自图中 Experiment 的 Result 保留 produces 关系；文献发现、合作组结果或历史观察可以直接进入图，不需要倒填一个虚假的 Experiment。
 
 Hypothesis 不会因为一条结果变成不可修改的 "supported" 或 "rejected" 终态。界面根据所有入边显示目前有支持证据、反对证据、证据冲突、尚未区分或尚无结果。一个 Experiment 可以有多个 Result，所以复现实验不会覆盖已有证据。
 
 图与 note 的职责不同。论文精读、长分析、结构、图像、日志、报告和远程 receipt 继续放在 Files、artifact、run 或 note 中。Graph 节点只保存短科学命题，并用受控引用连接这些来源。Research thread 绑定 graph 后，每一轮都会收到有节点数和字符数上限的相关子图，不会把整个 workspace 或全部 graph 原样塞进 prompt。多个 active graph 同时存在时必须显式选择。
 
-用户可以自己创建 seed hypotheses、实验 proposal 和结果，也可以从 Result 节点启动一个绑定的 Research planning thread。`hypothesis_proposer` 和 `evidence_judge` 仍负责独立的科学计划与证据判断。自动模式一次只启动一个 ready Experiment；没有 ready Experiment 时，才启动一个 planning child。Planner 在同一 graph revision 没有产生修改时不会循环重启。
+每个 graph 都有完成条件；创建时可以自己填写，也可以留空使用可见默认值，之后仍可编辑或重新打开。用户可以自己创建 seed hypotheses、实验 proposal，以及来自本项目、合作组或文献的观察/结果；创建科学输入时可以同时附 DOI、URL、note、artifact、run、thread 或 message 来源。也可以从 Result 节点启动一个绑定的 Research planning thread。`hypothesis_proposer` 会读取相关图证据，并可直接检索网络、本地文献 corpus 和受控浏览器，再提出带 DOI/URL 来源的临时分支。它给 Research 返回普通科学语言的 memo，只有确有可展示方案时才调用一次绑定的 staging tool，不在 agent 消息里接力 graph ID 或 revision。`evidence_judge` 也返回简短科学判断，由 Research 只记录该 Result 真正涉及的 Hypothesis 影响。Planner 会把临时分支与完整 runnable Experiment frontier 一起比较，在证据足以区分下一步时用文字说明一条推荐，不保存数值路线分数。未选中的分支不写入永久图。WebUI 用半透明节点显示临时分支，manual 模式由用户点击实体化，auto 模式也只实体化获选路线。每次 graph 变化（包括新增 Result）后，auto 会先规划，再最多运行一个真实 Experiment。完成条件满足后停止自动推进。
 
 Research Graph 不改变执行边界。文献任务仍由 Literature Review 完成，DFT 或实验任务仍经过 Experiment、相应 worker、受管执行和必要的人工审批。一次性问答和简单线性任务可以不创建 graph。
 
 <details>
 <summary>Research 当前可调用的角色、tools 与 skills</summary>
 
-Research 把科学计划形成交给 `hypothesis_proposer`，把证据解释交给 `evidence_judge`，把实际执行交给 `experiment_specialist`、`writing_specialist`、`peer_review_specialist` 或 `litreview_agent`。它自己保留文件、任务计划和项目记忆等通用能力，不直接持有 VASP、slab 或远程提交工具。Proposer 和 judge 都没有执行工具。
+Research 把科学计划形成交给 `hypothesis_proposer`，把证据解释交给 `evidence_judge`，把实际执行交给 `experiment_specialist`、`writing_specialist`、`peer_review_specialist` 或 `litreview_agent`。它自己保留文件、任务计划和项目记忆等通用能力，不直接持有 VASP、slab 或远程提交工具。Proposer 有网络、受控浏览和本地文献检索，但没有科学实验执行工具；judge 没有搜索、提案或执行工具。
 
-Research 可使用 `list_research_graphs`、`create_research_graph`、`inspect_research_graph`、`add_research_hypothesis`、`add_research_experiment`、`record_research_result` 和 `mark_research_experiment_failed`。这些工具要求显式 graph ID 和当前 revision，不接受通用 metadata。持久数据位于 workspace 的 `metadata/workspace.sqlite`。Graph 只保存科学节点、关系和 refs；详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
+Research 可以列出、创建、查看和编辑 graph，加入 Hypothesis、Experiment、Result、证据判断与来源，也可以记录真实 blocker。普通 mutation 需要刚刚查看过的 graph ID 和当前 revision，不接受通用 metadata；内部 `stage_research_plan` 则从受信任的 planning-thread 绑定中取得二者，不要求 agent 传递协议字段。它只发布当前 planning turn 的临时路线，不会把所有搜索分支写成永久节点。持久数据位于 workspace 的 `metadata/workspace.sqlite`。Graph 只保存科学节点、关系和 refs；详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
 
 它可按需读取的研究 skills 包括 `research-graph-control`、`nature-citation`、`nature-data`、`nature-experiment-log`、`nature-figure`、`nature-literature-pipeline`、`nature-paper-to-patent`、`researchwrite`、`nature-reader`、`nature-ref-verifier` 和 `nature-writing`。真正执行计算时会进入 Experiment 及其 worker 的 skill 范围。
 
@@ -98,7 +98,7 @@ Experiment coordinator 可以使用 `mp_search_materials` 和 `mp_download_struc
 
 Literature Review 不是把搜索结果改写成一篇流畅摘要。它的任务是发现文献、取得合法可用的文本、区分元数据与全文证据、去重、精读、建立证据表，并在论文确定后核对引用记录。
 
-它可以从公共网页搜索开始，必要时打开受控浏览器。受控浏览器可以复用用户本人已登录的机构会话，但不会绕过验证码、付费墙或安全警告。已有 PDF、Markdown 和表格也可以导入本地语料库，再围绕研究问题检索。最终引用由确定性工具统一解析，避免每条文献都依赖模型猜测元数据。
+它可以从公共网页搜索开始，必要时打开受控浏览器。受控浏览器可以复用用户本人已登录的机构会话，但不会绕过验证码、付费墙或安全警告。可访问的 PDF、HTML、XML/JATS、Markdown 和其他可读文本都可以直接阅读；只有需要反复按问题检索时才选择导入本地 corpus。同批导入时，某个文件不可读不会抹掉其他成功文档，只会单独报告。最终引用由确定性工具统一解析，避免每条文献都依赖模型猜测元数据。
 
 Literature Review 可以完成主题综述、方法比较、关键论文精读、中英文对照阅读、claim-evidence 表、引用补充、参考文献核验和全文获取记录。它不会运行材料计算，也不应把只读到摘要的论文写成掌握了全部方法细节。
 

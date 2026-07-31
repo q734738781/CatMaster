@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from catmaster.tools.base import ensure_project_space_layout, workspace_scope
+from catmaster.research.knowledge_graph.models import GraphCreateRequest
+from catmaster.research.knowledge_graph.service import ResearchGraphService
 from catmaster.research.knowledge_graph.store import ResearchGraphStore
 from catmaster.webui.thread_store import ThreadStore
 from catmaster.tools.misc.research_graph import (
@@ -11,6 +14,7 @@ from catmaster.tools.misc.research_graph import (
     inspect_research_graph,
     list_research_graphs,
     record_research_result,
+    set_research_result_judgment,
 )
 from catmaster.tools.registry import ToolRegistry
 
@@ -22,7 +26,10 @@ TOOL_NAMES = [
     "add_research_hypothesis",
     "add_research_experiment",
     "record_research_result",
+    "set_research_result_judgment",
     "mark_research_experiment_failed",
+    "stage_research_plan",
+    "set_research_graph_completion",
     "record_bound_research_result",
     "mark_bound_research_experiment_failed",
 ]
@@ -47,6 +54,10 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
             {
                 "question": "Does catalyst A improve conversion?",
                 "title": "Catalyst A",
+                "completion_criterion": (
+                    "A sourced matched comparison determines whether catalyst "
+                    "A improves conversion."
+                ),
                 "orchestration_mode": "manual",
                 "initial_hypotheses": [
                     {
@@ -103,6 +114,25 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
         )
         assert "supporting evidence available" in content
         assert result["data"]["omitted_count"] == 0
+        revision = result["data"]["graph"]["revision"]
+        result_id = result["data"]["focus_node_id"]
+        content, _judged = set_research_result_judgment(
+            {
+                "graph_id": graph_id,
+                "expected_revision": revision,
+                "result_node_id": result_id,
+                "hypothesis_node_id": hypothesis_id,
+                "relation": "opposes",
+            }
+        )
+        assert "opposing evidence available" in content
+        snapshot = ResearchGraphStore(tmp_path).get_snapshot(graph_id)
+        assert {
+            edge["relation"]
+            for edge in snapshot["edges"]
+            if edge["source_node_id"] == result_id
+            and edge["target_node_id"] == hypothesis_id
+        } == {"opposes"}
         listed, artifact = list_research_graphs({"include_archived": False})
         assert graph_id in listed
         assert artifact["data"]["graph_count"] == 1
@@ -120,24 +150,60 @@ def test_research_tool_final_schemas_are_non_nullable_and_minimal(
         assert "metadata" not in tool["parameters"].get("properties", {})
         assert "source_thread_id" not in tool["parameters"].get("properties", {})
         properties = tool["parameters"].get("properties", {})
+        if tool["name"] == "create_research_graph":
+            assert "completion_criterion" not in tool["parameters"].get(
+                "required",
+                [],
+            )
         if tool["name"] == "add_research_hypothesis":
             importance = properties["importance"]
-            assert importance["default"] == "medium"
-            assert importance["enum"] == ["low", "medium", "high"]
+            assert importance["default"] == ""
+            assert importance["enum"] == ["", "low", "medium", "high"]
             assert importance["type"] == "string"
             assert "confidence" in importance["description"]
         if tool["name"] == "add_research_experiment":
+            assert "plan_summary" not in tool["parameters"].get("required", [])
+            assert "decision_rule" not in tool["parameters"].get("required", [])
             assert properties["expected_value"]["enum"] == [
+                "",
                 "low",
                 "medium",
                 "high",
             ]
             assert properties["estimated_compute_cost"]["enum"] == [
+                "",
                 "none",
                 "low",
                 "medium",
                 "high",
             ]
+        if tool["name"] == "stage_research_plan":
+            assert "graph_id" not in properties
+            assert "expected_revision" not in properties
+            assert "evaluations" not in properties
+            assert "maxItems" not in properties["hypotheses"]
+            assert "maxItems" not in properties["experiments"]
+            experiment_schema = tool["parameters"]["$defs"][
+                "ResearchExperimentProposal"
+            ]
+            assert "plan_summary" not in experiment_schema["required"]
+            assert "decision_rule" not in experiment_schema["required"]
+        if tool["name"] == "record_research_result":
+            assert properties["experiment_node_id"]["type"] == "string"
+            assert properties["experiment_node_id"]["default"] == ""
+            assert "experiment_node_id" not in tool["parameters"].get(
+                "required",
+                [],
+            )
+        if tool["name"] == "set_research_result_judgment":
+            assert properties["relation"]["enum"] == [
+                "supports",
+                "opposes",
+                "inconclusive",
+                "unjudged",
+            ]
+        if tool["name"] == "stage_research_plan":
+            assert "self_consistency" not in json.dumps(tool["parameters"])
         if tool["name"] in {
             "record_bound_research_result",
             "mark_bound_research_experiment_failed",
@@ -179,6 +245,10 @@ def test_create_research_graph_binds_host_injected_current_thread(
     tool.invoke(
         {
             "question": "Which pathway controls selectivity?",
+            "completion_criterion": (
+                "A sourced discriminating Result identifies which pathway "
+                "controls selectivity."
+            ),
             "initial_hypotheses": [
                 {
                     "claim": "Pathway A controls selectivity.",
@@ -195,3 +265,86 @@ def test_create_research_graph_binds_host_injected_current_thread(
     schema = tool.args_schema
     assert "thread_id" not in schema.get("properties", {})
     assert "active_research_graph_id" not in schema.get("properties", {})
+
+
+def test_planning_child_stages_from_bound_thread_without_protocol_ids(
+    tmp_path: Path,
+) -> None:
+    ensure_project_space_layout(tmp_path, create=True)
+    service = ResearchGraphService(workspace=tmp_path)
+    created = service.create_graph(
+        GraphCreateRequest(
+            question="Which surface state controls selectivity?",
+            initial_hypotheses=[
+                {
+                    "claim": "The reconstructed surface controls selectivity.",
+                    "predictions": ["An operando reconstruction marker tracks selectivity."],
+                }
+            ],
+        )
+    )
+    graph_id = created["graph"]["graph_id"]
+    revision = created["graph"]["revision"]
+    planning, claimed = service.store.claim_planning(
+        graph_id,
+        expected_revision=revision,
+    )
+    assert claimed is True
+    threads = ThreadStore(workspace=tmp_path, workspace_id="default")
+    thread = threads.create_thread(
+        thread_id="thread_bound_planning",
+        title="Plan next step",
+        entrypoint="research",
+    )
+    threads.update_thread(
+        thread.thread_id,
+        active_research_graph_id=graph_id,
+        research_focus_node_id=created["nodes"][0]["node_id"],
+    )
+    service.store.update_planning(
+        graph_id,
+        planning["planning_id"],
+        start_revision=revision,
+        status="attached",
+        thread_id=thread.thread_id,
+    )
+    registry = ToolRegistry()
+    tool = next(
+        item
+        for item in registry.as_langchain_tools(
+            allowlist=["stage_research_plan"],
+            workspace=str(tmp_path),
+            runtime_context={
+                "thread_id": thread.thread_id,
+                "entrypoint": "research",
+            },
+        )
+        if item.name == "stage_research_plan"
+    )
+
+    tool.invoke(
+        {
+            "experiments": [
+                {
+                    "proposal_id": "exp_operando",
+                    "objective": "Test whether reconstruction tracks selectivity.",
+                    "plan_summary": "Measure structure and selectivity together.",
+                    "decision_rule": (
+                        "A reversible marker-selectivity correlation supports the branch."
+                    ),
+                    "execution_lane": "literature_review",
+                    "tests_hypothesis_ids": [created["nodes"][0]["node_id"]],
+                }
+            ],
+            "recommended_target_id": "exp_operando",
+            "recommendation_reason": (
+                "It directly separates reconstruction from a static-site explanation."
+            ),
+        }
+    )
+
+    staged = service.store.find_planning_by_thread(thread.thread_id)
+    assert staged is not None
+    assert staged["preview"]["proposal"]["recommended_target_id"] == "exp_operando"
+    assert "graph_id" not in tool.args_schema.get("properties", {})
+    assert "expected_revision" not in tool.args_schema.get("properties", {})

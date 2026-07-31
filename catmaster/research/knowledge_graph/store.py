@@ -24,7 +24,7 @@ _ACTIVE_LAUNCH_STATUSES = ("claimed", "submitting", "running", "unknown")
 _TERMINAL_PLANNING_STATUSES = ("finished", "no_change", "stale")
 _PLANNING_LEASE_SECONDS = 120
 _SCHEMA_COMPONENT = "research_knowledge_graph"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 4
 
 
 def _now() -> float:
@@ -66,12 +66,22 @@ class ResearchGraphStore:
 
     def _init_schema(self) -> None:
         with connect_workspace_db(self.workspace) as connection:
+            version_row = connection.execute(
+                "SELECT version FROM schema_migrations WHERE component = ?",
+                (_SCHEMA_COMPONENT,),
+            ).fetchone()
+            previous_version = (
+                int(version_row["version"]) if version_row is not None else 0
+            )
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS research_graphs (
                     graph_id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     question TEXT NOT NULL,
+                    completion_criterion TEXT NOT NULL DEFAULT '',
+                    completed INTEGER NOT NULL DEFAULT 0
+                        CHECK (completed IN (0, 1)),
                     orchestration_mode TEXT NOT NULL
                         CHECK (orchestration_mode IN ('manual', 'auto')),
                     archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
@@ -166,6 +176,7 @@ class ResearchGraphStore:
                         )
                     ),
                     thread_id TEXT NOT NULL DEFAULT '',
+                    preview_json TEXT NOT NULL DEFAULT '{}',
                     lease_until REAL NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
@@ -191,7 +202,46 @@ class ResearchGraphStore:
 
                 """
             )
+            graph_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(research_graphs)"
+                ).fetchall()
+            }
+            if "completion_criterion" not in graph_columns:
+                connection.execute(
+                    "ALTER TABLE research_graphs "
+                    "ADD COLUMN completion_criterion TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execute(
+                    """
+                    UPDATE research_graphs
+                    SET completion_criterion = (
+                        'Reach a defensible answer to the research question using '
+                        || 'recorded Results and traceable sources.'
+                    )
+                    WHERE completion_criterion = ''
+                    """
+                )
+            if "completed" not in graph_columns:
+                connection.execute(
+                    "ALTER TABLE research_graphs "
+                    "ADD COLUMN completed INTEGER NOT NULL DEFAULT 0"
+                )
+            planning_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(research_planning)"
+                ).fetchall()
+            }
+            if "preview_json" not in planning_columns:
+                connection.execute(
+                    "ALTER TABLE research_planning "
+                    "ADD COLUMN preview_json TEXT NOT NULL DEFAULT '{}'"
+                )
             ensure_workspace_ui_events(connection)
+            if previous_version < 4:
+                self._migrate_legacy_blocker_results(connection)
             connection.execute(
                 """
                 INSERT INTO schema_migrations(component, version)
@@ -202,11 +252,111 @@ class ResearchGraphStore:
             )
 
     @staticmethod
+    def _migrate_legacy_blocker_results(
+        connection: sqlite3.Connection,
+    ) -> None:
+        """Move the old exact blocker artifact back onto its Experiment."""
+
+        rows = connection.execute(
+            """
+            SELECT
+                result.graph_id,
+                result.node_id AS result_id,
+                result.body_json AS result_body_json,
+                experiment.node_id AS experiment_id,
+                experiment.body_json AS experiment_body_json
+            FROM research_nodes AS result
+            JOIN research_edges AS produced
+              ON produced.graph_id = result.graph_id
+             AND produced.target_node_id = result.node_id
+             AND produced.relation = 'produces'
+            JOIN research_nodes AS experiment
+              ON experiment.graph_id = produced.graph_id
+             AND experiment.node_id = produced.source_node_id
+            WHERE result.kind = 'result'
+              AND result.title = 'Execution blocked'
+              AND result.state = ''
+              AND experiment.kind = 'experiment'
+              AND experiment.state = 'blocked'
+              AND result.created_at = experiment.updated_at
+              AND (
+                    SELECT COUNT(*)
+                    FROM research_edges AS incoming
+                    WHERE incoming.graph_id = result.graph_id
+                      AND incoming.target_node_id = result.node_id
+                  ) = 1
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM research_edges AS outgoing
+                    WHERE outgoing.graph_id = result.graph_id
+                      AND outgoing.source_node_id = result.node_id
+                  )
+            """
+        ).fetchall()
+        changed_graphs: set[str] = set()
+        now = _now()
+        for row in rows:
+            try:
+                result_body = json.loads(str(row["result_body_json"]))
+                experiment_body = json.loads(str(row["experiment_body_json"]))
+                reason = str(result_body.get("summary") or "").strip()
+                if not reason:
+                    continue
+                if not str(experiment_body.get("blocking_reason") or "").strip():
+                    experiment_body["blocking_reason"] = reason
+                experiment_body = validate_node_body(
+                    NodeKind.EXPERIMENT,
+                    experiment_body,
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+            graph_id = str(row["graph_id"])
+            result_id = str(row["result_id"])
+            experiment_id = str(row["experiment_id"])
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO research_refs (
+                    graph_id, node_id, ref_kind, ref_id
+                )
+                SELECT graph_id, ?, ref_kind, ref_id
+                FROM research_refs
+                WHERE graph_id = ? AND node_id = ?
+                """,
+                (experiment_id, graph_id, result_id),
+            )
+            connection.execute(
+                """
+                UPDATE research_nodes
+                SET body_json = ?, revision = revision + 1, updated_at = ?
+                WHERE graph_id = ? AND node_id = ?
+                """,
+                (_json(experiment_body), now, graph_id, experiment_id),
+            )
+            connection.execute(
+                "DELETE FROM research_nodes WHERE graph_id = ? AND node_id = ?",
+                (graph_id, result_id),
+            )
+            changed_graphs.add(graph_id)
+
+        if changed_graphs:
+            connection.executemany(
+                """
+                UPDATE research_graphs
+                SET revision = revision + 1, updated_at = ?
+                WHERE graph_id = ?
+                """,
+                [(now, graph_id) for graph_id in changed_graphs],
+            )
+
+    @staticmethod
     def _graph_row(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "graph_id": str(row["graph_id"]),
             "title": str(row["title"]),
             "question": str(row["question"]),
+            "completion_criterion": str(row["completion_criterion"]),
+            "completed": bool(row["completed"]),
             "orchestration_mode": str(row["orchestration_mode"]),
             "archived": bool(row["archived"]),
             "revision": int(row["revision"]),
@@ -266,12 +416,17 @@ class ResearchGraphStore:
 
     @staticmethod
     def _planning_row(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            preview = json.loads(str(row["preview_json"] or "{}"))
+        except Exception:
+            preview = {}
         return {
             "planning_id": str(row["planning_id"]),
             "graph_id": str(row["graph_id"]),
             "revision": int(row["start_revision"]),
             "thread_id": str(row["thread_id"]),
             "status": str(row["status"]),
+            "preview": preview if isinstance(preview, dict) else {},
             "lease_until": float(row["lease_until"]),
             "created_at": float(row["created_at"]),
             "updated_at": float(row["updated_at"]),
@@ -316,12 +471,27 @@ class ResearchGraphStore:
         *,
         graph_id: str,
         expected_revision: int,
+        allow_archived: bool = False,
+        reopen_completed: bool = False,
     ) -> int:
+        current = self._get_graph_row(connection, graph_id)
+        current_revision = int(current["revision"])
+        if current_revision != int(expected_revision):
+            raise ResearchGraphConflict(
+                expected_revision=int(expected_revision),
+                current_revision=current_revision,
+            )
+        if bool(current["archived"]) and not allow_archived:
+            raise ValueError(
+                "This Research Graph is archived. Restore it before changing "
+                "scientific state or sources."
+            )
         now = _now()
+        completion_assignment = ", completed = 0" if reopen_completed else ""
         cursor = connection.execute(
-            """
+            f"""
             UPDATE research_graphs
-            SET revision = revision + 1, updated_at = ?
+            SET revision = revision + 1, updated_at = ?{completion_assignment}
             WHERE graph_id = ? AND revision = ?
             """,
             (now, graph_id, int(expected_revision)),
@@ -444,6 +614,7 @@ class ResearchGraphStore:
         *,
         title: str,
         question: str,
+        completion_criterion: str = "",
         orchestration_mode: OrchestrationMode | str = OrchestrationMode.MANUAL,
         initial_hypotheses: list[dict[str, Any]] | None = None,
         graph_id: str = "",
@@ -453,6 +624,10 @@ class ResearchGraphStore:
         title = str(title or "").strip() or question[:120]
         if not question:
             raise ValueError("Research question is required.")
+        completion_criterion = str(completion_criterion or "").strip() or (
+            "Reach a defensible answer to the research question using "
+            "recorded Results and traceable sources."
+        )
         mode = OrchestrationMode(orchestration_mode).value
         hypotheses = list(initial_hypotheses or [])
         now = _now()
@@ -461,11 +636,19 @@ class ResearchGraphStore:
             connection.execute(
                 """
                 INSERT INTO research_graphs (
-                    graph_id, title, question, orchestration_mode,
-                    archived, revision, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 0, 1, ?, ?)
+                    graph_id, title, question, completion_criterion, completed,
+                    orchestration_mode, archived, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 0, ?, 0, 1, ?, ?)
                 """,
-                (graph_id, title, question, mode, now, now),
+                (
+                    graph_id,
+                    title,
+                    question,
+                    completion_criterion,
+                    mode,
+                    now,
+                    now,
+                ),
             )
             created_ids: list[str] = []
             for seed in hypotheses:
@@ -489,6 +672,20 @@ class ResearchGraphStore:
                     """,
                     (graph_id, node_id, node_title, _json(body), now, now),
                 )
+                for ref in list(seed.get("refs") or []):
+                    connection.execute(
+                        """
+                        INSERT INTO research_refs (
+                            graph_id, node_id, ref_kind, ref_id
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            graph_id,
+                            node_id,
+                            RefKind(ref["ref_kind"]).value,
+                            str(ref["ref_id"]).strip(),
+                        ),
+                    )
                 created_ids.append(node_id)
             event_id = self._write_event(
                 connection,
@@ -585,7 +782,14 @@ class ResearchGraphStore:
         changes: dict[str, Any],
     ) -> dict[str, Any]:
         graph_id = _safe_id(graph_id, label="graph_id")
-        allowed = {"title", "question", "orchestration_mode", "archived"}
+        allowed = {
+            "title",
+            "question",
+            "completion_criterion",
+            "completed",
+            "orchestration_mode",
+            "archived",
+        }
         updates = {key: value for key, value in changes.items() if key in allowed}
         if not updates:
             return self.get_graph(graph_id)
@@ -597,6 +801,14 @@ class ResearchGraphStore:
             updates["question"] = str(updates["question"] or "").strip()
             if not updates["question"]:
                 raise ValueError("Research question is required.")
+        if "completion_criterion" in updates:
+            updates["completion_criterion"] = str(
+                updates["completion_criterion"] or ""
+            ).strip()
+            if not updates["completion_criterion"]:
+                raise ValueError("Research completion criterion is required.")
+        if "completed" in updates:
+            updates["completed"] = int(bool(updates["completed"]))
         if "orchestration_mode" in updates:
             updates["orchestration_mode"] = OrchestrationMode(
                 str(updates["orchestration_mode"])
@@ -605,10 +817,20 @@ class ResearchGraphStore:
             updates["archived"] = int(bool(updates["archived"]))
         with connect_workspace_db(self.workspace) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            current = self._get_graph_row(connection, graph_id)
+            if bool(current["archived"]) and not (
+                len(updates) == 1
+                and updates.get("archived") == 0
+            ):
+                raise ValueError(
+                    "This Research Graph is archived. Restore it before editing "
+                    "its goal or orchestration."
+                )
             revision = self._bump_graph(
                 connection,
                 graph_id=graph_id,
                 expected_revision=expected_revision,
+                allow_archived=True,
             )
             assignments = ", ".join(f"{key} = ?" for key in updates)
             connection.execute(
@@ -631,6 +853,29 @@ class ResearchGraphStore:
         if value:
             raise ValueError(f"{kind.value} nodes do not have an execution state.")
         return ""
+
+    @staticmethod
+    def _validate_experiment_readiness(
+        kind: NodeKind,
+        state: str,
+        body: dict[str, Any],
+    ) -> None:
+        if kind is not NodeKind.EXPERIMENT or state != ExperimentState.READY.value:
+            return
+        missing = [
+            label
+            for key, label in (
+                ("plan_summary", "plan summary"),
+                ("decision_rule", "decision rule"),
+            )
+            if not str(body.get(key) or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                "A ready experiment requires a "
+                + " and ".join(missing)
+                + ". Keep it as a draft until those details are known."
+            )
 
     @staticmethod
     def _expected_relation_shape(
@@ -720,6 +965,7 @@ class ResearchGraphStore:
             raise ValueError("Node title is required.")
         node_body = validate_node_body(node_kind, body)
         node_state = self._validate_node_state(node_kind, state)
+        self._validate_experiment_readiness(node_kind, node_state, node_body)
         edge_rows = list(edges or [])
         ref_rows = list(refs or [])
         now = _now()
@@ -770,7 +1016,7 @@ class ResearchGraphStore:
             for ref in ref_rows:
                 connection.execute(
                     """
-                    INSERT INTO research_refs (
+                    INSERT OR IGNORE INTO research_refs (
                         graph_id, node_id, ref_kind, ref_id
                     ) VALUES (?, ?, ?, ?)
                     """,
@@ -785,6 +1031,7 @@ class ResearchGraphStore:
                 connection,
                 graph_id=graph_id,
                 expected_revision=expected_revision,
+                reopen_completed=True,
             )
             event_id = self._write_event(
                 connection,
@@ -794,6 +1041,142 @@ class ResearchGraphStore:
                 node_ids=[node_id],
             )
         return self.get_node(graph_id, node_id), event_id
+
+    def materialize_plan_bundle(
+        self,
+        graph_id: str,
+        *,
+        expected_revision: int,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, str]],
+    ) -> tuple[dict[str, str], int]:
+        """Atomically turn one selected temporary route into durable H/E nodes."""
+
+        graph_id = _safe_id(graph_id, label="graph_id")
+        if not nodes:
+            raise ValueError("The selected route has no provisional node to add.")
+        prepared: list[dict[str, Any]] = []
+        proposal_ids: set[str] = set()
+        mapping: dict[str, str] = {}
+        for spec in nodes:
+            # A proposal ID is an ephemeral intra-payload reference, not a
+            # durable graph/API identifier. The planning model already bounds
+            # its length; only non-empty uniqueness matters here.
+            proposal_id = str(spec.get("proposal_id") or "").strip()
+            if not proposal_id:
+                raise ValueError("A selected planning node has no proposal ID.")
+            if proposal_id in proposal_ids:
+                raise ValueError("A selected planning route repeats a proposal ID.")
+            proposal_ids.add(proposal_id)
+            kind = NodeKind(str(spec.get("kind") or ""))
+            if kind not in {NodeKind.HYPOTHESIS, NodeKind.EXPERIMENT}:
+                raise ValueError("Planning may materialize only hypotheses or experiments.")
+            title = str(spec.get("title") or "").strip()
+            if not title:
+                raise ValueError("A selected planning node has no title.")
+            body = validate_node_body(kind, dict(spec.get("body") or {}))
+            state = self._validate_node_state(
+                kind,
+                str(spec.get("state") or ""),
+            )
+            self._validate_experiment_readiness(kind, state, body)
+            node_id = _new_id(
+                "hyp" if kind is NodeKind.HYPOTHESIS else "exp"
+            )
+            mapping[proposal_id] = node_id
+            prepared.append(
+                {
+                    "proposal_id": proposal_id,
+                    "node_id": node_id,
+                    "kind": kind,
+                    "title": title,
+                    "body": body,
+                    "state": state,
+                    "refs": list(spec.get("refs") or []),
+                }
+            )
+
+        now = _now()
+        with connect_workspace_db(self.workspace) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._get_graph_row(connection, graph_id)
+            for spec in prepared:
+                connection.execute(
+                    """
+                    INSERT INTO research_nodes (
+                        graph_id, node_id, kind, title, state, body_json,
+                        revision, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        graph_id,
+                        spec["node_id"],
+                        spec["kind"].value,
+                        spec["title"],
+                        spec["state"],
+                        _json(spec["body"]),
+                        now,
+                        now,
+                    ),
+                )
+                for ref in spec["refs"]:
+                    ref_id = str(ref.get("ref_id") or "").strip()
+                    if not ref_id:
+                        raise ValueError("A selected planning source is empty.")
+                    connection.execute(
+                        """
+                        INSERT INTO research_refs (
+                            graph_id, node_id, ref_kind, ref_id
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            graph_id,
+                            spec["node_id"],
+                            RefKind(ref["ref_kind"]).value,
+                            ref_id,
+                        ),
+                    )
+            for edge in edges:
+                source_id = mapping.get(
+                    str(edge.get("source_node_id") or ""),
+                    str(edge.get("source_node_id") or ""),
+                )
+                target_id = mapping.get(
+                    str(edge.get("target_node_id") or ""),
+                    str(edge.get("target_node_id") or ""),
+                )
+                source_id = _safe_id(source_id, label="source_node_id")
+                target_id = _safe_id(target_id, label="target_node_id")
+                relation = EdgeRelation(str(edge.get("relation") or ""))
+                self._validate_edge(
+                    connection,
+                    graph_id=graph_id,
+                    source_node_id=source_id,
+                    target_node_id=target_id,
+                    relation=relation,
+                )
+                connection.execute(
+                    """
+                    INSERT INTO research_edges (
+                        graph_id, source_node_id, target_node_id, relation
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (graph_id, source_id, target_id, relation.value),
+                )
+            revision = self._bump_graph(
+                connection,
+                graph_id=graph_id,
+                expected_revision=expected_revision,
+                reopen_completed=True,
+            )
+            event_id = self._write_event(
+                connection,
+                graph_id=graph_id,
+                revision=revision,
+                change="planning.materialized",
+                node_ids=mapping.values(),
+            )
+        return mapping, event_id
 
     def update_node(
         self,
@@ -817,6 +1200,13 @@ class ResearchGraphStore:
             kind = NodeKind(str(current["kind"]))
             validated_body = validate_node_body(kind, body)
             validated_state = self._validate_node_state(kind, state)
+            if kind is NodeKind.EXPERIMENT and validated_state != "blocked":
+                validated_body["blocking_reason"] = ""
+            self._validate_experiment_readiness(
+                kind,
+                validated_state,
+                validated_body,
+            )
             if kind is NodeKind.EXPERIMENT:
                 current_state = str(current["state"])
                 editable_states = {
@@ -836,6 +1226,7 @@ class ResearchGraphStore:
                 connection,
                 graph_id=graph_id,
                 expected_revision=expected_revision,
+                reopen_completed=True,
             )
             cursor = connection.execute(
                 """
@@ -895,6 +1286,7 @@ class ResearchGraphStore:
                 connection,
                 graph_id=graph_id,
                 expected_revision=expected_revision,
+                reopen_completed=True,
             )
             connection.execute(
                 """
@@ -915,6 +1307,95 @@ class ResearchGraphStore:
                 revision=revision,
                 change="edge.added",
                 node_ids=[source_node_id, target_node_id],
+            )
+
+    def set_result_judgment(
+        self,
+        graph_id: str,
+        *,
+        expected_revision: int,
+        result_node_id: str,
+        hypothesis_node_id: str,
+        relation: str,
+    ) -> int:
+        """Replace one Result-to-Hypothesis judgment without generic edge editing."""
+
+        graph_id = _safe_id(graph_id, label="graph_id")
+        result_node_id = _safe_id(result_node_id, label="result_node_id")
+        hypothesis_node_id = _safe_id(
+            hypothesis_node_id,
+            label="hypothesis_node_id",
+        )
+        normalized = str(relation or "").strip()
+        allowed = {"supports", "opposes", "inconclusive", "unjudged"}
+        if normalized not in allowed:
+            raise ValueError(
+                "Result judgment must be supports, opposes, inconclusive, or unjudged."
+            )
+        with connect_workspace_db(self.workspace) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            result = self._get_node_row(connection, graph_id, result_node_id)
+            hypothesis = self._get_node_row(
+                connection,
+                graph_id,
+                hypothesis_node_id,
+            )
+            if NodeKind(str(result["kind"])) is not NodeKind.RESULT:
+                raise ValueError("Only a Result node can carry an evidence judgment.")
+            if NodeKind(str(hypothesis["kind"])) is not NodeKind.HYPOTHESIS:
+                raise ValueError(
+                    "A Result judgment must target a Hypothesis node."
+                )
+            if normalized != "unjudged":
+                self._validate_edge(
+                    connection,
+                    graph_id=graph_id,
+                    source_node_id=result_node_id,
+                    target_node_id=hypothesis_node_id,
+                    relation=EdgeRelation(normalized),
+                )
+            revision = self._bump_graph(
+                connection,
+                graph_id=graph_id,
+                expected_revision=expected_revision,
+                reopen_completed=True,
+            )
+            connection.execute(
+                """
+                DELETE FROM research_edges
+                WHERE graph_id = ? AND source_node_id = ? AND target_node_id = ?
+                  AND relation IN ('supports', 'opposes', 'inconclusive')
+                """,
+                (graph_id, result_node_id, hypothesis_node_id),
+            )
+            if normalized != "unjudged":
+                connection.execute(
+                    """
+                    INSERT INTO research_edges (
+                        graph_id, source_node_id, target_node_id, relation
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        graph_id,
+                        result_node_id,
+                        hypothesis_node_id,
+                        normalized,
+                    ),
+                )
+            connection.execute(
+                """
+                UPDATE research_nodes
+                SET updated_at = ?
+                WHERE graph_id = ? AND node_id = ?
+                """,
+                (_now(), graph_id, result_node_id),
+            )
+            return self._write_event(
+                connection,
+                graph_id=graph_id,
+                revision=revision,
+                change="result.judgment_updated",
+                node_ids=[result_node_id, hypothesis_node_id],
             )
 
     def add_ref(
@@ -969,10 +1450,9 @@ class ResearchGraphStore:
         experiment_node_id = _safe_id(
             experiment_node_id, label="experiment_node_id"
         )
-        summary = str(reason or "").strip()
-        if not summary:
+        blocking_reason = str(reason or "").strip()
+        if not blocking_reason:
             raise ValueError("A blocking reason is required.")
-        result_id = _new_id("res")
         now = _now()
         with connect_workspace_db(self.workspace) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -990,31 +1470,17 @@ class ResearchGraphStore:
                     f"Experiment in {current_state.value} state cannot be "
                     "marked blocked."
                 )
+            body = json.loads(str(experiment["body_json"]))
+            body["blocking_reason"] = blocking_reason
+            body = validate_node_body(NodeKind.EXPERIMENT, body)
             connection.execute(
                 """
                 UPDATE research_nodes
-                SET state = 'blocked', revision = revision + 1, updated_at = ?
+                SET state = 'blocked', body_json = ?,
+                    revision = revision + 1, updated_at = ?
                 WHERE graph_id = ? AND node_id = ?
                 """,
-                (now, graph_id, experiment_node_id),
-            )
-            body = validate_node_body(NodeKind.RESULT, {"summary": summary})
-            connection.execute(
-                """
-                INSERT INTO research_nodes (
-                    graph_id, node_id, kind, title, state, body_json,
-                    revision, created_at, updated_at
-                ) VALUES (?, ?, 'result', 'Execution blocked', '', ?, 1, ?, ?)
-                """,
-                (graph_id, result_id, _json(body), now, now),
-            )
-            connection.execute(
-                """
-                INSERT INTO research_edges (
-                    graph_id, source_node_id, target_node_id, relation
-                ) VALUES (?, ?, ?, 'produces')
-                """,
-                (graph_id, experiment_node_id, result_id),
+                (_json(body), now, graph_id, experiment_node_id),
             )
             connection.execute(
                 """
@@ -1029,13 +1495,13 @@ class ResearchGraphStore:
             for ref in list(refs or []):
                 connection.execute(
                     """
-                    INSERT INTO research_refs (
+                    INSERT OR IGNORE INTO research_refs (
                         graph_id, node_id, ref_kind, ref_id
                     ) VALUES (?, ?, ?, ?)
                     """,
                     (
                         graph_id,
-                        result_id,
+                        experiment_node_id,
                         RefKind(ref["ref_kind"]).value,
                         str(ref["ref_id"]).strip(),
                     ),
@@ -1044,15 +1510,16 @@ class ResearchGraphStore:
                 connection,
                 graph_id=graph_id,
                 expected_revision=expected_revision,
+                reopen_completed=True,
             )
             event_id = self._write_event(
                 connection,
                 graph_id=graph_id,
                 revision=revision,
                 change="experiment.blocked",
-                node_ids=[experiment_node_id, result_id],
+                node_ids=[experiment_node_id],
             )
-        return self.get_node(graph_id, result_id), event_id
+        return self.get_node(graph_id, experiment_node_id), event_id
 
     def claim_launch(
         self,
@@ -1096,10 +1563,16 @@ class ResearchGraphStore:
                     f"Experiment must be ready before it can be {action}; "
                     f"current state is {state.value}."
                 )
+            self._validate_experiment_readiness(
+                NodeKind.EXPERIMENT,
+                ExperimentState.READY.value,
+                json.loads(str(experiment["body_json"])),
+            )
             revision = self._bump_graph(
                 connection,
                 graph_id=graph_id,
                 expected_revision=expected_revision,
+                reopen_completed=True,
             )
             launch_id = _new_id("launch")
             idempotency_key = _new_id(
@@ -1181,6 +1654,10 @@ class ResearchGraphStore:
             if (
                 current_status in {"completed", "blocked"}
                 and normalized_status != current_status
+                and not (
+                    current_status == "blocked"
+                    and normalized_status == "completed"
+                )
             ):
                 # Result/blocked writeback may finish a very fast child before
                 # the submitter advances its local launch object to running.
@@ -1229,6 +1706,95 @@ class ResearchGraphStore:
             result["event_id"] = event_id
             return result
 
+    def release_incomplete_launch(
+        self,
+        launch_id: str,
+        *,
+        thread_id: str = "",
+        run_id: str = "",
+    ) -> dict[str, Any]:
+        """Close an operationally incomplete run without creating scientific evidence."""
+
+        launch_id = _safe_id(launch_id, label="launch_id")
+        now = _now()
+        with connect_workspace_db(self.workspace) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM research_launches WHERE launch_id = ?",
+                (launch_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Research launch not found: {launch_id}")
+            launch = self._launch_row(row)
+            experiment = self._get_node_row(
+                connection,
+                str(launch["graph_id"]),
+                str(launch["experiment_node_id"]),
+            )
+            if str(launch["status"]) == "completed":
+                return launch
+            if (
+                str(launch["status"]) == "blocked"
+                and str(experiment["state"]) != ExperimentState.RUNNING.value
+            ):
+                return launch
+
+            connection.execute(
+                """
+                UPDATE research_launches
+                SET status = 'blocked',
+                    thread_id = CASE WHEN ? = '' THEN thread_id ELSE ? END,
+                    run_id = CASE WHEN ? = '' THEN run_id ELSE ? END,
+                    lease_owner = '', lease_until = 0, updated_at = ?
+                WHERE launch_id = ?
+                """,
+                (
+                    str(thread_id or ""),
+                    str(thread_id or ""),
+                    str(run_id or ""),
+                    str(run_id or ""),
+                    now,
+                    launch_id,
+                ),
+            )
+            if str(experiment["state"]) == ExperimentState.RUNNING.value:
+                connection.execute(
+                    """
+                    UPDATE research_nodes
+                    SET state = 'ready', revision = revision + 1, updated_at = ?
+                    WHERE graph_id = ? AND node_id = ?
+                    """,
+                    (
+                        now,
+                        str(launch["graph_id"]),
+                        str(launch["experiment_node_id"]),
+                    ),
+                )
+                graph = self._get_graph_row(connection, str(launch["graph_id"]))
+                revision = self._bump_graph(
+                    connection,
+                    graph_id=str(launch["graph_id"]),
+                    expected_revision=int(graph["revision"]),
+                )
+            else:
+                graph = self._get_graph_row(connection, str(launch["graph_id"]))
+                revision = int(graph["revision"])
+            self._write_event(
+                connection,
+                graph_id=str(launch["graph_id"]),
+                revision=revision,
+                change="launch.incomplete",
+                thread_id=str(thread_id or launch["thread_id"] or ""),
+                node_ids=[str(launch["experiment_node_id"])],
+                launch_id=launch_id,
+            )
+            updated = connection.execute(
+                "SELECT * FROM research_launches WHERE launch_id = ?",
+                (launch_id,),
+            ).fetchone()
+            assert updated is not None
+            return self._launch_row(updated)
+
     def complete_experiment_after_result(
         self,
         connection: sqlite3.Connection,
@@ -1250,7 +1816,7 @@ class ResearchGraphStore:
             SET status = 'completed', lease_owner = '', lease_until = 0,
                 updated_at = ?
             WHERE graph_id = ? AND experiment_node_id = ?
-              AND status IN ('claimed', 'submitting', 'running', 'unknown')
+              AND status IN ('claimed', 'submitting', 'running', 'unknown', 'blocked')
             """,
             (_now(), graph_id, experiment_node_id),
         )
@@ -1268,9 +1834,11 @@ class ResearchGraphStore:
         node_id: str = "",
     ) -> tuple[dict[str, Any], int]:
         graph_id = _safe_id(graph_id, label="graph_id")
-        experiment_node_id = _safe_id(
-            experiment_node_id, label="experiment_node_id"
-        )
+        experiment_node_id = str(experiment_node_id or "").strip()
+        if experiment_node_id:
+            experiment_node_id = _safe_id(
+                experiment_node_id, label="experiment_node_id"
+            )
         result_id = _safe_id(node_id, label="node_id") if node_id else _new_id(
             "res"
         )
@@ -1279,22 +1847,25 @@ class ResearchGraphStore:
         now = _now()
         with connect_workspace_db(self.workspace) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            experiment = self._get_node_row(
-                connection, graph_id, experiment_node_id
-            )
-            if NodeKind(str(experiment["kind"])) is not NodeKind.EXPERIMENT:
-                raise ValueError("A result must be produced by an experiment node.")
-            experiment_state = ExperimentState(str(experiment["state"]))
-            if experiment_state not in {
-                ExperimentState.READY,
-                ExperimentState.RUNNING,
-                ExperimentState.HAS_RESULTS,
-            }:
-                raise ValueError(
-                    "A result can be recorded only for a ready, running, or "
-                    f"previously completed experiment; current state is "
-                    f"{experiment_state.value}."
+            if experiment_node_id:
+                experiment = self._get_node_row(
+                    connection, graph_id, experiment_node_id
                 )
+                if NodeKind(str(experiment["kind"])) is not NodeKind.EXPERIMENT:
+                    raise ValueError(
+                        "A producing node must be a Research Graph experiment."
+                    )
+                experiment_state = ExperimentState(str(experiment["state"]))
+                if experiment_state not in {
+                    ExperimentState.READY,
+                    ExperimentState.RUNNING,
+                    ExperimentState.HAS_RESULTS,
+                }:
+                    raise ValueError(
+                        "A result can be recorded only for a ready, running, or "
+                        f"previously completed experiment; current state is "
+                        f"{experiment_state.value}."
+                    )
             connection.execute(
                 """
                 INSERT INTO research_nodes (
@@ -1304,14 +1875,15 @@ class ResearchGraphStore:
                 """,
                 (graph_id, result_id, title, _json(result_body), now, now),
             )
-            connection.execute(
-                """
-                INSERT INTO research_edges (
-                    graph_id, source_node_id, target_node_id, relation
-                ) VALUES (?, ?, ?, 'produces')
-                """,
-                (graph_id, experiment_node_id, result_id),
-            )
+            if experiment_node_id:
+                connection.execute(
+                    """
+                    INSERT INTO research_edges (
+                        graph_id, source_node_id, target_node_id, relation
+                    ) VALUES (?, ?, ?, 'produces')
+                    """,
+                    (graph_id, experiment_node_id, result_id),
+                )
             for judgment in judgments:
                 relation = EdgeRelation(judgment["relation"])
                 if relation not in {
@@ -1353,22 +1925,28 @@ class ResearchGraphStore:
                         str(ref["ref_id"]).strip(),
                     ),
                 )
-            self.complete_experiment_after_result(
-                connection,
-                graph_id=graph_id,
-                experiment_node_id=experiment_node_id,
-            )
+            if experiment_node_id:
+                self.complete_experiment_after_result(
+                    connection,
+                    graph_id=graph_id,
+                    experiment_node_id=experiment_node_id,
+                )
             revision = self._bump_graph(
                 connection,
                 graph_id=graph_id,
                 expected_revision=expected_revision,
+                reopen_completed=True,
             )
             event_id = self._write_event(
                 connection,
                 graph_id=graph_id,
                 revision=revision,
                 change="result.recorded",
-                node_ids=[experiment_node_id, result_id],
+                node_ids=(
+                    [experiment_node_id, result_id]
+                    if experiment_node_id
+                    else [result_id]
+                ),
             )
         return self.get_node(graph_id, result_id), event_id
 
@@ -1461,8 +2039,7 @@ class ResearchGraphStore:
         graph_id: str,
         *,
         expected_revision: int,
-        lease_owner: str,
-        stale_after_seconds: int = 900,
+        stale_after_seconds: int = 3600,
         recovery_lease_seconds: int = 120,
         allow_same_revision_after_no_change: bool = False,
     ) -> tuple[dict[str, Any], bool]:
@@ -1472,9 +2049,6 @@ class ResearchGraphStore:
         now = _now()
         lease_seconds = max(30, int(recovery_lease_seconds))
         stale_seconds = max(60, int(stale_after_seconds))
-        # Ownership is intentionally not persisted: BEGIN IMMEDIATE, the
-        # partial unique index, and lease expiry are sufficient for recovery.
-        _ = lease_owner
         with connect_workspace_db(self.workspace) as connection:
             connection.execute("BEGIN IMMEDIATE")
             graph = self._get_graph_row(connection, graph_id)
@@ -1483,6 +2057,16 @@ class ResearchGraphStore:
                 raise ResearchGraphConflict(
                     expected_revision=int(expected_revision),
                     current_revision=current_revision,
+                )
+            if bool(graph["archived"]):
+                raise ValueError(
+                    "This Research Graph is archived. Restore it before planning "
+                    "another scientific step."
+                )
+            if bool(graph["completed"]):
+                raise ValueError(
+                    "This Research Graph is completed. Reopen it before planning "
+                    "another scientific step."
                 )
             active_row = connection.execute(
                 """
@@ -1573,6 +2157,13 @@ class ResearchGraphStore:
                     }, False
 
             planning_id = _new_id("planning")
+            # Planning is a disposable workspace view, not an audit log. Keep
+            # only the current plan; durable scientific state lives in H/E/R
+            # nodes and their sources.
+            connection.execute(
+                "DELETE FROM research_planning WHERE graph_id = ?",
+                (graph_id,),
+            )
             connection.execute(
                 """
                 INSERT INTO research_planning (
@@ -1681,6 +2272,138 @@ class ResearchGraphStore:
                 planning=updated,
             )
 
+    def set_planning_preview(
+        self,
+        graph_id: str,
+        planning_id: str,
+        *,
+        start_revision: int,
+        preview: dict[str, Any],
+    ) -> int:
+        """Replace the one disposable UI preview for an attached planning turn."""
+
+        graph_id = _safe_id(graph_id, label="graph_id")
+        planning_id = _safe_id(planning_id, label="planning_id")
+        payload = dict(preview or {})
+        encoded = _json(payload)
+        if len(encoded) > 120_000:
+            raise ValueError("The temporary Research Graph plan is too large.")
+        with connect_workspace_db(self.workspace) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM research_planning
+                WHERE graph_id = ? AND planning_id = ?
+                """,
+                (graph_id, planning_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Research planning state not found: {planning_id}")
+            planning = self._planning_row(row)
+            if int(planning["revision"]) != int(start_revision):
+                raise ValueError("Planning preview revision does not match its turn.")
+            if planning["status"] not in {"claimed", "attached"}:
+                raise ValueError("This planning turn is no longer active.")
+            now = _now()
+            # The preview is a UI handoff, not planning history. Retain only
+            # the current preview for this graph and never grow an audit trail.
+            connection.execute(
+                """
+                UPDATE research_planning
+                SET preview_json = '{}'
+                WHERE graph_id = ? AND planning_id != ?
+                """,
+                (graph_id, planning_id),
+            )
+            connection.execute(
+                """
+                UPDATE research_planning
+                SET preview_json = ?, lease_until = ?, updated_at = ?
+                WHERE planning_id = ?
+                """,
+                (
+                    encoded,
+                    now + _PLANNING_LEASE_SECONDS,
+                    now,
+                    planning_id,
+                ),
+            )
+            updated_row = connection.execute(
+                "SELECT * FROM research_planning WHERE planning_id = ?",
+                (planning_id,),
+            ).fetchone()
+            updated = self._planning_row(updated_row)
+            return self._write_planning_event(
+                connection,
+                event_type="research_graph.planning_preview",
+                planning=updated,
+            )
+
+    def get_planning(self, graph_id: str, planning_id: str) -> dict[str, Any]:
+        graph_id = _safe_id(graph_id, label="graph_id")
+        planning_id = _safe_id(planning_id, label="planning_id")
+        with connect_workspace_db(self.workspace) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM research_planning
+                WHERE graph_id = ? AND planning_id = ?
+                """,
+                (graph_id, planning_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Research planning state not found: {planning_id}")
+        return self._planning_row(row)
+
+    def latest_planning_preview(
+        self,
+        graph_id: str,
+        *,
+        current_revision_only: bool = True,
+    ) -> dict[str, Any] | None:
+        graph_id = _safe_id(graph_id, label="graph_id")
+        with connect_workspace_db(self.workspace) as connection:
+            graph = self._get_graph_row(connection, graph_id)
+            row = connection.execute(
+                """
+                SELECT * FROM research_planning
+                WHERE graph_id = ? AND preview_json != '{}'
+                ORDER BY updated_at DESC, planning_id DESC
+                LIMIT 1
+                """,
+                (graph_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        planning = self._planning_row(row)
+        if (
+            current_revision_only
+            and int(planning["revision"]) != int(graph["revision"])
+        ):
+            return None
+        return planning
+
+    def planning_covers_current_graph(self, graph_id: str) -> bool:
+        """Whether a terminal planning turn finished after the latest graph edit."""
+
+        graph_id = _safe_id(graph_id, label="graph_id")
+        with connect_workspace_db(self.workspace) as connection:
+            graph = self._get_graph_row(connection, graph_id)
+            row = connection.execute(
+                """
+                SELECT updated_at
+                FROM research_planning
+                WHERE graph_id = ?
+                  AND status IN ('finished', 'no_change')
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (graph_id,),
+            ).fetchone()
+        return bool(
+            row is not None
+            and float(row["updated_at"]) >= float(graph["updated_at"])
+        )
+
     def scheduler_snapshot(self, graph_id: str) -> dict[str, Any]:
         graph = self.get_graph(graph_id)
         with connect_workspace_db(self.workspace) as connection:
@@ -1721,7 +2444,11 @@ class ResearchGraphStore:
             None,
         )
         return {
-            "enabled": graph["orchestration_mode"] == "auto" and not graph["archived"],
+            "enabled": (
+                graph["orchestration_mode"] == "auto"
+                and not graph["archived"]
+                and not graph["completed"]
+            ),
             "current_launch_id": (
                 str(active_launch["launch_id"])
                 if active_launch is not None

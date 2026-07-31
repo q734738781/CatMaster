@@ -49,6 +49,7 @@ def test_browser_schema_hides_host_control_fields() -> None:
 
     assert set(sanitized.args_schema["properties"]) == {"url"}
     assert "untrusted evidence" in sanitized.description
+    assert "read_document" in sanitized.description
 
 
 def test_browser_session_name_stays_below_unix_socket_limit(tmp_path: Path) -> None:
@@ -75,7 +76,10 @@ def test_browser_guard_injects_session_contains_path_and_truncates(tmp_path: Pat
 
     async def _handler(request):
         observed.update(request.args)
-        return CallToolResult(content=[TextContent(type="text", text="x" * 500)])
+        return CallToolResult(
+            content=[TextContent(type="text", text="x" * 500)],
+            structuredContent={"data": {"content": "x" * 500}},
+        )
 
     result = asyncio.run(
         guard(
@@ -88,6 +92,7 @@ def test_browser_guard_injects_session_contains_path_and_truncates(tmp_path: Pat
     assert observed["namespace"] == "catmaster"
     assert Path(observed["path"]).is_relative_to(tmp_path.resolve())
     assert "truncated browser output" in result.content[0].text
+    assert result.structuredContent is None
 
     with pytest.raises(ValueError, match="inside the active workspace"):
         asyncio.run(
@@ -96,6 +101,37 @@ def test_browser_guard_injects_session_contains_path_and_truncates(tmp_path: Pat
                 _handler,
             )
         )
+
+
+def test_browser_guard_rejects_binary_document_text(tmp_path: Path) -> None:
+    guard = BrowserToolGuard(
+        files_root=tmp_path,
+        session_name="fixed-session",
+        namespace="catmaster",
+        max_output_chars=1000,
+    )
+
+    async def _handler(_request):
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text="# \ufffd9\ufffd\u0018N\u0004.6\u0002\ufffd'\ufffd%\u0004\ufffd\u0018\ufffd\ufffd\ufffdv0w",
+                )
+            ],
+            structuredContent={"data": {"content": "binary duplicate"}},
+        )
+
+    result = asyncio.run(
+        guard(
+            _Request("agent_browser_read", {"url": "https://example.org/download/123"}),
+            _handler,
+        )
+    )
+
+    assert result.isError is True
+    assert "read_document" in result.content[0].text
+    assert result.structuredContent is None
 
 
 def test_browser_guard_rejects_hidden_cli_controls(tmp_path: Path) -> None:

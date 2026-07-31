@@ -195,8 +195,7 @@ models:
     print_http_raw_post: false
     langchain_class: null
     langchain_kwargs: {}
-    timeout_s: 120
-    max_retries: 3
+    timeout_s: 180
     extra: {}
 
   oai-compatible-main:

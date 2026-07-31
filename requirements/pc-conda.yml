@@ -51,8 +51,8 @@ dependencies:
       - openai==2.45.0
       - openrouter==0.11.1
       - langchain==1.3.13
-      - langchain-core==1.4.9
-      - langchain-openai==1.3.5
+      - langchain-core==1.5.1
+      - langchain-openai==1.4.1
       - langchain-openrouter==0.2.5
       - langchain-anthropic==1.4.8
       - langchain-deepseek==1.1.0

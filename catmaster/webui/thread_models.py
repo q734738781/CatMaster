@@ -131,9 +131,11 @@ class ThreadCreateRequest(BaseModel):
 
 
 class ThreadSubmitRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     text: str
     entrypoint: str = "research"
-    model_config: str = ""
+    llm_config: str = Field(default="", alias="model_config")
     permission_mode: str = ""
     attachments: list[dict[str, Any]] = Field(default_factory=list)
 

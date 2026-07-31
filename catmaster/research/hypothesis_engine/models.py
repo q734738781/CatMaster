@@ -242,8 +242,8 @@ class HypothesisPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    hypotheses: list[HypothesisDraft] = Field(default_factory=list, max_length=12)
-    actions: list[VerificationActionDraft] = Field(default_factory=list, max_length=24)
+    hypotheses: list[HypothesisDraft] = Field(default_factory=list)
+    actions: list[VerificationActionDraft] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_plan(self) -> HypothesisPlan:

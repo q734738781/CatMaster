@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Folder, FolderOpen, MessageSquarePlus, Search, RefreshCw, Plus, Trash2 } from "lucide-react";
 
 import { apiFetch } from "../useCatMasterThreadRuntime";
@@ -114,10 +114,15 @@ export default function WorkspaceRail({
   const [selectedPath, setSelectedPath] = useState("");
   const [error, setError] = useState("");
   const [loadingByPath, setLoadingByPath] = useState({});
+  const loadedPathsRef = useRef(new Set());
+  const loadingPathsRef = useRef(new Set());
 
-  const loadChildren = async (path = "", cursor = "") => {
+  const loadChildren = useCallback(async (path = "", cursor = "", force = false) => {
     if (!ctx || !workspaceName) return;
-    if (!cursor && childrenByPath[path] && path !== "") return;
+    const requestKey = `${path}\n${cursor}`;
+    if (loadingPathsRef.current.has(requestKey)) return;
+    if (!cursor && !force && loadedPathsRef.current.has(path)) return;
+    loadingPathsRef.current.add(requestKey);
     setLoadingByPath((current) => ({ ...current, [path]: true }));
     try {
       const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
@@ -130,21 +135,25 @@ export default function WorkspaceRail({
           : (payload.children || []),
       }));
       setPagesByPath((prev) => ({ ...prev, [key]: payload.page || {} }));
+      loadedPathsRef.current.add(key);
       setError("");
     } catch (err) {
       setError(err);
     } finally {
+      loadingPathsRef.current.delete(requestKey);
       setLoadingByPath((current) => ({ ...current, [path]: false }));
     }
-  };
+  }, [ctx, workspaceName]);
 
   useEffect(() => {
+    loadedPathsRef.current.clear();
+    loadingPathsRef.current.clear();
     setChildrenByPath({});
     setPagesByPath({});
     setSelectedPath("");
     setLoadingByPath({});
-    loadChildren("");
-  }, [ctx, workspaceName]);
+    loadChildren("", "", true);
+  }, [loadChildren]);
 
   const filteredThreads = threads.filter((thread) => {
     const text = String(thread.title || "").toLowerCase();
@@ -209,7 +218,7 @@ export default function WorkspaceRail({
       <div className="v2-rail-section grow">
         <div className="v2-section-row">
           <div className="v2-section-title">Files</div>
-          <button type="button" className="v2-icon-btn" onClick={() => loadChildren("")} aria-label="Refresh files" title="Refresh files">
+          <button type="button" className="v2-icon-btn" onClick={() => loadChildren("", "", true)} aria-label="Refresh files" title="Refresh files">
             <RefreshCw size={15} />
           </button>
         </div>

@@ -31,8 +31,7 @@ models:
     base_url: null
 
     default_headers: {}
-    timeout_s: 120
-    max_retries: 3
+    timeout_s: 180
 
     provider_options:
       codex_oauth:
@@ -56,8 +55,7 @@ models:
     base_url: null
 
     default_headers: {}
-    timeout_s: 120
-    max_retries: 3
+    timeout_s: 180
 
     provider_options:
       codex_oauth:

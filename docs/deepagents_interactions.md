@@ -1,165 +1,100 @@
-# DeepAgents Interaction Notes
+# DeepAgents integration reference
 
-> Maintainer compatibility note. This is not an end-user guide. Start with the
+> This is a maintainer reference for the active runtime. For user-facing
+> capabilities and workflows, start with the
 > [CatMaster user manual](user-guide/README.en.md).
 
-This note documents CatMaster's non-standard interaction points with DeepAgents,
-LangChain, and OpenRouter. The design rule is to keep these interactions small:
-prefer DeepAgent-native behavior, modify only CatMaster-owned runtime
-boundaries, and remove local code once upstream behavior makes it redundant.
+CatMaster uses DeepAgents and LangGraph for specialist execution while retaining
+ownership of workspace files, artifacts, run state, model configuration, and
+WebUI events. This document defines the current integration boundaries.
 
-## Current Active Path
+## Runtime ownership
 
-The active path is `catmaster/specialists/runtime.py`.
+`catmaster/specialists/runtime.py` builds lane specialists and workers with
+`create_deep_agent(...)`.
 
-CatMaster creates DeepAgents with:
+Each active agent receives:
 
-- `create_deep_agent(...)` for the lane specialist and worker agents.
-- LangGraph checkpoint/store objects backed by workspace SQLite files.
-- A stable `thread_id` derived from the WebUI chat session.
-- CatMaster middleware inserted into every specialist and worker agent.
+- a model selected through `catmaster/llm/factory.py`;
+- tools and skills for its current role;
+- a workspace filesystem backend;
+- workspace SQLite checkpoint and store objects;
+- a stable `thread_id` derived from the WebUI chat session;
+- CatMaster middleware for bounded tool-error recovery.
 
-The SQLite files are:
+DeepAgents checkpoints live in:
 
 - `metadata/deepagent_threads.sqlite`
 - `metadata/deepagent_memory.sqlite`
 
-The WebUI-facing run snapshot remains `metadata/runs/<run_id>/run_state.json`.
-Do not use DeepAgent checkpoints as the user-visible run status source.
+The WebUI reads the current run snapshot from
+`metadata/runs/<run_id>/run_state.json`. Checkpoints provide conversation
+continuity and are not the user-facing run-status format.
 
-## Middleware Added By CatMaster
+## Model calls and delegation
 
-`SpecialistRunner._build_default_middleware()` injects LangChain's built-in
-model retry middleware and the common CatMaster validation/error middleware.
-Provider- and workspace-specific middleware is composed around that common
-list when each agent is built.
+Model request settings come from the selected CatMaster profile. The factory
+passes `timeout_s` and an explicitly configured `max_retries` to the provider
+integration. Codex OAuth templates leave `max_retries` unset and use the pinned
+OpenAI SDK default for transport, rate-limit, and HTTP server errors. A narrow
+model middleware handles transient overloads that arrive inside an already
+accepted HTTP 200 stream, including the structured `server_is_overloaded` code
+and the provider's canonical retry-later or request-ID messages. It is attached
+through the DeepAgents `openai-codex` provider profile, so the same behavior
+applies to specialists, named workers, declarative subagents, and the native
+`general-purpose` child. The specialist runner only retries a completed episode
+when its final report cannot be parsed.
 
-### LangChain `ModelRetryMiddleware`
+DeepAgents supplies the native `general-purpose` subagent. It receives the
+parent model, processed tools, and staged skills from the DeepAgents builder.
+CatMaster passes only its explicit scientific subagents, such as workers and
+research reasoning roles. A newly added lane therefore receives the native
+general-purpose behavior without a CatMaster-specific wrapper.
 
-Purpose:
+## CatMaster middleware
 
-- Retry transient model API, streaming, rate-limit, gateway, connection, and
-  provider/schema failures inside the same LangChain model-call boundary.
-- Reuse the same `ModelRequest` and agent node so a retry does not create a new
-  worker/subagent episode and remains invisible to the current agent and its
-  parent unless the retry budget is exhausted.
+`SpecialistRunner._build_default_middleware()` installs
+`catmaster_nonfatal_tool_errors`.
 
-CatMaster configures three retries after the initial call, with nominal
-exponential delays of 5, 10, and 20 seconds plus jitter. `on_failure="error"` is
-required: LangChain's default `"continue"` behavior would turn an exhausted
-provider failure into an `AIMessage`, incorrectly making infrastructure failure
-look like an assistant response.
+When a bound tool raises an exception, this middleware returns a typed error
+`ToolMessage` with a compact artifact. The current agent can inspect the error
+and decide whether to correct its inputs, choose another method, or report the
+blocker. Model request retry remains separate and provider-owned.
 
-The `retry_on` predicate is `_is_retryable_model_exception`. It retries OpenAI
-stream-level base `APIError`, connection/timeouts, HTTP 408/409/425/429 and 5xx,
-plus the existing cross-provider transient/schema signatures. It explicitly
-does not retry authentication, permission, malformed-request, missing-resource,
-unprocessable-request, or other deterministic 4xx failures.
+The supporting functions are:
 
-Individual failed attempts remain available to callbacks and
-`observability.sqlite`, but they are not committed as agent messages or returned
-through the DeepAgents `task` tool. If the model-call budget is exhausted, the
-original provider exception leaves the node immediately; the outer specialist
-runner does not restart the complete episode or duplicate completed tool work.
-Its separate retry loop is reserved for an otherwise completed episode whose
-final report cannot be parsed.
-
-### `catmaster_validate_model_responses`
-
-Purpose:
-
-- Reject model responses that are syntactically accepted but unusable, such as
-  empty assistant output without tool calls.
-- Raise `SpecialistRetryableModelResponseError` inside
-  `ModelRetryMiddleware`, allowing the same transparent retry path to handle
-  semantic response failures.
-
-Related functions:
-
-- `_validate_model_response_for_retry`
-- `_validate_ai_message_for_retry`
-- `_is_retryable_model_exception`
-
-Keep these layers while using Codex OAuth/OpenRouter and long-lived DeepAgent
-threads. They are the model-call defense for transient provider/schema failures
-and unusable assistant outputs. They must not rewrite multimodal `ToolMessage`
-content; provider-specific compatibility handling belongs at the model adapter
-boundary.
-
-Possible future removal:
-
-- The retry predicate can be narrowed if provider streaming failures become
-  rare and are reliably covered by the model client's own retry policy.
-
-### Removed: `catmaster_textualize_multimodal_tool_results`
-
-CatMaster previously inserted a tool-result middleware named
-`catmaster_textualize_multimodal_tool_results`. That layer has been removed.
-It erased the DeepAgents-native multimodal path by converting fresh
-`read_file` image/PDF/file content blocks into text before the next model call
-could consume them.
-
-DeepAgents' built-in `read_file` can return messages like:
-
-```json
-{"type": "image", "base64": "...", "mime_type": "image/png"}
-```
-
-Those blocks are the desired active-path representation. They should remain
-available to the next model call whenever the selected provider/model supports
-the media type. Do not reintroduce a blanket tool-output textualizer.
-
-Durable thread history must still avoid raw user-upload base64. The WebUI stores
-uploaded binaries as artifacts and only passes inline content blocks in the
-current turn. DeepAgents `read_file` tool outputs are owned by the DeepAgents
-runtime; if provider replay compatibility is needed, handle it at the provider
-adapter boundary or through an explicit legacy-thread migration, not by mutating
-fresh tool results globally.
-
-### `catmaster_nonfatal_tool_errors`
-
-Purpose:
-
-- Convert tool exceptions into model-visible error `ToolMessage`s instead of
-  killing the whole agent run.
-- Preserve a compact artifact for WebUI/tool trace inspection.
-
-Related functions:
-
-- `_nonfatal_tool_error_result`
+- `_nonfatal_tool_error_result` in `catmaster/specialists/runtime.py`
 - `tool_error_to_message` in `catmaster/runtime/tool_output_adapter.py`
 
-Keep this layer. The specialist runtime depends on bounded recovery from tool
-failures.
+## Multimodal content
 
-Possible future removal:
+Current-turn attachments use LangChain content blocks when the selected model
+supports the media type. CatMaster stores uploaded binaries as workspace
+artifacts and keeps raw base64 out of durable WebUI thread messages. DeepAgents
+`read_file` image results remain multimodal for the next model call.
 
-- Only remove if every tool path is guaranteed to return explicit error
-  messages and DeepAgents provides equivalent non-fatal behavior for tool
-  exceptions.
+PDF and modern Office documents use bounded document readers. Provider-specific
+conversion happens at the model boundary, not inside scientific tools.
 
-### Codex OAuth freeform `apply_patch`
+See [Multimodal files](deepagents_multimodal.md) for the supported user flow,
+persistence rules, and provider behavior.
 
-Purpose:
+## Codex OAuth `apply_patch`
 
-- Register a LangChain OpenAI custom tool named `apply_patch` only for
-  `codex_oauth` model roles.
-- Match Codex CLI's freeform V4A envelope and Lark grammar. One call may add,
-  update, move, or delete several files.
-- Execute below the current project `files/` root with per-workspace locking,
-  atomic individual-file replacement, path traversal and symlink rejection,
-  and model-visible conflict errors.
+Codex OAuth roles receive a LangChain custom tool named `apply_patch`. It accepts
+the freeform V4A patch envelope and can add, update, move, or delete several
+files in one call.
 
-This is a normal LangChain custom tool, not the Responses built-in
-`{"type": "apply_patch"}`. Codex OAuth rejects that built-in declaration. The
-model emits a `custom_tool_call`; DeepAgents' standard tool node executes it and
-LangChain replays a `custom_tool_call_output` on the next model call. Keep this
-path on the framework's standard tool scheduler rather than adding a separate
-provider-call middleware.
+Execution is restricted to the current project `files/` root. The implementation
+uses workspace locking, atomic replacement for individual files, path traversal
+checks, symlink checks, and model-visible conflict errors.
 
-The checked-in manual acceptance test exercises real Codex OAuth model calls,
-multi-file patches, second-turn update/move/delete operations, concurrent
-threads, and the production model-retry middleware:
+The model emits a `custom_tool_call`. DeepAgents executes it through the normal
+tool scheduler and returns `custom_tool_call_output` on the next model call.
+`/memories` remains a routed DeepAgents store, so persistent memory edits use
+`edit_file` rather than this workspace patch tool.
+
+The live acceptance script is:
 
 ```bash
 env -u ALL_PROXY PYTHONPATH=. \
@@ -167,137 +102,48 @@ env -u ALL_PROXY PYTHONPATH=. \
   tests/manual/codex_oauth_apply_patch_live.py --workers 3
 ```
 
-`/memories` remains a routed DeepAgents store, not a physical workspace path.
-Agents must continue to use `edit_file` for persistent memory.
+## OpenRouter content conversion
 
-## OpenRouter Boundary Sanitizer
+`CatMasterChatOpenRouter._create_message_dicts(...)` converts standard
+LangChain media blocks into the shapes accepted by OpenRouter:
 
-OpenRouter-specific message normalization lives in `catmaster/llm/factory.py`.
+- image base64 blocks become `image_url` data URLs;
+- file base64 blocks become OpenRouter `file` blocks with `file_data`;
+- existing provider-native `image_url` and `file` blocks pass through.
 
-Related functions:
+Unsupported replayed blocks become explicit text references before SDK
+validation. The conversion is scoped to CatMaster's OpenRouter subclass and
+does not modify tool results or patch installed packages.
+
+The relevant functions are in `catmaster/llm/factory.py`:
 
 - `_sanitize_openrouter_message_dicts`
 - `_sanitize_openrouter_content`
 - `_openrouter_data_url`
 - `_attach_openrouter_cache_control`
 
-This is not a provider-wide shim. CatMaster now depends on
-`langchain-openrouter>=0.2.1` and `openrouter>=0.9.1`; that stack natively
-wraps file content messages with the current SDK `Chat*Message` classes and
-preserves `role`. CatMaster does not monkey-patch
-`langchain_openrouter.chat_models._wrap_messages_for_sdk`.
+## Dependency and verification contract
 
-Older checkpoints may contain LangChain-style blocks such as:
+`requirements/pc-conda.yml` is the source of truth for DeepAgents, LangChain,
+OpenRouter, and OpenAI package versions.
 
-```json
-{"type": "image", "id": "...", "mime_type": "image/jpeg"}
+After changing one of these dependencies, run:
+
+```bash
+/home/chenhh/miniconda3/envs/catmaster/bin/python -m pytest \
+  tests/test_native_apply_patch.py \
+  tests/test_openrouter_message_sanitizer.py \
+  tests/test_specialist_runtime.py \
+  tests/test_llm_factory_extra_body.py -q
 ```
 
-The OpenRouter SDK expects provider-native chat blocks such as `image_url`, and
-PDF/file inputs use OpenRouter's `file` block shape. The factory sanitizer
-therefore converts CatMaster/LangChain standard content blocks into native
-OpenRouter blocks at request time:
+Also verify:
 
-- `{"type": "image", "base64": "...", "mime_type": "..."}`
-  becomes an `image_url` data URL block.
-- `{"type": "file", "base64": "...", "mime_type": "...", "filename": "..."}`
-  becomes an OpenRouter `file` block with `file_data`.
-- Existing provider-native `image_url` and `file` blocks pass through unchanged.
+- image and PDF handling in a fresh thread;
+- replay through the same `thread_id`;
+- OpenRouter serialization after a media-bearing message;
+- context compaction after media-bearing tool results;
+- one Codex OAuth patch call when that provider is enabled.
 
-Only genuinely unsupported replayed blocks are degraded to a textual placeholder
-before SDK validation.
-
-Keep this sanitizer while old checkpoints exist and OpenRouter is used. It is
-intentionally scoped to CatMaster's `ChatOpenRouter` subclass at
-`CatMasterChatOpenRouter._create_message_dicts(...)`.
-
-Possible future removal:
-
-- Remove after old checkpoints are migrated or discarded and OpenRouter/LangChain
-  accept the standard content block shapes CatMaster emits without local
-  conversion.
-- Do not re-add a global `langchain_openrouter` monkey patch unless a focused
-  test proves the upstream wrapper regressed.
-
-## Dependency Expectations
-
-Current versions are pinned in `requirements/pc-conda.yml`:
-
-- `langchain-openrouter==0.2.5`
-- `openrouter==0.11.1`
-- `langchain-deepseek==1.1.0`
-- `deepagents==0.6.12`
-
-DeepAgents issue
-`langchain-ai/deepagents#2873` tracks a related multimodal summarization problem:
-image blocks can be mishandled when conversation history is summarized/offloaded.
-
-Do not assume an upstream DeepAgents upgrade fixes CatMaster's problem without
-testing these cases:
-
-- `read_file` on an image/PDF page
-- multi-turn replay through the same `thread_id`
-- OpenRouter model call after the image-bearing tool message exists
-- summary/compaction after image-bearing tool messages exist
-
-## Interaction Budget
-
-Interactions that are currently justified:
-
-- Non-fatal tool error conversion.
-- LangChain model-call retry for transient Codex OAuth/OpenRouter/API failures.
-- Model-response validation for empty/invalid assistant output.
-- Codex OAuth custom `apply_patch` execution and call-output feedback.
-- WebUI upload artifact storage plus current-turn content block injection.
-- OpenRouter request-boundary conversion for standard image/file blocks and
-  legacy checkpoint compatibility.
-
-Interactions that should not be added:
-
-- Manual chat transcript reconstruction into specialist prompts.
-- New memory-patch flows for active specialists.
-- Provider-specific message rewriting inside tools.
-- Inline base64 artifacts in model-visible durable history.
-- Extra summarization or compaction layers unless a measured context limit
-  problem requires them.
-
-Interactions that are candidates for removal later:
-
-- OpenRouter replay sanitizer, after old checkpoints are migrated or discarded.
-- Provider/schema exception retry breadth, if OpenRouter client retries and
-  schema handling stabilize.
-- Any local patch to installed DeepAgents packages, once equivalent constructor
-  options or upstream defaults exist.
-
-Interaction already removed:
-
-- Global OpenRouter file-wrapper monkey patch. Current
-  `langchain-openrouter>=0.2.1` / `openrouter>=0.9.1` handles file blocks with
-  the new SDK message classes, so CatMaster no longer replaces
-  `_wrap_messages_for_sdk`.
-- Runtime `ToolMessage` multimodal textualization. Fresh DeepAgents `read_file`
-  media blocks now remain multimodal through the next model call.
-
-## Maintenance Checklist
-
-When changing DeepAgents, LangChain, or OpenRouter versions:
-
-1. Run the focused compatibility tests:
-
-   ```bash
-   pytest tests/test_native_apply_patch.py tests/test_openrouter_message_sanitizer.py tests/test_specialist_runtime.py -q
-   ```
-
-2. Run the OpenRouter factory tests:
-
-   ```bash
-   pytest tests/test_llm_factory_raw_http_logging.py tests/test_llm_config_prompt_cache_retention.py -q
-   ```
-
-3. Manually check one replay scenario with a workspace that has existing
-   `deepagent_threads.sqlite` history containing image/PDF `read_file` calls.
-
-4. If failures mention `Unmarshaller`, `tool.content`, `image_url`, or
-   `content.str`, inspect the checkpoint history before changing tool logic.
-   The failure is often replay-schema incompatibility, not the scientific tool
-   result itself.
+Notable changes to these contracts belong in the repository
+[Changelog](../CHANGELOG.md).

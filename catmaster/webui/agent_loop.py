@@ -110,14 +110,21 @@ class ThreadAgentLoopService:
         focus_node_id = str(
             getattr(thread, "research_focus_node_id", "") or ""
         ).strip()
+        meta = getattr(thread, "meta", {})
+        planning = (
+            isinstance(meta, dict)
+            and str(meta.get("internal_kind") or "")
+            == "research_graph_planning"
+        )
         context = ResearchGraphContextBuilder(
             workspace=self.workspace
         ).build(
             graph_id,
             focus_node_id=focus_node_id,
             query=prompt,
-            max_nodes=24,
-            max_chars=12_000,
+            max_nodes=100 if planning else 24,
+            max_chars=40_000 if planning else 12_000,
+            planning=planning,
         )
         graph_markdown = str(context["markdown"]).strip()
         if isinstance(turn_content, list):
@@ -685,7 +692,7 @@ class ThreadAgentLoopService:
         text = str(payload.text or "").strip()
         thread = self.store.get_thread(thread_id)
         normalized_entrypoint = self.normalize_entrypoint(payload.entrypoint or thread.entrypoint)
-        llm_profile = LLMProfile.from_env_or_file(payload.model_config or None)
+        llm_profile = LLMProfile.from_env_or_file(payload.llm_config or None)
         capability = self._capability_for_entrypoint(profile=llm_profile, entrypoint=normalized_entrypoint)
         prepared_attachments = self.prepare_submit_attachments(
             thread_id,
@@ -717,7 +724,7 @@ class ThreadAgentLoopService:
                 {
                     "text": prompt_text,
                     "entrypoint": normalized_entrypoint,
-                    "model_config": payload.model_config,
+                    "model_config": payload.llm_config,
                     "permission_mode": permission_mode,
                     "message_id": user_message.id,
                     "attachments": attachment_sidecar,
@@ -737,7 +744,7 @@ class ThreadAgentLoopService:
             thread_id=thread_id,
             prompt=prompt_text,
             entrypoint=normalized_entrypoint,
-            model_config=payload.model_config,
+            model_config=payload.llm_config,
             permission_mode=permission_mode,
             turn_content=turn_content,
             attachment_metadata=attachment_sidecar,
