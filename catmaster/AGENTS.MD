@@ -347,6 +347,13 @@ prompts should express the qualitative objective and completion condition.
 Exact counts may remain there only when they are genuine safety, concurrency,
 transaction, or output-shape invariants rather than planning advice.
 
+Do not encourage model-generated governance ceremony for ordinary one-off work.
+System prompts should reject ad hoc hashes, frozen contracts, schemas,
+manifests, baselines, lockfiles, and acceptance frameworks unless the user asks
+for them or an existing machine interface, reproducibility requirement, or
+downstream consumer genuinely requires them. Preserve real repository and API
+contracts; the target is invented process work, not necessary interfaces.
+
 ## 7) Tool conventions
 
 ### Registration and returns

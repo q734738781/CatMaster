@@ -2346,6 +2346,7 @@ class SpecialistRunner:
     def _tool_policy() -> str:
         return (
             "By default, do not calculate or compare hashes/checksums unless the user explicitly requests it. "
+            "Do not create, freeze, or persist an ad hoc contract, schema, manifest, baseline, lockfile, acceptance checklist, or similar governance artifact merely to formalize a one-off task. Introduce one only when the user explicitly requests it or an existing API, tool, reproducibility requirement, or downstream machine consumer actually requires it; otherwise produce the requested artifact and use proportional validation. "
             "Tool discipline: if a relevant skill is available to the current agent, read it before acting. "
             "Treat tool schemas as compact invocation interfaces, not as complete SOP; skills carry workflow rules, method-critical defaults, and common edge-case guidance that may be intentionally absent from short schema descriptions. "
             "Before the first expensive, managed, or irreversible tool call in a workflow, do a brief skill-grounded preflight: confirm required input paths exist, choose method-critical toggles explicitly, and decide whether the builtin tool fits the task without probing by trial calls. "

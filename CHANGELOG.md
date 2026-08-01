@@ -12,6 +12,10 @@ references describe the current system.
   polishing, and compilation pass counts. Conditional planning guidance now
   lives in writing skills, while runtime prompts retain qualitative completion
   conditions and hard safety or transaction limits.
+- Shared specialist and named-worker prompts now reject model-invented hashes
+  and ad hoc frozen contracts, schemas, manifests, baselines, lockfiles, or
+  acceptance frameworks for ordinary one-off work while preserving artifacts
+  required by real APIs, tools, reproducibility needs, and downstream consumers.
 
 ### Literature Review
 

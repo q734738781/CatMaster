@@ -443,11 +443,14 @@ def test_prose_quality_policy_requires_skill_without_changing_science() -> None:
     assert "machine-readable files" in policy
 
 
-def test_tool_policy_keeps_checksum_out_of_ordinary_scientific_qc() -> None:
+def test_tool_policy_rejects_hash_and_ad_hoc_contract_ceremony() -> None:
     policy = runtime_mod.SpecialistRunner._tool_policy()
     checksum_rule = "By default, do not calculate or compare hashes/checksums unless the user explicitly requests it."
+    contract_rule = "Do not create, freeze, or persist an ad hoc contract, schema, manifest, baseline, lockfile, acceptance checklist, or similar governance artifact merely to formalize a one-off task."
     assert policy.startswith(checksum_rule)
     assert policy.count("hash") == 1
+    assert contract_rule in policy
+    assert "existing API, tool, reproducibility requirement, or downstream machine consumer actually requires it" in policy
     assert "use targeted inspection or a version-control diff when the question is edit scope" in policy
 
     shared_prompts = (
@@ -463,6 +466,7 @@ def test_tool_policy_keeps_checksum_out_of_ordinary_scientific_qc() -> None:
     )
     for prompt in shared_prompts:
         assert checksum_rule in prompt
+        assert contract_rule in prompt
 
 
 def test_litreview_downloader_is_optional_and_stops_after_one_reasonable_attempt() -> None:
