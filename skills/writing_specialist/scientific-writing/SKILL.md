@@ -24,6 +24,12 @@ When the deliverable is a paper, manuscript, or submission-style draft:
 - If evidence is incomplete, express the limitation scientifically and narrowly. Do not write phrases like "accessible snippets in the workspace" or "no new calculations were run" in journal-facing prose.
 - Write as the paper's scientific authorial voice, not as an assistant explaining what it did.
 
+## Handoff, Review, and Verification Depth
+
+- Keep an upstream `core_claims` list compact and evidence-backed. For a typical focused research manuscript, 2-4 core claims can be a useful planning reference, but it is not a quota; let the scientific argument and available evidence determine the actual number.
+- Review a complete compiled manuscript before finalizing it when publication readiness is part of the task. Apply accepted corrections while material scientific, structural, citation, or presentation defects remain; do not run a preset number of review or polishing rounds.
+- For TeX deliverables, compile and inspect the output after substantive changes and after repairs when needed. Treat a clean build plus satisfactory document inspection as the stopping condition rather than targeting a fixed number of compile passes.
+
 ## When to Use This Skill
 
 This skill should be used when:

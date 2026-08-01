@@ -477,16 +477,44 @@ def test_litreview_downloader_is_optional_and_stops_after_one_reasonable_attempt
     assert not (repo_root / "skills/research_specialist/nature-downloader").exists()
 
 
-def test_litreview_academic_search_defaults_reviews_to_perspective_scale() -> None:
+def test_litreview_academic_search_scales_breadth_without_overriding_user_scope() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "skills/litreview_agent/nature-academic-search/SKILL.md").read_text(encoding="utf-8")
     assert "50-60+ candidates" in text
-    assert "candidate-pool target" in text
+    assert "not a minimum, quota, or completion criterion" in text
+    assert "does not set a narrower boundary" in text
+    assert "do not silently reinterpret the requested final set" in text
+    assert "Keep discovery records shallow" in text
+    assert "deeper extraction only to the selected evidence-bearing set" in text
     assert "full-text acquisition remains selective" in text.lower()
     assert "Search summaries and abstracts are usable evidence" in text
     assert "Browser use and the number of downloaded papers are never review-completion targets" in text
     assert "Only record an access blocker after this direct attempt" not in text
     assert not (repo_root / "skills/research_specialist/nature-academic-search").exists()
+
+
+def test_writing_task_scale_numbers_live_in_skills_not_system_prompts() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    scientific_writing = (repo_root / "skills/writing_specialist/scientific-writing/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    achemso = (repo_root / "skills/writing_specialist/achemso-latex-manuscript/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "2-4 core claims can be a useful planning reference" in scientific_writing
+    assert "do not run a preset number of review or polishing rounds" in scientific_writing
+    assert "do not target a preset number of passes" in achemso
+
+    prompts = (
+        runtime_mod.SpecialistRunner._base_system_prompt("research"),
+        runtime_mod.SpecialistRunner._base_system_prompt("writing"),
+        runtime_mod.SpecialistRunner._writing_worker_prompt(),
+    )
+    for prompt in prompts:
+        assert "2-4 bullets" not in prompt
+        assert "at least one direct compile pass" not in prompt
+        assert "manuscript-review capability once" not in prompt
+        assert "one more bounded polishing/revision pass" not in prompt
 
 
 def test_report_parser_supports_review_target() -> None:
@@ -1551,7 +1579,9 @@ def test_specialist_lanes_start_with_staged_skills(
         _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert not litreview_agent_kwargs.get("subagents")
-        assert "candidate pool" in litreview_agent_kwargs["system_prompt"]
+        assert "requested scope" in litreview_agent_kwargs["system_prompt"]
+        assert "paper-count target" in litreview_agent_kwargs["system_prompt"]
+        assert "50-60" not in litreview_agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in litreview_agent_kwargs["system_prompt"]
         assert "metadata_agent" not in litreview_agent_kwargs["system_prompt"]
         assert "literature_agent" not in litreview_agent_kwargs["system_prompt"]
@@ -1567,6 +1597,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "full-text access as unknown until tested" not in agent_kwargs["system_prompt"]
         assert "local literature corpus" in agent_kwargs["system_prompt"]
         assert "deterministic batch" in agent_kwargs["system_prompt"]
+        assert "preserve the same scope and stopping conditions" in agent_kwargs["system_prompt"]
+        assert "50-60" not in agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "Do not perform computational execution" in agent_kwargs["system_prompt"]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in agent_kwargs["middleware"])
@@ -1705,8 +1737,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "place it after the references" in agent_kwargs["system_prompt"]
         assert "journal-style title centered on the chemical system and principal scientific finding" in agent_kwargs["system_prompt"]
         assert "figures to be inserted near their first substantive discussion rather than batched at the end" in agent_kwargs["system_prompt"]
-        assert "manuscript-review capability once on that PDF" in agent_kwargs["system_prompt"]
-        assert "reconcile the manuscript against the accepted suggestions and run one more bounded polishing/revision pass" in agent_kwargs["system_prompt"]
+        assert "manuscript-review capability perform a comment-only publication-readiness review" in agent_kwargs["system_prompt"]
+        assert "complete the bounded polishing or revision work still needed" in agent_kwargs["system_prompt"]
         assert "clearly exposed as `ReviewTarget`" in agent_kwargs["system_prompt"]
         assert "publishable paper ready to enter peer review" in agent_kwargs["system_prompt"]
         assert "Do not mention the workspace, files, runs, prompts, tools, agents, interruptions" in agent_kwargs["system_prompt"]

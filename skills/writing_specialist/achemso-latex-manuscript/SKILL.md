@@ -59,6 +59,7 @@ Read these assets first through the read-only skills mount:
 - Keep figures and tables aligned with actual artifact paths and generated files.
 - In ACS-style TeX, place each figure close to the first substantive paragraph that discusses it; do not accumulate figure environments in a later block after the surrounding argument is already complete.
 - Prefer conservative float placement such as `[htbp]` for ordinary figures. If the template already includes `placeins`, use `\FloatBarrier` sparingly to stop obvious float drift across subsection boundaries.
+- Compile the working manuscript after substantive TeX edits and after repairs when needed; do not target a preset number of passes. Stop when compilation and visual inspection no longer reveal delivery-relevant defects.
 - After compilation, inspect whether figures appear near their first callout in the PDF and repair placement if they do not; compile success alone is not enough.
 - When the manuscript needs atomistic structure renders, create a tuned reproducible render script, starting from `skills/materials_worker/structure-visual-inspection/code/render_structure_panel.py` when useful, and do not annotate the exported panel with renderer/backend labels.
 - When the manuscript needs a conceptual, mechanistic, or workflow figure, use `generate_nanobanana_figure` to create a concise publication-facing schematic and save it under the writing workspace.

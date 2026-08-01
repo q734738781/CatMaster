@@ -2169,8 +2169,8 @@ class SpecialistRunner:
                 "For the current implementation, keep Supporting Information in the same manuscript file rather than a separate SI manuscript: place it after the references as a clear supporting-information section or appendix so compilation and downstream PDF review operate on one manuscript PDF. Supporting data files may still live in separate workspace folders.\n"
                 "For LaTeX manuscripts, require figures to be inserted near their first substantive discussion rather than batched at the end. If float drift appears after compilation, require the worker to repair placement by moving the figure block closer to first mention and using conservative float controls such as `[htbp]` or `\\FloatBarrier` when the template permits.\n"
                 "Use `writing_polisher_agent` only for local prose cleanup on already drafted sections. It must not change claim strength, scientific scope, section logic, figure order, or evidence selection.\n"
-                "When a full paper/manuscript draft has been assembled and a compiled PDF is available, run the manuscript-review capability once on that PDF for comment-only publication-readiness review before final reconciliation.\n"
-                "After that review returns, reconcile the manuscript against the accepted suggestions and run one more bounded polishing/revision pass before treating the manuscript as final.\n"
+                "When a full paper/manuscript draft has been assembled and a compiled PDF is available, have the manuscript-review capability perform a comment-only publication-readiness review before final reconciliation.\n"
+                "After that review returns, reconcile the manuscript against the accepted suggestions and complete the bounded polishing or revision work still needed before treating the manuscript as final.\n"
                 "If an external-model peer review is requested from the parent, make sure the canonical manuscript PDF is clearly exposed as `ReviewTarget` in your closeout so downstream review uses the right artifact.\n"
                 "When the requested deliverable is a short note, compact summary, or quick status writeup, prioritize clarity and sufficiency over making it figure-heavy unless the user explicitly asks for visuals.\n"
                 "Treat a Markdown-to-PDF request as direct format conversion and delegate it to `writing_worker_agent` even when no prose revision is needed. Preserve the Markdown source and use the registered Markdown PDF capability. Do not rewrite the document as LaTeX unless the user explicitly requests TeX or a journal template requires it.\n"
@@ -2243,9 +2243,9 @@ class SpecialistRunner:
     def _author_packet_policy() -> str:
         return (
             "For paper/manuscript handoffs, pass one compact inline author packet rather than raw run history. "
-            "Use exactly these fields: `thesis`, `novelty`, `core_claims` (2-4 bullets), `evidence_refs`, `main_text_keep`, `supporting_only`, and `target_outputs`. "
+            "Use exactly these fields: `thesis`, `novelty`, `core_claims`, `evidence_refs`, `main_text_keep`, `supporting_only`, and `target_outputs`. "
             "Then issue one bounded writing brief with the section goal, target audience, requested output path(s), local section structure, and any citation/style constraints. "
-            "For TeX deliverables, require separate `.tex` and `.bib` files plus at least one direct compile pass when the environment supports compilation. "
+            "For TeX deliverables, require separate `.tex` and `.bib` files plus direct compilation and output inspection when the environment supports them. "
             "Do not paste long transcripts or ask the writing agent to rediscover workspace evidence."
         )
 
@@ -2627,7 +2627,7 @@ class SpecialistRunner:
             "Use the native `general-purpose` delegate for a bounded discovery or source-reading branch when doing it inline would materially inflate context. Require it to return concise scientific findings and source paths. Persist reusable evidence when useful, but never discard findings merely because optional corpus indexing failed. Run such delegated branches sequentially: issue at most one delegation in a model response and wait for it to finish before considering another, because all delegates share the workspace.\n"
             "Finalize metadata only after selecting the papers that will actually be cited. Use one bounded deterministic batch and surface only genuinely unresolved identifiers.\n"
             "Keep the final answer decision-relevant and shaped to the requested scope. State the coverage boundary and any conclusion materially limited by abstract-only or metadata-only evidence; never use the number of full texts read as a completion target.\n"
-            "For a review, research-progress overview, systematic landscape, or perspective-style synthesis that is not explicitly brief, aim to build and screen a candidate pool of roughly 50-60+ papers when feasible; the narrative may highlight a smaller evidence-bearing set.\n"
+            "Match discovery breadth to the user's requested scope. Treat an explicit paper range or a brief, focused, or non-systematic request as controlling. For broader reviews, expand across the important concepts, periods, evidence types, and disputes until additional searches are mostly duplicative rather than pursuing a paper-count target; preserve the same scope and stopping conditions in any delegated branch.\n"
             "Save reusable notes, evidence tables, and bibliographies under `/notes/literature/` when they are useful for handoff or were requested.\n"
             "Do not perform computational execution.\n"
             f"{cls._prose_quality_policy()}\n"

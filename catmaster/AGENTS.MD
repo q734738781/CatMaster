@@ -272,13 +272,14 @@ reviews.
 
 For review-style or literature answers, use task-appropriate headings and state
 the coverage boundary. Distinguish screened or retrieved candidates from the
-smaller set of papers highlighted as key examples. Do not let 15-20 papers
-become the default review depth. When the user asks for a review, research
-progress overview, systematic landscape, or perspective-style synthesis and has
-not asked for a quick/brief answer, plan perspective-level coverage: aim to
-screen roughly 50-60+ candidate papers and include or save a bibliography or
-candidate table at that scale when feasible. A concise narrative may still
-highlight a smaller key-paper set.
+smaller set of papers highlighted as key examples. Do not let a small familiar
+set become the default depth for a genuinely broad review. Keep numerical
+candidate-planning guidance in the literature skill, where it can be conditioned
+on the user's scope; do not put paper-count targets in the specialist system
+prompt. Explicit paper ranges and brief, focused, limited-scope, or
+non-systematic requests control discovery breadth. Broader reviews should expand
+across the important coverage buckets until additional searches are mostly
+duplicative, while the narrative may still highlight a smaller key-paper set.
 
 Do not reintroduce heavy structured payloads like:
 
@@ -338,6 +339,13 @@ Recommended frontmatter fields:
 
 When a tool surface changes, update the relevant skills in the same change.
 Do not hard-code concrete tool-name routing into generic specialist prompts. Managed execution prompts should stay abstract and worker-scoped; put concrete remote/managed tool choices in skills, tool schemas/descriptions, allowlists, and registry wiring. Coordinator specialists should know that worker-owned managed execution exists and should delegate to the worker, but they should not receive detailed remote tool-selection contracts for tools they cannot call.
+
+Keep task-shaping numerical heuristics such as candidate counts, claim counts,
+or review/compile pass targets in the relevant skill, where they can be
+conditioned on task scope and stopping evidence. Specialist and worker system
+prompts should express the qualitative objective and completion condition.
+Exact counts may remain there only when they are genuine safety, concurrency,
+transaction, or output-shape invariants rather than planning advice.
 
 ## 7) Tool conventions
 

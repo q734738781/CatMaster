@@ -2,7 +2,7 @@
 
 This test intentionally makes real model calls. Run it from the repository root:
 
-    env -u ALL_PROXY PYTHONPATH=. \
+    PYTHONPATH=. \
       /home/chenhh/miniconda3/envs/catmaster/bin/python \
       tests/manual/codex_oauth_apply_patch_live.py --workers 3
 """

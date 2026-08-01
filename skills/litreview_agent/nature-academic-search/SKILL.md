@@ -30,15 +30,17 @@ OpenAlex and Semantic Scholar are not model-visible LitReview tools. Do not plan
 
 ### 1. Set scope before searching
 
-Translate the request into concepts, synonyms, catalyst/material families, mechanism terms, benchmark terms, exclusions, and date boundaries. Separate a brief answer from a review-scale request.
+Translate the request into concepts, synonyms, catalyst/material families, mechanism terms, benchmark terms, exclusions, and date boundaries. Separate a brief answer from a review-scale request. Treat an explicit paper range and wording such as "limited scope", "focused", "brief", or "not a systematic review" as controlling; do not silently reinterpret the requested final set as permission for a much larger candidate quota.
 
-For a review, progress overview, systematic landscape, or perspective-style synthesis that is not explicitly brief, aim to screen roughly 50-60+ candidates when feasible. This is a candidate-pool target, not a requirement to download or narrate every paper.
+For a genuinely broad review, progress overview, systematic landscape, or perspective-style synthesis where the user does not set a narrower boundary, roughly 50-60+ candidates can be a useful planning reference so the search does not collapse to a small familiar set. It is not a minimum, quota, or completion criterion. Organize searches by the major topic, mechanism, time-period, evidence-type, and disagreement buckets, then stop when those buckets have representative evidence and additional queries mostly repeat known papers or add no decision-relevant evidence.
 
 ### 2. Build and persist the candidate pool
 
 Run multiple narrow `web_search` queries rather than one broad query. Use review articles for vocabulary and chronology, then search primary studies for representative mechanisms, benchmarks, disagreements, and recent changes.
 
 Persist a candidate table under `notes/literature/` when the pool is large. Include title, DOI/URL, year, source route, topic bucket, selection status, and why it matters. Deduplicate primarily by normalized DOI, then by normalized title/year.
+
+Keep discovery records shallow. Do not require reaction conditions, detailed direct evidence, full-text findings, or every final-synthesis field for every candidate. Apply that deeper extraction only to the selected evidence-bearing set or to a candidate whose inclusion decision depends on the missing detail.
 
 ### 3. Inspect and read selectively
 
@@ -68,7 +70,9 @@ Pass only the final selected DOI strings or DOI URLs to `finalize_citations` in 
 
 ## Method-critical defaults
 
-- Search breadth should follow the requested review scope, not a fixed narrative citation count.
+- Explicit user scope controls both discovery breadth and the final highlighted set unless the user asks for a separate larger screen.
+- Use numerical candidate guidance only as a planning reference for genuinely broad reviews; coverage saturation, not the number itself, determines when to stop.
+- Candidate discovery uses screening metadata; deep evidence extraction belongs to the selected evidence-bearing set.
 - Full-text acquisition remains selective and authorized even when the candidate pool is large.
 - Browser use and the number of downloaded papers are never review-completion targets.
 - Preserve query terms, date, source URL, and selection rationale for reproducibility.

@@ -97,7 +97,7 @@ tool scheduler and returns `custom_tool_call_output` on the next model call.
 The live acceptance script is:
 
 ```bash
-env -u ALL_PROXY PYTHONPATH=. \
+PYTHONPATH=. \
   /home/chenhh/miniconda3/envs/catmaster/bin/python \
   tests/manual/codex_oauth_apply_patch_live.py --workers 3
 ```
