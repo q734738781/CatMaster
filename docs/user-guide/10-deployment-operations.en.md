@@ -108,8 +108,8 @@ OpenAI SDK default. The Codex backend can also accept an HTTP 200 stream and
 then end it with the structured `server_is_overloaded` error, which the SDK
 cannot retry at the HTTP layer. CatMaster retries only that stream error up to
 six times, waiting 30, 60, 120, 240, 480, and 600 seconds across every
-DeepAgent layer, including its native `general-purpose` child. Other model
-exceptions are not captured by this additional retry.
+DeepAgent layer, including CatMaster's explicit `general-purpose` child. Other
+model exceptions are not captured by this additional retry.
 
 Do not copy the OAuth store or use one person's profile as the shared identity of a multi-user service.
 

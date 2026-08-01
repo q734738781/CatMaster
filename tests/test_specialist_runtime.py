@@ -1309,12 +1309,106 @@ def test_hypothesis_proposer_boundary_hides_injected_general_purpose_tools() -> 
     assert blocked.tool_call_id == "call-execute"
 
 
+def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp_path: Path) -> None:
+    class _BindableFakeModel(FakeMessagesListChatModel):
+        bound_tool_names: list[list[str]] = []
+        observed_system_prompts: list[str] = []
+
+        def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+            _ = (tool_choice, kwargs)
+            self.bound_tool_names.append([getattr(tool, "name", str(tool)) for tool in tools])
+            return self
+
+        def _generate(self, messages, *args, **kwargs):
+            system_text = "\n".join(
+                str(message.content)
+                for message in messages
+                if getattr(message, "type", "") == "system"
+            )
+            self.observed_system_prompts.append(system_text)
+            return super()._generate(messages, *args, **kwargs)
+
+    workspace = tmp_path / "project_space"
+    workspace.mkdir(parents=True)
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="experiment",
+    )
+    general_purpose = built.runner._general_purpose_subagent(skills=[])
+
+    def _caller_tool(value: str) -> str:
+        return value
+
+    caller_tool = StructuredTool.from_function(
+        func=_caller_tool,
+        name="caller_tool",
+        description="Return one caller-layer value.",
+    )
+    model = _BindableFakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "args": {
+                            "description": "Return the bounded result.",
+                            "subagent_type": "general-purpose",
+                        },
+                        "id": "call-task",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="child result"),
+            AIMessage(content="parent result"),
+        ]
+    )
+    agent = built.runner._load_create_deep_agent()(
+        model=model,
+        tools=[caller_tool],
+        subagents=[general_purpose],
+    )
+
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": "Delegate this bounded branch."}]}
+    )
+
+    assert result["messages"][-1].content == "parent result"
+    assert [
+        message.content
+        for message in result["messages"]
+        if getattr(message, "name", None) == "task"
+    ] == ["child result"]
+    child_tool_sets = [
+        set(names)
+        for names in model.bound_tool_names
+        if "read_document" in names and "task" not in names
+    ]
+    assert len(child_tool_sets) == 1
+    assert {"caller_tool", "read_document"} <= child_tool_sets[0]
+    assert "task" not in child_tool_sets[0]
+    child_system_prompts = [
+        prompt
+        for prompt in model.observed_system_prompts
+        if "CatMaster's general-purpose context worker" in prompt
+    ]
+    assert len(child_system_prompts) == 1
+    assert "You have no subagents and must not transfer the task onward" in child_system_prompts[0]
+    assert "Research Graph contract" not in child_system_prompts[0]
+
+
 @pytest.mark.parametrize(
     ("entrypoint", "expected_subagent_names"),
     [
         (
             "research",
             [
+                "general-purpose",
                 "hypothesis_proposer",
                 "evidence_judge",
                 "experiment_specialist",
@@ -1323,10 +1417,13 @@ def test_hypothesis_proposer_boundary_hides_injected_general_purpose_tools() -> 
                 "litreview_agent",
             ],
         ),
-        ("experiment", ["materials_worker", "ml_worker", "dynamics_worker", "orca_xtb_worker"]),
-        ("literature_review", []),
-        ("writing", ["writing_worker_agent", "writing_polisher_agent"]),
-        ("peer_review", ["peer_review_worker_agent"]),
+        (
+            "experiment",
+            ["general-purpose", "materials_worker", "ml_worker", "dynamics_worker", "orca_xtb_worker"],
+        ),
+        ("literature_review", ["general-purpose"]),
+        ("writing", ["general-purpose", "writing_worker_agent", "writing_polisher_agent"]),
+        ("peer_review", ["general-purpose", "peer_review_worker_agent"]),
     ],
 )
 def test_specialist_lanes_start_with_staged_skills(
@@ -1442,6 +1539,30 @@ def test_specialist_lanes_start_with_staged_skills(
 
     subagents_by_name = {subagent.kwargs["name"]: subagent.kwargs for subagent in top_subagents}
 
+    def _assert_explicit_general_purpose(owner_kwargs: dict[str, Any]) -> None:
+        specs = [subagent.kwargs for subagent in owner_kwargs.get("subagents") or []]
+        general_purpose = [spec for spec in specs if spec["name"] == "general-purpose"]
+        assert len(general_purpose) == 1
+        spec = general_purpose[0]
+        assert "tools" not in spec
+        assert "model" not in spec
+        assert spec["skills"] == list(owner_kwargs.get("skills") or [])
+        assert "CatMaster's general-purpose context worker" in spec["system_prompt"]
+        assert "Treat that brief as the complete operational scope" in spec["system_prompt"]
+        assert "You have no subagents and must not transfer the task onward" in spec["system_prompt"]
+        assert "do not calculate or compare hashes/checksums" in spec["system_prompt"]
+        assert "Do not create, freeze, or persist an ad hoc contract" in spec["system_prompt"]
+        assert "Research Graph contract" not in spec["system_prompt"]
+        assert "browser use and full-text acquisition" not in spec["system_prompt"]
+        assert "registered managed execution" not in spec["system_prompt"]
+        middleware_names = {type(item).__name__ for item in spec["middleware"]}
+        assert {"DocumentAccessMiddleware", "catmaster_nonfatal_tool_errors"} <= middleware_names
+        document_access = next(item for item in spec["middleware"] if type(item).__name__ == "DocumentAccessMiddleware")
+        assert {tool.name for tool in document_access.tools} == {"read_document"}
+
+    for created_agent_kwargs in created_agents:
+        _assert_explicit_general_purpose(created_agent_kwargs)
+
     def _created_agents_named(name: str) -> list[dict]:
         return [kwargs for kwargs in created_agents if kwargs["name"] == name]
 
@@ -1532,6 +1653,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "read and apply the `humanizer` skill" in experiment_agent_kwargs["system_prompt"]
         _assert_native_memory(experiment_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
+            "general-purpose",
             "materials_worker",
             "ml_worker",
             "dynamics_worker",
@@ -1547,6 +1669,7 @@ def test_specialist_lanes_start_with_staged_skills(
         _assert_native_skill_groups(writing_agent_kwargs, "writing_specialist", "writing_quality")
         _assert_native_memory(writing_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
+            "general-purpose",
             "writing_worker_agent",
             "writing_polisher_agent",
         ]
@@ -1563,6 +1686,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "explicit `ReviewTarget` or manuscript PDF path" in peer_review_agent_kwargs["system_prompt"]
         assert "delegate the bounded review episode to `peer_review_worker_agent`" in peer_review_agent_kwargs["system_prompt"]
         assert [subagent.kwargs["name"] for subagent in peer_review_agent_kwargs["subagents"]] == [
+            "general-purpose",
             "peer_review_worker_agent",
         ]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in peer_review_agent_kwargs["middleware"])
@@ -1582,7 +1706,7 @@ def test_specialist_lanes_start_with_staged_skills(
         _assert_native_skill_groups(litreview_agent_kwargs, "litreview_agent", "writing_quality")
         _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
-        assert not litreview_agent_kwargs.get("subagents")
+        assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["general-purpose"]
         assert "requested scope" in litreview_agent_kwargs["system_prompt"]
         assert "paper-count target" in litreview_agent_kwargs["system_prompt"]
         assert "50-60" not in litreview_agent_kwargs["system_prompt"]
@@ -1606,7 +1730,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "Do not perform computational execution" in agent_kwargs["system_prompt"]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in agent_kwargs["middleware"])
-        assert not agent_kwargs.get("subagents")
+        assert [subagent.kwargs["name"] for subagent in agent_kwargs["subagents"]] == ["general-purpose"]
         assert not _created_agents_named("literature_agent")
         assert not _created_agents_named("metadata_agent")
     elif entrypoint == "experiment":

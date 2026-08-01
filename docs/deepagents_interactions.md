@@ -41,15 +41,18 @@ model middleware handles transient overloads that arrive inside an already
 accepted HTTP 200 stream, including the structured `server_is_overloaded` code
 and the provider's canonical retry-later or request-ID messages. It is attached
 through the DeepAgents `openai-codex` provider profile, so the same behavior
-applies to specialists, named workers, declarative subagents, and the native
-`general-purpose` child. The specialist runner only retries a completed episode
-when its final report cannot be parsed.
+applies to specialists, named workers, declarative subagents, and CatMaster's
+explicit `general-purpose` child. The specialist runner only retries a completed
+episode when its final report cannot be parsed.
 
-DeepAgents supplies the native `general-purpose` subagent. It receives the
-parent model, processed tools, and staged skills from the DeepAgents builder.
-CatMaster passes only its explicit scientific subagents, such as workers and
-research reasoning roles. A newly added lane therefore receives the native
-general-purpose behavior without a CatMaster-specific wrapper.
+CatMaster supplies one explicit subagent named `general-purpose`, which replaces
+the auto-added DeepAgents child for every specialist and named worker. It is a
+bounded context worker, not a coordinator: the child completes one branch inside
+the caller's current lane and cannot delegate further. DeepAgents supplies the
+current model, processed direct tools, permissions, interrupt policy, and its
+standard child middleware. CatMaster explicitly passes the caller's staged skill
+roots and adds bounded document access plus nonfatal tool-error handling. The
+child does not receive the caller's full specialist prompt or persistent memory.
 
 ## CatMaster middleware
 

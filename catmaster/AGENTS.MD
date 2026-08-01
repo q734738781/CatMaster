@@ -108,9 +108,13 @@ tool or compatibility route.
 - local full-text corpus ingest/query tools;
 - one deterministic batch citation finalizer.
 
-It declares no custom literature or metadata worker. DeepAgents' native
-`general-purpose` subagent is the only child and inherits the same tools and
-browser session for bounded context-isolated work.
+It declares no custom literature or metadata worker. CatMaster explicitly
+replaces DeepAgents' auto-added `general-purpose` child with one shared
+context-worker specification. That child inherits the current layer's model,
+tools, permissions, and interrupt policy; CatMaster passes the same staged skill
+roots explicitly and adds bounded document access plus nonfatal tool-error
+handling. Its role is context isolation within the caller's current lane, not
+coordination or responsibility transfer.
 
 `open_public_page`, `find_in_page`, OpenAlex, and Semantic Scholar tools are not
 part of the LitReview model-visible surface. OpenAlex may remain an internal

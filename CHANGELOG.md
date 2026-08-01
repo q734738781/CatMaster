@@ -16,6 +16,11 @@ references describe the current system.
   and ad hoc frozen contracts, schemas, manifests, baselines, lockfiles, or
   acceptance frameworks for ordinary one-off work while preserving artifacts
   required by real APIs, tools, reproducibility needs, and downstream consumers.
+- CatMaster now explicitly replaces DeepAgents' auto-added `general-purpose`
+  child for every specialist and named worker. The shared child remains a
+  non-delegating context-isolation worker, inherits the current layer's direct
+  capability surface, receives the same staged skills, and adds bounded document
+  access and nonfatal tool-error handling without copying the full parent prompt.
 
 ### Literature Review
 
