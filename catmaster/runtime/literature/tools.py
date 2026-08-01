@@ -1,16 +1,55 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from catmaster.llm.config import LLMProfile
+from catmaster.runtime.tool_runtime import current_run_dir, current_tool_context
 from .models import PaperRecord
-from .online_search_adapter import OnlineSearchAdapter
+from .online_search_adapter import OnlineSearchAdapter, classify_tavily_failure
 from .openalex_client import OpenAlexClient
 from .semanticscholar_client import SemanticScholarClient, SemanticScholarRateLimitError
+
+
+_PUBLIC_WEB_CIRCUIT_LOCK = threading.Lock()
+_PUBLIC_WEB_CIRCUITS: dict[str, str] = {}
+_PUBLIC_WEB_CIRCUIT_LIMIT = 512
+
+
+def _public_web_circuit_scope() -> str:
+    context = current_tool_context()
+    return str(
+        context.get("search_scope")
+        or context.get("run_id")
+        or current_run_dir()
+        or ""
+    ).strip()
+
+
+def _public_web_circuit_failure(scope: str) -> str:
+    if not scope:
+        return ""
+    with _PUBLIC_WEB_CIRCUIT_LOCK:
+        return str(_PUBLIC_WEB_CIRCUITS.get(scope) or "")
+
+
+def _trip_public_web_circuit(scope: str, category: str) -> None:
+    if not scope:
+        return
+    with _PUBLIC_WEB_CIRCUIT_LOCK:
+        _PUBLIC_WEB_CIRCUITS[scope] = str(category or "upstream_error")
+        while len(_PUBLIC_WEB_CIRCUITS) > _PUBLIC_WEB_CIRCUIT_LIMIT:
+            _PUBLIC_WEB_CIRCUITS.pop(next(iter(_PUBLIC_WEB_CIRCUITS)))
+
+
+def _reset_public_web_circuits_for_tests() -> None:
+    with _PUBLIC_WEB_CIRCUIT_LOCK:
+        _PUBLIC_WEB_CIRCUITS.clear()
 
 
 def _literature_components() -> tuple[LLMProfile, OpenAlexClient, SemanticScholarClient, OnlineSearchAdapter]:
@@ -221,7 +260,7 @@ class RecommendSemanticScholarInput(BaseModel):
 
 
 class WebSearchInput(BaseModel):
-    """[web/search] Search the public web for scientific background and usable source summaries."""
+    """[web/search] Search for scientific background; may return scholarly-index results when public-web search is unavailable."""
 
     query: str = Field(..., description="Public-web query.")
     max_results: int = Field(5, ge=1, le=20, description="Maximum number of results to return.")
@@ -435,16 +474,158 @@ def recommend_semantic_scholar(payload: dict[str, Any]) -> tuple[str, dict[str, 
         return soft
 
 
+def _paper_search_hit(paper: PaperRecord) -> dict[str, Any]:
+    url = str(
+        paper.landing_page_url
+        or paper.url
+        or paper.open_access_pdf_url
+        or ""
+    ).strip()
+    if not url and paper.doi:
+        url = f"https://doi.org/{quote(str(paper.doi).strip(), safe='/():;')}"
+    snippet = str(paper.abstract or paper.snippet or "").strip()
+    if not snippet:
+        context = [str(paper.venue or "").strip()]
+        if paper.year is not None:
+            context.append(str(paper.year))
+        snippet = ", ".join(item for item in context if item) or "Scholarly metadata record."
+    return {
+        "title": str(paper.title or "Untitled paper").strip(),
+        "url": url,
+        "snippet": snippet,
+        "source": str(paper.source or "scholarly_index").strip(),
+    }
+
+
+def _deduplicate_papers(papers: list[PaperRecord], *, limit: int) -> list[PaperRecord]:
+    kept: list[PaperRecord] = []
+    seen: set[str] = set()
+    for paper in papers:
+        key = str(paper.doi or paper.paper_id or paper.title or "").strip().casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        kept.append(paper)
+        if len(kept) >= limit:
+            break
+    return kept
+
+
+def _fallback_semantic_scholar_client(client: Any) -> Any:
+    if type(client) is not SemanticScholarClient:
+        return client
+    return SemanticScholarClient(
+        api_key=client.api_key,
+        base_url=client.base_url,
+        timeout_s=client.timeout_s,
+        retry_429_attempts=0,
+        retry_429_wait_seconds=0,
+    )
+
+
+def _scholarly_search_fallback(
+    *,
+    query: str,
+    max_results: int,
+    openalex: Any,
+    scholar: Any,
+) -> tuple[list[dict[str, Any]], str, list[str]]:
+    """Return a bounded scholarly discovery fallback without Tavily."""
+
+    limit = max(1, min(int(max_results or 1), 20))
+    errors: list[str] = []
+    sources: list[tuple[str, Any]] = []
+    if getattr(openalex, "api_key", None):
+        sources.append(("openalex", openalex))
+    sources.append(("semantic_scholar", _fallback_semantic_scholar_client(scholar)))
+    if not getattr(openalex, "api_key", None):
+        sources.append(("openalex", openalex))
+
+    for source, client in sources:
+        try:
+            if source == "openalex":
+                raw = client.search_works(query, limit=limit)
+            else:
+                raw = client.search_papers(query, limit=limit)
+            papers = [item.paper for item in list(raw or []) if isinstance(getattr(item, "paper", None), PaperRecord)]
+            papers = _deduplicate_papers(papers, limit=limit)
+            if papers:
+                return [_paper_search_hit(paper) for paper in papers], source, errors
+        except SemanticScholarRateLimitError:
+            errors.append(f"{source}:rate_limited")
+        except httpx.HTTPStatusError as exc:
+            errors.append(f"{source}:http_{int(exc.response.status_code)}")
+        except httpx.RequestError:
+            errors.append(f"{source}:network_error")
+        except Exception:
+            errors.append(f"{source}:unavailable")
+    return [], "scholarly_index_unavailable", errors
+
+
+def _degraded_web_search_result(
+    *,
+    query: str,
+    max_results: int,
+    category: str,
+    openalex: Any,
+    scholar: Any,
+    circuit_open: bool,
+) -> tuple[str, dict[str, Any]]:
+    hits, backend, fallback_errors = _scholarly_search_fallback(
+        query=query,
+        max_results=max_results,
+        openalex=openalex,
+        scholar=scholar,
+    )
+    data: dict[str, Any] = {
+        "status": "degraded" if hits else "error",
+        "source": backend,
+        "backend": backend,
+        "degraded_from": "tavily",
+        "failure_category": category,
+        "retryable": False,
+        "circuit_open": bool(circuit_open),
+        "query": query,
+        "count": len(hits),
+        "hits": hits,
+    }
+    if fallback_errors:
+        data["fallback_errors"] = fallback_errors
+    if not hits:
+        data["message"] = (
+            "Public-web search is unavailable and the scholarly-index fallback "
+            "did not return usable results."
+        )
+    content = _format_web_search_content(data, max_results=max_results)
+    return content, {
+        "tool_name": "web_search",
+        "data": data,
+        "suppress_content_offload_ref": True,
+    }
+
+
 def web_search(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """[web/search] Search the public web for scientific background and usable source summaries."""
+    """[web/search] Search the public web, with scholarly discovery fallback when configured."""
     tool_name = "web_search"
     try:
         params = WebSearchInput(**payload)
-        _profile, _openalex, _scholar, web = _literature_components()
+        profile, openalex, scholar, web = _literature_components()
+        scope = _public_web_circuit_scope()
+        circuit_category = _public_web_circuit_failure(scope)
+        if circuit_category:
+            return _degraded_web_search_result(
+                query=params.query,
+                max_results=params.max_results,
+                category=circuit_category,
+                openalex=openalex,
+                scholar=scholar,
+                circuit_open=True,
+            )
         result = web.search_public_web(params.query, max_results=params.max_results)
         data = {
             "status": "ok",
-            "source": "public_web",
+            "source": "tavily",
+            "backend": "tavily",
             "query": params.query,
             "count": len(result.results),
             "hits": [item.model_dump() for item in result.results],
@@ -455,6 +636,32 @@ def web_search(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "suppress_content_offload_ref": True,
         }
     except Exception as exc:
+        if "params" in locals() and "profile" in locals():
+            failure = classify_tavily_failure(exc)
+            category = str(failure["category"])
+            if bool(failure["disable_for_scope"]):
+                _trip_public_web_circuit(scope if "scope" in locals() else "", category)
+            if profile.literature.public_web_on_search_failure:
+                return _degraded_web_search_result(
+                    query=params.query,
+                    max_results=params.max_results,
+                    category=category,
+                    openalex=openalex,
+                    scholar=scholar,
+                    circuit_open=bool(failure["disable_for_scope"]),
+                )
+            return _external_tool_soft_error_result(
+                tool_name=tool_name,
+                source="tavily",
+                status=category,
+                message=f"Public-web search is unavailable ({category}).",
+                extra={
+                    "query": params.query,
+                    "backend": "tavily",
+                    "retryable": bool(failure["retryable"]),
+                    "circuit_open": bool(failure["disable_for_scope"]),
+                },
+            )
         soft = _soft_external_error(
             tool_name,
             "public_web",

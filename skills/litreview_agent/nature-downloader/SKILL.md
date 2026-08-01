@@ -14,7 +14,7 @@ Acquire a small, selected set of decision-relevant papers through lawful routes 
 ## Quick Start
 
 1. Confirm that the requested claim needs details absent from available summaries or that the user explicitly requested the full paper.
-2. Reuse an existing attachment or direct lawful open-access route when available; otherwise make one reasonable controlled-browser attempt for the selected source.
+2. Reuse an existing attachment or direct lawful open-access route when available; otherwise use a reasonable controlled-browser route for the selected source.
 3. If acquisition fails, state the limitation and continue with other evidence instead of trying alternate pages or mirrors repeatedly.
 4. When acquired, save under `literature/downloads/` and ingest only if repeated focused retrieval will be useful.
 
@@ -34,7 +34,7 @@ Cookie, storage, credential, auth-vault, JavaScript evaluation, network intercep
 
 Do not invoke this acquisition workflow merely because a relevant paper was found. An abstract or substantive search summary is usable for claims it explicitly supports; full text is warranted when the answer depends on exact methods, conditions, values, figures, supplementary evidence, or a conflict that summaries cannot resolve.
 
-Existing workspace attachments and direct lawful open-access copies are the cheapest routes. A controlled browser is a fallback for one selected source when dynamic access or a user-authorized institutional session is relevant. In an ordinary review, make at most one reasonable acquisition attempt for that source. If it does not yield readable text, record that the full text was not checked and continue; do not cycle through DOI pages, publisher variants, mirrors, or repeated downloads.
+Existing workspace attachments and direct lawful open-access copies are the cheapest routes. A controlled browser is a fallback for a selected source when dynamic access or a user-authorized institutional session is relevant. If a reasonable acquisition route does not yield readable text, record that the full text was not checked and continue; do not cycle through DOI pages, publisher variants, mirrors, or repeated downloads.
 
 Do not turn broad discovery into automatic mass downloading. A review may screen many candidates, but full-text acquisition should remain a decision-relevant subset.
 

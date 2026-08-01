@@ -277,10 +277,10 @@ reviews.
 For review-style or literature answers, use task-appropriate headings and state
 the coverage boundary. Distinguish screened or retrieved candidates from the
 smaller set of papers highlighted as key examples. Do not let a small familiar
-set become the default depth for a genuinely broad review. Keep numerical
-candidate-planning guidance in the literature skill, where it can be conditioned
-on the user's scope; do not put paper-count targets in the specialist system
-prompt. Explicit paper ranges and brief, focused, limited-scope, or
+set become the default depth for a genuinely broad review. Keep discovery-breadth
+guidance in the literature skill, where it can be conditioned on the user's
+scope; do not put paper-count targets in the specialist system prompt or replace
+them with an internal numeric quota. Explicit paper ranges and brief, focused, limited-scope, or
 non-systematic requests control discovery breadth. Broader reviews should expand
 across the important coverage buckets until additional searches are mostly
 duplicative, while the narrative may still highlight a smaller key-paper set.

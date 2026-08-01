@@ -6,6 +6,7 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from deepagents.backends import FilesystemBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware, FilesystemPermission
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from catmaster.llm.config import LLMProfile
 from catmaster.llm.factory import build_chat_model
+from catmaster.runtime.search_surface import search_tools_for_role
 from catmaster.tools.registry import get_tool_registry
 
 from .models import (
@@ -437,22 +439,19 @@ def _inspect_tool() -> StructuredTool:
     )
 
 
-def _web_tools(*, workspace: Path) -> list[StructuredTool]:
-    try:
-        return get_tool_registry().as_langchain_tools(
-            allowlist=["web_search"],
-            workspace=str(workspace),
-            audience="self_evolution",
-        )
-    except Exception:
-        return []
-
-
 class ProposerAgent:
-    def __init__(self, *, model: Any, model_label: str, workspace: Path) -> None:
+    def __init__(
+        self,
+        *,
+        model: Any,
+        model_label: str,
+        workspace: Path,
+        search_tools: list[Any] | None = None,
+    ) -> None:
         self.model = model
         self.model_label = str(model_label or "").strip()
         self.workspace = Path(workspace).expanduser().resolve()
+        self.search_tools = list(search_tools or [])
 
     def reflect(
         self,
@@ -514,7 +513,7 @@ class ProposerAgent:
                     self_develop_root=self.workspace / "metadata" / "self_evolution" / "self_develop_skills",
                 ),
                 _inspect_tool(),
-                *_web_tools(workspace=self.workspace),
+                *self.search_tools,
             ],
             system_prompt=_load_prompt("proposer"),
             middleware=[
@@ -576,10 +575,18 @@ class ProposerAgent:
 
 
 class ReviewerAgent:
-    def __init__(self, *, model: Any, model_label: str, workspace: Path) -> None:
+    def __init__(
+        self,
+        *,
+        model: Any,
+        model_label: str,
+        workspace: Path,
+        search_tools: list[Any] | None = None,
+    ) -> None:
         self.model = model
         self.model_label = str(model_label or "").strip()
         self.workspace = Path(workspace).expanduser().resolve()
+        self.search_tools = list(search_tools or [])
 
     def review(
         self,
@@ -595,7 +602,7 @@ class ReviewerAgent:
         permissions = [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
         agent = create_agent(
             model=self.model,
-            tools=[_inspect_tool(), *_web_tools(workspace=self.workspace)],
+            tools=[_inspect_tool(), *self.search_tools],
             system_prompt=_load_prompt("reviewer"),
             middleware=[
                 FilesystemMiddleware(
@@ -654,15 +661,30 @@ def build_self_evolution_agents(
 ) -> tuple[ProposerAgent, ReviewerAgent]:
     proposer_label = profile.label_for_role("self_evolution_proposer")
     reviewer_label = profile.label_for_role("self_evolution_reviewer")
+    search_scope = f"self_evolution:{uuid4().hex}"
     proposer = ProposerAgent(
         model=build_chat_model(profile.config_for_role("self_evolution_proposer")),
         model_label=proposer_label,
         workspace=workspace,
+        search_tools=search_tools_for_role(
+            profile,
+            "self_evolution_proposer",
+            workspace=workspace,
+            audience="self_evolution",
+            runtime_context={"search_scope": search_scope},
+        ),
     )
     reviewer = ReviewerAgent(
         model=build_chat_model(profile.config_for_role("self_evolution_reviewer")),
         model_label=reviewer_label,
         workspace=workspace,
+        search_tools=search_tools_for_role(
+            profile,
+            "self_evolution_reviewer",
+            workspace=workspace,
+            audience="self_evolution",
+            runtime_context={"search_scope": search_scope},
+        ),
     )
     return proposer, reviewer
 

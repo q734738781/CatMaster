@@ -14,7 +14,7 @@ Maintain the shared scientific situation as one explicitly selected workspace Re
 
 ## Quick Start
 
-Use the graph ID injected for a bound turn. If no graph is bound, list graphs and ask the user to choose when several are relevant; create one only when the work is genuinely multi-step or evidence-driven. A newly created graph is attached to the current thread by trusted runtime context, so do not ask for or invent a thread ID. Inspect before mutating, pass the inspected revision to one mutation, and inspect again after a revision conflict.
+Use the graph ID injected for a bound turn. If no graph is bound, list graphs and ask the user to choose when several are relevant; create one only when the work is genuinely multi-step or evidence-driven. A newly created graph is attached to the current thread by trusted runtime context, so do not ask for or invent a thread ID. Inspect before mutating, use that revision for the next mutation, and inspect again after a revision conflict.
 
 ## Allowed tools
 
@@ -41,7 +41,7 @@ In an internal graph-planning turn, delegate model-generated branch formation to
 
 ### 2. Add the smallest useful scientific next step
 
-A user may contribute only one or two sentences. Preserve that input without inventing missing detail: a Hypothesis may start with only its claim, a draft Experiment may start with only its objective, and a Result may start with only its observation. Add rationale, observable predictions, sources, and coarse priority fields when they are known or can be developed from evidence. A ready Experiment is different: it needs a concise executable plan, a decision rule, the owning execution lane, expected decision value, and coarse estimated compute cost so another researcher can run it without inventing missing scientific choices. Keep an incomplete proposal as `draft`.
+A user may contribute only a brief scientific statement. Preserve that input without inventing missing detail: a Hypothesis may start with only its claim, a draft Experiment may start with only its objective, and a Result may start with only its observation. Add rationale, observable predictions, sources, and coarse priority fields when they are known or can be developed from evidence. A ready Experiment is different: it needs a concise executable plan, a decision rule, the owning execution lane, expected decision value, and coarse estimated compute cost so another researcher can run it without inventing missing scientific choices. Keep an incomplete proposal as `draft`.
 
 Keep as many scientifically distinct competing branches as the current evidence warrants, and stop when another branch would only repeat an existing one. Do not aim for a fixed Hypothesis/Experiment count or ratio. Temporary planning Experiments may remain drafts with only an objective; only a route with a usable plan and decision rule is ready for automatic execution. Importance, expected value, and compute cost are optional coarse bands; leave them empty when they are not genuinely known. They do not state confidence, truth, or success probability. Connect hypotheses to experiments through their typed inputs. Add experiment dependencies only for true execution prerequisites; they must remain acyclic. Do not add confidence, novelty, composite scoring, precise invented resource estimates, layout, prompt, token, or generic metadata.
 

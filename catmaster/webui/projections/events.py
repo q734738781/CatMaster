@@ -47,6 +47,9 @@ def project_event(
             )
     elif name == "message.completed":
         projected.status = "completed"
+        raw_message = data.get("message")
+        if isinstance(raw_message, dict):
+            projected.message = project_message(raw_message, workspace=workspace)
         public_name = "message.completed"
     elif name in {"message.failed", "error"}:
         public_name = "run.failed"

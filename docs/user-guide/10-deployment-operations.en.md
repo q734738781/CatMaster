@@ -167,7 +167,13 @@ export CROSSREF_MAILTO="you@example.org"
 `TAVILY_API_KEY` is optional for roles using `codex_oauth` or OpenAI Responses:
 those roles receive hosted `web_search`. Keep Tavily configured when other
 providers need public discovery. The two implementations are not exposed
-together under the same tool name.
+together under the same tool name, and the same provider resolver is used by
+specialists, workers, and self-evolution roles. For CatMaster's function,
+`literature.public_web_on_search_failure` controls scholarly-index fallback.
+Quota, authentication, rate-limit, and network failures open a circuit for the
+current run so later searches do not keep consuming or retrying the failed
+Tavily backend. Fallback results identify their actual scholarly backend and do
+not claim to be general-web coverage.
 
 The active Literature Review tool surface is authoritative. API keys provide access but do not guarantee full text or correct metadata.
 

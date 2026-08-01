@@ -39,6 +39,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
   const [messagePage, setMessagePage] = useState({});
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [artifacts, setArtifacts] = useState([]);
+  const [todoParts, setTodoParts] = useState([]);
   const [events, setEvents] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -49,6 +50,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
     const payload = await apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/messages?limit=50`);
     setMessages(Array.isArray(payload.messages) ? payload.messages : []);
     setMessagePage(payload.page || {});
+    setTodoParts(Array.isArray(payload.todo_parts) ? payload.todo_parts : []);
   }, [thread?.thread_id]);
 
   const loadOlderMessages = useCallback(async () => {
@@ -86,6 +88,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
         setMessages([]);
         setMessagePage({});
         setArtifacts([]);
+        setTodoParts([]);
         setEvents([]);
         return;
       }
@@ -99,6 +102,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
         if (!cancelled) {
           setMessages(Array.isArray(messagePayload.messages) ? messagePayload.messages : []);
           setMessagePage(messagePayload.page || {});
+          setTodoParts(Array.isArray(messagePayload.todo_parts) ? messagePayload.todo_parts : []);
           setArtifacts(Array.isArray(artifactPayload.artifacts) ? artifactPayload.artifacts : []);
         }
       } catch (err) {
@@ -125,6 +129,18 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
         const payload = JSON.parse(event.data || "{}");
         setEvents((prev) => [...prev.slice(-299), payload]);
         setMessages((prev) => applyThreadEvent(prev, payload));
+        const todoPart = payload.event === "activity.updated" && payload.data?.part?.type === "progress"
+          ? payload.data.part
+          : null;
+        if (todoPart?.items?.length) {
+          setTodoParts((prev) => {
+            const key = String(todoPart.title || "Research plan").toLowerCase();
+            return [
+              todoPart,
+              ...prev.filter((item) => String(item.title || "Research plan").toLowerCase() !== key),
+            ];
+          });
+        }
         const artifactPart = payload.event === "activity.updated" && payload.data?.part?.type === "artifact"
           ? payload.data.part
           : null;
@@ -189,6 +205,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
     const attachmentRows = Array.isArray(attachments) ? attachments : [];
     if (!thread?.thread_id || (!body && !attachmentRows.length)) return;
     setError("");
+    setTodoParts([]);
     try {
       const payload = await apiFetch(`/api/threads/${encodeURIComponent(thread.thread_id)}/submit`, {
         method: "POST",
@@ -257,6 +274,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
   return {
     runtime,
     messages,
+    todoParts,
     artifacts,
     events,
     messagePage,

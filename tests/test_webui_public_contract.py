@@ -613,6 +613,62 @@ def test_files_are_isolated_paginated_and_archived_without_internal_state(
     assert not any("metadata" in name or "/." in name for name in names)
 
 
+def test_files_projection_hides_tool_offload_and_known_transient_extract(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    (workspace / "files" / "large_tool_results").mkdir()
+    (workspace / "files" / "large_tool_results" / "call_x").write_text(
+        "internal",
+        encoding="utf-8",
+    )
+    literature = workspace / "files" / "literature"
+    literature.mkdir()
+    (literature / "core_extract.json").write_text("{}", encoding="utf-8")
+    (literature / "selected_evidence.md").write_text(
+        "# Evidence",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(project_space_root=str(tmp_path), no_login=True))
+    ctx = client.get(
+        "/api/bootstrap",
+        params={"project_space": "default"},
+    ).json()["ctx"]
+
+    root = client.get(
+        f"/api/session/{ctx}/files/tree",
+        params={"project_space": "default"},
+    ).json()
+    assert {row["name"] for row in root["children"]} == {"literature"}
+    nested = client.get(
+        f"/api/session/{ctx}/files/tree",
+        params={"project_space": "default", "path": "files/literature"},
+    ).json()
+    assert {row["name"] for row in nested["children"]} == {
+        "selected_evidence.md"
+    }
+    assert client.get(
+        f"/api/session/{ctx}/files/content",
+        params={
+            "project_space": "default",
+            "path": "files/literature/core_extract.json",
+        },
+    ).status_code == 404
+
+    archive = client.get(
+        f"/api/session/{ctx}/files/archive",
+        params={"project_space": "default"},
+    )
+    assert archive.status_code == 200
+    with zipfile.ZipFile(BytesIO(archive.content)) as bundle:
+        names = bundle.namelist()
+    assert any(name.endswith("selected_evidence.md") for name in names)
+    assert not any(
+        "large_tool_results" in name or name.endswith("core_extract.json")
+        for name in names
+    )
+
+
 def test_workspace_sqlite_uses_wal_only_for_verified_local_storage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

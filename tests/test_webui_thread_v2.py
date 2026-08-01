@@ -17,6 +17,7 @@ from catmaster.runtime.observability_store import OBSERVABILITY_DB_NAME, Observa
 from catmaster.webui.agent_loop import ThreadAgentLoopService
 from catmaster.webui import server
 from catmaster.webui.artifact_registry import ArtifactRegistry, infer_renderer
+from catmaster.webui.projections import project_event
 from catmaster.webui.server import create_app
 from catmaster.webui.thread_events import ThreadEventBroker
 from catmaster.webui.thread_models import (
@@ -1107,7 +1108,7 @@ def test_agent_loop_applies_queued_steering_at_safe_boundary(tmp_path: Path) -> 
                     await release.wait()
                 self.thread_store.update_message(kwargs["thread_id"], kwargs["message_id"], status="completed")
                 self.thread_store.update_thread(kwargs["thread_id"], status="idle", active_message_id="", active_run_id="")
-                return {"status": "done"}
+                return {"status": "steered" if len(prompts) == 1 else "done"}
 
         def fake_build_runner(**_kwargs):
             return SimpleNamespace(
@@ -1759,6 +1760,16 @@ def test_stream_translator_merges_token_tool_and_artifact_parts(tmp_path: Path) 
             artifact={"data": {"output_path": "out.csv"}},
         )
     )
+    store.append_part(
+        thread.thread_id,
+        message.id,
+        MessagePart(
+            id="part_reasoning",
+            type="reasoning",
+            text="working",
+            status="streaming",
+        ),
+    )
     translator.complete("hello", sidecar={"summary": "ok"})
 
     saved = store.get_message(thread.thread_id, message.id)
@@ -1775,6 +1786,112 @@ def test_stream_translator_merges_token_tool_and_artifact_parts(tmp_path: Path) 
     assert message_completed.data["text"] == "hello"
     assert message_completed.data["message"]["status"] == "completed"
     assert message_completed.data["message"]["parts"][0]["text"] == "hello"
+    assert next(
+        part
+        for part in message_completed.data["message"]["parts"]
+        if part["id"] == "part_reasoning"
+    )["status"] == "completed"
+    public_event = project_event(message_completed, workspace=workspace)
+    assert public_event.data.message is not None
+    assert public_event.data.message.status == "completed"
+    assert public_event.data.message.parts[0].text == "hello"
+
+
+def test_message_part_pages_keep_ref_and_todos_use_full_current_turn(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    thread_id = client.post(
+        "/api/workspaces/default/threads",
+        json={"title": "Long turn"},
+    ).json()["thread"]["thread_id"]
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    store.append_message(
+        ThreadMessage(
+            id="msg_user_long_parts",
+            thread_id=thread_id,
+            role="user",
+            status="completed",
+            parts=[
+                MessagePart(
+                    id="part_user_long_parts",
+                    type="text",
+                    text="Run the bounded review.",
+                    status="completed",
+                )
+            ],
+        )
+    )
+    parts = [
+        MessagePart(
+            id=f"part_long_{index:03d}",
+            type="reasoning",
+            text=f"step {index}",
+            status="completed",
+        )
+        for index in range(85)
+    ]
+    parts[10] = MessagePart(
+        id="part_todo_initial",
+        type="tool-call",
+        status="completed",
+        meta={
+            "tool": "write_todos",
+            "agent_name": "litreview_agent",
+            "input": {
+                "todos": [
+                    {"content": "Search representative work", "status": "completed"},
+                    {"content": "Write synthesis", "status": "in_progress"},
+                ]
+            },
+        },
+    )
+    parts[84] = MessagePart(
+        id="part_todo_final",
+        type="tool-call",
+        status="completed",
+        meta={
+            "tool": "write_todos",
+            "agent_name": "litreview_agent",
+            "input": {
+                "todos": [
+                    {"content": "Search representative work", "status": "completed"},
+                    {"content": "Write synthesis", "status": "completed"},
+                ]
+            },
+        },
+    )
+    store.append_message(
+        ThreadMessage(
+            id="msg_assistant_long_parts",
+            thread_id=thread_id,
+            role="assistant",
+            status="completed",
+            parts=parts,
+        )
+    )
+
+    message_page = client.get(f"/api/threads/{thread_id}/messages").json()
+    assistant = message_page["messages"][-1]
+    assert assistant["parts_page"]["shown_count"] == 20
+    assert assistant["parts_page"]["total_count"] == 85
+    assert message_page["todo_parts"][0]["summary"] == "2 of 2 items complete."
+    assert message_page["todo_parts"][0]["id"] == "part_todo_final"
+
+    ref = assistant["parts_page"]["full_content_ref"]
+    cursor = assistant["parts_page"]["next_cursor"]
+    shown_counts = [20]
+    while cursor:
+        response = client.get(ref, params={"cursor": cursor, "limit": 20})
+        assert response.status_code == 200
+        page = response.json()["page"]
+        shown_counts.append(page["shown_count"])
+        cursor = page["next_cursor"]
+        if cursor:
+            assert page["full_content_ref"] == ref
+    assert shown_counts == [20, 40, 60, 80, 85]
 
 
 def test_stream_translator_registers_only_existing_files_from_tool_artifacts(tmp_path: Path) -> None:
@@ -2846,6 +2963,114 @@ def test_streaming_adapter_emits_v3_tool_start_before_tool_finishes(tmp_path: Pa
     assert len(tool_parts) == 1
     assert tool_parts[0].status == "completed"
     assert tool_parts[0].text == "STREAM_DONE"
+
+
+def test_streaming_adapter_yields_for_steering_after_completed_tool_boundary(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=registry,
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_steering_boundary",
+    )
+    steering = {"queued": False}
+    calls: list[object] = []
+
+    class FakeV3Agent:
+        async def astream_events(
+            self,
+            payload,
+            config=None,
+            version="v3",
+            interrupt_after=None,
+        ):
+            calls.append(payload)
+            assert interrupt_after == ["tools"]
+            yield {
+                "method": "tools",
+                "params": {
+                    "namespace": [],
+                    "data": {
+                        "event": "tool-started",
+                        "tool_call_id": "call_safe",
+                        "tool_name": "execute",
+                        "input": {"task": "bounded work"},
+                    },
+                },
+            }
+            steering["queued"] = True
+            yield {
+                "method": "tools",
+                "params": {
+                    "namespace": [],
+                    "data": {
+                        "event": "tool-finished",
+                        "tool_call_id": "call_safe",
+                        "tool_name": "execute",
+                        "output": ToolMessage(
+                            content="completed before steering",
+                            tool_call_id="call_safe",
+                            name="execute",
+                        ),
+                    },
+                },
+            }
+
+        async def aget_state(self, _config):
+            return SimpleNamespace(next=("model",))
+
+    runner = StreamingSpecialistRunner(
+        runner=SimpleNamespace(
+            run_context=SimpleNamespace(
+                run_dir=tmp_path,
+                run_id="run_steering_boundary",
+            )
+        ),  # type: ignore[arg-type]
+        thread_store=store,
+        event_broker=broker,
+        artifact_registry=registry,
+        should_steer=lambda _thread_id: steering["queued"],
+    )
+
+    yielded = awaitable_result(
+        runner._consume_agent_stream(
+            FakeV3Agent(),
+            input_payload={"messages": [{"role": "user", "content": "first"}]},
+            config={"configurable": {"thread_id": "deepagent-safe"}},
+            translator=translator,
+        )
+    )
+
+    assert yielded is True
+    assert len(calls) == 1
+    assert [event.event for event in broker.replay(thread.thread_id)] == [
+        "tool_call.started",
+        "tool_call.completed",
+    ]
+    tool_part = next(
+        part
+        for part in store.get_message(thread.thread_id, message.id).parts
+        if part.type == "tool-call"
+    )
+    assert tool_part.status == "completed"
+    assert tool_part.text == "completed before steering"
 
 
 def test_streaming_adapter_flushes_observed_reasoning_before_stop(tmp_path: Path) -> None:

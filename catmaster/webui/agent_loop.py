@@ -926,6 +926,9 @@ class ThreadAgentLoopService:
                     event_broker=self.broker,
                     artifact_registry=self.artifact_registry,
                     should_stop=self.should_stop,
+                    should_steer=lambda active_thread_id: bool(
+                        self.store.get_thread(active_thread_id).pending_steering
+                    ),
                 )
                 if resume_decisions is not None:
                     run_result = await streaming_runner.aresume(
@@ -992,7 +995,7 @@ class ThreadAgentLoopService:
                 try:
                     latest = self.store.get_thread(thread_id)
                     if (
-                        terminal_status == "done"
+                        terminal_status in {"done", "steered"}
                         and latest.status == ThreadStatus.IDLE
                         and latest.pending_steering
                     ):

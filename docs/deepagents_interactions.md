@@ -31,6 +31,13 @@ The WebUI reads the current run snapshot from
 `metadata/runs/<run_id>/run_state.json`. Checkpoints provide conversation
 continuity and are not the user-facing run-status format.
 
+When WebUI steering arrives during a run, CatMaster uses LangGraph's runtime
+static breakpoint after the top-level `tools` node. The active tool is allowed
+to finish, its result is checkpointed, and the queued user message then starts
+from that same thread checkpoint. Runs with no further tool boundary finish
+normally before the queued message starts. This is a local OSS runtime
+integration; it does not depend on LangSmith Deployment double-texting APIs.
+
 ## Model calls and delegation
 
 Model request settings come from the selected CatMaster profile. The factory
@@ -47,12 +54,12 @@ episode when its final report cannot be parsed.
 
 CatMaster supplies one explicit subagent named `general-purpose`, which replaces
 the auto-added DeepAgents child for every specialist and named worker. It is a
-bounded context worker, not a coordinator: the child completes one branch inside
-the caller's current lane and cannot delegate further. DeepAgents supplies the
-current model, processed direct tools, permissions, interrupt policy, and its
-standard child middleware. CatMaster explicitly passes the caller's staged skill
-roots and adds bounded document access plus nonfatal tool-error handling. The
-child does not receive the caller's full specialist prompt or persistent memory.
+bounded context worker, not a coordinator: the child completes one self-contained
+task brief and cannot delegate further. DeepAgents supplies the current model,
+processed direct tools, permissions, interrupt policy, and its standard child
+middleware. CatMaster explicitly passes the caller's staged skill roots and adds
+bounded document access plus nonfatal tool-error handling. The child does not
+receive the caller's full specialist prompt or persistent memory.
 
 ## CatMaster middleware
 

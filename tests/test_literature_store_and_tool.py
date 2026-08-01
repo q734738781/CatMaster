@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+from tavily.errors import InvalidAPIKeyError, UsageLimitExceededError
 
 from catmaster.runtime.literature import PaperRecord, SemanticScholarRateLimitError
 from catmaster.runtime.literature.citations import finalize_citations
 from catmaster.runtime.literature.corpus import ingest_literature_files, query_literature_corpus
 from catmaster.runtime.literature.tools import (
+    _reset_public_web_circuits_for_tests,
     get_openalex_record,
     open_public_page,
     search_openalex,
@@ -14,6 +18,7 @@ from catmaster.runtime.literature.tools import (
     search_semantic_scholar,
     web_search,
 )
+from catmaster.runtime.tool_runtime import toolcall_context
 from catmaster.tools.base import ensure_project_space_layout, workspace_scope
 from catmaster.tools.registry import get_tool_registry
 
@@ -269,6 +274,111 @@ def test_direct_web_search_tool_returns_compact_hits(monkeypatch) -> None:
     assert "https://example.org" in content
     assert "A" * 600 in content
     assert artifact["data"]["count"] == 1
+
+
+def test_web_search_falls_back_and_skips_tavily_after_quota_failure_in_same_run(
+    monkeypatch,
+) -> None:
+    class _QuotaWeb:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def search_public_web(self, query: str, max_results: int = 5):
+            _ = (query, max_results)
+            self.calls += 1
+            raise UsageLimitExceededError("monthly usage limit exceeded")
+
+    class _OpenAlex:
+        api_key = "configured"
+
+        def search_works(self, query: str, limit: int):
+            assert query == "Pt CeO2 CO oxidation"
+            assert limit == 3
+            return [
+                type(
+                    "_Hit",
+                    (),
+                    {
+                        "paper": PaperRecord(
+                            paper_id="https://openalex.org/W1",
+                            title="Dynamic Pt sites on ceria",
+                            year=2025,
+                            url="https://example.org/pt-ceria",
+                            abstract="Operando evidence for dynamic Pt sites.",
+                            source="openalex",
+                        )
+                    },
+                )()
+            ]
+
+    web = _QuotaWeb()
+    profile = SimpleNamespace(
+        literature=SimpleNamespace(public_web_on_search_failure=True)
+    )
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (profile, _OpenAlex(), object(), web),
+    )
+    _reset_public_web_circuits_for_tests()
+
+    with toolcall_context(
+        "search-1",
+        context={"run_id": "run-quota", "search_scope": "run-quota"},
+    ):
+        first_content, first_artifact = web_search(
+            {"query": "Pt CeO2 CO oxidation", "max_results": 3}
+        )
+    with toolcall_context(
+        "search-2",
+        context={"run_id": "run-quota", "search_scope": "run-quota"},
+    ):
+        second_content, second_artifact = web_search(
+            {"query": "Pt CeO2 CO oxidation", "max_results": 3}
+        )
+
+    assert web.calls == 1
+    assert "Dynamic Pt sites on ceria" in first_content
+    assert "Dynamic Pt sites on ceria" in second_content
+    for artifact in (first_artifact, second_artifact):
+        data = artifact["data"]
+        assert data["status"] == "degraded"
+        assert data["backend"] == "openalex"
+        assert data["degraded_from"] == "tavily"
+        assert data["failure_category"] == "quota_exhausted"
+        assert data["retryable"] is False
+        assert data["circuit_open"] is True
+
+
+def test_web_search_classifies_auth_failure_without_exposing_error_text_when_fallback_disabled(
+    monkeypatch,
+) -> None:
+    class _AuthWeb:
+        def search_public_web(self, query: str, max_results: int = 5):
+            _ = (query, max_results)
+            raise InvalidAPIKeyError("sensitive provider detail")
+
+    profile = SimpleNamespace(
+        literature=SimpleNamespace(public_web_on_search_failure=False)
+    )
+    monkeypatch.setattr(
+        "catmaster.runtime.literature.tools._literature_components",
+        lambda: (profile, object(), object(), _AuthWeb()),
+    )
+    _reset_public_web_circuits_for_tests()
+
+    with toolcall_context(
+        "search-auth",
+        context={"run_id": "run-auth", "search_scope": "run-auth"},
+    ):
+        content, artifact = web_search({"query": "test query"})
+    data = json.loads(content)
+
+    assert data["status"] == "authentication_failed"
+    assert data["backend"] == "tavily"
+    assert data["retryable"] is False
+    assert data["circuit_open"] is True
+    assert "sensitive provider detail" not in content
+    assert artifact["data"] == data
 
 
 def test_search_semantic_scholar_tool_soft_fails_on_rate_limit(monkeypatch) -> None:

@@ -7,6 +7,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
@@ -369,15 +370,22 @@ function GraphCanvas({ payload, selectedNodeId, onSelectNode }) {
   const [query, setQuery] = useState("");
   const [flowNodes, setFlowNodes] = useState([]);
   const [flowEdges, setFlowEdges] = useState([]);
-  const [instance, setInstance] = useState(null);
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const layoutNodeIdsRef = useRef([]);
+  const selectedNodeIdRef = useRef(selectedNodeId);
+  const onSelectNodeRef = useRef(onSelectNode);
+  selectedNodeIdRef.current = selectedNodeId;
+  onSelectNodeRef.current = onSelectNode;
+  const instance = useReactFlow();
+  const focusNodeId = focusOnly ? selectedNodeId : "";
   const visible = useMemo(
     () => boundedResearchGraph(payload, {
       limit: density,
-      focusNodeId: focusOnly ? selectedNodeId : "",
+      focusNodeId,
       hops: 2,
       query,
     }),
-    [density, focusOnly, payload, query, selectedNodeId],
+    [density, focusNodeId, payload, query],
   );
 
   useEffect(() => {
@@ -388,11 +396,9 @@ function GraphCanvas({ payload, selectedNodeId, onSelectNode }) {
       position: { x: 0, y: 0 },
       data: {
         node,
-        onSelect: () => onSelectNode(node.node_id),
+        onSelect: () => onSelectNodeRef.current(node.node_id),
       },
-      width: 284,
-      height: 138,
-      selected: node.node_id === selectedNodeId,
+      selected: node.node_id === selectedNodeIdRef.current,
       draggable: false,
       connectable: false,
       focusable: false,
@@ -418,14 +424,45 @@ function GraphCanvas({ payload, selectedNodeId, onSelectNode }) {
     }));
     layoutGraph(nodes, edges).then((next) => {
       if (cancelled) return;
+      layoutNodeIdsRef.current = next.nodes.map((node) => node.id);
       setFlowNodes(next.nodes);
       setFlowEdges(next.edges);
-      window.requestAnimationFrame(() => instance?.fitView({ padding: 0.22, duration: 240 }));
+      setLayoutVersion((value) => value + 1);
     });
     return () => {
       cancelled = true;
     };
-  }, [instance, onSelectNode, payload?.graph?.revision, selectedNodeId, visible]);
+  }, [payload?.graph?.revision, visible]);
+
+  useEffect(() => {
+    setFlowNodes((nodes) => nodes.map((node) => ({
+      ...node,
+      selected: node.id === selectedNodeId,
+    })));
+  }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (
+      !layoutVersion
+      || !instance?.viewportInitialized
+      || !layoutNodeIdsRef.current.length
+    ) return undefined;
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      void instance.fitView({
+        nodes: layoutNodeIdsRef.current.map((id) => ({ id })),
+        padding: 0.22,
+        minZoom: 0.15,
+        maxZoom: 1,
+        duration: 240,
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [instance, layoutVersion]);
 
   return (
     <div className="v2-rg-canvas-shell">
@@ -469,18 +506,18 @@ function GraphCanvas({ payload, selectedNodeId, onSelectNode }) {
           nodes={flowNodes}
           edges={flowEdges}
           nodeTypes={NODE_TYPES}
-          onInit={setInstance}
           nodesFocusable={false}
           nodesDraggable={false}
           nodesConnectable={false}
-          fitView
-          fitViewOptions={{ padding: 0.22 }}
           minZoom={0.15}
           maxZoom={2.5}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={22} size={1} />
-          <Controls showInteractive={false} />
+          <Controls
+            showInteractive={false}
+            fitViewOptions={{ padding: 0.22, minZoom: 0.15, maxZoom: 1 }}
+          />
           <MiniMap
             pannable
             zoomable

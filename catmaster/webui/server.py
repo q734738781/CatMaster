@@ -63,7 +63,13 @@ from .artifact_registry import ArtifactRegistry
 from .auth import AuthIdentity, AuthManager, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
 from .session_registry import SessionRegistry
 from .thread_events import ThreadEventBroker, format_sse
-from .projections import project_event, project_message, project_messages, project_thread
+from .projections import (
+    project_current_todo_parts,
+    project_event,
+    project_message,
+    project_messages,
+    project_thread,
+)
 from .projections.files import project_artifact
 from .projections.common import decode_public_cursor, encode_public_cursor, redact_internal_text
 from .projections.monitor import project_monitor_snapshot
@@ -165,8 +171,23 @@ _HIDDEN_USER_DIRECTORY_NAMES = {
     ".pip-cache",
     ".venv",
     "__pycache__",
+    "large_tool_results",
     "metadata",
 }
+_HIDDEN_USER_RELATIVE_PATHS = {
+    ("literature", "core_extract.json"),
+}
+
+
+def _is_hidden_user_relative_path(parts: tuple[str, ...] | list[str]) -> bool:
+    normalized = tuple(str(part) for part in parts)
+    return (
+        any(
+            part.startswith(".") or part in _HIDDEN_USER_DIRECTORY_NAMES
+            for part in normalized
+        )
+        or normalized in _HIDDEN_USER_RELATIVE_PATHS
+    )
 
 
 def _is_internal_planning_thread(thread: Any) -> bool:
@@ -511,10 +532,7 @@ def _resolve_workspace_entry(session, rel_path: str = "", *, workspace: Optional
     rel_text = "" if candidate == workspace_root else str(candidate.relative_to(workspace_root)).replace("\\", "/")
     if rel_text and rel_text.split("/", 1)[0] != "files":
         raise HTTPException(status_code=404, detail="Requested user file was not found.")
-    if any(
-        part.startswith(".") or part in _HIDDEN_USER_DIRECTORY_NAMES
-        for part in Path(rel_text).parts[1:]
-    ):
+    if _is_hidden_user_relative_path(Path(rel_text).parts[1:]):
         raise HTTPException(status_code=404, detail="Requested user file was not found.")
     return workspace_root, candidate, rel_text
 
@@ -694,14 +712,15 @@ def _entry_preview_kind(path: Path, *, mime_type: str = "", file_size: int | Non
     return "binary"
 
 
-def _directory_has_children(path: Path) -> bool:
+def _directory_has_children(path: Path, *, workspace_root: Path) -> bool:
     try:
         next(
             item
             for item in path.iterdir()
             if (
-                item.name not in _HIDDEN_USER_DIRECTORY_NAMES
-                and not item.name.startswith(".")
+                not _is_hidden_user_relative_path(
+                    item.relative_to(workspace_root / "files").parts
+                )
                 and not item.is_symlink()
             )
         )
@@ -723,7 +742,11 @@ def _serialize_tree_entry(path: Path, *, workspace_root: Path) -> dict[str, Any]
         "node_type": node_type,
         "size": int(stat.st_size),
         "modified_ts": float(stat.st_mtime),
-        "has_children": _directory_has_children(path) if node_type == "directory" else False,
+        "has_children": (
+            _directory_has_children(path, workspace_root=workspace_root)
+            if node_type == "directory"
+            else False
+        ),
         "preview_kind": "directory" if node_type == "directory" else _entry_preview_kind(path, mime_type=mime_type, file_size=int(stat.st_size)),
     }
 
@@ -741,8 +764,9 @@ def _list_directory_entries(
         child
         for child in visible_directory.iterdir()
         if (
-            child.name not in _HIDDEN_USER_DIRECTORY_NAMES
-            and not child.name.startswith(".")
+            not _is_hidden_user_relative_path(
+                child.relative_to(workspace_root / "files").parts
+            )
             and not child.is_symlink()
         )
     ]
@@ -1389,8 +1413,10 @@ def _archive_workspace_entry(*, session, rel_path: str, workspace: Optional[Path
                 entry_count = 1
             else:
                 for item in candidate.rglob("*"):
-                    relative_parts = item.relative_to(candidate).parts
-                    if any(part.startswith(".") or part in _HIDDEN_USER_DIRECTORY_NAMES for part in relative_parts):
+                    user_relative_parts = item.relative_to(
+                        workspace_root / "files"
+                    ).parts
+                    if _is_hidden_user_relative_path(user_relative_parts):
                         continue
                     if item.is_symlink() or not item.is_file():
                         continue
@@ -2884,8 +2910,20 @@ def create_app(
         )
         rows = _enrich_thread_message_tool_sources(rows, workspace=workspace)
         projected = project_messages(rows, workspace=workspace)
+        current_turn_rows = [
+            message.model_dump(mode="json")
+            for message in store.list_current_turn_messages(thread_id)
+        ]
+        current_turn_rows = _enrich_thread_message_tool_sources(
+            current_turn_rows,
+            workspace=workspace,
+        )
         return {
             "messages": projected,
+            "todo_parts": project_current_todo_parts(
+                current_turn_rows,
+                workspace=workspace,
+            ),
             "page": {
                     "shown_count": len(projected),
                     "total_count": page.total_count,
@@ -2957,7 +2995,11 @@ def create_app(
                         if has_more and visible
                         else ""
                     ),
-                    "full_content_ref": "",
+                    "full_content_ref": (
+                        f"/api/threads/{thread_id}/messages/{message_id}/parts"
+                        if has_more
+                        else ""
+                    ),
                     "unit": "items",
                 },
         }

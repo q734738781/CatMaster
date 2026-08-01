@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from tavily.errors import (
+    ForbiddenError,
+    InvalidAPIKeyError,
+    TimeoutError as TavilyTimeoutError,
+    UsageLimitExceededError,
+)
 
 from catmaster.runtime.literature import OnlineSearchAdapter
+from catmaster.runtime.literature.online_search_adapter import classify_tavily_failure
 
 
 class _FakeResponse:
@@ -73,6 +80,26 @@ class _FakeTavilyClient:
             ]
         }
 
+
+@pytest.mark.parametrize(
+    ("exc", "category", "disable_for_scope"),
+    [
+        (UsageLimitExceededError("monthly credits exhausted"), "quota_exhausted", True),
+        (UsageLimitExceededError("rate limit: too many requests"), "rate_limited", True),
+        (InvalidAPIKeyError("invalid key"), "authentication_failed", True),
+        (ForbiddenError("request forbidden"), "authorization_failed", True),
+        (TavilyTimeoutError(30), "network_error", True),
+    ],
+)
+def test_tavily_failure_classification_is_explicit_and_run_circuit_safe(
+    exc: Exception,
+    category: str,
+    disable_for_scope: bool,
+) -> None:
+    classified = classify_tavily_failure(exc)
+
+    assert classified["category"] == category
+    assert classified["disable_for_scope"] is disable_for_scope
 
 def test_search_public_web_uses_tavily_results() -> None:
     adapter = OnlineSearchAdapter(tavily_api_key="test-key")

@@ -31,7 +31,7 @@ Hypothesis 不会因为一条结果变成不可修改的 "supported" 或 "reject
 
 图与 note 的职责不同。论文精读、长分析、结构、图像、日志、报告和远程 receipt 继续放在 Files、artifact、run 或 note 中。Graph 节点只保存短科学命题，并用受控引用连接这些来源。Research thread 绑定 graph 后，每一轮都会收到有节点数和字符数上限的相关子图，不会把整个 workspace 或全部 graph 原样塞进 prompt。多个 active graph 同时存在时必须显式选择。
 
-每个 graph 都有完成条件；创建时可以自己填写，也可以留空使用可见默认值，之后仍可编辑或重新打开。用户可以自己创建 seed hypotheses、实验 proposal，以及来自本项目、合作组或文献的观察/结果；创建科学输入时可以同时附 DOI、URL、note、artifact、run、thread 或 message 来源。也可以从 Result 节点启动一个绑定的 Research planning thread。`hypothesis_proposer` 会读取相关图证据，并可直接检索网络、本地文献 corpus 和受控浏览器，再提出带 DOI/URL 来源的临时分支。它给 Research 返回普通科学语言的 memo，只有确有可展示方案时才调用一次绑定的 staging tool，不在 agent 消息里接力 graph ID 或 revision。`evidence_judge` 也返回简短科学判断，由 Research 只记录该 Result 真正涉及的 Hypothesis 影响。Planner 会把临时分支与完整 runnable Experiment frontier 一起比较，在证据足以区分下一步时用文字说明一条推荐，不保存数值路线分数。未选中的分支不写入永久图。WebUI 用半透明节点显示临时分支，manual 模式由用户点击实体化，auto 模式也只实体化获选路线。每次 graph 变化（包括新增 Result）后，auto 会先规划，再最多运行一个真实 Experiment。完成条件满足后停止自动推进。
+每个 graph 都有完成条件；创建时可以自己填写，也可以留空使用可见默认值，之后仍可编辑或重新打开。用户可以自己创建 seed hypotheses、实验 proposal，以及来自本项目、合作组或文献的观察/结果；创建科学输入时可以同时附 DOI、URL、note、artifact、run、thread 或 message 来源。也可以从 Result 节点启动一个绑定的 Research planning thread。`hypothesis_proposer` 会读取相关图证据，并可直接检索网络、本地文献 corpus 和受控浏览器，再提出带 DOI/URL 来源的临时分支。它给 Research 返回普通科学语言的 memo，只有确有可展示方案时才使用绑定的 staging action。规划输入只包含科学 claim、objective、来源和以科学表述引用的关系；宿主从 planning thread 取得 graph/revision，并生成内部临时 ID。`evidence_judge` 也返回简短科学判断，由 Research 只记录该 Result 真正涉及的 Hypothesis 影响。Planner 会把临时分支与完整 runnable Experiment frontier 一起比较，在证据足以区分下一步时用文字说明推荐，不保存数值路线分数。未选中的分支不写入永久图。WebUI 用半透明节点显示临时分支，manual 模式由用户点击实体化，auto 模式也只实体化获选路线。每次 graph 变化（包括新增 Result）后，auto 会先规划，再最多运行一个真实 Experiment。完成条件满足后停止自动推进。
 
 Research Graph 不改变执行边界。文献任务仍由 Literature Review 完成，DFT 或实验任务仍经过 Experiment、相应 worker、受管执行和必要的人工审批。一次性问答和简单线性任务可以不创建 graph。
 
@@ -40,7 +40,7 @@ Research Graph 不改变执行边界。文献任务仍由 Literature Review 完�
 
 Research 把科学计划形成交给 `hypothesis_proposer`，把证据解释交给 `evidence_judge`，把实际执行交给 `experiment_specialist`、`writing_specialist`、`peer_review_specialist` 或 `litreview_agent`。它自己保留文件、任务计划和项目记忆等通用能力，不直接持有 VASP、slab 或远程提交工具。Proposer 有网络、受控浏览和本地文献检索，但没有科学实验执行工具；judge 没有搜索、提案或执行工具。
 
-Research 可以列出、创建、查看和编辑 graph，加入 Hypothesis、Experiment、Result、证据判断与来源，也可以记录真实 blocker。普通 mutation 需要刚刚查看过的 graph ID 和当前 revision，不接受通用 metadata；内部 `stage_research_plan` 则从受信任的 planning-thread 绑定中取得二者，不要求 agent 传递协议字段。它只发布当前 planning turn 的临时路线，不会把所有搜索分支写成永久节点。持久数据位于 workspace 的 `metadata/workspace.sqlite`。Graph 只保存科学节点、关系和 refs；详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
+Research 可以列出、创建、查看和编辑 graph，加入 Hypothesis、Experiment、Result、证据判断与来源，也可以记录真实 blocker。普通 mutation 需要刚刚查看过的 graph ID 和当前 revision，不接受通用 metadata；内部 `stage_research_plan` 则从受信任的 planning-thread 绑定中取得二者，并把 proposer 的科学语义草案转换为内部事务表示，不要求 agent 传递协议字段。它只发布当前 planning turn 的临时路线，不会把所有搜索分支写成永久节点。持久数据位于 workspace 的 `metadata/workspace.sqlite`。Graph 只保存科学节点、关系和 refs；详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
 
 它可按需读取的研究 skills 包括 `research-graph-control`、`nature-citation`、`nature-data`、`nature-experiment-log`、`nature-figure`、`nature-literature-pipeline`、`nature-paper-to-patent`、`researchwrite`、`nature-reader`、`nature-ref-verifier` 和 `nature-writing`。真正执行计算时会进入 Experiment 及其 worker 的 skill 范围。
 
@@ -98,14 +98,14 @@ Experiment coordinator 可以使用 `mp_search_materials` 和 `mp_download_struc
 
 Literature Review 会按实际获得的证据工作。检索摘要和论文摘要可以支持其明确陈述的结论；只有题名和书目信息时，只能确认论文存在。Agent 会区分这些边界、去重、综合证据，并在论文确定后核对引用记录，而不会把“拿到全文”当成每篇论文的验收条件。
 
-它从公共网页搜索开始。只有关键结论依赖摘要中没有的方法、条件、数值、图表或争议信息，或者用户明确要求精读全文时，才使用受控浏览器或下载。一次合理访问失败后会说明限制并继续使用其他证据，不会反复尝试出版社页面、镜像和下载。受控浏览器可以复用用户本人已登录的机构会话，但不会绕过验证码、付费墙或安全警告。已经可用的 PDF、HTML、XML/JATS、Markdown 等文本可直接阅读；只有需要反复按问题检索时才导入本地 corpus。
+它从搜索摘要和可信学术元数据开始。只有关键结论依赖摘要中没有的方法、条件、数值、图表或争议信息，或者用户明确要求精读全文时，才使用受控浏览器或下载。合理访问路径受阻后会说明限制并继续使用其他证据，不会反复尝试出版社页面、镜像和下载。受控浏览器可以复用用户本人已登录的机构会话，但不会绕过验证码、付费墙或安全警告。可读来源可以直接使用；只有需要反复按问题检索时才导入本地 corpus。
 
 Literature Review 可以完成主题综述、方法比较、关键论文精读、中英文对照阅读、claim-evidence 表、引用补充和参考文献核验。它不会运行材料计算，也不应把只读到摘要的论文写成掌握了全部方法细节；如果摘要证据会实质影响结论，会用自然语言说明把握和限制，而不是要求逐篇填写置信度字段。
 
 <details>
 <summary>Literature Review 当前 tools 与 skills</summary>
 
-直接 tools 包括 `web_search`、`ingest_literature_files`、`query_literature_corpus` 和 `finalize_citations`。搜索实现跟随该角色实际绑定的模型：`codex_oauth` 和 OpenAI Responses 模型使用托管的原生 `web_search`，其他 provider 使用 CatMaster 的 Tavily 函数；同一个 agent 只绑定其中一种。部署了 `agent-browser` 时，还会得到一套独立的受控浏览器工具，用于动态页面和用户授权会话。
+直接 tools 包括 `web_search`、`ingest_literature_files`、`query_literature_corpus` 和 `finalize_citations`。搜索实现跟随该角色实际绑定的模型：`codex_oauth` 和 OpenAI Responses 模型使用托管的原生 `web_search`，其他 provider 使用 CatMaster 搜索函数。该函数会在 Tavily 可用时使用 Tavily，分类失败后可降级为学术索引发现，并在结果中标明真实后端；同一个 agent 只绑定一种搜索实现。部署了 `agent-browser` 时，还会得到一套独立的受控浏览器工具，用于动态页面和用户授权会话。
 
 主要 skills 包括 `nature-academic-search`、`nature-downloader`、`nature-reader`、`nature-citation`、`nature-ref-verifier` 和 `nature-literature-pipeline`。它们分别处理检索范围、合法全文获取、图表感知的全文阅读、claim 级引用、元数据核验和较完整的文献流水线。
 

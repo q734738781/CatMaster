@@ -32,7 +32,7 @@ OpenAlex and Semantic Scholar are not model-visible LitReview tools. Do not plan
 
 Translate the request into concepts, synonyms, catalyst/material families, mechanism terms, benchmark terms, exclusions, and date boundaries. Separate a brief answer from a review-scale request. Treat an explicit paper range and wording such as "limited scope", "focused", "brief", or "not a systematic review" as controlling; do not silently reinterpret the requested final set as permission for a much larger candidate quota.
 
-For a genuinely broad review, progress overview, systematic landscape, or perspective-style synthesis where the user does not set a narrower boundary, roughly 50-60+ candidates can be a useful planning reference so the search does not collapse to a small familiar set. It is not a minimum, quota, or completion criterion. Organize searches by the major topic, mechanism, time-period, evidence-type, and disagreement buckets, then stop when those buckets have representative evidence and additional queries mostly repeat known papers or add no decision-relevant evidence.
+For a genuinely broad review, progress overview, systematic landscape, or perspective-style synthesis where the user does not set a narrower boundary, do not let discovery collapse to a small familiar set. Organize searches by the major topic, mechanism, time-period, evidence-type, and disagreement buckets, then stop when those buckets have representative evidence and additional queries mostly repeat known papers or add no decision-relevant evidence.
 
 ### 2. Build and persist the candidate pool
 
@@ -46,11 +46,11 @@ Keep discovery records shallow. Do not require reaction conditions, detailed dir
 
 Search summaries and abstracts are usable evidence for the claims they explicitly support. A title and bibliographic record alone establish discovery, not scientific detail. State a material limitation or lower confidence in ordinary language when a conclusion rests only on partial evidence; do not require a numeric score or a formal evidence tier for every paper.
 
-Use the browser only when a dynamic page or user-authorized route is needed to resolve a decision-relevant detail, or when the user explicitly asks for full-paper reading. Make at most one reasonable access attempt for a selected source in an ordinary review. If it fails, state that the full text was not checked and continue with other sources rather than trying alternate pages, mirrors, or downloads repeatedly. Existing workspace attachments and lawful open-access copies remain valid alternatives.
+Use the browser only when a dynamic page or user-authorized route is needed to resolve a decision-relevant detail, or when the user explicitly asks for full-paper reading. If a reasonable access route is blocked, state that the full text was not checked and continue with other sources rather than cycling through alternate pages, mirrors, or downloads. Existing workspace attachments and lawful open-access copies remain valid alternatives.
 
 Ingest acquired full text, then query focused evidence spans. Distinguish abstract/landing-page evidence from full-text page evidence in notes and claims.
 
-Use `general-purpose` for one bounded topic branch or source-reading episode when it would otherwise inflate parent context. Require a compact result and durable artifact paths.
+Use `general-purpose` for a bounded topic branch or source-reading episode when it would otherwise inflate parent context. Require a compact result and durable artifact paths.
 
 ### 4. Synthesize by claims, not metadata volume
 
@@ -71,7 +71,7 @@ Pass only the final selected DOI strings or DOI URLs to `finalize_citations` in 
 ## Method-critical defaults
 
 - Explicit user scope controls both discovery breadth and the final highlighted set unless the user asks for a separate larger screen.
-- Use numerical candidate guidance only as a planning reference for genuinely broad reviews; coverage saturation, not the number itself, determines when to stop.
+- For genuinely broad reviews, expand by unresolved concepts, evidence types, periods, and disputes; stop when additional discovery is mostly duplicative.
 - Candidate discovery uses screening metadata; deep evidence extraction belongs to the selected evidence-bearing set.
 - Full-text acquisition remains selective and authorized even when the candidate pool is large.
 - Browser use and the number of downloaded papers are never review-completion targets.

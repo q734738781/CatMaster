@@ -11,7 +11,7 @@ import { apiFetch, useCatMasterThreadRuntime } from "./useCatMasterThreadRuntime
 import { DEFAULT_ENTRYPOINT, entrypointMeta, normalizedEntrypoints, normalizeEntrypoint } from "./entrypoints";
 import { selectionFromHash, selectionToHash, tabFromHash } from "./inspectorSelection";
 import { artifactForSelection } from "./artifactSelection.js";
-import { todoGroupsFromMessages } from "./todoPanel.js";
+import { todoGroupsFromParts } from "./todoPanel.js";
 import { displayValue, presentError, userFacingFileTitle } from "./presentation.js";
 
 const ResearchTechTreePanel = lazy(
@@ -292,7 +292,10 @@ export default function CatMasterWorkspace({ boot }) {
     onThreadUpdate: updateThread,
     onSelectArtifact: (nextSelection) => handleSelection(nextSelection),
   });
-  const todoGroups = useMemo(() => todoGroupsFromMessages(runtimeState.messages), [runtimeState.messages]);
+  const todoGroups = useMemo(
+    () => todoGroupsFromParts(runtimeState.todoParts),
+    [runtimeState.todoParts],
+  );
 
   useEffect(() => {
     function closeDrawers(event) {

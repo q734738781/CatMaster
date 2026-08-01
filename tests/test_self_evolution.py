@@ -23,6 +23,7 @@ from catmaster.runtime.self_evolution import (
     normalize_candidate_status,
 )
 from catmaster.runtime.self_evolution.consolidation import ConsolidationService
+from catmaster.runtime.self_evolution.agents import build_self_evolution_agents
 from catmaster.runtime.self_evolution.storage import (
     hash_text,
     hash_tree,
@@ -31,6 +32,49 @@ from catmaster.runtime.self_evolution.telemetry import write_skill_version_manif
 from catmaster.runtime.self_evolution.trace import collect_turn_trace
 from catmaster.specialists.runtime import build_specialist_runner
 from catmaster.tools.base import ensure_project_space_layout
+from langchain_core.tools import StructuredTool
+
+
+@pytest.mark.parametrize(
+    ("provider", "expects_native"),
+    [("codex_oauth", True), ("openai", True), ("langchain", False)],
+)
+def test_self_evolution_search_uses_shared_provider_resolver(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    expects_native: bool,
+) -> None:
+    class _Profile:
+        def config_for_role(self, role: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                model=f"{role}-model",
+                provider=provider,
+                base_url=None,
+            )
+
+        def label_for_role(self, role: str) -> str:
+            return f"{role}-label"
+
+    workspace = tmp_path / "workspace"
+    ensure_project_space_layout(workspace)
+    monkeypatch.setattr(
+        "catmaster.runtime.self_evolution.agents.build_chat_model",
+        lambda config: {"model": config.model},
+    )
+
+    proposer, reviewer = build_self_evolution_agents(
+        _Profile(),
+        workspace=workspace,
+    )
+
+    for agent in (proposer, reviewer):
+        assert len(agent.search_tools) == 1
+        if expects_native:
+            assert agent.search_tools == [{"type": "web_search"}]
+        else:
+            assert isinstance(agent.search_tools[0], StructuredTool)
+            assert agent.search_tools[0].name == "web_search"
 
 
 def _skill_text(name: str, marker: str) -> str:

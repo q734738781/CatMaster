@@ -43,6 +43,18 @@ export function todoGroupsFromMessages(messages) {
   });
 }
 
+export function todoGroupsFromParts(parts) {
+  return (Array.isArray(parts) ? parts : [])
+    .filter((part) => part?.type === "progress" && Array.isArray(part.items) && part.items.length)
+    .map((part, index) => ({
+      source: String(part.title || "CatMaster").replace(/\s+plan$/i, "") || "CatMaster",
+      rows: normalizeTodoRows(part.items),
+      status: String(part.status || "running"),
+      toolCallId: String(part.id || ""),
+      updatedAt: -index,
+    }));
+}
+
 export function todoSummary(groups) {
   const rows = (Array.isArray(groups) ? groups : []).flatMap((group) => group.rows || []);
   return {

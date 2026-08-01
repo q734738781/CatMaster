@@ -9,10 +9,63 @@ from bs4 import BeautifulSoup
 
 try:
     from tavily import TavilyClient
+    from tavily.errors import (
+        BadRequestError as TavilyBadRequestError,
+        ForbiddenError as TavilyForbiddenError,
+        InvalidAPIKeyError as TavilyInvalidAPIKeyError,
+        MissingAPIKeyError as TavilyMissingAPIKeyError,
+        TimeoutError as TavilyTimeoutError,
+        UsageLimitExceededError as TavilyUsageLimitExceededError,
+    )
 except Exception:  # pragma: no cover - optional dependency in some test envs
     TavilyClient = Any  # type: ignore[misc,assignment]
+    TavilyBadRequestError = ()  # type: ignore[assignment,misc]
+    TavilyForbiddenError = ()  # type: ignore[assignment,misc]
+    TavilyInvalidAPIKeyError = ()  # type: ignore[assignment,misc]
+    TavilyMissingAPIKeyError = ()  # type: ignore[assignment,misc]
+    TavilyTimeoutError = ()  # type: ignore[assignment,misc]
+    TavilyUsageLimitExceededError = ()  # type: ignore[assignment,misc]
 
 from .models import FindInPageResult, InPageMatch, PublicPageSnapshot, PublicWebHit, PublicWebSearchResult
+
+
+def classify_tavily_failure(exc: Exception) -> dict[str, Any]:
+    """Map installed Tavily SDK failures to non-sensitive runtime behavior."""
+
+    message = str(exc or "").strip().lower()
+    if isinstance(exc, TavilyUsageLimitExceededError):
+        category = (
+            "rate_limited"
+            if any(token in message for token in ("rate limit", "too many", "excessive"))
+            else "quota_exhausted"
+        )
+        return {"category": category, "disable_for_scope": True, "retryable": False}
+    if isinstance(exc, (TavilyInvalidAPIKeyError, TavilyMissingAPIKeyError)):
+        return {
+            "category": "authentication_failed",
+            "disable_for_scope": True,
+            "retryable": False,
+        }
+    if isinstance(exc, TavilyForbiddenError):
+        category = (
+            "quota_exhausted"
+            if any(token in message for token in ("usage", "credit", "quota", "plan"))
+            else "authorization_failed"
+        )
+        return {"category": category, "disable_for_scope": True, "retryable": False}
+    if isinstance(exc, TavilyBadRequestError):
+        return {"category": "invalid_request", "disable_for_scope": False, "retryable": False}
+    if isinstance(exc, TavilyTimeoutError):
+        return {"category": "network_error", "disable_for_scope": True, "retryable": True}
+    if isinstance(exc, httpx.RequestError):
+        return {"category": "network_error", "disable_for_scope": True, "retryable": True}
+    module = type(exc).__module__.lower()
+    name = type(exc).__name__.lower()
+    if module.startswith("requests.") or name in {"connectionerror", "proxyerror"}:
+        return {"category": "network_error", "disable_for_scope": True, "retryable": True}
+    if isinstance(exc, RuntimeError) and "tavily_api_key" in message:
+        return {"category": "unavailable", "disable_for_scope": True, "retryable": False}
+    return {"category": "upstream_error", "disable_for_scope": False, "retryable": True}
 
 
 class OnlineSearchAdapter:

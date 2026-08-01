@@ -183,11 +183,19 @@ def test_research_tool_final_schemas_are_non_nullable_and_minimal(
             assert "evaluations" not in properties
             assert "maxItems" not in properties["hypotheses"]
             assert "maxItems" not in properties["experiments"]
+            serialized = json.dumps(tool["parameters"])
+            assert "proposal_id" not in serialized
+            assert "recommended_target_id" not in serialized
+            assert "tests_hypothesis_ids" not in serialized
+            assert "depends_on_experiment_ids" not in serialized
+            assert "recommended_route" in properties
             experiment_schema = tool["parameters"]["$defs"][
-                "ResearchExperimentProposal"
+                "ResearchExperimentDraft"
             ]
             assert "plan_summary" not in experiment_schema["required"]
             assert "decision_rule" not in experiment_schema["required"]
+            assert "tests_hypotheses" in experiment_schema["properties"]
+            assert "depends_on_experiments" in experiment_schema["properties"]
         if tool["name"] == "record_research_result":
             assert properties["experiment_node_id"]["type"] == "string"
             assert properties["experiment_node_id"]["default"] == ""
@@ -324,19 +332,29 @@ def test_planning_child_stages_from_bound_thread_without_protocol_ids(
 
     tool.invoke(
         {
+            "hypotheses": [
+                {
+                    "claim": "A static ensemble controls selectivity.",
+                    "predictions": [
+                        "Selectivity remains stable when reconstruction is suppressed."
+                    ],
+                }
+            ],
             "experiments": [
                 {
-                    "proposal_id": "exp_operando",
                     "objective": "Test whether reconstruction tracks selectivity.",
                     "plan_summary": "Measure structure and selectivity together.",
                     "decision_rule": (
                         "A reversible marker-selectivity correlation supports the branch."
                     ),
                     "execution_lane": "literature_review",
-                    "tests_hypothesis_ids": [created["nodes"][0]["node_id"]],
+                    "tests_hypotheses": [
+                        "The reconstructed surface controls selectivity.",
+                        "A static ensemble controls selectivity.",
+                    ],
                 }
             ],
-            "recommended_target_id": "exp_operando",
+            "recommended_route": "Test whether reconstruction tracks selectivity.",
             "recommendation_reason": (
                 "It directly separates reconstruction from a static-site explanation."
             ),
@@ -345,6 +363,19 @@ def test_planning_child_stages_from_bound_thread_without_protocol_ids(
 
     staged = service.store.find_planning_by_thread(thread.thread_id)
     assert staged is not None
-    assert staged["preview"]["proposal"]["recommended_target_id"] == "exp_operando"
+    proposal = staged["preview"]["proposal"]
+    hypothesis = proposal["hypotheses"][0]
+    experiment = proposal["experiments"][0]
+    assert proposal["recommended_target_id"] == experiment["proposal_id"]
+    assert experiment["tests_hypothesis_ids"] == [
+        created["nodes"][0]["node_id"],
+        hypothesis["proposal_id"],
+    ]
+    assert hypothesis["proposal_id"].startswith(
+        f"{planning['planning_id']}_hypothesis_"
+    )
+    assert experiment["proposal_id"].startswith(
+        f"{planning['planning_id']}_experiment_"
+    )
     assert "graph_id" not in tool.args_schema.get("properties", {})
     assert "expected_revision" not in tool.args_schema.get("properties", {})

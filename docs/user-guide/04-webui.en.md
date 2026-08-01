@@ -104,7 +104,7 @@ Review is not a global approval gate. Reading, search, analysis, and local file 
 
 ## Steer a running task without scripting every move
 
-The idle submit button is Send. While an agent is running, a text-only message becomes Steer. Steering does not forcibly interrupt an active tool. It becomes the next instruction at a safe boundary. Use it for constraints discovered during the run, such as preserving an original file, analyzing only the first 20 ps, or keeping both terminations.
+The idle submit button is Send. While an agent is running, a text-only message becomes Steer. Steering does not forcibly interrupt an active tool. After the current tool completes and its checkpoint is written, the queued message continues from the same thread state. If the model reaches a final response without another tool call, the queued message starts after that turn finishes. Use it for constraints discovered during the run, such as preserving an original file, analyzing only the first 20 ps, or keeping both terminations.
 
 If the new request changes the objective entirely, waiting for a safe stop and opening another thread is often clearer. New attachments are disabled during a run, so wait or stop before adding another file.
 
@@ -122,7 +122,7 @@ Trajectories are read-only and report their real frame count. Scrub or play them
 
 After an agent reports completion, check that the main deliverables exist at the promised paths. For structures, inspect candidates and the audit. For calculations, inspect the stage, status, stdout/stderr, and analysis. For literature, inspect the candidate and evidence tables plus the reference library. For writing, retain editable source files rather than only a compiled PDF.
 
-Uploading a file with the same name overwrites it. Directory deletion is recursive and permanent. Keep important originals backed up outside the workspace. The file tree also exposes `metadata/`, which is system state rather than an ordinary project directory. Do not move, rename, or delete it casually.
+Uploading a file with the same name overwrites it. Directory deletion is recursive and permanent. Keep important originals backed up outside the workspace. The ordinary file tree shows user deliverables and working files; internal metadata, tool-result offloads, and transient extracts remain available to diagnostics but are not presented as deliverables.
 
 ## Monitor helps determine whether the process is healthy
 
@@ -134,7 +134,7 @@ The current UI has no historical run selector. Overview may summarize the curren
 
 ## The inspector supports side-by-side review
 
-Clicking an artifact or file opens it in tabs on the right while Chat remains visible. This is useful for comparing a structure, report, table, or log while asking a follow-up. The Todo tab is a read-only projection of the current turn's plan, not a project-management form the user must maintain.
+Clicking an artifact or file opens it in tabs on the right while Chat remains visible. This is useful for comparing a structure, report, table, or log while asking a follow-up. The Todo tab is a read-only canonical projection of the current turn's latest plans; message pagination and refresh do not change its completion state. It is not a project-management form the user must maintain.
 
 ```text
 I am reviewing notes/slab_audit.md. Reinspect the third termination with its structure,

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 import catmaster.specialists.runtime as runtime_mod
 from catmaster.specialists.runtime import (
     RUN_STATE_FILE,
+    _BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST,
     _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
     _DYNAMICS_WORKER_TOOL_ALLOWLIST,
     _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST,
@@ -36,6 +37,11 @@ from catmaster.specialists.runtime import (
 from catmaster.runtime.usage_stats import load_usage_summary
 from catmaster.runtime.artifact_callback import UIEventHandler
 from catmaster.runtime.run_control import RunControl
+from catmaster.research.knowledge_graph.models import (
+    ExperimentCreateRequest,
+    GraphCreateRequest,
+)
+from catmaster.research.knowledge_graph.service import ResearchGraphService
 from catmaster.tools.registry import get_tool_registry
 
 
@@ -237,7 +243,8 @@ def test_real_registry_covers_specialist_allowlists() -> None:
         "mark_bound_research_experiment_failed",
     }
     assert bound_writeback <= _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
-    assert bound_writeback <= _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+    assert bound_writeback <= registered
+    assert bound_writeback.isdisjoint(_LITREVIEW_LOCAL_TOOL_ALLOWLIST)
     assert {
         "record_research_result",
         "mark_research_experiment_failed",
@@ -301,6 +308,57 @@ def test_search_surface_follows_each_role_provider(
         assert isinstance(tools[0], StructuredTool)
         assert tools[0].name == "web_search"
         assert isinstance(search_tools[0], StructuredTool)
+
+
+def test_litreview_graph_result_tools_require_a_bound_experiment(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project_space"
+    service = ResearchGraphService(workspace=workspace, workspace_id="proj")
+    created = service.create_graph(
+        GraphCreateRequest(question="Which mechanism controls selectivity?")
+    )
+    graph_id = created["graph"]["graph_id"]
+    experiment = service.add_experiment(
+        graph_id,
+        ExperimentCreateRequest(
+            expected_revision=created["graph"]["revision"],
+            objective="Compare the candidate mechanisms.",
+            execution_lane="literature_review",
+        ),
+    )
+    experiment_id = experiment["node"]["node_id"]
+    direct = service.thread_store.create_thread(
+        title="Direct review",
+        entrypoint="literature_review",
+    )
+    bound = service.thread_store.create_thread(
+        title="Bound review",
+        entrypoint="literature_review",
+    )
+    service.thread_store.update_thread(
+        bound.thread_id,
+        active_research_graph_id=graph_id,
+        research_focus_node_id=experiment_id,
+    )
+
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="literature_review",
+    )
+
+    direct_names = built.runner._litreview_local_tool_names(direct.thread_id)
+    bound_names = built.runner._litreview_local_tool_names(bound.thread_id)
+    assert direct_names == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+    assert direct_names.isdisjoint(_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST)
+    assert bound_names == (
+        _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+        | _BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST
+    )
 
 
 def test_specialist_callbacks_include_ui_event_handler(tmp_path: Path) -> None:
@@ -469,13 +527,29 @@ def test_tool_policy_rejects_hash_and_ad_hoc_contract_ceremony() -> None:
         assert contract_rule in prompt
 
 
-def test_litreview_downloader_is_optional_and_stops_after_one_reasonable_attempt() -> None:
+def test_general_purpose_policy_is_context_only_without_lane_or_concurrency_rules() -> None:
+    policies = (
+        runtime_mod.SpecialistRunner._general_purpose_specialist_policy(),
+        runtime_mod.SpecialistRunner._general_purpose_worker_policy(),
+    )
+
+    for policy in policies:
+        assert "one self-contained, context-heavy branch described by a complete task brief" in policy
+        assert "current lane" not in policy
+        assert "parallel" not in policy
+        assert "sequential" not in policy
+        assert "at most one" not in policy
+
+
+def test_litreview_downloader_is_optional_and_stops_after_a_blocked_route() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "skills/litreview_agent/nature-downloader/SKILL.md").read_text(encoding="utf-8")
     assert "full-text acquisition should remain a decision-relevant subset" in text
     assert "review may screen many candidates" in text
-    assert "one reasonable acquisition attempt" in text
+    assert "If a reasonable acquisition route does not yield readable text" in text
     assert "do not cycle through DOI pages" in text
+    assert "at most one" not in text
+    assert "one reasonable acquisition attempt" not in text
     assert "full-text access into a default literature-review requirement" in text
     assert "access as unknown until tested" not in text
     assert not (repo_root / "skills/research_specialist/nature-downloader").exists()
@@ -484,8 +558,8 @@ def test_litreview_downloader_is_optional_and_stops_after_one_reasonable_attempt
 def test_litreview_academic_search_scales_breadth_without_overriding_user_scope() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "skills/litreview_agent/nature-academic-search/SKILL.md").read_text(encoding="utf-8")
-    assert "50-60+ candidates" in text
-    assert "not a minimum, quota, or completion criterion" in text
+    assert "do not let discovery collapse to a small familiar set" in text
+    assert "additional queries mostly repeat known papers" in text
     assert "does not set a narrower boundary" in text
     assert "do not silently reinterpret the requested final set" in text
     assert "Keep discovery records shallow" in text
@@ -494,6 +568,8 @@ def test_litreview_academic_search_scales_breadth_without_overriding_user_scope(
     assert "Search summaries and abstracts are usable evidence" in text
     assert "Browser use and the number of downloaded papers are never review-completion targets" in text
     assert "Only record an access blocker after this direct attempt" not in text
+    assert "50-60+ candidates" not in text
+    assert "at most one" not in text
     assert not (repo_root / "skills/research_specialist/nature-academic-search").exists()
 
 
@@ -577,7 +653,7 @@ def test_common_worker_prompts_require_relevant_skill_check() -> None:
     assert expected in runtime_mod.SpecialistRunner._peer_review_worker_prompt()
 
 
-def test_delegating_worker_prompts_require_serial_subagents() -> None:
+def test_delegating_worker_prompts_do_not_gain_blanket_gp_serialization() -> None:
     prompts = (
         runtime_mod.SpecialistRunner._materials_worker_prompt(),
         runtime_mod.SpecialistRunner._ml_worker_prompt(),
@@ -589,8 +665,7 @@ def test_delegating_worker_prompts_require_serial_subagents() -> None:
     )
 
     for prompt in prompts:
-        assert "Delegate sequentially" in prompt
-        assert "current shared workspace makes parallel subagents unsafe" in prompt
+        assert "current shared workspace makes parallel subagents unsafe" not in prompt
 
 
 def test_experiment_specialist_can_use_materials_project_tools_directly() -> None:
@@ -604,7 +679,7 @@ def test_experiment_specialist_can_use_materials_project_tools_directly() -> Non
     assert "report precise API-key" in materials_prompt
 
 
-def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
+def test_specialist_prompts_default_to_on_demand_delegation() -> None:
     research_prompt = runtime_mod.SpecialistRunner._base_system_prompt("research", thread_id="thread-1")
     experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
     writing_prompt = runtime_mod.SpecialistRunner._base_system_prompt("writing")
@@ -621,10 +696,10 @@ def test_specialist_prompts_default_to_on_demand_serial_delegation() -> None:
     assert "A scientific reasonableness check is required for research closeouts" in research_prompt
     assert "do not force fixed `Summary` / `Facts` / `Files` headings" in research_prompt
     for prompt in (research_prompt, experiment_prompt, writing_prompt):
-        assert "Delegate sequentially" in prompt
-        assert "current shared workspace makes parallel subagents unsafe" in prompt
+        assert "current shared workspace makes parallel subagents unsafe" not in prompt
     assert "Run delegated review episodes sequentially" in peer_review_prompt
-    assert "Run such delegated branches sequentially" in litreview_prompt
+    assert "Run delegated branches sequentially" in litreview_prompt
+    assert "wait for each to finish" in litreview_prompt
     assert "treat its execution and domain QC as authoritative" in experiment_prompt
     assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in experiment_prompt
     assert "Experiment closeout discipline: use worker/tool returns as the QC source of record" in experiment_prompt
@@ -1399,6 +1474,8 @@ def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp
     ]
     assert len(child_system_prompts) == 1
     assert "You have no subagents and must not transfer the task onward" in child_system_prompts[0]
+    assert "current lane" not in child_system_prompts[0]
+    assert "another lane" not in child_system_prompts[0]
     assert "Research Graph contract" not in child_system_prompts[0]
 
 
@@ -1548,10 +1625,18 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "model" not in spec
         assert spec["skills"] == list(owner_kwargs.get("skills") or [])
         assert "CatMaster's general-purpose context worker" in spec["system_prompt"]
-        assert "Treat that brief as the complete operational scope" in spec["system_prompt"]
+        assert "The brief is the source of scope" in spec["system_prompt"]
         assert "You have no subagents and must not transfer the task onward" in spec["system_prompt"]
+        assert "Use workspace-relative paths and the paths supplied in the brief" in spec["system_prompt"]
+        assert "Treat `/` only as the workspace virtual root" not in spec["system_prompt"]
+        assert "never use leading-slash workspace paths" not in spec["system_prompt"]
         assert "do not calculate or compare hashes/checksums" in spec["system_prompt"]
         assert "Do not create, freeze, or persist an ad hoc contract" in spec["system_prompt"]
+        assert "current lane" not in spec["description"]
+        assert "current lane" not in spec["system_prompt"]
+        assert "another lane" not in spec["system_prompt"]
+        assert "Workspace script header policy" not in spec["system_prompt"]
+        assert "topic-centric layout" not in spec["system_prompt"]
         assert "Research Graph contract" not in spec["system_prompt"]
         assert "browser use and full-text acquisition" not in spec["system_prompt"]
         assert "registered managed execution" not in spec["system_prompt"]
@@ -1612,8 +1697,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "If `peer_review_specialist` gives you a saved review memo path, read that memo directly" in agent_kwargs["system_prompt"]
         assert "You remain the sole coordinator and final decision-maker" in agent_kwargs["system_prompt"]
         assert "Report weak evidence as a limitation" in agent_kwargs["system_prompt"]
-        assert "Delegate sequentially" in agent_kwargs["system_prompt"]
-        assert "current shared workspace makes parallel subagents unsafe" in agent_kwargs["system_prompt"]
+        assert "current shared workspace makes parallel subagents unsafe" not in agent_kwargs["system_prompt"]
         assert "runnable" in subagents_by_name["experiment_specialist"]
         assert "runnable" in subagents_by_name["writing_specialist"]
         assert "runnable" in subagents_by_name["peer_review_specialist"]
@@ -1721,7 +1805,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Own the review question" in agent_kwargs["system_prompt"]
         assert "substantive summaries or abstracts" in agent_kwargs["system_prompt"]
         assert "browser use and full-text acquisition as optional escalation" in agent_kwargs["system_prompt"]
-        assert "at most one reasonable access attempt" in agent_kwargs["system_prompt"]
+        assert "If a reasonable access route is blocked" in agent_kwargs["system_prompt"]
+        assert "instead of cycling through" in agent_kwargs["system_prompt"]
+        assert "at most one" not in agent_kwargs["system_prompt"]
         assert "full-text access as unknown until tested" not in agent_kwargs["system_prompt"]
         assert "local literature corpus" in agent_kwargs["system_prompt"]
         assert "deterministic batch" in agent_kwargs["system_prompt"]
@@ -1776,9 +1862,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Delegate domain-owned work to the proper specialized subagent first." in agent_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
-        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
+        assert "Use `general-purpose` only to isolate one self-contained, context-heavy branch described by a complete task brief." in agent_kwargs["system_prompt"]
         assert "Do not use `read_file` directly on PDF, DOCX, XLSX, or PPTX files." in agent_kwargs["system_prompt"]
-        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
+        assert "It inherits the caller's direct tools and staged skills, cannot delegate, and returns one handoff." in agent_kwargs["system_prompt"]
         assert "do not stop at that boundary alone" in agent_kwargs["system_prompt"]
         assert "prefer materializing it as a reusable workspace script under `scripts/`" in agent_kwargs["system_prompt"]
         assert "If a worker needs a handy Python package for a bounded local step and it is missing" in agent_kwargs["system_prompt"]
@@ -1791,9 +1877,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "All MLFF MD, restart, and trajectory-health tasks belong to `dynamics_worker`" in materials_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in materials_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in materials_worker_kwargs["system_prompt"]
-        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in materials_worker_kwargs["system_prompt"]
+        assert "Use `general-purpose` only to isolate one self-contained, context-heavy branch described by a complete task brief." in materials_worker_kwargs["system_prompt"]
         assert "Do not use `read_file` directly on PDF, DOCX, XLSX, or PPTX files." in materials_worker_kwargs["system_prompt"]
-        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in materials_worker_kwargs["system_prompt"]
+        assert "It inherits the caller's direct tools and staged skills, cannot delegate, and returns one handoff." in materials_worker_kwargs["system_prompt"]
         assert "obtain POTCARs through the pymatgen interface" in materials_worker_kwargs["system_prompt"]
         assert "If a handy Python package is missing for a bounded local step" in materials_worker_kwargs["system_prompt"]
         assert "write a reusable workspace script under `scripts/`" in materials_worker_kwargs["system_prompt"]
@@ -1810,9 +1896,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "If a handy Python package is still missing for a bounded local step" in ml_worker_kwargs["system_prompt"]
         assert "If the ML logic is longer than a short throwaway snippet and no managed tool covers it" in ml_worker_kwargs["system_prompt"]
         assert "Prefer organizing topic-specific ML scripts under `scripts/<topic>/`" in ml_worker_kwargs["system_prompt"]
-        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in ml_worker_kwargs["system_prompt"]
+        assert "Use `general-purpose` only to isolate one self-contained, context-heavy branch described by a complete task brief." in ml_worker_kwargs["system_prompt"]
         assert "Do not use `read_file` directly on PDF, DOCX, XLSX, or PPTX files." in ml_worker_kwargs["system_prompt"]
-        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in ml_worker_kwargs["system_prompt"]
+        assert "It inherits the caller's direct tools and staged skills, cannot delegate, and returns one handoff." in ml_worker_kwargs["system_prompt"]
         assert "Prefer materializing training pipelines, feature generation, sweeps, evaluation harnesses, embedding workflows, and data-processing logic as reusable scripts" in ml_worker_kwargs["system_prompt"]
         assert "Treat the managed ML tools as preferred paths when they fit, not as an exclusive gate" in ml_worker_kwargs["system_prompt"]
         assert "keep going locally with reusable scripts under `scripts/` instead of stopping" in ml_worker_kwargs["system_prompt"]
@@ -1873,9 +1959,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Delegate domain-owned work to the proper specialized subagent first." in agent_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
-        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in agent_kwargs["system_prompt"]
+        assert "Use `general-purpose` only to isolate one self-contained, context-heavy branch described by a complete task brief." in agent_kwargs["system_prompt"]
         assert "Do not use `read_file` directly on PDF, DOCX, XLSX, or PPTX files." in agent_kwargs["system_prompt"]
-        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in agent_kwargs["system_prompt"]
+        assert "It inherits the caller's direct tools and staged skills, cannot delegate, and returns one handoff." in agent_kwargs["system_prompt"]
         assert "Handle only one section or one bounded organization/integration task at a time" in writing_worker_kwargs["system_prompt"]
         assert "compact author packet" in writing_worker_kwargs["system_prompt"]
         assert "organize what belongs in the main text versus Supporting Information / Supporting Data" in writing_worker_kwargs["system_prompt"]
@@ -1891,9 +1977,9 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Perform conservative section-level prose polish" in writing_polisher_kwargs["system_prompt"]
         assert "without changing claim strength, scientific scope, evidence selection" in writing_polisher_kwargs["system_prompt"]
         assert "For journal-facing citations and BibTeX, use publication-style metadata only" in writing_worker_kwargs["system_prompt"]
-        assert "Use `general-purpose` only for bounded work that still belongs to your current lane when the main risk is context bloat from heavy local context." in writing_worker_kwargs["system_prompt"]
+        assert "Use `general-purpose` only to isolate one self-contained, context-heavy branch described by a complete task brief." in writing_worker_kwargs["system_prompt"]
         assert "Do not use `read_file` directly on PDF, DOCX, XLSX, or PPTX files." in writing_worker_kwargs["system_prompt"]
-        assert "`general-purpose` uses only the current layer's tools and cannot delegate to other subagents." in writing_worker_kwargs["system_prompt"]
+        assert "It inherits the caller's direct tools and staged skills, cannot delegate, and returns one handoff." in writing_worker_kwargs["system_prompt"]
     else:
         assert {tool.name for tool in agent_kwargs["tools"]} == ({"peer_review_request"} | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(agent_kwargs, "writing_specialist", "writing_quality")

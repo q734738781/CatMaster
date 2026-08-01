@@ -690,6 +690,23 @@ class CatMasterStreamTranslator:
             structured_sidecar=dict(sidecar or {}),
         )
         completed_message = self.store.get_message(self.thread_id, self.message_id)
+        if completed_message is not None:
+            for part in completed_message.parts:
+                if (
+                    part.type in {"reasoning", "subagent"}
+                    and str(part.status or "").lower()
+                    in {"created", "running", "streaming"}
+                ):
+                    self.store.update_part(
+                        self.thread_id,
+                        self.message_id,
+                        part.id,
+                        status="completed",
+                    )
+            completed_message = self.store.get_message(
+                self.thread_id,
+                self.message_id,
+            )
         self._emit(
             "message.completed",
             status="completed",
@@ -1786,12 +1803,14 @@ class StreamingSpecialistRunner:
         event_broker: ThreadEventBroker,
         artifact_registry: ArtifactRegistry,
         should_stop: Callable[[str], bool] | None = None,
+        should_steer: Callable[[str], bool] | None = None,
     ) -> None:
         self.runner = runner
         self.thread_store = thread_store
         self.event_broker = event_broker
         self.artifact_registry = artifact_registry
         self.should_stop = should_stop or (lambda _thread_id: False)
+        self.should_steer = should_steer
         self._usage_event_fingerprints: dict[str, str] = {}
 
     def _emit_thread_event(
@@ -1948,13 +1967,78 @@ class StreamingSpecialistRunner:
                     ),
                     "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
                 }
-                await self._consume_agent_stream(
+                steered = await self._consume_agent_stream(
                     agent,
                     input_payload=input_payload,
                     config=config,
                     translator=translator,
                     usage_handler=usage_handler,
                 )
+            if steered:
+                partial_text = translator.final_text_from_stream.strip()
+                translator.complete(
+                    partial_text,
+                    sidecar={"steering_yielded": True},
+                )
+                runner._write_run_state(
+                    {
+                        "schema_version": 1,
+                        "entrypoint": entrypoint,
+                        "status": "steered",
+                        "phase": "yielded_at_tool_boundary",
+                        "active_specialist": entrypoint,
+                        "thread_id": deepagent_thread_id,
+                        "webui_thread_id": thread_id,
+                        "proposal_review": False,
+                        "proposal_revision_count": 0,
+                        "pending_human_input": None,
+                        "todo_items": [],
+                        "artifacts": [],
+                        "delegation_log": [],
+                        "text_preview": partial_text[:280],
+                        "user_prompt": recorded_prompt,
+                        "final_answer": partial_text,
+                        "summary": (
+                            "Yielded after the active tool completed so newer user "
+                            "guidance can continue from the same checkpoint."
+                        ),
+                        "facts": [],
+                    }
+                )
+                runner._write_usage_summary(usage_handler)
+                self._emit_usage_updated(thread_id=thread_id, message_id=message_id)
+                runner._emit(
+                    "RUN_PAUSED",
+                    payload={
+                        "entrypoint": entrypoint,
+                        "status": "steered",
+                        "thread_id": thread_id,
+                    },
+                )
+                self.thread_store.update_thread(
+                    thread_id,
+                    status=ThreadStatus.IDLE,
+                    active_message_id="",
+                    active_run_id="",
+                )
+                self._emit_thread_event(
+                    thread_id,
+                    "thread.status",
+                    message_id=message_id,
+                    status="idle",
+                    data={"status": "idle", "steering_yielded": True},
+                )
+                return {
+                    "run_id": runner.run_context.run_id,
+                    "run_dir": str(runner.run_context.run_dir),
+                    "status": "steered",
+                    "summary": (
+                        "Yielded after the active tool completed for newer user guidance."
+                    ),
+                    "facts": [],
+                    "final_answer": partial_text,
+                    "artifacts": [],
+                }
             if translator.interrupt_id:
                 interrupted_state = {
                     "schema_version": 1,
@@ -2218,35 +2302,84 @@ class StreamingSpecialistRunner:
         config: dict[str, Any],
         translator: CatMasterStreamTranslator,
         usage_handler: Any | None = None,
-    ) -> None:
+    ) -> bool:
         started = False
+        boundary_control = (
+            self.should_steer is not None
+            and not isinstance(input_payload, Command)
+            and callable(getattr(agent, "aget_state", None))
+        )
+        current_input = input_payload
         try:
-            stream_or_awaitable = agent.astream_events(input_payload, config=config, version="v3")
-            stream = await stream_or_awaitable if inspect.isawaitable(stream_or_awaitable) else stream_or_awaitable
-            async for event in stream:
-                started = True
-                if usage_handler is not None:
-                    self._ingest_stream_usage(
-                        _event_data(event),
-                        translator=translator,
-                        usage_handler=usage_handler,
-                        call_id=self._stream_event_call_id(event),
-                        metadata=_event_metadata(event),
-                    )
-                translator.apply_v3_event(event)
-                translator.flush_observed_reasoning()
-                if self.should_stop(translator.thread_id):
+            while True:
+                # A new user message may arrive immediately after a completed
+                # tool boundary. Do not start another model call in that race.
+                if current_input is None and self._steering_requested(
+                    translator.thread_id
+                ):
+                    return True
+                stream_kwargs: dict[str, Any] = {
+                    "config": config,
+                    "version": "v3",
+                }
+                if boundary_control:
+                    stream_kwargs["interrupt_after"] = ["tools"]
+                stream_or_awaitable = agent.astream_events(
+                    current_input,
+                    **stream_kwargs,
+                )
+                stream = (
+                    await stream_or_awaitable
+                    if inspect.isawaitable(stream_or_awaitable)
+                    else stream_or_awaitable
+                )
+                async for event in stream:
+                    started = True
+                    if usage_handler is not None:
+                        self._ingest_stream_usage(
+                            _event_data(event),
+                            translator=translator,
+                            usage_handler=usage_handler,
+                            call_id=self._stream_event_call_id(event),
+                            metadata=_event_metadata(event),
+                        )
+                    translator.apply_v3_event(event)
                     translator.flush_observed_reasoning()
-                    raise asyncio.CancelledError("Graceful stop requested.")
-            translator.flush_observed_reasoning()
-            return
+                    if self.should_stop(translator.thread_id):
+                        translator.flush_observed_reasoning()
+                        raise asyncio.CancelledError("Graceful stop requested.")
+                translator.flush_observed_reasoning()
+                if translator.interrupt_id or not boundary_control:
+                    return False
+                pending_nodes = await self._pending_graph_nodes(agent, config)
+                if pending_nodes is None:
+                    # Local API verification for LangGraph 1.2.x confirms
+                    # `aget_state(...).next` after a static tool breakpoint.
+                    # If another compatible graph cannot expose it, resume the
+                    # rest of this turn without additional breakpoints instead
+                    # of guessing whether the graph is complete.
+                    boundary_control = False
+                    current_input = None
+                    continue
+                if not pending_nodes:
+                    return False
+                if self._steering_requested(translator.thread_id):
+                    return True
+                # LangGraph static interrupts are resumed with `None` on the
+                # same thread. This preserves the completed tool result and
+                # avoids cancelling remote or scientific work mid-call.
+                current_input = None
         except Exception as exc:
             if started:
                 raise
             logger.info("stream_events(version='v3') failed, falling back to astream: %s", exc)
-            if isinstance(input_payload, Command):
+            if isinstance(current_input, Command):
                 raise
-        async for chunk in agent.astream(input_payload, config=config, stream_mode=["messages", "updates"]):
+        async for chunk in agent.astream(
+            current_input,
+            config=config,
+            stream_mode=["messages", "updates"],
+        ):
             if usage_handler is not None:
                 self._ingest_stream_usage(
                     chunk,
@@ -2259,6 +2392,36 @@ class StreamingSpecialistRunner:
                 translator.flush_observed_reasoning()
                 raise asyncio.CancelledError("Graceful stop requested.")
         translator.flush_observed_reasoning()
+        return False
+
+    def _steering_requested(self, thread_id: str) -> bool:
+        if self.should_steer is None:
+            return False
+        try:
+            return bool(self.should_steer(thread_id))
+        except Exception:
+            logger.exception("Failed to inspect queued steering for thread %s", thread_id)
+            return False
+
+    @staticmethod
+    async def _pending_graph_nodes(
+        agent: Any,
+        config: dict[str, Any],
+    ) -> tuple[str, ...] | None:
+        getter = getattr(agent, "aget_state", None)
+        if not callable(getter):
+            return None
+        try:
+            snapshot = await getter(config)
+        except Exception:
+            logger.exception("Failed to inspect LangGraph state at a tool boundary")
+            return None
+        pending = getattr(snapshot, "next", None)
+        if pending is None and isinstance(snapshot, dict):
+            pending = snapshot.get("next")
+        if pending is None:
+            return None
+        return tuple(str(item) for item in pending if str(item).strip())
 
     @staticmethod
     def _validate_decisions(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:

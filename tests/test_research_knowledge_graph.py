@@ -2218,6 +2218,12 @@ def test_launch_recovery_reuses_child_and_never_blindly_resubmits(
         run_id="run_waiting_for_approval",
     )
     assert service.store.get_launch(launch["launch_id"])["status"] == "running"
+    service.reconcile_finished_child(
+        child_thread_id=recovered["thread_id"],
+        terminal_status="steered",
+        run_id="run_waiting_for_approval",
+    )
+    assert service.store.get_launch(launch["launch_id"])["status"] == "running"
 
     # An operationally incomplete child does not become scientific evidence.
     asyncio.run(service.tick())

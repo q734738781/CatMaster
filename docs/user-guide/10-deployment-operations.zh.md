@@ -167,7 +167,11 @@ export CROSSREF_MAILTO="you@example.org"
 
 对使用 `codex_oauth` 或 OpenAI Responses 的角色，`TAVILY_API_KEY` 不是必需项，
 这些角色会得到托管的原生 `web_search`。如果其他 provider 需要公共检索，则仍需配置
-Tavily；两种实现不会以同名工具同时暴露给同一个 agent。
+Tavily；两种实现不会以同名工具同时暴露给同一个 agent，specialist、worker 和
+self-evolution role 都经过同一个 provider resolver。对于 CatMaster 搜索函数，
+`literature.public_web_on_search_failure` 控制学术索引降级。额度、鉴权、限流或网络
+失败会在当前 run 内熔断 Tavily，后续搜索不再继续消耗或重试该后端；降级结果会标明
+实际学术索引来源，不会伪装成通用网页覆盖。
 
 实际可见 tools 以当前 Literature Review runtime 为准。API key 提供访问能力，不保证全文权限或元数据完全正确。
 

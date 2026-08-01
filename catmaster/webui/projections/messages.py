@@ -602,3 +602,56 @@ def project_messages(messages: list[Any], *, workspace: Path | None = None) -> l
         )
         for message in messages
     ]
+
+
+def project_current_todo_parts(
+    messages: list[Any],
+    *,
+    workspace: Path | None = None,
+) -> list[PublicPart]:
+    """Project the latest persisted plan for each agent in the current turn."""
+
+    rows = [
+        message.model_dump(mode="json")
+        if hasattr(message, "model_dump")
+        else message if isinstance(message, dict) else {}
+        for message in messages
+    ]
+    latest_user = max(
+        (
+            index
+            for index, message in enumerate(rows)
+            if str(message.get("role") or "").lower() == "user"
+        ),
+        default=-1,
+    )
+    latest_by_source: dict[str, tuple[int, PublicPart]] = {}
+    order = 0
+    for message in rows[latest_user + 1 :]:
+        message_id = str(message.get("id") or "")
+        thread_id = str(message.get("thread_id") or "")
+        for raw_part in list(message.get("parts") or []):
+            raw = (
+                raw_part.model_dump(mode="json")
+                if hasattr(raw_part, "model_dump")
+                else raw_part if isinstance(raw_part, dict) else {}
+            )
+            if not project_todo_items(raw, workspace=workspace):
+                continue
+            projected = project_tool_part(
+                raw,
+                workspace=workspace,
+                thread_id=thread_id,
+                message_id=message_id,
+            )
+            source_key = str(projected.title or "Research plan").casefold()
+            latest_by_source[source_key] = (order, projected)
+            order += 1
+    return [
+        projected
+        for _order, projected in sorted(
+            latest_by_source.values(),
+            key=lambda item: item[0],
+            reverse=True,
+        )
+    ]

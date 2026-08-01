@@ -24,7 +24,10 @@ from .models import (
     NodeKind,
     NodePatchRequest,
     RefKind,
+    ResearchExperimentProposal,
+    ResearchGraphPlanningDraft,
     ResearchGraphPlanningProposal,
+    ResearchHypothesisProposal,
     ResearchRefInput,
     ResultCreateRequest,
     ResultJudgmentSetRequest,
@@ -945,6 +948,7 @@ class ResearchGraphService:
             "queued",
             "running",
             "streaming",
+            "steered",
         }:
             return
         # A stopped, failed, or simply incomplete child is operational state,
@@ -1048,6 +1052,237 @@ class ResearchGraphService:
                 "existing ready experiment."
             )
         return ResearchGraphPlanningProposal.model_validate(payload)
+
+    @staticmethod
+    def _planning_semantic_key(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+    @classmethod
+    def _add_planning_alias(
+        cls,
+        aliases: dict[str, set[str]],
+        value: str,
+        target_id: str,
+    ) -> None:
+        key = cls._planning_semantic_key(value)
+        if key:
+            aliases.setdefault(key, set()).add(target_id)
+
+    @classmethod
+    def _resolve_planning_alias(
+        cls,
+        aliases: dict[str, set[str]],
+        value: str,
+        *,
+        role: str,
+    ) -> str:
+        key = cls._planning_semantic_key(value)
+        matches = aliases.get(key, set())
+        if not matches:
+            raise ValueError(
+                f"The planning {role} '{value}' does not match an exact scientific "
+                "title, claim, or objective in the bound graph or this draft."
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"The planning {role} '{value}' is scientifically ambiguous. "
+                "Use a unique exact title, claim, or objective."
+            )
+        return next(iter(matches))
+
+    def _planning_source_refs(self, values: list[str]) -> list[ResearchRefInput]:
+        refs: list[ResearchRefInput] = []
+        for raw in values:
+            value = str(raw or "").strip()
+            if not value:
+                continue
+            normalized_doi = re.sub(
+                r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)",
+                "",
+                value,
+                flags=re.IGNORECASE,
+            ).strip()
+            if _DOI_RE.fullmatch(normalized_doi):
+                kind = RefKind.DOI
+                ref_id = normalized_doi
+            else:
+                parsed = urlparse(value)
+                if parsed.scheme in {"http", "https"} and parsed.netloc:
+                    kind = RefKind.URL
+                    ref_id = value
+                else:
+                    kind = RefKind.NOTE
+                    ref_id = value
+            refs.append(ResearchRefInput(ref_kind=kind, ref_id=ref_id))
+        return refs
+
+    def compile_planning_draft(
+        self,
+        snapshot: dict[str, Any],
+        draft: ResearchGraphPlanningDraft,
+        *,
+        planning_id: str,
+    ) -> ResearchGraphPlanningProposal:
+        """Resolve scientific labels and add internal IDs outside the model contract."""
+
+        prefix = re.sub(
+            r"[^A-Za-z0-9_.:-]+",
+            "_",
+            str(planning_id or "planning").strip(),
+        )[:96]
+        hypothesis_ids = [
+            f"{prefix}_hypothesis_{index}"
+            for index, _item in enumerate(draft.hypotheses, start=1)
+        ]
+        experiment_ids = [
+            f"{prefix}_experiment_{index}"
+            for index, _item in enumerate(draft.experiments, start=1)
+        ]
+
+        hypothesis_aliases: dict[str, set[str]] = {}
+        experiment_aliases: dict[str, set[str]] = {}
+        ready_route_aliases: dict[str, set[str]] = {}
+        ready_ids = set(self._frontier_ids(snapshot))
+        for node in list(snapshot.get("nodes") or []):
+            node_id = str(node.get("node_id") or "")
+            body = dict(node.get("body") or {})
+            if node.get("kind") == "hypothesis":
+                self._add_planning_alias(
+                    hypothesis_aliases,
+                    str(node.get("title") or ""),
+                    node_id,
+                )
+                self._add_planning_alias(
+                    hypothesis_aliases,
+                    str(body.get("claim") or ""),
+                    node_id,
+                )
+            elif node.get("kind") == "experiment":
+                self._add_planning_alias(
+                    experiment_aliases,
+                    str(node.get("title") or ""),
+                    node_id,
+                )
+                self._add_planning_alias(
+                    experiment_aliases,
+                    str(body.get("objective") or ""),
+                    node_id,
+                )
+                if node_id in ready_ids:
+                    self._add_planning_alias(
+                        ready_route_aliases,
+                        str(node.get("title") or ""),
+                        node_id,
+                    )
+                    self._add_planning_alias(
+                        ready_route_aliases,
+                        str(body.get("objective") or ""),
+                        node_id,
+                    )
+
+        for target_id, item in zip(hypothesis_ids, draft.hypotheses, strict=True):
+            self._add_planning_alias(hypothesis_aliases, item.title, target_id)
+            self._add_planning_alias(hypothesis_aliases, item.claim, target_id)
+            self._add_planning_alias(ready_route_aliases, item.title, target_id)
+            self._add_planning_alias(ready_route_aliases, item.claim, target_id)
+        for target_id, item in zip(experiment_ids, draft.experiments, strict=True):
+            self._add_planning_alias(experiment_aliases, item.title, target_id)
+            self._add_planning_alias(experiment_aliases, item.objective, target_id)
+            self._add_planning_alias(ready_route_aliases, item.title, target_id)
+            self._add_planning_alias(ready_route_aliases, item.objective, target_id)
+
+        hypotheses = [
+            ResearchHypothesisProposal(
+                proposal_id=target_id,
+                claim=item.claim,
+                title=item.title,
+                rationale=item.rationale,
+                predictions=item.predictions,
+                importance=item.importance,
+                refs=self._planning_source_refs(item.sources),
+            )
+            for target_id, item in zip(
+                hypothesis_ids,
+                draft.hypotheses,
+                strict=True,
+            )
+        ]
+        experiments = [
+            ResearchExperimentProposal(
+                proposal_id=target_id,
+                objective=item.objective,
+                title=item.title,
+                plan_summary=item.plan_summary,
+                decision_rule=item.decision_rule,
+                blocking_reason=item.blocking_reason,
+                execution_lane=item.execution_lane,
+                expected_value=item.expected_value,
+                estimated_compute_cost=item.estimated_compute_cost,
+                tests_hypothesis_ids=[
+                    self._resolve_planning_alias(
+                        hypothesis_aliases,
+                        reference,
+                        role="hypothesis reference",
+                    )
+                    for reference in item.tests_hypotheses
+                ],
+                depends_on_experiment_ids=[
+                    self._resolve_planning_alias(
+                        experiment_aliases,
+                        reference,
+                        role="experiment prerequisite",
+                    )
+                    for reference in item.depends_on_experiments
+                ],
+                refs=self._planning_source_refs(item.sources),
+            )
+            for target_id, item in zip(
+                experiment_ids,
+                draft.experiments,
+                strict=True,
+            )
+        ]
+        recommended_target_id = ""
+        if draft.recommended_route:
+            recommended_target_id = self._resolve_planning_alias(
+                ready_route_aliases,
+                draft.recommended_route,
+                role="recommended route",
+            )
+        return ResearchGraphPlanningProposal(
+            hypotheses=hypotheses,
+            experiments=experiments,
+            recommended_target_id=recommended_target_id,
+            recommendation_reason=draft.recommendation_reason,
+        )
+
+    def stage_planning_draft(
+        self,
+        graph_id: str,
+        *,
+        expected_revision: int,
+        planning_thread_id: str,
+        draft: ResearchGraphPlanningDraft,
+    ) -> dict[str, Any]:
+        """Compile science-first input and publish its temporary graph preview."""
+
+        planning = self.store.find_planning_by_thread(planning_thread_id)
+        if planning is None or str(planning["graph_id"]) != str(graph_id):
+            raise ValueError(
+                "This tool is available only inside the active bound Research "
+                "Graph planning thread."
+            )
+        proposal = self.compile_planning_draft(
+            self.store.get_snapshot(graph_id),
+            draft,
+            planning_id=str(planning["planning_id"]),
+        )
+        return self.stage_planning_proposal(
+            graph_id,
+            expected_revision=expected_revision,
+            planning_thread_id=planning_thread_id,
+            proposal=proposal,
+        )
 
     def stage_planning_proposal(
         self,
@@ -1365,7 +1600,7 @@ class ResearchGraphService:
                     thread_id=child.thread_id,
                     payload=ThreadSubmitRequest(
                         text=(
-                            "Run one bounded scientific planning pass for the bound "
+                            "Run a bounded scientific planning pass for the bound "
                             "Research Graph. Inspect the focused node, active hypotheses, "
                             "and runnable experiment frontier, then ask "
                             "hypothesis_proposer to compare the meaningful alternatives "

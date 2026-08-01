@@ -165,6 +165,7 @@ class PublicMessagePageEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     messages: list[PublicMessage] = Field(default_factory=list)
+    todo_parts: list[PublicPart] = Field(default_factory=list)
     page: TruncationInfo
 
 

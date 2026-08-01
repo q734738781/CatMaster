@@ -78,8 +78,18 @@ export function applyThreadEvent(messages, payload) {
     ));
   }
   if (name === "message.completed") {
+    if (data.message) return upsertById(messages, data.message);
     return messages.map((message) => (
-      message.id === messageId ? { ...message, status: "completed" } : message
+      message.id === messageId ? {
+        ...message,
+        status: "completed",
+        parts: (message.parts || []).map((part) => (
+          ["reasoning", "progress"].includes(part.type)
+          && ["created", "running", "streaming"].includes(String(part.status || "").toLowerCase())
+            ? { ...part, status: "completed" }
+            : part
+        )),
+      } : message
     ));
   }
   if (name === "run.failed") {

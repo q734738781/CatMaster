@@ -139,8 +139,10 @@ Both modes should map to backend interrupt policy rather than bypassing backend
 safety checks in the frontend.
 
 Prompt steering while a thread is running should be queued as a steering request
-and applied at a safe boundary. Do not hard-cancel remote/scientific work solely
-to apply steering.
+and applied after the current tool node completes and its checkpoint is durable.
+If the current model finishes without another tool boundary, apply the queued
+message as the next turn. Do not hard-cancel remote/scientific work solely to
+apply steering.
 
 ## 6) Frontend Implementation Conventions
 

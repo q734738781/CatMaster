@@ -9,7 +9,7 @@ from catmaster.research.knowledge_graph.models import (
     GraphCreateRequest,
     GraphPatchRequest,
     HypothesisCreateRequest,
-    ResearchGraphPlanningProposal,
+    ResearchGraphPlanningDraft,
     ResearchRefInput,
     ResultJudgmentInput,
     ResultCreateRequest,
@@ -86,8 +86,8 @@ class AddResearchExperimentInput(ExperimentCreateRequest):
     graph_id: str = Field(..., min_length=3, description="Explicit target graph ID.")
 
 
-class StageResearchPlanInput(ResearchGraphPlanningProposal):
-    """[research/graph] Publish temporary scientific branches from the bound planning turn."""
+class StageResearchPlanInput(ResearchGraphPlanningDraft):
+    """[research/graph] Publish science-first temporary branches from the bound planning turn."""
 
 
 class SetResearchGraphCompletionInput(BaseModel):
@@ -489,14 +489,13 @@ def stage_research_plan(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 "The current thread is not an active Research Graph planning turn."
             )
         graph_id = str(planning["graph_id"])
-        proposal = ResearchGraphPlanningProposal.model_validate(
-            params.model_dump(mode="json")
-        )
-        result = service.stage_planning_proposal(
+        result = service.stage_planning_draft(
             graph_id,
             expected_revision=int(planning["revision"]),
             planning_thread_id=planning_thread_id,
-            proposal=proposal,
+            draft=ResearchGraphPlanningDraft.model_validate(
+                params.model_dump(mode="json")
+            ),
         )
         summary = str(result.get("summary") or "Temporary plan published.")
         materialized = dict(result.get("materialized") or {})

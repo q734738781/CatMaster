@@ -239,6 +239,138 @@ class ResearchExperimentProposal(ExperimentBody):
     )
 
 
+class ResearchHypothesisDraft(BaseModel):
+    """Science-first hypothesis input for the model-visible planning action."""
+
+    claim: str = Field(
+        ...,
+        description="Falsifiable scientific claim for a new temporary branch.",
+    )
+    title: str = Field(
+        "",
+        description="Optional concise scientific label; leave empty to derive it from the claim.",
+    )
+    rationale: str = ""
+    predictions: list[str] = Field(default_factory=list)
+    importance: PriorityBand = Field(
+        "",
+        description=(
+            "Optional relative scientific importance. Leave empty when it has "
+            "not been assessed; this is not confidence or probability."
+        ),
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional existing DOI, URL, or workspace note path supporting this "
+            "branch. Omit unavailable sources rather than inventing identifiers."
+        ),
+    )
+
+    _clean_claim = field_validator("claim")(_clean_text)
+    _clean_title = field_validator("title")(_clean_text)
+    _clean_rationale = field_validator("rationale")(_clean_text)
+    _clean_predictions = field_validator("predictions")(_clean_string_list)
+    _clean_sources = field_validator("sources")(_clean_string_list)
+
+
+class ResearchExperimentDraft(BaseModel):
+    """Science-first experiment input for the model-visible planning action."""
+
+    objective: str = Field(
+        ...,
+        description="Scientific objective or discriminating check for this temporary route.",
+    )
+    title: str = Field(
+        "",
+        description="Optional concise scientific label; leave empty to derive it from the objective.",
+    )
+    plan_summary: str = Field(
+        "",
+        description="Optional for a draft; include when the experiment is ready to run.",
+    )
+    decision_rule: str = Field(
+        "",
+        description="Optional for a draft; include the outcome-specific rule when known.",
+    )
+    blocking_reason: str = ""
+    execution_lane: ExecutionLane = ExecutionLane.EXPERIMENT
+    expected_value: PriorityBand = ""
+    estimated_compute_cost: ComputeCostBand = ""
+    tests_hypotheses: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Exact scientific titles or claims of the existing or newly proposed "
+            "hypotheses this experiment tests."
+        ),
+    )
+    depends_on_experiments: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Exact scientific titles or objectives of prerequisite experiments. "
+            "Leave empty when there is no true execution prerequisite."
+        ),
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional existing DOI, URL, or workspace note path supporting this "
+            "experiment. Omit unavailable sources rather than inventing identifiers."
+        ),
+    )
+
+    _clean_objective = field_validator("objective")(_clean_text)
+    _clean_title = field_validator("title")(_clean_text)
+    _clean_plan = field_validator("plan_summary")(_clean_text)
+    _clean_rule = field_validator("decision_rule")(_clean_text)
+    _clean_blocker = field_validator("blocking_reason")(_clean_text)
+    _clean_tests = field_validator("tests_hypotheses")(_clean_string_list)
+    _clean_dependencies = field_validator("depends_on_experiments")(
+        _clean_string_list
+    )
+    _clean_sources = field_validator("sources")(_clean_string_list)
+
+
+class ResearchGraphPlanningDraft(BaseModel):
+    """Science-first model input; the host adds internal planning identifiers."""
+
+    hypotheses: list[ResearchHypothesisDraft] = Field(
+        default_factory=list,
+        description="Scientifically distinct temporary hypotheses supported by current evidence.",
+    )
+    experiments: list[ResearchExperimentDraft] = Field(
+        default_factory=list,
+        description="Scientifically distinct temporary checks justified by current evidence.",
+    )
+    recommended_route: str = Field(
+        "",
+        description=(
+            "Optional exact scientific title, claim, or objective of the route to "
+            "recommend. Leave empty when the evidence does not distinguish one."
+        ),
+    )
+    recommendation_reason: str = Field(
+        "",
+        description="Short scientific reason for the recommendation, when present.",
+    )
+
+    _clean_recommended_route = field_validator("recommended_route")(_clean_text)
+    _clean_recommendation_reason = field_validator("recommendation_reason")(_clean_text)
+
+    @model_validator(mode="after")
+    def _require_scientific_content(self) -> "ResearchGraphPlanningDraft":
+        if not self.hypotheses and not self.experiments and not self.recommended_route:
+            raise ValueError(
+                "A temporary plan must add a scientific branch or recommend an "
+                "existing ready experiment."
+            )
+        if self.recommended_route and not self.recommendation_reason:
+            raise ValueError(
+                "A recommended route requires a concise scientific reason."
+            )
+        return self
+
+
 class ResearchGraphPlanningProposal(BaseModel):
     """Temporary graph mutation payload used only at the planning write boundary."""
 
@@ -507,8 +639,11 @@ __all__ = [
     "PlanMaterializeRequest",
     "RefCreateRequest",
     "RefKind",
+    "ResearchExperimentDraft",
     "ResearchExperimentProposal",
+    "ResearchGraphPlanningDraft",
     "ResearchGraphPlanningProposal",
+    "ResearchHypothesisDraft",
     "ResearchHypothesisProposal",
     "ResearchRefInput",
     "ResultBody",

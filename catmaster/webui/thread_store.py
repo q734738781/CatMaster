@@ -263,6 +263,35 @@ class ThreadStore:
             ).fetchall()
         return self._messages_from_rows(rows)
 
+    def list_current_turn_messages(self, thread_id: str) -> list[ThreadMessage]:
+        """Read the latest user turn without depending on message-part pagination."""
+
+        tid = _safe_id(thread_id, label="thread_id")
+        with self._lock:
+            self._flush_thread_deltas_locked(tid)
+        with connect_workspace_db(self.workspace) as connection:
+            latest_user = connection.execute(
+                """
+                SELECT row_id
+                FROM thread_messages
+                WHERE thread_id = ? AND message_role = 'user'
+                ORDER BY row_id DESC
+                LIMIT 1
+                """,
+                (tid,),
+            ).fetchone()
+            start_row_id = int(latest_user["row_id"]) if latest_user is not None else 0
+            rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM thread_messages
+                WHERE thread_id = ? AND row_id >= ?
+                ORDER BY row_id ASC
+                """,
+                (tid, start_row_id),
+            ).fetchall()
+        return self._messages_from_rows(rows)
+
     def completed_tool_call_ids(
         self,
         thread_id: str,
