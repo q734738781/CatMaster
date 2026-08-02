@@ -199,7 +199,8 @@ agents:
   image_analyzer: "openrouter-main"
   # Optional: if omitted, it falls back to `director`.
   # Search follows this role's provider: OpenAI/Codex uses hosted web_search;
-  # other providers use CatMaster's Tavily tool. agent-browser remains separate.
+  # other providers use CatMaster's Tavily tool. Selected-source acquisition is
+  # a separate high-level local tool.
   literature_deep_research: "openrouter-main-xhigh"
   # Optional: if omitted, it falls back to `task_runner`.
   tool_selector: "openrouter-main"
